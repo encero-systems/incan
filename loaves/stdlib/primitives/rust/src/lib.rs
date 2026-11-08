@@ -8,12 +8,20 @@ pub mod errors;
 pub mod file;
 pub mod frozen;
 pub mod iter;
+pub mod locking;
 pub mod mapping;
 pub mod num;
+pub mod reflection;
 pub mod strings;
 pub mod sync;
 pub mod task;
 pub mod time;
+pub mod validation;
+
+pub use reflection::{
+    FieldInfo, HasClassName, HasFieldInfo, HasFieldMetadata, HasFieldValueReflection, HasTypeClassName,
+    HasTypeFieldMetadata,
+};
 
 /// Internal re-exports used by compiler-generated code and primitive async sources.
 ///

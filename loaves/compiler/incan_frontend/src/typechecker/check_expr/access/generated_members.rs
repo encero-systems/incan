@@ -81,6 +81,10 @@ impl TypeChecker {
             span,
             Self::compiler_builtin_member_identity(core_traits::as_str(TraitId::Clone), method),
         );
+        self.type_info.record_resolved_builtin_method_call(
+            span,
+            BuiltinMethodId::Clone(incan_lang::lang::surface::clone_methods::CloneMethodId::Clone),
+        );
         Some(inner.as_ref().clone())
     }
 
@@ -104,6 +108,10 @@ impl TypeChecker {
         self.type_info.traits.inferred_method_identities.insert(
             span,
             Self::compiler_builtin_member_identity(core_traits::as_str(TraitId::Clone), method),
+        );
+        self.type_info.record_resolved_builtin_method_call(
+            span,
+            BuiltinMethodId::Clone(incan_lang::lang::surface::clone_methods::CloneMethodId::Clone),
         );
     }
 

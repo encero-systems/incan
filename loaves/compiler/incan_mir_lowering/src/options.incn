@@ -3,6 +3,8 @@
 from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin, SemanticSourceTargetKind, generic
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
 from rust::incan_lang::lang::surface::constructors import from_str as builtin_constructor, ConstructorId
+from rust::incan_lang::lang::surface::option_methods import OptionMethodId as RustOptionMethodId
+from rust::incan_lang::lang::surface::result_methods import ResultMethodId as RustResultMethodId
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
@@ -669,7 +671,8 @@ pub def clone_tuple_operand(mut builder: Builder, value: Place, span: SourceSpan
 
 pub def lower_carrier_method_plan(
     mut builder: Builder,
-    name: str,
+    option_method: Option[RustOptionMethodId],
+    result_method: Option[RustResultMethodId],
     source: Place,
     target: Place,
     fallback: Option[Operand],
@@ -680,20 +683,20 @@ pub def lower_carrier_method_plan(
     mut present = 0
     if declaration.carrier == Carrier.Option:
         present = 1
-    predicate = (declaration.carrier == Carrier.Option and (name == "is_some" or name == "is_none")) or (
-        declaration.carrier == Carrier.Result
-        and (name == "is_ok" or name == "is_err")
-    )
+    predicate = option_method in [Some(RustOptionMethodId.IsSome), Some(RustOptionMethodId.IsNone)] or result_method in [
+        Some(RustResultMethodId.IsOk),
+        Some(RustResultMethodId.IsErr),
+    ]
     if predicate:
-        if name == "is_none" or name == "is_err":
+        if option_method == Some(RustOptionMethodId.IsNone) or result_method == Some(RustResultMethodId.IsErr):
             present = 1 - present
         condition = variant_condition(builder, source, present, span)
         builder.emit(plan_assign(target, RvalueKind.Use(condition), span))
         return Ok(None)
-    if name == "unwrap":
+    if option_method == Some(RustOptionMethodId.Unwrap) or result_method == Some(RustResultMethodId.Unwrap):
         return lower_carrier_unwrap(builder, declaration, present, source, target, span)
-    if name != "unwrap_or":
-        return Err(f"unsupported Body IR intrinsic carrier method {name}")
+    if option_method != Some(RustOptionMethodId.UnwrapOr) and result_method != Some(RustResultMethodId.UnwrapOr):
+        return Err("unsupported Body IR intrinsic carrier method")
     match fallback:
         Some(value) => return lower_carrier_default(builder, declaration, present, source, target, value, span)
         None => return Err("unsupported Body IR carrier missing default")

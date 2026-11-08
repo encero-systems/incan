@@ -284,7 +284,7 @@ from rust::CRATE [@ "VERSION"] [with ["FEATURE", ...]] import ITEMS
 - Annotations are refused on a crate that `loaf.toml` configures.
 - Across files, one crate's versions match, and its features are unioned.
 - Annotations apply to `rust::` imports only.
-- In a project, a `rust::` import may name `std`, a Rust dependency declared under `[rust-dependencies]`, a registry Loaf declared under `[dependencies]` with a `crates-io/<package>` identity, or a sibling path dependency whose Rust facet the package links. Dependency aliases replace `-` with `_` in the crate name. Using an item from any other crate is refused (`INCAN-T0001`).
+- In a project, a `rust::` import may name `std`, a registry Loaf declared under `[dependencies]`, or a sibling path dependency whose Rust facet the package links. The dependency key is the import name, with `-` replaced by `_`. Using an item from any other crate is refused (`INCAN-T0001`).
 - An empty `@ ""` version requirement, and one that is not a Cargo SemVer requirement, are refused.
 
 These refusals are reported when the project builds (`INCAN-C0001`). `rust::core` and `rust::alloc` are refused (`INCAN-I0001`).

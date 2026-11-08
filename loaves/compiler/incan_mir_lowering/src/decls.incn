@@ -167,6 +167,9 @@ pub def lower_model_declarations(
         callable_name, callable_signature = callable_methods(constructors, module, owner, native_names, intrinsics)?
         if item == "":
             validate_marker_traits(declaration)?
+        mut view_lifetime_count = 0
+        if item == "":
+            view_lifetime_count = declaration_view_lifetimes(declaration)
         models.append(
             ModelDeclaration(
                 name=model_symbol(str(declaration.name)),
@@ -176,6 +179,7 @@ pub def lower_model_declarations(
                 derives=derives,
                 source_name=str(declaration.canonical.declaration_name),
                 span=plan_span(file=file, line=1, column=1),
+                view_lifetime_count=view_lifetime_count,
                 library_item=item,
                 library_type_arguments=library_arguments,
                 field_serde_names=serde_names,
@@ -195,6 +199,45 @@ pub def lower_model_declarations(
     return Ok(models)
 
 
+def declaration_view_lifetimes(declaration: &NominalDeclaration) -> int:
+    """Count physical references retained by one closed source layout; callable fields bind their own signatures."""
+    if len(declaration.type_parameters) == 0:
+        return 0
+    mut count = 0
+    for field in declaration.field_types:
+        count += type_view_lifetimes(field)
+    return count
+
+
+def type_view_lifetimes(ty: &RustType) -> int:
+    """Count reference slots structurally through tuples and generic nominal arguments in declaration order."""
+    match ty:
+        RustType.Ref(inner) => return 1 + type_view_lifetimes(inner)
+        RustType.RefMut(inner) => return 1 + type_view_lifetimes(inner)
+        RustType.Generic(base=base, args=arguments) =>
+            if base in [
+                "FrozenList",
+                "FrozenSet",
+                "FrozenDict",
+                "$FrozenList",
+                "$FrozenSet",
+                "$FrozenDict",
+            ]:
+                return 0
+            return element_view_lifetimes(arguments)
+        RustType.Tuple(elements) => return element_view_lifetimes(elements)
+        RustType.NativeArray(element=element, length=_length) => return type_view_lifetimes(element)
+        _ => return 0
+
+
+def element_view_lifetimes(elements: &list[RustType]) -> int:
+    """Sum reference slots without copying the retained field types."""
+    mut count = 0
+    for element in elements:
+        count += type_view_lifetimes(element)
+    return count
+
+
 def planned_field_metadata(declaration: &NominalDeclaration) -> Option[list[FieldMetadata]]:
     """Copy checked metadata values without recovering missing visibility, type names, or defaults."""
     match declaration.reflection_metadata:
@@ -204,6 +247,12 @@ def planned_field_metadata(declaration: &NominalDeclaration) -> Option[list[Fiel
             for field in fields:
                 mut alias: Option[str] = None
                 mut description: Option[str] = None
+                mut record_identity: list[int] = []
+                mut renamed_from: list[str] = []
+                for byte in field.record_identity:
+                    record_identity.append(int(byte))
+                for earlier in field.renamed_from:
+                    renamed_from.append(str(earlier))
                 match field.alias:
                     Some(value) => alias = Some(str(value))
                     None => pass
@@ -213,6 +262,9 @@ def planned_field_metadata(declaration: &NominalDeclaration) -> Option[list[Fiel
                 result.append(
                     FieldMetadata(
                         name=str(field.name),
+                        record_identity=record_identity,
+                        record_canonical=field.record_canonical,
+                        renamed_from=renamed_from,
                         alias=alias,
                         description=description,
                         type_name=str(field.type_name),

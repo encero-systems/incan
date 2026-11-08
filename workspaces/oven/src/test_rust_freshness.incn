@@ -1,20 +1,24 @@
 """Rust unit reuse contracts: a Rust unit key follows its crate manifest, how it is built and what it links."""
 
 from rust::std::process import Command, Output, Stdio
+from codegen import native_arguments, rust_arguments
 from std.environ import get_or
 from std.fs import Path
 from files import read, remove
 from intake import ManifestReader
+from invocation_identity import invocation_facts
 from observation import load_ledger
 from scratch import scratch_directory
 from rust_freshness import reconciled_rust_key
 from rust_units import (
     compile_rust_library,
     library_compile_arguments,
+    require_coherent_installed_producer,
     rust_library_graph_key,
     rust_library_producer_key,
 )
 from rust_build import BuiltUnit, RustBuild, artifact_context, linking, native_artifacts
+from rust_binaries import refuse_absolute_runtime_path
 from rust_manifest import RustFacet, package_environment
 from registry_units import RegistryUnits
 from loaf_local_graph import LocalEdge, LocalFacet
@@ -22,7 +26,7 @@ from rust_activation import DependencyDomain
 from rust_target import decoded
 from toolchain import NativeCrate
 from unit_publication import admit_payload, record_path, record_payload
-from unit_freshness import artifact_identity, record, fingerprint
+from unit_freshness import Key, artifact_identity, record, fingerprint
 from freshness_fixtures import Pass, fixture, make_executable, write
 
 
@@ -42,6 +46,28 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
     request = RustBuild(project="root", rustc="rustc", registry=RegistryUnits(units=[], search=[]))
     unrelated = BuiltUnit(crate_name="other", artifact="/other/library.rlib", directory="/other")
     assert linking(facet, request, {}, [])? == linking(facet, request, {"other": unrelated}, ["/other"])?
+    first_workspace = invocation_facts(
+        ["--remap-path-prefix", "/one/checkout=workspace"],
+        Path("/project"),
+        Path("/output"),
+    )
+    second_workspace = invocation_facts(
+        ["--remap-path-prefix", "/another/checkout=workspace"],
+        Path("/project"),
+        Path("/output"),
+    )
+    assert first_workspace == second_workspace
+    first_toolchain = invocation_facts(
+        ["--remap-path-prefix", "/one/sysroot=toolchain"],
+        Path("/project"),
+        Path("/output"),
+    )
+    second_toolchain = invocation_facts(
+        ["--remap-path-prefix", "/another/sysroot=toolchain"],
+        Path("/project"),
+        Path("/output"),
+    )
+    assert first_toolchain == second_toolchain
     scratch = scratch_directory()?
     setup = rust_crate(scratch.path())?
     sources = setup.facet.joinpath("rust").joinpath("src")
@@ -73,8 +99,20 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
     record_payload(setup.dependency, fingerprint(["core two"])?)?
     linked = rust_pass(setup, "another compiler", "alloc")?.key
     assert linked != compiler
+    verify_absolute_binary_runpath_refusal()
     verify_installed_rust_producer(scratch.path().joinpath("installed"))?
     return Ok(None)
+
+
+def verify_absolute_binary_runpath_refusal() -> None:
+    """A location-bound binary refuses reuse while retaining its deterministic code-generation identity."""
+    key = Key(digest="sha256:reuse", codegen="sha256:codegen", parts=[])
+    refused = refuse_absolute_runtime_path(key, ["link-arg=-Wl,-rpath,/bootstrap/sysroot/lib"])
+    assert refused.digest == ""
+    assert refused.codegen == "sha256:codegen"
+    assert refused.refusal == "unit identity refused: absolute runtime search path"
+    assert native_arguments("release") == ["-Copt-level=3"]
+    assert rust_arguments("release") == ["-C", "opt-level=3", "-C", "debuginfo=0"]
 
 
 def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
@@ -137,6 +175,16 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     stamp = installed.joinpath("library.oven-inputs")
     record(stamp, key, [artifact, graph, dependencies])?
     record(installed.joinpath("library.graph-inputs"), rust_library_graph_key(key, toolchain.driver)?, [graph])?
+    # The graph-wide preflight uses this same proof before any output directory or replacement producer exists.
+    preflight = require_coherent_installed_producer(facet, declared, request, built, [])?
+    assert preflight.reused and preflight.artifact == artifact.0
+    request.native_compiler = "different pinned native compiler"
+    match require_coherent_installed_producer(facet, declared, request, built, []):
+        Ok(_) =>
+            assert false, "generation preflight accepted a producer from another compiler"
+        Err(error) =>
+            assert "installed native data is stale" in error and "compiler" in error, error
+    request.native_compiler = "pinned native compiler"
     # 2. The selected producer is returned, rather than creating a consumer-local library with the same identity.
     output = scratch.joinpath("must-not-build")
     request.toolchain_search = [scratch.joinpath("unrelated-standard-directory").0]
@@ -391,6 +439,29 @@ pub def test_other_sources_than_the_installed_generation_are_refused_up_front() 
     accepted_text = decoded(accepted.stdout) + decoded(accepted.stderr)
     assert accepted.status.success(), accepted_text
     assert "unit incan_lang rust: reused installed producer" in accepted_text, accepted_text
+    verify_standard_package_refusal(scratch.path())?
+    return Ok(None)
+
+
+def verify_standard_package_refusal(root: Path) -> Result[None, str]:
+    """A source rebuild of `std.testing` refuses its changed native facet before compiling any replacement."""
+    stdlib = root.joinpath("standard-checkout/loaves/stdlib")
+    testing = stdlib.joinpath("testing")
+    manifest = "[project]\nname = \"incan_stdlib_testing\"\nversion = \"0.5.0\"\nprivate = true\n"
+    write(
+        testing.joinpath("loaf.toml"),
+        manifest + "[rust]\nname = \"incan_std_testing\"\ntype = \"lib\"\nedition = \"2024\"\n[rust.source]\nroot = \"rust\"\n",
+    )?
+    write(testing.joinpath("src/lib.incn"), "pub def source_generation_probe() -> None:\n    pass\n")?
+    write(testing.joinpath("rust/src/lib.rs"), "/// A source-generation probe.\npub fn probe() {}\n")?
+    output = standard_build(testing, stdlib)?
+    text = decoded(output.stdout) + decoded(output.stderr)
+    assert output.status.code() == Some(1i32), text
+    assert len(text.split("differ from the sources the installed native generation was built from")) == 2, text
+    assert "the selected sources differ for: incan_std_testing\n" in text, text
+    assert "install a toolchain built from these sources" in text, text
+    assert "set INCAN_STDLIB to the installed standard library" in text, text
+    assert ": compiled" not in text, text
     return Ok(None)
 
 
@@ -427,4 +498,13 @@ def probe_build(probe: Path) -> Result[Output, str]:
     mut command = Command.new(binary)
     command.arg("build").arg(probe.joinpath("src/main.incn").0).arg("--profile").arg("release").current_dir(probe.0)
     command.env("OVEN_OWNER", "off").env("OVEN_TRACE", "-").stdin(Stdio.null())
+    return command.output().map_err((error) => f"cannot run {binary}: {error}")
+
+
+def standard_build(project: Path, stdlib: Path) -> Result[Output, str]:
+    """Build a standard package through the installed command with the selected checkout as its standard library."""
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    mut command = Command.new(binary)
+    command.arg("build").arg(project.0).arg("--profile").arg("release").current_dir(project.0)
+    command.env("INCAN_STDLIB", stdlib.0).env("OVEN_OWNER", "off").env("OVEN_TRACE", "-").stdin(Stdio.null())
     return command.output().map_err((error) => f"cannot run {binary}: {error}")

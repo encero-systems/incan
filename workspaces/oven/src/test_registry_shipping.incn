@@ -16,6 +16,8 @@ pub def test_only_units_a_declared_crate_reaches_are_shipped() -> Result[None, s
     checkout = scratch.path()
     write(checkout.joinpath("loaves/app/loaf.toml"), APP)?
     write(checkout.joinpath("loaves/fixture/loaf.toml"), FIXTURE)?
+    write(checkout.joinpath("loaves/workspace/loaf.toml"), WORKSPACE)?
+    write(checkout.joinpath("loaves/refused/loaf.toml"), REFUSED)?
     # A build output's manifests are not declarations.
     write(checkout.joinpath("loaves/app/target/copy/loaf.toml"), STALE)?
     units = [
@@ -54,8 +56,8 @@ const FIXTURE: str = """[project]
 name = "fixture"
 version = "0.1.0"
 
-[rust-dependencies]
-pattern = { package = "regex", version = "1" }
+[dependencies]
+pattern = { loaf = "crates-io/regex", version = "1" }
 """
 const STALE: str = """[project]
 name = "stale"
@@ -63,6 +65,16 @@ version = "0.1.0"
 
 [dependencies]
 loader = { loaf = "crates-io/ra-ap-load-cargo", version = "0.0.325" }
+"""
+const WORKSPACE: str = """[workspace]
+members = ["app", "fixture"]
+"""
+const REFUSED: str = """[project]
+name = "refused"
+version = "0.1.0"
+
+[dependencies]
+loader = { loaf = "crates-io/ra-ap-load-cargo", version = "0.0.325", package = "ra-ap-load-cargo" }
 """
 
 

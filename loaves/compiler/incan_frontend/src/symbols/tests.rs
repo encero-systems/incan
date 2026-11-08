@@ -421,6 +421,22 @@ fn field_surface_type_name_uses_canonical_incan_collection_spelling() {
 
     assert_eq!(field_surface_type_name(&source, &resolved), "list[int]");
 
+    let source = Type::Generic(
+        "Option".to_string(),
+        vec![Spanned::new(
+            Type::Dotted(vec!["errors".to_string(), "TomlError".to_string()]),
+            Span::default(),
+        )],
+    );
+    let resolved = ResolvedType::Generic(
+        "Option".to_string(),
+        vec![ResolvedType::Named(
+            "__incan_carrier_model_6_6572726f7273_9_546f6d6c4572726f72_0_44".to_string(),
+        )],
+    );
+
+    assert_eq!(field_surface_type_name(&source, &resolved), "Option[TomlError]");
+
     let controls = [
         (
             ResolvedType::Generic(

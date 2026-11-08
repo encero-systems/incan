@@ -46,6 +46,7 @@ mod generic_layouts;
 mod generic_loans;
 mod identity;
 mod library_exports;
+mod model_debug;
 mod native_attributes;
 mod native_crates;
 mod native_loans;

@@ -8,7 +8,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 
+mod mutation;
 mod operations;
+pub(in crate::typechecker) use mutation::{MutationBody, MutationEffects, MutationForward, analyze_mutation};
 pub(in crate::typechecker) use operations::{OperandDependency, OperationInputs};
 
 /// One source storage projection. Dynamic indices conservatively overlap every element projection.
@@ -44,12 +46,12 @@ pub(in crate::typechecker) struct Place {
 
 impl Place {
     /// A prefix owns its descendants; differing canonical stored fields are proven disjoint.
-    fn contains(&self, other: &Self) -> bool {
+    pub(super) fn contains(&self, other: &Self) -> bool {
         self.root == other.root && other.projection.starts_with(&self.projection)
     }
 
     /// Conservatively overlap roots and dynamic elements, distinguishing only proven sibling fields.
-    fn overlaps(&self, other: &Self) -> bool {
+    pub(super) fn overlaps(&self, other: &Self) -> bool {
         self.root == other.root
             && self
                 .projection
@@ -163,6 +165,16 @@ pub(in crate::typechecker) struct OwnedInitialization {
     pub access_node: Option<usize>,
 }
 
+/// One in-place dictionary lookup and the shared entry loans carried by its pattern bindings.
+///
+/// An empty loan set represents a wildcard-only match. The lookup is read-only when every retained loan remains an
+/// observation and no other access touches the source dictionary while one of those loans is live.
+#[derive(Debug, Clone)]
+pub(in crate::typechecker) struct DictionaryLookup {
+    pub source: Place,
+    pub loans: Vec<LoanId>,
+}
+
 /// Stored initializer events belong to one explicit destination and must read/move its exact source within the
 /// initializer's expansion-bearing range. This validates retained links; it never discovers them by searching spans.
 fn validate_owned_initializations(graph: &Graph) -> Result<(), InvalidGraph> {
@@ -217,6 +229,15 @@ pub(in crate::typechecker) struct Graph {
     pub owner: CanonicalSymbolId,
     pub permissions: BTreeMap<Root, Permission>,
     pub loans: Vec<Loan>,
+    /// Loans created by direct stored-place iteration. Diagnostic projection consumes this authenticated source fact
+    /// rather than rediscovering loop structure by walking the completed control-flow graph.
+    pub direct_iteration_loans: BTreeSet<LoanId>,
+    /// Candidate non-copyable loop items and their dormant direct-list transfer nodes.
+    pub item_taking_loops: BTreeMap<HirSourceSpan, super::loop_items::GraphLoop>,
+    /// List moves materialized from item transfers, keyed by their graph node for T0119 projection.
+    pub taking_moves: BTreeMap<usize, super::loop_items::TakingMove>,
+    /// Optional `Dict.get` calls whose match bindings borrow the stored entry in place.
+    pub dictionary_lookups: BTreeMap<HirSourceSpan, DictionaryLookup>,
     /// Explicit local declarations retain their selected loan independently of display spelling.
     pub local_loans: BTreeMap<CanonicalSymbolId, LoanId>,
     /// Owned locals whose values keep one or more checked source loans alive through their last value use.
@@ -231,8 +252,45 @@ pub(in crate::typechecker) struct Graph {
     pub operations: BTreeMap<HirSourceSpan, OperationInputs>,
     /// Closures bound to a local, by closure expression, with the captures they read or borrow when built.
     pub closures: BTreeMap<HirSourceSpan, ClosureCaptures>,
+    /// Caller-visible parameter changes and forwarding calls from this callable. These are ordinary source-graph
+    /// facts; the module flow phase closes their interprocedural edges after every callable graph is available.
+    pub mutation: MutationBody,
     pub nodes: Vec<Node>,
     pub entry: usize,
+}
+
+impl Graph {
+    /// Create a minimal callable graph for caller-visible mutation facts when no explicit-flow rule needs the full
+    /// source CFG. The real callable identity and span remain authenticated; no synthetic place or access is added.
+    pub(in crate::typechecker) fn mutation_only(
+        owner: CanonicalSymbolId,
+        span: HirSourceSpan,
+        mutation: MutationBody,
+    ) -> Self {
+        Self {
+            owner,
+            permissions: BTreeMap::new(),
+            loans: Vec::new(),
+            direct_iteration_loans: BTreeSet::new(),
+            item_taking_loops: BTreeMap::new(),
+            taking_moves: BTreeMap::new(),
+            dictionary_lookups: BTreeMap::new(),
+            local_loans: BTreeMap::new(),
+            dependent_locals: BTreeMap::new(),
+            dependent_values: BTreeSet::new(),
+            owned_locals: BTreeMap::new(),
+            invocations: BTreeMap::new(),
+            operations: BTreeMap::new(),
+            closures: BTreeMap::new(),
+            mutation,
+            nodes: vec![Node {
+                event: Event::Nothing,
+                successors: Vec::new(),
+                span,
+            }],
+            entry: 0,
+        }
+    }
 }
 
 /// A closure bound to a local. It reads each captured Copy value when it is built and retains one shared loan for
@@ -853,6 +911,15 @@ fn check_event(
             continue;
         }
         let loan = &graph.loans[id.0];
+        // A carried dependency creates a new loan whose ancestry already keeps every earlier link live. Report the
+        // deepest active link for one source; sibling loans remain distinct because neither is the other's parent.
+        if state.loans.iter().any(|candidate| {
+            candidate != id
+                && validated.parents[candidate.0].contains(id)
+                && graph.loans[candidate.0].source == loan.source
+        }) {
+            continue;
+        }
         if loan.source.overlaps(place) && (loan.kind == LoanKind::Exclusive || access != Access::Read) {
             conflicts.insert(Conflict {
                 node,

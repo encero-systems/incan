@@ -37,6 +37,7 @@ pub fn function(
             .unwrap_or_else(|| ty(&function.return_type, span)),
     );
     let mut declaration = ast::FnDecl { inputs, output };
+    crate::signature_lifetimes::prepare_model_lifetimes(plan, &mut declaration, span)?;
     let mut generics = crate::futures::constructor_generics(function, span);
     generics
         .params
@@ -147,23 +148,31 @@ pub(crate) fn model_module_name(model: &crate::plan::ModelDeclaration) -> String
 }
 
 /// Keep a concrete struct's source name for derives, exposing its unique physical symbol through a type alias.
-/// Ordinary layouts stay at the crate root. Rust's derives operate on a source-named struct in a private namespace
-/// for specialized layouts, and MIR uses the alias's identical underlying ADT.
-/// Structural Display delegates to Debug on that same type and is published with it, including in compiled libraries.
+/// Ordinary layouts stay at the crate root. Procedural derives operate on a source-named struct in a private namespace
+/// for specialized layouts, and MIR uses the alias's identical underlying ADT. Structural Debug and Display are
+/// published on that same type, including in compiled libraries.
 pub(crate) fn model_items(
+    plan: &crate::plan::Plan,
     model: &crate::plan::ModelDeclaration,
     generator: &ast::attr::AttrIdGenerator,
     span: Span,
-) -> Vec<Box<ast::Item>> {
+) -> Result<Vec<Box<ast::Item>>, crate::error::PlanError> {
     if !model.library_item.is_empty() {
-        return vec![library_alias(&model.name, model.public, span)];
+        return Ok(vec![library_alias(&model.name, model.public, span)]);
     }
-    let mut declaration = self::model(model, span);
-    for derive in model
-        .derives
-        .iter()
-        .filter(|derive| derives::from_str(derive) != Some(DeriveId::Display))
-    {
+    let mut declaration = self::model(plan, model, span)?;
+    let tuple = model.fields.len() == 1 && model.fields[0].name == "0";
+    let structural_debug = !tuple
+        && model
+            .derives
+            .iter()
+            .any(|derive| derives::from_str(derive) == Some(DeriveId::Debug));
+    let stores_exclusive_view = model.fields.iter().any(|field| stores_exclusive_view(&field.ty));
+    for derive in model.derives.iter().filter(|derive| {
+        derives::from_str(derive) != Some(DeriveId::Display)
+            && !(structural_debug && derives::from_str(derive) == Some(DeriveId::Debug))
+            && !(stores_exclusive_view && derives::from_str(derive) == Some(DeriveId::Clone))
+    }) {
         declaration.attrs.push(derive_attribute(generator, derive, span));
     }
     if !model.checked_deserialize.is_empty() {
@@ -171,27 +180,50 @@ pub(crate) fn model_items(
             .attrs
             .push(crate::checked_json::deserialize_attribute(generator, span));
     }
+    let lifetime_count = usize::try_from(model.view_lifetime_count).map_err(|_| crate::error::PlanError::Invalid {
+        function: model.name.clone(),
+        reason: "model lifetime count exceeds the native index range".into(),
+    })?;
     let display = model
         .derives
         .iter()
         .any(|derive| derives::from_str(derive) == Some(DeriveId::Display))
         .then(|| {
             crate::derived_display::implementation(
-                crate::ast_build::path_ty(ast::Path::from_ident(ident(&model.name, span)), span),
-                ast::Generics::default(),
+                model_path_type(&model.name, lifetime_count, span),
+                crate::signature_lifetimes::model_lifetime_generics(lifetime_count, span),
                 span,
             )
         });
     if !specialized_model(model) {
-        return std::iter::once(declaration).chain(display).collect();
+        let debug = structural_debug.then(|| {
+            crate::model_debug::implementation(
+                model_source_name(model),
+                model.fields.iter().map(|field| field.name.as_str()),
+                model_path_type(&model.name, lifetime_count, span),
+                crate::signature_lifetimes::model_lifetime_generics(lifetime_count, span),
+                span,
+            )
+        });
+        return Ok(std::iter::once(declaration).chain(debug).chain(display).collect());
     }
     let namespace = model_module_name(model);
+    let mut contents = thin_vec![declaration];
+    if structural_debug {
+        contents.push(crate::model_debug::implementation(
+            model_source_name(model),
+            model.fields.iter().map(|field| field.name.as_str()),
+            model_path_type(model_source_name(model), lifetime_count, span),
+            crate::signature_lifetimes::model_lifetime_generics(lifetime_count, span),
+            span,
+        ));
+    }
     let module = item(
         ast::ItemKind::Mod(
             ast::Safety::Default,
             ident(&namespace, span),
             ast::ModKind::Loaded(
-                thin_vec![declaration],
+                contents,
                 ast::Inline::Yes,
                 ast::ModSpans {
                     inner_span: span,
@@ -204,11 +236,12 @@ pub(crate) fn model_items(
     let mut path = ast::Path::from_ident(ident(&namespace, span));
     path.segments
         .push(ast::PathSegment::from_ident(ident(&model.source_name, span)));
+    apply_model_lifetime_arguments(&mut path, lifetime_count, span);
     let mut alias = item(
         ast::ItemKind::TyAlias(Box::new(ast::TyAlias {
             defaultness: ast::Defaultness::Implicit,
             ident: ident(&model.name, span),
-            generics: ast::Generics::default(),
+            generics: crate::signature_lifetimes::model_lifetime_generics(lifetime_count, span),
             after_where_clause: ast::WhereClause::default(),
             bounds: Vec::new(),
             ty: Some(Box::new(ast::Ty {
@@ -221,7 +254,60 @@ pub(crate) fn model_items(
         span,
     );
     alias.vis = visibility(model.public, span);
-    vec![module, alias].into_iter().chain(display).collect()
+    Ok(vec![module, alias].into_iter().chain(display).collect())
+}
+
+/// Report whether a concrete field layout retains an exclusive reference that cannot satisfy Rust's `Clone`
+/// contract. Callable signatures bind their own inputs and are deliberately not traversed.
+fn stores_exclusive_view(ty: &PlanType) -> bool {
+    match ty {
+        PlanType::Tuple(elements) => elements
+            .iter()
+            .any(|element| stores_exclusive_view(&tuple_element_type(element.clone()))),
+        PlanType::NativeArray(elements, _) | PlanType::Boxed(elements) => elements.iter().any(stores_exclusive_view),
+        PlanType::TupleMutRef(_)
+        | PlanType::ScalarMutRef(_)
+        | PlanType::StringMutRef
+        | PlanType::EnumMutRef(..)
+        | PlanType::ModelMutRef(..)
+        | PlanType::ListMutRef(..)
+        | PlanType::ListIntoIterMutRef(..)
+        | PlanType::SetMutRef(..)
+        | PlanType::DictMutRef(..)
+        | PlanType::ZipIteratorMutRef(..)
+        | PlanType::GeneratorMutRef(..)
+        | PlanType::SliceMutRef(..)
+        | PlanType::NativeArrayMutRef(..) => true,
+        _ => false,
+    }
+}
+
+/// Build one model path with its declaration-owned lifetime arguments in stable field order.
+fn model_path_type(name: &str, count: usize, span: Span) -> Box<ast::Ty> {
+    let mut path = ast::Path::from_ident(ident(name, span));
+    apply_model_lifetime_arguments(&mut path, count, span);
+    crate::ast_build::path_ty(path, span)
+}
+
+/// Apply the surrounding model's lifetime binders to a specialized declaration or alias path.
+fn apply_model_lifetime_arguments(path: &mut ast::Path, count: usize, span: Span) {
+    let Some(segment) = path.segments.last_mut() else {
+        return;
+    };
+    if count == 0 {
+        return;
+    }
+    segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+        span,
+        args: (0..count)
+            .map(|index| {
+                ast::AngleBracketedArg::Arg(ast::GenericArg::Lifetime(ast::Lifetime {
+                    id: ast::DUMMY_NODE_ID,
+                    ident: ident(&format!("'incan_field_{index}"), span),
+                }))
+            })
+            .collect(),
+    })));
 }
 
 /// Declare a native layout's alias shell. The adapter supplies its exact metadata type through `type_of`, including
@@ -263,13 +349,30 @@ pub(super) fn model_source_name(model: &crate::plan::ModelDeclaration) -> &str {
 }
 
 /// Inject the checked layout and field order; a specialized struct is public inside its private namespace.
-pub fn model(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item> {
+pub fn model(
+    plan: &crate::plan::Plan,
+    model: &crate::plan::ModelDeclaration,
+    span: Span,
+) -> Result<Box<ast::Item>, crate::error::PlanError> {
     let tuple = model.fields.len() == 1 && model.fields[0].name == "0";
+    let mut field_types = model.fields.iter().map(|field| ty(&field.ty, span)).collect::<Vec<_>>();
+    let generics = crate::signature_lifetimes::apply_model_field_lifetimes(
+        plan,
+        &mut field_types,
+        model.view_lifetime_count,
+        span,
+    )
+    .map_err(|reason| crate::error::PlanError::Invalid {
+        function: model.name.clone(),
+        reason: reason.into(),
+    })?;
+    let token_types = field_types.clone();
     let fields = model
         .fields
         .iter()
         .zip(&model.field_public)
-        .map(|(field, public)| ast::FieldDef {
+        .zip(field_types)
+        .map(|((field, public), ty)| ast::FieldDef {
             attrs: ThinVec::new(),
             id: ast::DUMMY_NODE_ID,
             span,
@@ -281,7 +384,7 @@ pub fn model(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item
             },
             safety: ast::Safety::Default,
             ident: if tuple { None } else { Some(ident(&field.name, span)) },
-            ty: ty(&field.ty, span),
+            ty,
             default: None,
             is_placeholder: false,
         })
@@ -289,7 +392,7 @@ pub fn model(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item
     let mut declaration = item(
         ast::ItemKind::Struct(
             ident(model_source_name(model), span),
-            ast::Generics::default(),
+            generics.clone(),
             if tuple {
                 ast::VariantData::Tuple(fields, ast::DUMMY_NODE_ID)
             } else {
@@ -302,17 +405,28 @@ pub fn model(model: &crate::plan::ModelDeclaration, span: Span) -> Box<ast::Item
         span,
     );
     declaration.vis = visibility(model.public || specialized_model(model), span);
-    declaration.tokens = Some(model_tokens(model, span));
-    declaration
+    declaration.tokens = Some(model_tokens(model, &token_types, &generics, span));
+    Ok(declaration)
 }
 
 /// Retain the injected declaration's tokens for procedural derives, without parsing or generating source text.
-pub(super) fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) -> ast::tokenstream::LazyAttrTokenStream {
+pub(super) fn model_tokens(
+    model: &crate::plan::ModelDeclaration,
+    field_types: &[Box<ast::Ty>],
+    generics: &ast::Generics,
+    span: Span,
+) -> ast::tokenstream::LazyAttrTokenStream {
     use ast::token::{Delimiter, TokenKind};
     use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing};
     let mut fields = Vec::new();
     let tuple = model.fields.len() == 1 && model.fields[0].name == "0";
-    for (slot, (field, public)) in model.fields.iter().zip(&model.field_public).enumerate() {
+    for (slot, ((field, public), ty)) in model
+        .fields
+        .iter()
+        .zip(&model.field_public)
+        .zip(field_types)
+        .enumerate()
+    {
         if let Some(serde_name) = model.field_serde_names.get(slot).filter(|name| !name.is_empty()) {
             fields.extend(serde_rename_tokens(serde_name, span));
         }
@@ -326,7 +440,7 @@ pub(super) fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) ->
                 Spacing::Alone,
             ));
         }
-        fields.extend(type_tokens(&ty(&field.ty, span)));
+        fields.extend(type_tokens(ty));
         fields.push(AttrTokenTree::Token(
             ast::token::Token::new(TokenKind::Comma, span),
             Spacing::Alone,
@@ -338,6 +452,29 @@ pub(super) fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) ->
     }
     tokens.push(keyword_token("struct", span));
     tokens.push(name_token(model_source_name(model), span));
+    if !generics.params.is_empty() {
+        tokens.push(AttrTokenTree::Token(
+            ast::token::Token::new(TokenKind::Lt, span),
+            Spacing::Alone,
+        ));
+        for parameter in &generics.params {
+            tokens.push(AttrTokenTree::Token(
+                ast::token::Token::new(
+                    TokenKind::Lifetime(parameter.ident.name, ast::token::IdentIsRaw::No),
+                    span,
+                ),
+                Spacing::Alone,
+            ));
+            tokens.push(AttrTokenTree::Token(
+                ast::token::Token::new(TokenKind::Comma, span),
+                Spacing::Alone,
+            ));
+        }
+        tokens.push(AttrTokenTree::Token(
+            ast::token::Token::new(TokenKind::Gt, span),
+            Spacing::Alone,
+        ));
+    }
     tokens.push(AttrTokenTree::Delimited(
         DelimSpan::from_single(span),
         DelimSpacing::new(Spacing::Alone, Spacing::Alone),

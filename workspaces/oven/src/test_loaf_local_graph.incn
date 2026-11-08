@@ -1,8 +1,8 @@
 """The production local facet graph preserves features, host domains and inactive targets."""
 
-from std import toml
 from std.fs import Path
 from std.testing import fail
+from intake import ManifestReader, read_project
 from loaf_local_graph import LocalDemand, LocalFacet, catalog, local_facets, local_facet_session
 from rust_activation import CfgSnapshot, DependencyDomain, TargetConfiguration
 from registry_units import RegistryDemand, RegistrySelection, RegistryUnit, RegistryUnits
@@ -143,6 +143,14 @@ def registry_closure_controls() -> Result[None, str]:
             Err(reason) =>
                 assert "no compiled registry unit of crates-io/serde satisfies" in reason
                 assert "recorded registry closure does not satisfy" not in reason
+    absent = RegistryDemand(
+        selection=RegistrySelection(loaf="crates-io/missing", requirement="1", features=[]),
+        domain="target",
+    )
+    match incompatible.select([absent]):
+        Ok(_) => fail("an unpublished registry Loaf was accepted")
+        Err(reason) =>
+            assert "crates-io/missing is not published in the compiled registry closure" in reason
     missing = RegistryUnits(units=[serde_b], search=[])
     match missing.select([serde], "release"):
         Ok(_) => fail("a producer whose exact dependency is absent was accepted")
@@ -207,15 +215,17 @@ pub def test_local_graph_normal_selection_excludes_test_environment() -> Result[
     return Ok(None)
 
 
-pub def test_local_graph_catalog_requires_well_formed_features() -> Result[None, str]:
-    """A dependency-only catalog is valid, while present project and feature tables require their declared shapes."""
-    document = toml.parse("[dependencies]\nleaf='1'\n").map_err((error) => error.message())?
-    assert len(catalog(document)?.features) == 0
-    for malformed in ["project=1\n", "[project]\nfeatures=1\n"]:
-        invalid = toml.parse(malformed).map_err((error) => error.message())?
-        match catalog(invalid):
-            Ok(_) => fail("malformed project feature table was accepted")
-            Err(_) => pass
+pub def test_local_graph_catalog_projects_admitted_intent() -> Result[None, str]:
+    """Activation consumes intake's normalized production and environment dependency models without reparsing TOML."""
+    path = Path("tests/fixtures/local-test-graph/root").resolve().map_err((error) => error.message())?
+    project = read_project(path, ManifestReader()).map_err((error) => error.message())?
+    intent = project.intent
+    normal = catalog(intent.clone())?
+    testing = catalog(intent, "test")?
+    assert len(normal.dependencies) == 3
+    assert len(testing.dependencies) == 4
+    assert normal.features["chosen"] == ["dep:leaf", "leaf/extra"]
+    assert testing.features["chosen"] == ["leaf/extra"]
     return Ok(None)
 
 

@@ -26,20 +26,23 @@ Primitive type-argument names such as `T.__class_name__()` for `T=int`, `T=float
 
 Field metadata returned by `__fields__()`.
 
-| Field         | Type                               | Description                                                   |
-| ------------- | ---------------------------------- | ------------------------------------------------------------- |
-| `name`        | `FrozenStr`                        | Canonical Incan field identifier                              |
-| `alias`       | `Option[FrozenStr]`                | Wire name, if set via `[alias="..."]`                         |
-| `description` | `Option[FrozenStr]`                | Documentation string, if set via `[description="..."]`        |
-| `wire_name`   | `FrozenStr`                        | Effective wire name (alias if present, else canonical name)   |
-| `type_name`   | `FrozenStr`                        | Incan type display (e.g. `"str"`, `"int"`, `"Option[str]"`)   |
-| `has_default` | `bool`                             | Whether the field has a default value                         |
-| `extra`       | `FrozenDict[FrozenStr, FrozenStr]` | Reserved for future metadata; always empty in current version |
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | `FrozenStr` | Current declared Incan field identifier |
+| `identity` | `FrozenBytes` | Six-byte compiler-derived identity from the earliest declared name |
+| `canonical` | `bool` | Whether the field participates in the canonical stored hash; `true` when absent |
+| `renamed_from` | `FrozenList[FrozenStr]` | Earlier declared names in chronological order, earliest first |
+| `alias` | `Option[FrozenStr]` | Wire name, if set via `[alias="..."]` |
+| `description` | `Option[FrozenStr]` | Documentation string, if set via `[description="..."]` |
+| `wire_name` | `FrozenStr` | Effective wire name (alias if present, else declared name) |
+| `type_name` | `FrozenStr` | Incan type display (e.g. `"str"`, `"int"`, `"Option[str]"`) |
+| `has_default` | `bool` | Whether the field has a default value |
+| `extra` | `FrozenDict[FrozenStr, FrozenStr]` | Reserved for future metadata; always empty in current version |
 
 Notes:
 
 - Field metadata like `[alias="..."]` and `[description="..."]` is model-only.
-- For a `class`, `FieldInfo.alias` and `FieldInfo.description` are always `None` and `FieldInfo.wire_name == FieldInfo.name`.
+- For a `class`, `FieldInfo.alias` and `FieldInfo.description` are always `None`, `FieldInfo.wire_name == FieldInfo.name`, `FieldInfo.canonical` is `true`, and `FieldInfo.renamed_from` is empty.
 
 ## Compiler-generated field value views
 

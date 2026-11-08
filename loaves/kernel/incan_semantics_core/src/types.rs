@@ -142,7 +142,7 @@ impl RuntimeCarrier {
             Self::Decimal => "incan_std_primitives::num::Decimal128",
             Self::FrozenStr => "incan_std_primitives::frozen::FrozenStr",
             Self::FrozenBytes => "incan_std_primitives::frozen::FrozenBytes",
-            Self::ValidationError => "incan_std_core::validation::ValidationError",
+            Self::ValidationError => "incan_std_primitives::validation::ValidationError",
         }
     }
 }

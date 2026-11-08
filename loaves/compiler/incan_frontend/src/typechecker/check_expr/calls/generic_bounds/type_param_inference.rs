@@ -333,6 +333,18 @@ impl TypeChecker {
             .collect()
     }
 
+    /// Enclose the written type arguments for a call-site diagnostic, falling back to the call when none were written.
+    pub(in crate::typechecker::check_expr) fn explicit_type_argument_span(
+        explicit_type_args: &[Spanned<Type>],
+        call_span: Span,
+    ) -> Span {
+        match explicit_type_args {
+            [] => call_span,
+            [only] => only.span,
+            [first, .., last] => first.span.merge(last.span),
+        }
+    }
+
     /// Classify where the bindings a bound check sees came from: an explicit bracket list or inference.
     pub(in crate::typechecker::check_expr) fn type_argument_origin(
         explicit_type_args: &[Spanned<Type>],

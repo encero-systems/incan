@@ -1,0 +1,6 @@
+"""
+Foundational `host.tool` authority for `std.runtime`.
+"""
+
+pub capability invoke:
+    description = "Invoke a tool through the host"

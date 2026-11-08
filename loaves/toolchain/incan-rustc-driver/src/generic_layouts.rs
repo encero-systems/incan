@@ -3,10 +3,10 @@
 
 use crate::ast_build::{
     RUST_CLONE_SYMBOL, RUST_FMT_DEBUG_SYMBOL, block, expression, expression_statement, global_path, ident, inherited,
-    local, path_ty, self_value, trait_bound,
+    path_ty, self_value, trait_bound,
 };
+use crate::declarations;
 use crate::plan::{GenericLayoutType, GenericModelDeclaration};
-use crate::{declarations, union_debug};
 use incan_lang::lang::derives::{self, DeriveId};
 use rustc_ast as ast;
 use rustc_middle::ty::{self, Ty, TyCtxt};
@@ -74,7 +74,13 @@ pub(crate) fn items(
         .iter()
         .any(|derive| derives::from_str(derive) == Some(DeriveId::Debug))
     {
-        items.push(debug_impl(model, span));
+        items.push(crate::model_debug::implementation(
+            &model.source_name,
+            model.fields.iter().map(|field| field.name.as_str()),
+            applied_type(&model.name, &model.parameters, span),
+            parameters_of(model, Some(&["core", "fmt", RUST_FMT_DEBUG_SYMBOL]), span),
+            span,
+        ));
     }
     if model
         .derives
@@ -296,33 +302,6 @@ pub(crate) fn layout_type(layout: &GenericLayoutType, span: Span) -> Box<ast::Ty
             path_ty(path, span)
         }
     }
-}
-
-/// Format only authored fields under the source declaration name, keeping the marker and encoded ABI name private.
-fn debug_impl(model: &GenericModelDeclaration, span: Span) -> Box<ast::Item> {
-    let mut rendered = method_call(
-        local("formatter", span),
-        "debug_struct",
-        thin_vec![text(&model.source_name, span)],
-        span,
-    );
-    for field in &model.fields {
-        let read = expression(ast::ExprKind::Field(self_value(span), ident(&field.name, span)), span);
-        let borrowed = expression(
-            ast::ExprKind::AddrOf(ast::BorrowKind::Ref, ast::Mutability::Not, read),
-            span,
-        );
-        rendered = method_call(rendered, "field", thin_vec![text(&field.name, span), borrowed], span);
-    }
-    let body = block(
-        thin_vec![expression_statement(
-            method_call(rendered, "finish", ThinVec::new(), span),
-            span
-        )],
-        span,
-    );
-    let method = trait_method("fmt", union_debug::fmt_signature(span), body, span);
-    trait_impl(model, &["core", "fmt", RUST_FMT_DEBUG_SYMBOL], method, span)
 }
 
 /// Clone authored fields and recreate the zero-sized marker without requiring unused parameters to implement Clone.

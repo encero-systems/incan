@@ -83,43 +83,34 @@ fn owned_input_moves_and_missing_proof_refuses() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-/// A checked nominal Copy decision cannot become a native Move merely because the current carrier ABI lacks
-/// that proof. Calls and explicit Owned initializers must refuse until their carrier can preserve the decision.
+/// A checked nominal Copy decision materializes as Copy even when the legacy ABI heuristic cannot describe it.
 #[test]
-fn checked_copy_cannot_be_reinterpreted_as_native_move() -> Result<(), Box<dyn std::error::Error>> {
+fn checked_nominal_copy_materializes_without_legacy_abi_evidence() -> Result<(), Box<dyn std::error::Error>> {
     for source in [
         "def consume(value: Owned[Point]) -> int:\n    return value.x\ndef main(value: Owned[Point]) -> int:\n    return consume(value)\n@derive(Copy)\nmodel Point:\n    x: int\n",
         "def main(value: Owned[Point]) -> int:\n    let local: Owned[Point] = value\n    return local.x\n@derive(Copy)\nmodel Point:\n    x: int\n",
     ] {
-        let module = staged(source, false)?;
+        let module = admitted(source)?;
         let body = module
             .bodies
             .iter()
             .find(|body| body.name == "main")
             .ok_or("missing body")?;
         assert!(
-            body.first_representation_gap().is_some(),
-            "native carrier silently reinterpreted checked Copy: {body:?}"
+            body.first_representation_gap().is_none(),
+            "checked Copy left a representation gap: {body:?}"
         );
-        assert!(body.checked_input_profile.is_none());
-        for statement in &body.block.stmts {
-            assert!(
-                !matches!(statement.kind, bir::StatementKind::Call { .. }),
-                "refused input emitted a fallback call"
-            );
-            if let bir::StatementKind::Assign {
+        assert!(body.checked_input_profile.is_some());
+        assert!(body.block.stmts.iter().any(|statement| match &statement.kind {
+            bir::StatementKind::Assign {
                 rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
                 ..
-            } = &statement.kind
-            {
-                let local = read.place.local_id().and_then(|id| body.locals.get(id.index()));
-                assert!(
-                    !local.is_some_and(|local| local.name.as_deref() == Some("value"))
-                        || !matches!(read.fact, bir::OwnershipFact::Copy | bir::OwnershipFact::Move),
-                    "refused input emitted a fallback value transfer"
-                );
-            }
-        }
+            } => read.fact == bir::OwnershipFact::Copy,
+            bir::StatementKind::Call { args, .. } => args.iter().any(|argument| {
+                matches!(argument, bir::ArgumentElement::One(bir::Operand::Place(read)) if read.fact == bir::OwnershipFact::Copy)
+            }),
+            _ => false,
+        }));
     }
     let module = admitted(
         "def consume(value: Owned[&mut int]) -> None:\n    pass\ndef main(value: Owned[&mut int]) -> None:\n    consume(value)\n",

@@ -433,6 +433,9 @@ pub(super) fn field_from_checked(package_name: &str, field: &crate::library_expo
             .canonical
             .as_ref()
             .and_then(|identity| CanonicalIdentityExport::from_canonical(package_name, identity)),
+        record_identity: hex::encode(&field.record_identity),
+        record_canonical: field.record_canonical,
+        renamed_from: field.renamed_from.clone(),
         ty: type_ref_from_resolved(&field.ty),
         surface_type_name: field.surface_type_name.clone(),
         visibility: match field.visibility {

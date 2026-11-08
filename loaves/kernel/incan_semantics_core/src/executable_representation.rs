@@ -78,12 +78,16 @@ use crate::body_ir::{
 /// refused because an absent operation would force consumers to reconstruct builtin meaning from canonical text.
 /// Version 50 carries the primary source label in persisted checker diagnostics. Older representations are refused
 /// because decoding the prior diagnostic row shape would shift every following structured field.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 50;
+/// Version 51 closes the builtin-method operation over text, iterator, carrier, clone, and numeric methods as well, so
+/// partial operation registries are refused rather than reintroducing name-based dispatch.
+/// Version 52 publishes generic nominal ownership-mode substitutions and the view dependencies they carry.
+/// Version 53 retains each reflection-visible field's rename history, stored-record identity and canonical-hash flag.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 53;
 
 /// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
 /// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations, returned
 /// views, conditional profiles or the component carrying a view.
-const OLDEST_SUPPORTED_VERSION: u32 = 50;
+const OLDEST_SUPPORTED_VERSION: u32 = 53;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]

@@ -57,6 +57,7 @@ mod check_stmt;
 mod checked_facts;
 mod collect;
 mod collection_annotations;
+mod comprehension_sources;
 mod const_eval;
 mod construction;
 mod control_contexts;
@@ -68,16 +69,12 @@ mod dependency_registry;
 mod derive_contract;
 mod derive_requirements;
 mod diagnostic_values;
-mod for_item_taking;
 mod hash_key_inference;
 mod helpers;
-mod iteration_borrows;
 mod json_member_requirements;
-mod lifetime_contracts;
 mod lowering_facts;
 mod member_bindings;
 mod module_imports;
-mod mut_arguments;
 mod mut_marker;
 mod native_call_state;
 mod native_newtype_facts;
@@ -104,6 +101,7 @@ pub(crate) use ownership_contracts::carried_view_binding;
 pub(crate) use ownership_contracts::projection::{CheckedInputBody, CheckedInputInvocation, CheckedInputSource};
 mod reachability;
 mod receiver_change;
+mod record_identities;
 mod reserved_names;
 mod source_signatures;
 pub use declaration_views::{CheckEnvironmentView, CheckedBindingView, DeclarationView, VisibilityPoint};
@@ -198,13 +196,11 @@ pub struct LoopContext {
     pub expected_break_ty: Option<ResolvedType>,
     /// Types observed from `break` statements that contribute to the loop result.
     pub break_types: Vec<(ResolvedType, Span)>,
-    /// Symbol-table scope of the loop body: a binding held by an outer scope outlives each pass of the loop.
-    pub scope: usize,
-    /// How many statement blocks surround the loop; its body is the next one, so an assignment in a block deeper than
-    /// this runs in every pass of the loop that reaches it.
-    pub block_depth: usize,
     /// The loop's original-source range and expansion context; exits compare this complete identity.
     pub span: Span,
+    /// Canonical graph place borrowed by direct list iteration, retained only to activate that body's graph once an
+    /// overlapping replacement is checked.
+    pub(in crate::typechecker) borrowed_iteration: Option<ownership_contracts::flow::Place>,
 }
 
 /// Resolved target for a source-level `type Alias = Target` declaration.
@@ -530,6 +526,22 @@ pub struct TypeChecker {
     /// Callable bodies that produced a checked lazy result and therefore need retained-result ownership analysis.
     /// The marker is consumed when that body's flow is finalized; it never becomes a published semantic fact.
     lazy_result_bodies: HashSet<CanonicalSymbolId>,
+    /// Callable bodies that replace storage inside a direct borrowed iteration and therefore need graph analysis.
+    /// The marker only activates the canonical ownership pass; it does not retain a parallel place or loan model.
+    iteration_replacement_bodies: HashSet<CanonicalSymbolId>,
+    /// Callable bodies containing an optional dictionary lookup whose matched payload may borrow its stored entry.
+    /// The marker only activates canonical graph construction and is consumed when that body is finalized.
+    dictionary_lookup_bodies: HashSet<CanonicalSymbolId>,
+    /// Callable bodies containing a loop whose non-copyable item may be transferred by the body. The marker only
+    /// activates canonical graph construction; the graph decides whether the transfer actually occurs.
+    loop_item_bodies: HashSet<CanonicalSymbolId>,
+    /// Candidate loop-item transfers retained until the active callable's ownership graph is built.
+    loop_item_candidates: std::collections::BTreeMap<Span, ownership_contracts::loop_items::Candidate>,
+    /// Active loop-item roots, used only to retain the lexical parent relation of nested candidate loops.
+    active_loop_items: std::collections::BTreeMap<CanonicalSymbolId, Span>,
+    /// Local declarations whose explicit ownership bodies were refused before callers were checked. The marker
+    /// suppresses dependent caller-graph diagnostics without becoming serialized type information.
+    refused_ownership_authorities: HashSet<CanonicalSymbolId>,
     /// Nested producer diagnostic intervals used only while capturing independently owned outputs.
     diagnostic_owner_ranges: Vec<(std::ops::Range<usize>, std::ops::Range<usize>)>,
     /// Symbol table populated during the first pass.
@@ -545,7 +557,7 @@ pub struct TypeChecker {
     pub mutable_bindings: HashSet<String>,
     /// Caller-visible `mut` parameters: which callables declare them, which the checked bodies change, and the call
     /// arguments waiting to be decided once the module's bodies are known (#1773, `INCAN-T0117`).
-    pub(crate) mut_params: mut_arguments::MutParamFacts,
+    pub(crate) mutation: ownership_contracts::mutation::MutationFacts,
     /// The method whose body is being checked while its receiver is a plain `self`, so a write through `self`
     /// inside it can be refused with the declaration to change (#1723). `None` outside a method body, and inside a
     /// `mut self` method.
@@ -577,8 +589,8 @@ pub struct TypeChecker {
     scoped_c_string_view_bindings: HashMap<crate::ast::Span, usize>,
     /// Resource bindings transferred to an owning C ABI parameter in the current local checking flow.
     pub transferred_c_resource_bindings: HashMap<String, Span>,
-    /// Lists whose items a `for` loop of the current body takes, and that body's `for` pattern bindings (#1844).
-    for_item_taking: for_item_taking::ForItemTaking,
+    /// Direct collection comprehensions waiting for the complete body's later-read facts (#1983).
+    comprehension_sources: comprehension_sources::ComprehensionSources,
     /// Closures that capture local values, and the parameters and returns of this module that hold them (#1561).
     capturing_callables: capturing_callables::CapturingCallables,
     /// The standard package the program being checked is, when it is one; its `std.*` roots are its own modules.
@@ -639,8 +651,6 @@ pub struct TypeChecker {
     pub(in crate::typechecker) generic_partial_target: Option<check_expr::GenericPartialTarget>,
     /// Stack of active loop contexts, innermost last.
     pub loop_stack: Vec<LoopContext>,
-    /// Direct list places whose storage active statement loops still borrow.
-    iteration_borrows: Vec<iteration_borrows::IterationBorrow>,
     /// Active trait @requires context for default method bodies.
     pub current_trait_requires: Option<HashMap<String, ResolvedType>>,
     /// Active trait computed-property contract for default member bodies.

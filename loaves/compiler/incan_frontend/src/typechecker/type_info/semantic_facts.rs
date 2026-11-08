@@ -361,6 +361,7 @@ impl TypeCheckInfo {
     }
 
     /// Retain checker-owned nominal heads and leaves after an active declaration's binders have been classified.
+    /// Direct bindings and resolved module-qualified references are equally authoritative paths to one declaration.
     /// Body IR consumes this result directly and must not rebuild identities from normalized source names.
     pub fn qualify_semantic_type(&self, ty: IncanType) -> IncanType {
         match ty {
@@ -369,7 +370,17 @@ impl TypeCheckInfo {
                     .declarations
                     .named_type_identities
                     .get(&name)
-                    .or_else(|| self.declarations.body_ir_native_type_identities.get(&name));
+                    .or_else(|| self.declarations.body_ir_native_type_identities.get(&name))
+                    .or_else(|| {
+                        self.declarations
+                            .qualified_type_references
+                            .values()
+                            .find(|reference| match &reference.resolved {
+                                ResolvedType::Named(route) | ResolvedType::Generic(route, _) => route == &name,
+                                _ => false,
+                            })
+                            .map(|reference| &reference.identity)
+                    });
                 let Some(identity) = identity else {
                     return IncanType::Named(name);
                 };

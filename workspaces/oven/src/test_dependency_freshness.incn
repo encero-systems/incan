@@ -277,8 +277,8 @@ def verify_published_installation(scratch: Path, original: Path) -> Result[None,
     stage = scratch.joinpath("installation-stage")
     write(stage.joinpath("driver"), "fixture compiler")?
     write(stage.joinpath("std.rustabi"), "fixture Rust facts")?
-    write(stage.joinpath("stdlib/core/loaf.toml"), "[project]\nname='core'\nversion='1.0.0'\n")?
-    write(stage.joinpath("stdlib/core/src/lib.incn"), "pub def value() -> int:\n    return 1\n")?
+    write(stage.joinpath("stdlib/primitives/loaf.toml"), "[project]\nname='primitives'\nversion='1.0.0'\n")?
+    write(stage.joinpath("stdlib/primitives/src/lib.incn"), "pub def value() -> int:\n    return 1\n")?
     write(stage.joinpath("library.rlib"), read(original)?)?
     write(stage.joinpath("library.native.json"), "{\"search\":[],\"externs\":[],\"macro_externs\":[]}")?
     record_payload(stage.joinpath("library.rlib"), "installed producer")?
@@ -307,7 +307,7 @@ def verify_installation_page(directory: Path) -> Result[None, str]:
         Some(found) => found
 
     assert len(page.manifests) == 1
-    assert page.manifests[0].intent.name == "core"
+    assert page.manifests[0].intent.name == "primitives"
     assert len(page.manifests[0].digest) == 64
     # Repeated source-level selections emit no reads, decodes or hashes of these installed inputs.
     count_work(directory.0 + "/")
@@ -349,8 +349,8 @@ def verify_installation_page(directory: Path) -> Result[None, str]:
         Ok(_) => return Err("damaged installation page was silently reused or reproduced")
         Err(_) => pass
     canonical.write_bytes(encoded).map_err((error) => error.message())?
-    manifest = directory.joinpath("stdlib/core/loaf.toml")
-    write(manifest, "[project]\nname='core'\nversion='2.0.0'\n")?
+    manifest = directory.joinpath("stdlib/primitives/loaf.toml")
+    write(manifest, "[project]\nname='primitives'\nversion='2.0.0'\n")?
     match recall_installation(directory)?:
         None => pass
         Some(_) => return Err("changed manifest retained its preceding admission")
@@ -364,7 +364,7 @@ def verify_installation_page(directory: Path) -> Result[None, str]:
     match load_toolchain_at(directory):
         Ok(_) => return Err("a damaged standard manifest retained admission")
         Err(_) => pass
-    write(manifest, "[project]\nname='core'\nversion='2.0.0'\n")?
+    write(manifest, "[project]\nname='primitives'\nversion='2.0.0'\n")?
     _ = load_toolchain_at(directory)?
     # Source preparation can publish a new producer of unchanged bytes during one command.
     record_payload(directory.joinpath("library.rlib"), "refreshed producer")?

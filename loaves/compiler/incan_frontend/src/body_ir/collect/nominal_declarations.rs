@@ -203,8 +203,9 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
         .collect()
 }
 
-/// Retain source field order while resolving types from the checked class layout or span-keyed model facts.
-/// A missing field fact keeps the existing unknown carrier rather than inferring a layout from source spelling.
+/// Retain source field order while resolving types from the checked class layout or span-keyed model facts. A field
+/// written exactly as a declaration parameter keeps that template even when a checked constructor has already closed
+/// one use; physical instance specialization owns its replacement. Missing facts retain an unknown carrier.
 pub(super) fn nominal_field_types(
     fields: &[ast::Spanned<ast::FieldDecl>],
     class_layout: Option<&ClassLayoutInfo>,
@@ -214,6 +215,11 @@ pub(super) fn nominal_field_types(
     fields
         .iter()
         .map(|field| {
+            if let ast::Type::Simple(name) = &field.node.ty.node
+                && type_parameters.contains(name)
+            {
+                return IncanType::TypeVar(name.clone());
+            }
             if let Some(layout) = class_layout {
                 layout
                     .fields
@@ -309,6 +315,9 @@ pub(super) fn retain_class_reflection(retained: &mut bir::NominalDeclaration, fa
             .filter(|field| field.visibility == ast::Visibility::Public)
             .map(|field| bir::FieldMetadata {
                 name: field.name.clone(),
+                record_identity: field.record_identity.clone(),
+                record_canonical: field.record_canonical,
+                renamed_from: field.renamed_from.clone(),
                 alias: field.alias.clone(),
                 description: field.description.clone(),
                 type_name: field.surface_type_name.clone().unwrap_or_else(|| field.ty.to_string()),
@@ -456,6 +465,9 @@ pub(super) fn collect_field_metadata(
             let ty = facts.declarations.model_field_types.get(&field.span)?;
             Some(bir::FieldMetadata {
                 name: field.node.name.clone(),
+                record_identity: crate::symbols::field_record_identity(&field.node),
+                record_canonical: crate::symbols::field_record_canonical(&field.node),
+                renamed_from: crate::symbols::field_renamed_from(&field.node),
                 alias: field.node.metadata.alias.clone(),
                 description: field.node.metadata.description.clone(),
                 type_name: crate::symbols::field_surface_type_name(&field.node.ty.node, ty),

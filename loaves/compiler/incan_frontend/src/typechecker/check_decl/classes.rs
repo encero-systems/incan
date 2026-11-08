@@ -67,6 +67,20 @@ impl TypeChecker {
                     field.span,
                 ));
             }
+            if let Some(span) = field.node.metadata.renamed_from_key_span {
+                self.errors.push(errors::renamed_from_not_supported_on_class(
+                    &class.name,
+                    &field.node.name,
+                    span,
+                ));
+            }
+            if let Some(span) = field.node.metadata.canonical_key_span {
+                self.errors.push(errors::canonical_not_supported_on_class(
+                    &class.name,
+                    &field.node.name,
+                    span,
+                ));
+            }
         }
 
         self.check_class_fields(class, active_class_fields);
@@ -381,6 +395,9 @@ impl TypeChecker {
                         SemanticSourceTargetKind::Field,
                         field.span,
                     )),
+                    record_identity: crate::symbols::field_record_identity(&field.node),
+                    record_canonical: crate::symbols::field_record_canonical(&field.node),
+                    renamed_from: crate::symbols::field_renamed_from(&field.node),
                     surface_type_name: Some(crate::symbols::field_surface_type_name(&field.node.ty.node, &ty)),
                     ty,
                     visibility: field.node.visibility,

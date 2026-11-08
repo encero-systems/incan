@@ -493,6 +493,118 @@ impl MethodTarget {
         self.builtin_operation().is_some()
     }
 
+    /// Return the canonical diagnostic label for the checker-selected builtin operation.
+    pub fn builtin_label(&self) -> Option<String> {
+        self.builtin_operation()
+            .map(|operation| format!("{}.{}", operation.owner(), operation.member()))
+    }
+
+    /// Return the selected runtime-string operation without reclassifying canonical provenance.
+    pub fn builtin_str(&self) -> Option<incan_lang::lang::surface::string_methods::StringMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::Str(method)) => Some(method),
+            _ => None,
+        }
+    }
+
+    /// Return the selected frozen-string operation without reclassifying canonical provenance.
+    pub fn builtin_frozen_str(&self) -> Option<incan_lang::lang::surface::string_methods::StringMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::FrozenStr(method)) => Some(method),
+            _ => None,
+        }
+    }
+
+    /// Return the selected runtime-bytes operation without reclassifying canonical provenance.
+    pub fn builtin_bytes(&self) -> Option<incan_lang::lang::surface::bytes_methods::BytesMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::Bytes(method)) => Some(method),
+            _ => None,
+        }
+    }
+
+    /// Return the selected frozen-bytes operation without reclassifying canonical provenance.
+    pub fn builtin_frozen_bytes(&self) -> Option<incan_lang::lang::surface::frozen_bytes_methods::FrozenBytesMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::FrozenBytes(method)) => Some(method),
+            _ => None,
+        }
+    }
+
+    /// Return the selected opaque-iterator operation without reclassifying canonical provenance.
+    pub fn builtin_iterator(&self) -> Option<incan_lang::lang::surface::iterator_methods::IteratorMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::Iterator(method)) => Some(method),
+            _ => None,
+        }
+    }
+
+    /// Return the selected concrete-generator operation without reclassifying canonical provenance.
+    pub fn builtin_generator(&self) -> Option<incan_lang::lang::surface::iterator_methods::IteratorMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::Generator(method)) => Some(method),
+            _ => None,
+        }
+    }
+
+    /// Return the selected Option operation without reclassifying canonical provenance.
+    pub fn builtin_option(&self) -> Option<incan_lang::lang::surface::option_methods::OptionMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::Option(method)) => Some(method),
+            _ => None,
+        }
+    }
+
+    /// Return the selected Result operation without reclassifying canonical provenance.
+    pub fn builtin_result(&self) -> Option<incan_lang::lang::surface::result_methods::ResultMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::Result(method)) => Some(method),
+            _ => None,
+        }
+    }
+
+    /// Return the selected generic Clone operation without reclassifying canonical provenance.
+    pub fn builtin_clone(&self) -> Option<incan_lang::lang::surface::clone_methods::CloneMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::Clone(method)) => Some(method),
+            _ => None,
+        }
+    }
+
+    /// Return the selected float operation without reclassifying canonical provenance.
+    pub fn builtin_float(&self) -> Option<incan_lang::lang::surface::float_methods::FloatMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::Float(_, method)) => Some(method),
+            _ => None,
+        }
+    }
+
+    /// Return the selected integer-helper family without reclassifying canonical provenance.
+    pub fn builtin_integer_helper_family(&self) -> Option<incan_lang::lang::types::numerics::IntegerHelperFamily> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::IntegerHelper(_, family, _)) => Some(family),
+            _ => None,
+        }
+    }
+
+    /// Return the selected integer-helper operation without reclassifying canonical provenance.
+    pub fn builtin_integer_helper_operation(
+        &self,
+    ) -> Option<incan_lang::lang::types::numerics::IntegerHelperOperation> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::IntegerHelper(_, _, operation)) => Some(operation),
+            _ => None,
+        }
+    }
+
+    /// Return the selected numeric resize policy without reclassifying canonical provenance.
+    pub fn builtin_numeric_resize(&self) -> Option<incan_lang::lang::types::numerics::NumericResizeMethodId> {
+        match self.builtin_operation() {
+            Some(BuiltinMethodId::NumericResize(_, method)) => Some(method),
+            _ => None,
+        }
+    }
+
     /// Return the selected list operation without exposing the umbrella identity to native-layout consumers.
     pub fn builtin_list(&self) -> Option<incan_lang::lang::surface::list_methods::ListMethodId> {
         match self.builtin_operation() {
@@ -547,6 +659,7 @@ impl MethodTarget {
     }
 
     /// Validate that the checker-selected builtin operation and canonical provenance name the same registry member.
+    /// Standard Iterator source defaults retain their declaration provenance while carrying the same typed operation.
     pub fn has_valid_builtin_selection(&self) -> bool {
         let Some(operation) = self.builtin_operation() else {
             return true;
@@ -554,6 +667,16 @@ impl MethodTarget {
         let Some(canonical) = &self.canonical else {
             return false;
         };
+        if let BuiltinMethodId::Iterator(_) = operation
+            && canonical.namespace == crate::SymbolNamespace::Member
+            && canonical.kind == crate::SemanticSourceTargetKind::Method
+            && canonical.declaration_name == operation.member()
+            && canonical.scope_discriminant.is_none()
+            && canonical.declaration_span != crate::HirSourceSpan::new(0, 0)
+            && standard_iterator_origin(&canonical.origin)
+        {
+            return true;
+        }
         let Some((owner, member)) = canonical.declaration_name.split_once('.') else {
             return false;
         };
@@ -635,6 +758,24 @@ impl MethodTarget {
             render_type_arguments(&self.type_args),
             self.binding.render_snapshot()
         )
+    }
+}
+
+/// Authenticate the module or primitive-package origin of the standard Iterator declaration.
+fn standard_iterator_origin(origin: &crate::SymbolOrigin) -> bool {
+    let Some(source_module) = incan_lang::lang::traits::source_module(incan_lang::lang::traits::TraitId::Iterator)
+    else {
+        return false;
+    };
+    let canonical = source_module.split('.').map(str::to_owned).collect::<Vec<_>>();
+    match origin {
+        crate::SymbolOrigin::Module(path) => path == &canonical,
+        crate::SymbolOrigin::Package { library, module_path } => {
+            library == "incan_stdlib_primitives"
+                && canonical.first().is_some_and(|root| root == "std")
+                && module_path == &canonical[1..]
+        }
+        _ => false,
     }
 }
 

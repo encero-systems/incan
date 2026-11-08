@@ -1,0 +1,95 @@
+"""Filesystem-independent operation identities, clocks and observation callbacks."""
+
+
+pub model Clock:
+    """An enabled operation's identity and start on the shared raw host clock."""
+
+    pub span: int
+    pub start_ns: int
+    pub origin: str
+
+
+pub enum Operation(str):
+    """Fixed operation keys checked at call sites; each value is the operation's stable schema spelling."""
+
+    FileRead = "file_read"
+    JsonRead = "json_read"
+    JsonDecode = "json_decode"
+    FileHash = "file_hash"
+    ManifestParse = "manifest_parse"
+    ArtifactIdentity = "artifact_identity"
+    FeatureResolution = "feature_resolution"
+    GraphResolution = "graph_resolution"
+    UnitDescription = "unit_description"
+    RegistryIndex = "registry_index"
+    RegistryCompletion = "registry_completion"
+    WorkerReady = "worker_ready"
+    WorkerConnect = "worker_connect"
+    DriverRequest = "driver_request"
+    DriverSpawn = "driver_spawn"
+    OwnerRequest = "owner_request"
+    BakeryFind = "bakery_find"
+    BakeryClaim = "bakery_claim"
+    BakerySeal = "bakery_seal"
+    BakeryView = "bakery_view"
+    ProgramPrepare = "program_prepare"
+    GraphExport = "graph_export"
+    EngineCapture = "engine_capture"
+    StoreLock = "store_lock"
+    StoreFileSync = "store_file_sync"
+    StoreFileWrite = "store_file_write"
+    StoreFileRename = "store_file_rename"
+    StoreDirectorySync = "store_directory_sync"
+    StoreDurableSync = "store_durable_sync"
+    EngineUnit = "engine_unit"
+    EngineSelect = "engine_select"
+    EngineLease = "engine_lease"
+    EngineEpoch = "engine_epoch"
+    EnginePrepare = "engine_prepare"
+    CliStart = "cli_start"
+    LegacyRequest = "legacy_request"
+    LegacyPrepare = "legacy_prepare"
+    EngineCaptureInputs = "engine_capture_inputs"
+    EngineCaptureEncode = "engine_capture_encode"
+    EngineConnect = "engine_connect"
+    EngineRequest = "engine_request"
+    EngineChild = "engine_child"
+    EngineAdmission = "engine_admission"
+    RegistryPage = "registry_page"
+    ArchiveInventory = "archive_inventory"
+    ArchiveUnpack = "archive_unpack"
+    ToolchainAdmission = "toolchain_admission"
+    CompilerFacts = "compiler_facts"
+    RegistryMetadata = "registry_metadata"
+    InstallationRuntime = "installation_runtime"
+    InstallationPayload = "installation_payload"
+    InstallationDocument = "installation_document"
+    InstallationPageReuse = "installation_page_reuse"
+    InstallationPage = "installation_page"
+    FileStat = "file_stat"
+    Reason = "reason"
+
+
+pub model WorkObserver:
+    """
+    Caller-owned work callbacks for a component that must not depend on its consumer's observation policy.
+
+    An empty observer neither starts a clock nor calls a sink. The caller supplies both callbacks together and owns
+    their destination, compatibility exports and flushing. Callbacks must not change the observed operation's result.
+    """
+
+    pub start: Option[() -> Option[Clock]] = None
+    pub finish: Option[(Operation, str, Option[Clock], int) -> None] = None
+
+    pub def begin(self) -> Option[Clock]:
+        """Start only a fully configured observer; the empty observer allocates no observation state."""
+        if let Some(_) = self.finish:
+            if let Some(callback) = self.start:
+                return callback()
+        return None
+
+    pub def record(self, operation: Operation, key: str, clock: Option[Clock], bytes: int) -> None:
+        """Finish an enabled operation through the caller's sink; no clock means no callback."""
+        if let Some(_) = clock:
+            if let Some(callback) = self.finish:
+                callback(operation, key, clock, bytes)

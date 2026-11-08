@@ -38,11 +38,16 @@ fn run(arguments: &[String], codegen: bool) -> Result<(), Box<dyn std::error::Er
     if callbacks.records.is_empty() {
         return Err("Rust analysis produced no graph".into());
     }
-    std::fs::write(
+    write_graph(
         output,
-        incan_codegraph::artifact::encode_graph(&callbacks.records, std::path::Path::new(root))?,
+        &incan_codegraph::artifact::encode_graph(&callbacks.records, std::path::Path::new(root))?,
     )?;
     Ok(())
+}
+
+/// Publish encoded Rust graph bytes and retain the requested path in any filesystem refusal.
+fn write_graph(output: &str, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::write(output, bytes).map_err(|error| format!("cannot write Rust codegraph {output}: {error}").into())
 }
 
 /// Retain records outside rustc's arena; the caller decides whether this invocation continues through codegen.
@@ -86,6 +91,29 @@ impl rustc_driver::Callbacks for Observer {
             rustc_driver::Compilation::Continue
         } else {
             rustc_driver::Compilation::Stop
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_graph;
+
+    /// A graph publication failure identifies the exact output that could not be written.
+    #[test]
+    fn write_refusal_names_output_path() -> Result<(), Box<dyn std::error::Error>> {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let output = std::env::current_dir()?
+            .join(format!("incan-absent-codegraph-parent-{unique}"))
+            .join("unit.incngraph")
+            .display()
+            .to_string();
+        match write_graph(&output, b"graph") {
+            Err(error) if error.to_string().contains(&output) => Ok(()),
+            Err(error) => Err(format!("write refusal omitted `{output}`: {error}").into()),
+            Ok(()) => Err(format!("unexpectedly wrote graph to `{output}`").into()),
         }
     }
 }

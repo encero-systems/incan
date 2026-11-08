@@ -39,6 +39,7 @@ from carrier_operands import boundary_plan_operand
 from list_values import list_borrow
 from collections import is_collection, collection_owned, collection_reference
 from trait_links import contains
+from rust::incan_lang::lang::surface::result_methods import ResultMethodId as RustResultMethodId
 
 
 pub model Combinator:
@@ -54,21 +55,16 @@ pub model Combinator:
     pub effect: str
 
 
-pub def result_combinator(member: str) -> Option[Combinator]:
-    """Select the combinator a builtin Result member names; any other member is not one."""
-    if member == "Result.map":
-        return Some(Combinator(slot=0, effect="wrap"))
-    if member == "Result.map_err":
-        return Some(Combinator(slot=1, effect="wrap"))
-    if member == "Result.and_then":
-        return Some(Combinator(slot=0, effect="chain"))
-    if member == "Result.or_else":
-        return Some(Combinator(slot=1, effect="chain"))
-    if member == "Result.inspect":
-        return Some(Combinator(slot=0, effect="observe"))
-    if member == "Result.inspect_err":
-        return Some(Combinator(slot=1, effect="observe"))
-    return None
+pub def result_combinator(method: RustResultMethodId) -> Option[Combinator]:
+    """Select one checker-authenticated Result combinator."""
+    match method:
+        RustResultMethodId.Map => return Some(Combinator(slot=0, effect="wrap"))
+        RustResultMethodId.MapErr => return Some(Combinator(slot=1, effect="wrap"))
+        RustResultMethodId.AndThen => return Some(Combinator(slot=0, effect="chain"))
+        RustResultMethodId.OrElse => return Some(Combinator(slot=1, effect="chain"))
+        RustResultMethodId.Inspect => return Some(Combinator(slot=0, effect="observe"))
+        RustResultMethodId.InspectErr => return Some(Combinator(slot=1, effect="observe"))
+        _ => return None
 
 
 pub def lower_result_combinator(

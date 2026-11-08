@@ -42,7 +42,8 @@ pub def is_element_place(mut builder: Builder, source: RustPlace) -> Result[bool
                 return Ok(true)
             match root:
                 PlanType.NativeArray(_elements, _length) => return Ok(true)
-                PlanType.FrozenCollection(_name, _elements) => return Ok(true)
+                (PlanType.FrozenCollection(_name, _elements) | PlanType.FrozenCollectionRef(_name, _elements)) =>
+                    return Ok(true)
                 _ => pass
     match structural_prefix(builder, source)?:
         Some((count, _through_tuple)) => return Ok(count < len(source.projection))
@@ -78,11 +79,15 @@ pub def element_prefix_type(mut builder: Builder, source: &RustPlace, count: int
 
 def projected_type(mut builder: Builder, ty: PlanType, projection: &PlaceElem) -> Result[PlanType, str]:
     """Select one step's carrier: an indexed Unicode scalar string, collection element, slice, field or tuple element."""
+    mut source = ty
+    match source:
+        PlanType.FrozenCollectionRef(name, elements) => source = PlanType.FrozenCollection(name, elements)
+        _ => pass
     match projection:
         PlaceElem.Index(_index) =>
-            if ty == PlanType.String:
+            if source == PlanType.String:
                 return Ok(PlanType.String)
-            match ty:
+            match source:
                 PlanType.NativeArray(elements, _length) =>
                     if len(elements) == 1:
                         return Ok(elements[0])
@@ -93,24 +98,24 @@ def projected_type(mut builder: Builder, ty: PlanType, projection: &PlaceElem) -
                         return Ok(frozen_read_type(elements[0]))
                     return Err("unsupported Body IR frozen collection index type")
                 _ => pass
-            match list_shape(ty):
+            match list_shape(source):
                 Some((leaf, depth)) => return Ok(list_element(leaf, depth))
                 None => pass
-            if is_collection(ty):
-                return dictionary_value_type(ty)
+            if is_collection(source):
+                return dictionary_value_type(source)
         PlaceElem.Slice(start=_start, end=_end, step=_step) =>
-            if ty in [PlanType.String, PlanType.FrozenStr]:
+            if source in [PlanType.String, PlanType.FrozenStr]:
                 return Ok(PlanType.String)
-            if ty == PlanType.FrozenBytes:
+            if source == PlanType.FrozenBytes:
                 return Ok(PlanType.List(ListLeaf.U8, 1))
-            match list_shape(ty):
+            match list_shape(source):
                 Some((leaf, depth)) => return Ok(PlanType.List(leaf, depth))
                 None => return Err("unsupported Body IR slicing non-list")
         _ => pass
     return field_step_type(
         builder.constructors,
         builder.nominals,
-        ty,
+        source,
         projection,
         builder.enums,
         builder.unions,

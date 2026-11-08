@@ -4,7 +4,7 @@ use super::LangItemInfo;
 use crate::lang::registry::{RFC, Since, Stability};
 
 /// Stable identifier for an RFC 088 iterator protocol method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum IteratorMethodId {
     Iter,
     Map,

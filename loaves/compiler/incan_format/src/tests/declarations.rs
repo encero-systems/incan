@@ -126,6 +126,22 @@ fn test_format_source_preserves_ordinary_pub_model_field_visibility_issue884() -
 }
 
 #[test]
+fn field_rename_metadata_keeps_registry_order_and_authored_value_forms() -> Result<(), FormatError> {
+    let source = r#"model Customer:
+  email_address [canonical=false, renamed_from="email"] as "email": str
+  display_name [renamed_from=["name"], canonical=true, description="Visible name"]: str
+"#;
+    let formatted = format_source(source)?;
+    let expected = r#"model Customer:
+    email_address [renamed_from="email", canonical=false] as "email": str
+    display_name [description="Visible name", renamed_from=["name"], canonical=true]: str
+"#;
+    assert_eq!(formatted, expected);
+    assert_eq!(format_source(&formatted)?, formatted);
+    Ok(())
+}
+
+#[test]
 fn test_format_source_trait_with_supertraits() -> Result<(), FormatError> {
     let source = r#"trait OrderedCollection[T] with Collection[T], Serializable:
   def sorted(self) -> OrderedCollection[T]: ...

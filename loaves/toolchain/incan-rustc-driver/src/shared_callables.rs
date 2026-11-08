@@ -166,7 +166,7 @@ fn clone_impl(signature: &[PlanType], span: Span) -> Box<ast::Item> {
 /// Forward the SDK's nominal Callable1 slot to the existing boxed callback; rustc performs Rc and Box
 /// autodereferencing.
 fn callable_impl(signature: &[PlanType], span: Span) -> Box<ast::Item> {
-    let mut path = global_path(&["incan_stdlib_core", "traits", "callable", "Callable1"], span);
+    let mut path = global_path(&["incan_stdlib_primitives", "traits", "callable", "Callable1"], span);
     type_arguments(
         &mut path,
         signature.iter().map(|ty| crate::declarations::ty(ty, span)).collect(),

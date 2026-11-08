@@ -15,6 +15,7 @@ pub(super) fn validate_function(plan: &Plan, function: &Function) -> Result<(), 
         .iter()
         .chain(function.parameters.iter().map(|parameter| &parameter.ty))
         .any(|ty| borrowed_alias_in_source_type(plan, ty, &mut BTreeSet::new()))
+        && function.signature_lifetimes.is_empty()
     {
         return Err(invalid(
             function,
@@ -426,13 +427,20 @@ pub(super) fn operand(plan: &Plan, function: &Function, value: &Operand) -> Resu
                     .models
                     .get(usize::try_from(index).map_err(|_| invalid(function, "invalid Copy model index"))?)
                     .is_some_and(|model| {
-                        !model.library_item.is_empty() && model.derives.iter().any(|derive| derive == "Copy")
+                        model
+                            .derives
+                            .iter()
+                            .any(|derive| derives::from_str(derive) == Some(DeriveId::Copy))
                     })
             {
                 return Ok(ty);
             }
-            if matches!(ty, Scalar::Enum(index) if enum_declaration(plan, index).is_none_or(|value| !value.derives.iter().any(|name| name == "Copy")))
-            {
+            if matches!(ty, Scalar::Enum(index) if enum_declaration(plan, index).is_none_or(|value| {
+                !value
+                    .derives
+                    .iter()
+                    .any(|derive| derives::from_str(derive) == Some(DeriveId::Copy))
+            })) {
                 return Err(invalid(function, "non-Copy enum cannot be copied"));
             }
             if owns_values(&ty)

@@ -173,7 +173,8 @@ impl HelperOp {
             | StringMethodId::StartsWith
             | StringMethodId::EndsWith
             | StringMethodId::IsEmpty
-            | StringMethodId::Encode => None,
+            | StringMethodId::Encode
+            | StringMethodId::Slice => None,
         }
     }
 

@@ -24,19 +24,28 @@ from rust::incan_semantics_core::body_ir import (
     Place as RustPlace,
     MethodTarget,
 )
-from rust::incan_semantics_core import SymbolOrigin
 from rust::incan_lang::lang::surface::frozen_list_methods import FrozenListMethodId as RustFrozenListMethodId
 from rust::incan_lang::lang::surface::frozen_dict_methods import FrozenDictMethodId as RustFrozenDictMethodId
 from rust::incan_lang::lang::surface::frozen_set_methods import FrozenSetMethodId as RustFrozenSetMethodId
+from rust::incan_lang::lang::surface::string_methods import StringMethodId as RustStringMethodId
+from rust::incan_lang::lang::surface::bytes_methods import BytesMethodId as RustBytesMethodId
+from rust::incan_lang::lang::surface::frozen_bytes_methods import FrozenBytesMethodId as RustFrozenBytesMethodId
+from rust::incan_lang::lang::surface::iterator_methods import IteratorMethodId as RustIteratorMethodId
+from rust::incan_lang::lang::surface::option_methods import OptionMethodId as RustOptionMethodId
+from rust::incan_lang::lang::surface::float_methods import FloatMethodId as RustFloatMethodId
+from rust::incan_lang::lang::types::numerics import (
+    IntegerHelperFamily as RustIntegerHelperFamily,
+    IntegerHelperOperation as RustIntegerHelperOperation,
+)
 from generator_adapters import generator_adapter
 from generator_consumers import is_generator_consumer, consumer_result, generator_consumer
 from element_places import is_element_place
 from options import assign_carrier, carrier_layout, replace_owned_destination
 from tuples import tuple_fields
 from text_primitives import copy_frozen_bytes, decode_utf8 as primitive_decode_utf8, encode_utf8 as primitive_encode_utf8
-from numerics import numeric_name, numeric_carrier, integer_carrier
+from numerics import numeric_carrier, integer_carrier
 from strings import emit_text_helper, text_method
-from resize import resize_policy, emit_resize
+from resize import emit_resize
 from frame import place_type, Builder, temporary, drop_owned, external_call, forget_owned, read_place
 from lists import require_list_shape
 from checked_values import scalar_operand, scalar_place
@@ -51,7 +60,8 @@ from list_methods import (
     lower_list_builtin,
     lower_list_iter,
     lower_list_method,
-    lower_remaining_builtin_method,
+    lower_bytes_as_slice,
+    lower_iterator_method,
 )
 from list_iteration import frozen_dictionary_contains, list_root_place
 from list_values import list_borrow
@@ -70,36 +80,69 @@ pub def lower_builtin_method(
     if target.has_builtin_selection():
         if not target.has_valid_builtin_selection():
             return Err("unsupported Body IR builtin method operation without matching canonical provenance")
-        return lower_typed_collection_method(builder, target, arguments, destination, span)
-    mut member = ""
-    match target.canonical:
-        Some(identity) =>
-            if identity.origin != SymbolOrigin.Builtin:
-                return Err("unsupported Body IR non-builtin list Method")
-            member = str(identity.declaration_name)
-        None =>
-            return Err(
-                f"unsupported Body IR Method {str(target.name)} without canonical identity in {builder.name} at {span.file}:{span.line}:{span.column}",
-            )
-    # Builtin Clone calls use the exact retained native carrier rather than a same-named list member.
-    if member in ["Clone.clone", "Option.clone"]:
-        return lower_derived_clone(builder, arguments, destination, span)
-    receiver_type = argument_type(builder, arguments, 0, span)?
-    if lower_integer_helper(builder, member, receiver_type, arguments, destination, span)?:
-        return Ok(None)
-    if receiver_type == PlanType.FrozenBytes and member == "frozenbytes.len":
-        return lower_list_builtin(builder, arguments, destination, span)
-    if lower_text_codec_method(builder, member, arguments, destination, span)?:
-        return Ok(None)
-    if member == "str.__slice__":
-        return lower_string_slice(builder, arguments, destination, span)
-    match text_method(member, receiver_type):
-        Some((name, result)) => return lower_text_helper(builder, name, result, arguments, destination, span)
+        return lower_typed_builtin_method(builder, target, arguments, destination, span)
+    return Err(
+        f"unsupported Body IR Method {str(target.name)} without checker-selected builtin identity in {builder.name} at {span.file}:{span.line}:{span.column}",
+    )
+
+
+def lower_typed_builtin_method(
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Dispatch one checker-selected builtin operation without reclassifying its canonical name."""
+    match target.builtin_str():
+        Some(method) => return lower_string_method(builder, target, method, false, arguments, destination, span)
         None => pass
-    match resize_policy(member, receiver_type):
+    match target.builtin_frozen_str():
+        Some(method) => return lower_string_method(builder, target, method, true, arguments, destination, span)
+        None => pass
+    match target.builtin_bytes():
+        Some(RustBytesMethodId.Decode) =>
+            return lower_text_codec_method(builder, false, true, arguments, destination, span)
+        Some(RustBytesMethodId.AsSlice) => return lower_bytes_as_slice(builder, arguments, destination, span)
+        None => pass
+    match target.builtin_frozen_bytes():
+        Some(RustFrozenBytesMethodId.Len) => return lower_list_builtin(builder, arguments, destination, span)
+        Some(RustFrozenBytesMethodId.Decode) =>
+            return lower_text_codec_method(builder, true, true, arguments, destination, span)
+        Some(RustFrozenBytesMethodId.IsEmpty) =>
+            return Err("unsupported Body IR remaining builtin Method frozenbytes.is_empty")
+        None => pass
+    match target.builtin_iterator():
+        Some(method) => return lower_iterator_method(builder, method, arguments, destination, span)
+        None => pass
+    match target.builtin_generator():
+        Some(method) => return lower_iterator_method(builder, method, arguments, destination, span)
+        None => pass
+    match target.builtin_option():
+        Some(RustOptionMethodId.Clone) => return lower_derived_clone(builder, arguments, destination, span)
+        Some(_method) => return refuse_remaining_builtin_method(target)
+        None => pass
+    match target.builtin_result():
+        Some(_method) => return refuse_remaining_builtin_method(target)
+        None => pass
+    match target.builtin_clone():
+        Some(_method) => return lower_derived_clone(builder, arguments, destination, span)
+        None => pass
+    match target.builtin_float():
+        Some(method) => return lower_selected_float(builder, target, method, arguments, destination, span)
+        None => pass
+    match target.builtin_integer_helper_family():
+        Some(family) =>
+            match target.builtin_integer_helper_operation():
+                Some(operation) =>
+                    return lower_integer_helper(builder, target, family, operation, arguments, destination, span)
+                None => return Err("unsupported Body IR incomplete integer helper identity")
+        None => pass
+    match target.builtin_numeric_resize():
         Some(policy) =>
             if len(arguments) != 1:
                 return Err("invalid Body IR resize arity")
+            receiver_type = argument_type(builder, arguments, 0, span)?
             match destination:
                 Some(place) =>
                     output = scalar_place(builder, place, span)?
@@ -107,27 +150,6 @@ pub def lower_builtin_method(
                     return emit_resize(builder, policy, receiver_type, operand, output, span)
                 None => return Err("unsupported Body IR resize without checked destination")
         None => pass
-    # The checker types every non-predicate float member as `float`, but an `f32` receiver's own `powf` returns `f32`.
-    # Lowering either width would disagree with one of them, so the member stays refused until they agree.
-    if member == "f32.powf":
-        return Err("unsupported Body IR f32 powf: its checked float result differs from the carrier's f32 powf")
-    if member in ["f32.sqrt", "f64.sqrt"]:
-        return lower_float_square_root(builder, member, receiver_type, arguments, destination, span)
-    match float_method(member, receiver_type):
-        Some((name, parameters, result)) =>
-            return lower_float_method(builder, name, parameters, result, arguments, destination, span)
-        None => pass
-    return lower_remaining_builtin_method(builder, member, arguments, destination, span)
-
-
-def lower_typed_collection_method(
-    mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
-    span: SourceSpan,
-) -> Result[None, str]:
-    """Dispatch one checker-selected list, dictionary, set, or frozen collection operation."""
     match target.builtin_list():
         Some(method) => return lower_list_method(builder, method, arguments, destination, span)
         None => pass
@@ -161,6 +183,28 @@ def lower_typed_collection_method(
     return Err("unsupported Body IR builtin method operation")
 
 
+def lower_string_method(
+    mut builder: Builder,
+    target: &MethodTarget,
+    method: RustStringMethodId,
+    frozen: bool,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Lower one checker-selected runtime or frozen string operation."""
+    if method == RustStringMethodId.Encode:
+        return lower_text_codec_method(builder, frozen, false, arguments, destination, span)
+    if method == RustStringMethodId.Slice:
+        if frozen:
+            return Err("unsupported Body IR frozen string slice operation")
+        return lower_string_slice(builder, arguments, destination, span)
+    receiver_type = argument_type(builder, arguments, 0, span)?
+    match text_method(method, receiver_type):
+        Some((name, result)) => return lower_text_helper(builder, name, result, arguments, destination, span)
+        None => return refuse_remaining_builtin_method(target)
+
+
 def refuse_unsupported_frozen_collection_method(
     mut builder: Builder,
     member: str,
@@ -177,89 +221,100 @@ def refuse_unsupported_frozen_collection_method(
 
 def lower_integer_helper(
     mut builder: Builder,
-    member: str,
-    receiver: PlanType,
+    target: &MethodTarget,
+    family: RustIntegerHelperFamily,
+    operation: RustIntegerHelperOperation,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
     span: SourceSpan,
-) -> Result[bool, str]:
+) -> Result[None, str]:
     """Lower wrapping arithmetic directly and call native checked and saturating u8 methods at their exact widths."""
-    if lower_wrapping_integer(builder, member, receiver, arguments, destination, span)?:
-        return Ok(true)
-    if receiver != PlanType.U8:
-        return Ok(false)
-    for operation in [
-        "checked_add",
-        "checked_sub",
-        "checked_mul",
-        "checked_pow",
-        "wrapping_pow",
-        "saturating_add",
-        "saturating_sub",
-        "saturating_mul",
-        "saturating_pow",
+    receiver = argument_type(builder, arguments, 0, span)?
+    if family == RustIntegerHelperFamily.Wrapping and operation in [
+        RustIntegerHelperOperation.Add,
+        RustIntegerHelperOperation.Sub,
+        RustIntegerHelperOperation.Mul,
     ]:
-        if member != f"u8.{operation}":
-            continue
-        if len(arguments) != 2:
-            return Err("unsupported Body IR integer helper arity")
-        mut operand_type = PlanType.U8
-        if operation.endswith("_pow"):
-            operand_type = PlanType.U32
-        mut result = PlanType.U8
-        if operation.startswith("checked_"):
-            match destination:
-                Some(place) =>
-                    output = scalar_place(builder, place, span)?
-                    result = place_type(builder.locals, output)
-                None => return Err("unsupported Body IR checked integer helper without destination")
-        output = call_destination(builder, destination, result, span)?
-        value = argument_value(builder, arguments, 1, span)?
-        operands = [
-            numeric_receiver(builder, arguments, span)?,
-            coerce_numeric_operand(builder, value, operand_type, span)?,
-        ]
-        external_call(builder, f"u8::{operation}", [PlanType.U8, operand_type], result, operands, output, span)
-        return Ok(true)
-    return Ok(false)
+        return lower_wrapping_integer(builder, operation, receiver, arguments, destination, span)
+    if receiver != PlanType.U8:
+        return refuse_remaining_builtin_method(target)
+    if len(arguments) != 2:
+        return Err("unsupported Body IR integer helper arity")
+    mut operand_type = PlanType.U8
+    if operation == RustIntegerHelperOperation.Pow:
+        operand_type = PlanType.U32
+    mut result = PlanType.U8
+    if family == RustIntegerHelperFamily.Checked:
+        match destination:
+            Some(place) =>
+                output = scalar_place(builder, place, span)?
+                result = place_type(builder.locals, output)
+            None => return Err("unsupported Body IR checked integer helper without destination")
+    output = call_destination(builder, destination, result, span)?
+    value = argument_value(builder, arguments, 1, span)?
+    operands = [
+        numeric_receiver(builder, arguments, span)?,
+        coerce_numeric_operand(builder, value, operand_type, span)?,
+    ]
+    external_call(
+        builder,
+        f"u8::{integer_helper_name(family, operation)}",
+        [PlanType.U8, operand_type],
+        result,
+        operands,
+        output,
+        span,
+    )
+    return Ok(None)
 
 
 def lower_wrapping_integer(
     mut builder: Builder,
-    member: str,
+    method: RustIntegerHelperOperation,
     receiver: PlanType,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
     span: SourceSpan,
-) -> Result[bool, str]:
+) -> Result[None, str]:
     """Emit the checked integer member as native modular arithmetic without invoking a runtime wrapper recursively."""
     if not integer_carrier(receiver):
-        return Ok(false)
-    mut owner = numeric_name(receiver)
+        return Err("unsupported Body IR wrapping helper on a non-integer receiver")
+    binary = match method:
+        RustIntegerHelperOperation.Add => BinaryOp.Add
+        RustIntegerHelperOperation.Sub => BinaryOp.Subtract
+        RustIntegerHelperOperation.Mul => BinaryOp.Multiply
+        RustIntegerHelperOperation.Pow => return Err("unsupported Body IR direct wrapping pow")
+    if len(arguments) != 2:
+        return Err("unsupported Body IR wrapping integer arity")
+    output = call_destination(builder, destination, receiver, span)?
+    left = numeric_receiver(builder, arguments, span)?
+    value = argument_value(builder, arguments, 1, span)?
+    right = coerce_numeric_operand(builder, value, receiver, span)?
     if receiver == PlanType.Int:
-        owner = "i64"
-    for name, operation in [
-        ("wrapping_add", BinaryOp.Add),
-        ("wrapping_sub", BinaryOp.Subtract),
-        ("wrapping_mul", BinaryOp.Multiply),
-    ]:
-        if member != f"{owner}.{name}":
-            continue
-        if len(arguments) != 2:
-            return Err("unsupported Body IR wrapping integer arity")
-        output = call_destination(builder, destination, receiver, span)?
-        left = numeric_receiver(builder, arguments, span)?
-        value = argument_value(builder, arguments, 1, span)?
-        right = coerce_numeric_operand(builder, value, receiver, span)?
-        if receiver == PlanType.Int:
-            pair = temporary(builder, PlanType.CheckedInt, span)
-            builder.emit(plan_assign(pair, RvalueKind.Binary(operation, left, right), span))
-            wrapped = Place(local=pair.local, projection=Projection.Value, span=span)
-            builder.emit(plan_assign(output, RvalueKind.Use(read_place(wrapped, false, span)), span))
-            return Ok(true)
-        builder.emit(plan_assign(output, RvalueKind.Binary(operation, left, right), span))
-        return Ok(true)
-    return Ok(false)
+        pair = temporary(builder, PlanType.CheckedInt, span)
+        builder.emit(plan_assign(pair, RvalueKind.Binary(binary, left, right), span))
+        wrapped = Place(local=pair.local, projection=Projection.Value, span=span)
+        builder.emit(plan_assign(output, RvalueKind.Use(read_place(wrapped, false, span)), span))
+        return Ok(None)
+    builder.emit(plan_assign(output, RvalueKind.Binary(binary, left, right), span))
+    return Ok(None)
+
+
+def integer_helper_name(
+    family: RustIntegerHelperFamily,
+    operation: RustIntegerHelperOperation,
+) -> str:
+    """Choose the native primitive spelling after typed integer-helper dispatch."""
+    prefix = match family:
+        RustIntegerHelperFamily.Checked => "checked"
+        RustIntegerHelperFamily.Wrapping => "wrapping"
+        RustIntegerHelperFamily.Saturating => "saturating"
+    suffix = match operation:
+        RustIntegerHelperOperation.Add => "add"
+        RustIntegerHelperOperation.Sub => "sub"
+        RustIntegerHelperOperation.Mul => "mul"
+        RustIntegerHelperOperation.Pow => "pow"
+    return f"{prefix}_{suffix}"
 
 
 def lower_string_slice(
@@ -298,15 +353,13 @@ def lower_string_slice(
 
 def lower_text_codec_method(
     mut builder: Builder,
-    member: str,
+    frozen: bool,
+    decoding: bool,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
     span: SourceSpan,
-) -> Result[bool, str]:
+) -> Result[None, str]:
     """Call the exact borrowed UTF-8 runtime boundary after the frontend fills all checked codec slots."""
-    if member not in ["str.encode", "frozenstr.encode", "bytes.decode", "frozenbytes.decode"]:
-        return Ok(false)
-    decoding = member in ["bytes.decode", "frozenbytes.decode"]
     mut arity = 2
     if decoding:
         arity = 3
@@ -315,16 +368,16 @@ def lower_text_codec_method(
     incoming = builder.owned
     receiver_type = argument_type(builder, arguments, 0, span)?
     mut operands: list[Operand] = []
-    if member == "str.encode" and receiver_type in [PlanType.String, PlanType.StringRef]:
+    if not decoding and not frozen and receiver_type in [PlanType.String, PlanType.StringRef]:
         operands.append(text_argument(builder, arguments, 0, span)?)
-    elif member == "frozenstr.encode" and receiver_type == PlanType.FrozenStr:
+    elif not decoding and frozen and receiver_type == PlanType.FrozenStr:
         operands.append(argument_value(builder, arguments, 0, span)?)
-    elif member == "bytes.decode":
+    elif decoding and not frozen:
         leaf, depth = require_list_shape(receiver_type, "unsupported Body IR nonbytes codec receiver")?
         if leaf != ListLeaf.U8 or depth != 1:
             return Err("unsupported Body IR nonbytes codec receiver")
         operands.append(borrowed_list_argument(builder, arguments, 0, false, span)?)
-    elif member == "frozenbytes.decode" and receiver_type == PlanType.FrozenBytes:
+    elif decoding and frozen and receiver_type == PlanType.FrozenBytes:
         operands.append(argument_value(builder, arguments, 0, span)?)
     else:
         return Err("unsupported Body IR builtin codec identity with a different receiver")
@@ -346,7 +399,7 @@ def lower_text_codec_method(
         match declaration.variants[1].fields[0]:
             PlanType.ValidationError => pass
             PlanType.Model(owner, _name) =>
-                if builder.nominals[owner].native_item != "incan_std_core::validation::ValidationError":
+                if builder.nominals[owner].native_item != "incan_std_primitives::validation::ValidationError":
                     return Err("unsupported Body IR decode error identity")
             _ => return Err("unsupported Body IR decode error identity")
     else:
@@ -354,11 +407,11 @@ def lower_text_codec_method(
         if place_type(builder.locals, output) != result:
             return Err("unsupported Body IR encode result carrier")
     if decoding:
-        lower_primitive_decode(builder, member, operands, output, result, span)?
+        lower_primitive_decode(builder, frozen, operands, output, result, span)?
     else:
-        lower_primitive_encode(builder, member == "frozenstr.encode", operands, output, span)
+        lower_primitive_encode(builder, frozen, operands, output, span)
     drop_borrowed_text_temporaries(builder, incoming, output.local, span)
-    return Ok(true)
+    return Ok(None)
 
 
 def lower_primitive_encode(
@@ -385,7 +438,7 @@ def lower_primitive_encode(
 
 def lower_primitive_decode(
     mut builder: Builder,
-    member: str,
+    frozen: bool,
     operands: list[Operand],
     output: Place,
     result: PlanType,
@@ -436,7 +489,7 @@ def lower_primitive_decode(
     builder.current = accepted
     builder.owned = policy_owners
     mut decoded = plan_place(0, span)
-    if member == "frozenbytes.decode":
+    if frozen:
         copied = copy_frozen_bytes(builder, operands[0], span)
         encoded = list_borrow(builder, copied, false, span)?
         decoded = primitive_decode_utf8(
@@ -492,9 +545,35 @@ def lower_primitive_decode(
     return Ok(None)
 
 
+def lower_selected_float(
+    mut builder: Builder,
+    target: &MethodTarget,
+    method: RustFloatMethodId,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Lower one checker-selected float operation without reclassifying its canonical name."""
+    receiver = argument_type(builder, arguments, 0, span)?
+    if method == RustFloatMethodId.Powf and receiver == PlanType.F32:
+        return Err("unsupported Body IR f32 powf: its checked float result differs from the carrier's f32 powf")
+    if method == RustFloatMethodId.Sqrt:
+        return lower_float_square_root(builder, receiver, arguments, destination, span)
+    match float_method(method, receiver):
+        Some((name, parameters, result)) =>
+            return lower_float_method(builder, name, parameters, result, arguments, destination, span)
+        None => return refuse_remaining_builtin_method(target)
+
+
+def refuse_remaining_builtin_method(target: &MethodTarget) -> Result[None, str]:
+    """Preserve the established lowering refusal after typed dispatch identifies an unsupported operation."""
+    match target.builtin_label():
+        Some(member) => return Err(f"unsupported Body IR remaining builtin Method {member}")
+        None => return Err("unsupported Body IR builtin method operation")
+
+
 def lower_float_square_root(
     mut builder: Builder,
-    member: str,
     receiver: PlanType,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
@@ -503,13 +582,8 @@ def lower_float_square_root(
     """Call native square root at the checker's float result type, widening an f32 receiver before evaluation."""
     if len(arguments) != 1:
         return Err("invalid Body IR square-root arity")
-    mut width = "f64"
-    if receiver == PlanType.F32:
-        width = "f32"
-    elif receiver != PlanType.Float and receiver != PlanType.F64:
+    if receiver != PlanType.F32 and receiver != PlanType.Float and receiver != PlanType.F64:
         return Err("invalid Body IR square-root receiver")
-    if member != f"{width}.sqrt":
-        return Err("invalid Body IR square-root declaration identity")
     output = call_destination(builder, destination, PlanType.Float, span)?
     operand = numeric_receiver(builder, arguments, span)?
     widened = coerce_numeric_operand(builder, operand, PlanType.Float, span)?
@@ -517,7 +591,7 @@ def lower_float_square_root(
     return Ok(None)
 
 
-def float_method(member: str, receiver: PlanType) -> Option[tuple[str, list[PlanType], PlanType]]:
+def float_method(method: RustFloatMethodId, receiver: PlanType) -> Option[tuple[str, list[PlanType], PlanType]]:
     """Select the checked native float member; these primitives must not reenter their runtime wrappers."""
     mut width = ""
     if receiver == PlanType.F32:
@@ -526,13 +600,13 @@ def float_method(member: str, receiver: PlanType) -> Option[tuple[str, list[Plan
         width = "f64"
     else:
         return None
-    if member == "f64.powf":
+    if method == RustFloatMethodId.Powf and receiver != PlanType.F32:
         return Some(("f64::powf", [receiver, receiver], receiver))
-    if member == "f64.abs":
+    if method == RustFloatMethodId.Abs and receiver != PlanType.F32:
         return Some(("f64::abs", [receiver], PlanType.Float))
-    if member == f"{width}.is_finite":
+    if method == RustFloatMethodId.IsFinite:
         return Some((f"{width}::is_finite", [receiver], PlanType.Bool))
-    if member == f"{width}.is_nan":
+    if method == RustFloatMethodId.IsNan:
         return Some((f"{width}::is_nan", [receiver], PlanType.Bool))
     return None
 
@@ -578,7 +652,7 @@ def numeric_receiver(
 
 pub def lower_generator_member(
     mut builder: Builder,
-    method: str,
+    method: RustIteratorMethodId,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
     receiver_ty: PlanType,

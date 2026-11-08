@@ -5,7 +5,7 @@ use crate::ast::{AssignmentStmt, BindingKind, CallArg, Expr, Spanned};
 use crate::symbols::{ResolvedType, canonical_builtin_member_identity};
 use crate::typechecker::helpers::collection_type_id;
 use crate::typechecker::type_info::BodyIrEmptyListRequirement;
-use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::builtins::{BuiltinFnId, BuiltinMethodId};
 use incan_lang::lang::surface::string_methods::StringMethodId;
 use incan_lang::lang::types::collections::CollectionTypeId;
 
@@ -76,7 +76,9 @@ impl TypeChecker {
             }
             return;
         }
-        if self.type_info.resolved_string_helper_call(expression.span) == Some(StringMethodId::Join) {
+        if self.type_info.resolved_builtin_method_call(expression.span)
+            == Some(BuiltinMethodId::Str(StringMethodId::Join))
+        {
             let Expr::MethodCall(_, _, type_args, arguments) = &expression.node else {
                 return;
             };

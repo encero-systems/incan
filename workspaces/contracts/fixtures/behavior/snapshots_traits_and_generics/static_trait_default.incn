@@ -6,6 +6,12 @@
 #   point 3
 #   point 4
 #   point 5!
+#   tagged
+#   /b/
+#   /c/
+#   /d/
+
+from std.traits.convert import From
 
 trait Answer:
     """Supply a receiver-free default."""
@@ -26,6 +32,20 @@ trait Describe:
     def shout(self) -> str:
         """Describe the receiver through its own override."""
         return self.describe() + "!"
+
+
+trait Restore:
+    """Restore one adopter through a bounded static method."""
+
+    def tag(self) -> str:
+        """Tag an adopted value through ordinary bound dispatch."""
+        return "tagged"
+
+    @staticmethod
+    def restore(text: str) -> Result[Self, str]: ...
+
+    @classmethod
+    def restore_class(cls, text: str) -> Result[Self, str]: ...
 
 
 model Item with Answer:
@@ -50,9 +70,50 @@ model Holder:
     point: Point
 
 
+model Page with Restore, From[str]:
+    """Implement the bounded static method."""
+
+    route: str
+
+    @staticmethod
+    def restore(text: str) -> Result[Page, str]:
+        """Restore a page from its route."""
+        return Ok(Page(route=text))
+
+    @classmethod
+    def restore_class(cls, text: str) -> Result[Page, str]:
+        """Restore a page through its class receiver."""
+        return Ok(Page(route=text))
+
+    @classmethod
+    def from(cls, text: str) -> Page:
+        """Convert a route through the standard generic conversion trait."""
+        return Page(route=text)
+
+
 def make(x: int) -> Point:
     """Return a point as a call result."""
     return Point(x=x)
+
+
+def tag_of[T with Restore](value: T) -> str:
+    """Call the ordinary instance slot through the same bound."""
+    return value.tag()
+
+
+def restore_as[T with Restore](text: str) -> Result[T, str]:
+    """Call the static slot through a closed bounded type parameter."""
+    return T.restore(text)
+
+
+def restore_class_as[T with Restore](text: str) -> Result[T, str]:
+    """Call the classmethod slot through a closed bounded type parameter."""
+    return T.restore_class(text)
+
+
+def from_as[T with From[str]](text: str) -> T:
+    """Call a standard generic trait's classmethod through a closed bounded type parameter."""
+    return T.from(text)
 
 
 def main() -> None:
@@ -65,3 +126,11 @@ def main() -> None:
     holder = Holder(point=Point(x=4))
     println(holder.point.describe())
     println(make(5).shout())
+    println(tag_of(Page(route="/a/")))
+    match restore_as[Page]("/b/"):
+        Ok(page) => println(page.route)
+        Err(message) => println(message)
+    match restore_class_as[Page]("/c/"):
+        Ok(page) => println(page.route)
+        Err(message) => println(message)
+    println(from_as[Page]("/d/").route)

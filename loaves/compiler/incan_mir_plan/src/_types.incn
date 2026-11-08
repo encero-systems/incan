@@ -75,6 +75,8 @@ pub enum ListLeaf:
     Decimal
     FrozenStr
     FrozenBytes
+    # An immutable collection wrapper stored as one element of an ordinary owned collection.
+    FrozenCollection(str, list[PlanType])
     FunctionPointer(list[PlanType])
     # A zero-sized type token preserves its represented checked carrier when stored in a collection.
     TypeToken(list[PlanType])
@@ -280,6 +282,7 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.Decimal => return PlanType.Decimal
         ListLeaf.FrozenStr => return PlanType.FrozenStr
         ListLeaf.FrozenBytes => return PlanType.FrozenBytes
+        ListLeaf.FrozenCollection(name, elements) => return PlanType.FrozenCollection(name, elements)
         ListLeaf.FunctionPointer(signature) => return PlanType.FunctionPointer(signature)
         ListLeaf.TypeToken(represented) => return PlanType.TypeToken(represented)
         ListLeaf.List(element, depth) => return PlanType.List(element[0], depth)

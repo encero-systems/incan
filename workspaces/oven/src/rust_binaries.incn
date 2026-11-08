@@ -1,7 +1,9 @@
 """Compile a Rust facet's binaries against its built libraries, and bake each one under its producer identity."""
 
 from std.fs import Path
-from codegen import remap_arguments, rust_incremental_arguments, rust_metadata
+from rust::std::env::consts import OS
+from codegen import DARWIN_UUID_SALT, remap_arguments, rust_executable_arguments, rust_incremental_arguments, rust_metadata
+from darwin_executable import normalize_release_executable
 from loaf_local_graph import LocalFacet
 from observation import trace
 from publication import place
@@ -104,6 +106,7 @@ pub def compile_binary(
         declared.unstable,
         name,
     )?
+    normalize_release_executable(staged_binary, request.profile)?
     current = binary_key(directory, staged_dependencies, facet, declared, request, arguments, environment)?
     if (
         current.digest != inputs.digest
@@ -184,9 +187,12 @@ pub def binary_arguments(
         [artifact_context(facet, declared, request.profile)?, declared.package, declared.version, name, str(testing)],
     )?
     return Ok(
-        selected + ["-C", rust_metadata(request.profile, context)] + linking(facet, request, built, search)? + remap_arguments(
-            facet.project,
-        ),
+        selected + ["-C", rust_metadata(request.profile, context)] + rust_executable_arguments(request.profile) + linking(
+            facet,
+            request,
+            built,
+            search,
+        )? + remap_arguments(facet.project, [], Path(request.rustc).parent().parent().0)?,
     )
 
 
@@ -220,19 +226,9 @@ def binary_key(
     Use the same observed-source identity as libraries, refusing location-dependent embedded runtime paths. Evidence
     that is absent or stale names no identity, so the caller scans before anything is hashed.
     """
-    for argument in arguments:
-        if argument.startswith("link-arg=-Wl,-rpath,/"):
-            return Ok(
-                Key(
-                    digest="",
-                    parts=[],
-                    provenance=[facet.project],
-                    refusal="unit identity refused: absolute runtime search path",
-                ),
-            )
     compiler = native_compiler_fingerprint(request.rustc)?
     facts = arguments + [f"domain={facet.domain.value()}", f"unstable={declared.unstable}"]
-    return library_key(
+    key = library_key(
         Path(facet.project),
         directory,
         dependencies,
@@ -241,7 +237,30 @@ def binary_key(
         [],
         selected_toolchain(request)?,
         compiler,
-    )
+    )?
+    return Ok(refuse_absolute_runtime_path(key, arguments))
+
+
+pub def refuse_absolute_runtime_path(key: Key, arguments: list[str]) -> Key:
+    """
+    Refuse portable reuse when a binary embeds an absolute runpath, while retaining deterministic code generation.
+
+    The absolute path remains an effective invocation fact, so a different path derives a different code-generation
+    identity. Clearing only the reusable digest prevents publication without replacing stable symbol metadata with a
+    process-local fallback.
+    """
+    for argument in arguments:
+        if argument.startswith("link-arg=-Wl,-rpath,/"):
+            return Key(
+                digest="",
+                codegen=key.codegen,
+                parts=key.parts,
+                provenance=key.provenance,
+                refusal="unit identity refused: absolute runtime search path",
+                descriptor=key.descriptor,
+                compiler=key.compiler,
+            )
+    return key
 
 
 pub def binary_environment(
@@ -253,6 +272,8 @@ pub def binary_environment(
 ) -> Result[Dict[str, str], str]:
     """The package and pinned-driver identity environment shared by binary compilation and analysis."""
     mut environment = package_environment(project, declared, name)
+    if OS == "macos":
+        environment["RC_UUID_SALT"] = DARWIN_UUID_SALT
     if declared.sysroot:
         libraries = binary_libraries(rustc, retained)?
         for variable in sorted([key for key in libraries.environment.keys()]):

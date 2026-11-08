@@ -5,5 +5,5 @@ version = "0.1.0"
 [project.scripts]
 main = "src/main.incn"
 
-[rust-dependencies]
-string_fixtures = { path = "rust/string_fixtures" }
+[dependencies]
+string_fixtures = { loaf = "string_fixtures", path = "rust/string_fixtures" }

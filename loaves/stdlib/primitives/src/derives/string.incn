@@ -1,0 +1,54 @@
+"""
+Foundational string representation traits: Debug and Display
+See docs/derives/string_representation.md for detailed documentation.
+"""
+
+
+pub trait Debug:
+    """
+    Debug trait - Provides debug string representation via {:?} format
+    Python equivalent: __repr__
+    
+    Debug is automatically derived for all models and classes.
+    
+    Example:
+
+    ```incan
+    @derive(Debug)
+    model User:
+        name: str
+        age: int
+
+    user = User(name="Alice", age=30)
+    println(f"{user:?}")  # User { name: "Alice", age: 30 }
+    ```
+    """
+    def __repr__(self) -> str: ...
+
+
+pub trait Display:
+    """
+    Display trait - Provides user-friendly string representation via {} format
+    Python equivalent: __str__
+    
+    Unlike Debug, Display is NOT automatic. Implement __str__ to customize
+    how your type appears in f-strings and print statements.
+    
+    Example:
+
+    ```incan
+    model User:
+        name: str
+        email: str
+        
+        def __str__(self) -> str:
+            return f"{self.name} <{self.email}>"
+
+    user = User(name="Alice", email="alice@example.com")
+    println(f"{user}")   # Alice <alice@example.com>
+    println(f"{user:?}") # User { name: "Alice", email: "alice@example.com" }
+    ```
+    
+    Without __str__, use {:?} for debug output instead of {}.
+    """
+    def __str__(self) -> str: ...

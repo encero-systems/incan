@@ -32,9 +32,8 @@ pub fn result(plan: &Plan, owner: i64, info: i64) -> Result<PlanType, PlanError>
         .ok()
         .and_then(|index| plan.models.get(index))
         .ok_or_else(refused)?;
-    if !model.library_item.is_empty()
-        || !model.derives.iter().any(|derive| derive == "FieldInfo")
-        || metadata.library_item != "incan_std_core::reflection::FieldInfo"
+    if (model.library_item.is_empty() && !model.derives.iter().any(|derive| derive == "FieldInfo"))
+        || metadata.library_item != "incan_std_primitives::reflection::FieldInfo"
         || fields
             .iter()
             .any(|field| !model.fields.iter().any(|slot| slot.name == field.name))
@@ -73,7 +72,7 @@ pub fn items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> 
 fn accessor(owner: i64, output: &PlanType, span: Span) -> Box<ast::Item> {
     let value = call(
         &[
-            "incan_std_core",
+            "incan_std_primitives",
             "frozen",
             collections::as_str(CollectionTypeId::FrozenList),
             "new",
@@ -103,7 +102,10 @@ fn storage(owner: i64, model: &ModelDeclaration, span: Span) -> Box<ast::Item> {
         ast::ExprKind::AddrOf(ast::BorrowKind::Ref, ast::Mutability::Not, array),
         span,
     );
-    let element = path_ty(global_path(&["incan_std_core", "reflection", "FieldInfo"], span), span);
+    let element = path_ty(
+        global_path(&["incan_std_primitives", "reflection", "FieldInfo"], span),
+        span,
+    );
     let ty = Box::new(ast::Ty {
         id: ast::DUMMY_NODE_ID,
         kind: ast::TyKind::Ref(
@@ -163,29 +165,22 @@ fn accessor_item(owner: i64, output: &PlanType, value: Box<ast::Expr>, span: Spa
 fn entry(field: &FieldMetadata, span: Span) -> Box<ast::Expr> {
     let values = [
         ("name", frozen_text(&field.name, span)),
+        ("identity", frozen_bytes(&field.record_identity, span)),
+        ("canonical", boolean(field.record_canonical, span)),
+        ("renamed_from", frozen_text_list(&field.renamed_from, span)),
         ("alias", optional_text(&field.alias, span)),
         ("description", optional_text(&field.description, span)),
         (
             "wire_name",
-            frozen_text(field.alias.as_deref().unwrap_or(&field.name), span),
+            frozen_text(field.alias.as_deref().map_or(field.name.as_str(), |alias| alias), span),
         ),
         ("type_name", frozen_text(&field.type_name, span)),
-        (
-            "has_default",
-            expression(
-                ast::ExprKind::Lit(ast::token::Lit::new(
-                    ast::token::LitKind::Bool,
-                    Symbol::intern(if field.has_default { "true" } else { "false" }),
-                    None,
-                )),
-                span,
-            ),
-        ),
+        ("has_default", boolean(field.has_default, span)),
         (
             "extra",
             call(
                 &[
-                    "incan_std_core",
+                    "incan_std_primitives",
                     "frozen",
                     collections::as_str(CollectionTypeId::FrozenDict),
                     "new",
@@ -205,7 +200,7 @@ fn entry(field: &FieldMetadata, span: Span) -> Box<ast::Expr> {
     expression(
         ast::ExprKind::Struct(Box::new(ast::StructExpr {
             qself: None,
-            path: global_path(&["incan_std_core", "reflection", "FieldInfo"], span),
+            path: global_path(&["incan_std_primitives", "reflection", "FieldInfo"], span),
             fields: values
                 .into_iter()
                 .map(|(name, value)| ast::ExprField {
@@ -220,6 +215,56 @@ fn entry(field: &FieldMetadata, span: Span) -> Box<ast::Expr> {
                 .collect(),
             rest: ast::StructRest::None,
         })),
+        span,
+    )
+}
+
+/// Construct frozen identity bytes from one exact static byte-string literal.
+fn frozen_bytes(bytes: &[i64], span: Span) -> Box<ast::Expr> {
+    let escaped = bytes.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
+    let literal = expression(
+        ast::ExprKind::Lit(ast::token::Lit::new(
+            ast::token::LitKind::ByteStr,
+            Symbol::intern(&escaped),
+            None,
+        )),
+        span,
+    );
+    call(
+        &["incan_std_primitives", "frozen", "FrozenBytes", "new"],
+        thin_vec![literal],
+        span,
+    )
+}
+
+/// Construct an immutable list of frozen earlier-name strings from static storage.
+fn frozen_text_list(values: &[String], span: Span) -> Box<ast::Expr> {
+    let entries = values.iter().map(|value| frozen_text(value, span)).collect();
+    let array = expression(ast::ExprKind::Array(entries), span);
+    let slice = expression(
+        ast::ExprKind::AddrOf(ast::BorrowKind::Ref, ast::Mutability::Not, array),
+        span,
+    );
+    call(
+        &[
+            "incan_std_primitives",
+            "frozen",
+            collections::as_str(CollectionTypeId::FrozenList),
+            "new",
+        ],
+        thin_vec![slice],
+        span,
+    )
+}
+
+/// Construct one native boolean literal for a compiler-retained field fact.
+fn boolean(value: bool, span: Span) -> Box<ast::Expr> {
+    expression(
+        ast::ExprKind::Lit(ast::token::Lit::new(
+            ast::token::LitKind::Bool,
+            Symbol::intern(if value { "true" } else { "false" }),
+            None,
+        )),
         span,
     )
 }

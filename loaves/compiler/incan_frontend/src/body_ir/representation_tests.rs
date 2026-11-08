@@ -97,7 +97,8 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_complete_shared_read_shapes()?;
     assert_lent_and_moved_read()?;
     assert_equality_contract()?;
-    assert_builtin_collection_method_identities()?;
+    assert_builtin_method_identities()?;
+    assert_generic_view_carrier_storage()?;
     let mut changed = seed.clone();
     changed.bodies[0].native_attributes.push(bir::NativeAttribute {
         path: "selected::attribute".to_owned(),
@@ -111,24 +112,152 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     Ok(())
 }
 
-/// Prove collection method meaning crosses the checker/Body IR boundary as a closed operation, independently of the
-/// retained source spelling and canonical provenance.
-fn assert_builtin_collection_method_identities() -> Result<(), Box<dyn std::error::Error>> {
-    use incan_lang::lang::builtins::BuiltinMethodId;
-    use incan_lang::lang::surface::dict_methods::DictMethodId;
-    use incan_lang::lang::surface::list_methods::ListMethodId;
-    use incan_lang::lang::surface::set_methods::SetMethodId;
+/// Prove a generic carrier returned from a declared source keeps its nominal owner while replacing only the selected
+/// ownership argument with the physical reference used by the body and its callers.
+fn assert_generic_view_carrier_storage() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "class GraphState:\n    pub nodes: list[int]\nclass Cursor[S]:\n    pub selection: S\n    pub offset: int\nclass Selection[R]:\n    pub reader: R\n    pub key: int\n    pub def cursor(self, offset: int) -> Cursor[Borrowed[Selection[R]]] from self:\n        return Cursor[Borrowed[Selection[R]]](selection=self, offset=offset)\ndef select(reader: Borrowed[GraphState], key: int) -> Selection[Borrowed[GraphState]] from reader:\n    return Selection[Borrowed[GraphState]](reader=reader, key=key)\ndef select_mut(reader: BorrowedMut[GraphState], key: int) -> Selection[Reference[GraphState]] from reader:\n    return Selection[Reference[GraphState]](reader=reader, key=key)\ndef select_result(reader: Borrowed[GraphState]) -> Result[Selection[Borrowed[GraphState]], str] from reader:\n    return Ok(select(reader, 1))\ndef select_list(reader: Borrowed[GraphState]) -> list[Selection[Borrowed[GraphState]]] from reader:\n    return [select(reader, 0)]\ndef main() -> None:\n    mut state = GraphState(nodes=[1, 2])\n    selected = select(state, 1)\n    println(selected.reader.nodes[selected.key])\n    cursor = selected.cursor(0)\n    println(cursor.selection.reader.nodes[cursor.offset])\n    result = select_result(state)\n    match result:\n        Ok(matched) => println(matched.reader.nodes[matched.key])\n        Err(_) => pass\n    listed = select_list(state)\n    println(listed[0].reader.nodes[0])\n    mut exclusive = select_mut(state, 0)\n    exclusive.reader.nodes = [3]\n";
+    let (_, _, module) = checked_seed(source)?;
+    let select = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "select")
+        .ok_or("missing generic view producer")?;
+    let main = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "main")
+        .ok_or("missing generic view consumer")?;
+    let select_mut = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "select_mut")
+        .ok_or("missing exclusive generic view producer")?;
+    let select_list = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "select_list")
+        .ok_or("missing list generic view producer")?;
+    let cursor = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "cursor")
+        .ok_or("missing chained generic view producer")?;
+    let cursor_local = main
+        .locals
+        .iter()
+        .find(|local| local.name.as_deref() == Some("cursor"))
+        .ok_or("missing chained generic view consumer local")?;
+    assert!(
+        matches!(
+            &select.return_type,
+            super::IncanType::Generic { args, .. }
+                if matches!(args.as_slice(), [super::IncanType::Ref(_)])
+        ),
+        "select: {select:#?}"
+    );
+    assert!(
+        matches!(
+            &select_mut.return_type,
+            super::IncanType::Generic { args, .. }
+                if matches!(args.as_slice(), [super::IncanType::RefMut(_)])
+        ),
+        "select_mut: {select_mut:#?}"
+    );
+    assert!(
+        matches!(
+            &select_list.return_type,
+            super::IncanType::Generic { args, .. }
+                if matches!(
+                    args.as_slice(),
+                    [super::IncanType::Generic { args, .. }]
+                        if matches!(args.as_slice(), [super::IncanType::Ref(_)])
+                )
+        ),
+        "select_list: {select_list:#?}"
+    );
+    assert!(
+        matches!(
+            &cursor.return_type,
+            super::IncanType::Generic { args, .. }
+                if matches!(
+                    args.as_slice(),
+                    [super::IncanType::Ref(selection)]
+                        if matches!(selection.as_ref(), super::IncanType::Generic { .. })
+                )
+        ),
+        "cursor: {cursor:#?}"
+    );
+    assert_eq!(
+        cursor.returned_view.as_ref().map(|view| view.component.as_slice()),
+        Some(&[0][..]),
+        "cursor: {cursor:#?}"
+    );
+    assert!(
+        matches!(
+            &cursor_local.ty,
+            super::IncanType::Generic { args, .. }
+                if matches!(
+                    args.as_slice(),
+                    [super::IncanType::Ref(selection)]
+                        if matches!(
+                            selection.as_ref(),
+                            super::IncanType::Generic { args, .. }
+                                if matches!(args.as_slice(), [super::IncanType::Ref(_)])
+                        )
+                )
+        ),
+        "cursor local: {cursor_local:#?}"
+    );
+    assert!(
+        main.locals.iter().all(|local| !matches!(
+            &local.ty,
+            super::IncanType::Generic { args, .. }
+                if matches!(args.as_slice(), [super::IncanType::Generic { base, .. }] if base == "Borrowed")
+        )),
+        "main: {main:#?}"
+    );
+    Ok(())
+}
 
-    let source = "def operations() -> None:\n    mut values: list[int] = []\n    values.append(1)\n    values.count(1)\n    values.iter()\n    mut labels: dict[str, int] = {}\n    labels.insert(\"one\", 1)\n    labels.keys()\n    mut seen: set[int] = set()\n    seen.add(1)\n    seen.contains(1)\n";
+/// Prove builtin method meaning crosses the checker/Body IR boundary as a closed operation, independently of the
+/// retained source spelling and canonical provenance.
+fn assert_builtin_method_identities() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_lang::lang::builtins::BuiltinMethodId;
+    use incan_lang::lang::surface::{
+        bytes_methods::BytesMethodId, clone_methods::CloneMethodId, dict_methods::DictMethodId,
+        float_methods::FloatMethodId, iterator_methods::IteratorMethodId, list_methods::ListMethodId,
+        option_methods::OptionMethodId, result_methods::ResultMethodId, set_methods::SetMethodId,
+        string_methods::StringMethodId,
+    };
+    use incan_lang::lang::types::numerics::{
+        IntegerHelperFamily, IntegerHelperOperation, NumericResizeMethodId, NumericTypeId,
+    };
+
+    let source = "def operations() -> None:\n    mut values: list[int] = []\n    values.append(1)\n    values.count(1)\n    values.iter().take(1).collect()\n    numbers().collect()\n    mut labels: dict[str, int] = {}\n    labels.insert(\"one\", 1)\n    labels.keys()\n    mut seen: set[int] = set()\n    seen.add(1)\n    seen.contains(1)\n    \"value\".encode()\n    b\"value\".decode()\n    Some(1).is_some()\n    result: Result[int, str] = Ok(1)\n    result.is_ok()\n    1u8.checked_add(1u8)\n    resized: u16 = 1u8.resize()\n    1.0.sqrt()\n\n\ndef numbers() -> Generator[int]:\n    yield 1\n\n\ndef clone_number(value: &int) -> int:\n    return value.clone()\n";
     let (_, facts, module) = checked_seed(source)?;
     let expected = [
         BuiltinMethodId::List(ListMethodId::Append),
         BuiltinMethodId::List(ListMethodId::Count),
         BuiltinMethodId::ListIter,
+        BuiltinMethodId::Iterator(IteratorMethodId::Take),
+        BuiltinMethodId::Iterator(IteratorMethodId::Collect),
+        BuiltinMethodId::Generator(IteratorMethodId::Collect),
         BuiltinMethodId::Dict(DictMethodId::Insert),
         BuiltinMethodId::Dict(DictMethodId::Keys),
         BuiltinMethodId::Set(SetMethodId::Add),
         BuiltinMethodId::Set(SetMethodId::Contains),
+        BuiltinMethodId::Str(StringMethodId::Encode),
+        BuiltinMethodId::Bytes(BytesMethodId::Decode),
+        BuiltinMethodId::Option(OptionMethodId::IsSome),
+        BuiltinMethodId::Result(ResultMethodId::IsOk),
+        BuiltinMethodId::IntegerHelper(
+            NumericTypeId::U8,
+            IntegerHelperFamily::Checked,
+            IntegerHelperOperation::Add,
+        ),
+        BuiltinMethodId::NumericResize(NumericTypeId::U8, NumericResizeMethodId::Lossless),
+        BuiltinMethodId::Float(NumericTypeId::F64, FloatMethodId::Sqrt),
+        BuiltinMethodId::Clone(CloneMethodId::Clone),
     ];
     let checked = facts
         .calls
@@ -136,7 +265,10 @@ fn assert_builtin_collection_method_identities() -> Result<(), Box<dyn std::erro
         .values()
         .copied()
         .collect::<Vec<_>>();
-    assert!(expected.iter().all(|operation| checked.contains(operation)));
+    assert!(
+        expected.iter().all(|operation| checked.contains(operation)),
+        "checker operations: {checked:?}",
+    );
 
     let carried = module
         .bodies
@@ -150,7 +282,10 @@ fn assert_builtin_collection_method_identities() -> Result<(), Box<dyn std::erro
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert!(expected.iter().all(|operation| carried.contains(operation)));
+    assert!(
+        expected.iter().all(|operation| carried.contains(operation)),
+        "Body IR operations: {carried:?}",
+    );
     Ok(())
 }
 
@@ -868,11 +1003,11 @@ fn checked_metadata_seed(source: &str) -> Result<(TypeCheckInfo, bir::BodyIrModu
     use crate::loaf_index::LoafIndex;
     use std::sync::Arc;
 
-    let sdk = include_str!("../../../../stdlib/core/src/reflection.incn");
+    let sdk = include_str!("../../../../stdlib/primitives/src/reflection.incn");
     let tokens = crate::lexer::lex(sdk).map_err(|errors| format!("{errors:?}"))?;
     let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
     let mut declaring = TypeChecker::new();
-    declaring.set_current_package_identity(Some("incan_stdlib_core".into()));
+    declaring.set_current_package_identity(Some("incan_stdlib_primitives".into()));
     declaring.set_current_module_path(Some(vec!["reflection".into()]));
     declaring
         .check_program(&program)
@@ -886,19 +1021,19 @@ fn checked_metadata_seed(source: &str) -> Result<(TypeCheckInfo, bir::BodyIrModu
         public_namespaces: Vec::new(),
     };
     materialize_checked_api_public_namespaces(&mut api)?;
-    let mut manifest = LibraryManifest::new("incan_stdlib_core", "0.6.0");
+    let mut manifest = LibraryManifest::new("incan_stdlib_primitives", "0.6.0");
     manifest.contract_metadata.identity_graph.extend_checked_api_exports(
-        "incan_stdlib_core",
+        "incan_stdlib_primitives",
         &api,
         &[(module_path, exports)],
     )?;
     manifest.contract_metadata.api = Some(api);
     let directory = tempfile::tempdir()?;
     std::fs::write(
-        directory.path().join("incan_stdlib_core.incnlib"),
+        directory.path().join("incan_stdlib_primitives.incnlib"),
         manifest.to_json_string()?,
     )?;
-    let entry = LoafIndex::standard("incan_stdlib_core", directory.path())?;
+    let entry = LoafIndex::standard("incan_stdlib_primitives", directory.path())?;
     let mut checker = TypeChecker::new();
     checker.set_current_package_identity(Some("metadata".into()));
     checker.set_current_module_path(Some(Vec::new()));

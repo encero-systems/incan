@@ -2,10 +2,9 @@
 
 from rust::std::process import id
 from rust::std::rc import Rc
-from std.primitives import hexlify
+from std.primitives.hex import hexlify
 from crate.store import PreparedPayload, sync_durable
-from crate.store.files import StoreError, ensure_directory, failure, io_failure, sync_directory, sync_file
-from crate.store.hash import file_digest
+from crate.store.files import StoreError, ensure_directory, failure, file_digest, io_failure, sync_directory, sync_file
 from crate.store.index import view_digest
 from crate.store.path import StorePath as Path
 
@@ -55,19 +54,19 @@ def store_payloads(root: Path, sources: list[Path], durable: bool) -> Result[lis
     mut digests: list[PreparedPayload] = []
     mut touched: set[str] = set()
     for source in sources:
-        digest = hexlify(file_digest(source, "sha256").map_err((error) => failure("io", source.0, error.message()))?)
+        digest = hexlify(file_digest(source, "sha256").map_err((error) => failure("io", source.value, error.message()))?)
         prepared = pin_payload(root, digest)?
         target = payload_path(root, digest)
         if target.is_file():
             if not payload_intact(root, digest):
-                return Err(failure("integrity", target.0, "a stored payload does not match its name"))
+                return Err(failure("integrity", target.value, "a stored payload does not match its name"))
         else:
             install_payload(source, target)?
         # An intact existing name may belong to a writer that died before ordering its directory entry.
-        touched.add(target.parent().0)
+        touched.add(target.parent().value)
         digests.append(prepared)
     for directory in sorted([name for name in touched]):
-        sync_directory(Path(directory))?
+        sync_directory(root.at(directory))?
     if len(touched) > 0:
         sync_directory(root.joinpath("payloads"))?
         sync_directory(root)?
@@ -80,7 +79,7 @@ def store_payloads(root: Path, sources: list[Path], durable: bool) -> Result[lis
 def install_payload(source: Path, target: Path) -> Result[None, StoreError]:
     """Copy one payload beside its place, sync it, make it read-only and rename it into place."""
     ensure_directory(target.parent())?
-    temporary = Path(f"{target.0}.{id()}.tmp")
+    temporary = target.at(f"{target.value}.{id()}.tmp")
     source.store_copy(temporary, true, true).map_err((error) => io_failure(temporary, error))?
     temporary.store_chmod(true).map_err((error) => io_failure(temporary, error))?
     sync_file(temporary)?

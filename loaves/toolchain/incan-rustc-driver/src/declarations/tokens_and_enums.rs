@@ -109,10 +109,10 @@ pub(super) fn function_pointer_tokens(pointer: &ast::FnPtrTy, span: Span) -> Vec
     tokens
 }
 
-/// Mirror a path segment's type arguments (`Vec<Tag>`, `HashMap<String, i64>`) into derive input tokens.
+/// Mirror a path segment's lifetime and type arguments (`View<'a>`, `Vec<Tag>`) into derive input tokens.
 ///
 /// Without them a derive would name a generic struct bare and fail to compile; the admitted type builder spells only
-/// type arguments, never lifetimes or constants.
+/// declaration-owned lifetimes and type arguments, never constants.
 pub(super) fn generic_argument_tokens(
     arguments: &ast::GenericArgs,
     span: Span,
@@ -129,7 +129,16 @@ pub(super) fn generic_argument_tokens(
         }
         match argument {
             ast::AngleBracketedArg::Arg(ast::GenericArg::Type(argument)) => tokens.extend(type_tokens(argument)),
-            _ => unreachable!("the admitted AST type builder emits only type arguments"),
+            ast::AngleBracketedArg::Arg(ast::GenericArg::Lifetime(lifetime)) => {
+                tokens.push(AttrTokenTree::Token(
+                    Token::new(
+                        TokenKind::Lifetime(lifetime.ident.name, ast::token::IdentIsRaw::No),
+                        span,
+                    ),
+                    Spacing::Alone,
+                ));
+            }
+            _ => unreachable!("the admitted AST type builder emits only lifetime and type arguments"),
         }
     }
     tokens.push(AttrTokenTree::Token(Token::new(TokenKind::Gt, span), Spacing::Alone));
@@ -409,7 +418,7 @@ pub(crate) fn linked_zip_ty(
 
 /// Declare the SDK's type marker with erased zero-sized storage; the validated plan retains represented identity.
 pub(super) fn type_token_ty(elements: &[PlanType], span: Span) -> Box<ast::Ty> {
-    let mut path = ast::Path::from_ident(ident("incan_std_core", span));
+    let mut path = ast::Path::from_ident(ident("incan_std_primitives", span));
     path.segments
         .push(ast::PathSegment::from_ident(ident("reflection", span)));
     let mut segment = ast::PathSegment::from_ident(ident("TypeToken", span));

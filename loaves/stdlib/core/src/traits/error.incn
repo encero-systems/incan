@@ -1,3 +1,0 @@
-"""Compatibility import for the canonical low-level Error trait."""
-
-pub from std.primitives.errors import Error

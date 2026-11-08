@@ -10,7 +10,10 @@ use super::{
 use crate::ast::{CallArg, Expr, ParamKind, Receiver, Span, Spanned};
 use crate::symbols::CallableParam;
 use crate::typechecker::TypeChecker;
-use incan_lang::lang::builtins::BuiltinFnId;
+use incan_lang::lang::builtins::{BuiltinFnId, BuiltinMethodId};
+use incan_lang::lang::surface::{
+    clone_methods::CloneMethodId, list_methods::ListMethodId, option_methods::OptionMethodId,
+};
 use incan_lang::lang::trait_bounds;
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
@@ -50,7 +53,48 @@ impl Builder<'_> {
         if let Some(closure) = self.closure_local(callee) {
             return self.closure_call(&closure, arguments, span, incoming);
         }
+        if self.uses_ordinary_iteration_access(span) {
+            return self.ordinary_iteration_call(None, arguments, incoming);
+        }
         self.apply_call(None, arguments, span, incoming)
+    }
+
+    /// Whether an iteration-only graph must project this missing or inferred ordinary call without claiming an
+    /// explicit or native parameter contract. Ordinary calls still evaluate all source arguments below.
+    pub(super) fn uses_ordinary_iteration_access(&self, span: Span) -> bool {
+        self.allow_fresh_aggregate_elements
+            && self
+                .checker
+                .type_info
+                .protocols
+                .explicit_input_calls
+                .get(&span)
+                .is_none_or(|call| call.kind == super::super::InputCallKind::Ordinary)
+    }
+
+    /// Project an ordinary call while building the iteration-only ownership profile. Every argument is still
+    /// evaluated in source order and observed as a read; a retained loop item is transferred because the historical
+    /// loop-item contract hands non-cloneable items on to ordinary calls. Selected explicit inputs continue through
+    /// [`Self::apply_call`], where each parameter's canonical graph permission owns the decision.
+    pub(super) fn ordinary_iteration_call(
+        &mut self,
+        receiver: Option<&Spanned<Expr>>,
+        arguments: &[CallArg],
+        mut incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        if let Some(receiver) = receiver {
+            incoming = self.expression(receiver, incoming, false)?;
+        }
+        for argument in arguments {
+            let value = match argument {
+                CallArg::Positional(value)
+                | CallArg::Named(_, value)
+                | CallArg::PositionalUnpack(value)
+                | CallArg::KeywordUnpack(value) => value,
+            };
+            incoming = self.expression(value, incoming, self.is_loop_item_value(value))?;
+        }
+        Ok(incoming)
     }
 
     /// A builtin list method reads or changes its receiver place in place, after evaluating its arguments. An element
@@ -502,12 +546,14 @@ impl Builder<'_> {
             core_traits::as_str(TraitId::Clone),
             trait_bounds::rust::CLONE_METHOD,
         );
-        let list = crate::symbols::canonical_builtin_member_identity(
-            collections::as_str(CollectionTypeId::List),
-            trait_bounds::rust::CLONE_METHOD,
-        );
-        if matches!(self.checker.type_info.resolved_identity(span), Some(identity) if identity == &builtin || identity == &list)
-            || self.checker.type_info.traits.inferred_method_identities.get(&span) == Some(&builtin)
+        if matches!(
+            self.checker.type_info.resolved_builtin_method_call(span),
+            Some(
+                BuiltinMethodId::Clone(CloneMethodId::Clone)
+                    | BuiltinMethodId::List(ListMethodId::Clone)
+                    | BuiltinMethodId::Option(OptionMethodId::Clone)
+            )
+        ) || self.checker.type_info.traits.inferred_method_identities.get(&span) == Some(&builtin)
         {
             return true;
         }
@@ -697,7 +743,7 @@ impl Builder<'_> {
             },
             _ => Ok(self
                 .call_relation(expression)?
-                .filter(|relation| relation.carried.is_none())),
+                .filter(|relation| relation.component.is_empty())),
         }
     }
 
@@ -769,6 +815,7 @@ impl Builder<'_> {
                 exclusive: view.access == IncanInputAccess::Exclusive,
                 slot: view.source.slot.clone(),
                 fields: view.source.fields.clone(),
+                component: view.component.to_vec(),
                 carried: view.carried,
             }))
     }
@@ -808,6 +855,7 @@ impl Builder<'_> {
             exclusive,
             slot: source.slot.clone(),
             fields: source.fields.clone(),
+            component: Vec::new(),
             carried: None,
         }))
     }
@@ -1000,6 +1048,85 @@ impl Builder<'_> {
             },
         ))
     }
+
+    /// Evaluate an aggregate returned view and retain both its immediate source storage and every dependency stored
+    /// by that source value. A cursor borrowing a selection therefore keeps the selection local alive and carries
+    /// the selection's graph loan forward; neither dependency may be reconstructed from the nominal field shape.
+    pub(super) fn evaluate_aggregate_view_call(
+        &mut self,
+        expression: &Spanned<Expr>,
+        relation: ViewRelation,
+        incoming: Vec<usize>,
+    ) -> Result<(Vec<usize>, Vec<LoanId>), Unavailable> {
+        let source_slot = relation.slot.clone();
+        let (mut incoming, path) = self.evaluate_view_call(expression, relation, incoming)?;
+        let direct = path.through.ok_or(Unavailable {
+            span: expression.span,
+            reason: "aggregate view has no retained source loan".into(),
+        })?;
+        let call = super::super::builtins::view_call(expression);
+        let invocation = self.graph.invocations.get(&call.span).ok_or(Unavailable {
+            span: call.span,
+            reason: "aggregate view call has no checked invocation".into(),
+        })?;
+        let source = match source_slot {
+            SourceSlot::Receiver => invocation.receiver,
+            SourceSlot::Parameter(slot) => invocation
+                .arguments
+                .iter()
+                .find(|argument| argument.slot == slot)
+                .and_then(|argument| argument.loan),
+        }
+        .and_then(|loan| self.graph.loans.get(loan.0))
+        .ok_or(Unavailable {
+            span: call.span,
+            reason: "aggregate view source was not borrowed by its invocation".into(),
+        })?;
+        let dependencies = match &source.source.root {
+            Root::Binding(root) => self.graph.dependent_locals.get(root).cloned().unwrap_or_default(),
+            Root::Temporary { .. } => Vec::new(),
+        };
+        let mut loans = vec![direct];
+        for dependency in dependencies {
+            let (next, _, loan) = self.carry_dependency(dependency, call.span, incoming)?;
+            incoming = next;
+            loans.push(loan);
+        }
+        Ok((incoming, loans))
+    }
+
+    /// Recover the substituted source place of an already evaluated view call without creating another result loan.
+    /// Aggregate-return validation uses this after ordinary value evaluation so its graph matches the stored value's
+    /// execution while still proving the declaration's exact `from` relationship.
+    pub(super) fn evaluated_view_call_place(
+        &self,
+        expression: &Spanned<Expr>,
+        relation: &ViewRelation,
+    ) -> Result<Place, Unavailable> {
+        let expression = super::super::builtins::view_call(expression);
+        let invocation = self.graph.invocations.get(&expression.span).ok_or(Unavailable {
+            span: expression.span,
+            reason: "aggregate view call has no checked invocation".into(),
+        })?;
+        let base = match relation.slot {
+            SourceSlot::Receiver => invocation.receiver,
+            SourceSlot::Parameter(slot) => invocation
+                .arguments
+                .iter()
+                .find(|argument| argument.slot == slot)
+                .and_then(|argument| argument.loan),
+        }
+        .and_then(|loan| self.graph.loans.get(loan.0))
+        .ok_or(Unavailable {
+            span: expression.span,
+            reason: "aggregate view source was not borrowed by its invocation".into(),
+        })?;
+        let mut place = base.source.clone();
+        place
+            .projection
+            .extend(relation.fields.iter().cloned().map(Projection::Field));
+        Ok(place)
+    }
 }
 
 /// A selected callee's returned view: its access, the source slot, the declared stored-field path, and the carrier
@@ -1008,6 +1135,7 @@ pub(super) struct ViewRelation {
     exclusive: bool,
     slot: SourceSlot,
     fields: Vec<incan_semantics_core::CanonicalSymbolId>,
+    pub(super) component: Vec<usize>,
     pub(super) carried: Option<usize>,
 }
 

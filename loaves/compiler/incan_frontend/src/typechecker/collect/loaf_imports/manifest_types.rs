@@ -482,6 +482,9 @@ impl TypeChecker {
                     field.name.clone(),
                     FieldInfo {
                         identity: field.canonical.as_ref().and_then(|identity| identity.hydrate()),
+                        record_identity: field.hydrated_record_identity(),
+                        record_canonical: field.record_canonical,
+                        renamed_from: field.renamed_from.clone(),
                         ty: resolved_type_from_manifest_type_ref(&field.ty),
                         surface_type_name: field.surface_type_name.clone(),
                         visibility: match field.visibility {

@@ -1,0 +1,22 @@
+"""Placement-neutral lifetime guards that retain one resource until the guard leaves scope."""
+
+from rust::incan_std_primitives::locking import LockGuard as NativeLockGuard
+
+
+@derive(Clone)
+pub type LockGuard = newtype NativeLockGuard:
+    """
+    An opaque shared resource guard for disk and in-process lock identities.
+
+    Callers keep the guard for its lifetime and do not need to know whether a placement coordinates an operating-system
+    lock or an in-process reference count.
+    """
+
+    @staticmethod
+    pub def memory() -> LockGuard:
+        """Create an in-process anchor whose shared-reference count records live guards."""
+        return LockGuard(NativeLockGuard.memory())
+
+    pub def reference_count(self) -> int:
+        """Return the number of guards sharing this retained resource."""
+        return self.0.reference_count()

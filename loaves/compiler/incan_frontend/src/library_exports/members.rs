@@ -56,6 +56,9 @@ pub(super) fn map_fields(
             entries.push(CheckedField {
                 name: name.clone(),
                 canonical: info.identity.clone(),
+                record_identity: info.record_identity.clone(),
+                record_canonical: info.record_canonical,
+                renamed_from: info.renamed_from.clone(),
                 ty: map_type(name, info)?,
                 surface_type_name: info.surface_type_name.clone(),
                 visibility: info.visibility,
@@ -78,6 +81,9 @@ pub(super) fn map_fields(
                 Some(CheckedField {
                     name: name.clone(),
                     canonical: info.identity.clone(),
+                    record_identity: info.record_identity.clone(),
+                    record_canonical: info.record_canonical,
+                    renamed_from: info.renamed_from.clone(),
                     ty: map_type(name, info)?,
                     surface_type_name: info.surface_type_name.clone(),
                     visibility: info.visibility,
@@ -266,7 +272,7 @@ pub(super) fn is_registry_description_method(info: &MethodInfo) -> bool {
     }
     match &identity.origin {
         SymbolOrigin::Package { library, module_path } => {
-            library == "incan_stdlib_core" && module_path.iter().map(String::as_str).eq(["registry"])
+            library == "incan_stdlib_primitives" && module_path.iter().map(String::as_str).eq(["registry"])
         }
         SymbolOrigin::Module(path) => path.iter().map(String::as_str).eq(["std", "registry"]),
         _ => false,

@@ -1,7 +1,7 @@
 # Incan feature inventory
 
 !!! warning "Generated file"
-    Do not edit this page by hand. Update `loaves/stdlib/core/src/features.incn` and regenerate it.
+    Do not edit this page by hand. Update `loaves/stdlib/primitives/src/features.incn` and regenerate it.
 
     Regenerate with: `incan run scripts/generate_feature_inventory.incn`
 
@@ -26,7 +26,7 @@ This inventory describes the source-authored public features in the compiler's c
 | Explicit call-site generics | TypeSystem | 0.2 | None. | `decode_rows[Order, _](path)`<br>`session.read_csv[Order](path)` | Direct function and method calls can spell type arguments when inference needs help. | Adding throwaway typed locals or duplicate helper functions only to steer inference. | [Derives and traits](derives_and_traits.md#call-site-type-arguments), [Why call-site type arguments exist](../explanation/call_site_type_arguments.md), [Release 0.2](../../release_notes/0_2.md) |
 | Abstract traits and supertraits | TypeSystem | 0.2 | None. | `trait OrderedCollection[T] with Collection[T]:`<br>`def first(values: Collection[int]) -> int:` | Trait names are abstract annotation types, and traits can adopt supertraits with `with`. | Hidden generic bounds or duplicated method requirements when a trait annotation names the concept. | [Derives and traits](derives_and_traits.md#traits-authoring), [Derives and traits explained](../explanation/derives_and_traits.md) |
 | Source-defined derives and trait contracts | TypeSystem | 0.2 | Import the relevant `std.derives.*`, `std.traits.*`, or derivable module. | `@derive(json)`<br>`model Row with Serialize:`<br>`T with Clone` | Derive and trait surfaces are authored as named stdlib capability contracts rather than compiler folklore. | Backend-only helper shims or comments that claim derive behavior without source-visible contracts. | [Derives and traits](derives_and_traits.md), [std.derives](stdlib/derives.md), [std.traits](stdlib/traits.md) |
-| Model field metadata and reflection | TypeSystem | 0.2 | None for field metadata; import `std.reflection` helpers when needed. | `name as "wire_name": str`<br>`user.__fields__()` | Model fields can carry aliases/descriptions and reflection exposes typed `FieldInfo` metadata. | Stringly schema maps that duplicate model field names and wire aliases. | [Reflection](reflection.md), [std.reflection](stdlib/reflection.md), [Release 0.2](../../release_notes/0_2.md) |
+| Model field metadata and reflection | TypeSystem | 0.2 | None for field metadata; import `std.reflection` helpers when needed. | `name as "wire_name": str`<br>`name [renamed_from="old_name", canonical=false]: str`<br>`user.__fields__()` | Model fields carry aliases, descriptions, rename continuity and canonical-hash participation; reflection exposes the checked facts through typed `FieldInfo` metadata. | Stringly schema maps that duplicate model field names and wire aliases. | [Field metadata](field_metadata.md), [Reflection](reflection.md), [std.reflection](stdlib/reflection.md), [Release 0.2](../../release_notes/0_2.md) |
 | Type tokens and type-argument reflection | TypeSystem | 0.3 | Use explicit type arguments for compile-time reflection, or call an overload that expects `Type[T]`. | `T.__class_name__()`<br>`def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:`<br>`def cast[T with Int](expr: ColumnExpr) -> IntColumnExpr:`<br>`def accepts_schema(value: Type[MySchema]) -> str:`<br>`cast(col("amount"), int)` | Primitive type arguments expose stable source names. Explicit `Type[T]` contexts admit checked primitive, model, enum, trait, alias, constrained-scalar and newtype tokens for storage and precise overload selection; constrained generic overloads map explicit type arguments to precise results without making types general runtime values. | String target names, dummy schema values, or helper families used only to recover type-specific return types. | [Reflection](reflection.md), [std.reflection](stdlib/reflection.md), [RFC 107 north star](../../RFCs/107_type_directed_library_apis.md), [Release 0.3](../../release_notes/0_3.md), [Release 0.6](../../release_notes/0_6.md) |
 | Value enums | TypeSystem | 0.3 | None. | `enum Level(str):`<br>`WARN = "WARN"`<br>`Level.from_value(raw)` | Enums can use `str` or `int` backing values while preserving enum type safety. | Loose string/int constants or duplicate parsing helpers around enum-like values. | [Enums explained](../explanation/enums.md), [Modeling with enums](../how-to/modeling_with_enums.md), [Release 0.3](../../release_notes/0_3.md) |
 | Union types and narrowing | TypeSystem | 0.3 | None. | `value: int \| str`<br>`if isinstance(value, int):`<br>`match value:` | Closed anonymous unions support `Union[A, B]`, `A \| B`, narrowing, and exhaustive match type patterns. | Untyped `Any`-like values, parallel option fields, or manual tag/payload models for closed alternatives. | [Union types](union_types.md), [Release 0.3](../../release_notes/0_3.md) |
@@ -284,13 +284,14 @@ Canonical forms:
 - **Stability:** `Stable`
 - **Activation:** None for field metadata; import `std.reflection` helpers when needed.
 - **Use instead of:** Stringly schema maps that duplicate model field names and wire aliases.
-- **References:** [Reflection](reflection.md), [std.reflection](stdlib/reflection.md), [Release 0.2](../../release_notes/0_2.md)
+- **References:** [Field metadata](field_metadata.md), [Reflection](reflection.md), [std.reflection](stdlib/reflection.md), [Release 0.2](../../release_notes/0_2.md)
 
-Model fields can carry aliases/descriptions and reflection exposes typed `FieldInfo` metadata.
+Model fields carry aliases, descriptions, rename continuity and canonical-hash participation; reflection exposes the checked facts through typed `FieldInfo` metadata.
 
 Canonical forms:
 
 - `name as "wire_name": str`
+- `name [renamed_from="old_name", canonical=false]: str`
 - `user.__fields__()`
 
 ### Type tokens and type-argument reflection

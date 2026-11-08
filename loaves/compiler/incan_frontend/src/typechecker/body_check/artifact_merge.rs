@@ -120,7 +120,6 @@ pub(super) fn append_calls(target: &mut CallArtifacts, local: CallArtifacts) {
         resolved_method_calls,
         compiler_generated_member_identities,
         resolved_collection_constructors,
-        resolved_string_helper_calls,
         closure_holding_params,
         closure_returning_callables,
         capturing_callable_bindings,
@@ -180,7 +179,6 @@ pub(super) fn append_calls(target: &mut CallArtifacts, local: CallArtifacts) {
     target
         .resolved_collection_constructors
         .extend(resolved_collection_constructors);
-    target.resolved_string_helper_calls.extend(resolved_string_helper_calls);
     target.closure_holding_params.extend(closure_holding_params);
     target.closure_returning_callables.extend(closure_returning_callables);
     target.capturing_callable_bindings.extend(capturing_callable_bindings);
@@ -195,6 +193,7 @@ pub(super) fn append_protocols(target: &mut ProtocolArtifacts, local: ProtocolAr
         native_input_contracts,
         explicit_local_modes,
         explicit_input_flow,
+        mutation_flows,
         explicit_input_copy,
         body_ir_truthiness_receivers,
         body_ir_iterations,
@@ -208,6 +207,7 @@ pub(super) fn append_protocols(target: &mut ProtocolArtifacts, local: ProtocolAr
     target.native_input_contracts.extend(native_input_contracts);
     target.explicit_local_modes.extend(explicit_local_modes);
     target.explicit_input_flow.extend(explicit_input_flow);
+    target.mutation_flows.extend(mutation_flows);
     target.explicit_input_copy.extend(explicit_input_copy);
     target.body_ir_truthiness_receivers.extend(body_ir_truthiness_receivers);
     target.body_ir_iterations.extend(body_ir_iterations);

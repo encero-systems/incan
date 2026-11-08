@@ -39,7 +39,7 @@ pub def is_derived_default(target: NamedCallableTarget) -> bool:
                 SymbolOrigin.Module(path) =>
                     return len(path) == 3 and path[0] == "std" and path[1] == "derives" and path[2] == "copying"
                 SymbolOrigin.Package(library=library, module_path=path) =>
-                    return library == "incan_stdlib_core" and len(path) == 2 and path[0] == "derives" and path[1] == "copying"
+                    return library == "incan_stdlib_primitives" and len(path) == 2 and path[0] == "derives" and path[1] == "copying"
                 _ => return false
         None => return false
 

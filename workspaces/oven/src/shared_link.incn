@@ -27,6 +27,7 @@ pub def linkage_key(key: Key, shared: bool) -> Result[Key, str]:
         Key(
             digest="sha256:" + fingerprint([SCHEMA, key.digest])?,
             parts=key.parts + [f"linkage {SCHEMA}"],
+            codegen=key.codegen,
             provenance=key.provenance,
             descriptor=key.descriptor,
             compiler=key.compiler,

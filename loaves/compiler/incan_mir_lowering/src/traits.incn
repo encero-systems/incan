@@ -514,11 +514,22 @@ def owner_method_identity(
     owner: PlanType,
 ) -> Result[CanonicalSymbolId, str]:
     """Select the retained implementation once for both compiled Loaf calls and locally instantiated method bodies."""
-    match target.canonical:
+    return owner_callable_identity(module, target.canonical, str(target.name), target.trait_arguments, owner)
+
+
+def owner_callable_identity(
+    module: &BodyIrModule,
+    checked: Option[CanonicalSymbolId],
+    name: str,
+    trait_arguments: Option[list[RustType]],
+    owner: PlanType,
+) -> Result[CanonicalSymbolId, str]:
+    """Select one concrete owner's retained implementation for instance and associated trait calls."""
+    match checked:
         None => return Err("unsupported Body IR unproven Method")
         Some(_identity) => pass
     identity = owner_identity(module, owner)?
-    mut canonical = target.canonical.clone()
+    mut canonical = checked.clone()
     for nominal_position in range(len(module.nominal_declarations)):
         declaration = borrowed_at(module.nominal_declarations, nominal_position)
         if declaration.canonical != identity:
@@ -534,7 +545,7 @@ def owner_method_identity(
     for implementation_position in range(len(module.trait_implementations)):
         implementation = borrowed_at(module.trait_implementations, implementation_position)
         if implementation.owner == identity and Some(implementation.method) == canonical:
-            if not selected_slot_arguments(module, target, implementation, owner):
+            if not selected_slot_arguments(module, trait_arguments, implementation, owner):
                 continue
             match selected:
                 Some(previous) =>
@@ -552,7 +563,7 @@ def owner_method_identity(
                 Some(method) => needs_declared_fallback = not method_belongs_to_owner(method, identity)
                 None => pass
             if needs_declared_fallback:
-                match declared_owner_method(module, identity, str(target.name))?:
+                match declared_owner_method(module, identity, name)?:
                     Some(implementation) => canonical = Some(implementation)
                     None => pass
     match canonical:
@@ -600,12 +611,12 @@ def method_belongs_to_owner(method: CanonicalSymbolId, owner: CanonicalSymbolId)
 
 def selected_slot_arguments(
     module: &BodyIrModule,
-    target: &MethodTarget,
+    trait_arguments: Option[list[RustType]],
     implementation: &TraitImplementation,
     owner: PlanType,
 ) -> bool:
     """Match a checked trait instantiation without mixing it with a default body's independent bindings."""
-    match target.trait_arguments:
+    match trait_arguments:
         Some(arguments) => return arguments == implementation.slot_arguments
         None => pass
     return receiver_selects_slot_arguments(module, implementation, owner)
@@ -790,10 +801,15 @@ def receiver_place_type(mut builder: Builder, place: RustPlace, span: SourceSpan
 
 
 def nominal_owner(module: &BodyIrModule, actual: PlanType) -> Option[PlanType]:
-    """A retained model or source enum owns trait slots; any other receiver type is no retained nominal."""
+    """A retained model or source enum owns trait slots, including a receiver reached through stored reference."""
     match actual:
         PlanType.Model(owner, name) => return Some(PlanType.Model(owner, name))
+        (PlanType.ModelRef(owner, name) | PlanType.ModelMutRef(owner, name)) =>
+            return Some(PlanType.Model(owner, name))
         PlanType.Enum(owner, name) =>
+            if owner < len(module.enum_declarations):
+                return Some(PlanType.Enum(owner, name))
+        PlanType.EnumRef(owner, name) =>
             if owner < len(module.enum_declarations):
                 return Some(PlanType.Enum(owner, name))
         _ => pass
@@ -808,6 +824,64 @@ pub def validate_static_receiver(
     arguments: list[RustType],
 ) -> Result[None, str]:
     """Close the checked receiver in its active frame; only a retained model or enum admits an associated call."""
+    _ = static_receiver_owner(constructors, module, target, names, arguments)?
+    return Ok(None)
+
+
+pub def static_receiver_target(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    target: &NamedCallableTarget,
+    names: list[str],
+    arguments: list[RustType],
+) -> Result[NamedCallableTarget, str]:
+    """
+    Select the concrete implementation of a trait associated call after closing its bounded receiver.
+
+    Body IR retains the trait slot selected by checking and the receiver template independently. Lowering closes that
+    template in the active generic frame, then uses the same owner/implementation records as instance dispatch. When
+    the selected implementation has a body in this module, lowering replaces the trait slot's local call identity with
+    that body's exact identity, including when the trait itself came from an imported package.
+    """
+    if not is_trait_associated_target(module, target):
+        return Ok(target.clone())
+    match static_receiver_owner(constructors, module, target, names, arguments)?:
+        None => return Ok(target.clone())
+        Some(owner) =>
+            selected_identity = owner_callable_identity(module, target.canonical, str(target.name), None, owner)?
+            if Some(selected_identity) == target.canonical:
+                return Ok(target.clone())
+            mut selected = target.clone()
+            selected.canonical = Some(selected_identity)
+            selected.direct_call_id = None
+            for body_position in range(len(module.bodies)):
+                body = borrowed_at(module.bodies, body_position)
+                if body.canonical == selected.canonical:
+                    selected.direct_call_id = Some(body.direct_call_id.clone())
+                    break
+            return Ok(selected)
+
+
+def is_trait_associated_target(module: &BodyIrModule, target: &NamedCallableTarget) -> bool:
+    """Return whether a retained adoption records this associated target as its checked trait slot."""
+    match target.canonical:
+        None => return false
+        Some(identity) =>
+            for implementation_position in range(len(module.trait_implementations)):
+                implementation = borrowed_at(module.trait_implementations, implementation_position)
+                if implementation.method == identity:
+                    return true
+            return false
+
+
+def static_receiver_owner(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    target: &NamedCallableTarget,
+    names: list[str],
+    arguments: list[RustType],
+) -> Result[Option[PlanType], str]:
+    """Close an associated call's checked receiver and return its retained nominal owner when present."""
     match target.receiver_type:
         Some(template) =>
             target_name = str(target.name)
@@ -815,9 +889,9 @@ pub def validate_static_receiver(
                 (reason) => f"{reason} in static receiver of {target_name}",
             )?
             match enum_type(borrowed_table(module.enum_declarations), closed):
-                Some(_owner) => return Ok(None)
+                Some(owner) => return Ok(Some(owner))
                 None => pass
             match model_type(constructors, module.nominal_declarations, closed)?:
-                PlanType.Model(_owner, _name) => return Ok(None)
+                PlanType.Model(owner, name) => return Ok(Some(PlanType.Model(owner, name)))
                 _ => return Err("unsupported Body IR nonnominal static receiver")
         None => return Ok(None)

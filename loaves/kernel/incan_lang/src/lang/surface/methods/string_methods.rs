@@ -5,7 +5,7 @@
 use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
 
 /// Stable identifier for a string method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum StringMethodId {
     Upper,
     Lower,
@@ -22,6 +22,8 @@ pub enum StringMethodId {
     IsEmpty,
     /// `text.encode(encoding="utf-8")` returns the UTF-8 bytes of the text (#1668).
     Encode,
+    /// Compiler-internal signed-bound slice operation selected for primitive `str` slicing.
+    Slice,
 }
 
 /// One positional argument shape shared by the selected canonical string-helper subset.
@@ -85,7 +87,8 @@ impl StringMethodId {
             | Self::StartsWith
             | Self::EndsWith
             | Self::IsEmpty
-            | Self::Encode => None,
+            | Self::Encode
+            | Self::Slice => None,
         }
     }
 }
@@ -208,6 +211,15 @@ pub const STRING_METHODS: &[StringMethodInfo] = &[
     ),
 ];
 
+const STRING_SLICE_METHOD: StringMethodInfo = info(
+    StringMethodId::Slice,
+    "__slice__",
+    &[],
+    "Return the primitive text slice between two checked signed bounds.",
+    RFC::_009,
+    Since(0, 1),
+);
+
 /// Resolve a string method spelling to its stable id.
 pub fn from_str(name: &str) -> Option<StringMethodId> {
     super::from_str_impl(STRING_METHODS, name)
@@ -215,7 +227,10 @@ pub fn from_str(name: &str) -> Option<StringMethodId> {
 
 /// Return the canonical spelling for a string method.
 pub fn as_str(id: StringMethodId) -> &'static str {
-    info_for(id).canonical
+    match id {
+        StringMethodId::Slice => STRING_SLICE_METHOD.canonical,
+        _ => info_for(id).canonical,
+    }
 }
 
 /// Return the full metadata entry for a string method.
@@ -223,7 +238,10 @@ pub fn as_str(id: StringMethodId) -> &'static str {
 /// ## Panics
 /// - If the registry is missing an entry for `id` (this indicates a programming error).
 pub fn info_for(id: StringMethodId) -> &'static StringMethodInfo {
-    super::info_for_impl(STRING_METHODS, id, "string method info missing")
+    match id {
+        StringMethodId::Slice => &STRING_SLICE_METHOD,
+        _ => super::info_for_impl(STRING_METHODS, id, "string method info missing"),
+    }
 }
 
 const fn info(

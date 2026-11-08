@@ -6,8 +6,38 @@ use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
 
 use super::{Builder, ResolvedType, Unavailable};
 use crate::ast::{CallArg, Expr, FStringFormat, FStringPart, ListEntry, Span, Spanned};
+use crate::symbols::TypeInfo;
 
 impl Builder<'_> {
+    /// Mark constructor arguments whose declared field is exactly the type parameter selected by a carried view.
+    /// The checked argument-slot binding and nominal declaration own both orders; source field spellings are not
+    /// re-resolved here.
+    pub(super) fn constructor_view_arguments(&self, span: Span, component: &[usize]) -> Option<Vec<bool>> {
+        let (&parameter_slot, _) = component.split_first()?;
+        let ResolvedType::Generic(owner, _) = self.checker.type_info.expr_type(span)? else {
+            return None;
+        };
+        let (parameters, fields, order) = match self.checker.lookup_type_info(owner)? {
+            TypeInfo::Model(info) => (&info.type_params, &info.fields, &info.field_order),
+            TypeInfo::Class(info) => (&info.type_params, &info.fields, &info.field_order),
+            _ => return None,
+        };
+        let parameter = parameters.get(parameter_slot)?;
+        let binding = self.checker.type_info.constructor_field_binding(span)?;
+        Some(
+            binding
+                .argument_slots
+                .iter()
+                .map(|slot| {
+                    order.get(*slot).and_then(|name| fields.get(name)).is_some_and(|field| {
+                        matches!(&field.ty,
+                                ResolvedType::TypeVar(name) | ResolvedType::Named(name) if name == parameter)
+                    })
+                })
+                .collect(),
+        )
+    }
+
     /// Evaluate a list that stores returned views, retaining each substituted source loan under the list value.
     /// Non-view elements keep the same Copy-scalar boundary as an ordinary admitted list literal.
     pub(super) fn dependent_list(
@@ -96,8 +126,8 @@ impl Builder<'_> {
         Ok(Some((incoming, loans)))
     }
 
-    /// A fresh primitive list evaluates each Copy scalar in written order and retains no borrowed dependency.
-    /// Spreads, non-Copy elements and reference-carrying aggregates need separate retained-owner projection.
+    /// A fresh list evaluates each Copy or independently fresh element in written order and retains no borrowed
+    /// dependency. Spreads and non-Copy stored places need separate retained-owner projection.
     pub(super) fn scalar_list(
         &mut self,
         entries: &[ListEntry],
@@ -113,7 +143,7 @@ impl Builder<'_> {
                     });
                 }
             };
-            if !matches!(
+            let copy_scalar = matches!(
                 self.checker.type_info.expr_type(value.span),
                 Some(
                     ResolvedType::Int
@@ -122,7 +152,8 @@ impl Builder<'_> {
                         | ResolvedType::Bool
                         | ResolvedType::Unit
                 )
-            ) {
+            );
+            if !copy_scalar && !self.fresh_or_copy_field(value) && !self.allow_fresh_aggregate_elements {
                 return Err(Unavailable {
                     span: value.span,
                     reason: "list element needs checked retained-owner projection".into(),
@@ -179,7 +210,20 @@ impl Builder<'_> {
                 reason: "construction needs complete distinct fields without deferred defaults".into(),
             });
         }
-        for argument in arguments {
+        let view_arguments = self
+            .checker
+            .type_info
+            .expr_type(span)
+            .and_then(|ty| match ty {
+                ResolvedType::Generic(_, arguments) => arguments.iter().position(|argument| {
+                    matches!(argument,
+                        ResolvedType::Generic(name, payload)
+                            if payload.len() == 1 && self.checker.explicit_ownership_mode(name).is_some())
+                }),
+                _ => None,
+            })
+            .and_then(|slot| self.constructor_view_arguments(span, &[slot]));
+        for (index, argument) in arguments.iter().enumerate() {
             let value = match argument {
                 CallArg::Positional(value) | CallArg::Named(_, value) => value,
                 _ => {
@@ -189,10 +233,22 @@ impl Builder<'_> {
                     });
                 }
             };
-            if !self.fresh_or_copy_field(value) {
+            let stores_view = view_arguments
+                .as_ref()
+                .and_then(|arguments| arguments.get(index))
+                .copied()
+                .unwrap_or(false);
+            if !stores_view && !self.fresh_or_copy_field(value) {
+                let borrowed = self
+                    .optional_place(value)?
+                    .is_some_and(|path| path.through.is_some() || self.borrowed_inputs.contains(&path.place.root));
                 return Err(Unavailable {
                     span: value.span,
-                    reason: "non-Copy constructor field needs checked ownership transfer materialization".into(),
+                    reason: if borrowed {
+                        super::BORROWED_VALUE_IN_OWNED_FIELD.into()
+                    } else {
+                        "non-Copy constructor field needs checked ownership transfer materialization".into()
+                    },
                 });
             }
             incoming = self.expression(value, incoming, false)?;

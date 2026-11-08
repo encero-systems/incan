@@ -5,7 +5,7 @@ use super::types::next;
 use super::{NodeBindingError, Positions, Span};
 use crate::typechecker::ownership_contracts::flow::{
     Access, ClosureCaptures, Event, Graph, InputEvaluation, Invocation, InvocationArgument, Loan, LoanId, LoanKind,
-    Node, OperandDependency, OperationInputs, OwnedInitialization, Permission, Place, Projection, Root,
+    MutationBody, Node, OperandDependency, OperationInputs, OwnedInitialization, Permission, Place, Projection, Root,
 };
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 use std::collections::{BTreeMap, BTreeSet};
@@ -416,6 +416,10 @@ impl Reader<'_> {
             entry: self.number()?,
             permissions: self.ordered_map(Self::root, Self::permission)?,
             loans: self.list(Self::loan)?,
+            direct_iteration_loans: BTreeSet::new(),
+            item_taking_loops: BTreeMap::new(),
+            taking_moves: BTreeMap::new(),
+            dictionary_lookups: BTreeMap::new(),
             local_loans: self.ordered_map(Self::identity, |reader| Ok(LoanId(reader.number()?)))?,
             dependent_locals: self.ordered_map(Self::identity, Self::loan_ids)?,
             dependent_values: self.span_set()?,
@@ -423,6 +427,7 @@ impl Reader<'_> {
             operations: self.ordered_map(Self::semantic_span, Self::operation)?,
             invocations: self.ordered_map(Self::semantic_span, |reader| reader.invocation(schema))?,
             closures: self.ordered_map(Self::semantic_span, Self::closure)?,
+            mutation: MutationBody::default(),
             nodes: self.list(Self::node)?,
         })
     }

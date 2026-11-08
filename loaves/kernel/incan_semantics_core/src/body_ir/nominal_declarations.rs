@@ -86,6 +86,12 @@ pub struct TraitFieldImplementation {
 pub struct FieldMetadata {
     /// Canonical written field name.
     pub name: String,
+    /// Compiler-derived stored-record identity from the field's earliest declared name.
+    pub record_identity: Vec<u8>,
+    /// Whether this field participates in the canonical stored hash.
+    pub record_canonical: bool,
+    /// Earlier declared names in chronological order, earliest first.
+    pub renamed_from: Vec<String>,
     /// Explicit field alias, including an explicitly empty string.
     pub alias: Option<String>,
     /// Explicit source description, absent when none is declared.
@@ -228,11 +234,11 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
     let crate::SymbolOrigin::Package { library, module_path } = &identity.origin else {
         return None;
     };
-    (library == "incan_stdlib_core"
+    (library == "incan_stdlib_primitives"
         && module_path == &["reflection".to_owned()]
         && identity.declaration_name == "FieldInfo"
         && identity.kind == crate::SemanticSourceTargetKind::Class)
-        .then(|| "incan_std_core::reflection::FieldInfo".to_owned())
+        .then(|| "incan_std_primitives::reflection::FieldInfo".to_owned())
 }
 
 /// Physical direct-route declaration scope of a retained runtime carrier, or the existing source/package scope.

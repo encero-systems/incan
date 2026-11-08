@@ -695,11 +695,95 @@ pub(super) const EXPLICIT_OWNERSHIP_CONFLICT: DiagnosticCatalogEntry = Diagnosti
     docs_url: None,
 };
 
+pub(super) const STORE_RESERVED_MODEL_FIELD: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0127",
+    title: "Model field uses the store-reserved prefix",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A model field starts with `___`, which typed record stores reserve for record facts.",
+    explanation: "RFC 165 reserves every model-field spelling that starts with three underscores. The rule applies to every model, whether or not it is currently stored, so authored data can never collide with a store-owned fact during inspection or export. The closed store-owned set is `___id`, `___revision`, `___model_hash`, `___canonical_hash`, and `___object_hash`; any other imported `___` fact is refused rather than treated as an unknown field.",
+    examples: &["model Page:\n    ___id: int"],
+    common_causes: &["A field was named to look private or to mirror a store inspection record."],
+    fixes: &["Rename the model field so it does not start with three underscores."],
+    docs_url: None,
+};
+
+pub(super) const RECORD_MEMBER_IDENTITY_COLLISION: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0128",
+    title: "Record member identities collide",
+    severity: "error",
+    phase: "typecheck",
+    summary: "Two fields in one model, or two variants in one enum, have the same compiler-derived record identity.",
+    explanation: "RFC 165 derives a field or enum variant identity from the configured leading bytes of the SHA-256 digest of its earliest UTF-8 name. The identity needs to be unique only inside its model or enum. When two members collide, the diagnostic labels both declarations; authors do not assign an identity directly.",
+    examples: &["model CollidingFields:\n    fieldbbea15ef9eff: int\n    field3d4624c2d3a2: int"],
+    common_causes: &["Two distinct member names happen to share the same shortened SHA-256 identity."],
+    fixes: &["Rename the newer field or variant so the compiler derives a different identity."],
+    docs_url: None,
+};
+
+pub(super) const NONGENERIC_CALL_TYPE_ARGUMENTS: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0129",
+    title: "Nongeneric call has type arguments",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A function or method that declares no type parameters was called with an explicit type-argument list.",
+    explanation: "Explicit type arguments bind a callable's declared type parameters. A nongeneric callable has no slots for those arguments, so checking refuses the list at the call site instead of allowing it to reach lowering.",
+    examples: &["\"hello\".upper[int]()", "plain[str]()"],
+    common_causes: &[
+        "Adding a type argument to a builtin helper that has one fixed signature.",
+        "Treating a nongeneric source function or method as generic.",
+    ],
+    fixes: &[
+        "Remove the type-argument list, or declare type parameters on a source callable that is intended to be generic.",
+    ],
+    docs_url: None,
+};
+
+pub(super) const FIELD_RENAME_STILL_DECLARED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0130",
+    title: "Earlier field name is still declared",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A model field claims an earlier name that is still a field on the same model.",
+    explanation: "`renamed_from` declares continuity from an earlier field name. That earlier name cannot still identify a field on the same model, including the field carrying the metadata, because two current fields would then occupy the same point in the rename history.",
+    examples: &["model Customer:\n    email: str\n    email_address [renamed_from=\"email\"]: str"],
+    common_causes: &[
+        "The old field was retained after its replacement was added.",
+        "A field listed its current name in `renamed_from`.",
+    ],
+    fixes: &["Remove the rename claim, or remove the field that still uses the earlier name."],
+    docs_url: None,
+};
+
+pub(super) const FIELD_RENAME_CLAIMED_TWICE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0131",
+    title: "Earlier field name is claimed twice",
+    severity: "error",
+    phase: "typecheck",
+    summary: "One earlier field name appears more than once in a model's rename history.",
+    explanation: "An earlier name identifies one continuity chain. Two fields cannot claim it, and one field's ordered history cannot repeat it, because either form makes the earlier declaration ambiguous.",
+    examples: &[
+        "model Customer:\n    primary_email [renamed_from=\"email\"]: str\n    billing_email [renamed_from=\"email\"]: str",
+        "model Customer:\n    email_address [renamed_from=[\"email\", \"email\"]]: str",
+    ],
+    common_causes: &[
+        "Two replacement fields were given the same earlier name.",
+        "An ordered rename list accidentally repeats one entry.",
+    ],
+    fixes: &["Keep each earlier name on exactly one field and only once in its ordered history."],
+    docs_url: None,
+};
+
 pub(super) const CATALOG: &[DiagnosticCatalogEntry] = &[
     OWNERSHIP_BOUNDARY_UNPROVABLE,
     RESULT_SOURCE_INVALID,
     PLACE_BINDING_MIGRATION,
     EXPLICIT_OWNERSHIP_CONFLICT,
+    STORE_RESERVED_MODEL_FIELD,
+    RECORD_MEMBER_IDENTITY_COLLISION,
+    NONGENERIC_CALL_TYPE_ARGUMENTS,
+    FIELD_RENAME_STILL_DECLARED,
+    FIELD_RENAME_CLAIMED_TWICE,
     PARSER_SYNTAX,
     TYPECHECK,
     UNREACHABLE_CODE,

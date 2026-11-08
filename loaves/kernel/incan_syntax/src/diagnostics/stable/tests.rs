@@ -162,6 +162,40 @@ fn provider_import_failures_use_distinct_stable_codes() {
     }
 }
 
+#[test]
+fn field_rename_refusals_keep_codes_locations_and_explanations() -> Result<(), Box<dyn std::error::Error>> {
+    let still_declared = errors::field_rename_still_declared(
+        "Customer",
+        "email_address",
+        "email",
+        Span::new(60, 67),
+        Span::new(20, 30),
+    );
+    let claimed_twice = errors::field_rename_claimed_twice("Customer", "email", Span::new(40, 47), Span::new(80, 87));
+
+    assert_eq!(
+        code_for_error(&still_declared, DiagnosticPhase::Typecheck),
+        "INCAN-T0130"
+    );
+    assert_eq!(
+        code_for_error(&claimed_twice, DiagnosticPhase::Typecheck),
+        "INCAN-T0131"
+    );
+    assert!(still_declared.message.contains("still exists"));
+    assert!(claimed_twice.message.contains("claimed more than once"));
+    assert_eq!(still_declared.related_spans().len(), 1);
+    assert_eq!(still_declared.related_spans()[0].span, Span::new(20, 30));
+    assert_eq!(claimed_twice.related_spans().len(), 1);
+    assert_eq!(claimed_twice.related_spans()[0].span, Span::new(40, 47));
+    for code in ["INCAN-T0130", "INCAN-T0131"] {
+        let Some(entry) = explain(code) else {
+            return Err(format!("missing catalog explanation for {code}").into());
+        };
+        assert_eq!(entry.code, code);
+    }
+    Ok(())
+}
+
 /// Checker refusal families retain distinct codes and the remedies attached by their owning catalog entries.
 #[test]
 fn checker_refusals_of_unbuildable_programs_use_distinct_stable_codes() -> Result<(), Box<dyn std::error::Error>> {
@@ -330,6 +364,31 @@ fn reserved_compiler_name_refusal_uses_its_own_stable_code() -> Result<(), Box<d
         "a name that is only the prefix has nothing left to suggest, got {:?}",
         bare_prefix.hints()
     );
+    Ok(())
+}
+
+/// Typed record declaration refusals retain their own explainable codes and label both sides of a collision.
+#[test]
+fn record_declaration_refusals_use_their_stable_codes() -> Result<(), Box<dyn std::error::Error>> {
+    let reserved = errors::store_reserved_model_field("___id", Span::default());
+    let collision = errors::record_member_identity_collision(
+        "model",
+        "CollidingFields",
+        "field",
+        "fieldbbea15ef9eff",
+        Span::new(10, 20),
+        "field3d4624c2d3a2",
+        Span::new(30, 40),
+        "38dd14b42a9a",
+    );
+
+    assert_eq!(code_for_error(&reserved, DiagnosticPhase::Typecheck), "INCAN-T0127");
+    assert_eq!(code_for_error(&collision, DiagnosticPhase::Typecheck), "INCAN-T0128");
+    let reserved_entry = explain("INCAN-T0127").ok_or("INCAN-T0127 must have a catalog explanation")?;
+    let collision_entry = explain("INCAN-T0128").ok_or("INCAN-T0128 must have a catalog explanation")?;
+    assert_eq!(reserved_entry.severity, "error");
+    assert_eq!(collision_entry.severity, "error");
+    assert_eq!(collision.related_spans().len(), 1);
     Ok(())
 }
 
@@ -711,4 +770,30 @@ fn unreachable_code_warning_projects_as_an_explainable_typecheck_warning() {
         explain("INCAN-T0101").is_some(),
         "INCAN-T0101 must have a catalog explanation"
     );
+}
+
+/// Issue #2716: explicit type arguments on a nongeneric callable are refused at the written list with an actionable,
+/// explainable diagnostic instead of reaching lowering.
+#[test]
+fn nongeneric_call_type_arguments_use_a_distinct_stable_code() -> Result<(), Box<dyn std::error::Error>> {
+    let span = Span::new(14, 17);
+    let refusal = errors::explicit_type_arg_arity("upper", &[], &["int".to_string()], span);
+
+    assert_eq!(code_for_error(&refusal, DiagnosticPhase::Typecheck), "INCAN-T0129");
+    assert_eq!(refusal.message, "'upper' takes no type arguments");
+    assert_eq!(refusal.span, span);
+    assert!(
+        refusal
+            .hints()
+            .iter()
+            .any(|hint| hint == "Remove the type argument list"),
+        "the refusal must name the source fix, got {:?}",
+        refusal.hints()
+    );
+    let Some(entry) = explain("INCAN-T0129") else {
+        return Err("INCAN-T0129 must have a catalog explanation".into());
+    };
+    assert_eq!(entry.severity, "error");
+    assert_eq!(entry.phase, "typecheck");
+    Ok(())
 }

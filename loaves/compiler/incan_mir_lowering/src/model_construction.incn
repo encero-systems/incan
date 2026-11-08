@@ -22,6 +22,7 @@ from rust::incan_semantics_core::body_ir import (
     ArgumentBinding as RustArgumentBinding,
     ArgumentElement as RustArgumentElement,
     Constant as RustConstant,
+    NominalDeclaration as RustNominalDeclaration,
     Operand as RustOperand,
     Rvalue as RustRvalue,
 )
@@ -38,7 +39,7 @@ from defaults import model_default_arguments
 from lowering import BodyIrModule
 from checked_values import scalar_operand, scalar_place
 from operators import operand_type
-from statements import borrowed_payload, carrier_payload
+from statements import authenticated_component_operand, borrowed_payload, carrier_payload
 from call_arguments import tuple_pointer_element
 from builtin_calls import clone_enum_reference, clone_model_reference, coerce_numeric_operand
 from formatting import display_operand, lower_format
@@ -224,6 +225,14 @@ def model_field_operands(
                     slot,
                     builder.intrinsics,
                 )?
+                # A generic carrier selected as this body's returned view stores the authenticated source loan in its
+                # reference-shaped field, just as a tuple or builtin result carrier stores its selected payload.
+                if builder.carries_view:
+                    match reference_contract(field_type):
+                        Ok(_contract) =>
+                            operands.append(authenticated_component_operand(builder, value, field_type, span)?)
+                            continue
+                        Err(_reason) => pass
                 if field_type == PlanType.String:
                     text = display_operand(builder, value, span)?
                     operands.append(read_place(text, true, span))
@@ -234,12 +243,27 @@ def model_field_operands(
                             stored = coerce_numeric_operand(builder, operand, referent[0], span)?
                             operands.append(boxed_operand(builder, stored, referent[0], span))
                         _ =>
-                            operand = boundary_operand(builder, value, field_type, span)?
+                            operand = model_field_boundary(builder, value, declaration, slot, field_type, span)?
                             # Generic inference has already selected this field's carrier; retain its widening just
                             # as a call slot does.
                             operands.append(coerce_numeric_operand(builder, operand, field_type, span)?)
             None => return Err("unsupported Body IR spread model field")
     return Ok(operands)
+
+
+def model_field_boundary(
+    mut builder: Builder,
+    value: &RustOperand,
+    declaration: &RustNominalDeclaration,
+    slot: int,
+    field_type: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Add the closed field identity to a failed value-boundary diagnostic without changing materialization."""
+    match boundary_operand(builder, value, field_type, span):
+        Ok(operand) => return Ok(operand)
+        Err(reason) =>
+            return Err(f"{reason}; constructing {declaration.name}.{declaration.fields[slot]} as {field_type:?}")
 
 
 def boxed_operand(mut builder: Builder, value: Operand, referent: PlanType, span: SourceSpan) -> Operand:

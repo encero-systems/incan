@@ -18,7 +18,7 @@ pub(super) fn is_standard_slot(identity: &CanonicalSymbolId, name: &str) -> bool
     match &identity.origin {
         SymbolOrigin::Module(path) => path.iter().map(String::as_str).eq(["std", "derives", "comparison"]),
         SymbolOrigin::Package { library, module_path } => {
-            library == "incan_stdlib_core" && module_path.iter().map(String::as_str).eq(["derives", "comparison"])
+            library == "incan_stdlib_primitives" && module_path.iter().map(String::as_str).eq(["derives", "comparison"])
         }
         _ => false,
     }

@@ -16,7 +16,7 @@ from std.fs import Path
 pub const OVEN: str = "oven"
 pub const INCAN: str = "incan"
 # Commands only `oven` runs; `inspect` is split by its subcommand below.
-const OVEN_COMMANDS: FrozenList[str] = ["describe-unit", "owner", "bakery"]
+const OVEN_COMMANDS: FrozenList[str] = ["describe-unit", "owner", "bakery", "lock"]
 const OVEN_INSPECTIONS: FrozenList[str] = ["dependencies", "run"]
 # Commands only `incan` runs.
 const INCAN_COMMANDS: FrozenList[str] = ["explain", "fmt", "mcp", "toolchain"]
@@ -86,7 +86,11 @@ pub def expose_entry_points() -> Result[Path, str]:
         if name == executable.name():
             continue
         if entry.exists() or entry.is_symlink():
-            if not entry.samefile(executable.0).unwrap_or(false):
+            mut same = false
+            match entry.samefile(executable.0):
+                Ok(matches) => same = matches
+                Err(_) => pass
+            if not same:
                 return Err(f"{entry.0} exists and is not this Oven; remove it to expose the `{name}` entry point")
             continue
         match symlink(executable.name(), entry.0):

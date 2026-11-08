@@ -6,8 +6,8 @@
 //! diagnostics as anchored semantic values, and the published diagnostics are rendered from those values.
 
 use super::diagnostic_values::{AnchorFault, AnchoredDiagnostic, DiagnosticPositions};
-use super::mut_arguments::{self, MutBodyLocal};
 use super::ownership_contracts::CallableSource;
+use super::ownership_contracts::mutation::{self, MutationLocal};
 use super::type_info::{
     CAbiInteropArtifacts, CallArtifacts, ExpressionArtifacts, ProtocolArtifacts, ReferenceArtifacts,
     RustInteropArtifacts, TraitArtifacts, TypeCheckInfo,
@@ -45,7 +45,7 @@ pub(super) struct BodyLocal {
     rust: RustInteropArtifacts,
     traits: TraitArtifacts,
     c_abi: CAbiInteropArtifacts,
-    mutation: MutBodyLocal,
+    mutation: MutationLocal,
     dictionary: Vec<(usize, Span, String)>,
     iterator_sum_items: BTreeMap<Span, ResolvedType>,
     /// This owner's own entries in the active diagnostic writer, excluding nested owners. Settlement captures them
@@ -74,7 +74,7 @@ impl BodyCheckScope {
         let visibility = checker.check_environment().visibility_point();
         let mut enclosing = BodyLocal::take(checker);
         enclosing.install_shared_inputs(checker);
-        enclosing.mutation.enter_statement_frame(&mut checker.mut_params);
+        enclosing.mutation.enter_statement_frame(&mut checker.mutation);
         #[cfg(test)]
         checker.body_enclosing_observations.push(enclosing.clone());
         Self {
@@ -150,7 +150,7 @@ mod tests;
 #[derive(Debug, Clone)]
 pub(crate) struct CheckedBodyView {
     local: Arc<BodyLocal>,
-    effect_reads: super::mut_arguments::MutEffectReads,
+    effect_reads: mutation::MutationEffectReads,
     diagnostics: Vec<AnchoredDiagnostic>,
     warnings: Vec<AnchoredDiagnostic>,
     mutation: Vec<(usize, AnchoredDiagnostic)>,

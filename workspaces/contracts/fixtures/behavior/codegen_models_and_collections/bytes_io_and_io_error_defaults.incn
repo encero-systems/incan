@@ -1,4 +1,4 @@
-# behavior: WriteBuffer owns mutable bytes and snapshots, std.io reexports the primitive Endian and IoError declarations, BytesIO retains its byte-stream behavior, and a BytesIO reader streams into a sha256 digest
+# behavior: primitive buffers provide bounded owned-byte reads, std.io preserves shared declarations, and a BytesIO reader streams into SHA-256
 # expect-stdout:
 #   4
 #   true
@@ -22,10 +22,16 @@
 #   invalid_input
 #   2
 #   3
+#   true
+#   true
+#   true
+#   true
+#   truncated
+#   limit_exceeded
 
 from std.io import BytesIO, Endian as StreamEndian
 from std.hash import reader_digest
-from std.primitives.io import Endian as PrimitiveEndian, IoError as PrimitiveIoError, WriteBuffer, advance_cursor, read_cursor, read_slice_len, remaining_bytes
+from std.primitives.io import ByteReader, Endian as PrimitiveEndian, IoError as PrimitiveIoError, WriteBuffer, advance_cursor, read_cursor, read_slice_len, remaining_bytes
 from std.traits.error import Error
 
 
@@ -89,6 +95,28 @@ def show_independent_read_cursors() -> None:
     println(read_slice_len(second_remaining))
 
 
+def show_owned_byte_reads() -> None:
+    """Read scalars and a bounded length-prefixed payload without indexing beyond the owned bytes."""
+    mut reader = ByteReader.from_bytes(b"\x01\x02\x03\x04\x05\x06\x07\x08\x03\x00\x00\x00\x00\x00\x00\x00abc")
+    println(reader.read_u16_le() == Some(513u16))
+    reader = ByteReader.from_bytes(b"\x01\x02\x03\x04")
+    println(reader.read_u32_le() == Some(67305985u32))
+    reader = ByteReader.from_bytes(b"\x01\x02\x03\x04\x05\x06\x07\x08")
+    println(reader.read_u64_le() == Some(578437695752307201u64))
+    reader = ByteReader.from_bytes(b"\x03\x00\x00\x00\x00\x00\x00\x00abc")
+    match reader.read_length_prefixed(3):
+        Ok(payload) => println(payload == b"abc")
+        Err(error) => println(error.kind)
+    reader = ByteReader.from_bytes(b"\x04\x00\x00\x00\x00\x00\x00\x00abc")
+    match reader.read_length_prefixed(4):
+        Ok(payload) => println(len(payload))
+        Err(error) => println(error.kind)
+    reader = ByteReader.from_bytes(b"\x04\x00\x00\x00\x00\x00\x00\x00abcd")
+    match reader.read_length_prefixed(3):
+        Ok(payload) => println(len(payload))
+        Err(error) => println(error.kind)
+
+
 def main() -> None:
     println(len(oven_bytes()))
     println(oven_bytes() == b"oven")
@@ -110,3 +138,4 @@ def main() -> None:
         Ok(_) => pass
         Err(error) => println(error.message())
     show_independent_read_cursors()
+    show_owned_byte_reads()

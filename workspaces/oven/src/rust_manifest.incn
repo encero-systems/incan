@@ -53,8 +53,8 @@ pub def rust_facet(
     # 1. The package, its crate name and its edition come from the manifest, with the documented fallbacks.
     project_intent = read_project(root, reader).map_err((error) => error.message())?
     document = project_intent.parsed
-    package = required_string(document, "project.name")?
-    crate_name = crate_name_of(document, package)?
+    package = project_intent.intent.name
+    crate_name = project_intent.intent.rust_name
     edition = project_intent.intent.rust_edition
     # 2. A library crate is the `src/lib.rs` of the source root, and the manifest may type it a procedural macro.
     mut library = library_root(document, root)?.joinpath("src").joinpath("lib.rs")
@@ -146,7 +146,7 @@ def declared_binaries(document: TomlValue) -> Result[list[TomlValue], str]:
 
 pub def package_environment(project: str, declared: RustFacet, crate_name: str) -> Dict[str, str]:
     """The package environment Rust code reads at compile time (`env!`), under the names the Rust ecosystem uses."""
-    mut environment: Dict[str, str] = {"CARGO_PKG_NAME": declared.package, "CARGO_PKG_VERSION": declared.version, "CARGO_MANIFEST_DIR": project, "CARGO_CRATE_NAME": crate_name, "CARGO_PKG_AUTHORS": "", "CARGO_PKG_DESCRIPTION": ""}
+    mut environment: Dict[str, str] = {"CARGO_PKG_NAME": declared.crate_name, "CARGO_PKG_VERSION": declared.version, "CARGO_MANIFEST_DIR": project, "CARGO_CRATE_NAME": crate_name, "CARGO_PKG_AUTHORS": "", "CARGO_PKG_DESCRIPTION": ""}
     release = declared.version.split("-")
     mut pre = ""
     if len(release) > 1:

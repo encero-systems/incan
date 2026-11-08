@@ -180,7 +180,7 @@ struct Rebinding {
     local: BodyLocal,
     diagnostics: BTreeMap<String, super::super::diagnostic_values::AnchoredDiagnostic>,
     warnings: BTreeMap<String, super::super::diagnostic_values::AnchoredDiagnostic>,
-    mutation: super::super::mut_arguments::RecordMutation,
+    mutation: super::super::ownership_contracts::mutation::RecordedMutation,
     status: Option<bool>,
     binding: Option<super::super::type_info::FunctionBindingInfo>,
     defaults: BTreeMap<Span, (Span, String)>,
@@ -306,7 +306,9 @@ impl Rebinding {
 
     /// Finish as either a pending local value or an independently settled owner; no local fact is promoted by decoding.
     fn finish(mut self, stage: &str) -> Result<NativeOwner, NodeBindingError> {
-        self.local.mutation = super::super::mut_arguments::MutBodyLocal::from_record_projection(self.mutation);
+        self.local.mutation =
+            super::super::ownership_contracts::mutation::MutationLocal::from_record_projection(self.mutation);
+        self.local.mutation.restore_flow_graphs(&mut self.local.protocols);
         if stage == "local" {
             if self.status != Some(true)
                 || !self.diagnostics.is_empty()

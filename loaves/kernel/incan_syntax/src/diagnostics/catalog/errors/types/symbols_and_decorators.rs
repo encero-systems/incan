@@ -34,6 +34,49 @@ pub fn reserved_compiler_name(name: &str, kind: &str, span: Span) -> CompileErro
     .with_note("The compiler names the items and locals it generates with this prefix, so a source name spelled the same way could collide with one of them")
 }
 
+/// Report a model field that uses the store-reserved `___` prefix (RFC 165).
+pub fn store_reserved_model_field(name: &str, span: Span) -> CompileError {
+    let prefix = conventions::STORE_RESERVED_NAME_PREFIX;
+    let reserved = conventions::STORE_RESERVED_FIELD_NAMES.join(", ");
+    CompileError::type_error(
+        format!("Model field '{name}' starts with '{prefix}', a prefix reserved for stored-record facts"),
+        span,
+    )
+    .with_stable_code("INCAN-T0127")
+    .with_primary_label("Store-reserved model field declared here")
+    .with_hint(format!("Rename the field so it does not start with '{prefix}'"))
+    .with_note(format!("The closed store-owned name set is: {reserved}"))
+}
+
+/// Report two model fields or enum variants with one RFC 165 identity.
+pub fn record_member_identity_collision(
+    owner_kind: &str,
+    owner_name: &str,
+    member_kind: &str,
+    first_name: &str,
+    first_span: Span,
+    second_name: &str,
+    second_span: Span,
+    identity: &str,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "{owner_kind} '{owner_name}' has {member_kind}s '{first_name}' and '{second_name}' with the same record identity '{identity}'"
+        ),
+        second_span,
+    )
+    .with_stable_code("INCAN-T0128")
+    .with_primary_label(format!("'{second_name}' has record identity '{identity}'"))
+    .with_related_span(
+        first_span,
+        format!("'{first_name}' has the same record identity '{identity}'"),
+    )
+    .with_hint(format!(
+        "Rename the newer {member_kind} '{second_name}' so its record identity differs from '{first_name}'"
+    ))
+    .with_note("Record identities use the configured leading bytes of SHA-256 over the field or variant's earliest UTF-8 name")
+}
+
 /// Report an unknown type name written in a callable's signature or body annotation.
 ///
 /// The likeliest cause there is a type parameter that was never declared, not a missing import, so the hint shows

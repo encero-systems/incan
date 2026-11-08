@@ -4,7 +4,7 @@ Derive macros for the Incan programming language standard library.
 
 This crate provides procedural macros that generate boilerplate implementations for Incan language features. These macros are automatically used by the Incan compiler when you use decorators like `@derive(...)` in your Incan code.
 
-This crate is toolchain-locked to the Incan compiler and `incan_std_core`. Its macros are exported because Rust procedural macro crates must export proc macros, not because they are intended as an independently stable public macro toolkit.
+This crate is toolchain-locked to the Incan compiler and `incan_std_primitives`. Its macros are exported because Rust procedural macro crates must export proc macros, not because they are intended as an independently stable public macro toolkit.
 
 ## Purpose
 
@@ -33,10 +33,10 @@ This crate provides those macros.
 
 ### `#[derive(FieldInfo)]`
 
-Implements the `incan_std_core::HasFieldInfo` trait, enabling compile-time reflection:
+Implements the `incan_std_primitives::HasFieldInfo` trait, enabling compile-time reflection:
 
 ```rust
-use incan_std_core::HasFieldInfo;
+use incan_std_primitives::HasFieldInfo;
 use incan_derive::FieldInfo;
 
 #[derive(FieldInfo)]
@@ -104,7 +104,7 @@ Alias for `IncanClass` - same functionality, clearer name in some contexts.
 Rust requires procedural macros to live in a crate with `proc-macro = true` in `Cargo.toml`. Such crates can **only** export proc macros, not regular code. This is why we have:
 
 - **`incan_derive`** (this crate) - The macro definitions
-- **`incan_std_core`** - The trait definitions the macros implement
+- **`incan_std_primitives`** - The trait definitions the macros implement
 
 ### Code Generation Strategy
 
@@ -117,7 +117,7 @@ The compiler automatically:
 1. Detects `@derive(...)` decorators in Incan source
 2. Maps them to Rust derive attributes
 3. Adds prerequisite derives (e.g., `Eq` requires `PartialEq`)
-4. Ensures both `incan_std_core` and `incan_derive` are in scope
+4. Ensures both `incan_std_primitives` and `incan_derive` are in scope
 
 You should never need to use these macros directly - the compiler handles it.
 
@@ -135,7 +135,7 @@ Derive behavior is tested through programs in `workspaces/contracts/fixtures/beh
 
 When adding a new derive macro:
 
-1. Define the trait in the owning stdlib facet (`incan_std_core` for reflection)
+1. Define the trait in the owning stdlib facet (`incan_std_primitives` for reflection)
 2. Implement the proc macro here
 3. Update checked derive handling and native lowering for the declaration
 4. Extend a matching case under `workspaces/contracts/fixtures/behavior/`

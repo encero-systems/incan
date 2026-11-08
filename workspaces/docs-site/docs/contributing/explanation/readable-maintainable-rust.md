@@ -231,8 +231,8 @@ version = "0.1.0"
 type = "lib"
 edition = "2024"
 
-[rust-dependencies]
-thiserror = "1"
+[dependencies]
+thiserror = { loaf = "crates-io/thiserror", version = "1" }
 ```
 
 ### Typical CI Steps

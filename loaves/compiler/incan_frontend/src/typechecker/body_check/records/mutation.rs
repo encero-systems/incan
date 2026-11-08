@@ -2,13 +2,13 @@
 
 use super::input_flow::Reader;
 use super::{Fields, NodeBindingError, Positions, span_of};
-use crate::typechecker::mut_arguments::{MutBodyLocal, RecordMutation};
+use crate::typechecker::ownership_contracts::mutation::{MutationLocal, RecordedMutation};
 use std::collections::BTreeSet;
 
 /// Keep deterministic owner membership, changed-parameter inventories and reassigned local declarations.
 pub(super) fn project(
     positions: &Positions,
-    local: &MutBodyLocal,
+    local: &MutationLocal,
     fields: &mut Fields,
 ) -> Result<(), NodeBindingError> {
     let mutation = local
@@ -47,7 +47,7 @@ pub(super) fn project(
 /// Rebuild one supported mutation row without asking the current checker for any effect payload.
 pub(super) fn restore(
     positions: &Positions,
-    value: &mut RecordMutation,
+    value: &mut RecordedMutation,
     row: &[String],
 ) -> Result<(), NodeBindingError> {
     let span = positions.span(&row[1])?;

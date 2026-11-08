@@ -156,7 +156,7 @@ impl TypeChecker {
                     &self.type_info.body_ir_iterator_sum_items,
                     &self.type_info.body_ir_newtypes,
                 ),
-                &self.mut_params,
+                &self.mutation,
                 &self.pending_uncopyable_dict_lookups,
                 &self.errors,
                 &self.warnings,

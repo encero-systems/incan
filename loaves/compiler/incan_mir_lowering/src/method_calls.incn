@@ -60,6 +60,8 @@ from call_arguments import call_parameter_type, ordered_slot_operands
 from builtin_methods import lower_builtin_method
 from sequence_builtins import argument_type
 from result_carriers import lower_carrier_method
+from rust::incan_lang::lang::surface::iterator_methods import IteratorMethodId as RustIteratorMethodId
+from rust::incan_lang::lang::surface::iterator_methods import as_str as iterator_method_name
 
 
 pub def lower_method_call(
@@ -90,6 +92,8 @@ def lower_checked_method_call(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Borrow the proven receiver and call its canonical method body with bound ordinary arguments."""
+    if target.has_builtin_selection() and not target.has_valid_builtin_selection():
+        return Err("unsupported Body IR builtin method operation without matching canonical provenance")
     match target.intrinsic_carrier:
         Some(_carrier) => return lower_carrier_method(builder, target, arguments, destination, span)
         None => pass
@@ -97,15 +101,18 @@ def lower_checked_method_call(
     match target.canonical:
         Some(identity) =>
             if identity.origin == SymbolOrigin.Builtin:
-                if identity.declaration_name == "Iterator.collect":
+                if target.builtin_iterator() == Some(RustIteratorMethodId.Collect):
                     match argument_type(builder, arguments, 0, span)?:
                         PlanType.Model(_owner, _name) =>
                             selected = concrete_iterator_collect(module, builder, target, arguments, span)?
                             return lower_retained_method_call(module, builder, selected, arguments, destination, span)
                         _ => pass
-                match result_combinator(str(identity.declaration_name)):
-                    Some(combinator) =>
-                        return lower_result_combinator(module, builder, combinator, arguments, destination, span)
+                match target.builtin_result():
+                    Some(result_method) =>
+                        match result_combinator(result_method):
+                            Some(combinator) =>
+                                return lower_result_combinator(module, builder, combinator, arguments, destination, span)
+                            None => pass
                     None => pass
                 return lower_builtin_method(builder, target, arguments, destination, span)
         None =>
@@ -218,6 +225,7 @@ def concrete_iterator_collect(
         return Err("opaque Iterator.collect requires a standard library owner")
     mut selected = target.clone()
     mut matches = 0
+    selected_method = iterator_method_name(RustIteratorMethodId.Collect)
     for protocol_position in range(len(module.trait_declarations)):
         protocol = borrowed_at(module.trait_declarations, protocol_position)
         if not standard_iterator_protocol(protocol):
@@ -230,7 +238,7 @@ def concrete_iterator_collect(
                 or method.origin != protocol.origin
                 or method.namespace != SymbolNamespace.Member
                 or method.kind != SemanticSourceTargetKind.Method
-                or method.declaration_name != "collect"
+                or method.declaration_name != selected_method
             ):
                 continue
             if not (
@@ -264,9 +272,12 @@ def retained_iterator_default(
             if (
                 identity.kind != SemanticSourceTargetKind.Method
                 or identity.namespace != SymbolNamespace.Member
-                or identity.declaration_name not in ["iter", "collect"]
             ):
                 return Ok(false)
+            match target.builtin_iterator():
+                Some(RustIteratorMethodId.Iter) => pass
+                Some(RustIteratorMethodId.Collect) => pass
+                _ => return Ok(false)
             mut standard = false
             for protocol_position in range(len(module.trait_declarations)):
                 protocol = borrowed_at(module.trait_declarations, protocol_position)

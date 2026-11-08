@@ -130,7 +130,7 @@ The 0.7 milestone is the broader feature reopening lane after the backend replac
 
 Examples of deferred lanes:
 
-- incan.pub and package registry/product identity.
+- loaves.pub and package registry/product identity.
 - IncQL and Pallay toolchain dogfood.
 - source-local feature metadata.
 - Python interop research.

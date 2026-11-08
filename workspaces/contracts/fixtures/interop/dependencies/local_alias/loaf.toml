@@ -5,5 +5,5 @@ version = "0.1.0"
 [project.scripts]
 main = "src/main.incn"
 
-[rust-dependencies]
-counter = { package = "borrow_fixture", path = "rust/borrow_fixture" }
+[dependencies]
+counter = { loaf = "borrow_fixture", path = "rust/borrow_fixture" }

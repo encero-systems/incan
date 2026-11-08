@@ -119,7 +119,9 @@ impl TypeChecker {
             | ResultMethodId::Inspect
             | ResultMethodId::InspectErr
             | ResultMethodId::Unwrap
-            | ResultMethodId::UnwrapOr => ResolvedType::Unknown,
+            | ResultMethodId::UnwrapOr
+            | ResultMethodId::IsOk
+            | ResultMethodId::IsErr => ResolvedType::Unknown,
         }
     }
 
@@ -141,7 +143,7 @@ impl TypeChecker {
             ResultMethodId::Map | ResultMethodId::AndThen => Some(result(ResolvedType::Unknown, args[1].clone())),
             ResultMethodId::MapErr | ResultMethodId::OrElse => Some(result(args[0].clone(), ResolvedType::Unknown)),
             ResultMethodId::Inspect | ResultMethodId::InspectErr => Some(expected.clone()),
-            ResultMethodId::Unwrap | ResultMethodId::UnwrapOr => None,
+            ResultMethodId::Unwrap | ResultMethodId::UnwrapOr | ResultMethodId::IsOk | ResultMethodId::IsErr => None,
         }
     }
 
@@ -502,7 +504,10 @@ impl TypeChecker {
                 self.validate_result_combinator_callback(method, callback_ty, &err_ty, Some(&ResolvedType::Unit), span);
                 ResolvedType::Generic("Result".to_string(), vec![ok_ty, err_ty])
             }
-            result_methods::ResultMethodId::Unwrap | result_methods::ResultMethodId::UnwrapOr => ResolvedType::Unknown,
+            result_methods::ResultMethodId::Unwrap
+            | result_methods::ResultMethodId::UnwrapOr
+            | result_methods::ResultMethodId::IsOk
+            | result_methods::ResultMethodId::IsErr => ResolvedType::Unknown,
         }
     }
 }

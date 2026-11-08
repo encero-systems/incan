@@ -40,7 +40,8 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 use incan_semantics_core::{SemanticRegistrySubjectKind, SemanticRegistryValue, SurfaceModifierTypeCheck};
 use std::collections::{HashMap, HashSet};
 
-use super::{AnnotationOwner, PUBLIC_LIBRARY_NAMESPACE, mut_arguments, ownership_contracts, reachability, type_info};
+use super::ownership_contracts::mutation;
+use super::{AnnotationOwner, PUBLIC_LIBRARY_NAMESPACE, ownership_contracts, reachability, type_info};
 
 mod callables;
 mod classes;
@@ -68,7 +69,7 @@ struct PreparedCallableCheck {
     annotation_owner: Option<super::AnnotationOwner>,
     bound_details: HashMap<String, Vec<TypeBoundInfo>>,
     mutable_bindings: HashSet<String>,
-    mut_param_body: super::mut_arguments::MutParamBodyState,
+    mut_param_body: mutation::MutParamBodyState,
     return_error_type: Option<ResolvedType>,
     yield_context: YieldContext,
     has_statement_body: bool,
@@ -78,7 +79,7 @@ struct PreparedCallableCheck {
 struct CallableCheckRestore {
     annotation_owner: Option<super::AnnotationOwner>,
     mutable_bindings: HashSet<String>,
-    mut_param_body: super::mut_arguments::MutParamBodyState,
+    mut_param_body: mutation::MutParamBodyState,
 }
 
 /// A function's final declaration inputs and its native-call and receiver context.

@@ -1,9 +1,11 @@
-# behavior: primitive filesystem resources read and decode source bytes, retain views and release owned handles and locks (#2501)
+# behavior: primitive filesystem resources read and decode source bytes, file and owned-byte views share one bounded type, and placement-neutral guards retain resources (#2501, #2519)
 # expect-stdout:
 #   0
 #   3 3 3 1
 #   7
 #   97 97
+#   true
+#   true
 #   true
 #   true
 #   true
@@ -21,10 +23,12 @@
 
 """Exercise source reading, UTF-8 decoding and retained resources without importing higher standard facades."""
 
-from std.primitives.fs import MappedView, Path, map_read, open_read, open_write, read_chunk, try_exclusive, write_all
+from std.primitives.fs import Path, map_read, open_read, open_write, read_chunk, try_exclusive, write_all
 from std.primitives.fs.file import read_remaining
+from std.primitives.locking import LockGuard
 from std.primitives.native_strings import nul_terminated_utf8
 from std.primitives.text import decode_utf8
+from std.primitives.views import MappedFile, MappedView
 
 
 def read_source_chunks(path: Path, chunk_size: int) -> Result[list[bytes], str]:
@@ -71,6 +75,21 @@ def retained_view(path: Path) -> Result[MappedView, str]:
     match mapping.view(1, 3):
         Some(view) => return Ok(view)
         None => return Err("expected a valid mapped view")
+
+
+def retained_owned_view() -> Result[MappedView, str]:
+    """Return a bounded view after the local owned-byte handle leaves scope."""
+    mapping = MappedFile.owned(b"abcdefg")?
+    match mapping.view(1, 3):
+        Some(view) => return Ok(view)
+        None => return Err("expected a valid owned-byte view")
+
+
+def constructs_guard() -> bool:
+    """Clone an in-process guard and observe that both values retain one anchor."""
+    guard = LockGuard.memory()
+    clone = guard.clone()
+    return guard.reference_count() == 2 and clone.reference_count() == 2
 
 
 def lock_conflicts(path: Path) -> Result[bool, str]:
@@ -121,7 +140,7 @@ def main() -> Result[None, str]:
     1. Read empty, multi-chunk and short final reads.
     2. Keep two owned readers at independent cursor positions.
     3. Report open and read failures and release a handle on early return.
-    4. Retain a mapped view and release exclusive lock guards.
+    4. Retain mapped and owned-byte views and release placement-neutral lock guards.
     5. Decode valid, malformed and truncated source bytes with strict and replacement behavior.
     6. Build independent NUL-terminated UTF-8 storage and reject an interior NUL.
     """
@@ -156,12 +175,14 @@ def main() -> Result[None, str]:
         Ok(_) => println(false)
         Err(_) => println(true)
 
-    # 4. Keep mapped bytes after their mapping handle leaves scope, then release and reacquire one lock.
+    # 4. Keep mapped and owned bytes after their owner handles leave scope, then release and reacquire one lock.
     view = retained_view(source_path)?
     println(view.to_bytes() == b"bcd")
     lock_path = Path(value="primitive-source-lock")
     println(lock_conflicts(lock_path)?)
     println(lock_released(lock_path)?)
+    println(retained_owned_view()?.to_bytes() == b"bcd")
+    println(constructs_guard())
 
     # 5. Source loading uses the same strict and replacement byte decoder as generated programs.
     valid_path = Path(value="primitive-source-valid-utf8")

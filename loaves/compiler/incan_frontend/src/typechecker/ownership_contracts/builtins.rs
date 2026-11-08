@@ -2,8 +2,9 @@
 //! the builtin carrier forms that hold or reveal a carried view.
 
 use incan_lang::lang::builtins::BuiltinMethodId;
+use incan_lang::lang::surface::bytes_methods::BytesMethodId;
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
-use incan_lang::lang::surface::iterator_methods::{self, IteratorMethodId};
+use incan_lang::lang::surface::iterator_methods::IteratorMethodId;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
@@ -15,30 +16,15 @@ use incan_semantics_core::SurfaceFeatureKey;
 
 use super::flow::{Graph, LoanId};
 
-/// Return the registry identity of a deferred iterator or generator member.
-///
-/// Collection families with a closed [`BuiltinMethodId`] are selected through the typed checker fact instead. This
-/// identity-backed path remains for iterator and generator operations whose family has not yet joined that handoff.
-pub(super) fn retained_iterator_member(identity: &CanonicalSymbolId) -> Option<IteratorMethodId> {
-    if identity.origin != SymbolOrigin::Builtin || identity.namespace != incan_semantics_core::SymbolNamespace::Member {
-        return None;
-    }
-    let method = iterator_methods::from_str(identity.declaration_name.rsplit_once('.')?.1)?;
-    let owner = identity.declaration_name.split_once('.')?.0;
-    let generator = collections::as_str(CollectionTypeId::Generator);
-    let iterator = incan_lang::lang::traits::as_str(incan_lang::lang::traits::TraitId::Iterator);
-    (owner == generator || owner == iterator).then_some(method)
-}
-
 /// Return the lazy iterator member authenticated for one checked call span.
 ///
-/// A list iterator is selected only by its typed builtin operation. Iterator and generator adapters retain their
-/// existing canonical-identity path until those families gain their own typed operation handoff.
+/// List, opaque-iterator and concrete-generator members are selected only by their typed builtin operation.
 pub(super) fn retained_iterator_method(facts: &TypeCheckInfo, span: Span) -> Option<IteratorMethodId> {
-    if facts.resolved_builtin_method_call(span) == Some(BuiltinMethodId::ListIter) {
-        return Some(IteratorMethodId::Iter);
+    match facts.resolved_builtin_method_call(span)? {
+        BuiltinMethodId::ListIter => Some(IteratorMethodId::Iter),
+        BuiltinMethodId::Iterator(method) | BuiltinMethodId::Generator(method) => Some(method),
+        _ => None,
     }
-    retained_iterator_member(facts.resolved_identity(span)?)
 }
 
 /// Return whether a loan descends from a checked lazy-result dependency. The source expression's canonical builtin
@@ -137,10 +123,10 @@ pub(super) fn list_method_writes(facts: &TypeCheckInfo, span: Span) -> Option<bo
 /// Return the receiver of the compiler-selected `bytes.as_slice()` view. The retained Body IR result fact proves this
 /// is the builtin native slice projection rather than a source method with the same spelling.
 pub(super) fn byte_slice_view<'a>(facts: &TypeCheckInfo, expression: &'a Spanned<Expr>) -> Option<&'a Spanned<Expr>> {
-    let Expr::MethodCall(receiver, method, _, arguments) = &expression.node else {
+    let Expr::MethodCall(receiver, _, _, arguments) = &expression.node else {
         return None;
     };
-    (method == "as_slice"
+    (facts.resolved_builtin_method_call(expression.span) == Some(BuiltinMethodId::Bytes(BytesMethodId::AsSlice))
         && arguments.is_empty()
         && facts.expr_type(receiver.span) == Some(&ResolvedType::Bytes)
         && facts.calls.body_ir_call_result_types.contains_key(&expression.span))

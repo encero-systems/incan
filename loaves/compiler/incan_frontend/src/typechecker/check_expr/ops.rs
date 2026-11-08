@@ -24,6 +24,7 @@ use crate::typechecker::{
 };
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
+use incan_lang::lang::surface::constructors::ConstructorId;
 use incan_lang::lang::traits as builtin_traits;
 use incan_lang::{NumericTy, result_numeric_type};
 

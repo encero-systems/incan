@@ -248,7 +248,7 @@ impl TypeChecker {
                     func_name,
                     &info.type_params,
                     &Self::written_type_args(explicit_type_args),
-                    span,
+                    Self::explicit_type_argument_span(explicit_type_args, span),
                 ));
             } else {
                 let resolved: Vec<_> = explicit_type_args

@@ -380,14 +380,14 @@ def source_nominal_storage(owners: &dict[str, bool], ty: &RustType) -> Result[Ru
         _ => return Ok(ty.clone())
 
 
-def source_nominal_owner(owners: &dict[str, bool], name: str) -> bool:
+pub def source_nominal_owner(owners: &dict[str, bool], name: str) -> bool:
     """Read the checked-origin index without cloning its keys or revisiting declaration metadata."""
     match owners.get(name):
         Some(value) => return value.clone()
         None => return false
 
 
-def source_nominal_owners(body: &Body) -> dict[str, bool]:
+pub def source_nominal_owners(body: &Body) -> dict[str, bool]:
     """Index checked source origins once per frame, preserving direct alias precedence over carrier spellings."""
     mut owners: dict[str, bool] = {}
     for identity in body.named_type_identities.values():

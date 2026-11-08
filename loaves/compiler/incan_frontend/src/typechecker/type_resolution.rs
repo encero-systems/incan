@@ -43,7 +43,6 @@ impl TypeChecker {
                         if payload.len() == 1 && self.explicit_ownership_mode(name).is_some_and(&defer))
                 })
             {
-                // One component carries the view; every other component stays an ordinary type.
                 for (position, argument) in arguments.iter().enumerate() {
                     match &argument.node {
                         Type::Generic(_, payload) if position == index => {
@@ -52,6 +51,9 @@ impl TypeChecker {
                         _ => self.refuse_unimplemented_ownership_annotation(argument),
                     }
                 }
+            } else if carried {
+                let mut deferred = false;
+                self.refuse_result_ownership_except(ty, &defer, &mut deferred);
             } else {
                 self.refuse_unimplemented_ownership_annotation(ty);
             }
@@ -94,12 +96,48 @@ impl TypeChecker {
             &|segments| self.qualified_type_annotation_resolved_type(segments),
         );
         let resolved = self.normalize_union_member_identity(resolved);
+        let resolved = self.retain_qualified_annotation_nominals(&ty.node, resolved);
         let resolved = self.expand_type_aliases(resolved);
         // Only the checking pass sees every declaration's derives; collection may resolve a name declared further on.
         if self.validate_source_type_names {
             self.refuse_unhashable_collection_keys(ty, &resolved);
         }
         resolved
+    }
+
+    /// Defer the first supported result mode at any aggregate depth while refusing every other ownership wrapper.
+    /// The checked contract later requires one declared source and validates that complete structural path.
+    fn refuse_result_ownership_except(
+        &mut self,
+        annotation: &Spanned<Type>,
+        defer: &impl Fn(incan_lang::lang::types::ownership::OwnershipMode) -> bool,
+        deferred: &mut bool,
+    ) {
+        match &annotation.node {
+            Type::Generic(name, arguments) if self.explicit_ownership_mode(name).is_some() => {
+                if arguments.len() == 1 && !*deferred && self.explicit_ownership_mode(name).is_some_and(defer) {
+                    *deferred = true;
+                    self.refuse_unimplemented_ownership_annotation(&arguments[0]);
+                } else {
+                    self.refuse_unimplemented_ownership_annotation(annotation);
+                }
+            }
+            Type::Generic(_, arguments) | Type::DottedGeneric(_, arguments) | Type::Tuple(arguments) => {
+                for argument in arguments {
+                    self.refuse_result_ownership_except(argument, defer, deferred);
+                }
+            }
+            Type::Function(parameters, result) => {
+                for parameter in parameters {
+                    self.refuse_result_ownership_except(parameter, defer, deferred);
+                }
+                self.refuse_result_ownership_except(result, defer, deferred);
+            }
+            Type::Ref(inner) | Type::RefMut(inner) | Type::MutParam(inner) => {
+                self.refuse_result_ownership_except(inner, defer, deferred);
+            }
+            _ => self.refuse_unimplemented_ownership_annotation(annotation),
+        }
     }
 
     /// Return the nominal type a module-qualified spelling was proven to name, for the shared type resolver.
@@ -110,6 +148,79 @@ impl TypeChecker {
         self.type_info
             .qualified_type_reference(&segments.join("."))
             .map(|reference| self.qualified_reference_member_spelling(reference.resolved.clone(), &reference.identity))
+    }
+
+    /// Retain the canonical nominal selected at each module-qualified annotation node.
+    ///
+    /// The shared resolver intentionally returns the type a direct import would bind, but a module-only import has no
+    /// lexical type binding that can recover that declaration later. Preserve the checker-proven carrier at the exact
+    /// dotted node, including nested generic arguments, so two providers declaring the same leaf name remain distinct
+    /// and compatibility never guesses from the written path.
+    fn retain_qualified_annotation_nominals(&self, written: &Type, resolved: ResolvedType) -> ResolvedType {
+        match (written, resolved) {
+            (Type::Dotted(segments), resolved) => self.retain_qualified_nominal(segments, resolved),
+            (Type::DottedGeneric(segments, written_args), ResolvedType::Generic(base, resolved_args)) => {
+                let args = written_args
+                    .iter()
+                    .zip(resolved_args)
+                    .map(|(written, resolved)| self.retain_qualified_annotation_nominals(&written.node, resolved))
+                    .collect();
+                self.retain_qualified_nominal(segments, ResolvedType::Generic(base, args))
+            }
+            (Type::Generic(_, written_args), ResolvedType::Generic(base, resolved_args)) => ResolvedType::Generic(
+                base,
+                written_args
+                    .iter()
+                    .zip(resolved_args)
+                    .map(|(written, resolved)| self.retain_qualified_annotation_nominals(&written.node, resolved))
+                    .collect(),
+            ),
+            (
+                Type::Function(written_params, written_return),
+                ResolvedType::Function(resolved_params, resolved_return),
+            ) => {
+                let params = written_params
+                    .iter()
+                    .zip(resolved_params)
+                    .map(|(written, resolved)| CallableParam {
+                        ty: self.retain_qualified_annotation_nominals(&written.node, resolved.ty),
+                        ..resolved
+                    })
+                    .collect();
+                let return_type = self.retain_qualified_annotation_nominals(&written_return.node, *resolved_return);
+                ResolvedType::Function(params, Box::new(return_type))
+            }
+            (Type::Tuple(written_items), ResolvedType::Tuple(resolved_items)) => ResolvedType::Tuple(
+                written_items
+                    .iter()
+                    .zip(resolved_items)
+                    .map(|(written, resolved)| self.retain_qualified_annotation_nominals(&written.node, resolved))
+                    .collect(),
+            ),
+            (Type::Ref(written), ResolvedType::Ref(resolved)) => ResolvedType::Ref(Box::new(
+                self.retain_qualified_annotation_nominals(&written.node, *resolved),
+            )),
+            (Type::RefMut(written), ResolvedType::RefMut(resolved)) => ResolvedType::RefMut(Box::new(
+                self.retain_qualified_annotation_nominals(&written.node, *resolved),
+            )),
+            (Type::MutParam(written), resolved) => self.retain_qualified_annotation_nominals(&written.node, resolved),
+            (_, resolved) => resolved,
+        }
+    }
+
+    /// Replace a dotted nominal's direct-import spelling with its checker-proven canonical carrier.
+    fn retain_qualified_nominal(&self, segments: &[String], resolved: ResolvedType) -> ResolvedType {
+        let Some(reference) = self.type_info.qualified_type_reference(&segments.join(".")) else {
+            return resolved;
+        };
+        let Some(carrier) = incan_semantics_core::body_ir::nominal_carrier_key(&reference.identity) else {
+            return resolved;
+        };
+        match resolved {
+            ResolvedType::Named(_) => ResolvedType::Named(carrier),
+            ResolvedType::Generic(_, args) => ResolvedType::Generic(carrier, args),
+            resolved => resolved,
+        }
     }
 
     /// Reject unbound names in source-authored annotations after declaration collection is complete.

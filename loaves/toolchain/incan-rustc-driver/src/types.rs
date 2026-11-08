@@ -642,7 +642,16 @@ pub fn model_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanE
             function: name.into(),
             reason: "model declaration is missing".into(),
         })?;
-    Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
+    let arguments =
+        rustc_middle::ty::GenericArgs::for_item(tcx, definition, |parameter, arguments| match parameter.kind {
+            rustc_middle::ty::GenericParamDefKind::Lifetime => tcx.lifetimes.re_erased.into(),
+            _ => tcx
+                .type_of(parameter.def_id)
+                .instantiate(tcx, arguments)
+                .skip_normalization()
+                .into(),
+        });
+    Ok(tcx.type_of(definition).instantiate(tcx, arguments).skip_normalization())
 }
 
 /// Select the primitive leaf and wrap it in the standard Vec ADT once per retained list dimension.
@@ -798,14 +807,15 @@ fn zip_type<'tcx>(
     enum_type(tcx, &crate::zip_carriers::alias_name(left, right))
 }
 
-/// Resolve the bound core dependency's zero-sized `TypeToken` carrier after plan validation retained its represented
-/// type. Erasing the physical marker argument avoids making local nominal declarations generic SDK dependencies; the
-/// checked plan remains the semantic authority. A same-named transitive core artifact cannot supply the carrier.
+/// Resolve the bound primitive dependency's zero-sized `TypeToken` carrier after plan validation retained its
+/// represented type. Erasing the physical marker argument avoids making local nominal declarations generic SDK
+/// dependencies; the checked plan remains the semantic authority. A same-named transitive artifact cannot supply the
+/// carrier.
 pub fn type_token_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
     let [_element] = elements else {
         return Err(PlanError::UnknownCallee("unsupported TypeToken arity".into()));
     };
-    let mut definition = crate::native_crates::root(tcx, "incan_std_core")
+    let mut definition = crate::native_crates::root(tcx, "incan_std_primitives")
         .ok_or_else(|| PlanError::UnknownCallee("unsupported TypeToken SDK owner".into()))?;
     for segment in ["reflection", "TypeToken"] {
         definition = tcx

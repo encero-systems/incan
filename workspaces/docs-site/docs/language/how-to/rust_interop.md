@@ -41,14 +41,14 @@ main = "src/main.incn"
 serde_json = { loaf = "crates-io/serde_json", version = "1" }
 ```
 
-Alternatively, use `[rust-dependencies]` for a Rust crate requirement, including a package alias:
+Use the dependency key as an import alias when it differs from the Loaf's package identity:
 
 ```toml
-[rust-dependencies]
-json = { package = "serde_json", version = "1" }
+[dependencies]
+json = { loaf = "crates-io/serde_json", version = "1" }
 ```
 
-The second form is imported as `rust::json`. A sibling path Loaf linked as a Rust facet is also available through its dependency alias. See [Managing dependencies](../../tooling/how-to/dependencies.md) for project declarations.
+This form is imported as `rust::json`. A sibling path Loaf linked as a Rust facet is also available through its dependency alias. See [Managing dependencies](../../tooling/how-to/dependencies.md) for project declarations.
 
 The selected version and features must match an exact compiled registry unit in the installed toolchain. Declaring a crate does not download or build a missing registry unit. Use a toolchain that contains the required closure; changing only the requested version cannot supply a missing artifact.
 

@@ -36,6 +36,9 @@ static PLAN: Mutex<Option<Arc<ActivePlan>>> = Mutex::new(None);
 /// Typed errors raised while loading metadata or source locations survive rustc's fatal-error boundary.
 static FAILURE: Mutex<Option<PlanError>> = Mutex::new(None);
 
+/// Stable name of rustc's empty synthetic input; authored source spans are loaded separately from the native plan.
+const SYNTHETIC_SOURCE_NAME: &str = "source";
+
 /// Typed refusals and native compiler failures remain distinct at the executable boundary.
 #[derive(Debug, thiserror::Error)]
 pub enum DriverError {
@@ -138,7 +141,7 @@ pub fn compile(
     let plan = Arc::new(plan);
     *PLAN.lock().map_err(|_| DriverError::State)? = Some(Arc::new(ActivePlan::new(Arc::clone(&plan))));
     *FAILURE.lock().map_err(|_| DriverError::State)? = None;
-    let mut args = compilation_arguments(crate_name, output, identity, kind, overflow_checks, &plan.span.file);
+    let mut args = compilation_arguments(crate_name, output, identity, kind, overflow_checks);
     let all = externs.iter().chain(&shared).cloned().collect::<Vec<_>>();
     for (name, path) in &all {
         args.push("--extern".into());
@@ -198,7 +201,6 @@ fn compilation_arguments(
     identity: &DriverIdentity,
     kind: UnitKind,
     overflow_checks: bool,
-    source: &str,
 ) -> Vec<String> {
     let overflow = if overflow_checks { "yes" } else { "no" };
     let mut args = vec![
@@ -219,8 +221,9 @@ fn compilation_arguments(
         "debuginfo=2".into(),
         "-o".into(),
         output.to_string_lossy().into_owned(),
-        // A named input is never read: the callback installs the source-free root without consuming stdin.
-        source.into(),
+        // A named input is never read: the callback installs the source-free root without consuming stdin. Its name
+        // is stable because authored spans are loaded from the plan and remapped independently.
+        SYNTHETIC_SOURCE_NAME.into(),
     ];
     if kind == UnitKind::Library {
         args.extend(["--crate-type".into(), "lib".into()]);

@@ -263,7 +263,7 @@ pub fn rust_crate_not_declared(crate_name: &str, span: Span) -> CompileError {
         span,
     )
     .with_hint(format!(
-        "Declare `{crate_name}` under `[rust-dependencies]` or add the Loaf that supplies its Rust facet"
+        "Declare `{crate_name}` under `[dependencies]` with its `loaf` identity or add the Loaf that supplies its Rust facet"
     ))
     .with_note("Cached Rust metadata does not grant a project dependency authority")
 }

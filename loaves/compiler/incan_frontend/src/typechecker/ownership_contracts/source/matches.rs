@@ -6,9 +6,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_semantics_core::CanonicalSymbolId;
 
-use super::{Builder, Event, Path, Place, Unavailable};
+use super::{Builder, Event, Path, Place, Root, Unavailable};
 use crate::ast::{
-    BindingKind, CallArg, Expr, Literal, MatchArm, MatchBody, Pattern, PatternArg, Span, Spanned, TupleUnpackStmt,
+    BindingKind, CallArg, Expr, ListEntry, Literal, MatchArm, MatchBody, Pattern, PatternArg, Span, Spanned,
+    TupleUnpackStmt,
 };
 use crate::symbols::ResolvedType;
 
@@ -124,12 +125,32 @@ impl Builder<'_> {
         arms: &[Spanned<MatchArm>],
         incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
+        if let Some(outgoing) = self.dictionary_match(scrutinee, arms, incoming.clone())? {
+            return Ok(outgoing);
+        }
         let mut native = None;
-        let (evaluated, view) = if let Some(relation) = self.call_relation(scrutinee)?
-            && let Some(payload) = relation.carried
-        {
+        let mut aggregate = None;
+        let relation = self.call_relation(scrutinee)?;
+        let carried = relation.as_ref().and_then(|relation| relation.carried);
+        let aggregate_component = relation
+            .as_ref()
+            .filter(|relation| relation.carried.is_none())
+            .and_then(|relation| relation.component.first().copied());
+        let (evaluated, view) = if let Some(payload) = carried {
+            let relation = relation.ok_or(Unavailable {
+                span: scrutinee.span,
+                reason: "returned view call has no checked relation".into(),
+            })?;
             let (evaluated, path) = self.evaluate_view_call(scrutinee, relation, incoming)?;
             (evaluated, Some((path, payload)))
+        } else if let Some(payload) = aggregate_component {
+            let relation = relation.ok_or(Unavailable {
+                span: scrutinee.span,
+                reason: "aggregate view call has no checked relation".into(),
+            })?;
+            let (evaluated, path) = self.evaluate_view_call(scrutinee, relation, incoming)?;
+            aggregate = Some((path, payload));
+            (evaluated, None)
         } else if let Some((identity, payload)) = self.bound_carrier(scrutinee) {
             let (evaluated, path) = self.take_bound_view(scrutinee, identity, incoming)?;
             (evaluated, Some((path, payload)))
@@ -160,6 +181,16 @@ impl Builder<'_> {
                 Some((path, (name, span))) => self.view_arm_binding(name, span, path)?,
                 None => {
                     self.arm_binding(&arm.node.pattern)?;
+                    if let Some((path, payload)) = &aggregate
+                        && let Some((name, span)) =
+                            super::super::builtins::carried_view_binding(&arm.node.pattern, *payload)
+                    {
+                        let loan = path.through.ok_or(Unavailable {
+                            span,
+                            reason: "aggregate match payload has no retained source loan".into(),
+                        })?;
+                        self.native_arm_binding(name, span, &[loan])?;
+                    }
                     if let Some((loans, payload)) = &native
                         && let Some((name, span)) =
                             super::super::builtins::carried_view_binding(&arm.node.pattern, *payload)
@@ -266,6 +297,142 @@ impl Builder<'_> {
         ));
         self.expression(value, incoming, true)?;
         Ok(())
+    }
+
+    /// Evaluate tuple and list structure while allowing their elements to be source-dependent aggregate calls.
+    /// Ordinary expression evaluation owns every leaf; this helper only supplies the aggregate sequencing that the
+    /// generic returned-view contract authenticates separately.
+    fn aggregate_value_expression(
+        &mut self,
+        value: &Spanned<Expr>,
+        mut incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        match &value.node {
+            Expr::Paren(inner) => self.aggregate_value_expression(inner, incoming),
+            Expr::Tuple(elements) => {
+                for element in elements {
+                    incoming = self.expression(element, incoming, true)?;
+                }
+                Ok(incoming)
+            }
+            Expr::List(entries) => {
+                for entry in entries {
+                    let ListEntry::Element(element) = entry else {
+                        return Err(Unavailable {
+                            span: value.span,
+                            reason: "a returned reference-carrying list cannot infer spread dependencies".into(),
+                        });
+                    };
+                    incoming = self.expression(element, incoming, true)?;
+                }
+                Ok(incoming)
+            }
+            _ => self.expression(value, incoming, true),
+        }
+    }
+
+    /// Prove a view stored at `component` inside a user-defined or nested aggregate. Constructors are decomposed by
+    /// their checked type-parameter and field bindings; forwarding calls and dependent locals must retain the exact
+    /// declared source. No aggregate spelling is trusted without those checked relationships.
+    pub(super) fn aggregate_return(
+        &mut self,
+        value: &Spanned<Expr>,
+        component: &[usize],
+        _exclusive: bool,
+        source: &Place,
+        incoming: Vec<usize>,
+    ) -> Result<(), Unavailable> {
+        self.aggregate_value_expression(value, incoming)?;
+        if !self.aggregate_carries_source(value, component, source)? {
+            self.view_errors.push(super::view_error(
+                "A returned aggregate carrying a view must retain its declared source place in the selected component",
+                value.span,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Validate one aggregate component after ordinary evaluation has recorded every call and retained local loan.
+    fn aggregate_carries_source(
+        &mut self,
+        value: &Spanned<Expr>,
+        component: &[usize],
+        source: &Place,
+    ) -> Result<bool, Unavailable> {
+        if let Expr::Paren(inner) = &value.node {
+            return self.aggregate_carries_source(inner, component, source);
+        }
+        if let Some(relation) = self
+            .call_relation(value)?
+            .filter(|relation| relation.component == component && relation.carried.is_none())
+        {
+            return self
+                .evaluated_view_call_place(value, &relation)
+                .map(|place| place == *source);
+        }
+        if let Some(path) = self.optional_place(value)?
+            && let Root::Binding(root) = &path.place.root
+            && let Some(loans) = self.graph.dependent_locals.get(root)
+        {
+            return Ok(loans
+                .iter()
+                .all(|id| self.graph.loans.get(id.0).is_some_and(|loan| loan.source == *source)));
+        }
+        if component.is_empty() {
+            return Ok(self.optional_place(value)?.is_some_and(|path| path.place == *source));
+        }
+        if let Expr::Call(_, _, arguments) = &value.node
+            && let Some(selected) = self.constructor_view_arguments(value.span, component)
+        {
+            let mut found = false;
+            for (argument, selected) in arguments.iter().zip(selected) {
+                if !selected {
+                    continue;
+                }
+                let expression = match argument {
+                    CallArg::Positional(expression) | CallArg::Named(_, expression) => expression,
+                    _ => return Ok(false),
+                };
+                found = true;
+                if !self.aggregate_carries_source(expression, &component[1..], source)? {
+                    return Ok(false);
+                }
+            }
+            return Ok(found);
+        }
+        let selected = component[0];
+        if let Some((variant, arguments)) = self.carrier_value(value) {
+            if super::super::builtins::variant_carries_view(variant, selected) {
+                let [CallArg::Positional(payload)] = arguments else {
+                    return Ok(false);
+                };
+                return self.aggregate_carries_source(payload, &component[1..], source);
+            }
+            return Ok(true);
+        }
+        if matches!(value.node, Expr::Literal(Literal::None)) {
+            return Ok(true);
+        }
+        match &value.node {
+            Expr::Tuple(elements) => {
+                let Some(element) = elements.get(selected) else {
+                    return Ok(false);
+                };
+                self.aggregate_carries_source(element, &component[1..], source)
+            }
+            Expr::List(entries) if selected == 0 => {
+                for entry in entries {
+                    let ListEntry::Element(element) = entry else {
+                        return Ok(false);
+                    };
+                    if !self.aggregate_carries_source(element, &component[1..], source)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
     }
 
     /// Take the view out of a local still holding a carried call, for a `match` or `?` on it. The local's read
@@ -391,9 +558,8 @@ impl Builder<'_> {
         Ok(())
     }
 
-    /// Unpack a call that carries a view in one element of its tuple: that element's name is a view local of the
-    /// caller's place under the call's result loan, as a match arm binds it, and every other name is a fresh owner of
-    /// its element. Unpacking any other value needs checked aggregate dependency facts.
+    /// Unpack a call with a view in one tuple element. A direct carried view aliases the caller place; an aggregate
+    /// element retains the call's source loan while keeping its physical value. Every other name is a fresh owner.
     pub(super) fn tuple_unpack(
         &mut self,
         unpack: &TupleUnpackStmt,
@@ -407,8 +573,10 @@ impl Builder<'_> {
             .call_relation(&unpack.value)?
             .filter(|_| self.tuple_carrier(&unpack.value))
             .ok_or_else(|| unavailable("tuple unpacking needs checked aggregate dependency facts"))?;
+        let aggregate = relation.carried.is_none() && !relation.component.is_empty();
         let carried = relation
             .carried
+            .or_else(|| aggregate.then(|| relation.component[0]))
             .ok_or_else(|| unavailable("tuple unpacking needs checked aggregate dependency facts"))?;
         if unpack.binding == BindingKind::Reassign || unpack.names.len() != unpack.name_spans.len() {
             return Err(unavailable("unpacking a carried view needs new names"));
@@ -428,7 +596,15 @@ impl Builder<'_> {
                 return Err(unavailable("unpacking a carried view needs new names"));
             }
             if index == carried {
-                self.view_arm_binding(name, span, &path)?;
+                if aggregate {
+                    let loan = path.through.ok_or(Unavailable {
+                        span,
+                        reason: "aggregate tuple element has no retained source loan".into(),
+                    })?;
+                    self.native_arm_binding(name, span, &[loan])?;
+                } else {
+                    self.view_arm_binding(name, span, &path)?;
+                }
             } else {
                 self.root(&identity, span)?;
             }

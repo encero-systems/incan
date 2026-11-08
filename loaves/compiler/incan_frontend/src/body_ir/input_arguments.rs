@@ -144,10 +144,10 @@ impl BodyBuilder<'_, '_> {
                 .parameters
                 .get(*slot)
                 .ok_or("explicit input has no selected value parameter")?;
-            let ty = self.checked_type(&parameter.ty);
+            let ty = super::parameter_types::physical_type_argument(self.checked_type(&parameter.ty));
             let value = match argument.source {
                 Some(CheckedInputSource::Place { root, fields, elements }) => {
-                    if self.resolve_ty(expression.span) != ty {
+                    if super::parameter_types::physical_type_argument(self.resolve_ty(expression.span)) != ty {
                         return Err("explicit source-place input cannot coerce or copy its owner".into());
                     }
                     let place = self.lower_expr_to_place(expression, scope, out);
@@ -257,14 +257,13 @@ impl BodyBuilder<'_, '_> {
             .map_err(|reason| reason.to_string())?
             .as_ref()
             .ok_or("explicit input has no owning source body proof")?;
-        let copy = proof.value_is_copy(expression.span)?;
+        let copy = if matches!(access, IncanInputAccess::Owned | IncanInputAccess::Inferred) {
+            proof.value_is_copy(expression.span)?
+        } else {
+            false
+        };
         // A closure local passed to a parameter its callee only calls lends the callee its callable object.
         let passed_closure = proof.is_closure_argument(expression.span);
-        if matches!(access, IncanInputAccess::Owned | IncanInputAccess::Inferred)
-            && copy != ty.abi_v0_facts().ownership.is_trivially_copy()
-        {
-            return Err("checked Copy semantics require a compatible native input carrier".into());
-        }
         let (fact, last_use) = match access {
             IncanInputAccess::Shared | IncanInputAccess::InferredShared => (bir::OwnershipFact::Borrow, false),
             IncanInputAccess::Exclusive => (bir::OwnershipFact::MutBorrow, false),

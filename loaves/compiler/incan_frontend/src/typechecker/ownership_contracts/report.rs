@@ -15,7 +15,32 @@ use crate::typechecker::TypeCheckInfo;
 pub(super) fn conflicts(graph: &Graph, analysis: &Analysis, facts: &TypeCheckInfo) -> Vec<CompileError> {
     let mut projected: Vec<ProjectedConflict> = Vec::new();
     for conflict in &analysis.conflicts {
+        if super::dictionary::owns_conflict(graph, analysis, conflict) {
+            continue;
+        }
+        if let Some(error) = super::loop_items::conflict(graph, conflict) {
+            projected.push(ProjectedConflict {
+                error,
+                priority: 0,
+                builtin: None,
+            });
+            if !explicit_flow_required(graph, facts) {
+                continue;
+            }
+        } else if super::loop_items::owns_conflict(graph, conflict) && !explicit_flow_required(graph, facts) {
+            continue;
+        }
         let operation = &graph.nodes[conflict.node];
+        if let Some(error) = super::iteration::conflict(graph, facts, conflict) {
+            projected.push(ProjectedConflict {
+                error,
+                priority: 0,
+                builtin: None,
+            });
+            if !explicit_flow_required(graph, facts) {
+                continue;
+            }
+        }
         if let Some(loan) = builtin_conflict_loan(graph, analysis, facts, conflict) {
             let error = builtin_result_conflict(graph, analysis, facts, conflict.node, loan);
             let priority = builtin_conflict_priority(&operation.event);
@@ -74,6 +99,22 @@ pub(super) fn conflicts(graph: &Graph, analysis: &Analysis, facts: &TypeCheckInf
         });
     }
     projected.into_iter().map(|conflict| conflict.error).collect()
+}
+
+/// Return whether this body independently requires an explicit ownership graph. Such bodies historically reported
+/// the precise iteration refusal and the general graph conflict, so consolidation preserves both projections.
+fn explicit_flow_required(graph: &Graph, facts: &TypeCheckInfo) -> bool {
+    facts.declarations.ownership_contracts.contains_key(&graph.owner)
+        || facts
+            .protocols
+            .explicit_local_modes
+            .values()
+            .any(|mode| mode.owner == graph.owner)
+        || facts
+            .protocols
+            .explicit_input_calls
+            .values()
+            .any(|call| call.owner.as_ref() == Some(&graph.owner) && call.kind == super::InputCallKind::Explicit)
 }
 
 /// One emitted diagnostic and the lazy-reader identity used to collapse graph-level duplicates and cascades.
@@ -327,7 +368,7 @@ fn lazy_origin(graph: &Graph, facts: &TypeCheckInfo, start: LoanId) -> Option<(&
 }
 
 /// Render a canonical source place without reconstructing it from source spelling.
-fn display_place(place: &super::flow::Place) -> String {
+pub(super) fn display_place(place: &super::flow::Place) -> String {
     let mut value = match &place.root {
         Root::Binding(identity) => identity.declaration_name.clone(),
         Root::Temporary { .. } => "temporary".into(),

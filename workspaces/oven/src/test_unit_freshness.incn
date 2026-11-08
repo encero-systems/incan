@@ -27,7 +27,7 @@ from unit_freshness import Key, artifact_files, reusable, record, description_di
 from freshness_fixtures import Fixture, fixture, make_executable, reconcile, unit_key, write
 
 # The description digest of `ordinary_unit()` before units could declare rustc-internal access.
-const ORDINARY_DIGEST: str = "6dfc30122491a0de4d81120c513f24ebb60b12ba9093c09d182f1890c3d47b42"
+const ORDINARY_DIGEST: str = "37f5ff93d4e0748e7ccc89cc39fa6bba5465849d86b69bcf6219755891cdd2a8"
 
 
 pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None, str]:
@@ -110,6 +110,11 @@ def verify_descriptor_selection(setup: Fixture) -> Result[None, str]:
     first = unit_key(setup.unit, setup.toolchain)?
     second = unit_key(other, setup.toolchain)?
     assert description_digest(setup.unit)? == description_digest(other)?
+    write(Path(setup.toolchain.driver), "another compiler")?
+    another_compiler = unit_key(setup.unit, setup.toolchain)?
+    assert another_compiler.digest != first.digest
+    assert another_compiler.codegen == first.codegen
+    assert second.codegen != first.codegen
     assert first.descriptor != second.descriptor
     assert linkage_key(first, true)?.descriptor == first.descriptor
     one = write_unit(setup.unit, "app", None, described_by(first))?
@@ -605,6 +610,18 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     arguments = ["--extern", f"runtime={setup.toolchain.externs[0].path}"]
     environment = {"CARGO_PKG_NAME": "app"}
     first = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
+    another_compiler = library_key(
+        setup.root,
+        native,
+        dependencies,
+        arguments,
+        environment,
+        [],
+        setup.toolchain,
+        "another compiler",
+    )?
+    assert another_compiler.digest != first.digest
+    assert another_compiler.codegen == first.codegen
     retained = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
     assert retained.digest == first.digest
     observations = compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain)?
@@ -612,6 +629,7 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     write(included, "changed included value")?
     changed = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
     assert changed.digest != first.digest
+    assert changed.codegen != first.codegen
     assert not inputs_unchanged(dependencies, observations, Some(setup.root), arguments)?
     write(included, "first included value")?
     changed_environment = library_key(

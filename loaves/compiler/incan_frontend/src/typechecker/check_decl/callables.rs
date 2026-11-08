@@ -356,7 +356,7 @@ impl TypeChecker {
         &mut self,
         previous_annotation_owner: Option<super::AnnotationOwner>,
         previous_mutable_bindings: HashSet<String>,
-        previous_mut_param_body: super::mut_arguments::MutParamBodyState,
+        previous_mut_param_body: super::mutation::MutParamBodyState,
         yield_context: YieldContext,
         has_statement_body: bool,
     ) -> PreparedCallableCheck {
@@ -416,7 +416,7 @@ impl TypeChecker {
         let previous_yield = std::mem::replace(&mut self.current_yield_context, yield_context);
         let previous_iterators = std::mem::take(&mut self.consumed_iterator_bindings);
         let previous_resources = std::mem::take(&mut self.transferred_c_resource_bindings);
-        let previous_for_items = self.enter_for_item_taking_scope();
+        let previous_comprehensions = self.enter_comprehension_source_scope();
         let previous_constructors = std::mem::take(&mut self.unbound_c_abi_span_constructors);
         let previous_spans = std::mem::take(&mut self.c_abi_span_bindings);
         let previous_consumed_spans = std::mem::take(&mut self.consumed_c_abi_span_bindings);
@@ -426,7 +426,7 @@ impl TypeChecker {
 
         self.consumed_iterator_bindings = previous_iterators;
         self.transferred_c_resource_bindings = previous_resources;
-        self.exit_for_item_taking_scope(previous_for_items);
+        self.exit_comprehension_source_scope(previous_comprehensions);
         self.unbound_c_abi_span_constructors = previous_constructors;
         self.c_abi_span_bindings = previous_spans;
         self.consumed_c_abi_span_bindings = previous_consumed_spans;

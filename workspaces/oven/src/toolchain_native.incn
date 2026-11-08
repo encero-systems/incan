@@ -17,7 +17,7 @@ from rust_manifest import rust_facet
 from registry_units import RegistryUnits
 from rust_target import target_configuration
 from toolchain import NativeCrate, Toolchain, load_toolchain, rust_compiler, toolchain_file
-from unit import UnitDescription, UnitLoaf, describe
+from unit import UnitDescription, UnitLoaf, dependency_source_roots, describe
 from unit_rust import add_extern, add_rust_root, prepare_linked
 from vocabulary import published_workers, stage_vocabulary
 from unit_reading import read_unit
@@ -66,13 +66,23 @@ def publish_prepared(arguments: list[str]) -> Result[None, str]:
     if get_or("SELFBUILD_METADATA_ONLY", "") == "1":
         unit.kind = "metadata-only"
     # 2. An input edit during compilation cannot be certified as the completed producer's identity.
-    key = unit_key(unit, load_toolchain()?)?
+    toolchain = load_toolchain()?
+    key = unit_key(unit, toolchain)?
     identity = Path(f"{path.0}.identity")
     if arguments[2] == "identify":
         publish(identity, key.digest)?
         return publish(
             Path(f"{path.0}.arguments"),
-            "\n".join(compiled_arguments(unit.profile, key.digest, unit.project_root)),
+            "\n".join(
+                compiled_arguments(
+                    unit.profile,
+                    key.codegen,
+                    unit.project_root,
+                    unit.kind in ["program", "test"],
+                    dependency_source_roots(unit),
+                    toolchain.sysroot,
+                )?,
+            ),
         )
     if read(identity)? != key.digest:
         return Err("prepared unit inputs changed while compiling")

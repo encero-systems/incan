@@ -1,0 +1,11 @@
+# behavior: One build locks and links two compatibility classes of the same Loaf through distinct keys.
+# cli-commands:
+#   oven build .
+# expect-stdout:
+# expect-stderr:
+# expect-exit: 0
+
+
+def main() -> None:
+    """Build a root whose dependency graph, rather than program behavior, is under test."""
+    pass

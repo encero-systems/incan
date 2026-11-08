@@ -31,6 +31,7 @@ fn qualified_generic_constructor_retains_selected_owner_and_field_slots() -> Res
         .and_then(|id| provider_checker.symbols.identity_of(id))
         .cloned()
         .ok_or("missing canonical model owner")?;
+    let carrier = incan_semantics_core::body_ir::nominal_carrier_key(&owner).ok_or("missing nominal carrier")?;
 
     let consumer = parse_module("def main() -> None:\n    value = shapes.Holder[int](last=\"tail\", first=7)\n")?;
     let Declaration::Function(function) = &consumer.declarations.first().ok_or("missing consumer function")?.node
@@ -60,10 +61,7 @@ fn qualified_generic_constructor_retains_selected_owner_and_field_slots() -> Res
         span,
     );
     assert!(checker.errors.is_empty(), "{:?}", checker.errors);
-    assert_eq!(
-        result,
-        ResolvedType::Generic(canonical_name.to_owned(), vec![ResolvedType::Int])
-    );
+    assert_eq!(result, ResolvedType::Generic(carrier, vec![ResolvedType::Int]));
     assert_eq!(checker.type_info.resolved_identity(span), Some(&owner));
     let binding = checker
         .type_info

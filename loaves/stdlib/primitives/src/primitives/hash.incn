@@ -1,0 +1,51 @@
+"""Foundational byte hashing without file or application policy."""
+
+from rust::sha2 import Digest, Sha256
+from crate.primitives.views import MappedView
+
+
+pub trait ByteDigestHasher:
+    """Incremental byte-digest contract shared by foundational and higher-level algorithms."""
+
+    def update(mut self, chunk: bytes) -> None: ...
+
+    def finalize_bytes(mut self) -> bytes: ...
+
+
+pub class Sha256Hasher with ByteDigestHasher:
+    """
+    Storable incremental SHA-256 state over caller-supplied bytes.
+
+    `finalize_bytes()` returns the digest for bytes already supplied and resets the handle for a subsequent byte
+    stream. `update_view()` hashes a mapped view where it lies, without copying it out of its mapping.
+    """
+
+    handle: Sha256
+
+    def update(mut self, chunk: bytes) -> None:
+        """Add owned bytes to this digest."""
+        Digest.update(self.handle, chunk.as_slice())
+
+    pub def update_view(mut self, view: MappedView) -> None:
+        """Add the bytes of `view` without copying them out of the mapping."""
+        Digest.update(self.handle, view.0)
+
+    def finalize_bytes(mut self) -> bytes:
+        """Return the current digest and reset this handle for another byte stream."""
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class sha256:
+    """SHA-256 constructors and one-shot byte hashing."""
+
+    @staticmethod
+    pub def digest(data: bytes) -> bytes:
+        """Return the SHA-256 digest of `data`."""
+        mut hasher = sha256.new()
+        hasher.update(data)
+        return hasher.finalize_bytes()
+
+    @staticmethod
+    pub def new() -> Sha256Hasher:
+        """Create empty incremental SHA-256 state."""
+        return Sha256Hasher(handle=Sha256.default())

@@ -128,10 +128,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_chained_assignment(chained_assignment, remaining, scope, span, out)
             }
             ast::Statement::Return(Some(returned)) if self.returned_view.is_some() => {
-                let carried = self.returned_view.as_ref().and_then(|source| source.view.carried);
-                let lowered = match carried {
-                    Some(payload) => self.lower_carried_return(returned, payload, scope, span, out),
-                    None => self.lower_view_return(returned, scope, span, out),
+                let view = self.returned_view.as_ref().map(|source| source.view.clone());
+                let lowered = match view {
+                    Some(view) if !view.component.is_empty() && view.carried.is_none() => {
+                        self.lower_aggregate_return(returned, scope, span, out);
+                        Ok(())
+                    }
+                    Some(view) => match view.carried {
+                        Some(payload) => self.lower_carried_return(returned, payload, scope, span, out),
+                        None => self.lower_view_return(returned, scope, span, out),
+                    },
+                    None => Ok(()),
                 };
                 if let Err(reason) = lowered {
                     self.push_unsupported_stmt(reason, span, out);

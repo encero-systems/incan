@@ -2,7 +2,7 @@
 # expect-stdout:
 #   (amount * 2)
 #   (label * x)
-#   Column { sql: "amount" }
+#   Column { sql = "amount" }
 
 """Issue #1370: a model type parameter used only in method signatures is a phantom parameter."""
 

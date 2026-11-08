@@ -66,6 +66,7 @@ impl TypeChecker {
             .iter()
             .filter(|field| self.member_binding_is_active(field.span))
             .collect::<Vec<_>>();
+        self.validate_model_record_identities(model);
         self.refuse_awaitable_adoptions(&model.name, &resolved_trait_adoptions);
         self.refuse_pub_on_trait_implementations(&model.name, &model.traits, &model.methods);
 
@@ -226,6 +227,9 @@ impl TypeChecker {
                         SemanticSourceTargetKind::Field,
                         field.span,
                     )),
+                    record_identity: crate::symbols::field_record_identity(&field.node),
+                    record_canonical: crate::symbols::field_record_canonical(&field.node),
+                    renamed_from: crate::symbols::field_renamed_from(&field.node),
                     surface_type_name: Some(crate::symbols::field_surface_type_name(&field.node.ty.node, &ty)),
                     ty,
                     visibility: field.node.visibility,

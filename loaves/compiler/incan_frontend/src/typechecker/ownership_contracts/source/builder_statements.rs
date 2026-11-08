@@ -175,6 +175,21 @@ impl Builder<'_> {
             self.graph.dependent_values.insert(assignment.value.span);
             return Ok((result.incoming, true));
         }
+        // A user-defined or nested aggregate stores its physical reference while retaining the substituted source
+        // loan on the aggregate local. Unlike a builtin carried view, ordinary field access reads that stored value.
+        if let Some(relation) = self
+            .call_relation(&assignment.value)?
+            .filter(|relation| !relation.component.is_empty() && relation.carried.is_none())
+        {
+            let (incoming, loans) = self.evaluate_aggregate_view_call(&assignment.value, relation, incoming)?;
+            if self.graph.dependent_locals.insert(root.clone(), loans).is_some() {
+                return Err(Unavailable {
+                    span: assignment.name_span,
+                    reason: "aggregate view has more than one dependency destination".into(),
+                });
+            }
+            return Ok((incoming, true));
+        }
         // A new local initialized by a returned view aliases its substituted place under the call's result loan.
         if let Some(view) = self.view_source(&assignment.value)? {
             let (incoming, path) = self.evaluate_view_source(&assignment.value, view, incoming)?;
@@ -412,17 +427,11 @@ impl Builder<'_> {
     /// shared-borrowed through every poll, while an iterator result reuses the loans retained by that result.
     pub(super) fn for_header(
         &mut self,
-        pattern: &Spanned<crate::ast::Pattern>,
+        _pattern: &Spanned<crate::ast::Pattern>,
         iter: &Spanned<Expr>,
         span: Span,
         incoming: Vec<usize>,
     ) -> Result<(usize, Vec<usize>), Unavailable> {
-        let crate::ast::Pattern::Binding(name) = &pattern.node else {
-            return Err(Unavailable {
-                span: pattern.span,
-                reason: "loop pattern needs checked binding access".into(),
-            });
-        };
         if self.checker.type_info.protocols.iterations.contains_key(&iter.span)
             || self.checker.type_info.protocols.iterations.contains_key(&span)
         {
@@ -431,18 +440,10 @@ impl Builder<'_> {
                 reason: "protocol iteration needs checked callable access facts".into(),
             });
         }
-        let item = self
-            .checker
-            .type_info
-            .resolved_write_identity(pattern.span, name)
-            .cloned()
-            .ok_or(Unavailable {
-                span: pattern.span,
-                reason: "missing checked loop item".into(),
-            })?;
+        let candidate = self.checker.loop_item_candidates.get(&iter.span).cloned();
         let takes_items = self.checker.type_info.for_loop_takes_items(iter.span);
         let iterable = if takes_items { None } else { self.optional_place(iter)? };
-        let retained = if takes_items {
+        let retained = if takes_items || self.uses_ordinary_iteration_access(iter.span) {
             None
         } else {
             self.retained_result(iter, incoming.clone(), false)?
@@ -455,20 +456,22 @@ impl Builder<'_> {
             Some(path) => {
                 let place = path.place.clone();
                 let loan = self.call_loan(path, false, false, iter.span);
+                self.graph.direct_iteration_loans.insert(loan);
                 evaluated = self.event(evaluated, Event::Borrow(loan), iter.span);
                 Some((loan, place))
             }
             None => None,
         };
-        let header = self.event(evaluated, Event::Nothing, span)[0];
+        let transfer = self.event(evaluated, Event::Nothing, iter.span)[0];
+        let header = self.event(vec![transfer], Event::Nothing, span)[0];
         // The poll reads the iterable through its loan; exhaustion leaves the loop from here.
-        let mut poll = match iteration {
+        let mut poll = match &iteration {
             Some((loan, place)) => self.event(
                 vec![header],
                 Event::Access {
-                    place,
+                    place: place.clone(),
                     access: Access::Read,
-                    through: Some(loan),
+                    through: Some(*loan),
                 },
                 iter.span,
             ),
@@ -496,8 +499,48 @@ impl Builder<'_> {
                 );
             }
         }
-        // Each poll declares the item afresh, as an initializer does: its root is registered, with no write event.
-        self.root(&item, pattern.span)?;
+        if let Some(candidate) = candidate {
+            let item_roots = candidate.items.clone();
+            for item in &candidate.items {
+                let root = Root::Binding(item.clone());
+                // The loop scope has closed before the callable graph is projected, so its ephemeral item bindings
+                // are no longer in the symbol table's local inventory. The header creates each item as a fresh,
+                // transferable owner; register that permission from the retained checked identity.
+                self.graph.permissions.insert(
+                    root.clone(),
+                    Permission {
+                        exclusive: false,
+                        // The source binding remains immutable to authored assignments; the graph needs write
+                        // permission only for the loop header's producer-owned replacement on every poll.
+                        writable: true,
+                        transferable: true,
+                    },
+                );
+                self.constrained.insert(root);
+            }
+            let transfer = iteration.map(|(loan, _)| super::super::loop_items::TransferNodes {
+                loan,
+                transfer,
+                poll: poll[0],
+            });
+            self.graph
+                .item_taking_loops
+                .insert(iter.span, super::super::loop_items::GraphLoop { candidate, transfer });
+            for item in item_roots {
+                poll = self.event(
+                    poll,
+                    Event::Access {
+                        place: Place {
+                            root: Root::Binding(item),
+                            projection: Vec::new(),
+                        },
+                        access: Access::Replace,
+                        through: None,
+                    },
+                    span,
+                );
+            }
+        }
         Ok((header, poll))
     }
 
@@ -578,6 +621,11 @@ impl Builder<'_> {
             }
             Statement::Return(value) => {
                 match (value, self.view.clone(), self.owned_source.clone()) {
+                    (Some(value), Some((exclusive, source)), None)
+                        if !self.view_component.is_empty() && self.view_carried.is_none() =>
+                    {
+                        self.aggregate_return(value, &self.view_component.clone(), exclusive, &source, incoming)?;
+                    }
                     (Some(value), Some((exclusive, source)), None) => match self.view_carried {
                         Some(payload) => self.carried_return(value, payload, exclusive, &source, incoming)?,
                         None => {
@@ -625,18 +673,30 @@ impl Builder<'_> {
             Statement::If(branch) => self.if_statement(branch, incoming),
             Statement::While(loop_) => {
                 let header = self.event(incoming, Event::Nothing, statement.span)[0];
-                let condition = self.condition(&loop_.condition, vec![header])?;
+                let (condition, exit, dictionary_bindings) = match &loop_.condition {
+                    Condition::Let { pattern, value } => {
+                        match self.dictionary_condition(pattern, value, vec![header])? {
+                            Some((matched, unmatched, bindings)) => (matched, unmatched, bindings),
+                            None => (self.condition(&loop_.condition, vec![header])?, Vec::new(), Vec::new()),
+                        }
+                    }
+                    Condition::Expr(_) => {
+                        let evaluated = self.condition(&loop_.condition, vec![header])?;
+                        (evaluated.clone(), evaluated, Vec::new())
+                    }
+                };
                 self.loops.push(LoopEdges {
                     header,
                     breaks: Vec::new(),
                 });
                 let body = self.block(&loop_.body, condition.clone())?;
+                self.leave_dictionary_bindings(&dictionary_bindings);
                 self.connect(&body, header);
                 let loop_ = self.loops.pop().ok_or(Unavailable {
                     span: statement.span,
                     reason: "missing loop owner".into(),
                 })?;
-                Ok(condition.into_iter().chain(loop_.breaks).collect())
+                Ok(exit.into_iter().chain(loop_.breaks).collect())
             }
             Statement::Loop(loop_) => {
                 let header = self.event(incoming, Event::Nothing, statement.span)[0];
@@ -665,6 +725,18 @@ impl Builder<'_> {
                     })?
                     .breaks
                     .extend(incoming);
+                Ok(Vec::new())
+            }
+            Statement::Break(Some(value)) => {
+                let outgoing = self.expression(value, incoming, true)?;
+                self.loops
+                    .last_mut()
+                    .ok_or(Unavailable {
+                        span: statement.span,
+                        reason: "break without loop".into(),
+                    })?
+                    .breaks
+                    .extend(outgoing);
                 Ok(Vec::new())
             }
             Statement::Continue => {

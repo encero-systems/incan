@@ -2,6 +2,7 @@
 
 from std.fs import Path
 from rust_activation import version_matches
+from semver_req import compare_version_order, parse_version
 
 
 @derive(Eq)
@@ -53,6 +54,8 @@ pub model RegistryUnits:
     pub recorded_bindings: list[Tuple[str, str]] = []
     # Installation defaults are preferences; an authored project lock remains an exact producer constraint.
     pub installation_bindings: list[Tuple[str, str]] = []
+    # A project lock's mode orders compatible versions before the existing producer and profile tie-breaks.
+    pub resolution_mode: str = ""
 
     pub def artifact_for(self, selection: RegistrySelection, domain: str) -> Result[str, str]:
         """Bind a root only from the graph's recorded selection, selecting a singleton request when needed."""
@@ -94,10 +97,17 @@ pub model RegistryUnits:
             pinned = extend(entries[entry], entries, pinned, domain)?
         names = ", ".join(sorted([request.selection.loaf for request in roots]))
         solutions = resolve(
-            roots, 0, entries, pinned, {}, self.bindings, self.recorded_bindings, self.installation_bindings, profile,
-        ).map_err(
-            (reason) => f"no coherent compiled registry closure for {names}: {reason}",
-        )?
+            roots,
+            0,
+            entries,
+            pinned,
+            {},
+            self.bindings,
+            self.recorded_bindings,
+            self.installation_bindings,
+            profile,
+            self.resolution_mode,
+        ).map_err((reason) => f"no coherent compiled registry closure for {names}: {reason}")?
         # 3. No ordering of stored artifacts is permission to break a tie between coherent feature graphs.
         if len(solutions) == 0:
             return Err(f"no coherent compiled registry closure for {names}")
@@ -113,6 +123,7 @@ pub model RegistryUnits:
                 anchors=self.anchors,
                 recorded_bindings=self.recorded_bindings,
                 installation_bindings=self.installation_bindings,
+                resolution_mode=self.resolution_mode,
             ),
         )
 
@@ -139,12 +150,21 @@ def resolve(
     recorded: list[Tuple[str, str]],
     installation: list[Tuple[str, str]],
     profile: str,
+    mode: str,
 ) -> Result[list[Tuple[Dict[str, str], Dict[str, str]]], str]:
     """Backtrack exact producer closures, stopping after two distinct solutions prove ambiguity."""
     if index == len(roots):
         return Ok([(chosen, bindings)])
     demand = roots[index]
-    groups = candidate_groups([unit for unit in entries.values()], demand, resolved, recorded, installation, profile)?
+    groups = candidate_groups(
+        [unit for unit in entries.values()],
+        demand,
+        resolved,
+        recorded,
+        installation,
+        profile,
+        mode,
+    )?
     mut refusals: list[str] = []
     for candidates in groups:
         mut solutions: list[Tuple[Dict[str, str], Dict[str, str]]] = []
@@ -154,7 +174,18 @@ def resolve(
                 Ok(next) =>
                     mut linked = bindings
                     linked[demand.key()] = identity(unit)
-                    match resolve(roots, index + 1, entries, next, linked, resolved, recorded, installation, profile):
+                    match resolve(
+                        roots,
+                        index + 1,
+                        entries,
+                        next,
+                        linked,
+                        resolved,
+                        recorded,
+                        installation,
+                        profile,
+                        mode,
+                    ):
                         Err(reason) => refusals.append(reason)
                         Ok(found) => solutions = solutions + found
                     if len(solutions) > 1:
@@ -208,6 +239,7 @@ def candidate_groups(
     recorded: list[Tuple[str, str]],
     installation: list[Tuple[str, str]],
     profile: str,
+    mode: str,
 ) -> Result[list[list[RegistryUnit]], str]:
     """Honor exact producer records, distinguishing an unavailable request from an incompatible recorded choice."""
     if demand.key() in resolved:
@@ -224,11 +256,6 @@ def candidate_groups(
             return Ok([compatible])
         if len([unit for unit in units if qualifies(unit, demand.selection)?]) > 0:
             return Err(f"recorded registry closure does not satisfy {demand.key()}")
-    preferred = [unit for unit in units if (demand.domain, identity(unit)) in installation
-        and qualifies(unit, demand.selection)?]
-    mut groups: list[list[RegistryUnit]] = []
-    if len(preferred) > 0:
-        groups = profile_groups(preferred, profile)
     mut candidates: list[RegistryUnit] = []
     for domain in [demand.domain, "host", "target"]:
         candidates = [unit for unit in units if unit.domain == domain and qualifies(unit, demand.selection)?]
@@ -236,10 +263,32 @@ def candidate_groups(
             break
     if len(candidates) == 0:
         selected = demand.selection
+        published = [unit for unit in units if unit.loaf == selected.loaf]
+        if len(published) > 0:
+            return Err(
+                f"no compiled registry unit of {selected.loaf} satisfies {selected.requirement} with features {selected.features}",
+            )
         return Err(
-            f"no compiled registry unit of {selected.loaf} satisfies {selected.requirement} with features {selected.features}",
+            f"{selected.loaf} is not published in the compiled registry closure for requirement {selected.requirement} with features {selected.features}",
         )
+    candidates = mode_candidates(candidates, mode)?
+    preferred = [unit for unit in candidates if (demand.domain, identity(unit)) in installation]
+    mut groups: list[list[RegistryUnit]] = []
+    if len(preferred) > 0:
+        groups = profile_groups(preferred, profile)
     return Ok(groups + profile_groups(candidates, profile))
+
+
+def mode_candidates(candidates: list[RegistryUnit], mode: str) -> Result[list[RegistryUnit], str]:
+    """Keep the lowest or newest compatible version before producer and profile tie-breaks choose its exact unit."""
+    if mode == "" or len(candidates) < 2:
+        return Ok(candidates)
+    mut selected = str(candidates[0].version)
+    for candidate in candidates[1:]:
+        order = compare_version_order(parse_version(candidate.version)?, parse_version(selected)?)
+        if (mode in ["lowest", "lowest-direct"] and order < 0) or (mode == "newest" and order > 0):
+            selected = candidate.version
+    return Ok([candidate for candidate in candidates if candidate.version == selected])
 
 
 def profile_groups(candidates: list[RegistryUnit], profile: str) -> list[list[RegistryUnit]]:

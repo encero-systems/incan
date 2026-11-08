@@ -70,6 +70,7 @@ from hashed_collections import (
     read_dictionary_element,
 )
 from carrier_operands import boundary_operand, element_operand
+from explicit_arguments import reference_contract
 
 
 pub def list_borrow(mut builder: Builder, place: Place, mutable: bool, span: SourceSpan) -> Result[Operand, str]:
@@ -518,7 +519,7 @@ def read_element_field(
     projection: &PlaceElem,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Read a field from a list element, copying scalars and function pointers while cloning owned values."""
+    """Read a list element field, copying shared references and scalar values while cloning owned values."""
     steps = field_steps(
         builder.constructors,
         builder.nominals,
@@ -532,6 +533,14 @@ def read_element_field(
     for step in steps:
         field = appended_field(field, step, span)?
     ty = steps[len(steps) - 1].ty
+    match reference_contract(ty):
+        Ok((_referent, writable)) =>
+            if writable:
+                return Err("unsupported Body IR exclusive reference field inside a list element")
+            output = temporary(builder, ty, span)
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(field, false, span)), span))
+            return Ok(output)
+        Err(_reason) => pass
     if ty == PlanType.String:
         return clone_text(builder, field, span)
     if is_nominal_type(ty):
@@ -578,18 +587,32 @@ def absent_slice_bound(span: SourceSpan) -> list[Operand]:
 
 
 pub def list_base_place(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
-    """Map a frame root or materialize a primitive static list's current owned snapshot."""
+    """Map one collection root, materializing immutable frozen wrappers into the owned list used by every read path."""
     match source.global():
         Some(global) =>
             root = RustPlace.from_global(global.clone())
             operand = read_static(builder, root, global, OwnershipFact.Borrow, span)?
             match operand.kind:
-                OperandKind.Move(place) => return Ok(place)
+                OperandKind.Move(place) => return collection_read_storage(builder, place, span)
                 _ => return Err("unsupported Body IR non-list global receiver")
         None => pass
     match source.local_id():
-        Some(local) => return Ok(plan_place(int(local.index()) + 1 + builder.local_offset, span))
+        Some(local) =>
+            place = plan_place(int(local.index()) + 1 + builder.local_offset, span)
+            return collection_read_storage(builder, place, span)
         None => return Err("unsupported Body IR global list place")
+
+
+pub def collection_read_storage(
+    mut builder: Builder,
+    place: Place,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Normalize a borrowed frozen wrapper to its immutable referent while leaving every owned root unchanged."""
+    match place_type(builder.locals, place):
+        PlanType.FrozenCollectionRef(name, elements) =>
+            return dereferenced_place(place, PlanType.FrozenCollection(name, elements), span)
+        _ => return Ok(place)
 
 
 pub def list_index_operand(

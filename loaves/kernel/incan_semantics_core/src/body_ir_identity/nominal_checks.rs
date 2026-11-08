@@ -132,10 +132,19 @@ impl BodyIrModule {
             return false;
         };
         slots.len() == metadata.len()
-            && slots
-                .iter()
-                .zip(metadata)
-                .all(|(slot, record)| declaration.fields.get(*slot) == Some(&record.name))
+            && slots.iter().zip(metadata).all(|(slot, record)| {
+                declaration.fields.get(*slot) == Some(&record.name)
+                    && Self::reflection_record_identity_is_well_formed(record)
+            })
+    }
+
+    /// Require one retained field identity to match the earliest name carried beside it.
+    fn reflection_record_identity_is_well_formed(record: &crate::body_ir::FieldMetadata) -> bool {
+        let earliest_name = record.renamed_from.first().map_or(record.name.as_str(), String::as_str);
+        let expected = crate::record_identity::record_member_identity(earliest_name);
+        !record.name.is_empty()
+            && record.renamed_from.iter().all(|name| !name.is_empty())
+            && record.record_identity.as_slice() == &expected[..]
     }
 
     /// Validate adoption identities, selected methods and primitive adapters without accepting duplicate records.

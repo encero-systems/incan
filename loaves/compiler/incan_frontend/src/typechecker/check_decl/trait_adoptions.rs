@@ -148,43 +148,83 @@ impl TypeChecker {
         fields: &[Spanned<FieldDecl>],
         method_names: &HashSet<String>,
     ) {
-        let canonical_names: HashSet<String> = fields.iter().map(|f| f.node.name.clone()).collect();
+        let canonical_names: HashMap<String, Span> = fields
+            .iter()
+            .map(|field| (field.node.name.clone(), field.span))
+            .collect();
         let mut builtin_member_names: HashSet<&'static str> = HashSet::new();
         for info in magic_methods::MAGIC_METHODS {
             builtin_member_names.insert(info.canonical);
             builtin_member_names.extend(info.aliases);
         }
         let mut seen_aliases: HashMap<String, Span> = HashMap::new();
+        let mut seen_earlier_names: HashMap<String, Span> = HashMap::new();
 
         for field in fields {
-            let Some(alias) = field.node.metadata.alias.as_ref() else {
-                continue;
-            };
+            if let Some(alias) = field.node.metadata.alias.as_ref() {
+                if alias.trim().is_empty() {
+                    self.errors.push(errors::empty_alias(field.span));
+                } else {
+                    if canonical_names.contains_key(alias) {
+                        self.errors
+                            .push(errors::alias_collides_with_canonical(type_name, alias, field.span));
+                    }
 
-            if alias.trim().is_empty() {
-                self.errors.push(errors::empty_alias(field.span));
-                continue;
+                    if method_names.contains(alias) {
+                        self.errors
+                            .push(errors::alias_collides_with_method(type_name, alias, field.span));
+                    }
+                    if builtin_member_names.contains(alias.as_str()) {
+                        self.errors
+                            .push(errors::alias_collides_with_builtin(type_name, alias, field.span));
+                    }
+
+                    if let BindingRegistration::Collision { existing } =
+                        register_binding(&mut seen_aliases, alias.clone(), field.span)
+                    {
+                        self.errors
+                            .push(errors::duplicate_alias(type_name, alias, existing, field.span));
+                    }
+                }
             }
 
-            if canonical_names.contains(alias) {
-                self.errors
-                    .push(errors::alias_collides_with_canonical(type_name, alias, field.span));
+            if field.node.metadata.renamed_from_key_span.is_some() && field.node.metadata.renamed_from.is_empty() {
+                self.errors.push(errors::empty_field_rename(
+                    type_name,
+                    &field.node.name,
+                    field.node.metadata.renamed_from_key_span.unwrap_or(field.span),
+                ));
             }
 
-            if method_names.contains(alias) {
-                self.errors
-                    .push(errors::alias_collides_with_method(type_name, alias, field.span));
-            }
-            if builtin_member_names.contains(alias.as_str()) {
-                self.errors
-                    .push(errors::alias_collides_with_builtin(type_name, alias, field.span));
-            }
-
-            if let BindingRegistration::Collision { existing } =
-                register_binding(&mut seen_aliases, alias.clone(), field.span)
-            {
-                self.errors
-                    .push(errors::duplicate_alias(type_name, alias, existing, field.span));
+            for earlier in &field.node.metadata.renamed_from {
+                if !valid_earlier_field_name(&earlier.node) {
+                    self.errors.push(errors::invalid_earlier_field_name(
+                        type_name,
+                        &field.node.name,
+                        &earlier.node,
+                        earlier.span,
+                    ));
+                    continue;
+                }
+                if let Some(existing) = canonical_names.get(&earlier.node) {
+                    self.errors.push(errors::field_rename_still_declared(
+                        type_name,
+                        &field.node.name,
+                        &earlier.node,
+                        earlier.span,
+                        *existing,
+                    ));
+                }
+                if let BindingRegistration::Collision { existing } =
+                    register_binding(&mut seen_earlier_names, earlier.node.clone(), earlier.span)
+                {
+                    self.errors.push(errors::field_rename_claimed_twice(
+                        type_name,
+                        &earlier.node,
+                        existing,
+                        earlier.span,
+                    ));
+                }
             }
         }
     }
@@ -753,4 +793,15 @@ impl TypeChecker {
         );
         entries
     }
+}
+
+/// Return whether an earlier field name is an ASCII identifier that the lexer would admit as a declaration name.
+fn valid_earlier_field_name(name: &str) -> bool {
+    let mut characters = name.chars();
+    let Some(first) = characters.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_')
+        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
+        && incan_syntax::lexer::keyword_id(name).is_none()
 }

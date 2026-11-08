@@ -36,7 +36,9 @@ pub(super) fn add_source_backed_declarations(
     }
     for model in &plan.models {
         let span = sources.span(&model.span)?;
-        krate.items.extend(declarations::model_items(model, generator, span));
+        krate
+            .items
+            .extend(declarations::model_items(plan, model, generator, span)?);
         if !model.checked_deserialize.is_empty() {
             krate.items.push(crate::checked_json::forwarding_impl(model, span));
         }

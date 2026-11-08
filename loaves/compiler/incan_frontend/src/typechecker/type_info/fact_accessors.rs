@@ -364,16 +364,6 @@ impl TypeCheckInfo {
         self.calls.resolved_collection_constructors.insert(span, constructor);
     }
 
-    /// Return the selected runtime-string helper identity for one source call, if it is in the admitted subset.
-    pub fn resolved_string_helper_call(&self, span: Span) -> Option<StringMethodId> {
-        self.calls.resolved_string_helper_calls.get(&span).copied()
-    }
-
-    /// Record a selected runtime-string helper identity for later Body-IR lowering.
-    pub fn record_resolved_string_helper_call(&mut self, span: Span, method: StringMethodId) {
-        self.calls.resolved_string_helper_calls.insert(span, method);
-    }
-
     /// Record callable metadata needed by lowering when the callee expression alone cannot carry it.
     pub fn record_call_site_callable_params(&mut self, span: Span, params: &[CallableParam]) {
         if params
@@ -421,19 +411,33 @@ impl TypeCheckInfo {
     }
 
     /// Record a resolved method dispatch that lowering should preserve explicitly.
+    ///
+    /// A standard Iterator source default supplies the typed operation only when receiver checking did not already
+    /// select a concrete builtin carrier such as `Generator`; trait resolution must not erase that receiver family.
     pub fn record_resolved_method_call(
         &mut self,
         span: Span,
         method: impl Into<String>,
         dispatch: ResolvedMethodDispatch,
     ) {
-        self.calls.resolved_method_calls.insert(
-            span,
-            ResolvedMethodCall {
-                method: method.into(),
-                dispatch,
-            },
-        );
+        let method = method.into();
+        let ResolvedMethodDispatch::Trait {
+            trait_name,
+            module_path,
+            ..
+        } = &dispatch;
+        if incan_lang::lang::traits::from_str(trait_name) == Some(incan_lang::lang::traits::TraitId::Iterator)
+            && standard_iterator_module_path(module_path.as_deref())
+            && let Some(method_id) = incan_lang::lang::surface::iterator_methods::from_str(&method)
+        {
+            self.calls
+                .resolved_builtin_method_calls
+                .entry(span)
+                .or_insert(BuiltinMethodId::Iterator(method_id));
+        }
+        self.calls
+            .resolved_method_calls
+            .insert(span, ResolvedMethodCall { method, dispatch });
     }
 
     /// Remove and return the facts method resolution recorded for the call at `span` (see [`CallSiteFacts`]).
@@ -669,4 +673,17 @@ impl TypeCheckInfo {
     pub fn scrutinee_holds_no_loan(&self, span: Span) -> bool {
         self.protocols.loan_free_scrutinees.contains(&span)
     }
+}
+
+/// Authenticate either canonical origin shape used by the standard Iterator declaration.
+fn standard_iterator_module_path(module_path: Option<&[String]>) -> bool {
+    let Some(module_path) = module_path else {
+        return false;
+    };
+    let Some(source_module) = incan_lang::lang::traits::source_module(incan_lang::lang::traits::TraitId::Iterator)
+    else {
+        return false;
+    };
+    let canonical = source_module.split('.').map(str::to_owned).collect::<Vec<_>>();
+    module_path == canonical || (canonical.first().is_some_and(|root| root == "std") && module_path == &canonical[1..])
 }

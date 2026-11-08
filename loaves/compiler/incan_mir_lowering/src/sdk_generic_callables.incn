@@ -43,7 +43,7 @@ pub def sdk_owned_callable_bindings(
                                 _ = require_plain_sdk_callable(builder, arguments[index + 1])?
                                 mut storage = PlanType.Closure(signature)
                                 if delegation.rust_path() == Some(
-                                    "incan_stdlib_core::derives::collection::FallibleIterator::map_err",
+                                    "incan_stdlib_primitives::derives::collection::FallibleIterator::map_err",
                                 ):
                                     if len(signature) != 2:
                                         return Err(

@@ -143,11 +143,6 @@ pub struct CallArtifacts {
     /// Lowering consumes this decision instead of interpreting a source spelling such as `set(...)` as an ordinary
     /// function call or independently guessing whether a same-named binding shadows the collection constructor.
     pub resolved_collection_constructors: HashMap<crate::ast::Span, CollectionTypeId>,
-    /// Selected runtime-string helper methods, keyed by full call expression span.
-    ///
-    /// This carries the typechecker's canonical [`StringMethodId`] through Body IR so a consumer can select an
-    /// admitted helper operation from a resolved identity rather than rediscovering a method target from source text.
-    pub resolved_string_helper_calls: HashMap<crate::ast::Span, StringMethodId>,
     /// Function-typed parameters of this module's functions and methods that hold any callable of their type, since
     /// the body only calls them, keyed by the parameter's span (#1561).
     ///
@@ -223,6 +218,10 @@ pub struct ProtocolArtifacts {
     /// Explicit input flow is body-owned. The native executable gate remains closed until the complete projection
     /// and storage contract agree; record profiles without this payload must refuse rather than discard it.
     pub(in crate::typechecker) explicit_input_flow: BTreeMap<CanonicalSymbolId, super::ownership_contracts::InputFlow>,
+    /// Canonical callable graphs activated only by caller-visible mutation rules. A callable whose explicit-flow
+    /// graph is already present stores its mutation facts there instead, so there is one graph per callable.
+    /// Checker records transport the mutation projection separately and restore this transient map empty.
+    pub(in crate::typechecker) mutation_flows: BTreeMap<CanonicalSymbolId, super::ownership_contracts::flow::Graph>,
     /// Body-owned decisions from the checker's Copy relation, independent of the flow graph. Exact checked types
     /// select their retained decision; missing evidence never falls back to an ABI or source-name heuristic.
     pub(in crate::typechecker) explicit_input_copy: BTreeMap<CanonicalSymbolId, HashMap<ResolvedType, bool>>,

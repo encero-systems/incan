@@ -42,6 +42,10 @@ fn graph(events: Vec<Event>, edges: Vec<Vec<usize>>, loans: Vec<Loan>) -> Graph 
         ]
         .into(),
         loans,
+        direct_iteration_loans: BTreeSet::new(),
+        item_taking_loops: BTreeMap::new(),
+        taking_moves: BTreeMap::new(),
+        dictionary_lookups: BTreeMap::new(),
         local_loans: BTreeMap::new(),
         dependent_locals: BTreeMap::new(),
         dependent_values: BTreeSet::new(),
@@ -49,6 +53,7 @@ fn graph(events: Vec<Event>, edges: Vec<Vec<usize>>, loans: Vec<Loan>) -> Graph 
         owned_locals: BTreeMap::new(),
         invocations: BTreeMap::new(),
         closures: BTreeMap::new(),
+        mutation: super::MutationBody::default(),
         nodes: events
             .into_iter()
             .zip(edges)

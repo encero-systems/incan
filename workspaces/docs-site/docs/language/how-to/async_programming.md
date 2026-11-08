@@ -731,7 +731,7 @@ Generated projects reach Tokio through the `incan_std_async` runtime facet, the 
 
 ```toml
 [dependencies]
-incan_std_core = { path = "..." }
+incan_std_primitives = { path = "..." }
 incan_std_async = { path = "..." }
 ```
 

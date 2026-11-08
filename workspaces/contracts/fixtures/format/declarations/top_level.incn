@@ -23,7 +23,7 @@
 #       """A point with two integer coordinates."""
 #
 #       x: int
-#       y: int
+#       y [renamed_from=["vertical", "ordinate"], canonical=false] as "wireY": int
 
 from std.collections import Dict
 from std.fs import Path
@@ -40,4 +40,4 @@ model Point:
     """A point with two integer coordinates."""
 
     x:int
-    y:int
+    y [canonical=false, renamed_from=["vertical","ordinate"]] as "wireY":int

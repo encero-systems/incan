@@ -39,6 +39,9 @@ from pub::incan_platform.store import (
     view_snapshot,
     durable_syncs,
 )
+from pub::incan_platform.store import snapshot as placed_snapshot
+from pub::incan_platform.store.memory import root as memory_root
+from pub::incan_platform.store.path import StorePath
 from store_path_conversion import compact, payload_intact, payload_path, put_payload, snapshot
 
 static observed_work: dict[str, int] = {}
@@ -77,6 +80,51 @@ def count_files(directory: Path) -> int:
     match directory.iterdir():
         Ok(entries) => return len(entries)
         Err(_) => return 0
+
+
+def placement_trace(root: StorePath) -> Result[list[str], str]:
+    """
+    Exercise the placement-independent record, transaction, snapshot and fork contract once.
+
+    The same function receives a disk root and an isolated memory root, so neither placement can substitute a second
+    transaction engine or a placement-specific expected result.
+    """
+    empty = placed_snapshot(root).map_err((error) => error.message())?
+    first = commit(put(begin(empty), "a", b"one")).map_err((error) => error.message())?
+    held = first
+    second = commit(put(begin(first), "a", b"two")).map_err((error) => error.message())?
+    mut preview = fork(second, "preview").map_err((error) => error.message())?
+    preview = commit(put(begin(preview), "b", b"branch")).map_err((error) => error.message())?
+    home = placed_snapshot(root).map_err((error) => error.message())?
+    unchanged = commit(put(begin(home), "a", b"two")).map_err((error) => error.message())?
+    deleted = commit(delete(begin(home), "a")).map_err((error) => error.message())?
+    return Ok(
+        [
+            text(lookup(held, "a")),
+            text(lookup(second, "a")),
+            text(lookup(preview, "a")),
+            text(lookup(preview, "b")),
+            text(lookup(home, "b")),
+            str(unchanged.generation == home.generation),
+            text(lookup(deleted, "a")),
+        ],
+    )
+
+
+pub def test_disk_and_memory_placements_share_one_transaction_engine() -> Result[None, str]:
+    """
+    Disk and memory placements produce the same logical outcomes; memory creates no file or temporary artifact.
+
+    The memory placement owns immutable objects and roots in its state cell, while disk retains the qualified v3
+    layout and durability operations behind the same `StorePath` seam.
+    """
+    scratch = scratch_directory()?
+    before = count_files(scratch.path())
+    memory = placement_trace(memory_root())?
+    assert count_files(scratch.path()) == before, "the memory placement touched the scratch directory"
+    disk = placement_trace(store_path(scratch.path().joinpath("disk")))?
+    assert memory == disk
+    return Ok(None)
 
 
 pub def test_a_snapshot_keeps_its_generation_and_reads_tell_values_tombstones_and_absence_apart() -> Result[None, str]:

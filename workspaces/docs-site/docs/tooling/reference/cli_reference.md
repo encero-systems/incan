@@ -7,6 +7,7 @@ An Incan installation provides two commands, `oven` and `incan`, as one program.
 ```text
 oven --help | -h | help
 oven --version
+oven lock [--versions lowest|lowest-direct|newest] [PATH]
 oven run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 oven check PATH [--format text|json] [UNIT OPTIONS]
 oven test PATH [UNIT OPTIONS]
@@ -47,8 +48,17 @@ There is no implicit command or implicit source path. Each name runs only its ow
 | `--features A,B` | Comma-separated names, empty | Adds public root-package features. |
 | `--no-default-features` | Boolean, false | Disables selection of the root package's `default` feature. |
 | `--all-features` | Boolean, false | Selects every declared root-package feature. |
+| `--locked` | Boolean, false | On `oven run`, `oven build` and `oven test`, refuses a missing lock or any resolution that would change it. |
 
 Unknown features, invalid feature edges and unknown options fail the command. Feature-selection options require an owning project. Unsupported command-option combinations exit `2` before dependency preparation. Unit commands accept one path. Package features are specified in [Project configuration](project_configuration.md#projectfeatures).
+
+## `oven lock`
+
+Resolves the root project at `PATH` and atomically writes its generated [`oven.lock`](lock_file.md). `PATH` defaults to the current directory. Success prints `locked NAME VERSION (MODE)` and exits `0`. A generated write adds no other stdout or stderr.
+
+`--versions` accepts `lowest`, `lowest-direct` or `newest`. Without the option, an existing same-toolchain lock keeps its recorded mode; otherwise the mode is `lowest`. The current compiled-unit resolver applies the mode before its exact-producer and profile tie-breaks.
+
+This command is available only as `oven lock`. `incan lock` is an unknown command.
 
 ## `oven run`
 

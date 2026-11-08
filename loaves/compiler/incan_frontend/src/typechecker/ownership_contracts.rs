@@ -3,15 +3,21 @@
 //! A direct input annotation is admitted only with its complete supported body proof. Returned dependencies,
 //! deferred boundaries and unsupported storage shapes remain refused rather than acquiring repair copies.
 
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::ownership::{self, OwnershipMode};
-use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
 mod admission;
 mod builtins;
 mod checked;
 mod copy;
+mod dictionary;
 pub(super) mod flow;
+mod iteration;
+pub(in crate::typechecker) mod loop_items;
+pub(in crate::typechecker) mod mutation;
 pub(super) mod native;
+mod native_lifetimes;
 pub(super) mod projection;
 mod report;
 mod source;
@@ -76,6 +82,20 @@ pub(super) enum InputCallKind {
 }
 
 impl TypeChecker {
+    /// Return the runtime value beneath one canonical ownership wrapper in a checked type position.
+    pub(in crate::typechecker) fn explicit_ownership_value_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        let ResolvedType::Generic(name, arguments) = ty else {
+            return None;
+        };
+        if self.explicit_ownership_mode(name).is_none() {
+            return None;
+        }
+        let [underlying] = arguments.as_slice() else {
+            return None;
+        };
+        Some(underlying.clone())
+    }
+
     /// The body writer starts with isolated references. Retain the prepared parameter bindings before statement
     /// checking can shadow their names, so source admission and persisted restoration use the same canonical facts.
     pub(super) fn retain_callable_input_bindings(&mut self, callable: CallableSource<'_>) {
@@ -96,17 +116,74 @@ impl TypeChecker {
         }
     }
 
+    /// Mark a statement loop as borrowing a direct stored list. This is activation metadata only: the ownership graph
+    /// later resolves the canonical place, loan, loop back-edge and any conflicting replacement.
+    pub(in crate::typechecker) fn note_borrowed_iteration_loop(&mut self, iter: &Spanned<Expr>) {
+        if !matches!(self.type_info.expr_type(iter.span), Some(ResolvedType::Generic(name, _))
+                if collections::from_str(name) == Some(CollectionTypeId::List))
+        {
+            return;
+        }
+        let borrowed = checked_graph_place(iter, &self.type_info);
+        if let Some(context) = self.loop_stack.last_mut() {
+            context.borrowed_iteration = borrowed;
+        }
+    }
+
+    /// Activate graph analysis when a resolved binding replacement owns an active iteration place.
+    pub(in crate::typechecker) fn note_iteration_binding_replacement(&mut self, name: &str, span: Span) {
+        let Some(identity) = self.type_info.resolved_write_identity(span, name).cloned() else {
+            return;
+        };
+        self.note_iteration_place_replacement(flow::Place {
+            root: flow::Root::Binding(identity),
+            projection: Vec::new(),
+        });
+    }
+
+    /// Activate graph analysis when a resolved field replacement owns an active iteration place.
+    pub(in crate::typechecker) fn note_iteration_field_replacement(&mut self, object: &Spanned<Expr>, span: Span) {
+        let Some(mut target) = checked_graph_place(object, &self.type_info) else {
+            return;
+        };
+        let Some(field) = self
+            .type_info
+            .resolved_identity(span)
+            .filter(|identity| identity.kind == SemanticSourceTargetKind::Field)
+            .cloned()
+        else {
+            return;
+        };
+        target.projection.push(flow::Projection::Field(field));
+        self.note_iteration_place_replacement(target);
+    }
+
+    /// Mark the current body only when a checked replacement contains the canonical place borrowed by an active
+    /// direct loop. The graph still owns the loan, liveness, conflict and diagnostic decision.
+    fn note_iteration_place_replacement(&mut self, target: flow::Place) {
+        let overlaps = self.loop_stack.iter().any(|context| {
+            context
+                .borrowed_iteration
+                .as_ref()
+                .is_some_and(|borrowed| target.contains(borrowed))
+        });
+        if overlaps && let Some(identity) = self.current_body_identity().cloned() {
+            self.iteration_replacement_bodies.insert(identity);
+        }
+    }
+
     /// Mark the active callable when a selected builtin member returns or transforms a lazy iterator.
     pub(in crate::typechecker) fn note_lazy_result_member(
         &mut self,
-        identity: &CanonicalSymbolId,
         operation: Option<incan_lang::lang::builtins::BuiltinMethodId>,
     ) {
         let method = match operation {
             Some(incan_lang::lang::builtins::BuiltinMethodId::ListIter) => {
                 Some(incan_lang::lang::surface::iterator_methods::IteratorMethodId::Iter)
             }
-            _ => builtins::retained_iterator_member(identity),
+            Some(incan_lang::lang::builtins::BuiltinMethodId::Iterator(method))
+            | Some(incan_lang::lang::builtins::BuiltinMethodId::Generator(method)) => Some(method),
+            _ => None,
         };
         if method.is_some_and(|method| !incan_lang::lang::surface::iterator_methods::is_terminal(method)) {
             self.note_lazy_result_body();
@@ -128,24 +205,32 @@ impl TypeChecker {
             }),
             _ => None,
         };
-        let requires_explicit_flow = self.type_info.declarations.ownership_contracts.contains_key(&identity)
+        let requires_declared_flow = self.type_info.declarations.ownership_contracts.contains_key(&identity)
             || self
                 .type_info
                 .protocols
                 .explicit_local_modes
                 .values()
-                .any(|mode| mode.owner == identity)
-            || self
-                .type_info
-                .protocols
-                .explicit_input_calls
-                .values()
-                .any(|call| call.owner.as_ref() == Some(&identity) && call.kind == InputCallKind::Explicit);
+                .any(|mode| mode.owner == identity);
+        let requires_explicit_flow = requires_declared_flow
+            || self.type_info.protocols.explicit_input_calls.values().any(|call| {
+                call.owner.as_ref() == Some(&identity)
+                    && call.kind == InputCallKind::Explicit
+                    && !self.refused_ownership_authorities.contains(&call.callee)
+            });
         let may_retain_lazy_result = self.lazy_result_bodies.remove(&identity);
+        let may_replace_borrowed_iteration = self.iteration_replacement_bodies.remove(&identity);
+        let may_classify_dictionary_lookup = self.dictionary_lookup_bodies.remove(&identity);
+        let may_take_loop_items = self.loop_item_bodies.remove(&identity);
+        let retains_lazy_result = may_retain_lazy_result && body_retains_lazy_result(callable.body(), &self.type_info);
         // Existing explicit bodies already need complete flow. Ordinary bodies are scanned only when expression
-        // checking observed a generator or authenticated lazy iterator member in that body.
+        // checking observed a generator or authenticated lazy iterator member in that body, or when statement
+        // checking observed a replacement inside a direct borrowed list loop.
         if !requires_explicit_flow
-            && (!may_retain_lazy_result || !body_retains_lazy_result(callable.body(), &self.type_info))
+            && !may_replace_borrowed_iteration
+            && !may_classify_dictionary_lookup
+            && !may_take_loop_items
+            && !retains_lazy_result
         {
             self.type_info
                 .protocols
@@ -157,7 +242,13 @@ impl TypeChecker {
         if body.is_some() {
             native::retain_native_input_calls(&mut self.type_info.protocols, &self.type_info.rust, &identity, body);
         }
-        let (graph, view_errors) = source::build_reporting_views(self, callable, span, &identity);
+        let (graph, view_errors) = source::build_reporting_views(
+            self,
+            callable,
+            span,
+            &identity,
+            may_replace_borrowed_iteration || may_take_loop_items,
+        );
         let view_refused = !view_errors.is_empty();
         self.errors.extend(view_errors);
         let output = match graph {
@@ -166,14 +257,20 @@ impl TypeChecker {
                 span,
                 reason: "returned view does not borrow its declared source".into(),
             }),
-            Ok(graph) => match flow::analyze(&graph) {
-                Ok(analysis) => {
-                    self.errors
-                        .extend(report::conflicts(&graph, &analysis, &self.type_info));
-                    InputFlow::Checked { graph, analysis }
+            Ok(mut graph) => {
+                self.errors.extend(loop_items::settle(&mut graph, &mut self.type_info));
+                match flow::analyze(&graph) {
+                    Ok(analysis) => {
+                        for lookup in dictionary::read_only_lookups(&graph, &analysis) {
+                            self.type_info.record_read_only_dict_lookup(lookup);
+                        }
+                        self.errors
+                            .extend(report::conflicts(&graph, &analysis, &self.type_info));
+                        InputFlow::Checked { graph, analysis }
+                    }
+                    Err(fault) => InputFlow::Invalid { graph, fault },
                 }
-                Err(fault) => InputFlow::Invalid { graph, fault },
-            },
+            }
             Err(reason) => InputFlow::Unavailable(reason),
         };
         let has_source_conflicts =
@@ -182,10 +279,47 @@ impl TypeChecker {
             .protocols
             .explicit_input_flow
             .insert(identity.clone(), output);
+        // Iteration-only activation reports graph conflicts but does not turn an unrelated unsupported construct or
+        // an otherwise ordinary body into an explicit-input admission requirement.
+        if (may_replace_borrowed_iteration || may_take_loop_items) && !requires_declared_flow {
+            self.type_info.protocols.explicit_input_flow.remove(&identity);
+            self.type_info
+                .protocols
+                .explicit_input_calls
+                .retain(|_, call| call.owner.as_ref() != Some(&identity) || call.kind == InputCallKind::Explicit);
+            return;
+        }
+        if may_classify_dictionary_lookup
+            && !requires_explicit_flow
+            && !may_replace_borrowed_iteration
+            && !retains_lazy_result
+        {
+            self.type_info.protocols.explicit_input_flow.remove(&identity);
+            self.type_info
+                .protocols
+                .explicit_input_calls
+                .retain(|_, call| call.owner.as_ref() != Some(&identity) || call.kind == InputCallKind::Explicit);
+            return;
+        }
         // A validated conflict already produced its operation-owned diagnostic. The executable-body gate must still
         // reject that graph if lowering asks for it, but repeating the rejection here exposes an internal proof
         // consequence as a second source error.
         if has_source_conflicts {
+            return;
+        }
+        if let Some(InputFlow::Unavailable(unavailable)) = self.type_info.protocols.explicit_input_flow.get(&identity)
+            && unavailable.reason == source::BORROWED_VALUE_IN_OWNED_FIELD
+        {
+            self.refused_ownership_authorities.insert(identity.clone());
+            self.errors.push(
+                CompileError::type_error(
+                    "A plain owned field cannot store a borrowed value".to_string(),
+                    unavailable.span,
+                )
+                    .with_stable_code("INCAN-T0123")
+                    .with_note("The field's declared type owns its value; the borrowed source is not copied or cloned into it")
+                    .with_hint("Declare the carrying field as a type parameter and instantiate the carrier as Carrier[Borrowed[T]]"),
+            );
             return;
         }
         let admission = match callable {
@@ -350,6 +484,27 @@ impl TypeChecker {
     }
 }
 
+/// Resolve the canonical graph place of the direct binding and stored-field shapes statement iteration supports.
+pub(super) fn checked_graph_place(expression: &Spanned<Expr>, facts: &TypeCheckInfo) -> Option<flow::Place> {
+    match &expression.node {
+        Expr::Ident(_) => Some(flow::Place {
+            root: flow::Root::Binding(facts.resolved_identity(expression.span)?.clone()),
+            projection: Vec::new(),
+        }),
+        Expr::Paren(inner) => checked_graph_place(inner, facts),
+        Expr::Field(object, _) => {
+            let field = facts
+                .resolved_identity(expression.span)
+                .filter(|identity| identity.kind == SemanticSourceTargetKind::Field)?
+                .clone();
+            let mut place = checked_graph_place(object, facts)?;
+            place.projection.push(flow::Projection::Field(field));
+            Some(place)
+        }
+        _ => None,
+    }
+}
+
 /// Return whether a body stores, returns or loops over a compiler-authenticated lazy result. Terminal iterator
 /// expressions produce no retained dependency and must not widen ordinary bodies into the explicit ownership profile.
 fn body_retains_lazy_result(body: &[Spanned<Statement>], facts: &TypeCheckInfo) -> bool {
@@ -418,8 +573,8 @@ fn lazy_value_conflicts_later(value: &Spanned<Expr>, tail: &[Spanned<Statement>]
         .any(|source| body_conflicts_with_binding(tail, source, facts))
 }
 
-/// Activate direct-loop flow only when the body reaches the same stored source. A loop that merely consumes its
-/// iterator and writes unrelated output retains no dependency beyond the loop statement and needs no body profile.
+/// Activate direct-loop lazy flow only when the body reaches the same stored source. Iteration replacement uses the
+/// same graph, while this retained-result classification preserves the distinct iterator diagnostic projection.
 fn direct_loop_retains_lazy_source(iter: &Spanned<Expr>, body: &[Spanned<Statement>], facts: &TypeCheckInfo) -> bool {
     if !value_retains_lazy_result(iter, facts, false) {
         return false;

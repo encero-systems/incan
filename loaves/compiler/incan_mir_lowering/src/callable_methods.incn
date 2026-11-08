@@ -132,7 +132,7 @@ def standard_callable_origin(origin: SymbolOrigin) -> bool:
     """Authenticate the provider path; the explicit origin type also retains its Rust struct-pattern import."""
     match origin:
         SymbolOrigin.Package(library=library, module_path=path) =>
-            return library == "incan_stdlib_core" and len(path) == 2 and path[0] == "traits" and path[1] == "callable"
+            return library == "incan_stdlib_primitives" and len(path) == 2 and path[0] == "traits" and path[1] == "callable"
         _ => return false
 
 

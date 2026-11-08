@@ -87,7 +87,7 @@ pub def build_source_interfaces(context: NativeContext, helper: Path, phase_pref
     interfaces.mkdir(true, true).map_err((error) => error.message())?
     inventory = interfaces.joinpath("loaves.json")
     write_json(inventory, JsonValue.array([]))?
-    for package in ["primitives", "core", "async"]:
+    for package in ["primitives", "async"]:
         build_source_interface(context, helper, package, driver, sysroot, inventory, interfaces, phase_prefix)?
     return Ok(inventory)
 

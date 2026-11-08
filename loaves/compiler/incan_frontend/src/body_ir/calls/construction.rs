@@ -160,7 +160,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .get(&span)
             .into_iter()
             .flatten()
-            .map(|ty| self.checked_type(ty))
+            .map(|ty| parameter_types::physical_type_argument(self.checked_type(ty)))
             .collect()
     }
 
@@ -183,7 +183,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .iter()
                 .map(|ty| {
                     let ty = crate::resolved_type_subst::substitute_resolved_type(ty, &application.type_bindings);
-                    self.checked_type(&ty)
+                    parameter_types::physical_type_argument(self.checked_type(&ty))
                 })
                 .collect());
         }
@@ -209,7 +209,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             return Err("call with unresolved explicit type arguments".to_string());
         };
-        Ok(resolved.iter().map(|ty| self.checked_type(ty)).collect())
+        Ok(resolved
+            .iter()
+            .map(|ty| parameter_types::physical_type_argument(self.checked_type(ty)))
+            .collect())
     }
 
     /// Select the declaration identity a checked construction builds.

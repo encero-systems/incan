@@ -98,7 +98,7 @@ pub(crate) fn ordinary_items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Ite
         };
         let poll = ordinary_poll(plan, owner, model, methods, span)?;
         let path = applied(
-            &["incan_stdlib_core", "derives", traits::as_str(TraitId::Iterator)],
+            &["incan_stdlib_primitives", "derives", traits::as_str(TraitId::Iterator)],
             vec![crate::declarations::ty(&methods.item, span)],
             span,
         );
@@ -210,7 +210,11 @@ fn applied(segments: &[&str], arguments: Vec<Box<ast::Ty>>, span: Span) -> ast::
 
 /// Name the actual SDK trait whose implementation satisfies native adapter bounds.
 fn protocol(arguments: Vec<Box<ast::Ty>>, span: Span) -> ast::Path {
-    applied(&["incan_stdlib_core", "derives", "FallibleIterator"], arguments, span)
+    applied(
+        &["incan_stdlib_primitives", "derives", "FallibleIterator"],
+        arguments,
+        span,
+    )
 }
 
 /// Forward one function call; a single-segment source symbol remains crate-local.
@@ -241,7 +245,7 @@ fn parameter(name: &str, callable: Option<Vec<Box<ast::Ty>>>, span: Span) -> ast
     if let Some(arguments) = callable {
         let kind = if arguments.len() == 3 { "Callable2" } else { "Callable1" };
         bounds.push(trait_bound(
-            applied(&["incan_stdlib_core", "traits", kind], arguments, span),
+            applied(&["incan_stdlib_primitives", "traits", kind], arguments, span),
             span,
         ));
     }

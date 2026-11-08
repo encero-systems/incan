@@ -1,0 +1,9 @@
+[project]
+name = "accepts_any_loaf_scope"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+widget = { loaf = "acme/widgets", version = "1" }

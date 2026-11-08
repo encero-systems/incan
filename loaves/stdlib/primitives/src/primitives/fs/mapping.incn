@@ -1,85 +1,8 @@
-"""Read-only memory mappings with independently retained bounded views."""
+"""Read-only file mappings exposed through placement-neutral immutable byte views."""
 
-from rust::incan_std_primitives::mapping import MappedFile as NativeMapping, MappedView as NativeView
+from rust::incan_std_primitives::mapping import MappedFile as NativeMapping
 from crate.primitives.fs.path import PrimitivePath
-
-
-pub type MappedFile = newtype NativeMapping:
-    """
-    An owned read-only mapping of one whole file.
-
-    The backing inode must not be modified or truncated while this handle or any derived view lives. Replacing its
-    pathname does not change the mapped inode. Ownership cannot prevent unrelated processes from violating this rule.
-    """
-
-    pub def len(self) -> int:
-        """Return the number of mapped bytes."""
-        return self.0.len()
-
-    pub def view(self, offset: int, length: int) -> Option[MappedView]:
-        """Retain a bounded zero-copy range, or return `None` for an invalid range."""
-        return self.0.view(offset, length).map((view) => MappedView(view))
-
-
-pub type MappedView = newtype NativeView:
-    """
-    A zero-copy range with an independent shared anchor to its immutable mapping.
-
-    The view may outlive the mapping handle that created it because it retains the mapping. Keeping a small view keeps
-    the whole virtual mapping, and `to_bytes()` is the explicit copying operation.
-    """
-
-    pub def len(self) -> int:
-        """Return this view's byte length."""
-        return self.0.len()
-
-    pub def slice(self, offset: int, length: int) -> Option[MappedView]:
-        """Return a bounded subview relative to this view, or `None` for an invalid range."""
-        return self.0.slice(offset, length).map((view) => MappedView(view))
-
-    pub def to_bytes(self) -> bytes:
-        """Copy this view into independently owned bytes."""
-        return self.0.to_bytes()
-
-    pub def read_u8(self, offset: int) -> Option[u8]:
-        """Return an unsigned byte at a view-relative offset."""
-        return self.0.read_u8(offset)
-
-    pub def read_i8(self, offset: int) -> Option[i8]:
-        """Return a signed byte at a view-relative offset."""
-        return self.0.read_i8(offset)
-
-    pub def read_u16_le(self, offset: int) -> Option[u16]:
-        """Return a little-endian unsigned 16-bit scalar at a view-relative offset."""
-        return self.0.read_u16_le(offset)
-
-    pub def read_u32_le(self, offset: int) -> Option[u32]:
-        """Return a little-endian unsigned 32-bit scalar at a view-relative offset."""
-        return self.0.read_u32_le(offset)
-
-    pub def read_u64_le(self, offset: int) -> Option[u64]:
-        """Return a little-endian unsigned 64-bit scalar at a view-relative offset."""
-        return self.0.read_u64_le(offset)
-
-    pub def read_i16_le(self, offset: int) -> Option[i16]:
-        """Return a little-endian signed 16-bit scalar at a view-relative offset."""
-        return self.0.read_i16_le(offset)
-
-    pub def read_i32_le(self, offset: int) -> Option[i32]:
-        """Return a little-endian signed 32-bit scalar at a view-relative offset."""
-        return self.0.read_i32_le(offset)
-
-    pub def read_i64_le(self, offset: int) -> Option[i64]:
-        """Return a little-endian signed 64-bit scalar at a view-relative offset."""
-        return self.0.read_i64_le(offset)
-
-    pub def read_f32_le(self, offset: int) -> Option[f32]:
-        """Return a little-endian 32-bit floating-point scalar at a view-relative offset."""
-        return self.0.read_f32_le(offset)
-
-    pub def read_f64_le(self, offset: int) -> Option[f64]:
-        """Return a little-endian 64-bit floating-point scalar at a view-relative offset."""
-        return self.0.read_f64_le(offset)
+pub from crate.primitives.views import MappedFile, MappedView
 
 
 pub def map_read(path: PrimitivePath) -> Result[MappedFile, str]:
