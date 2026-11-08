@@ -15,21 +15,21 @@ use incan_frontend::library_manifest::{LibraryManifest, TypeRef};
 use incan_semantics_core::body_ir::loaf_item_path;
 use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin, encode_incan_symbol_identity};
 
-/// Publish canonical ABI items, nongeneric public Loaf facades and checked Rust item reexports. Facade aliases point
-/// to those same items; they introduce neither layouts nor callable implementations. An executable has no manifest.
-pub(crate) fn items(
+/// One checked public facade reduced to the native alias the adapter declares at the crate root.
+pub(crate) struct LibraryFacade {
+    name: String,
+    path: String,
+}
+
+/// Resolve checked library metadata into the compact aliases rustc needs, releasing the manifest before compilation.
+pub(crate) fn resolve_facades(
     plan: &Plan,
     manifest: Option<&LibraryManifest>,
-    span: Span,
-) -> Result<Vec<Box<ast::Item>>, PlanError> {
-    let mut items = plan
-        .exports
-        .iter()
-        .map(|export| public_use(&export.name, &export.path, span))
-        .collect::<Vec<_>>();
+) -> Result<Vec<LibraryFacade>, PlanError> {
     let Some(manifest) = manifest else {
-        return Ok(items);
+        return Ok(Vec::new());
     };
+    let mut facades = Vec::new();
     for name in public_names(manifest) {
         let Some(canonical) = manifest
             .contract_metadata
@@ -63,7 +63,24 @@ pub(crate) fn items(
             }
             continue;
         }
-        items.push(public_use(name, &path, span));
+        facades.push(LibraryFacade {
+            name: name.into(),
+            path,
+        });
+    }
+    Ok(facades)
+}
+
+/// Publish canonical ABI items, nongeneric public Loaf facades and checked Rust item reexports. Facade aliases point
+/// to those same items; they introduce neither layouts nor callable implementations. An executable has no manifest.
+pub(crate) fn items(plan: &Plan, facades: &[LibraryFacade], span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> {
+    let mut items = plan
+        .exports
+        .iter()
+        .map(|export| public_use(&export.name, &export.path, span))
+        .collect::<Vec<_>>();
+    for facade in facades {
+        items.push(public_use(&facade.name, &facade.path, span));
     }
     Ok(items)
 }
