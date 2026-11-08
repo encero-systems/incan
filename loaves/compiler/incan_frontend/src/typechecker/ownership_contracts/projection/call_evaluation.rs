@@ -24,6 +24,7 @@ pub(super) fn validate_invocation_events(
             let source = graph.loans.get(loan.0).ok_or("receiver loan is absent")?;
             validate_evaluation(graph, source.span, evaluation, Some(&source.source), Some(loan), None)?;
             end = Some(evaluation.end_node);
+            loans.extend(&invocation.receiver_dependencies);
             loans.push(loan);
         }
         (None, Some(evaluation)) if invocation.receiver_owned => {
@@ -305,6 +306,14 @@ impl CheckedInputBody<'_> {
                 )))
             }
             Expr::Paren(inner) => self.call_place(inner),
+            Expr::Field(_, _)
+                if self
+                    .facts
+                    .resolved_identity(expression.span)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant) =>
+            {
+                Ok(None)
+            }
             Expr::Field(base, _) => {
                 let (mut place, through) = self.call_place(base)?.ok_or("input field has no stored owner")?;
                 let field = self
@@ -336,11 +345,33 @@ impl CheckedInputBody<'_> {
                 let Some(call) = self.facts.protocols.explicit_input_calls.get(&inner.span) else {
                     return Ok(None);
                 };
-                if crate::ownership_metadata::returned_view(self.facts.selected_input_contract(call)?)?.is_none() {
+                let Some(view) = crate::ownership_metadata::returned_view(self.facts.selected_input_contract(call)?)?
+                else {
                     return Ok(None);
+                };
+                let invocation = self
+                    .graph
+                    .invocations
+                    .get(&inner.span)
+                    .ok_or("returned view call has no checked invocation")?;
+                let base = match view.source.slot {
+                    crate::ownership_metadata::SourceSlot::Receiver => invocation.receiver,
+                    crate::ownership_metadata::SourceSlot::Parameter(slot) => invocation
+                        .arguments
+                        .iter()
+                        .find(|argument| argument.slot == slot)
+                        .and_then(|argument| argument.loan),
                 }
+                .and_then(|loan| self.graph.loans.get(loan.0))
+                .ok_or("returned view call has no checked source loan")?;
+                let mut source = base.source.clone();
+                source
+                    .projection
+                    .extend(view.source.fields.iter().cloned().map(flow::Projection::Field));
                 let mut loans = self.graph.loans.iter().enumerate().filter(|(_, loan)| {
                     loan.span == inner.span
+                        && loan.source == source
+                        && loan.parent == base.parent
                         && loan
                             .parent
                             .and_then(|parent| self.graph.loans.get(parent.0))

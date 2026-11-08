@@ -436,6 +436,15 @@ impl Builder<'_> {
     /// Distinguish stored sources from fresh computed values without swallowing missing checked projection facts.
     pub(super) fn optional_place(&mut self, expression: &Spanned<Expr>) -> Result<Option<Path>, Unavailable> {
         match &expression.node {
+            Expr::Field(_, _)
+                if self
+                    .checker
+                    .type_info
+                    .resolved_identity(expression.span)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant) =>
+            {
+                Ok(None)
+            }
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => self.place(expression).map(Some),
             Expr::Paren(inner) => self.optional_place(inner),
             Expr::MethodCall(..)

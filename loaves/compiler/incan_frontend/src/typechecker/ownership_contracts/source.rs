@@ -10,7 +10,7 @@ use super::flow::{
 };
 use crate::ast::{
     AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, ForStmt,
-    FunctionDecl, IfStmt, MethodDecl, Param, Receiver, Span, Spanned, Statement, Type,
+    FunctionDecl, IfStmt, IndexAssignmentStmt, MethodDecl, Param, Receiver, Span, Spanned, Statement, Type,
 };
 use crate::ownership_metadata::SourceSlot;
 use crate::symbols::{ResolvedType, SymbolKind};
@@ -380,6 +380,15 @@ impl Builder<'_> {
         if let Some(result) = self.retained_result(expression, incoming.clone(), false)? {
             return Ok(result.incoming);
         }
+        if matches!(expression.node, Expr::Field(_, _))
+            && self
+                .checker
+                .type_info
+                .resolved_identity(expression.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+        {
+            return Ok(incoming);
+        }
         if self
             .checker
             .type_info
@@ -492,8 +501,16 @@ impl Builder<'_> {
             }
             Expr::Call(callee, _, arguments) => self.call(callee, arguments, expression.span, incoming),
             Expr::MethodCall(receiver, _, _, arguments) => {
-                match super::builtins::list_method_writes(&self.checker.type_info, expression.span) {
-                    Some(writes) => self.list_method(receiver, writes, arguments, expression.span, incoming),
+                if self
+                    .checker
+                    .type_info
+                    .resolved_identity(expression.span)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+                {
+                    return self.variant_construction(arguments, expression.span, incoming);
+                }
+                match super::builtins::builtin_place_method_writes(&self.checker.type_info, expression.span) {
+                    Some(writes) => self.builtin_place_method(receiver, writes, arguments, expression.span, incoming),
                     None if self.uses_ordinary_iteration_access(expression.span) => {
                         self.ordinary_iteration_call(Some(receiver), arguments, incoming)
                     }

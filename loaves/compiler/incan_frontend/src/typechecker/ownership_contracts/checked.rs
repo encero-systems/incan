@@ -33,7 +33,7 @@ impl TypeChecker {
         receiver: Option<Receiver>,
         span: Span,
     ) {
-        if let Some(call) = self.explicit_input_call_fact(identity, parameters, receiver) {
+        if let Some(call) = self.explicit_input_call_fact(identity, parameters, receiver, span) {
             self.type_info.protocols.explicit_input_calls.insert(span, call);
         }
     }
@@ -48,8 +48,13 @@ impl TypeChecker {
         declared: &[CallableParam],
         span: Span,
     ) {
-        let parameters = self.type_info.call_site_callable_params(span).unwrap_or(declared);
-        let call = self.explicit_input_call_fact(identity, parameters, receiver);
+        let parameters = self
+            .type_info
+            .call_site_callable_params(span)
+            .unwrap_or(declared)
+            .to_vec();
+        self.type_info.record_call_site_callable_params_exact(span, &parameters);
+        let call = self.explicit_input_call_fact(identity, &parameters, receiver, span);
         if let Some(call) = call {
             self.type_info.protocols.explicit_input_calls.insert(span, call);
         }
@@ -75,6 +80,7 @@ impl TypeChecker {
         self.type_info.protocols.explicit_input_calls.insert(
             span,
             super::InputCall {
+                site: span,
                 kind: super::InputCallKind::Indirect,
                 owner: Some(owner),
                 callee,
@@ -92,6 +98,7 @@ impl TypeChecker {
         identity: Option<&CanonicalSymbolId>,
         parameters: &[CallableParam],
         receiver: Option<Receiver>,
+        site: Span,
     ) -> Option<super::InputCall> {
         let callee = identity?;
         let kind = if self
@@ -112,6 +119,7 @@ impl TypeChecker {
             super::InputCallKind::Ordinary
         };
         let call = super::InputCall {
+            site,
             kind,
             owner: self.current_body_identity().cloned(),
             callee: callee.clone(),

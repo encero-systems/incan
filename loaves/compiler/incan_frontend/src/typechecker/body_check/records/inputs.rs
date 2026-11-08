@@ -185,6 +185,7 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
                 .insert(
                     anchor,
                     InputCall {
+                        site: anchor,
                         kind,
                         owner,
                         callee,

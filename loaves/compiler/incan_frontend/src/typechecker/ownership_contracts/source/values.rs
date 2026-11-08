@@ -9,6 +9,41 @@ use crate::ast::{CallArg, Expr, FStringFormat, FStringPart, ListEntry, Span, Spa
 use crate::symbols::TypeInfo;
 
 impl Builder<'_> {
+    /// Evaluate a checker-selected payload variant as fresh storage. Each payload is fresh, Copy, or an exact
+    /// transferable place; a borrowed place cannot become owned merely by crossing the variant boundary.
+    pub(super) fn variant_construction(
+        &mut self,
+        arguments: &[CallArg],
+        span: Span,
+        mut incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        for argument in arguments {
+            let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
+                return Err(Unavailable {
+                    span,
+                    reason: "variant construction needs fixed checked payloads".into(),
+                });
+            };
+            if !self.fresh_or_copy_field(value) {
+                let place = self.optional_place(value)?.ok_or(Unavailable {
+                    span: value.span,
+                    reason: "non-Copy variant payload needs checked ownership transfer materialization".into(),
+                })?;
+                if place.through.is_some() || self.borrowed_inputs.contains(&place.place.root) {
+                    return Err(Unavailable {
+                        span: value.span,
+                        reason: super::BORROWED_VALUE_IN_OWNED_FIELD.into(),
+                    });
+                }
+                self.constrained.insert(place.place.root);
+                incoming = self.expression(value, incoming, true)?;
+                continue;
+            }
+            incoming = self.expression(value, incoming, false)?;
+        }
+        Ok(incoming)
+    }
+
     /// Mark constructor arguments whose declared field is exactly the type parameter selected by a carried view.
     /// The checked argument-slot binding and nominal declaration own both orders; source field spellings are not
     /// re-resolved here.
@@ -239,17 +274,19 @@ impl Builder<'_> {
                 .copied()
                 .unwrap_or(false);
             if !stores_view && !self.fresh_or_copy_field(value) {
-                let borrowed = self
-                    .optional_place(value)?
-                    .is_some_and(|path| path.through.is_some() || self.borrowed_inputs.contains(&path.place.root));
-                return Err(Unavailable {
+                let place = self.optional_place(value)?.ok_or(Unavailable {
                     span: value.span,
-                    reason: if borrowed {
-                        super::BORROWED_VALUE_IN_OWNED_FIELD.into()
-                    } else {
-                        "non-Copy constructor field needs checked ownership transfer materialization".into()
-                    },
-                });
+                    reason: "non-Copy constructor field needs checked ownership transfer materialization".into(),
+                })?;
+                if place.through.is_some() || self.borrowed_inputs.contains(&place.place.root) {
+                    return Err(Unavailable {
+                        span: value.span,
+                        reason: super::BORROWED_VALUE_IN_OWNED_FIELD.into(),
+                    });
+                }
+                self.constrained.insert(place.place.root);
+                incoming = self.expression(value, incoming, true)?;
+                continue;
             }
             incoming = self.expression(value, incoming, false)?;
         }
@@ -270,9 +307,19 @@ impl Builder<'_> {
         }
         match &value.node {
             Expr::Literal(_) | Expr::FString(_) | Expr::List(_) => true,
+            Expr::Field(_, _) => self
+                .checker
+                .type_info
+                .resolved_identity(value.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant),
             Expr::Paren(inner) => self.fresh_or_copy_field(inner),
-            Expr::Call(_, _, _) => {
+            Expr::Call(callee, _, _) => {
                 self.checker.type_info.constructor_field_binding(value.span).is_some()
+                    || self
+                        .checker
+                        .type_info
+                        .resolved_identity(callee.span)
+                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
                     || self
                         .checker
                         .type_info
@@ -285,7 +332,14 @@ impl Builder<'_> {
                                 && contract.is_some_and(|contract| contract.result_source.is_none())
                         })
             }
-            Expr::MethodCall(..) => self.checked_clone_call(value.span),
+            Expr::MethodCall(..) => {
+                self.checked_clone_call(value.span)
+                    || self
+                        .checker
+                        .type_info
+                        .resolved_identity(value.span)
+                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+            }
             _ => false,
         }
     }

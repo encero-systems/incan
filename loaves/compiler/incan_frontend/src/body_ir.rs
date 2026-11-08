@@ -392,6 +392,11 @@ struct BodyBuilder<'type_info, 'source> {
     carried_view_locals: HashMap<incan_semantics_core::CanonicalSymbolId, ast::Span>,
     /// Locals that own a user-defined or nested aggregate whose selected generic component is a physical reference.
     aggregate_view_locals: HashSet<incan_semantics_core::CanonicalSymbolId>,
+    /// Hidden aggregate-result temporaries keyed by the temporary that borrows them, flattened to the complete owner
+    /// chain so a named outer aggregate can retain every physical source through its lexical scope.
+    aggregate_view_temporary_dependencies: HashMap<bir::LocalId, Vec<bir::LocalId>>,
+    /// Authenticated hidden aggregate owners that escape their source statement through a named aggregate local.
+    retained_statement_temporaries: HashSet<bir::LocalId>,
     /// Statement-if scopes whose branch states are independently joined for authenticated whole owners.
     input_if_scopes: Vec<bir::ScopeId>,
     /// Statement loops whose exit states are joined for authenticated whole owners, innermost last.
