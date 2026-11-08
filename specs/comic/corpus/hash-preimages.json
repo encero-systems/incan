@@ -1,0 +1,2651 @@
+{
+  "operation": "hash_preimage",
+  "profile": "crumb1",
+  "cases": [
+    {
+      "id": "hash-int-zero",
+      "projection": "object",
+      "input": {
+        "kind": "int",
+        "type": "i64",
+        "value": "0"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0200"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010200",
+        "sha256": "991e7a62cf2aef8a06713404f30c31a223803dae92ec3ab0e4eb83946faf1359"
+      }
+    },
+    {
+      "id": "hash-int-negative-one",
+      "projection": "object",
+      "input": {
+        "kind": "int",
+        "type": "i64",
+        "value": "-1"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0201"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010201",
+        "sha256": "54161bfb747f8adbbdc62c19e3add3c81a5a23384cfa024659d617451053cd9c"
+      }
+    },
+    {
+      "id": "hash-int-127",
+      "projection": "object",
+      "input": {
+        "kind": "int",
+        "type": "i64",
+        "value": "127"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "02fe01"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d6231000102fe01",
+        "sha256": "bf018a46acd94bf3d520ed5f79f33cf53797e0b145a0cb978c30441a0b9f06c7"
+      }
+    },
+    {
+      "id": "hash-int-128",
+      "projection": "object",
+      "input": {
+        "kind": "int",
+        "type": "i64",
+        "value": "128"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "028002"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310001028002",
+        "sha256": "07f717a2a882c672b2ac2aee2def61d579193d6edcb611f50f89d66aa67ca579"
+      }
+    },
+    {
+      "id": "hash-int-widened",
+      "projection": "object",
+      "input": {
+        "kind": "int",
+        "type": "i64",
+        "value": "127"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "02fe01"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d6231000102fe01",
+        "sha256": "bf018a46acd94bf3d520ed5f79f33cf53797e0b145a0cb978c30441a0b9f06c7"
+      }
+    },
+    {
+      "id": "hash-int-narrow",
+      "projection": "object",
+      "input": {
+        "kind": "int",
+        "type": "i8",
+        "value": "127"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "02fe01"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d6231000102fe01",
+        "sha256": "bf018a46acd94bf3d520ed5f79f33cf53797e0b145a0cb978c30441a0b9f06c7"
+      }
+    },
+    {
+      "id": "hash-false",
+      "projection": "object",
+      "input": {
+        "kind": "boolean",
+        "value": false
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0100"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010100",
+        "sha256": "82e6cd25dbe2c2f931b2299ce0dadcf719cbb478db885269781278ac40a0ca46"
+      }
+    },
+    {
+      "id": "hash-true",
+      "projection": "object",
+      "input": {
+        "kind": "boolean",
+        "value": true
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0101"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010101",
+        "sha256": "c140cf5352b048abf8e0e5f124b2c62ea843b66a6b26a2dc31dd30e8ae0043a7"
+      }
+    },
+    {
+      "id": "hash-positive-zero",
+      "projection": "object",
+      "input": {
+        "kind": "float",
+        "width": 64,
+        "bits": "0000000000000000"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "030000000000000000"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310001030000000000000000",
+        "sha256": "365c8d530d1002a2e794587bf1f3f29b0283eb17ac528392932571f86761572e"
+      }
+    },
+    {
+      "id": "hash-negative-zero",
+      "projection": "object",
+      "input": {
+        "kind": "float",
+        "width": 64,
+        "bits": "8000000000000000"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "038000000000000000"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310001038000000000000000",
+        "sha256": "c210b999ae677be6a07d4be66f8b8a79365eb9bdbd26eb05c6b3d218fb41c668"
+      }
+    },
+    {
+      "id": "hash-nan-payload",
+      "projection": "object",
+      "input": {
+        "kind": "float",
+        "width": 64,
+        "bits": "fff8000000000042"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "037ff8000000000000"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310001037ff8000000000000",
+        "sha256": "ca0d2ea2cd3fc64e0d013ec957c8d6e304cddbc00099c97b9aa9e60887b8c0c0"
+      }
+    },
+    {
+      "id": "hash-nan32",
+      "projection": "object",
+      "input": {
+        "kind": "float",
+        "width": 32,
+        "bits": "7fc00001"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "037ff8000000000000"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310001037ff8000000000000",
+        "sha256": "ca0d2ea2cd3fc64e0d013ec957c8d6e304cddbc00099c97b9aa9e60887b8c0c0"
+      }
+    },
+    {
+      "id": "hash-widen-float32",
+      "projection": "object",
+      "input": {
+        "kind": "float",
+        "width": 32,
+        "bits": "3fc00000"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "033ff8000000000000"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310001033ff8000000000000",
+        "sha256": "5ac57b65b2f349a3a05a0da15d36fa30f5e5fbae58e5f9d31c08f463b277a544"
+      }
+    },
+    {
+      "id": "hash-decimal-1990",
+      "projection": "object",
+      "input": {
+        "kind": "decimal",
+        "precision": 10,
+        "scale": 2,
+        "coefficient": "1990"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "048e0302"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310001048e0302",
+        "sha256": "6dae8783780409bb08dc9e2236dd522bbd066e7159ef1d92aa7f1edee8d66780"
+      }
+    },
+    {
+      "id": "hash-decimal-199",
+      "projection": "object",
+      "input": {
+        "kind": "decimal",
+        "precision": 10,
+        "scale": 1,
+        "coefficient": "199"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "048e0302"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310001048e0302",
+        "sha256": "6dae8783780409bb08dc9e2236dd522bbd066e7159ef1d92aa7f1edee8d66780"
+      }
+    },
+    {
+      "id": "hash-decimal-100",
+      "projection": "object",
+      "input": {
+        "kind": "decimal",
+        "precision": 10,
+        "scale": 0,
+        "coefficient": "100"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "040203"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310001040203",
+        "sha256": "279da58724eac799335188949d03837eb5ea384bd450a43f243c8a46910e5182"
+      }
+    },
+    {
+      "id": "hash-decimal-zero",
+      "projection": "object",
+      "input": {
+        "kind": "decimal",
+        "precision": 10,
+        "scale": 2,
+        "coefficient": "0"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "040000"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310001040000",
+        "sha256": "74eea14ba367c494fabd9ae7afb097e191c79c8826cdd31fe622044b402b1bae"
+      }
+    },
+    {
+      "id": "hash-string-empty",
+      "projection": "object",
+      "input": {
+        "kind": "string",
+        "value": ""
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0500"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010500",
+        "sha256": "b91ea0d0d756c715ee072e121a010caead96727e63d964275dfcd163bc819adf"
+      }
+    },
+    {
+      "id": "hash-string-a",
+      "projection": "object",
+      "input": {
+        "kind": "string",
+        "value": "a"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "050161"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310001050161",
+        "sha256": "659c4eab3c79979446f1120b78baf0b42d34b81aa1e854ee29890abebe7ece4c"
+      }
+    },
+    {
+      "id": "hash-unicode-composed",
+      "projection": "object",
+      "input": {
+        "kind": "string",
+        "value": "é"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0502c3a9"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010502c3a9",
+        "sha256": "0327455e954d76b5e67da1a7dec0c8a0943f83b35a720f34e86efd29c671cd1f"
+      }
+    },
+    {
+      "id": "hash-unicode-decomposed",
+      "projection": "object",
+      "input": {
+        "kind": "string",
+        "value": "é"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "050365cc81"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310001050365cc81",
+        "sha256": "e12c44c5be2946f16bddc3057f2821924b4745bd376120c3f4735f952fe179a0"
+      }
+    },
+    {
+      "id": "hash-binary-empty",
+      "projection": "object",
+      "input": {
+        "kind": "binary",
+        "hex": ""
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0600"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010600",
+        "sha256": "1aa032d93f346d82fecfe6d1739ccc39ddb5d3dcdf84d4d64b09a3b93e65bf8a"
+      }
+    },
+    {
+      "id": "hash-binary-zero",
+      "projection": "object",
+      "input": {
+        "kind": "binary",
+        "hex": "00"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "060100"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310001060100",
+        "sha256": "6af24770749d62afcf70f24845328c8498272a8b2afaab11002ee3801a6516f2"
+      }
+    },
+    {
+      "id": "hash-withheld",
+      "projection": "object",
+      "input": {
+        "kind": "withheld",
+        "type": "secret_string"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "07"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d6231000107",
+        "sha256": "91cfdeb7939dc1542ed848b96544b26614099b20346d7cf758752bd21d8891dc"
+      }
+    },
+    {
+      "id": "hash-none",
+      "projection": "object",
+      "input": {
+        "kind": "none"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0000"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010000",
+        "sha256": "1108f2ea1f47159837f889e62f9c34f0179f2a0482500cbaef2deb67f4b88424"
+      }
+    },
+    {
+      "id": "hash-some-none",
+      "projection": "object",
+      "input": {
+        "kind": "some",
+        "value": {
+          "kind": "none"
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0001"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010001",
+        "sha256": "7852da732496b632b10033569bccd80df396cebf933086b3e97a1e89e1287214"
+      }
+    },
+    {
+      "id": "hash-some-some-none",
+      "projection": "object",
+      "input": {
+        "kind": "some",
+        "value": {
+          "kind": "some",
+          "value": {
+            "kind": "none"
+          }
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0002"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010002",
+        "sha256": "744502863254338c9b19cb87a541e395f367ac51c1a744baafff771c12639a3a"
+      }
+    },
+    {
+      "id": "hash-present-int",
+      "projection": "object",
+      "input": {
+        "kind": "some",
+        "value": {
+          "kind": "int",
+          "type": "i64",
+          "value": "7"
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "020e"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310001020e",
+        "sha256": "f529f1aa837392cdfdfb53807e1d39e39309407aa974e740e8a1df384b33563b"
+      }
+    },
+    {
+      "id": "hash-empty-list",
+      "projection": "object",
+      "input": {
+        "kind": "list",
+        "items": []
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0800"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010800",
+        "sha256": "5ac4aa1433f6fb9faf46d376f0d1a873e8c625881ffeba8bebbc3554bcd919db"
+      }
+    },
+    {
+      "id": "hash-empty-tuple",
+      "projection": "object",
+      "input": {
+        "kind": "tuple",
+        "items": []
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0900"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010900",
+        "sha256": "8fa77a4287e75dd9e1201863562fb9098206934e68168da76f979017c70b0de4"
+      }
+    },
+    {
+      "id": "hash-empty-set",
+      "projection": "object",
+      "input": {
+        "kind": "set",
+        "items": []
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0a00"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010a00",
+        "sha256": "c4ae231b3cf33b47a4a9c9101579c05d418334c5b109d35d714adc91de52759c"
+      }
+    },
+    {
+      "id": "hash-empty-map",
+      "projection": "object",
+      "input": {
+        "kind": "map",
+        "entries": []
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0b00"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010b00",
+        "sha256": "df3068e633fa69fd98633eec4cee3a197d5620018fc4620bee35ef05ba0bf386"
+      }
+    },
+    {
+      "id": "hash-empty-record",
+      "projection": "object",
+      "input": {
+        "kind": "record",
+        "fields": []
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0c00"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010c00",
+        "sha256": "83e978447edd7e821757f1b0e1f799074d8d583ed3f828c8e33ef790bd3a9612"
+      }
+    },
+    {
+      "id": "hash-list-with-none",
+      "projection": "object",
+      "input": {
+        "kind": "list",
+        "items": [
+          {
+            "kind": "int",
+            "type": "i64",
+            "value": "1"
+          },
+          {
+            "kind": "none"
+          },
+          {
+            "kind": "int",
+            "type": "i64",
+            "value": "3"
+          }
+        ]
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0803020200000206"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010803020200000206",
+        "sha256": "d95375bdfcc57c4aa8e3a386dce5919f438ebd8e9c2599dffaf8ad7edbd4d556"
+      }
+    },
+    {
+      "id": "hash-set-numeric-order",
+      "projection": "object",
+      "input": {
+        "kind": "set",
+        "items": [
+          {
+            "kind": "int",
+            "type": "i64",
+            "value": "128"
+          },
+          {
+            "kind": "int",
+            "type": "i64",
+            "value": "-1"
+          },
+          {
+            "kind": "int",
+            "type": "i64",
+            "value": "0"
+          }
+        ]
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0a0302010200028002"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010a0302010200028002",
+        "sha256": "8ac33f0ffa203fe24222a0cdcdf459f6c8b9bb8b15a4ae24a3ad6632f4742e67"
+      }
+    },
+    {
+      "id": "hash-map-order",
+      "projection": "object",
+      "input": {
+        "kind": "map",
+        "entries": [
+          [
+            {
+              "kind": "string",
+              "value": "b"
+            },
+            {
+              "kind": "int",
+              "type": "i64",
+              "value": "2"
+            }
+          ],
+          [
+            {
+              "kind": "string",
+              "value": "a"
+            },
+            {
+              "kind": "int",
+              "type": "i64",
+              "value": "1"
+            }
+          ]
+        ]
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0b0205016102020501620204"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010b0205016102020501620204",
+        "sha256": "a6467b9f56a1e03f6f6f52e42cda15d70502e9d76d6c363466f1d679983e64a3"
+      }
+    },
+    {
+      "id": "hash-reference-a",
+      "projection": "object",
+      "input": {
+        "kind": "reference",
+        "target_type": "x",
+        "identity": "a",
+        "observed_target": "old"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0f01780161"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010f01780161",
+        "sha256": "56e8f2c85e36712735d05df410fa6471eebba1e0f74e2b56df58fe1bc63e34f7"
+      }
+    },
+    {
+      "id": "hash-reference-revised",
+      "projection": "object",
+      "input": {
+        "kind": "reference",
+        "target_type": "x",
+        "identity": "a",
+        "observed_target": "new"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0f01780161"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010f01780161",
+        "sha256": "56e8f2c85e36712735d05df410fa6471eebba1e0f74e2b56df58fe1bc63e34f7"
+      }
+    },
+    {
+      "id": "hash-reference-b",
+      "projection": "object",
+      "input": {
+        "kind": "reference",
+        "target_type": "x",
+        "identity": "b"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0f01780162"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010f01780162",
+        "sha256": "fe3c73e2827ffdff8d2a2bc91caade9ec0d2723c35bff8b2868f491275a1a514"
+      }
+    },
+    {
+      "id": "hash-enum-empty",
+      "projection": "object",
+      "input": {
+        "kind": "enum",
+        "variant_id": "013f54400c82",
+        "payload": {
+          "kind": "record",
+          "fields": []
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0d013f54400c820c00"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010d013f54400c820c00",
+        "sha256": "93d6105fac4026d4de86f192c55fab07c590e9802db2fc061aca95fc774258c5"
+      }
+    },
+    {
+      "id": "hash-union-a",
+      "projection": "object",
+      "input": {
+        "kind": "union",
+        "member_type": {
+          "kind": "record",
+          "nominal_hex": "1ddb0b3ce6d3"
+        },
+        "value": {
+          "kind": "record",
+          "fields": []
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile and domain",
+          "hex": "6372756d62310001"
+        },
+        {
+          "meaning": "literal contribution per the specification",
+          "hex": "0e137265636f7264403164646230623363653664330c00"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010e137265636f7264403164646230623363653664330c00",
+        "sha256": "bbe7864f5eb77fb4b517c03116a8d1ecbeecff564ea16912d0d6f303d450209d"
+      }
+    },
+    {
+      "id": "hash-union-b",
+      "projection": "object",
+      "input": {
+        "kind": "union",
+        "member_type": {
+          "kind": "record",
+          "nominal_hex": "dc09c4bb0cd5"
+        },
+        "value": {
+          "kind": "record",
+          "fields": []
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile and domain",
+          "hex": "6372756d62310001"
+        },
+        {
+          "meaning": "literal contribution per the specification",
+          "hex": "0e137265636f7264406463303963346262306364350c00"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010e137265636f7264406463303963346262306364350c00",
+        "sha256": "d1c0fe2c9b15a33881760973bad5caed8de80a2c69db332fd28184552643cb3a"
+      }
+    },
+    {
+      "id": "hash-record-object",
+      "projection": "object",
+      "input": {
+        "kind": "record",
+        "fields": [
+          {
+            "id": "82a3537ff0db",
+            "type": "string",
+            "canonical": false,
+            "absent": "required",
+            "value": {
+              "kind": "string",
+              "value": "x"
+            }
+          },
+          {
+            "id": "013f54400c82",
+            "type": "i64",
+            "canonical": true,
+            "absent": "required",
+            "value": {
+              "kind": "int",
+              "type": "i64",
+              "value": "7"
+            }
+          }
+        ]
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0c02013f54400c82020e82a3537ff0db050178"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010c02013f54400c82020e82a3537ff0db050178",
+        "sha256": "269a966f298850c8eca5a30472d8349c52fb978d0a5db140fc38722e9cac3d03"
+      }
+    },
+    {
+      "id": "hash-record-canonical",
+      "projection": "canonical",
+      "input": {
+        "kind": "record",
+        "fields": [
+          {
+            "id": "82a3537ff0db",
+            "type": "string",
+            "canonical": false,
+            "absent": "required",
+            "value": {
+              "kind": "string",
+              "value": "x"
+            }
+          },
+          {
+            "id": "013f54400c82",
+            "type": "i64",
+            "canonical": true,
+            "absent": "required",
+            "value": {
+              "kind": "int",
+              "type": "i64",
+              "value": "7"
+            }
+          }
+        ]
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "canonical domain",
+          "hex": "02"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0c01013f54400c82020e"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100020c01013f54400c82020e",
+        "sha256": "163258702dc40c73fb8c262292d7b2bffcd149c6e4161830efefb4b3b6af8f13"
+      }
+    },
+    {
+      "id": "hash-record-optional-omitted",
+      "projection": "object",
+      "input": {
+        "kind": "record",
+        "fields": [
+          {
+            "id": "013f54400c82",
+            "type": "i64",
+            "canonical": true,
+            "absent": "required",
+            "value": {
+              "kind": "int",
+              "type": "i64",
+              "value": "7"
+            }
+          },
+          {
+            "id": "a0fb3f1159c9",
+            "type": {
+              "kind": "option",
+              "item": "string"
+            },
+            "canonical": true,
+            "absent": "none",
+            "value": {
+              "kind": "none"
+            }
+          }
+        ]
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0c01013f54400c82020e"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010c01013f54400c82020e",
+        "sha256": "80109ea8fd4ef1fdc4fae7f454d0bea914c07a6c3e8f7bdacb143fae4e1f7a3c"
+      }
+    },
+    {
+      "id": "hash-record-required-none",
+      "projection": "object",
+      "input": {
+        "kind": "record",
+        "fields": [
+          {
+            "id": "a0fb3f1159c9",
+            "type": {
+              "kind": "option",
+              "item": "string"
+            },
+            "canonical": true,
+            "absent": "required",
+            "value": {
+              "kind": "none"
+            }
+          }
+        ]
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0c01a0fb3f1159c90000"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100010c01a0fb3f1159c90000",
+        "sha256": "951a52c2d91d1a78618a41473f44018f8c6c517c2f67d8eb46a109bbc0a9a28f"
+      }
+    },
+    {
+      "id": "hash-canonical-map-key-collapse",
+      "projection": "canonical",
+      "input": {
+        "kind": "map",
+        "entries": [
+          [
+            {
+              "kind": "record",
+              "fields": [
+                {
+                  "id": "013f54400c82",
+                  "type": "i64",
+                  "canonical": true,
+                  "absent": "required",
+                  "value": {
+                    "kind": "int",
+                    "type": "i64",
+                    "value": "1"
+                  }
+                },
+                {
+                  "id": "82a3537ff0db",
+                  "type": "string",
+                  "canonical": false,
+                  "absent": "required",
+                  "value": {
+                    "kind": "string",
+                    "value": "a"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "int",
+              "type": "i64",
+              "value": "7"
+            }
+          ],
+          [
+            {
+              "kind": "record",
+              "fields": [
+                {
+                  "id": "013f54400c82",
+                  "type": "i64",
+                  "canonical": true,
+                  "absent": "required",
+                  "value": {
+                    "kind": "int",
+                    "type": "i64",
+                    "value": "1"
+                  }
+                },
+                {
+                  "id": "82a3537ff0db",
+                  "type": "string",
+                  "canonical": false,
+                  "absent": "required",
+                  "value": {
+                    "kind": "string",
+                    "value": "b"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "int",
+              "type": "i64",
+              "value": "3"
+            }
+          ]
+        ]
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "canonical domain",
+          "hex": "02"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0b020c01013f54400c82020202060c01013f54400c820202020e"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100020b020c01013f54400c82020202060c01013f54400c820202020e",
+        "sha256": "aedf8ce7c34a5fab75d70cbfdd6493685c28f1c0ed392db1ac1377f90d1df38b"
+      }
+    },
+    {
+      "id": "hash-canonical-map-key-renamed",
+      "projection": "canonical",
+      "input": {
+        "kind": "map",
+        "entries": [
+          [
+            {
+              "kind": "record",
+              "fields": [
+                {
+                  "id": "013f54400c82",
+                  "type": "i64",
+                  "canonical": true,
+                  "absent": "required",
+                  "value": {
+                    "kind": "int",
+                    "type": "i64",
+                    "value": "1"
+                  }
+                },
+                {
+                  "id": "82a3537ff0db",
+                  "type": "string",
+                  "canonical": false,
+                  "absent": "required",
+                  "value": {
+                    "kind": "string",
+                    "value": "b"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "int",
+              "type": "i64",
+              "value": "7"
+            }
+          ],
+          [
+            {
+              "kind": "record",
+              "fields": [
+                {
+                  "id": "013f54400c82",
+                  "type": "i64",
+                  "canonical": true,
+                  "absent": "required",
+                  "value": {
+                    "kind": "int",
+                    "type": "i64",
+                    "value": "1"
+                  }
+                },
+                {
+                  "id": "82a3537ff0db",
+                  "type": "string",
+                  "canonical": false,
+                  "absent": "required",
+                  "value": {
+                    "kind": "string",
+                    "value": "a"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "int",
+              "type": "i64",
+              "value": "3"
+            }
+          ]
+        ]
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "canonical domain",
+          "hex": "02"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0b020c01013f54400c82020202060c01013f54400c820202020e"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100020b020c01013f54400c82020202060c01013f54400c820202020e",
+        "sha256": "aedf8ce7c34a5fab75d70cbfdd6493685c28f1c0ed392db1ac1377f90d1df38b"
+      }
+    },
+    {
+      "id": "hash-canonical-set-multiplicity",
+      "projection": "canonical",
+      "input": {
+        "kind": "set",
+        "items": [
+          {
+            "kind": "record",
+            "fields": [
+              {
+                "id": "013f54400c82",
+                "type": "i64",
+                "canonical": true,
+                "absent": "required",
+                "value": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "1"
+                }
+              },
+              {
+                "id": "82a3537ff0db",
+                "type": "string",
+                "canonical": false,
+                "absent": "required",
+                "value": {
+                  "kind": "string",
+                  "value": "b"
+                }
+              }
+            ]
+          },
+          {
+            "kind": "record",
+            "fields": [
+              {
+                "id": "013f54400c82",
+                "type": "i64",
+                "canonical": true,
+                "absent": "required",
+                "value": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "1"
+                }
+              },
+              {
+                "id": "82a3537ff0db",
+                "type": "string",
+                "canonical": false,
+                "absent": "required",
+                "value": {
+                  "kind": "string",
+                  "value": "a"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "canonical domain",
+          "hex": "02"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "0a020c01013f54400c8202020c01013f54400c820202"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100020a020c01013f54400c8202020c01013f54400c820202",
+        "sha256": "55d6074c002a9f8b6f57d18723b2ab0ed1090b55991a4fe4c8d498885cf8ec41"
+      }
+    },
+    {
+      "id": "hash-seal-empty",
+      "projection": "seal",
+      "input": {
+        "values": []
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "seal domain",
+          "hex": "04"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "00"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d6231000400",
+        "sha256": "f57b64a59e194a05fde67e6b8b3fe9afc010b2e1f052169c55b5c6850f88fe19"
+      }
+    },
+    {
+      "id": "hash-seal-one",
+      "projection": "seal",
+      "input": {
+        "values": [
+          {
+            "kind": "int",
+            "type": "i64",
+            "value": "1"
+          }
+        ]
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "seal domain",
+          "hex": "04"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "01020202"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d6231000401020202",
+        "sha256": "cc772f6cfada1574c8ed3d31665ed3e749259d08fafff578f333d12e4b04bf07"
+      }
+    },
+    {
+      "id": "hash-seal-two",
+      "projection": "seal",
+      "input": {
+        "values": [
+          {
+            "kind": "int",
+            "type": "i64",
+            "value": "1"
+          },
+          {
+            "kind": "int",
+            "type": "i64",
+            "value": "2"
+          }
+        ]
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "seal domain",
+          "hex": "04"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "02020202020204"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d6231000402020202020204",
+        "sha256": "f01cfb2a109df5138c494704744ef7c5957d3bb5888044d6772805aab25f3ae0"
+      }
+    },
+    {
+      "id": "hash-seal-reversed",
+      "projection": "seal",
+      "input": {
+        "values": [
+          {
+            "kind": "int",
+            "type": "i64",
+            "value": "2"
+          },
+          {
+            "kind": "int",
+            "type": "i64",
+            "value": "1"
+          }
+        ]
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "seal domain",
+          "hex": "04"
+        },
+        {
+          "meaning": "literal contribution per the tagged production",
+          "hex": "02020204020202"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d6231000402020204020202",
+        "sha256": "49576056806c05f018bc21c039fb474a2b6027e558c548a08d5dac06014dedba"
+      }
+    },
+    {
+      "id": "hash-model-empty",
+      "projection": "model",
+      "input": {
+        "type": {
+          "kind": "record",
+          "key": "R",
+          "fields": []
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile and domain",
+          "hex": "6372756d62310003"
+        },
+        {
+          "meaning": "ASCII spelling with one-byte length: record{}",
+          "hex": "087265636f72647b7d"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310003087265636f72647b7d",
+        "sha256": "c64bdc04c13371f4df13610f33a3533602cd258584255c6d8b3157782a32cbd2"
+      }
+    },
+    {
+      "id": "hash-model-age",
+      "projection": "model",
+      "input": {
+        "type": {
+          "kind": "record",
+          "key": "R",
+          "fields": [
+            {
+              "id": "013f54400c82",
+              "type": "i64",
+              "canonical": true,
+              "absent": "required"
+            }
+          ]
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile and domain",
+          "hex": "6372756d62310003"
+        },
+        {
+          "meaning": "ASCII spelling with one-byte length: record{013f54400c82:i64:1:r}",
+          "hex": "1c7265636f72647b3031336635343430306338323a6936343a313a727d"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100031c7265636f72647b3031336635343430306338323a6936343a313a727d",
+        "sha256": "6bda6df6b839b1230fd40cbdd83835d5baf2b8e64b3810601ee4621d95ab3ac0"
+      }
+    },
+    {
+      "id": "hash-model-age-optional",
+      "projection": "model",
+      "input": {
+        "type": {
+          "kind": "record",
+          "key": "R",
+          "fields": [
+            {
+              "id": "013f54400c82",
+              "type": "i64",
+              "canonical": true,
+              "absent": "required"
+            },
+            {
+              "id": "a0fb3f1159c9",
+              "type": {
+                "kind": "option",
+                "item": "string"
+              },
+              "canonical": true,
+              "absent": "none"
+            }
+          ]
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile and domain",
+          "hex": "6372756d62310003"
+        },
+        {
+          "meaning": "ASCII spelling with one-byte length: record{013f54400c82:i64:1:r;a0fb3f1159c9:option<string>:1:n}",
+          "hex": "3c7265636f72647b3031336635343430306338323a6936343a313a723b6130666233663131353963393a6f7074696f6e3c737472696e673e3a313a6e7d"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100033c7265636f72647b3031336635343430306338323a6936343a313a723b6130666233663131353963393a6f7074696f6e3c737472696e673e3a313a6e7d",
+        "sha256": "5fa38d1a40a8032353af93acea1b1592f04fc364e9de9834a9a4fa76eb787803"
+      }
+    },
+    {
+      "id": "hash-model-recursive",
+      "projection": "model",
+      "input": {
+        "type": {
+          "kind": "record",
+          "key": "R",
+          "fields": [
+            {
+              "id": "013f54400c82",
+              "type": {
+                "kind": "option",
+                "item": {
+                  "kind": "recur",
+                  "key": "R"
+                }
+              },
+              "canonical": true,
+              "absent": "required"
+            }
+          ]
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile and domain",
+          "hex": "6372756d62310003"
+        },
+        {
+          "meaning": "ASCII spelling with one-byte length: record{013f54400c82:option<^0>:1:r}",
+          "hex": "237265636f72647b3031336635343430306338323a6f7074696f6e3c5e303e3a313a727d"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310003237265636f72647b3031336635343430306338323a6f7074696f6e3c5e303e3a313a727d",
+        "sha256": "e5a70191f74262cc43c6558b7f4505c09e8938e7fd681002ecf5c6a10f5059bc"
+      }
+    },
+    {
+      "id": "hash-model-enum",
+      "projection": "model",
+      "input": {
+        "type": {
+          "kind": "enum",
+          "key": "E",
+          "variants": [
+            {
+              "id": "013f54400c82",
+              "fields": []
+            }
+          ]
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile and domain",
+          "hex": "6372756d62310003"
+        },
+        {
+          "meaning": "ASCII spelling with one-byte length: enum{013f54400c82:record{}}",
+          "hex": "1b656e756d7b3031336635343430306338323a7265636f72647b7d7d"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100031b656e756d7b3031336635343430306338323a7265636f72647b7d7d",
+        "sha256": "d8955812229e715feb9a36a6b534438d0d4980ff81eb76d8aab427ac740be315"
+      }
+    },
+    {
+      "id": "hash-model-decimal",
+      "projection": "model",
+      "input": {
+        "type": "decimal<10,2>"
+      },
+      "derivation": [
+        {
+          "meaning": "profile and domain",
+          "hex": "6372756d62310003"
+        },
+        {
+          "meaning": "ASCII spelling with one-byte length: decimal<10,2>",
+          "hex": "0d646563696d616c3c31302c323e"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100030d646563696d616c3c31302c323e",
+        "sha256": "8320451b86821a2e865692415b67bef536f9e0ac980772ba2770232d4f125268"
+      }
+    },
+    {
+      "id": "hash-model-nested-container",
+      "projection": "model",
+      "input": {
+        "type": {
+          "kind": "list",
+          "item": {
+            "kind": "map",
+            "key_type": "string",
+            "value_type": "i16"
+          }
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile and domain",
+          "hex": "6372756d62310003"
+        },
+        {
+          "meaning": "ASCII spelling with one-byte length: list<map<string,i16>>",
+          "hex": "156c6973743c6d61703c737472696e672c6931363e3e"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310003156c6973743c6d61703c737472696e672c6931363e3e",
+        "sha256": "f5e9487d8cd6edbc46a9658e832aaeed8149deac91889d53d23237322ffc7434"
+      }
+    },
+    {
+      "id": "hash-model-absent-required",
+      "projection": "model",
+      "input": {
+        "type": {
+          "kind": "record",
+          "key": "R",
+          "fields": [
+            {
+              "id": "013f54400c82",
+              "type": {
+                "kind": "list",
+                "item": "string"
+              },
+              "canonical": true,
+              "absent": "required"
+            }
+          ]
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile and domain",
+          "hex": "6372756d62310003"
+        },
+        {
+          "meaning": "literal contribution per the specification",
+          "hex": "257265636f72647b3031336635343430306338323a6c6973743c737472696e673e3a313a727d"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310003257265636f72647b3031336635343430306338323a6c6973743c737472696e673e3a313a727d",
+        "sha256": "5d76589144ae0e8608c2f1f13da095e0b9fe2323a516e0def5327b8ca8dd012b"
+      }
+    },
+    {
+      "id": "hash-model-absent-empty",
+      "projection": "model",
+      "input": {
+        "type": {
+          "kind": "record",
+          "key": "R",
+          "fields": [
+            {
+              "id": "013f54400c82",
+              "type": {
+                "kind": "list",
+                "item": "string"
+              },
+              "canonical": true,
+              "absent": "empty"
+            }
+          ]
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile and domain",
+          "hex": "6372756d62310003"
+        },
+        {
+          "meaning": "literal contribution per the specification",
+          "hex": "257265636f72647b3031336635343430306338323a6c6973743c737472696e673e3a313a657d"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d62310003257265636f72647b3031336635343430306338323a6c6973743c737472696e673e3a313a657d",
+        "sha256": "0cf4efe9fac6bfa3a0e803428b3b3c56a94b9f2c0f64e92dc7d257b60863ef18"
+      }
+    },
+    {
+      "id": "hash-description-empty",
+      "projection": "description",
+      "input": {
+        "description": {
+          "kind": "map",
+          "entries": [
+            [
+              {
+                "kind": "string",
+                "value": "fields"
+              },
+              {
+                "kind": "list",
+                "items": []
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "kind"
+              },
+              {
+                "kind": "string",
+                "value": "Record"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "nominal"
+              },
+              {
+                "kind": "binary",
+                "hex": "1ddb0b3ce6d3"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "path"
+              },
+              {
+                "kind": "string",
+                "value": "example.Empty"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "properties"
+              },
+              {
+                "kind": "map",
+                "entries": []
+              }
+            ]
+          ]
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile and domain",
+          "hex": "6372756d62310005"
+        },
+        {
+          "meaning": "literal contribution per the specification",
+          "hex": "0605066669656c64730500046b696e6403065265636f7264076e6f6d696e616c04061ddb0b3ce6d30470617468030d6578616d706c652e456d7074790a70726f706572746965730600"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100050605066669656c64730500046b696e6403065265636f7264076e6f6d696e616c04061ddb0b3ce6d30470617468030d6578616d706c652e456d7074790a70726f706572746965730600",
+        "sha256": "74c76e436b1c5fa289552610af5b29f7eb4e8b018d3156677f17ec067036a312"
+      }
+    },
+    {
+      "id": "hash-description-renamed",
+      "projection": "description",
+      "input": {
+        "description": {
+          "kind": "map",
+          "entries": [
+            [
+              {
+                "kind": "string",
+                "value": "fields"
+              },
+              {
+                "kind": "list",
+                "items": []
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "kind"
+              },
+              {
+                "kind": "string",
+                "value": "Record"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "nominal"
+              },
+              {
+                "kind": "binary",
+                "hex": "1ddb0b3ce6d3"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "path"
+              },
+              {
+                "kind": "string",
+                "value": "example.Renamed"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "properties"
+              },
+              {
+                "kind": "map",
+                "entries": []
+              }
+            ]
+          ]
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile and domain",
+          "hex": "6372756d62310005"
+        },
+        {
+          "meaning": "literal contribution per the specification",
+          "hex": "0605066669656c64730500046b696e6403065265636f7264076e6f6d696e616c04061ddb0b3ce6d30470617468030f6578616d706c652e52656e616d65640a70726f706572746965730600"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100050605066669656c64730500046b696e6403065265636f7264076e6f6d696e616c04061ddb0b3ce6d30470617468030f6578616d706c652e52656e616d65640a70726f706572746965730600",
+        "sha256": "a99a6eb74b25a34859ade28aa64b74b92428e76e1f5bf8eb108696173d56332a"
+      }
+    },
+    {
+      "id": "hash-description-other-owner",
+      "projection": "description",
+      "input": {
+        "description": {
+          "kind": "map",
+          "entries": [
+            [
+              {
+                "kind": "string",
+                "value": "fields"
+              },
+              {
+                "kind": "list",
+                "items": []
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "kind"
+              },
+              {
+                "kind": "string",
+                "value": "Record"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "nominal"
+              },
+              {
+                "kind": "binary",
+                "hex": "dc09c4bb0cd5"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "path"
+              },
+              {
+                "kind": "string",
+                "value": "example.Empty"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "properties"
+              },
+              {
+                "kind": "map",
+                "entries": []
+              }
+            ]
+          ]
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile and domain",
+          "hex": "6372756d62310005"
+        },
+        {
+          "meaning": "literal contribution per the specification",
+          "hex": "0605066669656c64730500046b696e6403065265636f7264076e6f6d696e616c0406dc09c4bb0cd50470617468030d6578616d706c652e456d7074790a70726f706572746965730600"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100050605066669656c64730500046b696e6403065265636f7264076e6f6d696e616c0406dc09c4bb0cd50470617468030d6578616d706c652e456d7074790a70726f706572746965730600",
+        "sha256": "0e0be326ec421e7b73574212c6955ecec608d849da4e2cca44cf43aa151346b6"
+      }
+    },
+    {
+      "id": "hash-description-property",
+      "projection": "description",
+      "input": {
+        "description": {
+          "kind": "map",
+          "entries": [
+            [
+              {
+                "kind": "string",
+                "value": "fields"
+              },
+              {
+                "kind": "list",
+                "items": []
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "kind"
+              },
+              {
+                "kind": "string",
+                "value": "Record"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "nominal"
+              },
+              {
+                "kind": "binary",
+                "hex": "1ddb0b3ce6d3"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "path"
+              },
+              {
+                "kind": "string",
+                "value": "example.Empty"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "properties"
+              },
+              {
+                "kind": "map",
+                "entries": [
+                  [
+                    {
+                      "kind": "string",
+                      "value": "version"
+                    },
+                    {
+                      "kind": "int",
+                      "value": "1"
+                    }
+                  ]
+                ]
+              }
+            ]
+          ]
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile and domain",
+          "hex": "6372756d62310005"
+        },
+        {
+          "meaning": "literal contribution per the specification",
+          "hex": "0605066669656c64730500046b696e6403065265636f7264076e6f6d696e616c04061ddb0b3ce6d30470617468030d6578616d706c652e456d7074790a70726f7065727469657306010776657273696f6e0202"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100050605066669656c64730500046b696e6403065265636f7264076e6f6d696e616c04061ddb0b3ce6d30470617468030d6578616d706c652e456d7074790a70726f7065727469657306010776657273696f6e0202",
+        "sha256": "f4a38693970fceee34a42e9dafe592c8488e429ca32f17abf003d3895d711824"
+      }
+    },
+    {
+      "id": "hash-description-absent-required",
+      "projection": "description",
+      "input": {
+        "description": {
+          "kind": "map",
+          "entries": [
+            [
+              {
+                "kind": "string",
+                "value": "fields"
+              },
+              {
+                "kind": "list",
+                "items": [
+                  {
+                    "kind": "map",
+                    "entries": [
+                      [
+                        {
+                          "kind": "string",
+                          "value": "absent"
+                        },
+                        {
+                          "kind": "string",
+                          "value": "required"
+                        }
+                      ],
+                      [
+                        {
+                          "kind": "string",
+                          "value": "canonical"
+                        },
+                        {
+                          "kind": "boolean",
+                          "value": true
+                        }
+                      ],
+                      [
+                        {
+                          "kind": "string",
+                          "value": "id"
+                        },
+                        {
+                          "kind": "binary",
+                          "hex": "978c2f894135"
+                        }
+                      ],
+                      [
+                        {
+                          "kind": "string",
+                          "value": "name"
+                        },
+                        {
+                          "kind": "string",
+                          "value": "tags"
+                        }
+                      ],
+                      [
+                        {
+                          "kind": "string",
+                          "value": "properties"
+                        },
+                        {
+                          "kind": "map",
+                          "entries": []
+                        }
+                      ],
+                      [
+                        {
+                          "kind": "string",
+                          "value": "type"
+                        },
+                        {
+                          "kind": "string",
+                          "value": "list<string>"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "kind"
+              },
+              {
+                "kind": "string",
+                "value": "Record"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "nominal"
+              },
+              {
+                "kind": "binary",
+                "hex": "1ddb0b3ce6d3"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "path"
+              },
+              {
+                "kind": "string",
+                "value": "example.Tags"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "properties"
+              },
+              {
+                "kind": "map",
+                "entries": []
+              }
+            ]
+          ]
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile and description domain",
+          "hex": "6372756d62310005"
+        },
+        {
+          "meaning": "complete Tags description; fields carry the explicit absent policy",
+          "hex": "0605066669656c64730501060606616273656e74030872657175697265640963616e6f6e6963616c01010269640406978c2f894135046e616d650304746167730a70726f7065727469657306000474797065030c6c6973743c737472696e673e046b696e6403065265636f7264076e6f6d696e616c04061ddb0b3ce6d30470617468030c6578616d706c652e546167730a70726f706572746965730600"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100050605066669656c64730501060606616273656e74030872657175697265640963616e6f6e6963616c01010269640406978c2f894135046e616d650304746167730a70726f7065727469657306000474797065030c6c6973743c737472696e673e046b696e6403065265636f7264076e6f6d696e616c04061ddb0b3ce6d30470617468030c6578616d706c652e546167730a70726f706572746965730600",
+        "sha256": "07f8d19d23bf568d2919a3f1aa7f4a39fd9acfc42de6ccb3e4c2614be82a1045"
+      }
+    },
+    {
+      "id": "hash-description-absent-empty",
+      "projection": "description",
+      "input": {
+        "description": {
+          "kind": "map",
+          "entries": [
+            [
+              {
+                "kind": "string",
+                "value": "fields"
+              },
+              {
+                "kind": "list",
+                "items": [
+                  {
+                    "kind": "map",
+                    "entries": [
+                      [
+                        {
+                          "kind": "string",
+                          "value": "absent"
+                        },
+                        {
+                          "kind": "string",
+                          "value": "empty"
+                        }
+                      ],
+                      [
+                        {
+                          "kind": "string",
+                          "value": "canonical"
+                        },
+                        {
+                          "kind": "boolean",
+                          "value": true
+                        }
+                      ],
+                      [
+                        {
+                          "kind": "string",
+                          "value": "id"
+                        },
+                        {
+                          "kind": "binary",
+                          "hex": "978c2f894135"
+                        }
+                      ],
+                      [
+                        {
+                          "kind": "string",
+                          "value": "name"
+                        },
+                        {
+                          "kind": "string",
+                          "value": "tags"
+                        }
+                      ],
+                      [
+                        {
+                          "kind": "string",
+                          "value": "properties"
+                        },
+                        {
+                          "kind": "map",
+                          "entries": []
+                        }
+                      ],
+                      [
+                        {
+                          "kind": "string",
+                          "value": "type"
+                        },
+                        {
+                          "kind": "string",
+                          "value": "list<string>"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "kind"
+              },
+              {
+                "kind": "string",
+                "value": "Record"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "nominal"
+              },
+              {
+                "kind": "binary",
+                "hex": "1ddb0b3ce6d3"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "path"
+              },
+              {
+                "kind": "string",
+                "value": "example.Tags"
+              }
+            ],
+            [
+              {
+                "kind": "string",
+                "value": "properties"
+              },
+              {
+                "kind": "map",
+                "entries": []
+              }
+            ]
+          ]
+        }
+      },
+      "derivation": [
+        {
+          "meaning": "profile and description domain",
+          "hex": "6372756d62310005"
+        },
+        {
+          "meaning": "complete Tags description; fields carry the explicit absent policy",
+          "hex": "0605066669656c64730501060606616273656e740305656d7074790963616e6f6e6963616c01010269640406978c2f894135046e616d650304746167730a70726f7065727469657306000474797065030c6c6973743c737472696e673e046b696e6403065265636f7264076e6f6d696e616c04061ddb0b3ce6d30470617468030c6578616d706c652e546167730a70726f706572746965730600"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d623100050605066669656c64730501060606616273656e740305656d7074790963616e6f6e6963616c01010269640406978c2f894135046e616d650304746167730a70726f7065727469657306000474797065030c6c6973743c737472696e673e046b696e6403065265636f7264076e6f6d696e616c04061ddb0b3ce6d30470617468030c6578616d706c652e546167730a70726f706572746965730600",
+        "sha256": "40e252d342a4ca8f9c50102c5f19049a67ebcec78a51af2f964dfd020d0e1f08"
+      }
+    }
+  ]
+}

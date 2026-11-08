@@ -37,10 +37,21 @@
       "operation": "text_print",
       "cases": 46,
       "sha256": "f90cf3440002b12baaced1faa8a76106b12804ede4c93029d99fc351779f057f"
+    },
+    {
+      "path": "hash-preimages.json",
+      "operation": "hash_preimage",
+      "cases": 68,
+      "sha256": "a6bb0887a6498d19b2b4085421436e6363e103149d232aab98d4843a1c3a5592"
+    },
+    {
+      "path": "nominal-identities.json",
+      "operation": "nominal_identity",
+      "cases": 2,
+      "sha256": "fe89d9022653922f99babbf298720864d9c36ceaf0ff038ef84999c33946428d"
     }
   ],
   "pending": [
-    "exact hash preimages and digests",
     "Crumb binary profile and byte vectors",
     "resource-limit and streaming executions",
     "recursive shapes, enums, unions, maps, sets and decimal coverage",
