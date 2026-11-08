@@ -497,7 +497,7 @@ A consumer that skips work on the strength of a reachability answer must err tow
 
 ### Building it
 
-The compiler already sees both languages. `rust_inspect` loads a Cargo project through rust-analyzer — `ra_ap_hir`, `ra_ap_ide_db`, `ra_ap_syntax` and `ra_ap_project_model` are workspace dependencies — and extracts typed Rust metadata that today serves interop checking. The Rust half of this graph is mostly a question of emitting what that already resolves, in the record shapes the schema already defines.
+The compiler already sees both languages. It checks Incan through its own frontend and reads Rust through rustc: interop facts come from the toolchain's ABI caches, and from rustc extraction for the paths those caches do not cover, as DD-0009 defines. The Rust half of this graph projects those compiler-owned facts into the record shapes the schema already defines, with no second resolver beside them.
 
 That single-observer position is the substantive advantage over the alternative. Polyglot indexers merge independently-derived per-language indexes and must reconcile their symbol identities afterwards. One compiler observing both languages has nothing to reconcile: the identity an Incan declaration uses to name a Rust one is the identity the Rust side was recorded under.
 
@@ -534,13 +534,13 @@ The digest must be language-neutral. An Incan declaration and a Rust declaration
 
 Where an implementation cannot compute a declaration's semantic digest, it must report the declaration as changed. Erring toward changed costs redundant work; erring the other way yields a wrong build.
 
-### Exported identity and provenance
+### Exported identity and keys
 
-The identity rules above govern what a consumer may key on. The identity carried on declaration, reference, call, import-binding and export records mirrors the compiler's own, span and scope discriminant included. That is correct as *provenance* — it names where a declaration sat in the compilation that produced the record — and wrong as a key.
+The identity rules above govern what a consumer may key on. Declaration, reference, call, import-binding and export records carry the compiler's own identity as `canonical_identity`, span and scope discriminant included. That is correct as *provenance* — it names where a declaration sat in the compilation that produced the record — and wrong as a key. A consumer must not cache against it across compilations.
 
-A key therefore needs a second, span-free identity exported alongside it rather than a change to the existing one, since both jobs are real. It also needs a signature, which a compiler identity does not carry and which comes from the declaration's lowered body; an exported identity without one cannot separate overloads, and publishing it would push the collision this section exists to prevent out to every consumer at once.
+Every declaration therefore also carries a `stable_key`, exported alongside its `canonical_identity` rather than in place of it, since both jobs are real. The key is span-free, scoped by its package's name, and derived from an identity that includes the declaration's signature, so overloads stay apart. Package version, source spans, file layout and the semantic digest never enter it. A reference, call, import binding or export carries its target's `stable_key` only when the target is proved; an ambiguous or unproved target carries none, and no key is inferred for it.
 
-A consumer must treat the compiler-mirroring identity as provenance and must not cache against it across compilations.
+The graph header's `declaration_digests` maps each `stable_key` to the declaration's semantic digest, so identity and meaning stay in separate fields. A digest is `null` where the producer has none, including a Rust declaration it has no checked digest for, and a consumer must treat a `null` digest as changed. Renaming a module or a declaration may change its key, and a declaration whose logical identity cannot be established justifies no reuse across compilations.
 
 ### The documentation digest
 
@@ -674,7 +674,7 @@ The task-context ranker's baseline is simple: exact identifiers, module/name/doc
 - **Typechecker / Symbol resolution**: checked declarations, imports, aliases, references, calls, public API signatures, dispatch targets where known, and diagnostics provide high-provenance graph facts.
 - **IR Lowering**: lowering does not define the graph, but generated or materialized structures may need source/metadata anchors so tools can connect emitted behavior back to source.
 - **Emission**: generated Rust is not the graph source of truth, but emission may expose artifact metadata that can be linked to source graph identities.
-- **Stdlib / Runtime (`incan_stdlib`)**: stdlib source and manifests should be graphable as ordinary Incan packages, and stdlib builtins should appear as external or stdlib nodes when referenced.
+- **Stdlib / Runtime (`loaves/stdlib/`)**: stdlib source and manifests should be graphable as ordinary Incan packages, and stdlib builtins should appear as external or stdlib nodes when referenced.
 - **Generated behavior explanation**: derives, decorators, vocabularies, trait resolution, type-directed mappings, ownership plans, and generated artifacts should contribute source-anchored explanation records when available.
 - **Formatter**: no syntax changes are required by this RFC, but compact graph/context output should have deterministic formatting.
 - **LSP / Tooling**: CLI, MCP, editor integrations, graph export, graph stale checks, live graph snapshots, context packing, architecture-advice tooling, risk scoring, and checked metadata/documentation tooling are directly affected.
@@ -686,8 +686,8 @@ The task-context ranker's baseline is simple: exact identifiers, module/name/doc
 ### Graph export
 
 - [x] Compiler-backed `incan inspect codegraph --format jsonl` with files, modules, declarations, imports, exports, references, calls, diagnostics, spans, provenance and degraded-state records.
-- [x] Canonical declaration identities that survive edits (`incan-v1`, span-free).
-- [x] Graph-schema version on every export (schema 7).
+- [x] Span-free declaration identities kept apart from compiler provenance (`canonical_identity`).
+- [x] Graph-schema version on every export (schema 9).
 - [x] Strict checked export and tolerant export.
 
 ### Cross-language graph progress
@@ -702,21 +702,25 @@ The task-context ranker's baseline is simple: exact identifiers, module/name/doc
 - [x] Per-declaration semantic digest excluding position, formatting, comments and documentation; documentation digest kept apart.
 - [x] Closure digests over codegraph edges and MIR-backed Rust body digests (#1504).
 - [x] Corpus and invariant tests: every standard-library declaration digests; a comment, a docstring, an insertion and a reorder move only what they should.
-- [ ] The exported identity carries the digest as its key (see "Exported identity and provenance").
+- [x] Exported declarations carry a `stable_key`, and the header's `declaration_digests` maps each key to its semantic digest, `null` where unavailable (see "Exported identity and keys").
 
 ### Context surfaces
 
-- [ ] MCP surface for graph exploration and task-ranked context packing.
-- [ ] Compact deterministic agent context format beside JSON and JSONL.
-- [ ] Snapshot identities and staleness checks.
-- [ ] Optional process-risk facts (churn, ownership, co-change, coverage) with provenance and absence when inputs are unavailable.
-- [ ] Feedback and task-memory signals with automatic expiry.
-- [ ] LSP features reading the same graph records.
+- [x] MCP surface for graph exploration and task-ranked context packing.
+- [ ] `incan mcp` served as a `std.mcp` server under RFC 156, with its tools in that server's catalog.
+- [ ] Task-ranked packs served by `incan inspect context`.
+- [x] Compact deterministic agent context format beside JSON and JSONL, stating its format version.
+- [x] Content-addressed snapshot identities and staleness checks.
+- [x] Optional git churn, author-touch ownership and co-change records with provenance; absent inputs produce no observations.
+- [ ] Coverage-backed process-risk facts, with no synthesized values when coverage is unavailable.
+- [x] Session-only MCP feedback and task memory with automatic snapshot and TTL expiry.
+- [x] LSP definition, references and incoming/outgoing call hierarchy project the same records from captured-buffer analysis and refuse stale views.
+- [ ] Authored text carries its author, and context packs and MCP spans render workspace and dependency text as quoted evidence.
 
 ### Docs
 
 - [x] `incan inspect codegraph` documented in the CLI reference.
-- [ ] Agent context format and MCP surface documented.
+- [x] Agent context CLI, format and MCP surface documented in the agent context reference.
 
 ## Design Decisions
 
@@ -733,5 +737,5 @@ The task-context ranker's baseline is simple: exact identifiers, module/name/doc
 - Identity and digest are separate fields. Identity answers which declaration a fact is about and must survive edits; a semantic digest answers whether its meaning changed. A single content-addressed field cannot do both, and the graph is the normative source of the digest RFC 124 folds into unit identity.
 - One graph spans both languages. A declaration is a `Declaration` whatever its surface syntax, and `language` is an attribute of the fact rather than a partition of the schema. The reserved `rust_item` node kind and `uses_rust_item` edge kind are retired: they encode the distinction `language` exists to dissolve, and would leave two ways to state one relationship.
 - Reachability over Rust is a lower bound, not an exact answer. Unresolved edges count as reachable and affectedness propagates downstream. This binds consumers: anything skipping work on a reachability answer must err toward doing the work, because a missed node is a wrong build while a spurious one is only slow.
-- Rust-side facts should come from what `rust_inspect` already resolves through rust-analyzer before any independent analysis is written. Re-deriving name resolution would reproduce the low-trust rediscovery this RFC exists to avoid.
+- Rust-side facts come from rustc and the toolchain's ABI caches through the compiler's own fact boundary (DD-0009), not from a separate resolver. Re-deriving name resolution would reproduce the low-trust rediscovery this RFC exists to avoid.
 - SCIP remains an export adapter rather than the internal model, but its symbol naming and its separation of definitions from reference occurrences should be followed where they fit, so an exporter stays a projection rather than a translation.

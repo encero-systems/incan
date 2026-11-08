@@ -110,11 +110,10 @@ After the `## Layers affected` section, add a `## Progress Checklist` section. A
 
 ### Tests
 
-- [ ] Parser unit test for `<construct>`.
-- [ ] Typechecker unit test: valid usage.
-- [ ] Typechecker unit test: invalid usage → correct diagnostic.
-- [ ] Codegen snapshot test: `<construct>` in expression position.
-- [ ] Integration test (end-to-end compile + run).
+- [ ] Existing check cases extended for accepted syntax and valid usage.
+- [ ] Existing check cases extended for invalid usage → correct diagnostic code.
+- [ ] Existing behavior cases extended for `<construct>` in expression position and observable execution.
+- [ ] Smallest relevant case/area selectors pass during development; affected whole families pass at commit points, per `workspaces/contracts/README.md`.
 
 ### Docs
 
