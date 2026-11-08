@@ -16,8 +16,15 @@ model EnumInstance:
     ancestors: list[str]
 
 
-pub def specialize_enums(mut module: &mut BodyIrModule) -> Result[None, str]:
-    """Close payload layouts in place before native type selection; open templates never become physical declarations."""
+pub def specialized_enum_layouts(module: &BodyIrModule) -> Result[list[EnumDeclaration], str]:
+    """
+    Close the enum payload layouts a module's checked types use; open templates never become physical declarations.
+
+    1. Collect closed enum uses from checked declaration frames, bodies and nominal field types.
+    2. Retain each non-generic declaration and collect its payload uses.
+    3. Close each instance once, following its payloads to further closed instances.
+    """
+    # 1. Collect closed enum uses from checked declaration frames, bodies and nominal field types.
     mut instances: list[EnumInstance] = []
     for ty in declaration_storage(module):
         collect_type(module, ty, instances, [])?
@@ -30,28 +37,35 @@ pub def specialize_enums(mut module: &mut BodyIrModule) -> Result[None, str]:
         declaration = borrowed_at(module.nominal_declarations, nominal_position)
         for field in declaration.field_types:
             _ = collect_type(module, field, instances, [])?
-    mut declarations: list[EnumDeclaration] = []
+    # 2. Retain each non-generic declaration and collect its payload uses.
+    mut layouts: list[EnumDeclaration] = []
     for enum_position in range(len(module.enum_declarations)):
         declaration = borrowed_at(module.enum_declarations, enum_position)
         if len(declaration.type_parameters) == 0:
-            declarations.append(declaration.clone())
+            layouts.append(declaration.clone())
             for variant in declaration.variants:
                 for field in variant.fields:
                     _ = collect_type(module, field, instances, [])?
+    # 3. Close each instance once, following its payloads to further closed instances.
     mut cursor = 0
     while cursor < len(instances):
         instance = instances[cursor]
         cursor += 1
         declaration = close_layout(instance)?
-        for retained in range(len(declarations)):
-            if declarations[retained].name == declaration.name:
+        for retained in range(len(layouts)):
+            if borrowed_at(layouts, retained).name == declaration.name:
                 return Err(f"unsupported Body IR enum instance symbol collision {declaration.name}")
         lineage = instance.ancestors + [instance.declaration.canonical.render_compact()]
         for variant in declaration.variants:
             for field in variant.fields:
                 _ = collect_type(module, field, instances, lineage)?
-        declarations.append(declaration.clone())
-    module.enum_declarations = declarations
+        layouts.append(declaration.clone())
+    return Ok(layouts)
+
+
+pub def specialize_enums(mut module: &mut BodyIrModule) -> Result[None, str]:
+    """Replace generic enum templates in place with every closed layout selected from the joined context."""
+    module.enum_declarations = specialized_enum_layouts(module)?
     return Ok(None)
 
 

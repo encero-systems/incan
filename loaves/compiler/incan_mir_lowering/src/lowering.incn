@@ -44,7 +44,7 @@ from checked_json import lower_checked_deserialize
 from string_conversion import lower_string_conversions
 from string_conversion_contracts import validate_conversion_placement
 from table_views import borrowed_at
-from enum_instances import specialize_enums
+from enum_instances import specialize_enums, specialized_enum_layouts
 from display_methods import display_functions
 from comparison_methods import comparison_functions, attach_enum_comparisons
 from decorator_caches import validate_instance_binding
@@ -1123,8 +1123,13 @@ pub def plan_contexts(
     constructors = index_constructors(source_context.nominal_declarations)
     template_references = referenced_templates(context)
     trace_lowering_footprint(footprint_trace, "retained source templates")
+    # A closed enum payload can name a nominal instance no frame uses, and a closed nominal field or method frame can
+    # name an enum instance no source frame uses, so enum layouts are discovered before nominal specialization and
+    # installed again from the same joined context afterwards.
+    trace_lowering(trace, "discover enum payload dependencies")
+    enum_layouts = specialized_enum_layouts(context)?
     trace_lowering(trace, "specialize nominals")
-    nominal_instances = specialize_nominals_with_instances(constructors, context)?
+    nominal_instances = specialize_nominals_with_instances(constructors, context, enum_layouts)?
     trace_lowering_footprint(footprint_trace, "specialized nominals")
     trace_lowering(trace, "specialize enums")
     specialize_enums(context)?

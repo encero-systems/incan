@@ -1,13 +1,18 @@
-# behavior: empty enum payload lists take declared concrete or supplied generic element types, including constructors nested in Result and differently typed locals (#1516, #2256)
+# behavior: enum payloads retain concrete generic arguments from destinations, nested inferred model constructors and generic model fields (#1516, #2256, #2715)
 # expect-stdout:
 #   0
 #   0
 #   0
 #   aside:0
 #   empty
+#   present
+#   deleted
+#   1
 
 @derive(Clone)
 enum Holder[Elem with Clone]:
+    """Hold either concrete text, generic items or no payload for destination-inference coverage."""
+
     Names(list[str])
     Items(list[Elem])
     Empty
@@ -19,6 +24,58 @@ enum Concrete:
     Names(list[str])
 
 
+model Page:
+    """Supply a concrete model payload to nested generic constructors."""
+
+    route: str
+
+
+model RecordId[T]:
+    """Carry a record's generic value type even though the identifier field does not use it."""
+
+    serial: int
+
+
+model RecordVersion[T]:
+    """Pair a typed record identifier with the value stored at that version."""
+
+    id: RecordId[T]
+    value: T
+
+
+model Tombstone:
+    """Describe a deletion without carrying the record's generic value type."""
+
+    serial: int
+
+
+enum RecordState[T]:
+    """Represent present, deleted and absent states while preserving the record value type."""
+
+    Present(RecordVersion[T])
+    Deleted(Tombstone)
+    Absent
+
+
+enum Slot[T]:
+    """Hold one generic value or none, named concretely only through a generic model's field."""
+
+    Filled(T)
+    Vacant
+
+
+model Shelf[T]:
+    """Carry a generic slot whose concrete enum layout only this model's closed instances name."""
+
+    slot: Slot[T]
+
+    def count(self) -> int:
+        """Count the slot through a method frame lowered only for a closed shelf instance."""
+        match self.slot:
+            Slot.Filled(_) => return 1
+            Slot.Vacant => return 0
+
+
 def build_concrete() -> Result[Concrete, str]:
     """Contextually type an empty payload before wrapping the concrete enum in a result."""
     return Ok(Concrete.Names([]))
@@ -26,48 +83,63 @@ def build_concrete() -> Result[Concrete, str]:
 
 @derive(Clone)
 model Maker[T with Clone]:
+    """Build holders whose selected element type is independent of the maker's own type."""
+
     seed: T
 
     def build[Picked with Clone](self) -> Holder[Picked]:
+        """Build an empty item holder for the explicitly selected type."""
         return Holder.Items([])
 
 
 def build[U with Clone]() -> Holder[U]:
+    """Build an empty item holder whose element type comes from the destination."""
     return Holder.Items([])
 
 
 def build_names[Picked with Clone]() -> Holder[Picked]:
+    """Build the concrete text variant while retaining the caller's generic holder type."""
     return Holder.Names([])
 
 
 def build_aside[Picked with Clone]() -> Holder[Picked]:
+    """Build and inspect one concrete holder before returning a generic empty holder."""
     aside: Holder[str] = Holder.Items([])
     match aside:
-        case Holder.Items(values):
-            println(f"aside:{len(values)}")
-        case _:
-            println("aside:other")
+        Holder.Items(values) => println(f"aside:{len(values)}")
+        _ => println("aside:other")
     return Holder.Empty
 
 
 def show[E with Clone](holder: Holder[E]) -> str:
+    """Render the observable payload size or the empty marker for a holder."""
     match holder:
-        case Holder.Items(values):
-            return f"{len(values)}"
-        case Holder.Names(names):
-            return f"{len(names)}"
-        case Holder.Empty:
-            return "empty"
+        Holder.Items(values) => return f"{len(values)}"
+        Holder.Names(names) => return f"{len(names)}"
+        Holder.Empty => return "empty"
+
+
+def describe[T](state: RecordState[T]) -> str:
+    """Name a state whose generic argument came from its payload or enclosing call."""
+    match state:
+        RecordState.Present(_) => return "present"
+        RecordState.Deleted(_) => return "deleted"
+        RecordState.Absent => return "absent"
+
+
+def shelve[T](value: T) -> Shelf[T]:
+    """Build a shelf inside a generic frame, so the caller names only the shelf instance."""
+    return Shelf(slot=Slot.Filled(value))
 
 
 def main() -> None:
-    """Observe generic destinations and a concrete payload nested inside a result."""
+    """Observe explicit, destination-inferred, nested-constructor and model-field generic arguments."""
     match build_concrete():
-        case Ok(value):
+        Ok(value) =>
             match value:
-                case Concrete.Names(names):
+                Concrete.Names(names) =>
                     assert len(names) == 0
-        case Err(_error):
+        Err(_error) =>
             assert false
     m = Maker[int](seed=1)
     h: Holder[str] = m.build[str]()
@@ -78,3 +150,7 @@ def main() -> None:
     println(show(n))
     a: Holder[int] = build_aside[int]()
     println(show(a))
+    present = RecordState.Present(RecordVersion(id=RecordId(serial=1), value=Page(route="/")))
+    println(describe(present))
+    println(describe[Page](RecordState.Deleted(Tombstone(serial=1))))
+    println(shelve(7).count())

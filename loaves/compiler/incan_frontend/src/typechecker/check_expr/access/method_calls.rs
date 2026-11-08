@@ -369,6 +369,9 @@ impl TypeChecker {
             };
             if !self.source_type_names_same_declaration(expected_name, enum_name)
                 || arguments.len() != enum_info.type_params.len()
+                || arguments
+                    .iter()
+                    .any(|argument| !self.enum_construction_argument_is_fixed(argument))
             {
                 return None;
             }
@@ -395,6 +398,110 @@ impl TypeChecker {
             arguments: arguments.clone(),
             payloads,
         })
+    }
+
+    /// Return whether a destination-provided enum argument is concrete in the current caller.
+    ///
+    /// A generic callee's provisional parameter remains an inference placeholder and must not select the enum's
+    /// executable carrier. An active type parameter of the caller is already a real generic argument, including when
+    /// nested inside another type, and is therefore preserved.
+    fn enum_construction_argument_is_fixed(&self, argument: &ResolvedType) -> bool {
+        if Self::is_settled_type_argument(argument) || self.active_type_param_name(argument).is_some() {
+            return true;
+        }
+        match argument {
+            ResolvedType::Generic(_, arguments) | ResolvedType::Tuple(arguments) => arguments
+                .iter()
+                .all(|argument| self.enum_construction_argument_is_fixed(argument)),
+            ResolvedType::FrozenList(inner)
+            | ResolvedType::FrozenSet(inner)
+            | ResolvedType::TypeToken(inner)
+            | ResolvedType::Ref(inner)
+            | ResolvedType::RefMut(inner) => self.enum_construction_argument_is_fixed(inner),
+            ResolvedType::FrozenDict(key, value) => {
+                self.enum_construction_argument_is_fixed(key) && self.enum_construction_argument_is_fixed(value)
+            }
+            ResolvedType::Function(parameters, returned) => {
+                parameters
+                    .iter()
+                    .all(|parameter| self.enum_construction_argument_is_fixed(&parameter.ty))
+                    && self.enum_construction_argument_is_fixed(returned)
+            }
+            _ => false,
+        }
+    }
+
+    /// Infer a generic enum variant's concrete owner from its checked payloads after argument checking.
+    ///
+    /// The pre-argument construction pass handles written receiver arguments and destination types because those
+    /// facts must contextualize literals. With neither available, nonliteral payloads can still bind the enum's
+    /// parameters from their own checked types. The construction is inferred only when the payloads fix every
+    /// parameter; a parameter no payload fixes leaves the construction open, and no type is chosen for it.
+    pub(super) fn inferred_enum_variant_construction(
+        &mut self,
+        base_ty: &ResolvedType,
+        method: &str,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) -> Option<EnumVariantInstantiation> {
+        let ResolvedType::Named(enum_name) = base_ty else {
+            return None;
+        };
+        if matches!(
+            collection_type_id(enum_name),
+            Some(CollectionTypeId::Option | CollectionTypeId::Result)
+        ) {
+            return None;
+        }
+        let (type_params, declared_payloads) = {
+            let TypeInfo::Enum(info) = self.lookup_semantic_type_info(enum_name)? else {
+                return None;
+            };
+            if info.type_params.is_empty() {
+                return None;
+            }
+            let canonical_variant = info.variant_aliases.get(method).map(String::as_str).unwrap_or(method);
+            let declared = info.variant_fields.get(canonical_variant)?.clone();
+            (info.type_params.clone(), declared)
+        };
+        if declared_payloads.len() != args.len() || declared_payloads.len() != arg_types.len() {
+            return None;
+        }
+
+        let mut bindings = HashMap::new();
+        for ((declared, actual), argument) in declared_payloads.iter().zip(arg_types).zip(args) {
+            let expression = match argument {
+                CallArg::Positional(expression)
+                | CallArg::Named(_, expression)
+                | CallArg::PositionalUnpack(expression)
+                | CallArg::KeywordUnpack(expression) => expression,
+            };
+            let actual = self
+                .type_info
+                .calls
+                .inferred_constructor_types
+                .get(&expression.span)
+                .or_else(|| self.type_info.calls.body_ir_constructor_types.get(&expression.span))
+                .or_else(|| self.body_ir_checked_value_type(expression.span))
+                .unwrap_or(actual);
+            self.infer_type_param_bindings(declared, actual, &mut bindings);
+        }
+        let arguments = type_params
+            .iter()
+            .map(|parameter| {
+                bindings
+                    .get(parameter)
+                    .filter(|argument| self.enum_construction_argument_is_fixed(argument))
+                    .cloned()
+            })
+            .collect::<Option<Vec<_>>>()?;
+        self.refuse_unsatisfied_nominal_type_arguments(enum_name, &bindings, TypeArgumentOrigin::Inferred, span);
+        let payloads = declared_payloads
+            .iter()
+            .map(|payload| substitute_resolved_type(payload, &bindings))
+            .collect();
+        Some(EnumVariantInstantiation { arguments, payloads })
     }
 
     /// Type-check `receiver.method(...)` once the receiver, method name, explicit type arguments, and value arguments

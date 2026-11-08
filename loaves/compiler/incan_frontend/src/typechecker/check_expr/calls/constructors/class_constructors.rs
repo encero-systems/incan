@@ -248,7 +248,7 @@ impl TypeChecker {
             .map(|info| Self::constructor_hook_owner_type_params(info).to_vec())
             .unwrap_or_default();
         let arguments = field_arguments.iter().map(|(expr, ty)| (*expr, ty)).collect::<Vec<_>>();
-        self.unify_argument_type_bindings(&type_params, &arguments, &mut type_bindings);
+        self.unify_constructor_argument_type_bindings(&type_params, &arguments, &mut type_bindings);
         if self.errors.len() == errors_before_fields {
             self.refuse_conflicting_type_arguments(display_name, &type_params, &arguments, &type_bindings);
         }
@@ -282,11 +282,58 @@ impl TypeChecker {
             if let Some(templates) = self.constructor_field_templates(type_name, call_span) {
                 for ((expr, expected), template) in field_arguments.iter().zip(&templates) {
                     let expected = substitute_resolved_type(expected, &type_bindings);
+                    if !type_params.is_empty() {
+                        self.retain_inferred_constructor_argument_type(expr, &expected);
+                    }
                     self.retain_contextual_literal_type(expr, &expected, owner.as_ref(), Some(template));
                 }
             }
         }
         result
+    }
+
+    /// Publish a concrete destination for a nested model or class constructor after the enclosing constructor closes
+    /// its field binders.
+    ///
+    /// A phantom parameter cannot be inferred from the nested constructor's own fields. The enclosing checked field
+    /// type is therefore the first concrete executable fact. Canonical declaration identity and the recorded field
+    /// binding authenticate that destination; other calls and incompatible nominal owners retain their original type.
+    fn retain_inferred_constructor_argument_type(&mut self, expression: &Spanned<Expr>, destination: &ResolvedType) {
+        let Expr::Call(callee, type_arguments, _) = &expression.node else {
+            return;
+        };
+        if !type_arguments.is_empty()
+            || !Self::is_settled_type_argument(destination)
+            || self.type_info.constructor_field_binding(expression.span).is_none()
+        {
+            return;
+        }
+        let Some(constructor) = self.type_info.resolved_identity(callee.span).cloned() else {
+            return;
+        };
+        if !matches!(
+            constructor.kind,
+            incan_semantics_core::SemanticSourceTargetKind::Model
+                | incan_semantics_core::SemanticSourceTargetKind::Class
+        ) {
+            return;
+        }
+        let destination_name = match destination {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
+            _ => return,
+        };
+        if self.named_type_reference_identity(destination_name).as_ref() != Some(&constructor) {
+            return;
+        }
+        let Some(actual) = self.type_info.expr_type(expression.span) else {
+            return;
+        };
+        if self.types_compatible(actual, destination) {
+            self.type_info
+                .calls
+                .body_ir_constructor_types
+                .insert(expression.span, destination.clone());
+        }
     }
 
     /// Read original field templates through the constructor's checked argument slots, before explicit type

@@ -143,7 +143,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .or_else(|| self.type_info.expressions.body_ir_expr_types.get(&span))
             .or_else(|| self.type_info.calls.body_ir_constructor_types.get(&span))
             .or_else(|| self.type_info.calls.body_ir_call_result_types.get(&span))
-            .or_else(|| self.type_info.calls.inferred_constructor_types.get(&span))
             .or_else(|| self.type_info.calls.inferred_call_result_types.get(&span))
             .or_else(|| self.type_info.traits.self_method_result_types.get(&span))
             .or_else(|| self.type_info.expr_type(span))
@@ -174,6 +173,27 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return local.ty.clone();
         }
         checked
+    }
+
+    /// Resolve a nominal construction from its exact inferred owner when the legacy expression fact is still bare.
+    ///
+    /// Ordinary expression lowering retains [`Self::resolve_ty`]'s lookup order. Model, class and enum producers use
+    /// this boundary so a checked generic constructor can refine only its own result without adding a lookup to every
+    /// Body IR expression.
+    pub(super) fn resolve_constructor_ty(&self, span: ast::Span) -> IncanType {
+        if matches!(
+            self.type_info.expressions.body_ir_expr_types.get(&span),
+            Some(ResolvedType::Named(_))
+        ) && let Some(exact) = self
+            .type_info
+            .calls
+            .inferred_constructor_types
+            .get(&span)
+            .or_else(|| self.type_info.calls.body_ir_constructor_types.get(&span))
+        {
+            return self.checked_type(exact);
+        }
+        self.resolve_ty(span)
     }
 
     /// Whether `ty` leaves a part unresolved in this body: an unknown or still-inferred type, or a type parameter the
