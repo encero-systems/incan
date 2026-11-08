@@ -16,6 +16,7 @@ def exercise_std_graph_surface() -> None:
     root: NodeId = dag.add_node("root")
     leaf: NodeId = dag.add_node("leaf")
     dag_edge: Result[None, GraphError] = dag.add_edge(root, leaf)
+    dag_has_edge: bool = dag.contains_edge(root, leaf)
     dag_order: list[NodeId] = dag.topological_order()
 
     mut multi = MultiDiGraph[str]()
