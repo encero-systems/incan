@@ -76,6 +76,14 @@ pub model UnitDescription:
     pub vocab_admissions: list[str] = []
     pub vocab_policy: str = "locked-dependencies"
     pub vocab_desugarer: bool = false
+    # The trust evidence covering compile-time code, keyed by the selected Loaf's package identity.
+    pub covered_by: Dict[str, str] = {}
+    # Selected dependencies that unattended preparation could not make ready without running untrusted code.
+    pub not_prepared_loaves: list[str] = []
+    # The stable missing-trust stop printed by an unattended description; empty when preparation is complete.
+    pub trust_stop: str = ""
+    # Whether preparation was requested by an unasked tool. This controls Oven only and is never a compiler input.
+    pub unattended: bool = false
     # The rustc-internal access the Loaf declares (`[build]`); a description names it only when there is some.
     pub toolchain_access: ToolchainAccess = ToolchainAccess()
     # The resolved sysroot whose libraries an executable that links sysroot dependencies loads at run time. Oven binds
@@ -104,6 +112,8 @@ pub model UnitDescription:
             self.vocabulary,
         ), "vocab_admissions": texts(self.vocab_admissions), "vocab_policy": JsonValue.string(self.vocab_policy), "vocab_desugarer": JsonValue.bool(
             self.vocab_desugarer,
+        ), "covered_by": string_map(self.covered_by), "not_prepared_loaves": texts(self.not_prepared_loaves), "trust_stop": JsonValue.string(
+            self.trust_stop,
         ), "externs": JsonValue.array([item.to_json() for item in self.externs]), "search": texts(self.search), "search_index": optional_text(
             self.search_index,
         ), "rust_abi": texts(self.rust_abi)}
@@ -127,6 +137,14 @@ pub def dependency_source_roots(unit: UnitDescription) -> list[Tuple[str, str]]:
 def texts(items: list[str]) -> JsonValue:
     """A JSON array of strings."""
     return JsonValue.array([JsonValue.string(item) for item in items])
+
+
+def string_map(items: Dict[str, str]) -> JsonValue:
+    """A JSON object whose stable keys name Loaves and whose values name their trust evidence."""
+    mut result: Dict[str, JsonValue] = {}
+    for name in sorted([name for name in items.keys()]):
+        result[name] = JsonValue.string(items[name])
+    return JsonValue.object(result)
 
 
 def optional_text(value: Option[str]) -> JsonValue:
