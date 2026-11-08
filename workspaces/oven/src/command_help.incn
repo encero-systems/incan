@@ -10,6 +10,7 @@ from toolchain_archive import PACK_USAGE, INSTALL_USAGE, help_text as archive_he
 
 # The project commands both surfaces run follow the invoked surface's name.
 const RUN_OPERANDS: str = "run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
+const INCAN_RUN_OPERANDS: str = "run [--direct] PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
 const CHECK_OPERANDS: str = "check PATH [--format text|json] [UNIT OPTIONS]"
 const TEST_OPERANDS: str = "test PATH [UNIT OPTIONS]"
 const BUILD_OPERANDS: str = "build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
@@ -30,7 +31,7 @@ pub const UNIT_VALUE_OPTIONS: FrozenList[str] = [
 
 pub def usage(surface: str) -> str:
     """The surface's overview, composed from the same synopses each command's detailed help uses."""
-    project = [f"{surface} --version", f"{surface} {RUN_OPERANDS}", f"{surface} {CHECK_OPERANDS}"]
+    project = [f"{surface} --version", f"{surface} {run_operands(surface)}", f"{surface} {CHECK_OPERANDS}"]
     if surface == OVEN:
         return overview(
             surface,
@@ -148,8 +149,8 @@ def unit_help(surface: str, command: str) -> str:
     ]
     if command == "run":
         return render(
-            f"{surface} {RUN_OPERANDS}",
-            options + [
+            f"{surface} {run_operands(surface)}",
+            options + direct_options(surface) + [
                 "  --argv0 TEXT          Set the program's argument zero.",
                 "  --program-entry PATH  Add a program entry; repeatable.",
                 "  --engine-report       Retain and print unit counters with INCAN_ENGINE=records.",
@@ -184,6 +185,20 @@ def unit_help(surface: str, command: str) -> str:
         ],
         f"{surface} build src/main.incn --profile debug",
     )
+
+
+def run_operands(surface: str) -> str:
+    """Select the run synopsis for the invoked surface."""
+    if surface == OVEN:
+        return RUN_OPERANDS
+    return INCAN_RUN_OPERANDS
+
+
+def direct_options(surface: str) -> list[str]:
+    """Expose direct source execution only on the Incan surface."""
+    if surface == OVEN:
+        return []
+    return ["  --direct               Run PATH as one source file without Oven planning."]
 
 
 pub def version_text(surface: str) -> str:
