@@ -38,10 +38,11 @@ pub const STANDARD_PACKAGES: FrozenList[str] = [
 
 
 pub model ReleaseOptions:
-    """Caller-selected release source, output, fixed-point proof, worker count, and per-command timeout."""
+    """Caller-selected release source, output, retention, fixed-point proof, worker count, and per-command timeout."""
 
     pub source_sha: str
     pub output: Path
+    pub keep_trees: bool
     pub prove_fixed_point: bool
     pub jobs: int
     pub timeout_seconds: int
@@ -88,15 +89,19 @@ pub model Step:
 
 
 pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, str]:
-    """Parse `SHA OUT [--prove-fixed-point] [--jobs N] [--timeout SECONDS]` without reading process state."""
+    """Parse release identity, retention, proof, and process budgets without reading process state."""
     mut positional: list[str] = []
+    mut keep_trees = false
     mut prove = false
     mut jobs = 4
     mut timeout = 600
     mut index = 0
     while index < len(arguments):
         argument = str(arguments[index])
-        if argument == "--prove-fixed-point":
+        if argument == "--keep-trees":
+            keep_trees = true
+            index += 1
+        elif argument == "--prove-fixed-point":
             prove = true
             index += 1
         elif argument == "--jobs" or argument == "--timeout":
@@ -114,13 +119,14 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
             positional.append(argument)
             index += 1
     if len(positional) != 2:
-        return Err("usage: release.incn SHA OUT [--prove-fixed-point] [--jobs N] [--timeout SECONDS]")
+        return Err("usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--jobs N] [--timeout SECONDS]")
     if not full_sha(positional[0]):
         return Err("SHA must be a full lowercase source commit")
     return Ok(
         ReleaseOptions(
             source_sha=positional[0],
             output=Path(positional[1]),
+            keep_trees=keep_trees,
             prove_fixed_point=prove,
             jobs=jobs,
             timeout_seconds=timeout,
