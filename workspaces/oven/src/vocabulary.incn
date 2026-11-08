@@ -221,8 +221,9 @@ def registration_main(entry: str) -> str:
 
 
 def run_registration(output: Path) -> Result[JsonValue, str]:
-    """Capture one producer registration and require a valid JSON descriptor payload."""
+    """Capture one producer registration without ambient environment access and require a valid JSON payload."""
     mut command = Command.new(output.0)
+    _ = command.env_clear()
     captured = command.output().map_err((error) => f"cannot run vocabulary registration: {error}")?
     if not captured.status.success():
         return Err(f"vocabulary registration failed: {captured.status}")
