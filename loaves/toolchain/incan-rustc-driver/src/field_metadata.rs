@@ -32,8 +32,7 @@ pub fn result(plan: &Plan, owner: i64, info: i64) -> Result<PlanType, PlanError>
         .ok()
         .and_then(|index| plan.models.get(index))
         .ok_or_else(refused)?;
-    if !model.library_item.is_empty()
-        || !model.derives.iter().any(|derive| derive == "FieldInfo")
+    if (model.library_item.is_empty() && !model.derives.iter().any(|derive| derive == "FieldInfo"))
         || metadata.library_item != "incan_std_primitives::reflection::FieldInfo"
         || fields
             .iter()

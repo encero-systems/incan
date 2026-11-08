@@ -1,0 +1,22 @@
+# behavior: field metadata for an imported model builds by value, by type and through a type parameter while private fields stay hidden (#2519)
+# expect-stdout:
+#   type_:type, balance:balance, external_id:externalId
+#   type_:type, balance:balance, external_id:externalId
+#   type_:type, balance:balance, external_id:externalId
+#   type_:type, balance:balance, external_id:externalId
+
+from pub::catalog import Account, local_fields
+
+
+def fields_by_type[T]() -> list[str]:
+    """Describe the fields selected from a type parameter."""
+    return [f"{info.name}:{info.wire_name}" for info in T.__fields__()]
+
+
+def main() -> None:
+    """Read the provider and consumer views of one imported model."""
+    account = Account(type="savings", externalId="external")
+    println(", ".join(local_fields()))
+    println(", ".join([f"{info.name}:{info.wire_name}" for info in account.__fields__()]))
+    println(", ".join([f"{info.name}:{info.wire_name}" for info in Account.__fields__()]))
+    println(", ".join(fields_by_type[Account]()))
