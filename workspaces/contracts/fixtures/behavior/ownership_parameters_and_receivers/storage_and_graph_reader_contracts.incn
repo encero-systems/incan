@@ -15,6 +15,8 @@
 #   8
 #   9
 #   2
+#   0
+#   3
 """Exercise the RFC 164 ownership shapes required by storage and graph readers."""
 
 
@@ -40,6 +42,10 @@ class GraphState:
     pub def node_count(self) -> int:
         """Return the number of nodes visible through this graph state."""
         return len(self.nodes)
+
+    pub def contains_index(self, index: int) -> Result[bool, str]:
+        """Return whether an index identifies a stored node."""
+        return Ok(index >= 0 and index < len(self.nodes))
 
 
 trait GraphRead:
@@ -85,6 +91,37 @@ class Editor[G with GraphEdit]:
 def edit(graph: BorrowedMut[EditableGraph]) -> Editor[Reference[EditableGraph]] from graph:
     """Carry exclusive graph access through a mutable-receiver trait bound."""
     return Editor[Reference[EditableGraph]](graph=graph)
+
+
+@derive(Clone, Copy, Eq)
+model GraphKey:
+    pub local: int
+
+
+class KeyHolder:
+    pub key: GraphKey
+
+
+class KeySelection[R]:
+    pub reader: R
+    pub key: GraphKey
+
+
+def key_local(key: GraphKey) -> int:
+    """Return the scalar stored in a Copy graph key."""
+    return key.local
+
+
+def select_key(
+    reader: Borrowed[GraphState], key: GraphKey
+) -> KeySelection[Borrowed[GraphState]] from reader:
+    """Carry a Copy graph key beside a borrowed reader."""
+    return KeySelection[Borrowed[GraphState]](reader=reader, key=key)
+
+
+def key_through_borrowed(holder: Borrowed[KeyHolder]) -> int:
+    """Pass a Copy key field read through a borrowed parameter by value."""
+    return key_local(holder.key)
 
 
 class MemoryGraph:
@@ -220,3 +257,8 @@ def main() -> None:
     bounded_graph = BoundedGraph(nodes=[1, 2])
     bounded = bounded_graph.read_view()
     println(bounded.node_count())
+    copy_reader = GraphState(nodes=[1])
+    keyed = select_key(copy_reader, GraphKey(local=0))
+    assert copy_reader.contains_index(keyed.key.local) == Ok(True)
+    println(key_local(keyed.key))
+    println(key_through_borrowed(KeyHolder(key=GraphKey(local=3))))
