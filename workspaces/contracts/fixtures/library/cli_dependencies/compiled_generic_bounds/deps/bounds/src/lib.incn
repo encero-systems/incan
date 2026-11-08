@@ -86,6 +86,24 @@ pub trait ValueWalker[E]:
         return value.walk(self)
 
 
+pub trait NumberSource[E]:
+    """Supply one integer for a provider-owned reconstruction protocol."""
+
+    def integer(mut self) -> Result[int, E]
+
+
+pub trait Reconstruct:
+    """Reconstruct an adopter through an associated implementation."""
+
+    @staticmethod
+    def __reconstruct__[E, S with NumberSource[E]](mut source: S) -> Result[Self, E]
+
+    @staticmethod
+    def through_default[E, S with NumberSource[E]](mut source: S) -> Result[Self, E]:
+        """Dispatch through Self inside this provider-owned default."""
+        return Self.__reconstruct__(source)
+
+
 pub model Item with Labeled:
     """Supply the label in a compiled library method."""
 

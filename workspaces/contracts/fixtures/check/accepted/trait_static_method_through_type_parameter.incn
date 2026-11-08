@@ -14,6 +14,31 @@ trait CheckWalker[E]:
         return value.walk(self)
 
 
+trait CheckSource[E]:
+    def integer(mut self) -> Result[int, E]
+
+
+trait CheckReconstruct:
+    @staticmethod
+    def __reconstruct__[E, S with CheckSource[E]](mut source: S) -> Result[Self, E]
+
+    @staticmethod
+    def through_default[E, S with CheckSource[E]](mut source: S) -> Result[Self, E]:
+        return Self.__reconstruct__(source)
+
+
+model CheckItem with CheckReconstruct:
+    value: int
+
+    @staticmethod
+    def __reconstruct__[E, S with CheckSource[E]](mut source: S) -> Result[CheckItem, E]:
+        return Ok(CheckItem(value=source.integer()?))
+
+    @staticmethod
+    def through_owner[E, S with CheckSource[E]](mut source: S) -> Result[CheckItem, E]:
+        return Self.__reconstruct__(source)
+
+
 def parse[T with TryFrom[str]](text: str) -> Option[T]:
     match T.try_from(text):
         Ok(value) => return Some(value)

@@ -1,6 +1,6 @@
 """A consumer that bounds its own generic functions by a dependency's trait."""
 
-from pub::bounds import Item, Labeled, ValueWalker, WalkValue
+from pub::bounds import Item, Labeled, NumberSource, Reconstruct, ValueWalker, WalkValue
 
 
 model WalkLeaf with WalkValue:
@@ -29,6 +29,27 @@ model DefaultWalker with ValueWalker[str]:
     marker: int
 
 
+model IntSource with NumberSource[str]:
+    """Return one consumer-owned integer."""
+
+    value: int
+
+    def integer(mut self) -> Result[int, str]:
+        """Return the configured value."""
+        return Ok(self.value)
+
+
+model RebuiltNumber with Reconstruct:
+    """Adopt the provider-owned associated default."""
+
+    value: int
+
+    @staticmethod
+    def __reconstruct__[E, S with NumberSource[E]](mut source: S) -> Result[RebuiltNumber, E]:
+        """Build a number from a consumer-owned source."""
+        return Ok(RebuiltNumber(value=source.integer()?))
+
+
 def display[T with Labeled](value: T) -> str:
     """Select the library's default through its checked trait bound."""
     return value.decorated()
@@ -47,4 +68,7 @@ pub def run_trait_slot() -> None:
     println(item.value)
     match WalkBranch(leaf=WalkLeaf(text="provider leaf")).walk(DefaultWalker(marker=0)):
         Ok(text) => println(text)
+        Err(message) => println(message)
+    match RebuiltNumber.through_default(IntSource(value=19)):
+        Ok(value) => println(f"provider Self {value.value}")
         Err(message) => println(message)
