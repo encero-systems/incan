@@ -6,12 +6,14 @@ from std.tempfile import TemporaryDirectory
 from release_support import (
     BaselineReport,
     Counts,
+    append_bytes,
     check_baseline,
     parse_release_options,
     parse_verification_options,
     release_receipt,
     require_candidate_census,
     same_bytes,
+    tree_bytes,
     verification_program,
 )
 
@@ -100,6 +102,7 @@ def test_receipt_keeps_refusal_evidence_distinct_from_success() -> Result[None, 
         "complete",
         0,
         42,
+        JsonValue.object({"total": JsonValue.int(99)}),
         {"incan": JsonValue.string("abc")},
         "native-fixed-point",
         JsonValue.object({"pass": JsonValue.int(8)}),
@@ -114,6 +117,10 @@ def test_receipt_keeps_refusal_evidence_distinct_from_success() -> Result[None, 
         .and_then((value) => value.expect_str())
         .map_err((error) => error.message())?
     assert compiler_build == "native-fixed-point"
+    measured = receipt.require("tree_bytes").map_err((error) => error.message())?
+    total = measured.require("total").map_err((error) => error.message())?
+    total_bytes = total.expect_int().map_err((error) => error.message())?
+    assert total_bytes == 99
     assert receipt.require("baseline_parity").and_then((value) => value.expect_bool()).map_err(
         (error) => error.message(),
     )?
@@ -130,6 +137,22 @@ def test_byte_comparison_reads_complete_content() -> Result[None, str]:
     assert same_bytes(left, right)?
     right.write_bytes(b"alpHa").map_err((error) => error.message())?
     assert not same_bytes(left, right)?
+    return Ok(None)
+
+
+def test_tree_measurement_walks_regular_files_once_and_records_bytes() -> Result[None, str]:
+    """A tree measurement sums nested regular files, excludes symlink targets, and writes one typed TSV row."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    tree = temporary.path().joinpath("tree")
+    tree.joinpath("nested").mkdir(true, true).map_err((error) => error.message())?
+    tree.joinpath("one").write_bytes(b"one").map_err((error) => error.message())?
+    tree.joinpath("nested/two").write_bytes(b"two!!").map_err((error) => error.message())?
+    tree.joinpath("alias").symlink_to(tree.joinpath("nested/two")).map_err((error) => error.message())?
+    assert tree_bytes(tree)? == 8
+
+    timings = temporary.path().joinpath("timings.tsv")
+    append_bytes(timings, "build-home", 8)?
+    assert timings.read_text("utf-8", "strict").map_err((error) => error.message())? == "bytes/build-home\t8\n"
     return Ok(None)
 
 
