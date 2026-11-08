@@ -177,7 +177,7 @@ def lower_delegated_call(
         )
     match delegation.declaration_frame():
         Some(frame) =>
-            validate_source_input_call(builder, frame)?
+            validate_source_input_call(module, builder, frame)?
             parameters = []
             for index in range(len(frame.params)):
                 parameters.append(call_parameter_type(builder, frame, frame.params[index])?)

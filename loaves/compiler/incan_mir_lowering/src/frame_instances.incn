@@ -236,10 +236,8 @@ pub def lower_instances(
                 redirects,
             )?
             enqueue_instances(queue, instances)
-    # The restart that remains: the driver discards this whole attempt and plans again from the closure the missing
-    # declarations extend. Invariant: no call binds to a missing declaration, and a refused attempt publishes nothing.
-    # A declaration selected only inside a missing one's body surfaces on the next attempt, so attempts grow with
-    # nesting depth, not with call count. DD-0013's stage E2 removes the restart with prepared keyed reads.
+    # Runtime declarations are preflighted before plan construction. Retain this check as a fail-closed assertion
+    # against a future lowering operation bypassing that authenticated facade inventory.
     if len(redirects.missing) != 0:
         return Ok(RuntimeRetention.NeedsRuntime(redirects.missing))
     redirect_runtime_calls(functions, redirects)?

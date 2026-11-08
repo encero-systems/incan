@@ -6,9 +6,10 @@ from async_ import future_type, validate_futures, construct_future, await_future
 from defaults import default_arguments, default_type
 from numerics import numeric_carrier as checked_numeric_carrier
 pub from closures import owned_capture
-pub from runtime_requirements import RuntimeRequirement, UnitPlanning, RefusalPlanning
-pub from lowering import BodyIrModule
-from lowering import unit_plan as checked_unit_plan
+pub from runtime_requirements import RuntimeRequirement, RefusalPlanning
+pub from runtime_calls import layout_runtime_requirements
+pub from lowering import BodyIrModule, UnitContinuation, UnitPlanning
+from lowering import unit_plan as checked_unit_plan, resume_unit_plan as checked_resume_unit_plan
 from program_refusals import program_refusals as checked_program_refusals
 # The record contracts live in internal_models; these names remain importable from the lowering as before.
 pub from pub::internal_models import (
@@ -131,6 +132,28 @@ pub def unit_plan(
 ) -> Result[UnitPlanning, str]:
     """Borrow checked modules and consume their source inputs to lower a program, library or collected test unit."""
     return checked_unit_plan(
+        modules,
+        inputs.sources,
+        inputs.files,
+        entry,
+        str(kind),
+        inputs.tests,
+        published,
+        inputs.overflow_checks,
+    )
+
+
+pub def resume_unit_plan(
+    continuation: UnitContinuation,
+    modules: list[BodyIrModule],
+    inputs: SourceInputs,
+    entry: int,
+    kind: &str,
+    mut published: list[NativeUnionDeclaration],
+) -> Result[UnitPlanning, str]:
+    """Resume preserved ordinary-frame work after the frontend resolves the exact requested runtime declarations."""
+    return checked_resume_unit_plan(
+        continuation,
         modules,
         inputs.sources,
         inputs.files,

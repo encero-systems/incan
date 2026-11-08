@@ -1,15 +1,12 @@
 """Shared declaration context for a project whose individual owning modules have been validated."""
 
 from rust::incan_semantics_core::body_ir import BodyIrModule, EnumDeclaration, NominalDeclaration, LoafCallable
-from traits import specialize_project_traits
+from traits import append_specialized_project_trait_bodies
 from table_views import borrowed_at
 
 
-pub def project_context(
-    modules: &list[BodyIrModule],
-    entry: int,
-) -> Result[tuple[BodyIrModule, list[BodyIrModule]], str]:
-    """Retain original canonical identities while joining layouts and specialized bodies for native planning."""
+pub def project_context(modules: &list[BodyIrModule], entry: int) -> Result[tuple[BodyIrModule, list[str]], str]:
+    """Retain one joined planning context and the source-provenance order of its owning modules."""
     mut context = modules[entry].clone()
     context.bodies.clear()
     context.nominal_declarations.clear()
@@ -22,16 +19,11 @@ pub def project_context(
     context.decorated_bindings.clear()
     context.loaf_callables.clear()
     context.native_union_declarations.clear()
-    mut checked: list[BodyIrModule] = []
+    mut owners: list[str] = []
     for module_position in range(len(modules)):
         module = borrowed_at(modules, module_position)
-        specialized = specialize_project_traits(module, modules)?
-        # The imported Rust type has Clone, but List.append cannot prove that trait for a named opaque value.
-        # An explicit interop clone is an owned call result and retains the module for both planning views.
-        checked.append(specialized.clone())
-        for body_position in range(len(specialized.bodies)):
-            body = borrowed_at(specialized.bodies, body_position)
-            context.bodies.push(body.clone())
+        owners.append(str(module.module_id.path()))
+        append_specialized_project_trait_bodies(module, modules, context.bodies)?
         # Indexed interop reads avoid legacy emission moving a vector field from a borrowed loop element.
         for index in range(len(module.nominal_declarations)):
             mut declaration = borrowed_at(module.nominal_declarations, index).clone()
@@ -71,7 +63,7 @@ pub def project_context(
         for index in range(len(module.native_union_declarations)):
             declaration = module.native_union_declarations[index].clone()
             context.native_union_declarations.push(declaration.clone())
-    return Ok((context, checked))
+    return Ok((context, owners))
 
 
 def retains_callable(context: &BodyIrModule, candidate: &LoafCallable) -> bool:

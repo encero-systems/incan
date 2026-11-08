@@ -24,9 +24,15 @@ from pub::incan_mir_plan import (
 )
 from trait_links import validate_project_implementation, has_open_trait_arguments
 from rust::std::env import var_os as native_environment
-from rust::incan_semantics_core import IncanType as RustType
-from rust::incan_semantics_core::body_ir import NativeUnionDeclaration, BodyIrModule as RustBodyIrModule
-from classes import is_program_entry
+from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId as RustCanonicalSymbolId
+from rust::incan_semantics_core::body_ir import (
+    NativeUnionDeclaration,
+    BodyIrModule as RustBodyIrModule,
+    NominalDeclaration as RustNominalDeclaration,
+    EnumDeclaration as RustEnumDeclaration,
+    StaticDeclaration as RustStaticDeclaration,
+)
+from classes import body_module_identity, is_program_entry
 from project import project_context
 from body_index import body_index
 from program_context import ProgramContext
@@ -45,13 +51,14 @@ from decls import lower_model_declarations, publish_local_layouts
 from fallible_factories import retain_factory_callable_storage
 from enums import lower_enum_declarations
 from unions import publish_unions, collect_unions, union_index
-from generic_layouts import generic_models
+from generic_layouts import generic_models, referenced_templates
 from generic_enums import generic_enums
 from options import intrinsic_declarations
 from async_ import validate_futures
 from type_parameters import Instance, merge_instance_requests
 from runtime_layouts import runtime_zip_carriers
-from runtime_requirements import RuntimeRetention, FramesPlanning, BodyPlanning, UnitPlanning
+from runtime_requirements import RuntimeRequirement, RuntimeRetention, FramesPlanning, BodyPlanning
+from runtime_calls import selected_runtime_requirements
 from program_entries import (
     EmittedFrames,
     collected_test_entries,
@@ -68,6 +75,41 @@ from frame_instances import lower_instances, merge_externals
 
 pub type BodyIrModule = rusttype RustBodyIrModule:
     """The frontend-owned canonical module, borrowed without conversion or duplication."""
+
+
+pub model NominalLayout:
+    """One checked concrete nominal declaration retained across runtime resolution."""
+
+    pub declaration: RustNominalDeclaration
+
+
+pub model EnumLayout:
+    """One enum layout's stable declaration identity and concrete argument tuple."""
+
+    pub canonical: RustCanonicalSymbolId
+    pub arguments: list[RustType]
+
+
+pub model UnitContinuation:
+    """Ordinary-frame work retained while the frontend resolves only the runtime declarations that work selected."""
+
+    pub nominal_layouts: list[NominalLayout]
+    pub nominal_instances: list[NominalInstance]
+    pub enum_layouts: list[EnumLayout]
+    pub static_layouts: list[RustCanonicalSymbolId]
+    pub intrinsic_layouts: list[EnumDeclaration]
+    pub functions: list[Function]
+    pub externals: list[ExternalFunction]
+    pub instances: list[Instance]
+    pub emitted_frames: EmittedFrames
+    pub statics: list[StaticCell]
+
+
+pub enum UnitPlanning:
+    """A complete native plan, or preserved ordinary-frame work awaiting exact runtime declarations."""
+
+    Complete(Option[Plan])
+    NeedsRuntime(UnitContinuation, list[RuntimeRequirement])
 
 
 def validate_project_module(module: &BodyIrModule, modules: &list[BodyIrModule]) -> Result[int, str]:
@@ -154,7 +196,6 @@ def program_context(
     return Ok(
         ProgramContext(
             body_indices=body_index(module),
-            bodies=Arc.new(list(module.bodies)),
             display_functions=Arc.new(display_functions(constructor_view, module, intrinsics)?),
             statics=Arc.new(list(module.static_declarations)),
             comparison_functions=Arc.new(comparison_functions(constructor_view, module, intrinsics)?),
@@ -179,11 +220,11 @@ def lowered_plan(
     mut published: list[NativeUnionDeclaration],
     overflow_checks: bool,
 ) -> Result[UnitPlanning, str]:
-    """Lower a checked unit: 1. Prepare layouts. 2. Lower bodies and instances. 3. Publish the completed plan."""
+    """Lower a checked unit once, preserving ordinary frames when exact runtime declarations need resolution."""
     trace_key: str = "INCAN_TRACE_LOWERING"
     trace = native_environment(trace_key).is_some()
     # 1. Validate the checked inputs and prepare their shared layouts.
-    source_context, template_constructors, checked, specialized_context, nominal_instances = plan_contexts(
+    source_context, template_constructors, owners, specialized_context, nominal_instances, template_references = plan_contexts(
         modules,
         sources,
         files,
@@ -217,16 +258,12 @@ def lowered_plan(
     )?
     mut program = initial_program
     mut emitted_frames = no_emitted_frames()
-    # 2. Lower ordinary frames, static initializers and their requested instances.
+    # 2. Lower ordinary frames and static initializers exactly once.
     mut retained_nominals = nominal_instances
-    mut statics: list[StaticCell] = []
-    mut original_nominal_count: int = 0
-    match lower_plan_frames(
-        template_constructors,
+    lower_ordinary_bodies(
         context,
-        source_context,
         program,
-        checked,
+        list(owners),
         sources,
         files,
         entry,
@@ -238,17 +275,421 @@ def lowered_plan(
         instances,
         emitted_frames,
         unions,
-        retained_nominals,
         trace,
-    )?:
-        BodyPlanning.NeedsRuntime(requests) => return Ok(UnitPlanning.NeedsRuntime(requests))
-        BodyPlanning.Complete((retained, original)) =>
-            statics = retained
-            original_nominal_count = original
+    )?
+    mut statics = lower_computed_statics(
+        context,
+        program,
+        unions,
+        sources,
+        files,
+        list(owners),
+        intrinsics,
+        functions,
+        externals,
+        instances,
+    )?
+    requirements = selected_runtime_requirements(context, externals, functions)?
+    if len(requirements) != 0:
+        return Ok(
+            UnitPlanning.NeedsRuntime(
+                UnitContinuation(
+                    nominal_layouts=nominal_layout_order(context),
+                    nominal_instances=list(retained_nominals),
+                    enum_layouts=enum_layout_order(context),
+                    static_layouts=static_layout_order(context),
+                    intrinsic_layouts=list(intrinsics),
+                    functions=functions,
+                    externals=externals,
+                    instances=instances,
+                    emitted_frames=emitted_frames,
+                    statics=statics,
+                ),
+                requirements,
+            ),
+        )
+
+    # 3. Complete instances and publish the plan when no declaration resolution is needed.
+    return finish_unit_plan(
+        template_constructors,
+        constructors,
+        source_context,
+        template_references,
+        context,
+        program,
+        owners,
+        sources,
+        files,
+        entry,
+        kind,
+        tests,
+        intrinsics,
+        functions,
+        models,
+        enums,
+        externals,
+        instances,
+        emitted_frames,
+        statics,
+        unions,
+        retained_nominals,
+        published,
+        trace,
+    )
+
+
+pub def resume_unit_plan(
+    continuation: UnitContinuation,
+    modules: list[BodyIrModule],
+    sources: list[str],
+    files: list[str],
+    entry: int,
+    kind: str,
+    tests: list[str],
+    mut published: list[NativeUnionDeclaration],
+    overflow_checks: bool = true,
+) -> Result[UnitPlanning, str]:
+    """Resume preserved ordinary frames against the exact runtime declaration closure the frontend resolved."""
+    trace_key: str = "INCAN_TRACE_LOWERING"
+    trace = native_environment(trace_key).is_some()
+    source_context, template_constructors, owners, specialized_context, nominal_instances, template_references = plan_contexts(
+        modules,
+        sources,
+        files,
+        entry,
+        false,
+    )?
+    mut context = specialized_context
+    preserve_nominal_layout_order(context, continuation.nominal_layouts)?
+    mut retained_nominals = nominal_instances
+    merge_nominal_instances(retained_nominals, continuation.nominal_instances)
+    preserve_enum_layout_order(context, continuation.enum_layouts)?
+    previous_static_count = len(continuation.static_layouts)
+    preserve_static_layout_order(context, continuation.static_layouts)?
+    constructor_table, unions, initial_intrinsics = layout_tables(context, files[entry], continuation.intrinsic_layouts)?
+    constructors = Arc.new(constructor_table)
+    mut intrinsics = initial_intrinsics
+    mut models: list[ModelDeclaration] = []
+    mut enums: list[EnumDeclaration] = []
+    mut functions: list[Function] = []
+    mut externals: list[ExternalFunction] = []
+    mut instances: list[Instance] = []
+    mut program = initial_plan_roots(
+        constructors,
+        context,
+        files[entry],
+        intrinsics,
+        retained_nominals,
+        kind,
+        unions,
+        overflow_checks,
+        false,
+        models,
+        enums,
+        functions,
+        externals,
+        instances,
+    )?
+    mut resolved_statics = lower_computed_statics(
+        context,
+        program,
+        unions,
+        sources,
+        files,
+        list(owners),
+        intrinsics,
+        functions,
+        externals,
+        instances,
+        previous_static_count,
+    )?
+    merge_planned_functions(functions, continuation.functions)?
+    merge_externals(externals, continuation.externals)?
+    merge_instance_requests(instances, continuation.instances)
+    emitted_frames = rebase_emitted_frames(context, continuation.emitted_frames)
+    mut statics = continuation.statics
+    for cell in resolved_statics:
+        statics.append(cell)
+    requirements = selected_runtime_requirements(context, externals, functions)?
+    if len(requirements) != 0:
+        return Ok(
+            UnitPlanning.NeedsRuntime(
+                UnitContinuation(
+                    nominal_layouts=nominal_layout_order(context),
+                    nominal_instances=list(retained_nominals),
+                    enum_layouts=enum_layout_order(context),
+                    static_layouts=static_layout_order(context),
+                    intrinsic_layouts=list(intrinsics),
+                    functions=functions,
+                    externals=externals,
+                    instances=instances,
+                    emitted_frames=emitted_frames,
+                    statics=statics,
+                ),
+                requirements,
+            ),
+        )
+    return finish_unit_plan(
+        template_constructors,
+        constructors,
+        source_context,
+        template_references,
+        context,
+        program,
+        owners,
+        sources,
+        files,
+        entry,
+        kind,
+        tests,
+        intrinsics,
+        functions,
+        models,
+        enums,
+        externals,
+        instances,
+        emitted_frames,
+        statics,
+        unions,
+        retained_nominals,
+        published,
+        trace,
+    )
+
+
+def merge_planned_functions(mut functions: list[Function], additions: list[Function]) -> Result[None, str]:
+    """Merge preserved frames with freshly rebuilt declaration roots, refusing any same-name plan drift."""
+    for addition_position in range(len(additions)):
+        addition = borrowed_at(additions, addition_position)
+        mut retained = false
+        for function_position in range(len(functions)):
+            function = borrowed_at(functions, function_position)
+            if function.name != addition.name:
+                continue
+            if function != addition:
+                return Err(f"runtime continuation changed planned function {addition.name}")
+            retained = true
+            break
+        if not retained:
+            functions.append(addition.clone())
+    return Ok(None)
+
+
+def rebase_emitted_frames(context: &BodyIrModule, previous: EmittedFrames) -> EmittedFrames:
+    """Rebase ordinary-frame body positions after resolved dependency modules enter before authored modules."""
+    mut emitted = no_emitted_frames()
+    for position in range(len(context.bodies)):
+        body = borrowed_at(context.bodies, position)
+        match body.canonical:
+            Some(identity) =>
+                if previous.positions.get(identity) != None:
+                    emitted.record(body.clone(), position)
+            None => pass
+    return emitted
+
+
+def nominal_layout_order(context: &BodyIrModule) -> list[NominalLayout]:
+    """Retain the checked concrete declarations in the order that every preserved model index names."""
+    mut layouts: list[NominalLayout] = []
+    for declaration in context.nominal_declarations:
+        layouts.append(NominalLayout(declaration=declaration.clone()))
+    return layouts
+
+
+def merge_nominal_instances(mut retained: list[NominalInstance], additions: list[NominalInstance]) -> None:
+    """Retain each checked nominal specialization needed by a layout restored from an earlier attempt."""
+    for addition in additions:
+        mut found = false
+        for instance in retained:
+            if (
+                instance.declaration.canonical == addition.declaration.canonical
+                and instance.arguments == addition.arguments
+            ):
+                found = true
+                break
+        if not found:
+            retained.append(addition)
+
+
+def enum_layout_order(context: &BodyIrModule) -> list[EnumLayout]:
+    """Retain the uniquely identified carrier order that every preserved enum index names."""
+    mut layouts: list[EnumLayout] = []
+    for declaration in context.enum_declarations:
+        layouts.append(
+            EnumLayout(canonical=declaration.canonical.clone(), arguments=list(declaration.native_type_arguments)),
+        )
+    return layouts
+
+
+def static_layout_order(context: &BodyIrModule) -> list[RustCanonicalSymbolId]:
+    """Retain the declaration order that every preserved static slot and initializer name addresses."""
+    mut identities: list[RustCanonicalSymbolId] = []
+    for declaration in context.static_declarations:
+        identities.append(declaration.canonical.clone())
+    return identities
+
+
+def preserve_nominal_layout_order(mut context: &mut BodyIrModule, previous: list[NominalLayout]) -> Result[None, str]:
+    """Restore checked late layouts, keep existing nominal indices stable and append newly resolved declarations."""
+    mut ordered: list[RustNominalDeclaration] = []
+    for layout in previous:
+        mut found = false
+        for position in range(len(context.nominal_declarations)):
+            declaration = borrowed_at(context.nominal_declarations, position)
+            if nominal_layout_matches(declaration, layout):
+                ordered.append(declaration.clone())
+                found = true
+                break
+        if not found:
+            ordered.append(layout.declaration.clone())
+    for position in range(len(context.nominal_declarations)):
+        declaration = borrowed_at(context.nominal_declarations, position)
+        if not nominal_layout_retained(previous, declaration):
+            ordered.append(declaration.clone())
+    context.nominal_declarations = ordered
+    return Ok(None)
+
+
+def preserve_enum_layout_order(mut context: &mut BodyIrModule, previous: list[EnumLayout]) -> Result[None, str]:
+    """Keep the original enum inventory stable; resolved runtime bodies add no source enum authority to the unit."""
+    mut ordered: list[RustEnumDeclaration] = []
+    for layout in previous:
+        mut found = false
+        for position in range(len(context.enum_declarations)):
+            declaration = borrowed_at(context.enum_declarations, position)
+            if enum_layout_matches(declaration, layout):
+                ordered.append(declaration.clone())
+                found = true
+                break
+        if not found:
+            return Err(f"runtime continuation lost enum layout {layout.canonical.declaration_name}")
+    context.enum_declarations = ordered
+    return Ok(None)
+
+
+def nominal_layout_matches(declaration: &RustNominalDeclaration, layout: &NominalLayout) -> bool:
+    """Match one nominal layout without conflating concrete instances that share a source name."""
+    return (
+        declaration.canonical == layout.declaration.canonical
+        and declaration.native_type_arguments == layout.declaration.native_type_arguments
+    )
+
+
+def nominal_layout_retained(layouts: &list[NominalLayout], declaration: &RustNominalDeclaration) -> bool:
+    """Whether the preserved order already contains this exact nominal instance."""
+    for layout in layouts:
+        if nominal_layout_matches(declaration, layout):
+            return true
+    return false
+
+
+def enum_layout_matches(declaration: &RustEnumDeclaration, layout: &EnumLayout) -> bool:
+    """Match one enum layout without conflating concrete instances that share a source name."""
+    return declaration.canonical == layout.canonical and declaration.native_type_arguments == layout.arguments
+
+
+def preserve_static_layout_order(
+    mut context: &mut BodyIrModule,
+    previous: list[RustCanonicalSymbolId],
+) -> Result[None, str]:
+    """Keep preserved static slots stable and append declarations introduced by resolved runtime bodies."""
+    mut ordered: list[RustStaticDeclaration] = []
+    for identity in previous:
+        mut found = false
+        for position in range(len(context.static_declarations)):
+            declaration = borrowed_at(context.static_declarations, position)
+            if declaration.canonical == identity:
+                ordered.append(declaration.clone())
+                found = true
+                break
+        if not found:
+            return Err("runtime continuation lost a static declaration layout")
+    for position in range(len(context.static_declarations)):
+        declaration = borrowed_at(context.static_declarations, position)
+        if declaration.canonical not in previous:
+            ordered.append(declaration.clone())
+    context.static_declarations = ordered
+    return Ok(None)
+
+
+def finish_unit_plan(
+    template_constructors: &ConstructorIndex,
+    constructors: Arc[ConstructorIndex],
+    source_context: &BodyIrModule,
+    template_references: list[str],
+    mut context: &mut BodyIrModule,
+    mut program: ProgramContext,
+    owners: &list[str],
+    sources: list[str],
+    files: list[str],
+    entry: int,
+    kind: str,
+    tests: list[str],
+    mut intrinsics: list[EnumDeclaration],
+    mut functions: list[Function],
+    models: list[ModelDeclaration],
+    mut enums: list[EnumDeclaration],
+    mut externals: list[ExternalFunction],
+    mut instances: list[Instance],
+    emitted_frames: EmittedFrames,
+    mut statics: list[StaticCell],
+    unions: list[RustType],
+    mut retained_nominals: list[NominalInstance],
+    mut published: list[NativeUnionDeclaration],
+    trace: bool,
+) -> Result[UnitPlanning, str]:
+    """Drain instances from preserved ordinary frames, finalize their layouts and publish one complete plan."""
+    original_nominal_count = len(context.nominal_declarations)
+    trace_lowering(trace, "generic instances")
+    retry_enum_layouts = enum_layout_order(context)
+    retry_static_layouts = static_layout_order(context)
+    retry_intrinsic_layouts = list(intrinsics)
+    retry_functions = list(functions)
+    retry_externals = list(externals)
+    retry_instances = list(instances)
+    retry_emitted_frames = emitted_frames.clone()
+    retry_statics = list(statics)
+    mut instance_cells: list[StaticCell] = []
+    retention = lower_instances(
+        template_constructors,
+        context,
+        source_context,
+        program,
+        instances,
+        unions,
+        sources,
+        files,
+        list(owners),
+        functions,
+        externals,
+        intrinsics,
+        retained_nominals,
+        instance_cells,
+    )?
+    for cell in instance_cells:
+        statics.append(cell)
+    match retention:
+        RuntimeRetention.NeedsRuntime(requests) =>
+            retry = UnitContinuation(
+                nominal_layouts=nominal_layout_order(context),
+                nominal_instances=list(retained_nominals),
+                enum_layouts=retry_enum_layouts,
+                static_layouts=retry_static_layouts,
+                intrinsic_layouts=retry_intrinsic_layouts,
+                functions=retry_functions,
+                externals=retry_externals,
+                instances=retry_instances,
+                emitted_frames=retry_emitted_frames,
+                statics=retry_statics,
+            )
+            return Ok(UnitPlanning.NeedsRuntime(retry, requests))
+        RuntimeRetention.Complete => pass
+
     retained_constructors = program.constructors.as_ref()
     original_constructors = constructors.as_ref()
+    mut completed_models = models
     if len(context.nominal_declarations) != original_nominal_count:
-        models = lower_model_declarations(
+        completed_models = lower_model_declarations(
             retained_constructors,
             context,
             files[entry],
@@ -262,29 +703,36 @@ def lowered_plan(
         context,
         original_nominal_count,
         functions,
-        models,
+        completed_models,
         enums,
         externals,
         intrinsics,
         kind,
     )?
-    # 3. Publish only the declarations and entry points retained by the completed plan.
+
+    # ---- Completed publication ----
     mut exports: list[PlanExport] = []
     mut templates: list[GenericModelDeclaration] = []
     mut enum_templates: list[GenericEnumDeclaration] = []
     if kind == "library":
-        templates = generic_models(template_constructors, source_context, retained_nominals, files[entry])?
+        templates = generic_models(
+            template_constructors,
+            source_context,
+            template_references,
+            retained_nominals,
+            files[entry],
+        )?
         enum_templates = generic_enums(template_constructors, source_context, context, enums, intrinsics, files[entry])?
         exports = loaf_exports(context, emitted_frames.body_positions, source_context, templates, enum_templates)
         publish_unions(original_constructors, context, intrinsics, published)?
     planned = completed_plan(
         context,
-        checked[entry],
+        owners[entry],
         kind,
         tests,
         files[entry],
         functions,
-        models,
+        completed_models,
         enums,
         externals,
         statics,
@@ -357,17 +805,18 @@ pub def initial_plan_roots(
 pub def layout_tables(
     context: &BodyIrModule,
     file: str,
+    retained_intrinsics: list[EnumDeclaration] = [],
 ) -> Result[tuple[ConstructorIndex, list[RustType], list[EnumDeclaration]], str]:
     """Create matched constructor, union and intrinsic tables for either planning entry point."""
     constructors = index_constructors(context.nominal_declarations)
     unions = collect_unions(context)
-    intrinsics = intrinsic_declarations(constructors, context, file)?
+    intrinsics = intrinsic_declarations(constructors, context, file, retained_intrinsics)?
     return Ok((constructors, unions, intrinsics))
 
 
 def completed_plan(
     context: &BodyIrModule,
-    entry: &BodyIrModule,
+    entry_owner: str,
     kind: str,
     tests: list[str],
     file: str,
@@ -382,8 +831,8 @@ def completed_plan(
     zip_carriers: list[ZipCarrier],
 ) -> Result[Option[Plan], str]:
     """Admit the completed unit's test and program entries, then transfer its owned native inventories into the plan."""
-    has_main, declares_main = main_selection(context, entry)
-    test_entries = collected_test_entries(context, entry, tests, functions, enums)?
+    has_main, declares_main = main_selection(context, entry_owner)
+    test_entries = collected_test_entries(context, entry_owner, tests, functions, enums)?
     mut program_entries: list[str] = []
     if kind == "program" and not has_main:
         if declares_main:
@@ -416,7 +865,7 @@ def lower_plan_frames(
     mut context: &mut BodyIrModule,
     templates: &BodyIrModule,
     mut program: ProgramContext,
-    checked: &list[BodyIrModule],
+    owners: &list[str],
     sources: list[str],
     files: list[str],
     entry: int,
@@ -435,7 +884,7 @@ def lower_plan_frames(
     lower_ordinary_bodies(
         context,
         program,
-        checked,
+        list(owners),
         sources,
         files,
         entry,
@@ -459,7 +908,7 @@ def lower_plan_frames(
         unions,
         sources,
         files,
-        checked,
+        list(owners),
         functions,
         externals,
         intrinsics,
@@ -531,7 +980,7 @@ def lower_requested_frames(
     unions: list[RustType],
     sources: list[str],
     files: list[str],
-    checked: &list[BodyIrModule],
+    owners: &list[str],
     mut functions: list[Function],
     mut externals: list[ExternalFunction],
     mut intrinsics: list[EnumDeclaration],
@@ -539,17 +988,13 @@ def lower_requested_frames(
     trace: bool,
 ) -> Result[FramesPlanning, str]:
     """Lower static initializers before draining the checked callable requests they and ordinary bodies contribute."""
-    mut owners: list[str] = []
-    for module_position in range(len(checked)):
-        module = borrowed_at(checked, module_position)
-        owners.append(str(module.module_id.path()))
     statics = lower_computed_statics(
         context,
         program,
         unions,
         sources,
         files,
-        owners,
+        list(owners),
         intrinsics,
         functions,
         externals,
@@ -566,7 +1011,7 @@ def lower_requested_frames(
         unions,
         sources,
         files,
-        owners,
+        list(owners),
         functions,
         externals,
         intrinsics,
@@ -603,8 +1048,8 @@ def finalize_plan_layouts(
     return Ok(None)
 
 
-# The immutable source context retains its matching constructor index beside checked and specialized layouts.
-pub type PlanContexts = tuple[BodyIrModule, ConstructorIndex, list[BodyIrModule], BodyIrModule, list[NominalInstance]]
+# The immutable source context retains its matching constructor index beside module provenance and specialized layouts.
+pub type PlanContexts = tuple[BodyIrModule, ConstructorIndex, list[str], BodyIrModule, list[NominalInstance], list[str]]
 
 
 pub def plan_contexts(
@@ -618,13 +1063,17 @@ pub def plan_contexts(
     trace_lowering(trace, "validate modules")
     validate_plan_inputs(modules, sources, files, entry)?
     trace_lowering(trace, "project context")
-    source_context, checked = project_context(modules, entry)?
+    mut source_context, owners = project_context(modules, entry)?
     constructors = index_constructors(source_context.nominal_declarations)
     trace_lowering(trace, "specialize nominals")
     nominal_context, nominal_instances = specialize_nominals_with_instances(constructors, source_context)?
     trace_lowering(trace, "specialize enums")
     context = specialize_enums(nominal_context)?
-    return Ok((source_context, constructors, checked, context, nominal_instances))
+    # Later template consumers read declarations, constructor authority and this compact reference inventory;
+    # executable bodies belong to `context`.
+    template_references = referenced_templates(source_context)
+    source_context.bodies.clear()
+    return Ok((source_context, constructors, owners, context, nominal_instances, template_references))
 
 
 def trace_lowering(enabled: bool, stage: str) -> None:
@@ -652,11 +1101,16 @@ def validate_plan_inputs(
     return Ok(None)
 
 
-def main_selection(context: &BodyIrModule, entry: &BodyIrModule) -> tuple[bool, bool]:
+def main_selection(context: &BodyIrModule, entry_owner: str) -> tuple[bool, bool]:
     """Separate the checked program entry from an ordinary declaration merely spelled main."""
     mut selected = false
     mut declared = false
-    for body in entry.bodies:
+    for body in context.bodies:
+        match body_module_identity(body):
+            Ok(owner) =>
+                if owner != entry_owner:
+                    continue
+            Err(_reason) => continue
         if str(body.name) == "main":
             declared = true
         if is_program_entry(context, body):

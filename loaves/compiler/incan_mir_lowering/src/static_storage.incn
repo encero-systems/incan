@@ -92,17 +92,19 @@ pub def lower_computed_statics(
     mut functions: list[Function],
     mut externals: list[ExternalFunction],
     mut instances: list[Instance],
+    start_slot: int = 0,
 ) -> Result[list[StaticCell], str]:
     """
     Plan computed statics and effect-free literal lists or dictionaries as guarded adapter cells (RFC 052).
 
     A computed initializer body returns the first value, and its module gets a declaration-order initializer.
-    Literal dictionaries construct their checked entries without entering that module initialization protocol.
+    Literal dictionaries construct their checked entries without entering that module initialization protocol. A
+    continuation starts at the first newly resolved declaration so preserved authored cells are never lowered twice.
     """
     mut cells: list[StaticCell] = []
     mut keys: list[int] = []
     mut names = function_names()
-    for slot in range(len(module.static_declarations)):
+    for slot in range(start_slot, len(module.static_declarations)):
         declaration = module.static_declarations[slot]
         for binding in module.decorated_bindings:
             if binding.original_body.canonical == Some(declaration.canonical):
@@ -511,11 +513,7 @@ pub def computed_static_root(mut builder: Builder, value: &RustPlace, span: Sour
         None => return Ok(None)
 
 
-pub def computed_static_type(
-    mut builder: Builder,
-    value: &RustPlace,
-    global: RustGlobalPlace,
-) -> Result[PlanType, str]:
+pub def computed_static_type(mut builder: Builder, value: &RustPlace, global: RustGlobalPlace) -> Result[PlanType, str]:
     """The checked carrier a static place selects, without reading the static."""
     mut ty = native_source_type(
         builder.constructors,

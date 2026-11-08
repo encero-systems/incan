@@ -44,7 +44,7 @@ from function_frames import lower_function
 pub def lower_ordinary_bodies(
     context: &BodyIrModule,
     program: ProgramContext,
-    checked: &list[BodyIrModule],
+    owners: &list[str],
     sources: &list[str],
     files: &list[str],
     entry: int,
@@ -61,7 +61,7 @@ pub def lower_ordinary_bodies(
     """
     Lower selected source frames in module order, retaining synthesized callees and checked instance requests.
 
-    Bodies are grouped by declaring module once, frame names are checked by key, and native signatures merge through
+    Bodies are grouped by retained module provenance once, frame names are checked by key, and native signatures merge through
     a keyed index, so no step rescans every body, frame or signature per frame.
     """
     mut module_bodies: BTreeMap[str, list[int]] = BTreeMap.new()
@@ -70,9 +70,8 @@ pub def lower_ordinary_bodies(
         module_bodies.entry(owner).or_insert([]).push(position)
     mut names = function_names()
     mut signatures = external_index()
-    for index in range(len(checked)):
-        checked_module = borrowed_at(checked, index)
-        checked_owner = str(checked_module.module_id.path())
+    for index in range(len(owners)):
+        checked_owner = owners[index]
         mut positions: list[int] = []
         match module_bodies.get(checked_owner):
             Some(selected) =>
@@ -212,7 +211,7 @@ def append_async_entry(
 
 pub def collected_test_entries(
     context: &BodyIrModule,
-    entry: &BodyIrModule,
+    entry_owner: str,
     tests: list[str],
     functions: &list[Function],
     enums: list[EnumDeclaration],
@@ -221,7 +220,9 @@ pub def collected_test_entries(
     mut entries: list[str] = []
     for name in tests:
         mut found = false
-        for body in entry.bodies:
+        for body in context.bodies:
+            if body_module_identity(body)? != entry_owner:
+                continue
             if str(body.name) != name:
                 continue
             native = function_name(context, body)

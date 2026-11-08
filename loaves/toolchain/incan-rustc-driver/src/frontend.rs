@@ -18,7 +18,8 @@ use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_mir_lowering::{
-    RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning, program_refusals, unit_plan,
+    RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning, layout_runtime_requirements, program_refusals,
+    resume_unit_plan, unit_plan,
 };
 use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NativeUnionDeclaration, NominalDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
@@ -111,6 +112,8 @@ struct RuntimeDependencyContext {
     checked_local: BTreeSet<CanonicalSymbolId>,
     package: String,
     authored: Vec<BodyIrModule>,
+    /// Declaration-only runtime modules that stabilize lowering layouts without becoming dependency roots.
+    layout_modules: Vec<BodyIrModule>,
     sources: Vec<String>,
     files: Vec<String>,
     entry: usize,
@@ -125,6 +128,9 @@ struct CheckedProgram {
     entry: usize,
     /// The first of the program's own modules; the Loaf declarations it reaches come before it.
     own: usize,
+    /// Number of reached dependency modules at the front; prepared layout modules between this and `own` survive
+    /// retries.
+    dependency_modules: usize,
     /// Standard native closures constrain linking only when this checked declaration closure reaches their package.
     /// Each reached package keeps the requester chains of the declarations that entered it.
     reached_loaves: BTreeMap<String, Vec<Vec<CanonicalSymbolId>>>,
@@ -441,8 +447,8 @@ fn check_compilation_source(
     }
 }
 
-/// Retain source provenance across dependency retries while withholding incomplete publication. A lowering
-/// refusal or missing program entry receives the same deterministic certificate as ordinary unit compilation.
+/// Preserve ordinary-frame lowering while resolving only the authenticated runtime declarations it selects. A
+/// lowering refusal or missing program entry receives the same deterministic certificate as ordinary compilation.
 fn lower_compilation_plan(
     program: &mut CheckedProgram,
     kind: UnitKind,
@@ -453,6 +459,15 @@ fn lower_compilation_plan(
 ) -> Result<crate::plan::Plan, Box<dyn std::error::Error>> {
     tracing::debug!(target: "incan::invocation", modules = ?program.modules, "checked direct-route Body IR");
     let kind_name = kind.as_str().to_owned();
+    let file = program
+        .files
+        .get(program.entry)
+        .ok_or("selected Body IR entry source is missing")?;
+    let layout_requirements = layout_runtime_requirements(&program.modules, file.clone());
+    if !layout_requirements.is_empty() {
+        prepare_runtime_layouts(program, layout_requirements)?;
+    }
+    let mut continuation = None;
     loop {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
         let inputs = SourceInputs {
@@ -462,16 +477,29 @@ fn lower_compilation_plan(
             overflow_checks,
         };
         let mut attempt_unions = Vec::new();
-        match unit_plan(
-            &program.modules,
-            inputs,
-            program.entry.try_into()?,
-            &kind_name,
-            &mut attempt_unions,
-        )
-        .inspect_err(|_| receipt.deterministic())?
-        {
-            UnitPlanning::NeedsRuntime(requirements) => satisfy_runtime_requirements(program, requirements)?,
+        let planning = match continuation.take() {
+            Some(preserved) => resume_unit_plan(
+                preserved,
+                &program.modules,
+                inputs,
+                program.entry.try_into()?,
+                &kind_name,
+                &mut attempt_unions,
+            ),
+            None => unit_plan(
+                &program.modules,
+                inputs,
+                program.entry.try_into()?,
+                &kind_name,
+                &mut attempt_unions,
+            ),
+        }
+        .inspect_err(|_| receipt.deterministic())?;
+        match planning {
+            UnitPlanning::NeedsRuntime(preserved, requirements) => {
+                satisfy_runtime_requirements(program, requirements)?;
+                continuation = Some(preserved);
+            }
             UnitPlanning::Complete(Some(plan)) => {
                 published_unions.extend(attempt_unions);
                 return Ok(plan);

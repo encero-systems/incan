@@ -69,7 +69,7 @@ def body_refusals(
     The bodies lowered and the comparison bridge instances scheduled are the ones compilation selects: both read
     `ordinary_body` and `comparison_bridge_instances`.
     """
-    source_context, template_constructors, checked, specialized_context, nominal_instances = plan_contexts(
+    source_context, template_constructors, owners, specialized_context, nominal_instances, _template_references = plan_contexts(
         modules,
         sources,
         files,
@@ -106,9 +106,8 @@ def body_refusals(
     mut selected_count = 0
     mut emitted_frames = no_emitted_frames()
     mut index = 0
-    for module_position in range(len(checked)):
-        checked_module = borrowed_at(checked, module_position)
-        checked_owner = str(checked_module.module_id.path())
+    for module_position in range(len(owners)):
+        checked_owner = owners[module_position]
         # Each module borrows the bodies in place rather than copying every one.
         for position in range(len(context.bodies)):
             body = body_at(context.bodies, position)
@@ -151,10 +150,6 @@ def body_refusals(
     if selection != "":
         finish_selected_census(selection, selected_count, progress, refusals)
         return Ok(RefusalPlanning.Complete(refusals))
-    mut owners: list[str] = []
-    for module_position in range(len(checked)):
-        module = borrowed_at(checked, module_position)
-        owners.append(str(module.module_id.path()))
     match append_context_refusals(
         template_constructors,
         context,

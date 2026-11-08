@@ -60,8 +60,10 @@ from call_arguments import call_parameter_type, ordered_slot_operands
 from builtin_methods import lower_builtin_method
 from sequence_builtins import argument_type
 from result_carriers import lower_carrier_method
-from rust::incan_lang::lang::surface::iterator_methods import IteratorMethodId as RustIteratorMethodId
-from rust::incan_lang::lang::surface::iterator_methods import as_str as iterator_method_name
+from rust::incan_lang::lang::surface::iterator_methods import (
+    IteratorMethodId as RustIteratorMethodId,
+    as_str as iterator_method_name,
+)
 
 
 pub def lower_method_call(
@@ -269,10 +271,7 @@ def retained_iterator_default(
     match target.canonical:
         None => return Ok(false)
         Some(identity) =>
-            if (
-                identity.kind != SemanticSourceTargetKind.Method
-                or identity.namespace != SymbolNamespace.Member
-            ):
+            if (identity.kind != SemanticSourceTargetKind.Method or identity.namespace != SymbolNamespace.Member):
                 return Ok(false)
             match target.builtin_iterator():
                 Some(RustIteratorMethodId.Iter) => pass
@@ -396,7 +395,7 @@ def call_method_body(
                 return construct_future(module, builder, body, operands, output, span)
             None => return Err("unsupported Body IR async method call without carrier")
     callee = CalleeKind.Planned(source_method_symbol(module, builder, target, body, span))
-    return emit_selected_body_call(builder, body, callee, operands, destination, span)
+    return emit_selected_body_call(module, builder, body, callee, operands, destination, span)
 
 
 def retain_sdk_factory_result(

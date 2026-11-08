@@ -1,7 +1,7 @@
 """Transient dependency requests produced by the runtime operations a planning attempt actually selects."""
 
 from rust::incan_semantics_core import CanonicalSymbolId
-from pub::incan_mir_plan import Plan, SourceSpan, StaticCell
+from pub::incan_mir_plan import SourceSpan, StaticCell
 
 
 pub model RuntimeRequirement:
@@ -20,23 +20,16 @@ pub enum RuntimeRetention:
 
 
 pub enum FramesPlanning:
-    """Static cells retained by completed frame planning, or the dependencies needed before retrying."""
+    """Static cells retained by completed frame planning, or a preflight invariant failure."""
 
     Complete(list[StaticCell])
     NeedsRuntime(list[RuntimeRequirement])
 
 
 pub enum BodyPlanning:
-    """Completed body storage and its original nominal count, or missing runtime declarations."""
+    """Completed body storage and its original nominal count, or a preflight invariant failure."""
 
     Complete(tuple[list[StaticCell], int])
-    NeedsRuntime(list[RuntimeRequirement])
-
-
-pub enum UnitPlanning:
-    """A complete native plan or missing entry, distinct from prerequisites and real lowering refusals."""
-
-    Complete(Option[Plan])
     NeedsRuntime(list[RuntimeRequirement])
 
 

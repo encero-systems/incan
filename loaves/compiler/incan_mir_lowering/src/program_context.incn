@@ -30,7 +30,6 @@ pub model ProgramContext:
 
     pub body_indices: BodyIndex
     # This immutable copy keeps the specialized module's order, so the checked index selects the same executable facts.
-    pub bodies: Arc[list[RustBody]]
     pub display_functions: Arc[list[DisplayFunction]]
     pub statics: Arc[list[StaticDeclaration]]
     pub comparison_functions: Arc[list[list[str]]]
@@ -49,13 +48,11 @@ pub model ProgramContext:
 pub def synthetic_program_context(module: &BodyIrModule, constructors: Arc[ConstructorIndex]) -> ProgramContext:
     """Keep module storage but no dispatch mappings for external-only synthetic frames."""
     functions: list[DisplayFunction] = []
-    bodies: list[RustBody] = []
     comparisons: list[list[str]] = []
     unions: BTreeSet[RustType] = BTreeSet.new()
     bindings: list[DecoratedBinding] = []
     return ProgramContext(
         body_indices=empty_body_index(),
-        bodies=Arc.new(bodies),
         display_functions=Arc.new(functions),
         statics=Arc.new(list(module.static_declarations)),
         comparison_functions=Arc.new(comparisons),
