@@ -30,12 +30,7 @@ A path and a kind together are unique, so one name can hold two kinds: `pub.crat
 `Incan.Model` and `Incan.Class` map to the core `Record`, and `Incan.Enum` to the core `Enum`, so a document's data shapes and its program records are one form. A model is described the way it is written in Incan, with its fields as `name: Type` and Incan's own facts as properties:
 
 ~~~text
-shop.billing.Invoice = Incan.Model {
-    visibility = Public
-    id: Int
-    customer: Str
-    total: shop.billing.Cents
-}
+shop.billing.Invoice = Incan.Model { visibility = Public, id: Int, customer: Str, total: shop.billing.Cents }
 
 shop.billing.Status = Incan.Enum { Draft, Sent, Paid(on: Str) }
 ~~~
@@ -174,3 +169,7 @@ oven.Lock << (
 ~~~
 
 `satisfied_by` and `trust` are noncanonical, so a newly baked asset moves the object projection and not the graph identity. The resolved graph identity binds each entry's origin, name, version and dependency edges, shaped like RFC 106's closure digest. `oven.lock` stays TOML until this proposal is adopted.
+
+## Open
+
+- **Kind descriptions.** Each kind's own description, registered by this profile, which fixes the properties the kind accepts and the order they print in. The examples here use that order: `visibility`, `decorators`, `type` and `body` for a function, and `parameters`, `returns` and `requires` for its `type`.
