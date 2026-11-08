@@ -25,6 +25,7 @@ from release_support import (
     Counts,
     ReleaseOptions,
     Step,
+    append_bytes,
     append_timing,
     check_baseline,
     counts_json,
@@ -34,6 +35,7 @@ from release_support import (
     require_candidate_census,
     release_receipt,
     run_step,
+    tree_bytes,
     verification_program,
     write_json,
 )
@@ -71,6 +73,20 @@ pub model Candidate:
     pub context: NativeContext
     pub oven: Path
     pub lsp: Path
+
+
+pub model ReleaseTreeBytes:
+    """Logical regular-file bytes retained in each release-owned output tree and their sum."""
+
+    pub build_home: int
+    pub source: int
+    pub verification_source: int
+    pub verification_home: int
+    pub relocated_rust: int
+    pub lane: int
+    pub bundle: int
+    pub ci: int
+    pub total: int
 
 
 def main() -> None:
@@ -691,7 +707,7 @@ def require_release_step(run: ReleaseRun, child: Step) -> Result[None, str]:
 
 def phase(run: ReleaseRun, name: str) -> Result[None, str]:
     """Publish a refused receipt naming the phase before any of its work starts."""
-    return write_receipt(run, name, "refused", 1, None, JsonValue.null())
+    return write_receipt(run, name, "refused", 1, None, JsonValue.null(), JsonValue.null())
 
 
 def complete_receipt(run: ReleaseRun, counts: Counts) -> Result[None, str]:
@@ -704,7 +720,9 @@ def complete_receipt(run: ReleaseRun, counts: Counts) -> Result[None, str]:
             .joinpath("oven-tests.json")
             .copy(run.paths.output.joinpath("oven-tests.json"), true, true)
             .map_err((error) => error.message())?
-    return write_receipt(run, "complete", "passed", 0, Some(counts), oven_tests)
+    measured = measure_release_tree_bytes(run)?
+    record_release_tree_bytes(run.paths.output.joinpath("timings.tsv"), measured)?
+    return write_receipt(run, "complete", "passed", 0, Some(counts), oven_tests, release_tree_bytes_json(measured))
 
 
 def write_receipt(
@@ -714,6 +732,7 @@ def write_receipt(
     code: int,
     counts: Option[Counts],
     oven_tests: JsonValue,
+    measured_bytes: JsonValue,
 ) -> Result[None, str]:
     """Write the stable release rehearsal receipt, retaining partial artifact evidence on refusal."""
     mut artifacts: Dict[str, JsonValue] = {}
@@ -737,6 +756,7 @@ def write_receipt(
         phase_name,
         code,
         run.started.elapsed().as_secs().saturating_resize[int](),
+        measured_bytes,
         artifacts,
         compiler_build,
         contracts,
@@ -744,6 +764,62 @@ def write_receipt(
         parity,
     )
     return write_json(run.paths.output.joinpath("receipt.json"), value)
+
+
+def measure_release_tree_bytes(run: ReleaseRun) -> Result[ReleaseTreeBytes, str]:
+    """Walk each release-owned output tree once and return its logical regular-file bytes."""
+    build_home = tree_bytes(run.paths.home)?
+    source = tree_bytes(run.paths.source)?
+    verification_source = tree_bytes(run.paths.output.joinpath("verification-source"))?
+    verification_home = tree_bytes(run.paths.output.joinpath("verification-home"))?
+    relocated_rust = tree_bytes(run.paths.output.joinpath("rustup"))?
+    lane = tree_bytes(run.paths.lane)?
+    bundle = tree_bytes(run.paths.bundle)?
+    ci = tree_bytes(run.paths.output.joinpath("ci"))?
+    total = build_home + source + verification_source + verification_home + relocated_rust + lane + bundle + ci
+    return Ok(
+        ReleaseTreeBytes(
+            build_home=build_home,
+            source=source,
+            verification_source=verification_source,
+            verification_home=verification_home,
+            relocated_rust=relocated_rust,
+            lane=lane,
+            bundle=bundle,
+            ci=ci,
+            total=total,
+        ),
+    )
+
+
+def record_release_tree_bytes(path: Path, measured: ReleaseTreeBytes) -> Result[None, str]:
+    """Append every measured release tree and their total to the timing evidence."""
+    append_bytes(path, "build-home", measured.build_home)?
+    append_bytes(path, "source", measured.source)?
+    append_bytes(path, "verification-source", measured.verification_source)?
+    append_bytes(path, "verification-home", measured.verification_home)?
+    append_bytes(path, "relocated-rust", measured.relocated_rust)?
+    append_bytes(path, "lane", measured.lane)?
+    append_bytes(path, "bundle", measured.bundle)?
+    append_bytes(path, "ci", measured.ci)?
+    return append_bytes(path, "total", measured.total)
+
+
+def release_tree_bytes_json(measured: ReleaseTreeBytes) -> JsonValue:
+    """Encode every measured release tree and their total for the receipt."""
+    return JsonValue.object(
+        {
+            "build_home": JsonValue.int(measured.build_home),
+            "source": JsonValue.int(measured.source),
+            "verification_source": JsonValue.int(measured.verification_source),
+            "verification_home": JsonValue.int(measured.verification_home),
+            "relocated_rust": JsonValue.int(measured.relocated_rust),
+            "lane": JsonValue.int(measured.lane),
+            "bundle": JsonValue.int(measured.bundle),
+            "ci": JsonValue.int(measured.ci),
+            "total": JsonValue.int(measured.total),
+        },
+    )
 
 
 def write_difference(path: Path, left: &BaselineReport, right: &BaselineReport) -> Result[None, str]:

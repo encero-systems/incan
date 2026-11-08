@@ -225,6 +225,7 @@ pub def release_receipt(
     phase: str,
     exit_code: int,
     elapsed_seconds: int,
+    tree_bytes: JsonValue,
     artifacts: Dict[str, JsonValue],
     compiler_build: str,
     contracts: JsonValue,
@@ -237,7 +238,7 @@ pub def release_receipt(
             host,
         ), "outcome": JsonValue.string(outcome), "phase": JsonValue.string(phase), "exit_code": JsonValue.int(exit_code), "elapsed_seconds": JsonValue.int(
             elapsed_seconds,
-        ), "sha256": JsonValue.object(artifacts), "compiler_build": JsonValue.string(compiler_build), "contracts": contracts, "oven_tests": oven_tests, "baseline_parity": baseline_parity},
+        ), "tree_bytes": tree_bytes, "sha256": JsonValue.object(artifacts), "compiler_build": JsonValue.string(compiler_build), "contracts": contracts, "oven_tests": oven_tests, "baseline_parity": baseline_parity},
     )
 
 
@@ -259,6 +260,18 @@ pub def verification_program(source: Path) -> Result[Path, str]:
     if not program.is_file():
         return Err(f"verification source has no installed verifier: {program.0}")
     return Ok(program)
+
+
+pub def tree_bytes(root: Path) -> Result[int, str]:
+    """Measure the logical bytes in regular files under one tree with one descendant walk."""
+    if not root.exists():
+        return Ok(0)
+    mut total = 0
+    for entry in root.rglob("*").map_err((error) => error.message())?:
+        if entry.is_symlink() or not entry.is_file():
+            continue
+        total += entry.stat().and_then((value) => value.size()).map_err((error) => error.message())?
+    return Ok(total)
 
 
 pub def log_tail(path: Path, limit: int = 30) -> str:
@@ -315,6 +328,15 @@ pub def append_timing(path: Path, phase: str, elapsed_seconds: float) -> Result[
     if path.is_file():
         text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
     text += f"{phase}\t{elapsed_seconds}\n"
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def append_bytes(path: Path, tree: str, bytes: int) -> Result[None, str]:
+    """Append one measured tree size to the release's stable TSV evidence."""
+    mut text = ""
+    if path.is_file():
+        text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    text += f"bytes/{tree}\t{bytes}\n"
     return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
 
 
