@@ -8,9 +8,9 @@ This folder is the experimental specification and conformance corpus. It is self
 
 ## Status
 
-This foundation fixes the value, identity and compatibility requirements as test data, and writes the COMIC text rules as a draft grammar. It includes an experimental exact hash preimage grammar and vectors, but does **not** freeze a binary layout. A value rule can be settled before its byte spelling. The open items are listed in [text](spec/text.md), [binary](spec/binary.md) and [hashes](spec/hashes.md). The corpus must not be advertised as full codec conformance until those items have exact vectors and an implementation runs them.
+This foundation fixes the value, identity and compatibility requirements as test data, and writes the COMIC text rules as a draft grammar. It includes experimental exact hash preimages and the first [row byte-layout draft](spec/row-v1.md), with literal vectors for both. Neither freezes the complete format or establishes implementation conformance. A value rule can be settled before its byte spelling. The open items are listed in [text](spec/text.md), [binary](spec/binary.md) and [hashes](spec/hashes.md). The corpus must not be advertised as full codec conformance until those items have exact vectors and an implementation runs them.
 
-The initial corpus includes independently checkable member-identity vectors, typed-value comparisons, shape admission and evolution cases. Hand-authored text read and print cases additionally cover descriptions, rows, literals and refusals. Its JSON is test notation, not COMIC syntax or a proposed Crumb encoding. Digest vectors derive from explicitly framed typed contributions and complete descriptions. They do not establish binary codec conformance.
+The initial corpus includes independently checkable member-identity vectors, typed-value comparisons, shape admission and evolution cases. Hand-authored text read and print cases additionally cover descriptions, rows, literals and refusals. Its JSON is test notation, not COMIC syntax or a proposed Crumb encoding. Digest vectors derive from explicitly framed typed contributions and complete descriptions. Row byte vectors additionally cover inline and referenced descriptions, stored cells, framing and refusal outcomes. They do not establish binary codec conformance.
 
 ## Read in this order
 
@@ -18,7 +18,7 @@ The initial corpus includes independently checkable member-identity vectors, typ
 2. [Identity and hashes](spec/hashes.md): what changes identity or equality.
 3. [Compatibility](spec/evolution.md): what a reader may adapt.
 4. [COMIC text](spec/text.md): the draft grammar and canonical printing.
-5. [Crumb bytes](spec/binary.md): binary invariants and remaining choices.
+5. [Crumb bytes](spec/binary.md): binary invariants and remaining choices, with [crumb-row/1](spec/row-v1.md) as the first exact row draft.
 6. [Conformance](spec/conformance.md): the executable meaning of the [corpus manifest](corpus/manifest.json).
 7. Profiles that build on the core: [Incan](profiles/incan.md), for Incan, Rust and C program records, and [store import](profiles/store.md), for loading documents into a store.
 

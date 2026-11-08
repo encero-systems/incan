@@ -41,18 +41,30 @@
     {
       "path": "hash-preimages.json",
       "operation": "hash_preimage",
-      "cases": 68,
-      "sha256": "a6bb0887a6498d19b2b4085421436e6363e103149d232aab98d4843a1c3a5592"
+      "cases": 73,
+      "sha256": "e4842866e0dc189dcd562397002a0096eb46f43f2c47711879b31bde0f6a28cb"
     },
     {
       "path": "nominal-identities.json",
       "operation": "nominal_identity",
       "cases": 2,
       "sha256": "fe89d9022653922f99babbf298720864d9c36ceaf0ff038ef84999c33946428d"
+    },
+    {
+      "path": "binary-row.json",
+      "operation": "binary_decode",
+      "cases": 81,
+      "sha256": "3dcf962f0d3db5643133fb9d6dd024c663c366cc0521b973ef23f608ddecb368"
+    },
+    {
+      "path": "type-selectors.json",
+      "operation": "type_selector",
+      "cases": 8,
+      "sha256": "e834b74e2569a5a1a068ff59b42e9e662456a8d82bfba40a0361c9b67c631348"
     }
   ],
   "pending": [
-    "Crumb binary profile and byte vectors",
+    "Complete row-profile execution coverage and separate column-profile specification",
     "resource-limit and streaming executions",
     "recursive shapes, enums, unions, maps, sets and decimal coverage",
     "text parser/printer execution, long-line wrapping, stored-reference and store-key spellings"
