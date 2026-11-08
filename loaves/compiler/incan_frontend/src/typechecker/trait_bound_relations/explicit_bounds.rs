@@ -82,6 +82,9 @@ impl TypeChecker {
         if Self::function_value_misses_future_bound(ty, &bound.name) {
             return false;
         }
+        if let Some(satisfies) = self.ownership_view_satisfies_explicit_bound_info(ty, bound, bindings) {
+            return satisfies;
+        }
         // An inferred `Eq` or `Hash` bound (#1758) holds unless the type is known to lack the derive.
         if bound.inferred
             && let Some(derive) = derives::from_str(&bound.name)
@@ -144,6 +147,48 @@ impl TypeChecker {
             return self.type_satisfies_explicit_bound(ty, &bound.name);
         }
         self.type_satisfies_nominal_trait_bound_with_args(ty, &bound.name, &expected_args)
+    }
+
+    /// Delegate a source-trait bound through a canonical ownership view when that view exposes the whole trait.
+    ///
+    /// A shared `Borrowed[T]` view cannot promise a trait that includes a `mut self` member because generic dispatch
+    /// could select that member. An exclusive returned `Reference[T]` view exposes both receiver modes. The referent
+    /// must independently satisfy the bound; the view does not manufacture an adoption or weaken generic arguments.
+    fn ownership_view_satisfies_explicit_bound_info(
+        &self,
+        ty: &ResolvedType,
+        bound: &TypeBoundInfo,
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> Option<bool> {
+        let ResolvedType::Generic(name, arguments) = ty else {
+            return None;
+        };
+        let [referent] = arguments.as_slice() else {
+            return None;
+        };
+        let mode = self.explicit_ownership_mode(name)?;
+        if !matches!(mode, OwnershipMode::Borrowed | OwnershipMode::Reference) {
+            return None;
+        }
+        let trait_info = self.lookup_trait_adoption_info(bound)?;
+        if mode == OwnershipMode::Borrowed
+            && (Self::trait_declares_mutable_receiver(trait_info)
+                || self
+                    .semantic_supertrait_closure(&bound.name)
+                    .iter()
+                    .filter_map(|(name, _)| self.lookup_semantic_trait_info(name))
+                    .any(Self::trait_declares_mutable_receiver))
+        {
+            return Some(false);
+        }
+        Some(self.type_satisfies_explicit_bound_info(referent, bound, bindings))
+    }
+
+    /// Return whether any method of this trait requires exclusive receiver access.
+    fn trait_declares_mutable_receiver(info: &crate::symbols::TraitInfo) -> bool {
+        info.methods
+            .values()
+            .any(|method| method.receiver == Some(Receiver::Mutable))
     }
 
     /// Keep a published plain trait bound in its declaring module rather than resolving its bare name in the

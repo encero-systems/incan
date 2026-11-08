@@ -126,8 +126,8 @@ impl Builder<'_> {
         Ok(Some((incoming, loans)))
     }
 
-    /// A fresh primitive list evaluates each Copy scalar in written order and retains no borrowed dependency.
-    /// Spreads, non-Copy elements and reference-carrying aggregates need separate retained-owner projection.
+    /// A fresh list evaluates each Copy or independently fresh element in written order and retains no borrowed
+    /// dependency. Spreads and non-Copy stored places need separate retained-owner projection.
     pub(super) fn scalar_list(
         &mut self,
         entries: &[ListEntry],
@@ -153,7 +153,7 @@ impl Builder<'_> {
                         | ResolvedType::Unit
                 )
             );
-            if !copy_scalar && !self.allow_fresh_aggregate_elements {
+            if !copy_scalar && !self.fresh_or_copy_field(value) && !self.allow_fresh_aggregate_elements {
                 return Err(Unavailable {
                     span: value.span,
                     reason: "list element needs checked retained-owner projection".into(),
