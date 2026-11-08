@@ -16,7 +16,7 @@ A document is a sequence of root entries, separated by one blank line in canonic
 - a **value**, `Type { … }`, which has no name of its own.
 - a **table** of two or more values of one type, described below.
 
-Canonical form sorts bindings by path. A document has no hash and is never sealed; every value has its own hashes. A value or table cut off before its closing bracket is refused, so truncation inside an entry cannot pass. A document cut at an entry boundary reads as a shorter document, so a caller that must know a set of values arrived whole uses a sealed Crumb set (see [binary](binary.md)).
+Canonical form sorts bindings by path. A document has no hash and is never sealed; every value has its own hashes. A value or table cut off before its closing bracket is refused, so truncation inside an entry cannot pass. A document cut at an entry boundary reads as a shorter document. Values that cross a network boundary should therefore travel crumbled, as a sealed Crumb set (see [binary](binary.md)); text is for reading, diffs, tests and local files.
 
 ## Names and paths
 
@@ -119,3 +119,4 @@ One text reads as one value or is refused. A key given twice, two kinds at one p
 - Named enum payloads: a payload with named fields printing as `Shape.Circle { radius = 1.0 }`, so reordering it cannot misread a loose document.
 - The table form of a map of records.
 - Date and time literals. Until decided, they are strings in a slot whose type validates them.
+- An optional closing `___` entry holding a document hash, for text that must cross a boundary anyway. It would be checked when present and never required, so it seals nothing by default.
