@@ -28,7 +28,7 @@ from std.encoding.hex import hexlify
 from std.hash import sha256
 from std.json import JsonValue
 from files import read_json
-from home_paths import TOOLCHAIN, home
+from home_paths import TOOLCHAIN, home, toolchain_directory as selected_toolchain_directory
 from observation import observe
 from json_fields import array, field, strings, text_field, required_items, required_text
 from native_closure_input import NativeClosureInput
@@ -88,11 +88,6 @@ pub def rust_compiler(toolchain: Toolchain) -> str:
     return Path(toolchain.sysroot).joinpath("bin").joinpath("rustc").0
 
 
-pub def toolchain_directory() -> Result[Path, str]:
-    """The directory this Oven's toolchain is installed in: `<home>/toolchains/<toolchain>`."""
-    return Ok(home()?.joinpath("toolchains").joinpath(TOOLCHAIN))
-
-
 pub def load_toolchain() -> Result[Toolchain, str]:
     """
     Read the installed toolchain through its physical directory so aliases share native preparation and exports.
@@ -103,6 +98,11 @@ pub def load_toolchain() -> Result[Toolchain, str]:
     if directory.is_dir():
         directory = directory.resolve().map_err((error) => error.message())?
     return load_toolchain_at(directory)
+
+
+pub def toolchain_directory() -> Result[Path, str]:
+    """The installed directory of the toolchain this Oven version selects."""
+    return selected_toolchain_directory()
 
 
 pub def load_toolchain_at(directory: Path) -> Result[Toolchain, str]:

@@ -16,7 +16,7 @@ from std.fs import Path
 pub const OVEN: str = "oven"
 pub const INCAN: str = "incan"
 # Commands only `oven` runs; `inspect` is split by its subcommand below.
-const OVEN_COMMANDS: FrozenList[str] = ["describe-unit", "owner", "bakery", "lock"]
+const OVEN_COMMANDS: FrozenList[str] = ["describe-unit", "owner", "bakery", "lock", "trust"]
 const OVEN_INSPECTIONS: FrozenList[str] = ["dependencies", "run"]
 # Commands only `incan` runs.
 const INCAN_COMMANDS: FrozenList[str] = ["explain", "fmt", "mcp", "toolchain"]
