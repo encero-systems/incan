@@ -29,14 +29,14 @@
     {
       "path": "text-read.json",
       "operation": "text_read",
-      "cases": 75,
-      "sha256": "25ba682096fffc4803b590a6a15a678cbaf98e7302e3898652845e7b2ed6ecb7"
+      "cases": 80,
+      "sha256": "df5c785212d930ac0a094bc160eb2d12cbd12c95f9de0038e02a173e0f3f0a81"
     },
     {
       "path": "text-print.json",
       "operation": "text_print",
-      "cases": 46,
-      "sha256": "f90cf3440002b12baaced1faa8a76106b12804ede4c93029d99fc351779f057f"
+      "cases": 49,
+      "sha256": "6d4828b41607e41fb8086990e3fd40d5f31ed11047be276db5e389ef576201d7"
     },
     {
       "path": "hash-preimages.json",
@@ -127,6 +127,18 @@
     {
       "path": "text/print-two-rows.comic",
       "sha256": "8dc0071747b406d187e066df9c600f1b27f696ebac9f13390f453362e0c3cf00"
+    },
+    {
+      "path": "text/profile-function-properties-canonical.comic",
+      "sha256": "5b028d94c4ca4ff9749f6c16b0be5c0e1719c7c9d9d9e70e117538c5b9702dd4"
+    },
+    {
+      "path": "text/profile-function-properties-shuffled.comic",
+      "sha256": "1743accf8bb231859e7738c313aa13d1d0bf5bda0875e9acc9dc4409d5f81a39"
+    },
+    {
+      "path": "text/profile-invoice-properties.comic",
+      "sha256": "375396a1e8e30f7ae5803e1da3ff8810b60e175bf9d0a6748d9927e7c8f6f03c"
     },
     {
       "path": "text/read-absent-gap.comic",
@@ -427,6 +439,10 @@
     {
       "path": "text/read-union-string.comic",
       "sha256": "86f259a8fedfbb2a0f1fefe8a96ad1c763be512c4111ac9f3c2c92da39fa7331"
+    },
+    {
+      "path": "text/registered-opaque-property-order.comic",
+      "sha256": "7ba7f91f9afd553689c431ac5ca0b8044354202d3e2c1cfb451e878f64150eff"
     }
   ]
 }
