@@ -423,15 +423,11 @@ impl<'a> PublicationAudit<'a> {
                 self.operand(left)?;
                 self.operand(right)?;
             }
-            Rvalue::IsInstance {
-                value,
-                value_ty,
-                target,
-            } => {
-                self.operand(value)?;
-                self.ty(value_ty)?;
-                self.ty(&target.ty)?;
-                if let Some(identity) = &mut target.canonical {
+            Rvalue::IsInstance(payload) => {
+                self.operand(&mut payload.value)?;
+                self.ty(&mut payload.value_ty)?;
+                self.ty(&payload.target.ty)?;
+                if let Some(identity) = &mut payload.target.canonical {
                     self.identity(identity, true)?;
                 }
             }

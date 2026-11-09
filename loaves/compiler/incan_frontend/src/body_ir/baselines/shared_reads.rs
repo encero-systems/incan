@@ -287,9 +287,10 @@ fn shared_statement(statement: &bir::Statement, context: &ReadContext<'_>) -> bo
 /// are declined. A checked Copy field projection observes its scalar without copying the native owner.
 fn shared_rvalue(value: &bir::Rvalue, local: bir::LocalId) -> bool {
     match value {
-        bir::Rvalue::Use(value) | bir::Rvalue::UnaryOp(_, value) | bir::Rvalue::IsInstance { value, .. } => {
+        bir::Rvalue::Use(value) | bir::Rvalue::UnaryOp(_, value) => {
             !uses(value, local) || scalar_projection(value, local)
         }
+        bir::Rvalue::IsInstance(payload) => !uses(&payload.value, local) || scalar_projection(&payload.value, local),
         bir::Rvalue::BinaryOp(_, left, right) => {
             (!uses(left, local) || scalar_projection(left, local))
                 && (!uses(right, local) || scalar_projection(right, local))

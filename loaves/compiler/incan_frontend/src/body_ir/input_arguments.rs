@@ -215,7 +215,7 @@ impl BodyBuilder<'_, '_> {
             .local_id()
             .and_then(|id| self.locals.get(id.index()))
             .ok_or("explicit input has no local owner storage")?;
-        if local.identity.as_ref() != Some(root) || place.projection.len() != fields.len() + elements.len() {
+        if local.identity.as_deref() != Some(root) || place.projection.len() != fields.len() + elements.len() {
             return Err("explicit input storage differs from its checked source owner".into());
         }
         let mut fields = fields.iter();

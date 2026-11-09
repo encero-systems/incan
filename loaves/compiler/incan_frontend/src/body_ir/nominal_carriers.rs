@@ -493,9 +493,9 @@ fn retain_rvalue(value: &mut bir::Rvalue, identities: &Identities) {
             qualify_type(&mut variant.ok_type, None, identities);
             qualify_type(&mut variant.error_type, None, identities);
         }
-        bir::Rvalue::IsInstance { value_ty, target, .. } => {
-            qualify_type(value_ty, None, identities);
-            qualify_type(&mut target.ty, None, identities);
+        bir::Rvalue::IsInstance(payload) => {
+            qualify_type(&mut payload.value_ty, None, identities);
+            qualify_type(&mut payload.target.ty, None, identities);
         }
         bir::Rvalue::Closure { params, body, .. } => {
             for parameter in params {
@@ -640,7 +640,7 @@ fn retain_rvalue_operands(value: &mut bir::Rvalue, identities: &Identities) {
             retain_operand(left, identities);
             retain_operand(right, identities);
         }
-        bir::Rvalue::IsInstance { value, .. } => retain_operand(value, identities),
+        bir::Rvalue::IsInstance(payload) => retain_operand(&mut payload.value, identities),
         bir::Rvalue::Aggregate(_, elements) => retain_elements(elements, identities),
         bir::Rvalue::Dict(entries) => {
             for entry in entries {

@@ -6,6 +6,7 @@ use crate::{CompilerNodeKind, IncanPrimitiveType, SemanticSourceTargetKind};
 mod identities_and_profiles;
 mod matches_and_providers;
 mod rendering;
+mod serialization_layout;
 
 /// Build a scalar-only body for structural and serialization tests, without callable representation facts.
 fn sample_body() -> Body {

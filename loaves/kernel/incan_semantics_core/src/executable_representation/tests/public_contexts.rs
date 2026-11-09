@@ -531,7 +531,7 @@ fn publication_removes_session_local_binding_discriminants() -> Result<(), Box<d
     exported.locals.push(crate::body_ir::LocalDecl {
         id: crate::body_ir::LocalId(0),
         name: Some("local".into()),
-        identity: Some(local_identity),
+        identity: Some(Box::new(local_identity)),
         ty: IncanType::Primitive(IncanPrimitiveType::Int),
         origin: crate::body_ir::LocalOrigin::UserBinding,
         scope: ScopeId(0),

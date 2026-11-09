@@ -438,8 +438,8 @@ pub def scalar_rvalue(
                     f"unsupported Body IR binary operator {operator:?} on text or nominal operands {left_type:?} at {span:?}",
                 )
             return Ok(RvalueKind.Binary(binary_operator(operator)?, left_operand, right_operand))
-        RustRvalue.IsInstance(value=value, value_ty=ty, target=target) =>
-            return lower_union_isinstance(builder, value, ty, target.ty, span)
+        RustRvalue.IsInstance(payload) =>
+            return lower_union_isinstance(builder, payload.value, payload.value_ty, payload.target.ty, span)
         RustRvalue.Aggregate(kind, elements) =>
             return checked_aggregate(module, builder, kind, elements, expected, span)
         RustRvalue.Dict(_entries) => return Err("unsupported Body IR Dict")
