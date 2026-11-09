@@ -1,0 +1,30 @@
+"""Inventory the pinned corpus and report unsupported operations without claiming conformance."""
+
+from rust::std::env import args
+from rust::std::process import exit
+from std.fs import Path
+from corpus import inventory, load
+
+
+def main() -> None:
+    """Exit 0 only for explicit inventory mode; incomplete conformance exits 3."""
+    arguments = [argument for argument in args()]
+    if len(arguments) < 2 or len(arguments) > 3:
+        println("usage: comic-conformance MANIFEST [--inventory]")
+        exit(2)
+    inventory_only = len(arguments) == 3 and arguments[2] == "--inventory"
+    if len(arguments) == 3 and not inventory_only:
+        println("unknown option")
+        exit(2)
+    match load(Path(arguments[1])):
+        Err(error) =>
+            println(f"FAILED: {error}")
+            exit(1)
+        Ok(corpus) =>
+            match inventory(corpus).to_json():
+                Err(error) =>
+                    println(f"FAILED: {error.message()}")
+                    exit(1)
+                Ok(receipt) => println(receipt)
+    if not inventory_only:
+        exit(3)

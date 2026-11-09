@@ -11,6 +11,10 @@ import primitives._logging
 import primitives._telemetry
 import primitives.checksum
 import primitives.collections
+import primitives.crumb
+import primitives.crumb.budget
+import primitives.crumb.errors as crumb_errors
+import primitives.crumb.framing
 import primitives.environ
 import primitives.fs
 import primitives.fs.file
