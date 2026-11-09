@@ -1,0 +1,182 @@
+"""Deterministic source-Loaf archives whose optional published lock is checked data, never a resolver input."""
+
+from rust::std::string import String as RustString
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.io import BytesIO, Endian, IoError, _BytesIO
+from files import make_directory
+from intake import read_project
+from lock_format import OvenLock, lock_text, published_lock, read_lock, read_lock_text
+from publication import publish_binary
+
+const ARCHIVE_MAGIC: bytes = b"incan.source-loaf/1\x00"
+const MANIFEST: str = "loaf.toml"
+const PUBLISHED_LOCK: str = "oven.lock"
+
+
+@derive(Clone, Eq)
+pub model SourceLoaf:
+    """Checked contents of one source archive and the digest that covered them."""
+
+    pub digest: str
+    pub members: list[str]
+    pub manifest: bytes
+    pub lock: Option[OvenLock]
+
+
+pub def create_source_loaf(
+    project: Path,
+    workspace_lock: Path,
+    output: Path,
+    selected: list[str],
+    adopted: bool,
+) -> Result[SourceLoaf, str]:
+    """
+    Publish selected source files with the project's own resolved lock inside the archive digest.
+
+    The caller selects the publish facet. This boundary verifies that every selected regular file remains inside the
+    project, requires the manifest, and adds only the selected member's reachable lock slice. Adoption adds no lock.
+    """
+    local = read_project(project).map_err((error) => error.message())?
+    mut contents: Dict[str, bytes] = {}
+    for relative in selected:
+        validate_member(relative)?
+        if relative == PUBLISHED_LOCK:
+            return Err(f"{PUBLISHED_LOCK} is generated from the selected Loaf's resolved closure")
+        if relative in contents:
+            return Err(f"source Loaf selects `{relative}` more than once")
+        source = checked_source(project, relative)?
+        contents[relative] = source.read_bytes().map_err((error) => f"{source.0}: {error.message()}")?
+    if "loaf.toml" not in contents:
+        return Err(f"source Loaf must contain {MANIFEST}")
+    if not adopted:
+        complete = read_lock(workspace_lock)?
+        carried = published_lock(complete, local.intent.name, local.intent.version)?
+        contents["oven.lock"] = lock_text(carried)?.encode("utf-8")
+    archive = archive_bytes(contents)?
+    make_directory(output.parent())?
+    publish_binary(output, archive)?
+    digest = digest_bytes(archive)
+    return decode_archive(archive, digest, output.0)
+
+
+pub def read_source_loaf(path: Path, expected_digest: str) -> Result[SourceLoaf, str]:
+    """Verify the complete archive digest before exposing its manifest or optional published lock."""
+    archive = path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")?
+    actual = digest_bytes(archive)
+    if actual != expected_digest:
+        return Err(f"{path.0}: source-Loaf digest is {actual}, expected {expected_digest}")
+    return decode_archive(archive, actual, path.0)
+
+
+def checked_source(project: Path, relative: str) -> Result[Path, str]:
+    """Resolve one selected member and refuse symlink or traversal escapes from the project boundary."""
+    root = project.resolve().map_err((error) => f"{project.0}: {error.message()}")?
+    source = project.joinpath(relative).resolve().map_err((error) => f"{project.0}/{relative}: {error.message()}")?
+    if source.0 != root.0 and not source.0.startswith(root.0 + "/"):
+        return Err(f"source-Loaf member `{relative}` leaves project {root.0}")
+    if not source.is_file():
+        return Err(f"source-Loaf member `{relative}` is not a regular file")
+    return Ok(source)
+
+
+def validate_member(relative: str) -> Result[None, str]:
+    """Admit only canonical forward-slash archive member names."""
+    if relative == "" or relative.startswith("/") or "\\" in relative:
+        return Err(f"invalid source-Loaf member `{relative}`")
+    for part in relative.split("/"):
+        if part in ["", ".", ".."]:
+            return Err(f"invalid source-Loaf member `{relative}`")
+    return Ok(None)
+
+
+def archive_bytes(contents: Dict[str, bytes]) -> Result[bytes, str]:
+    """Encode members in canonical name order with checked lengths and no filesystem metadata."""
+    buffer = BytesIO(b"")
+    buffer.write_bytes(ARCHIVE_MAGIC).map_err((error) => error.message())?
+    put_number(buffer, len(contents))?
+    for name in sorted([name for name in contents.keys()]):
+        data = contents[name]
+        put_bytes(buffer, name.encode("utf-8"))?
+        put_bytes(buffer, data)?
+    return Ok(buffer.getvalue())
+
+
+def decode_archive(archive: bytes, digest: str, provenance: str) -> Result[SourceLoaf, str]:
+    """Decode the closed archive format and validate member names, uniqueness and the carried lock."""
+    reader = BytesIO(archive)
+    magic = reader.read_exact(len(ARCHIVE_MAGIC)).map_err((error) => f"{provenance}: {error.message()}")?
+    if hexlify(magic) != hexlify(ARCHIVE_MAGIC):
+        return Err(f"{provenance}: unsupported source-Loaf archive format")
+    count = read_number(reader, provenance)?
+    if count > reader.remaining() // 16:
+        return Err(f"{provenance}: source-Loaf member count exceeds the archive")
+    mut contents: Dict[str, bytes] = {}
+    mut members: list[str] = []
+    for _index in range(count):
+        name = read_text(reader, provenance)?
+        validate_member(name)?
+        if name in contents:
+            return Err(f"{provenance}: source-Loaf repeats member `{name}`")
+        contents[name] = read_bytes(reader, provenance)?
+        members.append(name)
+    if reader.remaining() != 0:
+        return Err(f"{provenance}: source-Loaf has trailing bytes")
+    if members != sorted(members):
+        return Err(f"{provenance}: source-Loaf members are not in canonical order")
+    if "loaf.toml" not in contents:
+        return Err(f"{provenance}: source-Loaf has no {MANIFEST}")
+    mut carried: Option[OvenLock] = None
+    if "oven.lock" in contents:
+        lock_source = RustString.from_utf8(contents["oven.lock"]).map_err(
+            (_) => f"{provenance}: carried {PUBLISHED_LOCK} is not UTF-8",
+        )?
+        carried = Some(read_lock_text(str(lock_source), f"{provenance}:{PUBLISHED_LOCK}")?)
+    return Ok(SourceLoaf(digest=digest, members=members, manifest=contents["loaf.toml"], lock=carried))
+
+
+def put_bytes(buffer: _BytesIO, data: bytes) -> Result[None, str]:
+    """Write one length-prefixed archive field."""
+    put_number(buffer, len(data))?
+    buffer.write_bytes(data).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def put_number(buffer: _BytesIO, value: int) -> Result[None, str]:
+    """Write one nonnegative portable archive length."""
+    converted: Option[u64] = value.try_resize()
+    match converted:
+        None => return Err("source-Loaf field is too large")
+        Some(number) =>
+            buffer.write(number, Endian.Little).map_err((error) => error.message())?
+            return Ok(None)
+
+
+def read_number(reader: _BytesIO, provenance: str) -> Result[int, str]:
+    """Read one portable archive length into the host's checked integer range."""
+    result: Result[u64, IoError] = reader.read(Endian.Little)
+    number = result.map_err((error) => f"{provenance}: {error.message()}")?
+    converted: Option[int] = number.try_resize()
+    match converted:
+        None => return Err(f"{provenance}: source-Loaf field is too large")
+        Some(value) => return Ok(value)
+
+
+def read_bytes(reader: _BytesIO, provenance: str) -> Result[bytes, str]:
+    """Read one bounded length-prefixed archive field."""
+    size = read_number(reader, provenance)?
+    if size > reader.remaining():
+        return Err(f"{provenance}: source-Loaf field runs past the archive")
+    return reader.read_exact(size).map_err((error) => f"{provenance}: {error.message()}")
+
+
+def read_text(reader: _BytesIO, provenance: str) -> Result[str, str]:
+    """Read one strict UTF-8 member name."""
+    data = read_bytes(reader, provenance)?
+    return RustString.from_utf8(data).map((value) => str(value)).map_err((_) => f"{provenance}: member name is not UTF-8")
+
+
+def digest_bytes(archive: bytes) -> str:
+    """Name the complete source archive by its SHA-256 digest."""
+    return "sha256:" + hexlify(sha256.digest(archive))
