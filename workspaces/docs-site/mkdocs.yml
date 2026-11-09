@@ -342,6 +342,11 @@ nav:
           - Oven and toolchain ownership map: contributing/explanation/oven_toolchain_ownership_map.md
           - Build engine architecture: contributing/explanation/build_engine_architecture.md
           - Bakery storage design: contributing/explanation/bakery_storage_design.md
+          - Native driver identity verification: contributing/explanation/native_driver_identity_design.md
+          - Loaf artifacts and consumer indexing: contributing/explanation/loaf_artifact_design.md
+          - Oven unit boundary and bootstrap: contributing/explanation/oven_unit_bootstrap_design.md
+          - Rust metadata cache design: contributing/explanation/rust_metadata_cache_design.md
+          - Toolchain packaging and release qualification: contributing/explanation/toolchain_release_design.md
           - Native linkage during development: contributing/explanation/development-linking.md
           - "Post-mortem: v0.5.1": contributing/explanation/postmortem_v051.md
           - Incapunk docs theme: contributing/explanation/incapunk_docs_theme.md
@@ -376,6 +381,7 @@ nav:
           - "DD-0013: The Incan build engine": design_records/0013_the_incan_build_engine.md
           - "DD-0014: Resolved project lock": design_records/0014_resolved_project_lock.md
           - "DD-0016: Signed toolchain releases": design_records/0016_signed_toolchain_releases.md
+          - "DD-0015: The compiler producer map": design_records/0015_compiler_producer_map.md
       - Whitepapers:
           - Overview: whitepapers/index.md
           - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md

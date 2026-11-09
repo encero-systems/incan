@@ -185,6 +185,340 @@ Native units take their full RFC 124 identity before claiming. Command names, re
 
 Interfaces outlive their implementation language. Wire schemas and durable records carry typed identities and scoped handles, never Rust layouts or pointers.
 
+### Producer-map design (Draft)
+
+This section contains the implementation design supporting [DD-0015](../../design_records/0015_compiler_producer_map.md). It remains a proposal while that record is Draft. The [open design questions](#open-design-questions) retain recommendations for review, not accepted decisions; moving this material here does not change DD-0013's accepted contracts or settle those questions.
+
+The decision record states the choices and their rationale. This section owns the producer inventory, data contracts, preparation and evaluation protocol, migration steps, examples and verification matrix.
+
+#### Visitors and independently reusable contributions
+
+A visitor or compiler pass computes one contribution to the representation of a declaration. A producer makes that operation addressable by record key, prepares its inputs and publishes the result with its observed dependencies. Each contribution has an owning producer, a value digest and its own dependency evidence. They form one logical representation without making every contribution share one invalidation boundary: changing ownership facts must not invalidate a reader that observed only an unchanged signature.
+
+The engine schedules and reuses those contributions; it does not walk syntax to derive compiler facts. Producers enter the existing semantic operations, whose visitors read dependencies through the scoped reader. Wrapping a whole-program check and extracting one owner's result is a projection, not the intended per-record producer.
+
+#### Motivating edit
+
+Consider:
+
+```incan
+def greeting() -> str:
+    return "hello"
+
+
+def main() -> None:
+    println(greeting())
+```
+
+Changing `"hello"` to `"hullo"` should check, lower and plan `greeting` again and nothing of `main`, because `main` read only `greeting`'s name slot and signature, and neither changed. A comment added above `main` should check nothing again: it moves `main`'s lines, so only `main`'s position map and the native line tables change. The proposed contracts below explain both outcomes without a special case for either.
+
+
+#### Operating contracts
+
+1. **One producer per record family.** The [producer map](#families-and-producers) is the one home of which compiler producer answers which family. Within one compiler generation exactly one producer is selectable for a family; the compiler record service selects it with one match over a closed family enum. A family the selected profile does not cover answers `UnsupportedProducer`, and records mode then fails rather than falling back. The engine never chooses a producer: it asks for a key.
+
+2. **Keys name questions; the compiler supplies identities.** A record key is its family, identity, identity profile, origin, facet and context. For a declaration facet the identity is RFC 106's stable declaration identity. A callable's identity includes its checked signature, so the producer that computes signatures is keyed by the declaration slot it fills (namespace, name, kind) and publishes the slot's members with their identities. Every later facet is keyed by a member identity. A signature edit therefore removes one identity and adds another, as RFC 106 states, and the engine invents no continuity. The context holds only what the facet observes, such as canonical type arguments, target and lowering profile. Physical locations, store revisions, table slots, requests, views and homes never enter a key; a position map's key names its source revision only because that is the question it answers (BE-34). One canonical string encoding of a key is both its store key and its key in every in-memory index.
+
+3. **One schema and one digest per value.** Each family has one versioned value schema with one home. Its tags are `incan_lang` registry keys that the Incan schema and the Rust adapters both use, and only the schema validates. A value's digest is the digest of its canonical encoding; for a declaration facet that is RFC 106's semantic digest of that facet. Values hold no positions, comments or documentation: doc records and position maps are separate records with their own digests (BE-34). A value whose digest cannot be computed counts as changed.
+
+4. **Ranks order work and never name it.** A rank is the namespace's position in the import order, then the producer stage, then an order inside a joint group that the compiler supplies. The rank certificate binds the digests of the finalized predecessor roots, not rank numbers, so adding a module reorders work without moving any key or digest. Producers are joint only for a demonstrated cycle: mutually dependent headers, recursive layouts, mutation-effect forwarding, return-carrier flow and shared-read loans. A group's key is its rule and the digest of its sorted membership, and its members keep their own output keys.
+
+5. **Inputs are prepared before values are evaluated.** `prepare` returns the complete read envelope of one output (required reads as a paged root, selector witnesses and the rank certificate), or names earlier-rank prerequisites. `evaluate` reads only inside that envelope, through one scope. Reading an unfinished supplier is `UnfinishedSupplier` and reading outside the envelope is `OutsidePreparation`. Neither publishes a value, and neither is retried. There is no lower-again loop.
+
+6. **Witnesses are the graph's edges.** Every read reports present, deleted, absent (with the exact slot and selection), members (with selector, bounds, membership digest and continuation) or a store error. A completed evaluation publishes, in one transaction, its value, an evaluation record (producer profile, output key, claim key, value digest, receipt root and rank) and its witnesses; forward and reverse indexes derive from those same witnesses. In records mode the graph is the only dependency authority: no unit freshness stamp, capture ledger or process-global cache answers a dependency question.
+
+7. **Change is one ranked sweep with early cutoff.** Changed values seed the sweep, and reverse edges find their readers in the selected view. Readers are processed in rank order once their dirty predecessors are final. A reader whose witnesses all still validate is reused without running its producer; one whose witnesses changed, or cannot be validated, is evaluated once. An output equal to its previous value stops propagation along that path. The producer profile is part of every reuse: a value produced under one profile is never reused, or compared for cutoff, under another.
+
+8. **Producers enter the existing compiler, and projections give way one family at a time.** The Rust checker, the Body IR builder and the Incan lowering remain the only semantic implementations (BE-32). A producer is a record-scoped entry into an existing compiler operation and reads only through its scope. A family moves from projection to producer in one change, which:
+   - shows the producer's records byte-identical to the projection's over the oracle corpus;
+   - passes that family's rows of the edit matrix against the cold oracle;
+   - deletes that family's projection and any Rust-side check of its grammar.
+
+   Two producers are never selectable for one family, and a projection is never a records-mode fallback.
+
+9. **Equivalence is measured against two oracles.** The *cold oracle* is the same engine computing the same captured source in a fresh project view that shares the admitted frozen roots and holds no project results. A warm result is equivalent when it matches the cold result in four things: selected record bindings (key and value digest), rendered diagnostics, native unit identity and payload, and program behavior. In addition, every witness it relied on must validate on the new source. The *legacy oracle* compares the cold result with the first engine: checking-scope membership, diagnostics, the complete plan and behavior. A row's producer count is exact when the warm evaluations are exactly the dirty set computed from two cold runs, before and after the edit.
+
+
+#### Families and producers
+
+One row per record family. "Reads" uses P for present, D for deleted, A for absent and M for members. Every producer can also end with a store error, which terminates the activation. "State" is the state at the line commit `ee29e866b`.
+
+| Family | Output key | Producer and stage | Reads | Value schema home | Joint when | State |
+| --- | --- | --- | --- | --- | --- | --- |
+| `source` | origin, logical path | Engine capture (not a compiler producer) | — | Oven capture | — | Delivered (build epochs) |
+| `discover` | origin, logical source, syntax profile | Parse, `Discover` | P source; P/A/M vocabulary selection | `internal_models` source records | One evaluation per source revision; member outputs below | None |
+| `declaration-source` | declaration slot, header seed | Output of `discover` | — | `internal_models` source records | — | None |
+| `doc` | declaration identity | Output of `discover`, bound to its identity when the slot publishes it | — | `internal_models` source records | — | None |
+| `position-map` | declaration identity, semantic root, source revision | Output of `discover` | — | `internal_models` source records | — | None |
+| `name-slot` | namespace, name, selection context | The one namespace resolver, `NameSlot` | M namespace members; P imported bindings; A exact missing names and paths | `internal_models` namespace records | Never; import cycles stay refused | None |
+| `influence` | header seed | Restricted body scanners (hash bounds, closure eligibility, value uses), `Influence` | P body syntax; P/A/M name slots | `internal_models` checker records | Never | None |
+| `slot` | namespace, name, kind | Header and signature checking, `Slot` | P member headers; P/A/M name slots; P imported signatures; M influence by target | `internal_models` checker records | Header and hash-forwarding cycles | None |
+| `layout` | type identity, observed type arguments | Layout, `Layout` | P slots and earlier layouts; M members | `internal_models` checker records | Recursive layout cycles | None |
+| `default` | identity, parameter or field anchor | Default and constant checking, `Default` | P own expression; P/A/M names; P signatures | `internal_models` checker records | Recursive constant dependencies | Writer row inside `declaration` only |
+| `declaration` | identity | Declaration validation, defaults' writers, ownership contract, `Declaration` | P slot; P layouts and defaults read | `internal_models.checker_records` (`Declaration`) | Never | Projection only |
+| `local` | callable identity | One body's local check, `Local` | P own source and environment; P/A/M every lookup, failed ones included | `internal_models.checker_records` (`Local`) | Never | Projection only |
+| `mutation-effect` | rule, membership digest; member projection per identity and parameter | Mutation-effect resolution, `MutationEffect` | P local effect facts; M forwarding edges; A unresolved callees | `internal_models` checker records | Forwarding cycles | Refused by the profile |
+| `final` | callable identity | Settlement of one body, `Final` | P own local; P callee effects | `internal_models.checker_records` (`Final`) | Never | Projection only |
+| `check-scope` | checking scope, command semantic profile | Aggregation, `CheckScope` | M scope membership; P diagnostic and status roots | `internal_models` checker records | Never | None |
+| `body-ir-seed` | executable owner | Per-owner Body IR construction, `BodyIrSeed` | P final, own source, declaration and layout facts | Open question 1 | Never | None |
+| `representation` | executable owner or group, pass | Return carriers, native representation and shared-read loans, `BodyIrSummary` | P seeds; P callee summaries; M call and implementation edges | Open question 1 | Return-flow and shared-loan cycles | None |
+| `body-ir` | executable owner | Body IR finalization, `BodyIr` | P own seed and summaries; P callee loan summaries | Open question 1 | Never | None |
+| `instance` | generic identity, canonical arguments, context | Instance preparation, `Instance` | P frozen or local template; P substitutions; M implementation choices | Open question 1 | Never; recursion is a reference | None |
+| `lowering-demand` | native instance, role, lowering profile | Lowering preparation, `LoweringDemand` | P Body IR or instance; P runtime facades, layouts, frames; A/M facade and provider selectors | `incan_mir_plan` | Layout cycles inside concrete layouts | None |
+| `runtime-facade` | typed runtime operation | Frozen admission (standard and runtime records) | — | `incan_mir_plan` | — | None (open question 5) |
+| `plan-function` | native instance, role, lowering profile | Plan function, `PlanFunction` | P own demand's prepared fields only | `incan_mir_plan` | Never; lexical groups are named | None |
+| `native-interface` | native namespace, target, profile | Native interface, `NativeInterface` | M selected plan, layout, export and entry roots; P exact extern identities; P position maps | `incan_mir_plan`; unit identity stays Oven's RFC 124 function | Never | None |
+| `rust-inspection` | Rust unit, inspection profile; per-item projections | Rust inspection (named here, built with Loaf admission, E3) | P exact native and source inputs; A/M items | `internal_models` interop records | One Rust unit | Existing extractor, not a producer |
+| `c-declarations` | C unit, ABI profile; per-item projections | C declarations (built with Loaf admission, E3) | P headers and options; A/M declarations | `internal_models` interop records | One translation unit | None |
+| `caller-facet` | Rust unit, referenced exports, ABI profile | Caller facet, RFC 097 (built with Loaf admission, E3) | M referenced exports; P their signatures | `internal_models` interop records | Only for a qualified foreign header group | None |
+
+The stage order is the table's order, from `Discover` to `NativeInterface`. These are the `ProducerStage` values; the line's enum has nine of them and gains the rest. The three foreign producers rank in their own unit's namespace, before the `Slot` stage of any namespace that reads them.
+
+Each value schema is versioned, and its version is part of its producer profile. Native compilation is not a semantic producer: the engine claims it by RFC 124 identity and calls `compile_native` with a record-backed `PlanReader`.
+
+Two homes decided here, for one family each:
+
+- **`runtime-facade` keys** are typed runtime operations bound to canonical callables, never native path spellings. The compiler architecture review's row 3 found lowering classifying providers by path prefix.
+- **The store-backed `RecordSource`** lives with the record contracts in `internal_models`, because it is the one place that knows both the key encoding and the read evidence. The worker host is "not part of the compiler's query interfaces" (its README); it owns activation lifetime and protocol dispatch.
+
+#### Keys and identity
+
+The key model is `RecordKey(family, identity, identity_profile, origin, facet, context)` in `internal_models.record_scope`. Its parts:
+
+- **Declaration identity** is `StableDeclarationId.render_compact()` (RFC 106; `incan_semantics_core/src/stable_identity.rs`). It holds namespace, origin, name, kind, location (module level, or nested owner and binding ordinal) and, for callables, the checked signature.
+- **Before a signature exists**, a declaration is addressed by its slot `(namespace, name, kind)` and a header seed. The seed is the digest of the member's normalized header projection, with no positions and no source revision. Equal headers give an equal seed, so a body edit keeps the seed. Two members with identical headers form a collision that the slot producer refuses exactly as the first engine refuses duplicate declarations.
+- **The slot record** publishes each member's final identity together with its signature. A revision-local syntax handle is an activation handle only and is never persisted.
+- **Non-declaration identities:**
+  - a source is its logical path under its origin;
+  - a namespace is its module path;
+  - an instance is its generic identity plus canonical arguments;
+  - a plan function is its native instance identity plus role;
+  - a native interface is its native namespace with target and profile.
+- **The encoding.** One function in `internal_models` writes every key as a canonical string. That string is the store key and the key of every in-memory index (frontier, witness deduplication, reverse-edge pages). Sets and ordering of key models work; dictionary lookups keyed by models do not run today (probe 4), so maps use the encoding.
+
+#### Values, schemas and digests
+
+- **Checker families** use `internal_models.checker_records` (`incan.checker-fields/9`, profile `incan.checker-free-functions/10`). A record holds a profile, an owner identity, the digest of the owner's position-free semantic syntax, a stage family and ordered canonical fields. Its digest is SHA-256 over the encoding. A body edit always changes that body's checked records, because the semantic syntax digest is part of the value. Consumers in other declarations read slots and signatures, never another body's checked record, so a body edit stops there.
+- **Field families and profile names** are `incan_lang` registry keys. The Rust adapters emit them and never spell them. The Incan codec is the only grammar check. Rebinding turns validated fields into native scratch for the next Rust consumer and never derives a fact the record does not hold.
+- **Source, namespace, doc and position records** are new Incan schemas in `internal_models`. A position map binds `(declaration identity, semantic node anchor)` to file, line and column for one source revision. Diagnostics are stored against node anchors and rendered by joining the current position map.
+- **Plan-function and native-interface records** are values of the `incan_mir_plan` models, encoded by one codec owned beside them. The rustc adapter reads them through the `PlanReader`, which is the versioned data schema crossing the native boundary.
+- **Body IR records:** open question 1.
+- **Unavailable digests.** A producer that cannot compute a value's digest, for example because its profile refuses a capability, publishes nothing and reports `UnsupportedProducer`. Records mode reports the declaration as not producible; it never reuses.
+
+#### Ranks and joint groups
+
+A rank is `(namespace order, stage, group order)`, carried as `ProducerRank`.
+
+- **Namespace order** is the import DAG of the captured epoch. Admitted frozen namespaces are final on admission and rank before every editable namespace. Circular imports stay refused (DD-0012, decision 4).
+- **Stage** is the table's order.
+- **Group order** is the condensation order of a joint group's dependency cycle, supplied by the compiler.
+
+Rank numbers exist only in the scheduler's frontier. The rank certificate in `PreparedInputs` is the digest of the finalized predecessor roots the envelope reads, so it changes only when a predecessor's value does.
+
+A joint group is allowed only for:
+
+- mutually dependent headers, including hash-forwarding cycles;
+- recursive layouts;
+- recursive constants or defaults;
+- mutation-effect forwarding cycles;
+- return-carrier flow cycles;
+- shared-read loan cycles.
+
+The group's key is its rule and the digest of its sorted membership. It runs the existing compiler's fixed point as one evaluation, reports iterations and member visits, and publishes member outputs under their own keys, so an equal member value still stops propagation when membership changes. Inserting or deleting a member recomputes membership from the relation records and may merge or split a group. A group spanning a whole module without a cycle is not allowed. A legal program that fits none of these cycle kinds is a compiler or design finding that blocks its stage, not a new refusal.
+
+#### Preparation and reads
+
+`prepare(stage, input_snapshot, demand_page, producer_profile)` returns one of:
+
+- `Prepared(PreparedInputs)`: the output key, the exact snapshot and profile, the required reads as a paged root, the selector witnesses (including absent and member evidence that preparation itself observed) and the rank certificate;
+- `NeedPrerequisite(keys, earlier_rank)`, which is scheduling input, never a diagnostic;
+- `SemanticRefusal`;
+- `CompilerFault`.
+
+Preparation may scan syntax and selectors; its work is counted separately from evaluation.
+
+`evaluate` opens one `RecordReads` scope bound to the envelope (`prepared_reader`). Each read yields one witness:
+
+| Outcome | Witness keeps | Invalidated when |
+| --- | --- | --- |
+| Present | key, revision, value digest, selection and selection digest | the key's value digest in the selected view differs |
+| Deleted | key and the tombstone's revision | the key becomes present |
+| Absent | exact key or slot, selection context, exclusion digest | a record appears at that key or slot |
+| Members | selector, order, bounds, membership digest, continuation | the membership digest over the same bounds differs |
+
+An unfinished supplier, damage, a wrong snapshot or profile, a read outside the envelope, or lost witness recording is a fault. A fault is sticky and publishes neither a value nor a partial witness set. `finish()` hands over one complete receipt, including the preparation evidence of an activation that read nothing.
+
+Reads are owned. A read copies the selected value once, out of the store's mapped segment, and counts it. Where a large payload is consumed without decoding, the carrier is an owned anchored `MappedView`, never a borrowed view inside a user-defined generic type (probes 1, 1b and 2). After every activation the worker asserts zero open scopes, zero live record mappings of that request and zero retained decoded values.
+
+#### The ranked graph: evaluations, edges and the sweep
+
+Graph facts live in the bakery, in engine families owned by Oven:
+
+- `evaluation`, per output key and producer profile: claim key, value digest, receipt root, rank and outcome (`Produced` or `SemanticRefusal`);
+- `edge-out`, per evaluation and witness;
+- `edge-in`, per target key, read kind and reader.
+
+All three are written in the one transaction that publishes the value. The reverse index is a range of `edge-in` keys, read in bounded pages, and is filtered to evaluations selected in the requesting view. The claim key is the digest of the producer profile, the output key and the prepared envelope's value digests and selector witnesses; it never includes the physical manifest, the home or trace configuration.
+
+For a new epoch the engine:
+
+1. compares the captured sources' semantic projections with the previous epoch's;
+2. reads the reverse edges of the changed records in the selected view;
+3. settles preparation and visits dirty records in rank order once their dirty predecessors are final;
+4. validates each prior evaluation's witnesses: `Unchanged` reuses it, rebinding provenance only when revisions changed; `Changed`, or an inability to validate, evaluates once;
+5. claims the completed key, rechecks, evaluates and publishes value, evaluation and edges together;
+6. propagates only changed values;
+7. forms the native descriptor from the finalized roots and selects the result against the expected view revision.
+
+The existing mechanisms from engine mechanics with unit records (E1a) are reused unchanged: capture, claims, publication, caller selection, leases, execution pins and launch. The graph is new code beside them.
+
+Typed dependency ownership splits three ways:
+
+- the compiler owns what a witness means: its read kind and the family of its target;
+- the engine owns storing and traversing witnesses;
+- the store owns bytes and index pages.
+
+No compiler consumer reads a record any other way than through its scope.
+
+#### Replacing the bootstrap projections
+
+Today `body_check/records` projects a declaration, local or final record out of a `TypeChecker` that checked the whole fixture. That is a test sink. A producer for family F replaces it in one change:
+
+1. **Red case.** A failing contract case names the behavior: for example, editing a private literal of one body evaluates one `local` and one `final` record and no sibling.
+2. **Entry point.** The bootstrap adapter (adaptation 1 of DD-0013) gains a record-scoped entry into the existing operation that owns F. The entry reads its inputs only through `RecordReads`, owns its scratch, and publishes F's fields. For `local`, the operation is `BodyCheckScope` with immutable environment views; `check_program_internal` followed by selecting one owner is not a producer.
+3. **Cross-check.** On the oracle corpus, the producer's records are byte-identical to the projection's: the canonical controls, the checker's fresh-legacy influence comparison (`influence_facts_match_fresh_legacy_inference`), the free-function baseline and every census fixture the profile covers. Both emit the same schema, so a difference is a defect in one of them, never two answers.
+4. **Matrix.** F's rows of the edit matrix pass against both oracles.
+5. **Deletion.** The same change deletes F's projection, every Rust spelling of F's tags and every Rust check of F's grammar. The legacy oracle stays: it is the first engine itself, not a projection.
+
+The profile records which families have producers. Raising coverage, such as representing a refused artifact field, is a profile bump; old-profile records are not reused under the new profile.
+
+#### The cold oracle and the edit matrix
+
+For base source S and edit E giving S′:
+
+- **Warm** runs records mode on S, applies E, and runs records mode on S′ in the same project view.
+- **Cold** runs records mode on S′ in a fresh project view with the same admitted frozen roots and no project results.
+- **Cold-before** runs cold on S as well, so the expected dirty set can be computed.
+- **Legacy** runs `INCAN_ENGINE=legacy` on S′.
+
+The comparisons:
+
+- **Equivalence** (warm against cold): equal sets of selected `(key, value digest)` bindings for the requested roots; equal rendered diagnostics, by text and by JSON; equal native unit identity and payload digest; equal stdout, stderr and exit status; and every warm witness valid on S′. Evaluation and edge records may differ between the two (warm carries rebinding provenance) and are compared only for validity.
+- **Exact counts** (warm against the cold pair): the expected evaluated set is every record that exists only in the cold run, every record whose own source projection differs between cold-before and cold, and every reader, in the cold-before graph, of a record whose value digest differs or that no longer exists. Warm evaluations must equal that set: more is over-invalidation, fewer is stale reuse. Counts are reported per family.
+- **Legacy parity** (cold against legacy): equal checking-scope membership (canonical member sets, unreachable bodies included), diagnostics, complete plan bytes and behavior.
+
+The matrix, with the minimum each row must show:
+
+| Row | Example edit | Evaluates | Does not evaluate |
+| --- | --- | --- | --- |
+| Body | `"hello"` to `"hullo"` in `greeting` | `discover`; `greeting`'s `influence` (equal value), `local`, `final`, Body IR chain and `plan-function`; `native-interface` | anything of `main`; `greeting`'s `slot` and `declaration` |
+| Body, length change | add a statement to `greeting` | as above, plus position maps of declarations after it | other semantic records |
+| Comment, blank line, docstring | a comment above `main`; edit a docstring | `discover`; moved declarations' position maps; the doc record | every check, Body IR and plan record |
+| Signature | `greeting` returns `int` | the `slot`; a new identity's chain; `main`, whose slot witness changed | unrelated siblings |
+| Layout | add a field to a model | `layout`; readers of that layout | functions that never read it |
+| Default | change a default's value | `default`; readers that observe the value | readers of its type or template only |
+| Namespace insertion | add `def other()` | `discover`; the new slot; readers holding an absent witness at that name | everything else |
+| Namespace deletion | delete an unused function | its slot and chain become deleted | records that never read it |
+| Absent import | `from helpers import f` before `helpers.incn` exists, then create it | the absent witness's readers | unrelated modules; unrelated new siblings |
+| Candidate set | add an overload or trait implementation | readers holding a members witness; equal results stop there | readers of other slots |
+| Feature | toggle a feature that selects a name | readers of the feature-selected names | others |
+| Toolchain | a new compiler generation | everything (no cross-profile reuse) | — |
+| Loaf version | swap an admitted dependency version | readers whose witnesses into it changed | open question 3 |
+
+Robustness rows in the same harness:
+
+- an equal value reached through a changed read set publishes new witnesses and dirties nothing;
+- a group splits and merges;
+- a damaged record is a store error, recomputed in a new explicit transaction;
+- a misprepared envelope is a fault with nothing published;
+- a killed worker publishes nothing.
+
+The equivalence and count assertions run as engine tests on small fixtures. Timing samples (at least twenty per edit-loop row, paired with the first engine, in a cold and a warm home) run in the development-loop benchmark, outside CI.
+
+#### Worked example
+
+Cold, for the program in the motivating edit above:
+
+```text
+source(app.incn)
+  -> discover(app)                    one parse; declaration-source x2, doc x2, position-map x2
+  -> name-slot(app, greeting), name-slot(app, main)
+  -> slot(app, greeting, function)    member: function:app::greeting|() -> str
+     slot(app, main, function)        member: function:app::main|() -> None
+  -> declaration(greeting), declaration(main)
+  -> local(greeting), local(main)     main reads name-slot(greeting) and slot(greeting)
+  -> final(greeting), final(main)
+  -> check-scope(app)
+  -> body-ir-seed, representation, body-ir   one chain per function
+  -> lowering-demand(main)            reads runtime-facade(println_text) from admitted std records
+  -> plan-function(greeting), plan-function(main), plan-function(entry)
+  -> native-interface(app)            reads position maps for line tables
+  -> native bake (claimed by RFC 124 identity), selection, launch
+```
+
+After `"hello"` becomes `"hullo"`:
+
+- `discover(app)` runs once.
+- `declaration-source(greeting)` has a new body projection and an equal header seed.
+- `influence(greeting)` reads the changed body syntax and is evaluated; its value (no hash bound, no closure use) is equal, so the slot's witnesses validate and `slot(greeting)` and `declaration(greeting)` are reused.
+- `local(greeting)` reads the changed body projection and is evaluated, and so are `final`, the Body IR chain and `plan-function(greeting)`.
+- `local(main)`'s witnesses (name slot and `slot(greeting)`) validate, so `main` evaluates nothing.
+- `native-interface(app)` reads a changed plan root and evaluates; the native unit is baked again, whole.
+
+After a comment above `main`:
+
+- `discover(app)` runs once. Both header seeds and body projections are equal, so every semantic record is reused.
+- `position-map(main)` changes, `native-interface(app)` reads it and evaluates, and the native unit is baked again for its line tables.
+- Rendered diagnostics, if any, show `main`'s new lines.
+
+#### Figures
+
+An SVG belongs at `workspaces/docs-site/docs/contributing/explanation/build_engine_producer_map.svg`, drawn with the same skin as `build_engine_record_graph.svg`:
+
+- **Columns** are the producer stages in rank order, from `Discover` to `NativeInterface`, with a separate band for frozen admitted records on the left.
+- **Each column** holds the hello example's records as boxes.
+- **Edges** are typed (P, A, M) and point from reader to target.
+- **Overlays:** for the body edit, evaluated records in the accent color and reused ones outlined; for the comment edit, only `discover`, `position-map(main)` and `native-interface` in the accent color.
+- **Insets:** a joint group (a mutation-effect cycle of two functions) and one absent witness at `helpers.f`.
+
+
+#### Open design questions
+
+Each quotes the sentence that leaves it open.
+
+1. **Where do Body IR, representation and instance values get their schema?** The architecture page: "Wire schemas and durable records carry typed identities, schema-defined values and scoped handles, not Rust heap layouts, process pointers or Rust trait-object representations." Body IR is a Rust data model (`incan_semantics_core::body_ir`). Loaves already ship it as a versioned whole-module encoding (`executable_representation/module_codec.rs`: postcard with a representation version). DD-0013 does not say whether that versioned representation counts as a schema-defined value. **Recommendation:** use the kernel's versioned executable representation, framed per executable owner, as the one Body IR schema. That is not a Rust heap layout but a versioned encoding of a schema the kernel owns, and a second Incan model of Body IR would be a second semantic model. The alternative is an Incan-owned Body IR schema, which is a large separate stage.
+
+2. **Which protocol carries `Prepare` and `Evaluate` to a worker?** The architecture page: "`incan.engine/1` is separate from `incan.compiler-worker/1`". Its message table then lists `Prepare / NeedPrerequisite` as "The worker derives compiler-owned selectors, ranks and demands". The engine codec encodes these messages; the worker host speaks only `incan.compiler-worker/1`, whose commands are whole compiles. **Recommendation:** record activations become a new version of the worker protocol in `incan_worker_host`, the one home of the worker's message family. The unused `Prepare`, `NeedPrerequisite`, `Evaluate` and `Produced` bodies leave `incan.engine/1`, which then stays the client protocol. The other reading puts `incan.engine/1` on the worker, which would give the worker two protocols.
+
+3. **Do the toolchain and Loaf-version rows belong to this slice's exit?** The ranked-graph stage's proof row: "Cold-baseline equivalence for body, signature, layout, default, namespace insert and delete, absent import, candidate set, feature, toolchain and Loaf edits". But Loaf admission (E3) delivers "Bundle, Loaf and local-bake admission (local Loaves by copy) … version diffs", and records mode refuses editable path dependencies. **Recommendation:** this slice measures the toolchain row as a producer-profile change and moves the Loaf-version row to Loaf admission's exit, which already owns version swaps.
+
+4. **Does this slice's exit include the lowering-library edit row?** The ranked-graph stage's row: "One-record edit reuses sibling checks, Body IR and plans | Efficiency | One lowering-body edit 270.79 s; edited unit 252.02 s". The lowering library depends on two Rust Loaves (`incan_semantics_core`, `incan_lang`), and Loaf admission (E3) delivers "Rust and C units in a Loaf". **Recommendation:** this slice proves sibling reuse on Incan-only fixtures and the hello edit loop row (316.9 ms median); the lowering-library row is measured when Loaf admission lands, and its proof row says so.
+
+5. **How do frozen standard and runtime records first come to exist?** Compiler reads by record (S3) requires "Std manifest and fact reads replaced by records", while the toolchain release becomes "an `oven bake` of its Loaf graph" only at Loaf admission (E3). Until then the toolchain bundle ships Loaf artifacts (`.incnlib`, `.incnbody`, `.rustabi`), not records. **Recommendation:** a one-time admission conversion per installed toolchain reads those artifacts and writes records in the producers' schemas through the sealed-set admission path (BE-16). It is the only reader of Loaf artifacts in records mode, and it is deleted when Loaves ship records. Baking the standard library from source at first use is the alternative; it costs a full standard check on a cold home.
+
+6. **Is the bounded codegraph answer this slice's, or the readers stage's (E5)?** Compiler reads by record lists "Bounded codegraph answer for one unit | 64,211,355 bytes, 60,612 records", and the code map says the in-memory node and link structures are "replaced by the `GraphRead` adapter in S3". The readers stage owns "MCP and graph pages". **Recommendation:** this slice answers one unit's codegraph question as a bounded projection of its persisted declaration, reference and call fields through RFC 166's `GraphRead`. The whole-export compatibility renderer and the MCP pages stay with the readers stage.
+
+7. **When do the process-global standard caches go?** The code map: "Process-global `ARTIFACTS` / `ABI` stores in `loaf_index/retained.rs` duplicate the store; removed in S3", that is, in compiler reads by record. The first engine is still the default and uses them for worker reuse. **Recommendation:** records mode never uses them, from this slice on; they are deleted with the first engine at the default switch, because the reason for them, a reused legacy worker, holds until then.
+
+8. **When do Incan-model record values move to Crumb?** RFC 168: "Crumb must be usable independently for encoded values, files, messages or compiler artifacts." The checker codec is a separate hand-written framing. **Recommendation:** no change in this slice. At the first checker profile bump after Crumb ships in the toolchain, checker, source and plan records encode with Crumb, leaving one encoding mechanism for Incan-model records.
+
+
+#### Changes from the 2026-10-30 study
+
+**Kept:** slot-keyed headers with header seeds; the phase split into local, effect and final checking; Body IR seed, summaries and final; the joint-group rules; the prepared envelope; the read kinds; checking scope as a publication gate rather than a bit in every value; and the strict complete-plan oracle.
+
+**Changed:**
+
+- Homes follow the line: `internal_models` for contracts and schemas, `incan_platform.store` for the substrate.
+- The checker profile is now `/10`, with ownership families.
+- Reads are owned, because of the borrowed-view gap.
+- Producer selection is a closed enum, and keys are string-encoded, both because of probes.
+- `Deleted` joins the read outcomes (RFC 165).
+- Doc and position records follow BE-34.
+- Vocabulary comes from `incan_lang`.
+- The cold oracle and exact counts are defined as computations, not intentions.
+- Open questions 1, 2, 3, 4, 5 and 6 are new.
+
 ## Loaves and toolchain bundles
 
 Toolchain bundles, dependency Loaves, local bakes and registry assets enter through one admission path for sealed record sets: verify transport, format and trust without executing package code; verify digests and capability closure; import only missing objects; publish admitted roots atomically; bind in a view only after policy and native-identity checks; release staging. Repeating an admission is a no-op. Admission never moves a selection.

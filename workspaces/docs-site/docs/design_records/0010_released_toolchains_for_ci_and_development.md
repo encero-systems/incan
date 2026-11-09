@@ -25,33 +25,25 @@ Before this decision, every development checkout built the compiler and Oven wit
 
 **A completed toolchain becomes a real release: its packed toolchain is the release artifact of its version tag. CI and every later development checkout install a released artifact.** This decides how toolchains are distributed; whether a given toolchain is complete and published is the maintainer's release decision.
 
-Oven's `incan toolchain pack OUT` produces the archive from an installed toolchain. It contains the named compiler driver, runtime dependencies, compiled standard Loaves, Rust standard-library ABI caches and prepared registry closure. Artifact paths are relative to their containing documents. The machine's Rust sysroot and local driver identity proof are not release contents.
+Released artifacts contain the complete compiled toolchain closure and relocate independently of the source installation. Installation verifies the selected compiler and driver identity; moving an archive does not relax those checks.
 
-`incan toolchain install ARCHIVE` installs under the selected Incan home. The archive must name the toolchain this Oven supports. Installation binds the local Rust sysroot and verifies the staged driver's identity before replacing an existing installation. Moving the archive between machines does not relax the pinned compiler or loaded-library identity checks.
+CI and later development use the repository's pinned, host-compatible release and Rust toolchain. CI builds and tests the proposed compiler; merely installing its seed is not evidence that the proposed compiler works.
 
-**An archive is releasable only if the toolchain it installs relocates.** The gate (`workspaces/oven/tests/verify_toolchain_relocation.sh`) packs the installed toolchain, installs it into a fresh directory against a copied sysroot, and audits that every artifact path in every document Oven reads is relative and resolves inside that installation. It then runs the check, testing and interop contract families against the relocated installation with the source installation and its builder directories absent. Each case must have the source installation's outcome.
+Release production is Incan-authored and uses an installed release seed, with no frozen bootstrap builder or generated Rust production path. Qualification requires complete build provenance, case-for-case behavioral parity and byte-identical named artifacts in generations two and three. A partial native build does not establish self-hosted release production.
 
-### CI and later development
-
-CI runners first install Rust 1.98.0 with `rustc-dev`, then install the released artifact the repository pins. Later development uses the same published artifact rather than reconstructing a private bootstrap environment. The artifact and Rust installation must match the runner's host platform.
-
-Release production must build the runtime, lowering, driver, standard packages, Oven, contract runner and LSP from source with an installed release pack, the seed. The frozen bootstrap builder and generated Rust are retired as production paths. Acceptance requires an audit of every build unit excluding the private bootstrap inputs, a case-for-case census match on the same source and keys, and byte-identical driver, runtime, lowering, standard-library floor, Oven and runner artifacts in generations two and three. Generation one is built by the seed and can legitimately retain the seed's code generation; generations two and three are both built from this source by a compiler built from this source, so their equality is the fixed point. Until that complete gate passes, a partial native build does not establish a bootstrap-free release producer.
-
-Release executable profiles strip debug provenance and remap checkout and selected-toolchain source locations to logical prefixes before the platform linker signs an executable. On macOS, a release executable retains its required UUID, derives that UUID from the unsigned executable content, and receives its ad-hoc signature only after the UUID is final. Library profiles stay unchanged, store layout paths remain custody evidence rather than artifact bytes, and the reusable producer identity continues to retain the exact compiler and linked inputs.
-
-`scripts/release.incn` is the release-production authority. It retains phase logs, timings, a refusal-capable receipt and the packed bundle, and its fixed-point mode retains three digest sets and compares generations two and three for the six named artifacts above byte for byte. CI runs the same program; the release workflow enables fixed-point mode, while ordinary stage qualification omits it because the proof builds two additional generations. An installed seed is a prerequisite, never the compiler under test. The repository pins each host's seed tag and digest in `build-toolchain.json`, while publication remains a separate maintainer action.
-
-CI builds each PR's compiler with the installed toolchain and verifies the resulting compiler. Installing a release artifact is a prerequisite for that build, not evidence that the PR's compiler was tested.
+One release program owns production for both local use and CI. Release publication remains a separate maintainer action. Packaging, relocation checks, deterministic executable preparation and the exact fixed-point evidence belong in the supporting design.
 
 ## Consequences
 
 Ordinary CI and development depend on a versioned release artifact and the pinned Rust installation. They no longer depend on another checkout's build paths. Release production must retain the complete named native closure; a copied driver alone is insufficient. The archive carries exactly the standard Loaves the installed toolchain compiled: a package that does not compile is absent, not stubbed. The maintainer controls release publication, and development checkouts publish nothing themselves.
 
-Measured on 2026-10-22 on the maintainer's macOS arm64 machine, with core, testing, interop, async, system, codecs, compression and web compiled: the zstd archive is 464,503,294 bytes (443 MiB) and installs in 17.1 s. The relocated installation, with the source installation absent, reproduced the source outcomes case for case in all three families.
-
 ## Non-goals
 
 This decision does not declare self-hosting complete, implement a CI workflow, publish a release, define artifact signing or promise cross-platform compatibility for one host's archive. It does not change the compiler, Oven or Loaf ownership boundaries.
+
+## Supporting design
+
+[Toolchain packaging and release qualification](../contributing/explanation/toolchain_release_design.md) records the mechanisms and supporting evidence. Changes to those mechanisms do not change this decision unless they alter its stated boundaries or guarantees.
 
 ## Revisit condition
 
