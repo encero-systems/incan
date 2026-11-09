@@ -1,0 +1,206 @@
+"""Deterministic logical inputs shared by codec measurements, independent of encoded output."""
+
+from std.json import JsonValue
+from std.primitives.crumb.row_descriptions import Description, DescriptionMode
+from std.primitives.crumb.row_writer import RowRecord
+from std.primitives.crumb.text_types import TextDescription, TextDocument, TextField, TextNamedValue, TextType, TextValue
+from std.primitives.crumb.types import AbsentPolicy
+from std.primitives.crumb.values import Metadata, MetadataEntry, Value, ValueField
+from std.primitives.text import encode_utf8
+
+
+pub model FieldSpec:
+    """One shared logical field with binary identity and both public schema spellings."""
+
+    pub name: str
+    pub storage: str
+    pub text_type: TextType
+
+
+pub def fields(workload: str) -> list[FieldSpec]:
+    """Keep field order identical for JSON, COMIC and binary records."""
+    if workload == "nested":
+        return [
+            FieldSpec(name="field0", storage="i64", text_type=TextType.Scalar("i64")),
+            FieldSpec(name="field1", storage="list<i64>", text_type=TextType.List([TextType.Scalar("i64")])),
+            FieldSpec(name="field2", storage="option<i64>", text_type=TextType.Option([TextType.Scalar("i64")])),
+            FieldSpec(name="field3", storage="record@6368696c6478", text_type=TextType.Named("bench.Child")),
+        ]
+    mut width = 3
+    if workload == "wide":
+        width = 32
+    mut result: list[FieldSpec] = []
+    for index in range(width):
+        name = "f" + ("00000" + str(index))[-5:]
+        mut storage = "i64"
+        if workload == "strings":
+            storage = "string"
+        result.append(FieldSpec(name=name, storage=storage, text_type=TextType.Scalar(storage)))
+    return result
+
+
+pub def child_fields() -> list[FieldSpec]:
+    """Nested records have actual stored fields rather than flattened benchmark aliases."""
+    return [FieldSpec(name="postal", storage="string", text_type=TextType.Scalar("string"))]
+
+
+pub def member(spec: FieldSpec) -> Metadata:
+    """Complete required field metadata; optional None is a value, not a missing field."""
+    return Metadata.Map([
+        MetadataEntry(key="id", value=Metadata.Binary(encode_utf8(spec.name))),
+        MetadataEntry(key="name", value=Metadata.Text(spec.name)),
+        MetadataEntry(key="type", value=Metadata.Text(spec.storage)),
+        MetadataEntry(key="canonical", value=Metadata.Boolean(true)),
+        MetadataEntry(key="absent", value=Metadata.Text("required")),
+        MetadataEntry(key="properties", value=Metadata.Map([])),
+    ])
+
+
+pub def declaration(key: bytes, path: str, specs: list[FieldSpec]) -> Description:
+    """Build one inline description without reading or deriving it from encoded bytes."""
+    mut members: list[Metadata] = []
+    for spec in specs:
+        members.append(member(spec))
+    return Description(metadata=Metadata.Map([
+        MetadataEntry(key="kind", value=Metadata.Text("Record")),
+        MetadataEntry(key="nominal", value=Metadata.Binary(key)),
+        MetadataEntry(key="path", value=Metadata.Text(path)),
+        MetadataEntry(key="fields", value=Metadata.List(members)),
+        MetadataEntry(key="properties", value=Metadata.Map([])),
+    ]), mode=DescriptionMode.Inline)
+
+
+pub def descriptions(workload: str) -> list[Description]:
+    """Include the complete nested declaration even when a workload has no populated optional."""
+    mut result = [declaration(b"record\x00", "bench.Row", fields(workload))]
+    if workload == "nested":
+        result.append(declaration(b"childx\x00", "bench.Child", child_fields()))
+    return result
+
+
+pub def stored(name: str, value: Value) -> ValueField:
+    """All generated fields are canonical and explicitly present."""
+    return ValueField(identity=encode_utf8(name), canonical=true, absent=AbsentPolicy.Required, value=value)
+
+
+pub def row_value(workload: str, index: int, specs: list[FieldSpec]) -> Value:
+    """Use bounded repeated values so all six column encodings have valid representative inputs."""
+    if workload == "nested":
+        mut optional = Value.NoneValue
+        if index % 3 != 0:
+            optional = Value.Some([Value.Integer(str(index % 1000))])
+        return Value.Record([
+            stored("field0", Value.Integer(str(index))),
+            stored("field1", Value.List([Value.Integer(str(index)), Value.Integer(str(index + 1))])),
+            stored("field2", optional),
+            stored("field3", Value.Record([stored("postal", Value.Text("1011AB"))])),
+        ])
+    mut result: list[ValueField] = []
+    for position in range(len(specs)):
+        mut value = Value.Integer(str((index // 8 + position) % 4096))
+        if workload == "strings":
+            size = (index // 8 + position) % 128
+            value = Value.Text("x" * size + str((index // 8 + position) % 32))
+        result.append(stored(specs[position].name, value))
+    return Value.Record(result)
+
+
+pub def rows(workload: str, count: int) -> list[RowRecord]:
+    """Materialize binary format values; this stage is timed separately from encoding."""
+    specs = fields(workload)
+    mut result: list[RowRecord] = []
+    for index in range(count):
+        result.append(RowRecord(key=b"record\x00", value=row_value(workload, index, specs)))
+    return result
+
+
+pub def json_value(value: Value) -> Result[JsonValue, str]:
+    """Translate only the benchmark's common JSON-representable subset without dropping fields."""
+    match value:
+        Value.Integer(number) => return Ok(JsonValue.int(int(number)))
+        Value.Text(text) => return Ok(JsonValue.string(text))
+        Value.NoneValue => return Ok(JsonValue.null())
+        Value.Some(children) => return json_value(children[0])
+        Value.List(children) =>
+            mut result: list[JsonValue] = []
+            for child in children:
+                result.append(json_value(child)?)
+            return Ok(JsonValue.array(result))
+        Value.Record(members) =>
+            mut result: Dict[str, JsonValue] = {}
+            for field in members:
+                # The benchmark uses ASCII field identities identical to public names.
+                name = field.identity.decode("utf-8")?
+                result[name] = json_value(field.value)?
+            return Ok(JsonValue.object(result))
+        _ => return Err("benchmark value is outside the shared JSON subset")
+
+
+pub def json_rows(workload: str, count: int) -> Result[JsonValue, str]:
+    """Generate JSON independently; only one temporary format row exists at a time."""
+    specs = fields(workload)
+    mut result: list[JsonValue] = []
+    for index in range(count):
+        result.append(json_value(row_value(workload, index, specs))?)
+    return Ok(JsonValue.array(result))
+
+
+pub def text_value(value: Value, path: str = "bench.Row") -> Result[TextValue, str]:
+    """Translate common logical input into the text codec's separate owned representation."""
+    match value:
+        Value.Integer(number) => return Ok(TextValue.Integer("i64", number))
+        Value.Text(text) => return Ok(TextValue.Text(text))
+        Value.NoneValue => return Ok(TextValue.NoneValue)
+        Value.Some(children) => return Ok(TextValue.Some([text_value(children[0])?]))
+        Value.List(children) =>
+            mut result: list[TextValue] = []
+            for child in children:
+                result.append(text_value(child)?)
+            return Ok(TextValue.List(result))
+        Value.Record(members) =>
+            mut result: list[TextNamedValue] = []
+            for field in members:
+                name = field.identity.decode("utf-8")?
+                result.append(TextNamedValue(name=name, value=text_value(field.value, "bench.Child")?))
+            return Ok(TextValue.Record(path, result))
+        _ => return Err("benchmark value is outside the common text subset")
+
+
+pub def text_declaration(path: str, specs: list[FieldSpec]) -> TextDescription:
+    """Build an ordinary Record declaration with no application registration or metadata extras."""
+    mut members: list[TextField] = []
+    for spec in specs:
+        members.append(TextField(name=spec.name, storage_type=spec.text_type, absent=AbsentPolicy.Required, canonical=true, properties=[]))
+    return TextDescription(path=path, kind="Record", shape="Record", properties=[], fields=members, variants=[])
+
+
+pub def text_rows(workload: str, count: int) -> Result[TextDocument, str]:
+    """Generate text values without retaining a second complete binary Value tree."""
+    specs = fields(workload)
+    mut declarations = [text_declaration("bench.Row", specs)]
+    if workload == "nested":
+        declarations.append(text_declaration("bench.Child", child_fields()))
+    mut result: list[TextValue] = []
+    for index in range(count):
+        result.append(text_value(row_value(workload, index, specs))?)
+    return Ok(TextDocument(descriptions=declarations, values=result))
+
+
+pub def value_sum(value: Value) -> Result[int, str]:
+    """Consume every scalar for a cross-codec checksum; this work is labeled in scan timings."""
+    match value:
+        Value.Integer(number) => return Ok(int(number))
+        Value.Text(text) => return Ok(len(text))
+        Value.NoneValue => return Ok(0)
+        Value.Some(children) => return value_sum(children[0])
+        Value.List(children) =>
+            mut result = 0
+            for child in children:
+                result += value_sum(child)?
+            return Ok(result)
+        Value.Record(members) =>
+            mut result = 0
+            for member in members:
+                result += value_sum(member.value)?
+            return Ok(result)
+        _ => return Err("unsupported checksum value")

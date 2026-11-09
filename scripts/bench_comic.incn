@@ -1,0 +1,96 @@
+"""Sample one compiled codec benchmark's process tree, retaining failed and resource-limited runs."""
+
+from rust::std::env import args
+from rust::std::fs import File
+from rust::std::process import Command, Stdio, exit
+from rust::std::thread import sleep
+from rust::std::time import Duration, Instant
+from std.fs import Path
+from pub::incan_platform.probes import process_table
+from memory_budget import process_tree
+
+
+def main() -> None:
+    """Keep benchmark compilation outside the measured process tree."""
+    arguments = [str(argument) for argument in args()][1:]
+    match run(arguments):
+        Ok(code) => exit(code)
+        Err(message) =>
+            println(f"measurement failed: {message}")
+            exit(1)
+
+
+def positive(value: str) -> Result[int, str]:
+    """Reject malformed or oversized guard arguments before native integer conversion."""
+    if value == "" or len(value) > 9:
+        return Err("expected a positive integer with at most9 digits")
+    for character in value:
+        if character not in "0123456789":
+            return Err("expected a positive integer")
+    result = int(value)
+    if result < 1:
+        return Err("expected a positive integer")
+    return Ok(result)
+
+
+def run(arguments: list[str]) -> Result[int, str]:
+    """Write stages, sampled concurrent memory and observed kernel peak as distinct evidence."""
+    if len(arguments) < 5:
+        return Err("usage: bench_comic BINARY OUTPUT_PREFIX LIMIT_MIB SECONDS [benchmark arguments]")
+    executable, prefix = arguments[0], arguments[1]
+    limit = positive(arguments[2])? * 1048576
+    seconds = positive(arguments[3])?
+    Path(prefix).parent().mkdir(true, true).map_err((e) => e.message())?
+    log = File.create(prefix + ".stages.tsv").map_err((e) => str(e))?
+    errors = File.create(prefix + ".stderr.txt").map_err((e) => str(e))?
+    mut command = Command.new(executable)
+    for argument in arguments[4:]:
+        command.arg(argument)
+    command.stdin(Stdio.null()).stdout(log).stderr(errors)
+    started = Instant.now()
+    mut child = command.spawn().map_err((e) => str(e))?
+    root = int(child.id())
+    mut peak_tree = 0
+    mut peak_resident = 0
+    mut largest_kernel_peak = 0
+    mut peak_members = 0
+    mut samples = 0
+    mut status = 1
+    mut outcome = "exit"
+    mut timeline = "elapsed_ms\tprocesses\ttree_footprint\ttree_resident\tlargest_kernel_peak\n"
+    while true:
+        finished = child.try_wait().map_err((e) => str(e))?
+        members = process_tree(process_table()?, root)
+        mut footprint = 0
+        mut resident = 0
+        for member in members:
+            footprint += member.footprint
+            resident += member.resident
+            if member.lifetime_peak > largest_kernel_peak:
+                largest_kernel_peak = member.lifetime_peak
+        if footprint > peak_tree:
+            peak_tree = footprint
+        if resident > peak_resident:
+            peak_resident = resident
+        if len(members) > peak_members:
+            peak_members = len(members)
+        elapsed = int(started.elapsed().as_millis())
+        timeline += f"{elapsed}\t{len(members)}\t{footprint}\t{resident}\t{largest_kernel_peak}\n"
+        samples += 1
+        if let Some(finished_status) = finished:
+            status = finished_status.code().unwrap_or(1)
+            break
+        if footprint > limit or elapsed > seconds * 1000:
+            outcome = if footprint > limit: "memory_limit" else: "time_limit"
+            child.kill().map_err((e) => str(e))?
+            _ = child.wait().map_err((e) => str(e))?
+            status = 124
+            break
+        sleep(Duration.from_millis(10))
+    wall = started.elapsed().as_secs_f64()
+    summary = "outcome\texit_status\twall_seconds\tsampled_tree_peak_bytes\tsampled_tree_resident_bytes\tlargest_process_kernel_peak_bytes\tmax_processes\tsamples\n"
+    result = f"{outcome}\t{status}\t{wall}\t{peak_tree}\t{peak_resident}\t{largest_kernel_peak}\t{peak_members}\t{samples}\n"
+    Path(prefix + ".memory.tsv").write_text(summary + result, "utf-8", "strict", None).map_err((e) => e.message())?
+    Path(prefix + ".timeline.tsv").write_text(timeline, "utf-8", "strict", None).map_err((e) => e.message())?
+    println(result)
+    return Ok(status)
