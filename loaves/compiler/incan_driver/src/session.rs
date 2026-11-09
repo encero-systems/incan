@@ -22,6 +22,7 @@ use incan_frontend::contract_metadata::{
 use incan_frontend::hir::build_semantic_module_snapshot_v0;
 use incan_frontend::loaf_index::{LIBRARY_MANIFEST_EXTENSION, LoafIndex};
 use incan_frontend::parsed_module::ParsedModule;
+use incan_frontend::rust_abi_cache::{RustAbiCache, encode_rust_abi_cache};
 use incan_frontend::testing_markers::{TestingMarkerSemantics, testing_marker_semantics_from_manifest};
 use incan_frontend::typechecker::{TypeCheckInfo, TypeChecker};
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
@@ -219,7 +220,9 @@ impl CompilationSession {
             return Ok(());
         }
         let facts = source.facts(&uncovered).map_err(CliError::failure)?;
-        Arc::make_mut(&mut self.loaves).add_rust_facts(&uncovered, facts);
+        let encoded = encode_rust_abi_cache(&facts).map_err(CliError::failure)?;
+        let cache = RustAbiCache::decode_owned(encoded).map_err(CliError::failure)?;
+        Arc::make_mut(&mut self.loaves).add_rust_fact_cache(&uncovered, Arc::new(cache));
         Ok(())
     }
 
