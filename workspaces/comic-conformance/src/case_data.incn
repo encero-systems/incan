@@ -148,6 +148,17 @@ pub enum FixturePropertyKind(str):
     PropertyGroup = "property_group"
 
 
+pub enum FixtureScalarAlias(str):
+    """Legacy scalar spellings retained by independently pinned negative vectors."""
+
+    F64 = "f64"
+
+    pub def scalar_kind(self) -> ScalarKind:
+        """Map a fixture-only spelling to the shared scalar vocabulary."""
+        match self:
+            FixtureScalarAlias.F64 => return ScalarKind.Fp64
+
+
 pub def text(value: JsonValue, key: str) -> Result[str, str]:
     """Require one string; numeric expectations remain exact strings rather than JSON numbers."""
     return value.require(key).and_then((item) => item.expect_str()).map_err((error) => error.message())
