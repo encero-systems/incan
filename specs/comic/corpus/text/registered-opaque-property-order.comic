@@ -1,0 +1,1 @@
+example.Widget = Example.Widget { zeta = "last", alpha = "first", id: i64 }

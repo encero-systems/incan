@@ -1,0 +1,6 @@
+# Before
+example.Point = Record { x: i64, y: i64 }
+
+# Value
+example.Point << ( 1, # x
+ 2 ) # end

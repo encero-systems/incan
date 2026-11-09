@@ -205,6 +205,7 @@ nav:
               - std.graph: language/reference/stdlib/graph.md
               - std.hash: language/reference/stdlib/hash.md
               - std.io: language/reference/stdlib/io.md
+              - std.primitives.crumb: language/reference/stdlib/crumb.md
               - std.interop: language/reference/stdlib/interop.md
               - std.json: language/reference/stdlib/json.md
               - std.toml: language/reference/stdlib/toml.md

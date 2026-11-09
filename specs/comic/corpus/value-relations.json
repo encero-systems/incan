@@ -1,0 +1,224 @@
+{
+  "operation": "value_relation",
+  "profile": "crumb1",
+  "cases": [
+    {
+      "id": "signed-zero",
+      "left": {
+        "kind": "float",
+        "width": 64,
+        "bits": "0000000000000000"
+      },
+      "right": {
+        "kind": "float",
+        "width": 64,
+        "bits": "8000000000000000"
+      },
+      "expected": "distinct"
+    },
+    {
+      "id": "nan-normalization",
+      "left": {
+        "kind": "float",
+        "width": 64,
+        "bits": "7ff8000000000001"
+      },
+      "right": {
+        "kind": "float",
+        "width": 64,
+        "bits": "fff8000000000042"
+      },
+      "expected": "same"
+    },
+    {
+      "id": "float-widening",
+      "left": {
+        "kind": "float",
+        "width": 32,
+        "bits": "3fc00000"
+      },
+      "right": {
+        "kind": "float",
+        "width": 64,
+        "bits": "3ff8000000000000"
+      },
+      "expected": "same"
+    },
+    {
+      "id": "integer-widening",
+      "left": {
+        "kind": "int",
+        "type": "i32",
+        "value": "2147483647"
+      },
+      "right": {
+        "kind": "int",
+        "type": "i64",
+        "value": "2147483647"
+      },
+      "expected": "same"
+    },
+    {
+      "id": "large-integer-exact",
+      "left": {
+        "kind": "int",
+        "type": "i64",
+        "value": "9007199254740992"
+      },
+      "right": {
+        "kind": "int",
+        "type": "i64",
+        "value": "9007199254740993"
+      },
+      "expected": "distinct"
+    },
+    {
+      "id": "unicode-not-normalized",
+      "left": {
+        "kind": "string",
+        "value": "é"
+      },
+      "right": {
+        "kind": "string",
+        "value": "é"
+      },
+      "expected": "distinct"
+    },
+    {
+      "id": "outer-versus-inner-absence",
+      "left": {
+        "kind": "none"
+      },
+      "right": {
+        "kind": "some",
+        "value": {
+          "kind": "none"
+        }
+      },
+      "expected": "distinct"
+    },
+    {
+      "id": "optional-present",
+      "left": {
+        "kind": "int",
+        "type": "i64",
+        "value": "7"
+      },
+      "right": {
+        "kind": "some",
+        "value": {
+          "kind": "int",
+          "type": "i64",
+          "value": "7"
+        }
+      },
+      "expected": "same"
+    },
+    {
+      "id": "nested-present",
+      "left": {
+        "kind": "some",
+        "value": {
+          "kind": "int",
+          "type": "i64",
+          "value": "7"
+        }
+      },
+      "right": {
+        "kind": "some",
+        "value": {
+          "kind": "some",
+          "value": {
+            "kind": "int",
+            "type": "i64",
+            "value": "7"
+          }
+        }
+      },
+      "expected": "same"
+    },
+    {
+      "id": "nested-absence-depth",
+      "left": {
+        "kind": "some",
+        "value": {
+          "kind": "none"
+        }
+      },
+      "right": {
+        "kind": "some",
+        "value": {
+          "kind": "some",
+          "value": {
+            "kind": "none"
+          }
+        }
+      },
+      "expected": "distinct"
+    },
+    {
+      "id": "sequence-order",
+      "left": {
+        "kind": "list",
+        "items": [
+          {
+            "kind": "int",
+            "type": "i64",
+            "value": "1"
+          },
+          {
+            "kind": "int",
+            "type": "i64",
+            "value": "2"
+          }
+        ]
+      },
+      "right": {
+        "kind": "list",
+        "items": [
+          {
+            "kind": "int",
+            "type": "i64",
+            "value": "2"
+          },
+          {
+            "kind": "int",
+            "type": "i64",
+            "value": "1"
+          }
+        ]
+      },
+      "expected": "distinct"
+    },
+    {
+      "id": "reference-not-contents",
+      "left": {
+        "kind": "reference",
+        "target_type": "example.Customer",
+        "identity": "customer-7",
+        "observed_target": "revision-a"
+      },
+      "right": {
+        "kind": "reference",
+        "target_type": "example.Customer",
+        "identity": "customer-7",
+        "observed_target": "revision-b"
+      },
+      "expected": "same"
+    },
+    {
+      "id": "reference-identity",
+      "left": {
+        "kind": "reference",
+        "target_type": "example.Customer",
+        "identity": "customer-7"
+      },
+      "right": {
+        "kind": "reference",
+        "target_type": "example.Customer",
+        "identity": "customer-8"
+      },
+      "expected": "distinct"
+    }
+  ]
+}

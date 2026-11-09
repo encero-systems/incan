@@ -1,0 +1,99 @@
+"""Derive member and nominal identities, and frame closed selectors without consulting a registry."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.framing import encode_unsigned, frame
+from crate.primitives.crumb.types import TypeNode
+from crate.primitives.crumb.spelling import selector_spelling
+from crate.primitives.hash import sha256
+from crate.primitives.text import encode_utf8
+
+
+pub def member_identity(earliest_name: str, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Return SHA-256(UTF-8 earliest name)[:6], without normalization, prefix or terminator."""
+    for _ in range(4):
+        budget.charge_bytes(len(earliest_name))?
+    data = encode_utf8(earliest_name)
+    budget.charge_bytes(38)?
+    return Ok(sha256.digest(data)[:6])
+
+
+pub def declaration_identity(
+    registry: str,
+    package: str,
+    earliest_path: str,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """
+    Hash three zero-terminated UTF-8 components, refusing an embedded terminator.
+
+    The result is an identity under this binding scheme, never proof of registry authority.
+    """
+    data = declaration_preimage(registry, package, earliest_path, budget)?
+    budget.charge_bytes(38)?
+    return Ok(sha256.digest(data)[:6])
+
+
+pub def declaration_preimage(
+    registry: str,
+    package: str,
+    earliest_path: str,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """Return the binding identity's exact three-component preimage, independent of crumb1 domains."""
+    mut output: list[u8] = []
+    for component in [registry, package, earliest_path]:
+        for _ in range(4):
+            budget.charge_bytes(len(component))?
+        data = encode_utf8(component)
+        budget.charge_elements(len(data))?
+        for byte in data:
+            if byte == 0:
+                return Err(CrumbError.invalid_input("nominal identity terminator"))
+        append_bytes(output, data, budget)?
+        append_bytes(output, b"\x00", budget)?
+    return Ok(output)
+
+
+pub def closed_selector(node: TypeNode, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """
+    Construct K from a nominal node with closed arguments; binding arity is checked separately.
+
+    1. Validate the complete N spelling, including every nested argument.
+    2. Frame the declaration identity, argument count and exact argument spellings.
+    """
+    # 1. No unresolved parameter, malformed identity or unknown scalar may cross this boundary.
+    selector_spelling(node, budget)?
+    match node:
+        TypeNode.Nominal(_, identity, arguments) =>
+            # 2. Arguments are framed individually; parameter names never enter K.
+            mut output: list[u8] = []
+            append_bytes(output, identity, budget)?
+            append_bytes(output, encode_unsigned(str(len(arguments)), budget)?, budget)?
+            for argument in arguments:
+                spelling = selector_spelling(argument, budget)?
+                append_bytes(output, frame(encode_utf8(spelling), budget)?, budget)?
+            return Ok(output)
+        TypeNode.Underlying(target) =>
+            if len(target) != 1:
+                return Err(CrumbError.invalid_input("underlying type arity"))
+            return closed_selector(target[0], budget)
+        _ => return Err(CrumbError.invalid_input("nominal selector required"))
+
+
+pub def check_arity(node: TypeNode, expected: int) -> Result[None, CrumbError]:
+    """Check the argument count against the binding's independently supplied declaration contract."""
+    match node:
+        TypeNode.Nominal(_, _, arguments) =>
+            if expected < 0 or len(arguments) != expected:
+                return Err(CrumbError.invalid_input("nominal parameter arity"))
+            return Ok(None)
+        _ => return Err(CrumbError.invalid_input("nominal selector required"))
+
+
+def append_bytes(mut output: list[u8], value: bytes, mut budget: Budget) -> Result[None, CrumbError]:
+    """Charge each owned append before copying; the source already consists of octets."""
+    budget.charge_bytes(len(value))?
+    for byte in value:
+        output.append(byte.saturating_resize[u8]())
+    return Ok(None)

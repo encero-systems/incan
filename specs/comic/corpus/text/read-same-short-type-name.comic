@@ -1,0 +1,7 @@
+a.Id = Record { value: i64 }
+
+b.Id = Record { value: i64 }
+
+example.Value = Record { value: a.Id | b.Id }
+
+example.Value << (value=a.Id << (3))

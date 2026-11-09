@@ -1,0 +1,38 @@
+"""Execute the pinned corpus, retaining failures and unsupported operations in the receipt."""
+
+from rust::std::env import args
+from rust::std::process import exit
+from std.fs import Path
+from corpus import inventory, load
+from execute import run
+
+
+def main() -> None:
+    """Inventory exits 0; execution exits 1 on failure, 3 if incomplete, or 0 only when complete."""
+    arguments = [argument for argument in args()]
+    if len(arguments) < 2 or len(arguments) > 3:
+        println("usage: comic-conformance MANIFEST [--inventory]")
+        exit(2)
+    inventory_only = len(arguments) == 3 and arguments[2] == "--inventory"
+    if len(arguments) == 3 and not inventory_only:
+        println("unknown option")
+        exit(2)
+    match load(Path(arguments[1])):
+        Err(error) =>
+            println(f"FAILED: {error}")
+            exit(1)
+        Ok(corpus) =>
+            if inventory_only:
+                match inventory(corpus).to_json():
+                    Err(error) =>
+                        println(f"FAILED: {error.message()}")
+                        exit(1)
+                    Ok(receipt) => println(receipt)
+                exit(0)
+            report = run(corpus)
+            match report.document.to_json():
+                Err(error) =>
+                    println(f"FAILED: {error.message()}")
+                    exit(1)
+                Ok(receipt) => println(receipt)
+            exit(report.exit_code)
