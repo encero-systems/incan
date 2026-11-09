@@ -229,7 +229,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let value = self.lower_expr_to_operand(value, scope, out);
         let ty = self.resolve_ty(span);
         self.push_assign_temp(
-            bir::Rvalue::IsInstance {
+            bir::Rvalue::IsInstance(Box::new(bir::IsInstanceRvalue {
                 value,
                 value_ty,
                 target: bir::IsInstanceTarget {
@@ -237,7 +237,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     canonical: target.canonical.clone(),
                     span: target_span,
                 },
-            },
+            })),
             ty,
             scope,
             call_span,

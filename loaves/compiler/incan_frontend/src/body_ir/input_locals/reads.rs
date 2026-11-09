@@ -37,7 +37,7 @@ impl BodyBuilder<'_, '_> {
                         .place
                         .local_id()
                         .and_then(|id| self.locals.get(id.index()))
-                        .and_then(|local| local.identity.as_ref())
+                        .and_then(|local| local.identity.as_deref())
                         .ok_or("local alias has no canonical physical owner")?;
                     let mut fields = Vec::new();
                     let mut elements = Vec::new();

@@ -167,7 +167,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.declare_new_local_with_reads(name.clone(), outer_ty, closure_scope, hir_span_value, total_reads);
             self.locals[capture_local.index()].origin = bir::LocalOrigin::Captured;
             if let Some(identity) = identity {
-                self.locals[capture_local.index()].identity = Some(identity.clone());
+                self.locals[capture_local.index()].identity = Some(Box::new(identity.clone()));
                 self.identity_bindings.insert(identity, capture_local);
             }
             capture_locals.push(capture_local);
@@ -258,7 +258,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(outer_local) = self.bindings.get(name).copied() {
             let ty = self.locals[outer_local.index()].ty.clone();
             let place = bir::Place::from_local(outer_local);
-            let identity = self.locals[outer_local.index()].identity.clone();
+            let identity = self.locals[outer_local.index()].identity.as_deref().cloned();
             let (mut fact, mut last_use) = self.ownership_fact_for_place(&place, &ty);
             if identity.as_ref().is_some_and(|identity| {
                 self.input_body

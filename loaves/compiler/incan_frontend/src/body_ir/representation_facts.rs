@@ -165,7 +165,7 @@ fn retain_residual_types(statements: &mut [bir::Statement]) {
     for statement in statements {
         match &mut statement.kind {
             bir::StatementKind::Assign { place, rvalue } => {
-                if !matches!(rvalue, bir::Rvalue::IsInstance { .. }) {
+                if !matches!(rvalue, bir::Rvalue::IsInstance(_)) {
                     residuals.clear();
                     tests.clear();
                     continue;
@@ -174,20 +174,17 @@ fn retain_residual_types(statements: &mut [bir::Statement]) {
                     residuals.remove(&local);
                     tests.retain(|condition, (source, _, _)| *condition != local && *source != local);
                 }
-                if let bir::Rvalue::IsInstance {
-                    value: bir::Operand::Place(read),
-                    value_ty,
-                    target,
-                } = rvalue
+                if let bir::Rvalue::IsInstance(payload) = rvalue
+                    && let bir::Operand::Place(read) = &payload.value
                 {
                     if !read.place.projection.is_empty() || !place.projection.is_empty() {
                         continue;
                     }
                     if let (Some(source), Some(output)) = (read.place.local_id(), place.local_id()) {
                         if let Some(residual) = residuals.get(&source) {
-                            *value_ty = residual.clone();
+                            payload.value_ty = residual.clone();
                         }
-                        tests.insert(output, (source, value_ty.clone(), target.ty.clone()));
+                        tests.insert(output, (source, payload.value_ty.clone(), payload.target.ty.clone()));
                     }
                 }
             }

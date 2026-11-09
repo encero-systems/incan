@@ -818,9 +818,10 @@ fn shared_statement(statement: &bir::Statement, context: &ReadContext<'_>) -> bo
 fn shared_rvalue(value: &bir::Rvalue, context: &ReadContext<'_>) -> bool {
     let local = context.local;
     match value {
-        bir::Rvalue::Use(value) | bir::Rvalue::UnaryOp(_, value) | bir::Rvalue::IsInstance { value, .. } => {
+        bir::Rvalue::Use(value) | bir::Rvalue::UnaryOp(_, value) => {
             !uses(value, local) || scalar_projection(value, local)
         }
+        bir::Rvalue::IsInstance(payload) => !uses(&payload.value, local) || scalar_projection(&payload.value, local),
         bir::Rvalue::BinaryOp(operator, left, right) => {
             let comparison = matches!(
                 operator,
