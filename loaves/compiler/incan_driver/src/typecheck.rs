@@ -118,6 +118,18 @@ pub fn typecheck_modules(
             checker.set_current_package_identity(package.map(str::to_owned));
             register_module_path_segments(&mut checker, modules);
             checker.set_loaves(Arc::clone(loaves));
+            let mut not_prepared = unit
+                .not_prepared_loaves
+                .iter()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>();
+            not_prepared.extend(
+                unit.loaves
+                    .iter()
+                    .filter(|loaf| unit.not_prepared_loaves.contains(&loaf.name))
+                    .flat_map(|loaf| [loaf.key.clone(), loaf.name.clone()]),
+            );
+            checker.set_not_prepared_loaves(not_prepared);
             if let Some(policy) = own_standard_package {
                 checker.set_own_standard_package(policy);
             }

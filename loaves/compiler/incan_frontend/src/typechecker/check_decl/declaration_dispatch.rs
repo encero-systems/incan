@@ -47,6 +47,7 @@ impl TypeChecker {
                 self.check_function(func, decl.span);
             }
             Declaration::TestModule(test_module) => self.check_test_module(test_module),
+            Declaration::VocabBlock(block) if block.not_checked => {}
             Declaration::VocabBlock(_) => self.errors.push(CompileError::syntax(
                 "raw vocabulary declarations must be desugared before type checking".to_string(),
                 decl.span,

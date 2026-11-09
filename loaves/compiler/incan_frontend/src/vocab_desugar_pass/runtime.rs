@@ -218,6 +218,12 @@ impl NativeDesugarerRuntime {
     ) -> Result<Option<Output>, VocabDesugarPassError> {
         let provider = self.provider(loaves, block)?;
         let failure = |message| native_error(&provider, message);
+        if !self.covered_by.contains_key(&provider.name) {
+            self.record(&provider, module.unwrap_or(""), "not-trusted");
+            return Err(VocabDesugarPassError::NotTrusted {
+                provider: provider.name,
+            });
+        }
         if !self.admitted.contains(&provider.identity) {
             self.record(&provider, module.unwrap_or(""), "denied");
             return Err(failure(
@@ -433,7 +439,7 @@ impl NativeDesugarerRuntime {
             .strip_prefix(&self.project_root)
             .unwrap_or_else(|_| Path::new(path.file_name().unwrap_or_default()))
             .to_string_lossy();
-        let admitted = decision != "denied";
+        let admitted = !matches!(decision, "denied" | "not-trusted");
         let covered_by = self.covered_by.get(&provider.name).cloned().unwrap_or_default();
         self.evidence
             .push(json!({"provider": provider.name, "unit_identity": provider.identity,
