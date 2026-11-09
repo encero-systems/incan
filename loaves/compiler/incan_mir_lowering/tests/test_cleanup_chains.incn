@@ -37,7 +37,16 @@ def empty_program_context() -> ProgramContext:
     unions: BTreeSet[RustType] = BTreeSet.new()
     nominals: list[NominalDeclaration] = []
     named: BTreeMap[str, list[int]] = BTreeMap.new()
-    constructors = ConstructorIndex(owners={}, generic_owners={}, named=named, count=0)
+    files: BTreeMap[str, str] = BTreeMap.new()
+    versions: BTreeMap[str, str] = BTreeMap.new()
+    constructors = ConstructorIndex(
+        owners={},
+        generic_owners={},
+        named=named,
+        source_files=files,
+        package_versions=versions,
+        count=0,
+    )
     enums: list[RustEnumDeclaration] = []
     value_enums: list[ValueEnumDeclaration] = []
     bindings: list[DecoratedBinding] = []

@@ -336,6 +336,32 @@ impl TypeChecker {
         fixed_array(actual) && fixed_array(expected) && actual != expected
     }
 
+    /// Return whether projected source wrappers contain the open-to-exact fixed-array relation that needs projection.
+    /// Other nested generic constructors retain their native target so projection cannot discard inner arguments.
+    pub(super) fn rust_call_arg_wants_projected_fixed_array_expectation(
+        arg_ty: &ResolvedType,
+        target_ty: &ResolvedType,
+    ) -> bool {
+        if Self::rust_call_arg_wants_fixed_array_expectation(arg_ty, target_ty) {
+            return true;
+        }
+        match (arg_ty, target_ty) {
+            (ResolvedType::Generic(actual, actual_args), ResolvedType::Generic(expected, expected_args))
+                if actual == expected && actual_args.len() == expected_args.len() =>
+            {
+                actual_args.iter().zip(expected_args).any(|(actual, expected)| {
+                    Self::rust_call_arg_wants_projected_fixed_array_expectation(actual, expected)
+                })
+            }
+            (ResolvedType::Tuple(actual), ResolvedType::Tuple(expected)) if actual.len() == expected.len() => {
+                actual.iter().zip(expected).any(|(actual, expected)| {
+                    Self::rust_call_arg_wants_projected_fixed_array_expectation(actual, expected)
+                })
+            }
+            _ => false,
+        }
+    }
+
     /// Validate a Rust method call (`receiver.method(...)`) against metadata and record required arg coercions.
     ///
     /// The receiver is already validated by access resolution; this function validates only post-receiver parameters.
