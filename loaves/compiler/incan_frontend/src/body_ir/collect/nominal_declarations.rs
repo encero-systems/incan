@@ -81,7 +81,9 @@ pub(in crate::body_ir) fn collect_local_enum_declarations(
 ///
 /// Constructor argument binding already comes from the typechecker; this adds only the source-local declaration
 /// identity and canonical raw field order the direct runtime otherwise could not establish without reopening AST or
-/// typechecker state. This deliberately does not retain a general nominal registry.
+/// typechecker state. An authenticated native-backed declaration retains the same physical owner while its provider
+/// builds as when a consumer imports it; equal-spelled ordinary declarations keep their authored layouts. This uses
+/// the existing exact-owner bridge, not a general nominal registry.
 pub(in crate::body_ir) fn collect_local_nominal_declarations(
     program: &ast::Program,
     module_identity: &str,
@@ -138,7 +140,7 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
             let validated_constructor = validated_constructor(&declaration.node, &canonical, type_info);
             let retained = bir::NominalDeclaration {
                 trait_adoptions: checked_trait_adoptions(name, &type_parameters, type_info),
-                native_item: String::new(),
+                native_item: bir::native_nominal_item(&canonical).unwrap_or_default(),
                 class_inheritance: None,
                 native_type_arguments: Vec::new(),
                 direct_declaration_id: CompilerNodeId::declaration_at(module_identity, declaration.span),
