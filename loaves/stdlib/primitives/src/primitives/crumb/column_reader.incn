@@ -1,0 +1,218 @@
+"""Finite column envelopes are fully admitted before any records or projections escape."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.column_directory import FixedTable, read_table, group_index, prefix_at, locate
+from crate.primitives.crumb.column_errors import ColumnError, ColumnFailure, failure, shared, primitive
+from crate.primitives.crumb.column_group_read import GroupData, read_group, group_value
+from crate.primitives.crumb.column_projection import ColumnField, project
+from crate.primitives.crumb.column_types import BlockEncoding, ColumnChoice, GroupChoice
+from crate.primitives.crumb.hashes import start_seal, append_seal
+from crate.primitives.crumb.registrations import KindRegistry
+from crate.primitives.crumb.row_cursor import RowCursor, copied
+from crate.primitives.crumb.row_description_read import read_dictionary
+from crate.primitives.crumb.row_descriptions import Description
+from crate.primitives.crumb.row_dictionary import Dictionary
+from crate.primitives.crumb.row_errors import RowFailure, failure as row_failure
+from crate.primitives.crumb.row_index import selected
+from crate.primitives.crumb.row_metadata import charge_copy
+from crate.primitives.crumb.row_writer import RowRecord
+from crate.primitives.crumb.values import Value
+from crate.primitives.views import MappedView
+
+
+pub class ColumnSet:
+    """Admitted immutable backing, complete written descriptions and bounded indexes."""
+
+    dictionary: Dictionary
+    prefixes: FixedTable
+    groups: list[GroupData]
+    backing: MappedView
+    sealed: bool
+
+    pub def len(self) -> int:
+        """Return the logical record count, including zero-field instances."""
+        return self.prefixes.final
+
+    pub def is_sealed(self) -> bool:
+        """True means the complete logical seal was verified."""
+        return self.sealed
+
+    pub def descriptions(self, mut budget: Budget) -> Result[list[Description], ColumnError]:
+        """Copy descriptions and original modes for explicit original-shape re-encoding."""
+        mut result: list[Description] = []
+        for description in self.dictionary.entries:
+            charge_copy(description.source.metadata, budget).map_err((e) => primitive(e, 0))?
+            result.append(description.source)
+        return Ok(result)
+
+    pub def choices(self, mut budget: Budget) -> Result[list[GroupChoice], ColumnError]:
+        """Retain original physical choices; logical equality alone cannot reproduce physical bytes."""
+        mut result: list[GroupChoice] = []
+        for group in self.groups:
+            budget.charge_elements(1).map_err((e) => primitive(e, 0))?
+            mut columns: list[ColumnChoice] = []
+            for column in group.columns:
+                budget.charge_elements(1).map_err((e) => primitive(e, 0))?
+                mut blocks: list[BlockEncoding] = []
+                for block in column.blocks:
+                    budget.charge_elements(1).map_err((e) => primitive(e, block.origin))?
+                    blocks.append(encoding_choice(block.encoding, block.origin)?)
+                columns.append(ColumnChoice(blocks=blocks))
+            result.append(GroupChoice(columns=columns))
+        return Ok(result)
+
+    pub def read_record(self, index: int, mut budget: Budget) -> Result[RowRecord, ColumnError]:
+        """Decode one format record without application constructors or normalization."""
+        group = locate(self.prefixes, index, budget)?
+        position = index - prefix_at(self.prefixes, group, budget)?
+        value = group_value(self.groups[group], position, self.dictionary, budget)?
+        budget
+            .charge_bytes(len(self.dictionary.entries[self.groups[group].description].key))
+            .map_err((e) => primitive(e, 0))?
+        return Ok(RowRecord(key=self.dictionary.entries[self.groups[group].description].key, value=value))
+
+    pub def field(self, index: int, identity: bytes, mut budget: Budget) -> Result[ColumnField, ColumnError]:
+        """Retain selected backing and copied type facts independently of the set's scope."""
+        group = locate(self.prefixes, index, budget)?
+        position = index - prefix_at(self.prefixes, group, budget)?
+        for description in self.dictionary.entries:
+            charge_copy(description.source.metadata, budget).map_err((e) => primitive(e, 0))?
+        return project(self.groups[group], position, identity, self.dictionary, budget)
+
+    pub def read_field(self, index: int, identity: bytes, mut budget: Budget) -> Result[Value, ColumnError]:
+        """An unknown identity is distinct from a valid field's declared absence."""
+        handle = self.field(index, identity, budget)?
+        return handle.read(budget)
+
+
+pub def read_columns(
+    view: MappedView,
+    supplied: list[Description],
+    registry: KindRegistry,
+    require_sealed: bool,
+    mut budget: Budget,
+) -> Result[ColumnSet, ColumnError]:
+    """Admit exactly one envelope, refusing any trailing bytes."""
+    result, _ = read_envelope(view, supplied, registry, require_sealed, true, budget)?
+    return Ok(result)
+
+
+pub def read_prefix(
+    view: MappedView,
+    supplied: list[Description],
+    registry: KindRegistry,
+    require_sealed: bool,
+    mut budget: Budget,
+) -> Result[tuple[ColumnSet, int], ColumnError]:
+    """Admit one complete leading envelope and report consumed bytes to an explicit stream caller."""
+    return read_envelope(view, supplied, registry, require_sealed, false, budget)
+
+
+def read_envelope(
+    view: MappedView,
+    supplied: list[Description],
+    registry: KindRegistry,
+    require_sealed: bool,
+    exact: bool,
+    mut budget: Budget,
+) -> Result[tuple[ColumnSet, int], ColumnError]:
+    """Validate complete descriptions, every cell and any logical seal before exposure."""
+    mut cursor = RowCursor.create(view).map_err(shared)?
+    magic = copied(cursor.take(4, budget).map_err(shared)?, 0, budget).map_err(shared)?
+    if magic != b"CRMB":
+        return Err(shared(row_failure(RowFailure.BadMagic, 0)))
+    codec = cursor.length(budget).map_err(shared)?
+    profile = cursor.length(budget).map_err(shared)?
+    if codec != 2 or profile != 1:
+        return Err(shared(row_failure(RowFailure.UnsupportedProfile, 4)))
+    flags = cursor.byte(budget).map_err(shared)?
+    if flags & 254 != 0:
+        return Err(shared(row_failure(RowFailure.ReservedFlags, cursor.absolute() - 1)))
+    payload = cursor.frame(budget).map_err(shared)?
+    origin = cursor.absolute() - payload.len()
+    if exact:
+        cursor.finished().map_err(shared)?
+    sealed = flags == 1
+    if require_sealed and not sealed:
+        return Err(shared(row_failure(RowFailure.SealRequired, 6)))
+    mut body = RowCursor.create(payload, origin).map_err(shared)?
+    dictionary = read_dictionary(body, supplied, registry, budget).map_err(shared)?
+    prefixes, groups = read_groups(body, dictionary, budget)?
+    if sealed:
+        verify_seal(body, prefixes.final, groups, dictionary, budget)?
+    body.finished().map_err(shared)?
+    consumed = cursor.consumed()
+    match view.slice(0, consumed):
+        None => return Err(shared(row_failure(RowFailure.Truncated, consumed)))
+        Some(backing) =>
+            return Ok(
+                (ColumnSet(dictionary=dictionary, prefixes=prefixes, groups=groups, backing=backing, sealed=sealed), consumed),
+            )
+
+
+def read_groups(
+    mut cursor: RowCursor,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[tuple[FixedTable, list[GroupData]], ColumnError]:
+    """All directories and unselected cells are admitted; zero-field rows still consume work."""
+    origin = cursor.absolute()
+    rows = cursor.length(budget).map_err(shared)?
+    count = cursor.length(budget).map_err(shared)?
+    budget.charge_elements(rows).map_err((e) => primitive(e, origin))?
+    if (rows == 0 and count != 0) or (rows != 0 and count == 0) or count > rows:
+        return Err(shared(row_failure(RowFailure.InvalidOffsets, origin)))
+    prefixes = read_table(cursor, count, true, budget)?
+    if prefixes.final != rows:
+        return Err(shared(row_failure(RowFailure.InvalidOffsets, prefixes.origin)))
+    directory = group_index(cursor, count, budget)?
+    mut groups: list[GroupData] = []
+    mut previous = -1
+    for index in range(count):
+        start = prefix_at(prefixes, index, budget)?
+        end = prefix_at(prefixes, index + 1, budget)?
+        raw, group_origin = selected(directory, index, budget).map_err(shared)?
+        group = read_group(raw, group_origin, end - start, dictionary, budget)?
+        if previous == group.description:
+            return Err(failure(ColumnFailure.NonmaximalGroup, group_origin))
+        previous = group.description
+        budget.charge_bytes(64).map_err((e) => primitive(e, group_origin))?
+        groups.append(group)
+    return Ok((prefixes, groups))
+
+
+def verify_seal(
+    mut cursor: RowCursor,
+    count: int,
+    groups: list[GroupData],
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[None, ColumnError]:
+    """Hash logical record order, independently of physical codec/encoding choices."""
+    origin = cursor.absolute()
+    actual_count = cursor.length(budget).map_err(shared)?
+    if actual_count != count:
+        return Err(shared(row_failure(RowFailure.SealCount, origin)))
+    expected = copied(cursor.take(32, budget).map_err(shared)?, origin, budget).map_err(shared)?
+    mut seal = start_seal(count, budget).map_err((e) => primitive(e, origin))?
+    for group in groups:
+        for position in range(group.rows):
+            budget.charge_elements(1).map_err((e) => primitive(e, origin))?
+            value = group_value(group, position, dictionary, budget)?
+            append_seal(value, seal, budget).map_err((e) => primitive(e, origin))?
+    actual = seal.digest(budget).map_err((e) => primitive(e, origin))?
+    if actual != expected:
+        return Err(shared(row_failure(RowFailure.SealMismatch, origin)))
+    return Ok(None)
+
+
+def encoding_choice(value: int, origin: int) -> Result[BlockEncoding, ColumnError]:
+    """Translate only admitted physical IDs into the existing explicit writer choices."""
+    match value:
+        0 => return Ok(BlockEncoding.Indexed)
+        1 => return Ok(BlockEncoding.FrameOfReference)
+        2 => return Ok(BlockEncoding.ZigzagDelta)
+        3 => return Ok(BlockEncoding.Runs)
+        4 => return Ok(BlockEncoding.DictionaryPacked)
+        5 => return Ok(BlockEncoding.DictionaryRuns)
+        _ => return Err(failure(ColumnFailure.UnsupportedEncoding, origin))

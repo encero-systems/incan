@@ -8,7 +8,7 @@ incan run workspaces/comic-conformance/src/main.incn -- specs/comic/corpus/manif
 
 `--inventory` exits successfully only after those input checks. Its JSON receipt still says `status: incomplete`, with every unimplemented operation marked `unsupported`. It does **not** claim that those cases passed. Omitting `--inventory` runs every dispatch and exits 3 while any required operation is unsupported; an executed failure takes precedence and exits 1. A receipt distinguishes passed, failed and unsupported cases and records failure details. Invalid input, stale pins and duplicate identities exit 1; invalid command arguments exit 2.
 
-The runner executes member identities, nominal identity preimages and hashes, closed type selectors, written-shape refusals and adaptation comparisons from the corpus. Hash cases derive object, canonical, model, description and seal preimages and digests from logical input trees, comparing both with independent literals. Value-relation cases compare derived digests. Accepted adaptation cases check reconstructed values and all three declared object/canonical/model projection relations. Binary row cases execute complete decoding, typed refusal checks and original-shape re-encoding. Text and column codec operations remain explicitly unsupported. The bounded primitive has independent tests for nested records, enum payloads, union identity, recursive plans and shared limits. It must compare the implementation's output against the separately authored expectations; hashing a supplied expected preimage alone is not a hash-conformance test.
+The runner executes member identities, nominal identity preimages and hashes, closed type selectors, written-shape refusals and adaptation comparisons from the corpus. Hash cases derive object, canonical, model, description and seal preimages and digests from logical input trees, comparing both with independent literals. Value-relation cases compare derived digests. Accepted adaptation cases check reconstructed values and all three declared object/canonical/model projection relations. Binary row cases execute complete decoding, typed refusal checks and original-shape re-encoding. Text operations execute the COMIC parser and printer; column operations execute the finite column reader. The bounded primitive has independent tests for nested records, enum payloads, union identity, recursive plans and shared limits. It must compare the implementation's output against the separately authored expectations; hashing a supplied expected preimage alone is not a hash-conformance test.
 
 JSON and filesystem convenience APIs are dependencies of this test project only. The production Crumb foundation belongs to `std.primitives.crumb` and imports no higher-level standard package.
 
@@ -44,4 +44,14 @@ incan run workspaces/comic-conformance/src/write_columns_main.incn -- specs/comi
 
 The receipt compares 52 accepted block, dictionary, complete-column and envelope vectors. Logical values and complete descriptions come from the original corpus; the choice fixture supplies only group/column/block encoding IDs for the complete cases. Those IDs were transcribed from the independent literal framing, without using the production encoder or decoder. Expected bytes and manifest pins are unchanged.
 
-These are chosen-encoding comparisons, not a claim that different valid column encodings have identical bytes. `decoding_executed=false` is explicit. Negative decoder cases and actual decode/re-encode coverage remain the reader's responsibility; the main corpus still reports unsupported column operations until that implementation exists.
+These are chosen-encoding comparisons, not a claim that different valid column encodings have identical bytes. `decoding_executed=false` is explicit. The independent reader receipt below covers negative decoder cases and actual decode/re-encode behavior.
+
+## Binary column decoding
+
+```text
+incan run workspaces/comic-conformance/src/read_columns_main.incn -- specs/comic/corpus/manifest.json
+```
+
+The reader receipt requires all 107 column cases, 292 actual decode executions after expanding proper prefixes, and 52 original-choice decode/re-encode checks. Expected bytes and digests remain independent corpus literals. Accepted cases decode actual values, descriptions and choices, then pass those results to the writer; the adapter never echoes expected bytes as implementation output. Refusals compare typed categories, and setup failures remain test failures.
+
+Focused controls exercise independently retained packed-field handles, a small selected field beside a large unselected field, corruption in an unselected block, complete-prefix boundaries, bounded dictionary restart lookup, repeated-run expansion and reconstructed-prefix resource accounting. These are finite format-value operations. Generated application model reconstruction and transport streaming are not claimed.

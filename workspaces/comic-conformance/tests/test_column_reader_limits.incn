@@ -1,0 +1,98 @@
+"""Resource controls distinguish compact physical bytes from expanded logical storage and work."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.column_block_read import read_block
+from std.primitives.crumb.column_block_write import write_block
+from std.primitives.crumb.column_types import BlockEncoding
+from std.primitives.crumb.column_dictionary import build_keys, encode_keys
+from std.primitives.crumb.column_key_read import read_keys, key_at
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.row_dictionary import admit_dictionary
+from std.primitives.crumb.row_errors import RowFailure
+from std.primitives.crumb.row_buffer import RowBuffer
+from std.primitives.crumb.types import TypeNode, AbsentPolicy
+from std.primitives.crumb.values import Value
+from row_test_support import backing
+
+
+def test_expanded_runs_charge_payload_storage() -> Result[None, str]:
+    """One stored kilobyte repeated 256 times must not bypass a 64 KiB decoded-byte allowance."""
+    mut setup = Budget.create(bytes=16777216, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], setup).map_err((e) => e.message())?
+    dictionary = admit_dictionary([], registry, setup).map_err((e) => e.message())?
+    node = TypeNode.Scalar("binary")
+    payload: bytes = [1u8 for _ in range(1024)]
+    single = write_block(
+        node,
+        AbsentPolicy.Required,
+        [Value.Binary(payload)],
+        BlockEncoding.Runs,
+        None,
+        dictionary,
+        setup,
+    ).map_err((e) => e.message())?
+    repeated = write_block(
+        node,
+        AbsentPolicy.Required,
+        [Value.Binary(payload) for _ in range(256)],
+        BlockEncoding.Runs,
+        None,
+        dictionary,
+        setup,
+    ).map_err((e) => e.message())?
+    mut enough = Budget.create(bytes=65536, elements=1048576, depth=64).map_err((e) => e.message())?
+    read_block(node, AbsentPolicy.Required, 1, backing(single)?, 0, None, dictionary, enough).map_err((e) => e.message())?
+    mut limited = Budget.create(bytes=65536, elements=1048576, depth=64).map_err((e) => e.message())?
+    match read_block(node, AbsentPolicy.Required, 256, backing(repeated)?, 0, None, dictionary, limited):
+        Ok(_) => return Err("expanded repeated payload escaped byte accounting")
+        Err(error) =>
+            match error.cause:
+                Some(cause) =>
+                    assert cause.kind == RowFailure.LimitExceeded
+                None => return Err("expanded run refusal lost its resource cause")
+    return Ok(None)
+
+
+def test_dictionary_lookup_starts_at_its_restart() -> Result[None, str]:
+    """Code 299 remains accessible under a budget too small to reconstruct 300 earlier keys."""
+    mut setup = Budget.create(bytes=16777216, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], setup).map_err((e) => e.message())?
+    dictionary = admit_dictionary([], registry, setup).map_err((e) => e.message())?
+    node = TypeNode.Scalar("i16")
+    values = [Value.Integer(str(index)) for index in range(300)]
+    built = build_keys(node, values, dictionary, setup).map_err((e) => e.message())?
+    encoded = encode_keys(node, built, dictionary, setup).map_err((e) => e.message())?
+    keys = read_keys(node, backing(encoded)?, 0, dictionary, setup).map_err((e) => e.message())?
+    mut selected = Budget.create(bytes=4096, elements=4096, depth=64).map_err((e) => e.message())?
+    match key_at(keys, 299, dictionary, selected).map_err((e) => e.message())?:
+        Value.Integer(number) =>
+            assert number == "299"
+        _ => return Err("numeric dictionary lookup lost its type")
+    return Ok(None)
+
+
+def test_reconstructed_prefix_keys_consume_bytes() -> Result[None, str]:
+    """A small encoded suffix does not make its long reconstructed key free."""
+    mut setup = Budget.create(bytes=16777216, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], setup).map_err((e) => e.message())?
+    dictionary = admit_dictionary([], registry, setup).map_err((e) => e.message())?
+    node = TypeNode.Scalar("binary")
+    mut values: list[Value] = []
+    for index in range(16):
+        prefix: bytes = [1u8 for _ in range(4096)]
+        mut raw = RowBuffer.create()
+        raw.append(prefix, setup).map_err((e) => e.message())?
+        raw.octet(index, setup).map_err((e) => e.message())?
+        values.append(Value.Binary(raw.finish(setup).map_err((e) => e.message())?))
+    built = build_keys(node, values, dictionary, setup).map_err((e) => e.message())?
+    encoded = encode_keys(node, built, dictionary, setup).map_err((e) => e.message())?
+    assert len(encoded) < 8192
+    mut limited = Budget.create(bytes=65536, elements=1048576, depth=64).map_err((e) => e.message())?
+    match read_keys(node, backing(encoded)?, 0, dictionary, limited):
+        Ok(_) => return Err("reconstructed dictionary bytes escaped accounting")
+        Err(error) =>
+            match error.cause:
+                Some(cause) =>
+                    assert cause.kind == RowFailure.LimitExceeded
+                None => return Err("dictionary refusal lost its resource cause")
+    return Ok(None)

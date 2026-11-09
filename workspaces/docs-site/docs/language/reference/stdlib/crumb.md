@@ -256,7 +256,7 @@ An absent-policy optional cell omits its outer option tag. `field_view` returns 
 | `LimitExceeded` | Shared resource allowance or host representation exhausted. |
 | `MissingField`, `RecordIndex` | Invalid field identity/unknown field or a negative/out-of-range record lookup. |
 
-No failed finite admission exposes a partial set or unchecked view. The prefix API still requires a complete envelope; a paused transport is not successful completion. There is no column decoder, incremental record-yielding stream or generated model reconstruction in this surface.
+No failed finite admission exposes a partial set or unchecked view. The prefix API still requires a complete envelope; a paused transport is not successful completion. This row surface does not provide an incremental record-yielding stream or generated model reconstruction. The finite column reader is described below.
 
 ## COMIC text
 
@@ -321,4 +321,49 @@ Only the declared outer absence is removed. `Some(None)` remains present, a requ
 
 Every selected encoding has exact canonical bytes, but column bytes are not canonical across choices or writers. Two choices can encode the same records differently. The optional seal hashes ordered logical values exactly as the row codec does; it is independent of group packing, dictionaries and encoding IDs. It does not authenticate the sender.
 
-This finite writer transposes groups in memory under the shared request budget. It does not promise minimum-size encoding, streaming output, spooling, a column reader or native-array borrowing. Byte/work allowances are explicit protocol accounting rather than an exact allocator or resident-memory bound.
+This finite writer transposes groups in memory under the shared request budget. It does not promise minimum-size encoding, streaming output, spooling or native-array borrowing. Byte/work allowances are explicit protocol accounting rather than an exact allocator or resident-memory bound.
+
+## Finite column reader
+
+`std.primitives.crumb.column_reader` admits a complete experimental `crumb-columns/1` envelope before exposing a `ColumnSet`. Admission checks every block and dictionary, including unselected data, and verifies a supplied logical seal. Descriptions, typed cells and logical hashes use the same contracts as the row codec; no application model constructors or normalization hooks run.
+
+```incan
+from std.primitives.crumb.column_reader import ColumnSet, read_columns, read_prefix
+from std.primitives.crumb.column_projection import ColumnField
+from std.primitives.crumb.column_errors import ColumnError, ColumnFailure
+```
+
+| API | Return type | Contract |
+| --- | --- | --- |
+| `read_columns(view: MappedView, supplied: list[Description], registry: KindRegistry, require_sealed: bool, mut budget: Budget)` | `Result[ColumnSet, ColumnError]` | Admit exactly one complete envelope, rejecting trailing bytes. Every argument is explicit. |
+| `read_prefix(view: MappedView, supplied: list[Description], registry: KindRegistry, require_sealed: bool, mut budget: Budget)` | `Result[tuple[ColumnSet, int], ColumnError]` | Admit a complete leading envelope and return its consumed byte length. This is an explicit framed boundary, not transport completion or partial admission. |
+| `columns.len()` | `int` | Return the logical record count, including zero-field records. |
+| `columns.is_sealed()` | `bool` | Report successful complete logical-seal verification. |
+| `columns.descriptions(mut budget: Budget)` | `Result[list[Description], ColumnError]` | Copy complete descriptions and their original inline/reference modes. |
+| `columns.choices(mut budget: Budget)` | `Result[list[GroupChoice], ColumnError]` | Return admitted physical encoding choices for explicit original-shape re-encoding. |
+| `columns.read_record(index: int, mut budget: Budget)` | `Result[RowRecord, ColumnError]` | Materialize one format record and its nominal key. |
+| `columns.field(index: int, identity: bytes, mut budget: Budget)` | `Result[ColumnField, ColumnError]` | Retain the selected block, backing and type/dictionary facts independently of the set's scope. |
+| `columns.read_field(index: int, identity: bytes, mut budget: Budget)` | `Result[Value, ColumnError]` | Select and materialize one field. Unknown identities differ from valid declared absence. |
+| `field.read(mut budget: Budget)` | `Result[Value, ColumnError]` | Decode an independently retained selection under an explicit access budget. |
+
+Record positions are zero-based and field identities are six bytes. Group lookup binary-searches logical prefixes; a column selects its 256-position block directly. Packed values use addressed bits. Delta values replay at most the selected block's preceding deltas; runs scan only the selected block. Dictionary lookup begins at the selected 16-key restart. These are bounded accesses, not a constant-time claim for all representations. Root-enum columns contain complete enum cells, so selecting one payload field can decode that one enum value.
+
+Packed values do not necessarily occupy an independent byte slice. `ColumnField` therefore provides explicit decoding rather than pretending to be a native-array borrow or an encoded row-cell view. It retains the complete underlying allocation, and can keep a large envelope alive. Mapped-file contents must remain stable through the caller/store's own protocol; a retained mapping cannot prevent external writes. The set retains indexes and encoded backing rather than all decoded records. Admission temporarily materializes bounded blocks, and seal checking may revisit selected values within a block.
+
+Both admission and later access consume shared byte/work/depth allowances. Reconstructed dictionary prefixes and repeated run payloads are charged, not merely their compact physical bytes. Callers can supply fresh access budgets after admission. Allowances are conservative protocol accounting, not an exact allocator or resident-memory bound. Original-shape re-encoding uses both descriptions and `choices()`; equal logical records alone do not imply equal column bytes.
+
+### Column failures
+
+`ColumnError` contains `kind: ColumnFailure`, `offset: int`, `field: Option[bytes] = None`, `variant: Option[bytes] = None` and `cause: Option[RowError] = None`. Offsets are relative to the supplied view. Shared framing, description, cell, seal and resource refusals retain their typed row cause; field and variant context identifies the deepest available member. `message() -> str` reports categories and positions without input payloads.
+
+| `ColumnFailure` categories | Meaning |
+| --- | --- |
+| `Shared` | A preserved shared row failure, including resource exhaustion. |
+| `UnsupportedEncoding`, `EncodingType`, `EmptyEncoding` | Unknown encoding, incompatible stored type or non-indexed encoding for an all-absent block. |
+| `NonzeroPadding`, `NonminimalBits`, `NonminimalBase`, `NonminimalDelta`, `ValueOverflow` | Invalid packed padding, nonminimal numeric representation or reconstructed value outside its declared type. |
+| `RunLength`, `AdjacentRuns` | Invalid positive run counts/lengths, wrong total or redundant adjacent runs. |
+| `DictionaryCode`, `MissingDictionary`, `DictionaryMembership`, `UnusedDictionary` | Invalid code, unavailable keys, keys not exactly matching all column values or a dictionary without a code-encoded block. |
+| `NonmaximalPrefix`, `DictionaryOrder`, `InvalidPrefix`, `RestartOffset`, `RestartPrefix` | Nonminimal key encoding, unordered keys, invalid prefix or restart. |
+| `NonmaximalGroup`, `BlockCount` | Adjacent groups with the same nominal identity or an inconsistent block count. |
+
+A failed finite admission returns no partial set or unchecked selection. This surface does not provide incremental record yields, application model reconstruction or automatic typed-array borrowing.

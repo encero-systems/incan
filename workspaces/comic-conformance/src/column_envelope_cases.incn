@@ -1,0 +1,61 @@
+"""Actual column-envelope decoding and original-choice re-encoding."""
+
+from std.json import JsonValue
+from std.primitives.crumb import Budget
+from std.primitives.crumb.column_reader import ColumnSet, read_columns
+from std.primitives.crumb.column_writer import write_columns
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.row_descriptions import Description, DescriptionMode
+from std.primitives.crumb.row_writer import RowRecord
+from std.primitives.hex import hexlify
+from case_data import array, field, text
+from column_read_data import refusal, case_budget, same_values, require_accepted
+from hash_data import metadata
+from row_case_values import record_value
+from row_read_data import metadata_notation
+from row_test_support import backing
+
+
+pub def check_envelope(example: JsonValue, data: bytes) -> Result[bool, str]:
+    """Supplied descriptions are inputs; only production reader errors count as refusals."""
+    mut setup = Budget.create(bytes=67108864, elements=4194304, depth=128).map_err((e) => e.message())?
+    registry = KindRegistry.create([], setup).map_err((e) => e.message())?
+    mut supplied: list[Description] = []
+    if example.get("supplied_descriptions").is_some():
+        for item in array(example, "supplied_descriptions")?:
+            supplied.append(Description(metadata=metadata(item)?, mode=DescriptionMode.Reference))
+    mut require_sealed = false
+    if let Some(value) = example.get("require_sealed"):
+        require_sealed = value.expect_bool().map_err((e) => e.message())?
+    expected = field(example, "expected")?
+    mut budget = case_budget(example)?
+    match read_columns(backing(data)?, supplied, registry, require_sealed, budget):
+        Err(error) => return refusal(error, expected)
+        Ok(rows) =>
+            require_accepted(expected)?
+            return accepted(rows, expected, data)
+
+
+def accepted(rows: ColumnSet, expected: JsonValue, original: bytes) -> Result[bool, str]:
+    """Writer inputs come from the decoder, including physical choices and description modes."""
+    mut budget = Budget.create(bytes=134217728, elements=8388608, depth=128).map_err((e) => e.message())?
+    sealed = field(expected, "sealed")?.expect_bool().map_err((e) => e.message())?
+    wanted = array(expected, "records")?
+    if rows.len() != len(wanted) or rows.is_sealed() != sealed:
+        return Err("decoded record count or seal status differs")
+    descriptions = rows.descriptions(budget).map_err((e) => e.message())?
+    notation = [metadata_notation(description.metadata) for description in descriptions]
+    mut records: list[RowRecord] = []
+    for index in range(rows.len()):
+        actual = rows.read_record(index, budget).map_err((e) => e.message())?
+        if hexlify(actual.key) != text(wanted[index], "selector_hex")?:
+            return Err("decoded nominal selector differs")
+        expected_value = record_value(wanted[index], notation)?
+        same_values([actual.value], [expected_value], budget)?
+        records.append(actual)
+    choices = rows.choices(budget).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    encoded = write_columns(descriptions, records, registry, sealed, choices, budget).map_err((e) => e.message())?
+    if encoded != original:
+        return Err("decoded records and original physical choices did not reproduce the literal envelope")
+    return Ok(true)

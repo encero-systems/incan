@@ -1,0 +1,98 @@
+"""Group admission and logical record reconstruction from independently retained field columns."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.column_data_read import ColumnData, read_column, column_at
+from crate.primitives.crumb.column_errors import ColumnError, shared, primitive, in_field
+from crate.primitives.crumb.row_cursor import RowCursor
+from crate.primitives.crumb.row_dictionary import Dictionary
+from crate.primitives.crumb.row_errors import RowFailure, failure
+from crate.primitives.crumb.row_index import read_index, selected
+from crate.primitives.crumb.types import NominalKind, AbsentPolicy
+from crate.primitives.crumb.values import Value, ValueField
+from crate.primitives.views import MappedView
+
+
+pub model GroupData:
+    """Internal positive row run with admitted columns in written field-identity order."""
+
+    pub description: int
+    pub rows: int
+    pub columns: list[ColumnData]
+
+
+pub def read_group(
+    view: MappedView,
+    origin: int,
+    rows: int,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[GroupData, ColumnError]:
+    """Check every expected column, never treating a missing field column as declared absence."""
+    mut cursor = RowCursor.create(view, origin).map_err(shared)?
+    index = cursor.length(budget).map_err(shared)?
+    if index >= len(dictionary.entries):
+        return Err(shared(failure(RowFailure.DescriptionIndex, origin)))
+    mut count = len(dictionary.entries[index].fields)
+    if dictionary.entries[index].kind == NominalKind.Enum:
+        count = 1
+    directory = read_index(cursor, count, budget).map_err(shared)?
+    mut columns: list[ColumnData] = []
+    for position in range(count):
+        budget.charge_elements(1).map_err((e) => primitive(e, origin))?
+        raw, column_origin = selected(directory, position, budget).map_err(shared)?
+        if dictionary.entries[index].kind == NominalKind.Enum:
+            columns.append(
+                read_column(
+                    dictionary.entries[index].selector,
+                    AbsentPolicy.Required,
+                    rows,
+                    raw,
+                    column_origin,
+                    dictionary,
+                    budget,
+                )?,
+            )
+        else:
+            #2801: keep stored fields addressed through their descriptor place.
+            columns.append(
+                read_column(
+                    dictionary.entries[index].fields[position].shape.storage_type,
+                    dictionary.entries[index].fields[position].shape.absent,
+                    rows,
+                    raw,
+                    column_origin,
+                    dictionary,
+                    budget,
+                ).map_err((e) => in_field(e, dictionary.entries[index].fields[position].shape.identity))?,
+            )
+    return Ok(GroupData(description=index, rows=rows, columns=columns))
+
+
+pub def group_value(
+    group: GroupData,
+    position: int,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[Value, ColumnError]:
+    """Materialize one format value in logical field order, without application constructors or hooks."""
+    if position < 0 or position >= group.rows:
+        return Err(shared(failure(RowFailure.RecordIndex, 0)))
+    index = group.description
+    if dictionary.entries[index].kind == NominalKind.Enum:
+        return column_at(group.columns[0], position, dictionary, budget)
+    mut fields: list[ValueField] = []
+    for field_index in range(len(dictionary.entries[index].fields)):
+        budget.charge_elements(1).map_err((e) => primitive(e, 0))?
+        budget.charge_bytes(48).map_err((e) => primitive(e, 0))?
+        value = column_at(group.columns[field_index], position, dictionary, budget).map_err(
+            (e) => in_field(e, dictionary.entries[index].fields[field_index].shape.identity),
+        )?
+        fields.append(
+            ValueField(
+                identity=dictionary.entries[index].fields[field_index].shape.identity,
+                canonical=dictionary.entries[index].fields[field_index].shape.canonical,
+                absent=dictionary.entries[index].fields[field_index].shape.absent,
+                value=value,
+            ),
+        )
+    return Ok(Value.Record(fields))

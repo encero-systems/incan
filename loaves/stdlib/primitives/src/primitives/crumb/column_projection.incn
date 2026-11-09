@@ -1,0 +1,84 @@
+"""Independently retained selected field handles, including packed and enum-backed fields."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.column_block_data import BlockData
+from crate.primitives.crumb.column_block_read import block_at
+from crate.primitives.crumb.column_errors import ColumnError, shared, primitive, in_field
+from crate.primitives.crumb.column_group_read import GroupData
+from crate.primitives.crumb.column_key_read import ColumnKeys
+from crate.primitives.crumb.row_dictionary import Dictionary
+from crate.primitives.crumb.row_errors import RowFailure, failure
+from crate.primitives.crumb.types import TypeNode, AbsentPolicy, NominalKind
+from crate.primitives.crumb.values import Value, ValueField
+
+
+pub class ColumnField:
+    """A selected value's retained block/dictionary facts; packed values need decoding, not a fabricated byte slice."""
+
+    block: BlockData
+    node: TypeNode
+    absent: AbsentPolicy
+    keys: Option[ColumnKeys]
+    dictionary: Dictionary
+    position: int
+    identity: bytes
+    enum_field: bool
+
+    pub def read(self, mut budget: Budget) -> Result[Value, ColumnError]:
+        """Decode this field after the set can leave scope; every native range retains immutable backing."""
+        value = block_at(self.block, self.node, self.absent, self.keys, self.dictionary, self.position, budget).map_err(
+            (e) => in_field(e, self.identity),
+        )?
+        if self.enum_field:
+            match value:
+                Value.Enum(_, fields) => return enum_member(fields, self.identity, budget)
+                _ => return Err(shared(failure(RowFailure.InvalidCell, self.block.origin)))
+        return Ok(value)
+
+
+pub def project(
+    group: GroupData,
+    position: int,
+    identity: bytes,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[ColumnField, ColumnError]:
+    """Select a root field by its stored identity; unknown identities differ from valid absent values."""
+    if position < 0 or position >= group.rows:
+        return Err(shared(failure(RowFailure.RecordIndex, 0)))
+    index = group.description
+    mut selected = -1
+    is_enum = dictionary.entries[index].kind == NominalKind.Enum
+    if is_enum:
+        selected = 0
+    else:
+        for field_index in range(len(dictionary.entries[index].fields)):
+            budget.charge_elements(1).map_err((e) => primitive(e, 0))?
+            if dictionary.entries[index].fields[field_index].shape.identity == identity:
+                selected = field_index
+                break
+    if selected < 0:
+        return Err(shared(failure(RowFailure.MissingField, 0)))
+    budget.charge_bytes(128).map_err((e) => primitive(e, 0))?
+    result = ColumnField(
+        block=group.columns[selected].blocks[position // 256],
+        node=group.columns[selected].node,
+        absent=group.columns[selected].absent,
+        keys=group.columns[selected].keys,
+        dictionary=dictionary,
+        position=position % 256,
+        identity=identity,
+        enum_field=is_enum,
+    )
+    if is_enum:
+        result.read(budget)?
+    return Ok(result)
+
+
+def enum_member(fields: list[ValueField], identity: bytes, mut budget: Budget) -> Result[Value, ColumnError]:
+    """Root enums store a complete typed cell; finding one payload field may decode that one enum value."""
+    for field in fields:
+        budget.charge_elements(1).map_err((e) => primitive(e, 0))?
+        if field.identity == identity:
+            return Ok(field.value)
+    return Err(shared(failure(RowFailure.MissingField, 0)))

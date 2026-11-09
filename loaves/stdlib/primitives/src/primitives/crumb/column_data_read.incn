@@ -1,0 +1,107 @@
+"""Complete-column admission retains bounded blocks and exact shared dictionary membership."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.column_block_data import BlockData
+from crate.primitives.crumb.column_block_read import read_block, block_at
+from crate.primitives.crumb.column_data_write import block_count
+from crate.primitives.crumb.column_dictionary import key_id
+from crate.primitives.crumb.column_errors import ColumnError, ColumnFailure, failure, shared, primitive
+from crate.primitives.crumb.column_key_read import ColumnKeys, read_keys, key_at
+from crate.primitives.crumb.column_presence import cell_type, present
+from crate.primitives.crumb.row_cursor import RowCursor
+from crate.primitives.crumb.row_dictionary import Dictionary
+from crate.primitives.crumb.row_errors import RowFailure, failure as row_failure
+from crate.primitives.crumb.row_index import read_index, selected
+from crate.primitives.crumb.types import TypeNode, AbsentPolicy
+from crate.primitives.crumb.values import Value
+from crate.primitives.views import MappedView
+
+
+pub model ColumnData:
+    """Internal complete-column indexes, with no decoded record/model array retained."""
+
+    pub rows: int
+    pub node: TypeNode
+    pub absent: AbsentPolicy
+    pub keys: Option[ColumnKeys]
+    pub blocks: list[BlockData]
+
+
+pub def read_column(
+    node: TypeNode,
+    absent: AbsentPolicy,
+    rows: int,
+    view: MappedView,
+    origin: int,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[ColumnData, ColumnError]:
+    """Validate every block, including unprojected values and values using a different physical encoding."""
+    count = block_count(rows).map_err((e) => primitive(e, origin))?
+    stored_type = cell_type(node, absent, budget).map_err((e) => primitive(e, origin))?
+    mut cursor = RowCursor.create(view, origin).map_err(shared)?
+    mode = cursor.byte(budget).map_err(shared)?
+    if mode > 1:
+        return Err(failure(ColumnFailure.UnsupportedEncoding, origin))
+    mut keys: Option[ColumnKeys] = None
+    if mode == 1:
+        raw = cursor.frame(budget).map_err(shared)?
+        keys = Some(read_keys(stored_type, raw, cursor.absolute() - raw.len(), dictionary, budget)?)
+    directory = read_index(cursor, count, budget).map_err(shared)?
+    mut blocks: list[BlockData] = []
+    mut used: set[str] = set()
+    mut has_codes = false
+    for index in range(count):
+        budget.charge_elements(1).map_err((e) => primitive(e, origin))?
+        raw, block_origin = selected(directory, index, budget).map_err(shared)?
+        if raw.len() == 0:
+            return Err(shared(row_failure(RowFailure.InvalidOffsets, block_origin)))
+        length = min([256, rows - index * 256])
+        block, values = read_block(node, absent, length, raw, block_origin, keys, dictionary, budget)?
+        if block.encoding in [4, 5]:
+            has_codes = true
+        if mode == 1:
+            for value in values:
+                budget.charge_elements(1).map_err((e) => primitive(e, block_origin))?
+                # Keep propagation in a block arm beside pass; see compiler issue #2807.
+                observed = present(value, node, absent).map_err((e) => primitive(e, block_origin))?
+                match observed:
+                    None => pass
+                    Some(stored) =>
+                        identity = key_id(stored_type, stored, dictionary, budget).map_err(
+                            (e) => primitive(e, block_origin),
+                        )?
+                        used.add(identity)
+        budget.charge_bytes(128).map_err((e) => primitive(e, block_origin))?
+        blocks.append(block)
+    if let Some(admitted) = keys:
+        if not has_codes:
+            return Err(failure(ColumnFailure.UnusedDictionary, origin))
+        if len(used) != admitted.count:
+            return Err(failure(ColumnFailure.DictionaryMembership, origin))
+        for code in range(admitted.count):
+            value = key_at(admitted, code, dictionary, budget)?
+            identity = key_id(stored_type, value, dictionary, budget).map_err((e) => primitive(e, origin))?
+            if identity not in used:
+                return Err(failure(ColumnFailure.DictionaryMembership, origin))
+    return Ok(ColumnData(rows=rows, node=node, absent=absent, keys=keys, blocks=blocks))
+
+
+pub def column_at(
+    column: ColumnData,
+    position: int,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[Value, ColumnError]:
+    """Address one fixed-size block without decoding preceding blocks, then decode only its selected value."""
+    if position < 0 or position >= column.rows:
+        return Err(shared(row_failure(RowFailure.RecordIndex, 0)))
+    return block_at(
+        column.blocks[position // 256],
+        column.node,
+        column.absent,
+        column.keys,
+        dictionary,
+        position % 256,
+        budget,
+    )
