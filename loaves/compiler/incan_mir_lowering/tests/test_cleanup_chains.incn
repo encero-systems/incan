@@ -2,6 +2,7 @@
 
 from rust::std::collections import BTreeMap, BTreeSet
 from rust::std::sync import Arc
+from rust::incan_semantics_core import CanonicalSymbolId
 from rust::incan_semantics_core import IncanType as RustType
 from rust::incan_semantics_core::body_ir import (
     StaticDeclaration,
@@ -39,12 +40,14 @@ def empty_program_context() -> ProgramContext:
     named: BTreeMap[str, list[int]] = BTreeMap.new()
     files: BTreeMap[str, str] = BTreeMap.new()
     versions: BTreeMap[str, str] = BTreeMap.new()
+    validated: BTreeSet[CanonicalSymbolId] = BTreeSet.new()
     constructors = ConstructorIndex(
         owners={},
         generic_owners={},
         named=named,
         source_files=files,
         package_versions=versions,
+        validated_constructors=validated,
         count=0,
     )
     enums: list[RustEnumDeclaration] = []
