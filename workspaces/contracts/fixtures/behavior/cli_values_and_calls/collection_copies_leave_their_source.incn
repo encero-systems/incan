@@ -8,7 +8,7 @@
 #   4
 
 class Bag:
-    items: list[int]
+    pub items: list[int]
 
     pub def doubled(self) -> int:
         more = [*self.items, *self.items]

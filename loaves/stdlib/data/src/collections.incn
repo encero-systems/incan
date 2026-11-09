@@ -232,7 +232,69 @@ pub class OrdinalMap[K with (Clone, OrdinalKey)]:
         """Create an empty ordinal map."""
         empty: list[_OrdinalRecord[K]] = []
         key_encoding = _validate_ordinal_encoding_or_raise(K.ordinal_encoding())
-        return _ordinal_map_from_records(empty, -1, key_encoding)
+        return OrdinalMap._from_records(empty, -1, key_encoding)
+
+    @staticmethod
+    def _from_records(records: list[_OrdinalRecord[K]], max_ordinal: int, key_encoding: str) -> Self:
+        """Build private compact storage sections from validated ordinal records."""
+        canonical_records = _canonical_ordinal_records(records)
+        ordinal_width = _compact_width(max_ordinal)
+        key_offset_width = _compact_width(_total_key_record_bytes(canonical_records))
+        slot_count = _ordinal_slot_count(len(canonical_records))
+        slot_width = _compact_width(len(canonical_records) + 1)
+
+        mut keys: list[K] = []
+        mut key_byte_values: list[bytes] = []
+        mut key_records: list[u8] = []
+        mut key_offsets: list[u8] = []
+        mut ordinal_values: list[int] = []
+        mut ordinals: list[u8] = []
+        mut hash_values: list[int] = []
+        mut slots_values: list[int] = []
+        mut offset = 0
+        for _ in range(slot_count):
+            slots_values.append(0)
+        _append_compact_int(key_offsets, offset, key_offset_width)
+        for index in range(len(canonical_records)):
+            record = canonical_records[index]
+            keys.append(record.key)
+            key_byte_values.append(record.key_bytes)
+            _append_bytes(key_records, record.key_bytes)
+            offset += len(record.key_bytes)
+            _append_compact_int(key_offsets, offset, key_offset_width)
+            ordinal_values.append(record.ordinal)
+            _append_compact_int(ordinals, record.ordinal, ordinal_width)
+            hash_values.append(record.hash)
+            if slot_count > 0:
+                mut slot = record.hash % slot_count
+                while slots_values[slot] != 0:
+                    slot = (slot + 1) % slot_count
+                slots_values[slot] = index + 1
+
+        mut slots: list[u8] = []
+        for value in slots_values:
+            _append_compact_int(slots, value, slot_width)
+
+        return OrdinalMap(
+            key_values=keys,
+            key_records=key_records,
+            key_byte_values=key_byte_values,
+            key_offsets=key_offsets,
+            key_offset_width=key_offset_width,
+            ordinals=ordinals,
+            ordinal_values=ordinal_values,
+            ordinal_width=ordinal_width,
+            hash_values=hash_values,
+            slots=slots,
+            slot_values=slots_values,
+            slot_width=slot_width,
+            slot_count_value=slot_count,
+            max_ordinal_value=max_ordinal,
+            key_encoding_value=key_encoding,
+            lookup_algorithm_value=_ORDINAL_MAP_LOOKUP_OPEN_ADDRESSING,
+            verification_mode_value=_ORDINAL_MAP_VERIFY_EXACT_BYTES,
+            metadata=b"",
+        )
 
     @staticmethod
     pub def from_keys(keys: list[K]) -> Result[Self, OrdinalMapError]:
@@ -291,7 +353,7 @@ pub class OrdinalMap[K with (Clone, OrdinalKey)]:
             if ordinal > max_ordinal:
                 max_ordinal = ordinal
             records.append(_OrdinalRecord(key=key, key_bytes=key_bytes, ordinal=ordinal, hash=hash))
-        return Ok(_ordinal_map_from_records(records, max_ordinal, key_encoding))
+        return Ok(OrdinalMap._from_records(records, max_ordinal, key_encoding))
 
     @staticmethod
     pub def from_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
@@ -647,72 +709,6 @@ model _OrdinalMapReader:
         """Read a length-prefixed container section."""
         size = self.read_u64_le()?
         return self.read_exact(size)
-
-
-def _ordinal_map_from_records[K with (Clone, OrdinalKey)](
-    records: list[_OrdinalRecord[K]],
-    max_ordinal: int,
-    key_encoding: str,
-) -> OrdinalMap[K]:
-    """Build compact storage sections and lookup slots from validated ordinal records."""
-    canonical_records = _canonical_ordinal_records(records)
-    ordinal_width = _compact_width(max_ordinal)
-    key_offset_width = _compact_width(_total_key_record_bytes(canonical_records))
-    slot_count = _ordinal_slot_count(len(canonical_records))
-    slot_width = _compact_width(len(canonical_records) + 1)
-
-    mut keys: list[K] = []
-    mut key_byte_values: list[bytes] = []
-    mut key_records: list[u8] = []
-    mut key_offsets: list[u8] = []
-    mut ordinal_values: list[int] = []
-    mut ordinals: list[u8] = []
-    mut hash_values: list[int] = []
-    mut slots_values: list[int] = []
-    mut offset = 0
-    for _ in range(slot_count):
-        slots_values.append(0)
-    _append_compact_int(key_offsets, offset, key_offset_width)
-    for index in range(len(canonical_records)):
-        record = canonical_records[index]
-        keys.append(record.key)
-        key_byte_values.append(record.key_bytes)
-        _append_bytes(key_records, record.key_bytes)
-        offset += len(record.key_bytes)
-        _append_compact_int(key_offsets, offset, key_offset_width)
-        ordinal_values.append(record.ordinal)
-        _append_compact_int(ordinals, record.ordinal, ordinal_width)
-        hash_values.append(record.hash)
-        if slot_count > 0:
-            mut slot = record.hash % slot_count
-            while slots_values[slot] != 0:
-                slot = (slot + 1) % slot_count
-            slots_values[slot] = index + 1
-
-    mut slots: list[u8] = []
-    for value in slots_values:
-        _append_compact_int(slots, value, slot_width)
-
-    return OrdinalMap(
-        key_values=keys,
-        key_records=key_records,
-        key_byte_values=key_byte_values,
-        key_offsets=key_offsets,
-        key_offset_width=key_offset_width,
-        ordinals=ordinals,
-        ordinal_values=ordinal_values,
-        ordinal_width=ordinal_width,
-        hash_values=hash_values,
-        slots=slots,
-        slot_values=slots_values,
-        slot_width=slot_width,
-        slot_count_value=slot_count,
-        max_ordinal_value=max_ordinal,
-        key_encoding_value=key_encoding,
-        lookup_algorithm_value=_ORDINAL_MAP_LOOKUP_OPEN_ADDRESSING,
-        verification_mode_value=_ORDINAL_MAP_VERIFY_EXACT_BYTES,
-        metadata=b"",
-    )
 
 
 def _canonical_ordinal_records[K with (Clone, OrdinalKey)](source: list[_OrdinalRecord[K]]) -> list[_OrdinalRecord[K]]:

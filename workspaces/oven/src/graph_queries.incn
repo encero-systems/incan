@@ -16,6 +16,11 @@ class Index:
     # Every module and declaration, by id.
     by_id: Dict[str, JsonValue]
 
+    @staticmethod
+    pub def new() -> Index:
+        """Create an empty query index whose private collections remain class-owned."""
+        return Index(selected=[], identities=[], canonical_targets=[], modules=[], by_id={})
+
     pub def add(mut self, record: JsonValue, term: str) -> None:
         """Index one compiler record and retain only the declarations and modules the term names."""
         record_kind = text(record, "record")
@@ -256,7 +261,7 @@ pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list
 
 def indexed(records: list[JsonValue], term: str) -> Index:
     """Index every module and declaration by id, the declarations and identities `term` names, and its modules."""
-    mut index = Index(selected=[], identities=[], canonical_targets=[], modules=[], by_id={})
+    mut index = Index.new()
     for record in records:
         index.add(record, term)
     return index

@@ -98,6 +98,10 @@ class DigestOwner:
 
     handle: Sha224
 
+    @staticmethod
+    pub def create(handle: Sha224) -> DigestOwner:
+        return DigestOwner(handle=handle)
+
     pub def update(mut self, chunk: bytes) -> None:
         """Bind the native method's anonymous by-value input parameter."""
         Digest.update(self.handle, chunk.as_slice())
@@ -170,7 +174,7 @@ def show_generic_receivers() -> None:
     inferred: u8 = rng.gen_range(13..14).wrapping_resize()
     assert inferred == 13u8
     native: Sha224 = Sha224.default()
-    mut digest = DigestOwner(handle=native)
+    mut digest = DigestOwner.create(native)
     digest.update(b"abc")
     output = digest.finish()
     assert len(output) == 28

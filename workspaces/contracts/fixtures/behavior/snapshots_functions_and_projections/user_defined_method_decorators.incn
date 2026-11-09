@@ -9,7 +9,7 @@
 
 
 class Box:
-    value: int
+    pub value: int
 
     @as_int
     pub def label(self, value: int) -> str:

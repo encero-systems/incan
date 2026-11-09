@@ -1,1 +1,2 @@
 pub from facade import FacadeVault as ExportedVault
+pub from facade import create_facade_vault as create_exported_vault

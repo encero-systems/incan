@@ -17,6 +17,11 @@ from record_service import (
 class Source with RecordSource:
     result: RecordRead
 
+    @staticmethod
+    pub def returning(result: RecordRead) -> Source:
+        """Create a configured source while keeping its response field private."""
+        return Source(result=result)
+
     def read(self, scope: ReadScope, request: RecordRequest) -> RecordRead:
         """Return the configured response, including deliberately invalid bindings for negative controls."""
         return self.result
@@ -38,10 +43,10 @@ pub def test_scoped_record_evidence() -> None:
     )
     evidence = RevisionEvidence(scope=scope, request=request, revision="revision", semantic_digest="semantic")
     found = SelectedFact(evidence=evidence, value=b"ok", selection_digest="selection")
-    mut reads = RecordReads(scope=scope, preparation=preparation(), allowed=[request])
-    assert_found(reads.read(Source(result=RecordRead.Found(found)), request), found)
+    mut reads = RecordReads.start(scope, preparation(), [request])
+    assert_found(reads.read(Source.returning(RecordRead.Found(found)), request), found)
     absent = AbsentFact(scope=scope, request=request, exclusion_digest="exclusion")
-    assert_absent(reads.read(Source(result=RecordRead.Absent(absent)), request), absent)
+    assert_absent(reads.read(Source.returning(RecordRead.Absent(absent)), request), absent)
     assert reads.counters().operations == 2
     assert reads.counters().response_bytes == 2
     match reads.finish():
@@ -59,7 +64,7 @@ pub def test_scoped_record_evidence() -> None:
                 ReadWitness.Absent(actual) => assert actual == absent
                 _ => assert false
         Err(_) => assert false
-    assert_fault(reads.read(Source(result=RecordRead.Found(found)), request), ReadFault.ClosedScope)
+    assert_fault(reads.read(Source.returning(RecordRead.Found(found)), request), ReadFault.ClosedScope)
     assert refused(reads.finish(), ReadFault.ClosedScope)
     field_controls(scope, request)
     preparation_controls(scope, request, found)
@@ -73,10 +78,10 @@ pub def test_scoped_record_evidence() -> None:
 def fault_controls(scope: ReadScope, request: RecordRequest, found: SelectedFact) -> None:
     """Every fault poisons the scope; the earlier successful read cannot escape as an incomplete witness set."""
     for fault in [ReadFault.UnfinishedSupplier, ReadFault.DamagedRecord, ReadFault.WitnessUnavailable]:
-        mut reads = RecordReads(scope=scope, preparation=preparation(), allowed=[request])
-        reads.read(Source(result=RecordRead.Found(found)), request)
-        assert_fault(reads.read(Source(result=RecordRead.Failed(fault)), request), fault)
-        assert_fault(reads.read(Source(result=RecordRead.Found(found)), request), fault)
+        mut reads = RecordReads.start(scope, preparation(), [request])
+        reads.read(Source.returning(RecordRead.Found(found)), request)
+        assert_fault(reads.read(Source.returning(RecordRead.Failed(fault)), request), fault)
+        assert_fault(reads.read(Source.returning(RecordRead.Found(found)), request), fault)
         assert reads.counters().operations == 2
         assert refused(reads.finish(), fault)
     stale = ReadScope(snapshot="stale", profile=scope.profile)
@@ -84,8 +89,8 @@ def fault_controls(scope: ReadScope, request: RecordRequest, found: SelectedFact
         evidence=RevisionEvidence(scope=stale, request=request, revision="revision", semantic_digest="semantic"),
         value=b"ok", selection_digest="selection",
     )
-    mut reads = RecordReads(scope=scope, preparation=preparation(), allowed=[request])
-    assert_fault(reads.read(Source(result=RecordRead.Found(wrong)), request), ReadFault.SnapshotMismatch)
+    mut reads = RecordReads.start(scope, preparation(), [request])
+    assert_fault(reads.read(Source.returning(RecordRead.Found(wrong)), request), ReadFault.SnapshotMismatch)
     assert refused(reads.finish(), ReadFault.SnapshotMismatch)
 
 
@@ -110,20 +115,20 @@ def binding_controls(scope: ReadScope, request: RecordRequest, found: SelectedFa
             ReadFault.InvalidEvidence,
         ),
     ]:
-        mut reads = RecordReads(scope=scope, preparation=preparation(), allowed=[request])
+        mut reads = RecordReads.start(scope, preparation(), [request])
         reply = SelectedFact(evidence=changed, value=found.value, selection_digest=found.selection_digest)
-        assert_fault(reads.read(Source(result=RecordRead.Found(reply)), request), expected)
+        assert_fault(reads.read(Source.returning(RecordRead.Found(reply)), request), expected)
         assert reads.counters().response_bytes == 2
         assert refused(reads.finish(), expected)
-    mut reads = RecordReads(scope=scope, preparation=preparation(), allowed=[])
-    assert_fault(reads.read(Source(result=RecordRead.Found(found)), request), ReadFault.OutsidePreparation)
+    mut reads = RecordReads.start(scope, preparation(), [])
+    assert_fault(reads.read(Source.returning(RecordRead.Found(found)), request), ReadFault.OutsidePreparation)
     assert reads.counters().operations == 0
     assert refused(reads.finish(), ReadFault.OutsidePreparation)
 
 
 def empty_controls(scope: ReadScope, payload: RecordRequest) -> None:
     """Empty activations and empty membership answers still retain schema, snapshot, profile and selector evidence."""
-    mut empty = RecordReads(scope=scope, preparation=preparation(), allowed=[])
+    mut empty = RecordReads.start(scope, preparation(), [])
     match empty.finish():
         Ok(receipt) =>
             assert receipt.schema == "incan.compiler-fact-reads/1"
@@ -138,8 +143,8 @@ def empty_controls(scope: ReadScope, payload: RecordRequest) -> None:
         evidence=RevisionEvidence(scope=scope, request=request, revision="revision", semantic_digest="semantic"),
         value=b"", selection_digest="empty-members",
     )
-    mut reads = RecordReads(scope=scope, preparation=preparation(), allowed=[request])
-    assert_found(reads.read(Source(result=RecordRead.Found(found)), request), found)
+    mut reads = RecordReads.start(scope, preparation(), [request])
+    assert_found(reads.read(Source.returning(RecordRead.Found(found)), request), found)
     match reads.finish():
         Ok(receipt) =>
             assert len(receipt.witnesses) == 1
@@ -178,20 +183,18 @@ def assert_fault(result: RecordRead, expected: ReadFault) -> None:
 
 def invalid_controls(scope: ReadScope, request: RecordRequest, found: SelectedFact) -> None:
     """Invalid empty scopes and bounded replies cannot produce reusable evidence."""
-    mut invalid = RecordReads(
-        scope=ReadScope(snapshot="", profile=scope.profile), preparation=preparation(), allowed=[],
-    )
+    mut invalid = RecordReads.start(ReadScope(snapshot="", profile=scope.profile), preparation(), [])
     assert refused(invalid.finish(), ReadFault.InvalidEvidence)
     missing = PreparationEvidence(output=request.key, rank_certificate="certificate", selector_witnesses="")
-    mut invalid = RecordReads(scope=scope, preparation=missing, allowed=[])
+    mut invalid = RecordReads.start(scope, missing, [])
     assert refused(invalid.finish(), ReadFault.InvalidEvidence)
     absent = AbsentFact(scope=scope, request=request, exclusion_digest="")
-    mut reads = RecordReads(scope=scope, preparation=preparation(), allowed=[request])
-    assert_fault(reads.read(Source(result=RecordRead.Absent(absent)), request), ReadFault.InvalidEvidence)
+    mut reads = RecordReads.start(scope, preparation(), [request])
+    assert_fault(reads.read(Source.returning(RecordRead.Absent(absent)), request), ReadFault.InvalidEvidence)
     assert refused(reads.finish(), ReadFault.InvalidEvidence)
     short = SelectedFact(evidence=found.evidence, value=b"x", selection_digest=found.selection_digest)
-    mut reads = RecordReads(scope=scope, preparation=preparation(), allowed=[request])
-    assert_fault(reads.read(Source(result=RecordRead.Found(short)), request), ReadFault.InvalidEvidence)
+    mut reads = RecordReads.start(scope, preparation(), [request])
+    assert_fault(reads.read(Source.returning(RecordRead.Found(short)), request), ReadFault.InvalidEvidence)
     assert reads.counters().response_bytes == 1
     assert refused(reads.finish(), ReadFault.InvalidEvidence)
 
@@ -211,8 +214,8 @@ def selector_controls(scope: ReadScope, request: RecordRequest, found: SelectedF
             evidence=RevisionEvidence(scope=scope, request=changed, revision="revision", semantic_digest="semantic"),
             value=found.value, selection_digest=found.selection_digest,
         )
-        mut reads = RecordReads(scope=scope, preparation=preparation(), allowed=[request])
-        assert_fault(reads.read(Source(result=RecordRead.Found(reply)), request), ReadFault.SelectionMismatch)
+        mut reads = RecordReads.start(scope, preparation(), [request])
+        assert_fault(reads.read(Source.returning(RecordRead.Found(reply)), request), ReadFault.SelectionMismatch)
         assert refused(reads.finish(), ReadFault.SelectionMismatch)
 
 
@@ -229,7 +232,7 @@ def preparation_controls(scope: ReadScope, request: RecordRequest, found: Select
     ready = ReadyWork(output=request.key, stage=ProducerStage.BodyIr, profile=profile)
     match prepared_reader(ready, snapshot, prepared):
         Ok(reader) =>
-            assert_found(reader.read(Source(result=RecordRead.Found(found)), request), found)
+            assert_found(reader.read(Source.returning(RecordRead.Found(found)), request), found)
             match reader.finish():
                 Ok(receipt) => assert receipt.scope == scope
                 Err(_) => assert false
@@ -256,8 +259,8 @@ def field_controls(scope: ReadScope, payload: RecordRequest) -> None:
         evidence=RevisionEvidence(scope=scope, request=request, revision="revision", semantic_digest="semantic"),
         value=b"ok", selection_digest="field",
     )
-    mut reads = RecordReads(scope=scope, preparation=preparation(), allowed=[request])
-    assert_found(reads.read(Source(result=RecordRead.Found(found)), request), found)
+    mut reads = RecordReads.start(scope, preparation(), [request])
+    assert_found(reads.read(Source.returning(RecordRead.Found(found)), request), found)
     match reads.finish():
         Ok(receipt) =>
             assert receipt.operations == 1
@@ -269,16 +272,16 @@ def field_controls(scope: ReadScope, payload: RecordRequest) -> None:
         evidence=RevisionEvidence(scope=scope, request=small, revision="revision", semantic_digest="semantic"),
         value=b"ok", selection_digest="field",
     )
-    mut reads = RecordReads(scope=scope, preparation=preparation(), allowed=[small])
-    assert_fault(reads.read(Source(result=RecordRead.Found(oversized)), small), ReadFault.InvalidEvidence)
+    mut reads = RecordReads.start(scope, preparation(), [small])
+    assert_fault(reads.read(Source.returning(RecordRead.Found(oversized)), small), ReadFault.InvalidEvidence)
     assert reads.counters().operations == 1
     assert reads.counters().response_bytes == 2
     assert refused(reads.finish(), ReadFault.InvalidEvidence)
     stale = AbsentFact(
         scope=ReadScope(snapshot="stale", profile=scope.profile), request=request, exclusion_digest="proof",
     )
-    mut reads = RecordReads(scope=scope, preparation=preparation(), allowed=[request])
-    assert_fault(reads.read(Source(result=RecordRead.Absent(stale)), request), ReadFault.SnapshotMismatch)
+    mut reads = RecordReads.start(scope, preparation(), [request])
+    assert_fault(reads.read(Source.returning(RecordRead.Absent(stale)), request), ReadFault.SnapshotMismatch)
     assert refused(reads.finish(), ReadFault.SnapshotMismatch)
 
 

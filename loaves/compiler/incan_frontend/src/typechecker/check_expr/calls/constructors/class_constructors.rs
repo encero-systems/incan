@@ -130,6 +130,7 @@ impl TypeChecker {
         let mut field_arguments: Vec<(&Spanned<Expr>, ResolvedType)> = Vec::new();
         let mut provided: std::collections::HashMap<String, Span> = std::collections::HashMap::new();
         let mut type_bindings: std::collections::HashMap<String, ResolvedType> = std::collections::HashMap::new();
+        let is_class = matches!(self.lookup_type_info(type_name), Some(TypeInfo::Class(_)));
         // Canonical field bound by each written argument, in written source order, for #1158's Body IR binding fact.
         // `None` marks an argument this check already rejected, which keeps the recorded binding fail-closed.
         let mut bound_fields: Vec<Option<String>> = Vec::with_capacity(args.len());
@@ -175,10 +176,17 @@ impl TypeChecker {
             provided.insert(canonical_name.clone(), expr.span);
             bound_fields.push(Some(canonical_name.clone()));
 
-            let is_model = matches!(self.lookup_type_info(type_name), Some(TypeInfo::Model(_)));
-            if is_model && self.private_field_is_inaccessible(type_name, field_info) {
-                self.errors
-                    .push(self.private_field_error(type_name, field_info, &field_name.node, field_name.span));
+            if self.private_field_is_inaccessible(type_name, field_info) {
+                let error = if is_class {
+                    errors::private_class_constructor_field(
+                        field_info.owner.as_deref().map_or(display_name, |owner| owner),
+                        &field_name.node,
+                        field_name.span,
+                    )
+                } else {
+                    self.private_field_error(type_name, field_info, &field_name.node, field_name.span)
+                };
+                self.errors.push(error);
                 continue;
             }
 
