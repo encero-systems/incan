@@ -1,0 +1,67 @@
+# behavior: frozen text and bytes literals select trait methods through generic bounds, including named arguments; concrete and ordinary storage calls retain their behavior (#2875)
+# expect-stdout:
+#   frozen trait arguments
+
+trait Observe[E]:
+    def reference(mut self, kind: FrozenStr, identity: FrozenBytes) -> Result[None, E]
+
+
+class Collector with Observe[str]:
+    pub count: int = 0
+
+    def reference(mut self, kind: FrozenStr, identity: FrozenBytes) -> Result[None, str]:
+        assert kind == "object"
+        assert len(identity) == 1
+        self.count += 1
+        return Ok(None)
+
+
+def visit[E, W with Observe[E]](mut walker: W) -> Result[None, E]:
+    walker.reference("object", b"a")?
+    return walker.reference(identity=b"b", kind="object")
+
+
+trait Ordinary:
+    def size(self, kind: str, identity: bytes) -> int
+
+
+model OrdinaryCollector with Ordinary:
+    def size(self, kind: str, identity: bytes) -> int:
+        return len(kind) + len(identity)
+
+
+def ordinary[W with Ordinary](walker: W) -> int:
+    return walker.size("object", b"a")
+
+
+trait Choose[T]:
+    def choose(self, value: T) -> int
+
+
+model Choice with Choose[str], Choose[FrozenStr]:
+    def choose(self, value: str) -> int:
+        return 1
+
+    def choose(self, value: FrozenStr) -> int:
+        return 2
+
+
+def prefer[C with (Choose[str], Choose[FrozenStr])](choice: C) -> int:
+    return choice.choose("ordinary storage wins")
+
+
+def main() -> None:
+    mut collector = Collector()
+    match visit(collector):
+        Ok(_) =>
+            assert collector.count == 2
+        Err(_) =>
+            assert false
+    match collector.reference("object", b"c"):
+        Ok(_) =>
+            assert collector.count == 3
+        Err(_) =>
+            assert false
+    assert ordinary(OrdinaryCollector()) == 7
+    assert prefer(Choice()) == 1
+    println("frozen trait arguments")
