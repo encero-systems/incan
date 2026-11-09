@@ -248,7 +248,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// across later nested argument evaluation, so even its final textual read clones until the outer call consumes
     /// that operand. An owner declared outside the active loop also clones at its last textual read, unless the read
     /// consumes the value replaced by its enclosing assignment. Loop-local owners can transfer at their last use. A
-    /// local with no tracked countdown (an [`bir::LocalOrigin::External`] reference) gets the explicit
+    /// compiler temporary normally has no countdown because its flattened expression consumes it once; a
+    /// whole-place read therefore transfers it with the same fact as [`Self::temp_operand`]. A synthetic temporary
+    /// explicitly seeded for several reads, such as a chained assignment value, follows that countdown instead. Any
+    /// other local with no tracked countdown (an [`bir::LocalOrigin::External`] reference) gets the explicit
     /// [`bir::OwnershipFact::Unknown`]. Source projections consume their counted occurrence through
     /// [`Self::source_place_operand`]; synthetic projections do not. A newly eligible final read in a conditional body
     /// retains an enclosing owner for the other paths' scope-exit drops. Bare-only native transfers retain their
@@ -293,6 +296,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if is_copy {
             let _ = self.consume_place_read(place);
             return (bir::OwnershipFact::Copy, false);
+        }
+        if self
+            .locals
+            .get(local.index())
+            .is_some_and(|declaration| declaration.origin == bir::LocalOrigin::Temporary)
+            && !self.remaining_reads.contains_key(&local)
+        {
+            return (bir::OwnershipFact::Move, true);
         }
         let reused_by_loop = self.loop_reuses_local(local);
         let shortened_by_projection = self.remaining_reads.get(&local).is_some_and(|reads| reads.projected);

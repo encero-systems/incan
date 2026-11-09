@@ -47,7 +47,7 @@ impl TypeChecker {
             Expr::If(if_expr) => self.check_if_expr(if_expr, expr.span),
             Expr::Loop(loop_expr) => self.check_loop_expr(loop_expr, None, expr.span),
             Expr::Generator(generator) => self.check_generator_expr(generator, expr.span),
-            Expr::ListComp(comp) => self.check_list_comp(comp, expr.span),
+            Expr::ListComp(comp) => self.check_list_comp(comp, expr.span, None),
             Expr::DictComp(comp) => self.check_dict_comp(comp, expr.span),
             Expr::Closure(params, body) => self.check_closure(params, body, expr.span),
             Expr::Tuple(elems) => self.check_tuple(elems),
@@ -258,6 +258,7 @@ impl TypeChecker {
                 self.check_closure_with_union_expected(params, body, members, expr.span)
             }
             (Expr::List(elems), expected_ty) => self.check_list_with_expected(elems, expected_ty),
+            (Expr::ListComp(comp), expected_ty) => self.check_list_comp(comp, expr.span, expected_ty),
             (Expr::Dict(entries), expected_ty) => self.check_dict_with_expected(entries, expected_ty),
             (Expr::Set(elems), expected_ty) => self.check_set_with_expected(elems, expected_ty),
             (Expr::Loop(loop_expr), expected_ty) => self.check_loop_expr(loop_expr, expected_ty, expr.span),

@@ -193,7 +193,7 @@ impl TypeChecker {
     ///
     /// The destination may wrap the list in `Option` or a union (see [`Self::collection_literal_destination`]), so
     /// `[]` and `[None]` take the element type of an `Option[list[...]]` or `list[...] | str` destination too.
-    fn list_expected_element_type(&self, expected: Option<&ResolvedType>) -> Option<ResolvedType> {
+    pub(super) fn list_expected_element_type(&self, expected: Option<&ResolvedType>) -> Option<ResolvedType> {
         let destination =
             self.collection_literal_destination(expected?, &|ty| Self::list_element_type(ty).is_some())?;
         Self::list_element_type(destination).cloned()
