@@ -169,7 +169,8 @@ def test_source_refusals_and_collection() -> Result[None, str]:
     original_text = str(original)
     assert source.invalid(original) == "input:1: validation"
     match source.validation_failure:
-        Some(error) => assert str(error) == original_text
+        Some(error) =>
+            assert str(error) == original_text
         None => return Err("original validation error lost")
     assert len(source.failures) == 15
     return Ok(None)
