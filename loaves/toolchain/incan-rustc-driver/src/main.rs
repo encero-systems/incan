@@ -50,6 +50,7 @@ mod model_debug;
 mod native_attributes;
 mod native_crates;
 mod native_loans;
+mod native_plan_report;
 mod native_search;
 mod native_shared;
 mod native_timing;
