@@ -20,6 +20,9 @@ use crate::error::{CliError, CliResult};
 use crate::session::{RustFacts, RustFactsSetup};
 use crate::unit::UnitDescription;
 
+/// The directory under `<toolchain>/rust-abi` that holds each distinct extracted cache once, named by its SHA-256.
+const CONTENT_STORE: &str = "objects";
+
 /// The extraction boundary of an installed toolchain; native inputs still come exclusively from the unit.
 #[derive(Deserialize)]
 struct Toolchain {
@@ -79,6 +82,7 @@ pub fn cached_rust_facts(unit: &UnitDescription) -> CliResult<RustFactsSetup> {
     // ---- Generation cache ----
     let (directory, toolchain) = installed_toolchain(unit)?;
     let identity = generation_identity(unit, &toolchain, &externs, &directory)?;
+    let store = directory.join("rust-abi").join(CONTENT_STORE);
     let directory = directory.join("rust-abi").join("units");
     fs::create_dir_all(&directory).map_err(failure)?;
     let cache = directory.join(format!("{}.rustabi", hex::encode(identity.finalize())));
@@ -91,7 +95,7 @@ pub fn cached_rust_facts(unit: &UnitDescription) -> CliResult<RustFactsSetup> {
     flock(&lock, FlockOperation::LockExclusive).map_err(failure)?;
     let reused = cache.is_file();
     if !reused {
-        extract_cache(&toolchain, unit, &externs, &directory, &cache)?;
+        extract_cache(&toolchain, unit, &externs, &directory, &store, &cache)?;
     }
     if incan_frontend::trace_flags::trace_rust_facts() {
         eprintln!(
@@ -119,7 +123,7 @@ pub fn cached_path_facts(
     let started = std::time::Instant::now();
 
     // ---- Optional cache availability ----
-    let (directory, cache, _lock) = match path_cache_location(unit, paths) {
+    let (directory, store, cache, _lock) = match path_cache_location(unit, paths) {
         Ok(location) => location,
         Err(error) => {
             if incan_frontend::trace_flags::trace_rust_facts() {
@@ -139,7 +143,7 @@ pub fn cached_path_facts(
         facts
     } else {
         let facts = extract().map_err(CliError::failure)?;
-        if let Err(error) = persist_path_facts(&directory, &cache, &facts)
+        if let Err(error) = persist_path_facts(&directory, &store, &cache, &facts)
             && incan_frontend::trace_flags::trace_rust_facts()
         {
             eprintln!("rust facts cache not retained: {}", error.message);
@@ -160,7 +164,11 @@ pub fn cached_path_facts(
 }
 
 /// Locate and lock a bounded cache without extracting facts, so setup failures can retain ordinary checking.
-fn path_cache_location(unit: &UnitDescription, paths: &BTreeSet<String>) -> CliResult<(PathBuf, PathBuf, File)> {
+/// Returns the cache's directory, the toolchain's content store, the cache path and its held lock.
+fn path_cache_location(
+    unit: &UnitDescription,
+    paths: &BTreeSet<String>,
+) -> CliResult<(PathBuf, PathBuf, PathBuf, File)> {
     let (directory, toolchain) = installed_toolchain(unit)?;
     let externs = unit.externs.iter().map(|native| (&native.name, &native.path)).collect();
     let mut identity = generation_identity(unit, &toolchain, &externs, &directory)?;
@@ -171,6 +179,7 @@ fn path_cache_location(unit: &UnitDescription, paths: &BTreeSet<String>) -> CliR
         &directory.join("rust-abi").join("observations"),
     )?;
     identity.update(serde_json::to_vec(paths).map_err(failure)?);
+    let store = directory.join("rust-abi").join(CONTENT_STORE);
     let directory = directory.join("rust-abi").join("units").join("paths");
     fs::create_dir_all(&directory).map_err(failure)?;
     let cache = directory.join(format!("{}.rustabi", hex::encode(identity.finalize())));
@@ -181,17 +190,48 @@ fn path_cache_location(unit: &UnitDescription, paths: &BTreeSet<String>) -> CliR
         .open(cache.with_extension("lock"))
         .map_err(failure)?;
     flock(&lock, FlockOperation::LockExclusive).map_err(failure)?;
-    Ok((directory, cache, lock))
+    Ok((directory, store, cache, lock))
 }
 
 /// Publish only a complete successful extraction, preserving a previous cache if serialization or writing fails.
-fn persist_path_facts(directory: &Path, cache: &Path, facts: &RustFacts) -> CliResult<()> {
+fn persist_path_facts(directory: &Path, store: &Path, cache: &Path, facts: &RustFacts) -> CliResult<()> {
     let bytes = incan_lang::interop::encode_rust_abi_cache(facts).map_err(failure)?;
     let mut temporary = tempfile::NamedTempFile::new_in(directory).map_err(failure)?;
     temporary.write_all(&bytes).map_err(failure)?;
     temporary.flush().map_err(failure)?;
-    temporary.persist(cache).map_err(failure)?;
-    Ok(())
+    publish_cache(store, temporary, cache)
+}
+
+/// Publish a complete cache under its request name through the toolchain's content store.
+///
+/// Request identities differ whenever any unit input differs, yet many requests produce byte-identical facts. The
+/// store keeps each distinct cache once, named by its SHA-256, and every request name is a hard link to it; a
+/// filesystem without hard links gets a private copy instead. A stored file whose bytes no longer match its name is
+/// replaced, never linked. The caller holds the request's lock and every step renames atomically, so readers observe
+/// either the previous cache or the complete new one.
+fn publish_cache(store: &Path, temporary: tempfile::NamedTempFile, cache: &Path) -> CliResult<()> {
+    // ---- Content-addressed copy ----
+    let digest = read_digest(temporary.path())?;
+    fs::create_dir_all(store).map_err(failure)?;
+    let object = store.join(format!("{}.rustabi", hex::encode(digest)));
+    if !object.is_file() || read_digest(&object)? != digest {
+        temporary.persist(&object).map_err(failure)?;
+    }
+    // ---- Request name ----
+    let link = cache.with_extension(format!("link-{}", std::process::id()));
+    match fs::remove_file(&link) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(failure(error)),
+        _ => {}
+    }
+    if fs::hard_link(&object, &link).is_err() {
+        fs::copy(&object, &link).map_err(failure)?;
+    }
+    fs::rename(&link, cache).map_err(failure)?;
+    // Renaming a link over another link to the same file succeeds without removing the source name.
+    match fs::remove_file(&link) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(failure(error)),
+        _ => Ok(()),
+    }
 }
 
 /// Hash the same exact extractor, shipped facts and native artifact generation for complete and bounded caches.
@@ -375,6 +415,7 @@ fn extract_cache(
     unit: &UnitDescription,
     externs: &BTreeMap<&String, &PathBuf>,
     directory: &Path,
+    store: &Path,
     cache: &Path,
 ) -> CliResult<()> {
     let mut temporary = tempfile::NamedTempFile::new_in(directory).map_err(failure)?;
@@ -400,11 +441,102 @@ fn extract_cache(
     }
     incan_lang::interop::RustAbiCache::open(temporary.path()).map_err(failure)?;
     temporary.flush().map_err(failure)?;
-    temporary.persist(cache).map_err(failure)?;
-    Ok(())
+    publish_cache(store, temporary, cache)
 }
 
 /// Preserve an I/O or serialization failure as an actionable client setup error.
 fn failure(error: impl std::fmt::Display) -> CliError {
     CliError::failure(format!("cannot prepare Rust ABI cache: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::io::Write;
+    use std::path::Path;
+
+    use sha2::{Digest, Sha256};
+
+    use super::publish_cache;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// A complete extraction written beside its request names, as both extraction paths write one.
+    fn extracted(directory: &Path, bytes: &[u8]) -> Result<tempfile::NamedTempFile, Box<dyn std::error::Error>> {
+        let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
+        temporary.write_all(bytes)?;
+        temporary.flush()?;
+        Ok(temporary)
+    }
+
+    /// Every file name in `directory`, sorted, so tests can assert that no temporary name survives publication.
+    fn names(directory: &Path) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let mut names = fs::read_dir(directory)?
+            .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
+            .collect::<Result<Vec<_>, std::io::Error>>()?;
+        names.sort();
+        Ok(names)
+    }
+
+    #[test]
+    fn identical_extractions_share_one_stored_cache() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (units, store) = (root.path().join("units"), root.path().join("objects"));
+        fs::create_dir_all(&units)?;
+        let (first, second) = (units.join("first.rustabi"), units.join("second.rustabi"));
+        publish_cache(&store, extracted(&units, b"facts")?, &first)?;
+        publish_cache(&store, extracted(&units, b"facts")?, &second)?;
+        assert_eq!(fs::read(&first)?, b"facts");
+        assert_eq!(fs::read(&second)?, b"facts");
+        assert_eq!(names(&store)?.len(), 1);
+        assert_eq!(names(&units)?, ["first.rustabi", "second.rustabi"]);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(fs::metadata(&first)?.ino(), fs::metadata(&second)?.ino());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn distinct_extractions_keep_their_own_bytes() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (units, store) = (root.path().join("units"), root.path().join("objects"));
+        fs::create_dir_all(&units)?;
+        let (first, second) = (units.join("first.rustabi"), units.join("second.rustabi"));
+        publish_cache(&store, extracted(&units, b"first facts")?, &first)?;
+        publish_cache(&store, extracted(&units, b"second facts")?, &second)?;
+        assert_eq!(fs::read(&first)?, b"first facts");
+        assert_eq!(fs::read(&second)?, b"second facts");
+        assert_eq!(names(&store)?.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn stored_cache_with_wrong_bytes_is_replaced_before_linking() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (units, store) = (root.path().join("units"), root.path().join("objects"));
+        fs::create_dir_all(&units)?;
+        fs::create_dir_all(&store)?;
+        let named = store.join(format!("{}.rustabi", hex::encode(Sha256::digest(b"facts"))));
+        fs::write(&named, b"damaged")?;
+        let cache = units.join("request.rustabi");
+        publish_cache(&store, extracted(&units, b"facts")?, &cache)?;
+        assert_eq!(fs::read(&cache)?, b"facts");
+        assert_eq!(fs::read(&named)?, b"facts");
+        Ok(())
+    }
+
+    #[test]
+    fn republishing_the_same_cache_leaves_no_temporary_name() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (units, store) = (root.path().join("units"), root.path().join("objects"));
+        fs::create_dir_all(&units)?;
+        let cache = units.join("request.rustabi");
+        publish_cache(&store, extracted(&units, b"facts")?, &cache)?;
+        publish_cache(&store, extracted(&units, b"facts")?, &cache)?;
+        assert_eq!(fs::read(&cache)?, b"facts");
+        assert_eq!(names(&units)?, ["request.rustabi"]);
+        Ok(())
+    }
 }

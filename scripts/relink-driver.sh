@@ -67,6 +67,15 @@ driver=$toolchain/bin/incan-rustc-driver-${digest[1,12]}
 installed=$EPOCHREALTIME
 abi=$toolchain/rust-abi/std-${driver:t}.rustabi
 [[ -f $abi ]] || env -u RUSTC_BOOTSTRAP "$driver" --rust-abi "$sysroot" "$abi" std core alloc
+# Successive drivers usually extract identical std facts; keep each distinct cache once in the driver's content store.
+store=$toolchain/rust-abi/objects
+mkdir -p "$store"
+object=$store/$(shasum -a 256 "$abi" | cut -d ' ' -f1).rustabi
+if [[ ! -f $object ]]; then
+    ln "$abi" "$object" 2>/dev/null || cp "$abi" "$object"
+elif [[ ! $abi -ef $object ]] && cmp -s "$abi" "$object"; then
+    ln "$object" "$abi.link.$$" && mv -f "$abi.link.$$" "$abi"
+fi
 cached=$EPOCHREALTIME
 
 manifest=$(mktemp "$toolchain/toolchain.json.XXXXXX")
