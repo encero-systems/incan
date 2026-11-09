@@ -15,6 +15,7 @@ const NO_VARIANTS: FrozenList[VariantInfo] = []
 
 class StoredText with Walk:
     """An explicit class adopter that exposes its text as one scalar."""
+
     pub value: str
 
     def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
@@ -24,13 +25,20 @@ class StoredText with Walk:
     @staticmethod
     def __shape__() -> ShapeInfo:
         """Describe this handwritten scalar representation."""
-        return ShapeInfo(name="str", identity=b"", renamed_from=NO_RENAMES,
-                         renamed_from_lifecycle=None, spelling="string", fields=NO_FIELDS,
-                         variants=NO_VARIANTS)
+        return ShapeInfo(
+            name="str",
+            identity=b"",
+            renamed_from=NO_RENAMES,
+            renamed_from_lifecycle=None,
+            spelling="string",
+            fields=NO_FIELDS,
+            variants=NO_VARIANTS,
+        )
 
 
 class SeenText with Walker[str]:
     """Override only the scalar while inheriting generic structural recursion."""
+
     pub values: list[str]
 
     def str(mut self, value: str) -> Result[None, str]:

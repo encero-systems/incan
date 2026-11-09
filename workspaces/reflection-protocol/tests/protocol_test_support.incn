@@ -1,23 +1,39 @@
 """Handwritten adopters prove the ordinary protocol before compiler-generated adoption exists."""
 
 from std.primitives.reflection import (
-    DecimalValue, FieldInfo, LifecycleInfo, Reconstruct, SequenceKind, ShapeInfo, Source,
-    VariantInfo, Walk, Walker,
+    DecimalValue,
+    FieldInfo,
+    LifecycleInfo,
+    Reconstruct,
+    SequenceKind,
+    ShapeInfo,
+    Source,
+    VariantInfo,
+    Walk,
+    Walker,
 )
-
 
 const NO_RENAMES: FrozenList[FrozenStr] = []
 const NO_FIELDS: FrozenList[FieldInfo] = []
 const NO_VARIANTS: FrozenList[VariantInfo] = []
 
+
 pub def text_shape() -> ShapeInfo:
     """A manually declared scalar representation, with no nominal authority claim."""
-    return ShapeInfo(name="str", identity=b"", renamed_from=NO_RENAMES, renamed_from_lifecycle=None,
-                     spelling="string", fields=NO_FIELDS, variants=NO_VARIANTS)
+    return ShapeInfo(
+        name="str",
+        identity=b"",
+        renamed_from=NO_RENAMES,
+        renamed_from_lifecycle=None,
+        spelling="string",
+        fields=NO_FIELDS,
+        variants=NO_VARIANTS,
+    )
 
 
 pub class TextValue with Walk, Reconstruct:
     """A custom live class deliberately exposing only its stored text."""
+
     pub text: str
 
     def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
@@ -38,6 +54,7 @@ pub class TextValue with Walk, Reconstruct:
 
 pub class RecordingWalker with Walker[str]:
     """Override a scalar observation; inherited structural defaults must reuse this state."""
+
     pub values: list[str]
     pub refuse: bool = false
 
@@ -51,16 +68,18 @@ pub class RecordingWalker with Walker[str]:
 
 pub class QuietWalker with Walker[str]:
     """Use every default without any concrete override."""
+
     pub marker: int = 0
 
 
 pub class TextSource with Source[str]:
     """A deliberately limited format; unsupported kinds fail rather than become absent fields."""
+
     pub text: str
     pub fail: bool = false
     pub reads: int = 0
     pub failures: list[str] = []
-    pub validation_failures: list[ValidationError] = []
+    pub validation_failure: Option[ValidationError] = None
 
     def str(mut self) -> Result[str, str]:
         """Read the test's string and retain a caller-selected failure exactly once."""
@@ -162,8 +181,8 @@ pub class TextSource with Source[str]:
         return false
 
     def invalid(mut self, error: ValidationError) -> str:
-        """Retain the typed original separately from the located diagnostic summary."""
-        self.validation_failures.append(error)
+        """Retain this scalar source's final validation error separately from the diagnostic summary."""
+        self.validation_failure = Some(error)
         return self.malformed("validation")
 
     def collects(self) -> bool:
@@ -193,6 +212,7 @@ pub class TextSource with Source[str]:
 
 pub class ReferenceValue with Walk:
     """A hand-authored reference kind; walking never looks up its target."""
+
     pub identity: FrozenBytes
 
     def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
@@ -202,12 +222,20 @@ pub class ReferenceValue with Walk:
     @staticmethod
     def __shape__() -> ShapeInfo:
         """The test uses an explicit custom reference spelling."""
-        return ShapeInfo(name="ReferenceValue", identity=b"", renamed_from=NO_RENAMES,
-                         renamed_from_lifecycle=None, spelling="ref@object", fields=NO_FIELDS, variants=NO_VARIANTS)
+        return ShapeInfo(
+            name="ReferenceValue",
+            identity=b"",
+            renamed_from=NO_RENAMES,
+            renamed_from_lifecycle=None,
+            spelling="ref@object",
+            fields=NO_FIELDS,
+            variants=NO_VARIANTS,
+        )
 
 
 pub class NestedReferences with Walk:
     """A custom sequence containing explicitly present references."""
+
     pub values: list[ReferenceValue]
 
     def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
@@ -220,12 +248,20 @@ pub class NestedReferences with Walk:
     @staticmethod
     def __shape__() -> ShapeInfo:
         """Describe this custom sequence independently of its instances."""
-        return ShapeInfo(name="NestedReferences", identity=b"", renamed_from=NO_RENAMES,
-                         renamed_from_lifecycle=None, spelling="list[ref@object]", fields=NO_FIELDS, variants=NO_VARIANTS)
+        return ShapeInfo(
+            name="NestedReferences",
+            identity=b"",
+            renamed_from=NO_RENAMES,
+            renamed_from_lifecycle=None,
+            spelling="list[ref@object]",
+            fields=NO_FIELDS,
+            variants=NO_VARIANTS,
+        )
 
 
 pub class ReferenceCollector with Walker[str]:
     """Observe only references, relying on defaults for all intermediate structure."""
+
     pub identities: list[FrozenBytes]
 
     def reference(mut self, kind: FrozenStr, identity: FrozenBytes) -> Result[None, str]:

@@ -2,7 +2,16 @@
 
 from std.primitives.reflection import DecimalValue, LifecycleInfo, SequenceKind, ShapeInfo, Walk, Walker
 from std.reflection import DecimalValue as PublicDecimalValue, ShapeInfo as PublicShapeInfo
-from protocol_test_support import NestedReferences, ReferenceCollector, ReferenceValue, QuietWalker, RecordingWalker, TextSource, TextValue, text_shape
+from protocol_test_support import (
+    NestedReferences,
+    ReferenceCollector,
+    ReferenceValue,
+    QuietWalker,
+    RecordingWalker,
+    TextSource,
+    TextValue,
+    text_shape,
+)
 
 
 def test_recursive_defaults_retain_state() -> Result[None, str]:
@@ -25,7 +34,8 @@ def test_default_failure_is_not_swallowed() -> Result[None, str]:
     """A nested failure travels unchanged through a structural default."""
     mut walker = RecordingWalker(values=[], refuse=true)
     match walker.some(TextValue(text="unrecorded")):
-        Err(error) => assert error == "located failure"
+        Err(error) =>
+            assert error == "located failure"
         Ok(_) => return Err("failure swallowed")
     assert len(walker.values) == 0
     return Ok(None)
@@ -56,7 +66,8 @@ def test_manual_reconstruction_and_errors() -> Result[None, str]:
     assert source.reads == 1
     mut failed = TextSource(text="", fail=true)
     match TextValue.__reconstruct__(failed):
-        Err(error) => assert error == "input:1: bad text"
+        Err(error) =>
+            assert error == "input:1: bad text"
         Ok(_) => return Err("invalid source accepted")
     assert failed.collected() == Some("input:1: bad text")
     return Ok(None)
@@ -82,7 +93,9 @@ def test_decimal_range_and_scale() -> Result[None, str]:
     assert DecimalValue.new(coefficient=100, precision=2, scale=0).is_err()
     assert DecimalValue.new(coefficient=-100, precision=2, scale=0).is_err()
     assert DecimalValue.new(coefficient=-170141183460469231731687303715884105728, precision=38, scale=0).is_err()
-    value = DecimalValue.new(coefficient=-99999999999999999999999999999999999999, precision=38, scale=38).map_err((_) => "boundary")?
+    value = DecimalValue
+        .new(coefficient=-99999999999999999999999999999999999999, precision=38, scale=38)
+        .map_err((_) => "boundary")?
     assert value.scale == 38
     zero = DecimalValue.new(coefficient=0, precision=1, scale=1).map_err((_) => "zero")?
     assert zero.coefficient == 0
@@ -153,8 +166,10 @@ def test_source_refusals_and_collection() -> Result[None, str]:
     assert source.shape_mismatch("string", "bool") == "input:1: shape string != bool"
     assert len(source.failures) == 14
     original = ValidationError("negative stored state")
+    original_text = str(original)
     assert source.invalid(original) == "input:1: validation"
-    assert len(source.validation_failures) == 1
-    assert str(source.validation_failures[0]) == str(original)
+    match source.validation_failure:
+        Some(error) => assert str(error) == original_text
+        None => return Err("original validation error lost")
     assert len(source.failures) == 15
     return Ok(None)

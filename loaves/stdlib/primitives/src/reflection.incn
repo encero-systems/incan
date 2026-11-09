@@ -1,12 +1,12 @@
-"""
-Typed value traversal, stored-state reconstruction and declaration metadata.
-"""
+"""Typed value traversal, stored-state reconstruction and declaration metadata."""
+
 
 pub class FieldInfo:
     """
     Compiler-provided field metadata returned by __fields__().
     Instances are immutable and read-only.
     """
+
     pub name: FrozenStr
     pub identity: FrozenBytes
     pub canonical: bool
@@ -21,6 +21,7 @@ pub class FieldInfo:
 
 pub model LifecycleInfo:
     """Descriptive rename/deprecation history; these unverified labels grant no authority."""
+
     pub since: Option[FrozenStr] = None
     pub retire_in: Option[FrozenStr] = None
     pub message: Option[FrozenStr] = None
@@ -30,6 +31,7 @@ pub model LifecycleInfo:
 
 pub model VariantInfo:
     """One enum alternative's stable identity, complete payload and descriptive metadata."""
+
     pub name: FrozenStr
     pub identity: FrozenBytes
     pub description: Option[FrozenStr]
@@ -47,6 +49,7 @@ pub model ShapeInfo:
     to a foreign type. Fields and variants use their checked six-byte identities in ascending order.
     Recursive shapes keep finite checked selectors rather than recursively allocating metadata.
     """
+
     pub name: FrozenStr
     pub identity: FrozenBytes
     pub renamed_from: FrozenList[FrozenStr]
@@ -63,6 +66,7 @@ pub model ShapeInfo:
 
 pub enum SequenceKind:
     """The value-level sequence kind; frozen collections retain their ordinary collection kind."""
+
     List
     Set
     Tuple
@@ -70,6 +74,7 @@ pub enum SequenceKind:
 
 pub enum DecimalValueError:
     """Why an exact decimal carrier cannot represent a valid declared decimal."""
+
     Precision(u8)
     Scale(u8, u8)
     Coefficient(u8)
@@ -84,6 +89,7 @@ pub model DecimalValue:
     Validate construction contract. Invalid construction returns DecimalValueError; direct raw
     construction is refused. No floating-point conversion participates in validation.
     """
+
     pub coefficient: i128
     pub precision: u8
     pub scale: u8
@@ -107,12 +113,12 @@ pub trait Walk:
 
     def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
         """Visit this value's declared stored representation, propagating the walker's failure."""
-        ...
+        pass
 
     @staticmethod
     def __shape__() -> ShapeInfo:
         """Describe the complete stored representation without constructing a value."""
-        ...
+        pass
 
 
 pub trait Reconstruct with Walk:
@@ -121,7 +127,7 @@ pub trait Reconstruct with Walk:
     @staticmethod
     def __reconstruct__[E, S with Source[E]](mut source: S) -> Result[Self, E]:
         """Read and validate complete stored state without replaying construction normalization."""
-        ...
+        pass
 
 
 pub trait Walker[E]:
@@ -233,120 +239,120 @@ pub trait Source[E]:
 
     def bool(mut self) -> Result[bool, E]:
         """Read one bool value, retaining the source's located failure on refusal."""
-        ...
+        pass
 
     def str(mut self) -> Result[str, E]:
         """Read one str value, retaining the source's located failure on refusal."""
-        ...
+        pass
 
     def bytes(mut self) -> Result[bytes, E]:
         """Read one bytes value, retaining the source's located failure on refusal."""
-        ...
+        pass
 
     def integer(mut self) -> Result[i128, E]:
         """Read one i128 value, retaining the source's located failure on refusal."""
-        ...
+        pass
 
     def unsigned(mut self) -> Result[u128, E]:
         """Read one u128 value, retaining the source's located failure on refusal."""
-        ...
+        pass
 
     def float(mut self) -> Result[f64, E]:
         """Read one f64 value, retaining the source's located failure on refusal."""
-        ...
+        pass
 
     def decimal(mut self) -> Result[DecimalValue, E]:
         """Read one DecimalValue value, retaining the source's located failure on refusal."""
-        ...
+        pass
 
     def none(mut self) -> Result[None, E]:
         """Read one None value, retaining the source's located failure on refusal."""
-        ...
+        pass
 
     def some[V with Reconstruct](mut self) -> Result[Option[V], E]:
         """Read one optional layer; a present V may itself contain further optional layers."""
-        ...
+        pass
 
     def begin_sequence(mut self, kind: SequenceKind) -> Result[None, E]:
         """Enter the requested sequence kind or refuse a shape mismatch."""
-        ...
+        pass
 
     def element[V with Reconstruct](mut self) -> Result[Option[V], E]:
         """Read the next typed element; None means the selected sequence has ended."""
-        ...
+        pass
 
     def end_sequence(mut self) -> Result[None, E]:
         """Validate complete consumption of this sequence, including tuple arity."""
-        ...
+        pass
 
     def begin_dict(mut self) -> Result[None, E]:
         """Enter a dictionary while retaining the format's duplicate-key and size policy."""
-        ...
+        pass
 
     def entry[K with Reconstruct, V with Reconstruct](mut self) -> Result[Option[tuple[K, V]], E]:
         """Read the next typed key/value pair, or None at the dictionary's end."""
-        ...
+        pass
 
     def end_dict(mut self) -> Result[None, E]:
         """Validate complete consumption of the current dictionary."""
-        ...
+        pass
 
     def begin_model(mut self, shape: ShapeInfo) -> Result[None, E]:
         """Admit the requested stored shape before reading any of its fields."""
-        ...
+        pass
 
     def field[V with Reconstruct](mut self, info: FieldInfo) -> Result[Option[V], E]:
         """Read a present typed field or report absence; a failed read is never absence."""
-        ...
+        pass
 
     def end_model(mut self) -> Result[None, E]:
         """Validate model completion and the format's unknown-field policy."""
-        ...
+        pass
 
     def begin_variant(mut self, shape: ShapeInfo) -> Result[VariantInfo, E]:
         """Select a checked alternative from this enum shape before reading its payload."""
-        ...
+        pass
 
     def end_variant(mut self) -> Result[None, E]:
         """Validate complete consumption of the selected enum payload."""
-        ...
+        pass
 
     def member(mut self) -> Result[FrozenStr, E]:
         """Read the union member's stored-type spelling; reconstruction checks membership."""
-        ...
+        pass
 
     def reference(mut self, kind: FrozenStr) -> Result[FrozenBytes, E]:
         """Read the identity of a reference of the requested kind, without dereferencing it."""
-        ...
+        pass
 
     def missing(mut self, info: FieldInfo) -> E:
         """Create and retain one located missing-field failure under this source's policy."""
-        ...
+        pass
 
     def takes_default(self, info: FieldInfo) -> bool:
         """Explicitly permit a declared absence default; inspection must not run a factory."""
-        ...
+        pass
 
     def invalid(mut self, error: ValidationError) -> E:
         """Retain the original final-state validation failure and its hierarchy."""
-        ...
+        pass
 
     def collects(self) -> bool:
         """Whether independently decodable fields continue after a failure."""
-        ...
+        pass
 
     def collected(self) -> Option[E]:
         """Return retained failures when present; reconstruction must never return partial state."""
-        ...
+        pass
 
     def malformed(mut self, reason: str) -> E:
         """Convert malformed input into a located source failure without erasing its cause."""
-        ...
+        pass
 
     def numeric_range(mut self, requested_type: FrozenStr) -> E:
         """Report that the decoded exact value cannot fit the requested numeric type."""
-        ...
+        pass
 
     def shape_mismatch(mut self, expected: FrozenStr, actual: FrozenStr) -> E:
         """Report incompatible stored and requested shapes at the current source position."""
-        ...
+        pass
