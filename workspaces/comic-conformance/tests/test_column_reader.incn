@@ -7,6 +7,7 @@ from std.primitives.crumb.column_types import BlockEncoding, ColumnChoice, Group
 from std.primitives.crumb.column_writer import write_columns
 from std.primitives.crumb.registrations import KindRegistry
 from std.primitives.crumb.row_errors import RowFailure
+from std.primitives.crumb.row_buffer import RowBuffer
 from std.primitives.crumb.row_writer import RowRecord
 from std.primitives.crumb.values import Value, ValueField
 from std.primitives.crumb.types import AbsentPolicy
@@ -71,10 +72,13 @@ def test_corrupt_unselected_column_prevents_set_admission() -> Result[None, str]
     first = ValueField(identity=b"field1", canonical=true, absent=AbsentPolicy.Required, value=Value.Integer("7"))
     last = ValueField(identity=b"field2", canonical=true, absent=AbsentPolicy.Required, value=Value.Boolean(false))
     rows = [RowRecord(key=b"record\x00", value=Value.Record([first, last]))]
-    mut raw = write_columns([declared], rows, registry, false, [], budget).map_err((e) => e.message())?
+    raw = write_columns([declared], rows, registry, false, [], budget).map_err((e) => e.message())?
     assert raw[len(raw) - 1] == 0u8
-    raw[len(raw) - 1] = 2u8
-    match read_columns(backing(raw)?, [], registry, false, budget):
+    mut corrupt = RowBuffer.create()
+    corrupt.append(raw[:len(raw) - 1], budget).map_err((e) => e.message())?
+    corrupt.octet(2, budget).map_err((e) => e.message())?
+    changed = corrupt.finish(budget).map_err((e) => e.message())?
+    match read_columns(backing(changed)?, [], registry, false, budget):
         Ok(_) => return Err("unselected malformed boolean was admitted")
         Err(error) =>
             assert error.field == Some(b"field2")
@@ -89,8 +93,10 @@ def test_prefix_consumption_is_explicit_and_exact_read_refuses_tail() -> Result[
     mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
     registry = KindRegistry.create([], budget).map_err((e) => e.message())?
     raw = write_columns([], [], registry, true, [], budget).map_err((e) => e.message())?
-    mut combined: bytes = raw.clone()
-    combined.append(0u8)
+    mut joined = RowBuffer.create()
+    joined.append(raw, budget).map_err((e) => e.message())?
+    joined.octet(0, budget).map_err((e) => e.message())?
+    combined = joined.finish(budget).map_err((e) => e.message())?
     assert read_columns(backing(combined)?, [], registry, true, budget).is_err()
     rows, consumed = read_prefix(backing(combined)?, [], registry, true, budget).map_err((e) => e.message())?
     assert rows.len() == 0

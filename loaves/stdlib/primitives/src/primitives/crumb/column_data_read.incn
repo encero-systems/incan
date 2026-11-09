@@ -55,9 +55,13 @@ pub def read_column(node: TypeNode, absent: AbsentPolicy, rows: int, view: Mappe
         if mode == 1:
             for value in values:
                 budget.charge_elements(1).map_err((e) => primitive(e, block_origin))?
-                match present(value, node, absent).map_err((e) => primitive(e, block_origin))?:
+                # Bind propagated match inputs before capture; see compiler issue #2800.
+                observed = present(value, node, absent).map_err((e) => primitive(e, block_origin))?
+                match observed:
                     None => pass
-                    Some(stored) => used.add(key_id(stored_type, stored, dictionary, budget).map_err((e) => primitive(e, block_origin))?)
+                    Some(stored) =>
+                        identity = key_id(stored_type, stored, dictionary, budget).map_err((e) => primitive(e, block_origin))?
+                        used.add(identity)
         budget.charge_bytes(128).map_err((e) => primitive(e, block_origin))?
         blocks.append(block)
     if let Some(admitted) = keys:

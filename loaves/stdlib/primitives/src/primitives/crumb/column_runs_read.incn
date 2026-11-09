@@ -9,6 +9,7 @@ from crate.primitives.crumb.row_cursor import RowCursor, copied
 from crate.primitives.crumb.row_dictionary import Dictionary
 from crate.primitives.crumb.types import TypeNode
 from crate.primitives.crumb.values import Value
+from crate.primitives.crumb.value_admission import validate
 
 
 pub def read_runs(block: BlockData, node: TypeNode, keys: Option[ColumnKeys], dictionary: Dictionary, target: int, mut budget: Budget) -> Result[list[Value], ColumnError]:
@@ -47,7 +48,9 @@ pub def read_runs(block: BlockData, node: TypeNode, keys: Option[ColumnKeys], di
         if target < 0:
             for _ in range(length):
                 budget.charge_bytes(16).map_err((e) => primitive(e, offset))?
-                result.append(value)
+                validate(value, budget).map_err((e) => primitive(e, offset))?
+                validate(value, budget).map_err((e) => primitive(e, offset))?
+            result.append(value)
         elif target >= total and target - total < length:
             budget.charge_bytes(16).map_err((e) => primitive(e, offset))?
             result.append(value)
