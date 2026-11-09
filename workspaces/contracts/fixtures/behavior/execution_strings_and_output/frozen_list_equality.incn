@@ -1,0 +1,59 @@
+# behavior: list equality compares frozen and ordinary text/bytes by content without consuming either owner (#2863, #2864)
+# expect-stdout:
+#   frozen list equality
+
+model FrozenLists:
+    pub words: list[FrozenStr]
+    pub buffers: list[FrozenBytes]
+
+
+def owned_text(value: str) -> str:
+    return value
+
+
+def owned_bytes(value: bytes) -> bytes:
+    return value
+
+
+def main() -> None:
+    """Compare literals, dynamic values and fields in both directions, including unequal lengths and contents."""
+    values = FrozenLists(words=["first", "second"], buffers=[b"first", b"second"])
+    assert values.words == ["first", "second"]
+    assert ["first", "second"] == values.words
+    assert values.buffers == [b"first", b"second"]
+    assert [b"first", b"second"] == values.buffers
+    words = [owned_text("first"), owned_text("second")]
+    buffers = [owned_bytes(b"first"), owned_bytes(b"second")]
+    assert values.words == words
+    assert words == values.words
+    assert values.buffers == buffers
+    assert buffers == values.buffers
+    assert not (values.words != words)
+    assert not (buffers != values.buffers)
+    assert values.words != ["first"]
+    assert [b"first"] != values.buffers
+    assert values.words != ["first", "other"]
+    assert [b"first", b"other"] != values.buffers
+    assert values.words[1] == "second"
+    assert values.buffers[1][0] == 115
+    assert words[1] == "second"
+    assert buffers[1][0] == 115
+    empty_words: list[FrozenStr] = []
+    ordinary_words: list[str] = []
+    empty_buffers: list[FrozenBytes] = []
+    ordinary_buffers: list[bytes] = []
+    assert empty_words == ordinary_words
+    assert ordinary_words == empty_words
+    assert empty_buffers == ordinary_buffers
+    assert ordinary_buffers == empty_buffers
+    assert empty_words != words
+    assert buffers != empty_buffers
+    nested_words: list[list[FrozenStr]] = [["a"], [], ["b", "c"]]
+    nested_buffers: list[list[FrozenBytes]] = [[b"a"], [], [b"b", b"c"]]
+    assert nested_words == [["a"], [], ["b", "c"]]
+    assert [["a"], [], ["b", "c"]] == nested_words
+    assert nested_buffers == [[b"a"], [], [b"b", b"c"]]
+    assert [[b"a"], [], [b"b", b"c"]] == nested_buffers
+    assert nested_words != [["a"], ["b", "c"]]
+    assert [[b"a"], [], [b"b", b"x"]] != nested_buffers
+    println("frozen list equality")
