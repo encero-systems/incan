@@ -1,0 +1,76 @@
+"""Column-specific refusals preserve shared row causes and precise byte/member context."""
+
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.row_errors import RowError, RowFailure, primitive as row_primitive
+
+
+pub enum ColumnFailure:
+    """Physical column failures that do not change the existing row codec's categories."""
+
+    Shared
+    UnsupportedEncoding
+    EncodingType
+    NonzeroPadding
+    NonminimalBits
+    NonminimalBase
+    ValueOverflow
+    RunLength
+    AdjacentRuns
+    DictionaryCode
+    MissingDictionary
+    EmptyEncoding
+    NonmaximalPrefix
+    DictionaryOrder
+    InvalidPrefix
+    DictionaryMembership
+    UnusedDictionary
+    NonmaximalGroup
+    RestartOffset
+    RestartPrefix
+    BlockCount
+    NonminimalDelta
+
+
+pub model ColumnError:
+    """A physical refusal or the original shared descriptor/cell failure, without input contents."""
+
+    pub kind: ColumnFailure
+    pub offset: int
+    pub field: Option[bytes] = None
+    pub variant: Option[bytes] = None
+    pub cause: Option[RowError] = None
+
+    pub def message(self) -> str:
+        """Render location and typed category, keeping payload data out of diagnostics."""
+        if let Some(original) = self.cause:
+            return f"Crumb column at byte {self.offset}: {original.message()}"
+        return f"Crumb column {self.kind:?} at byte {self.offset}"
+
+
+pub def failure(kind: ColumnFailure, offset: int) -> ColumnError:
+    """Create a column refusal at the narrowest known byte boundary."""
+    return ColumnError(kind=kind, offset=offset)
+
+
+pub def shared(error: RowError) -> ColumnError:
+    """Preserve the original typed shared cause and its deepest member context."""
+    return ColumnError(kind=ColumnFailure.Shared, offset=error.offset, field=error.field, variant=error.variant, cause=Some(error))
+
+
+pub def primitive(error: CrumbError, offset: int) -> ColumnError:
+    """Budget and shared scalar failures retain the same categories as row admission."""
+    return shared(row_primitive(error, offset))
+
+
+pub def overflow(error: CrumbError, offset: int) -> ColumnError:
+    """Distinguish an exact reconstructed value outside its stored type from resource exhaustion."""
+    match error:
+        CrumbError.Limit(_) => return primitive(error, offset)
+        _ => return failure(ColumnFailure.ValueOverflow, offset)
+
+
+pub def in_field(error: ColumnError, identity: bytes) -> ColumnError:
+    """Keep deeper field context; otherwise attach the root column identity."""
+    if error.field.is_some():
+        return error
+    return ColumnError(kind=error.kind, offset=error.offset, field=Some(identity), variant=error.variant, cause=error.cause)
