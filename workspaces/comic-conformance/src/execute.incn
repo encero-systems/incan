@@ -18,6 +18,7 @@ from corpus import Corpus, CorpusCase, receipt
 from adaptation_cases import check_adaptation
 from hash_cases import check_preimage, check_relation
 from row_reader_cases import check_reader
+from column_reader_cases import check_columns
 from case_data import field, fields, hex_bytes, nodes, text
 from text_cases import check_text_print, check_text_read
 
@@ -79,6 +80,7 @@ def evaluate(item: CorpusCase, texts: dict[str, bytes]) -> Outcome:
         "hash_preimage",
         "value_relation",
         "binary_decode",
+        "column_codec",
         "text_read",
         "text_print",
     ]:
@@ -123,6 +125,7 @@ def check(item: CorpusCase, texts: dict[str, bytes]) -> Result[bool, str]:
         "hash_preimage" => return check_preimage(item.document, budget)
         "value_relation" => return check_relation(item.document, budget)
         "binary_decode" => return check_reader(item.document)
+        "column_codec" => return check_columns(item.document)
         "text_read" => return check_text_read(item.document, texts, budget)
         "text_print" => return check_text_print(item.document, texts, budget)
         _ => return Err("operation dispatcher mismatch")
