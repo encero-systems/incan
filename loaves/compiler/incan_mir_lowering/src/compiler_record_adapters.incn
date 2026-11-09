@@ -1,0 +1,197 @@
+"""
+One explicit adapter generation from native compiler carriers to Incan-owned identity and source facts.
+
+The Rust carriers remain transitional inputs for direct native consumers. This module names the old writer and reader,
+the source schema/profile, every field and variant disposition, and the removal gate. Conversion allocates owned text
+and path lists; no Rust `Arc`, `String`, `Vec` or allocation identity crosses into the Incan record contract.
+"""
+
+from pub::internal_models.compiler_records import (
+    CanonicalSymbolId,
+    DeclarationKind,
+    DeclarationSignature,
+    HirSourceSpan,
+    PackageIdentity,
+    PlanSourceSpanRecord,
+    StableDeclarationComponent,
+    StableDeclarationId,
+    StableDeclarationLocation,
+    SymbolNamespace,
+    SymbolOrigin,
+)
+from pub::incan_mir_plan import SourceSpan as PlanSourceSpan
+from rust::std::sync import Arc
+from rust::incan_semantics_core import (
+    CanonicalSymbolId as RustCanonicalSymbolId,
+    HirSourceSpan as RustHirSourceSpan,
+    ScopeDiscriminant as RustScopeDiscriminant,
+    SemanticSourceTargetKind as RustDeclarationKind,
+    SymbolNamespace as RustSymbolNamespace,
+    SymbolOrigin as RustSymbolOrigin,
+)
+from rust::incan_semantics_core::stable_identity import (
+    DeclarationSignature as RustDeclarationSignature,
+    StableDeclarationId as RustStableDeclarationId,
+    StableDeclarationLocation as RustStableDeclarationLocation,
+)
+
+pub const IDENTITY_SOURCE_WRITER: str = "incan_frontend checked identity construction"
+pub const IDENTITY_SOURCE_READER: str = "incan_mir_lowering native carrier consumers"
+pub const IDENTITY_SOURCE_PROFILE: str = "incan_semantics_core executable representation 53"
+pub const IDENTITY_ADAPTER_GENERATION: int = 1
+pub const IDENTITY_ADAPTER_REMOVAL_GATE: str = "all direct native consumers accept pub::internal_models.compiler_records declarations"
+
+
+pub def canonical_symbol_id(
+    identity: &RustCanonicalSymbolId,
+    source_file: str,
+    package_version: str,
+) -> CanonicalSymbolId:
+    """
+    Copy every native canonical field into the Incan-owned record and attach boundary-owned source facts.
+
+    `source_file` maps the declaration span to the selected source file. `package_version` completes package ownership;
+    both are explicit because the transitional Rust carrier stores neither value.
+    """
+    return CanonicalSymbolId(
+        namespace=symbol_namespace(identity.namespace),
+        origin=symbol_origin(identity.origin, package_version),
+        declaration_name=str(identity.declaration_name),
+        kind=declaration_kind(identity.kind),
+        scope_discriminant=scope_discriminant(identity.scope_discriminant),
+        declaration_span=hir_source_span(identity.declaration_span, source_file),
+    )
+
+
+pub def stable_declaration_id(identity: &RustStableDeclarationId, package_version: str) -> StableDeclarationId:
+    """Copy every stable field, recursively retaining the complete checked owner path and collision-local ordinal."""
+    return StableDeclarationId(
+        namespace=symbol_namespace(identity.namespace),
+        origin=symbol_origin(identity.origin, package_version),
+        declaration_name=str(identity.declaration_name),
+        kind=declaration_kind(identity.kind),
+        location=stable_location(identity.location, package_version),
+        signature=declaration_signature(identity.signature),
+    )
+
+
+pub def hir_source_span(span: RustHirSourceSpan, source_file: str) -> HirSourceSpan:
+    """Attach an owned source filename and copy the exact byte range and optional 32-byte expansion identity."""
+    mut expansion: Option[list[int]] = None
+    match span.expansion.as_ref():
+        Some(values) => expansion = Some([int(value) for value in values.as_slice().to_vec()])
+        None => pass
+    return HirSourceSpan(file=source_file, start=int(span.start), end=int(span.end), expansion=expansion)
+
+
+pub def authored_plan_source_span(span: &PlanSourceSpan) -> PlanSourceSpanRecord:
+    """Copy a shared Plan filename once into the authored record projection, excluding `Arc` allocation identity."""
+    return PlanSourceSpanRecord(file=str(span.file), line=span.line, column=span.column)
+
+
+pub def native_plan_source_span(span: &PlanSourceSpanRecord) -> PlanSourceSpan:
+    """Allocate one shared Plan filename when restoring the authored record projection for native lowering."""
+    return PlanSourceSpan(file=Arc.new(str(span.file)), line=span.line, column=span.column)
+
+
+def symbol_namespace(namespace: RustSymbolNamespace) -> SymbolNamespace:
+    """Map every native namespace variant without a display-text or fallback path."""
+    match namespace:
+        RustSymbolNamespace.OrdinaryLexical => return SymbolNamespace.OrdinaryLexical
+        RustSymbolNamespace.Member => return SymbolNamespace.Member
+        RustSymbolNamespace.ModulePath => return SymbolNamespace.ModulePath
+
+
+def symbol_origin(origin: &RustSymbolOrigin, package_version: str) -> SymbolOrigin:
+    """Map every native owner variant while copying paths and completing selected package ownership."""
+    match origin:
+        RustSymbolOrigin.Module(path) => return SymbolOrigin.Module([str(part) for part in path])
+        RustSymbolOrigin.Package(library=library, module_path=path) =>
+            return SymbolOrigin.Package(
+                PackageIdentity(name=str(library), version=package_version),
+                [str(part) for part in path],
+            )
+        RustSymbolOrigin.RustCrate(path) => return SymbolOrigin.RustCrate([str(part) for part in path])
+        RustSymbolOrigin.Builtin => return SymbolOrigin.Builtin
+
+
+def declaration_kind(kind: &RustDeclarationKind) -> DeclarationKind:
+    """Map all 24 native source-target variants; a new source variant makes this match non-exhaustive."""
+    match kind:
+        RustDeclarationKind.Function => return DeclarationKind.Function
+        RustDeclarationKind.Model => return DeclarationKind.Model
+        RustDeclarationKind.Class => return DeclarationKind.Class
+        RustDeclarationKind.Newtype => return DeclarationKind.Newtype
+        RustDeclarationKind.Rusttype => return DeclarationKind.Rusttype
+        RustDeclarationKind.Enum => return DeclarationKind.Enum
+        RustDeclarationKind.TypeAlias => return DeclarationKind.TypeAlias
+        RustDeclarationKind.Partial => return DeclarationKind.Partial
+        RustDeclarationKind.Variant => return DeclarationKind.Variant
+        RustDeclarationKind.Trait => return DeclarationKind.Trait
+        RustDeclarationKind.Capability => return DeclarationKind.Capability
+        RustDeclarationKind.Field => return DeclarationKind.Field
+        RustDeclarationKind.Method => return DeclarationKind.Method
+        RustDeclarationKind.Property => return DeclarationKind.Property
+        RustDeclarationKind.Const => return DeclarationKind.Const
+        RustDeclarationKind.Static => return DeclarationKind.Static
+        RustDeclarationKind.Local => return DeclarationKind.Local
+        RustDeclarationKind.Parameter => return DeclarationKind.Parameter
+        RustDeclarationKind.Receiver => return DeclarationKind.Receiver
+        RustDeclarationKind.GenericBinder => return DeclarationKind.GenericBinder
+        RustDeclarationKind.Module => return DeclarationKind.Module
+        RustDeclarationKind.RustItem => return DeclarationKind.RustItem
+        RustDeclarationKind.Builtin => return DeclarationKind.Builtin
+        RustDeclarationKind.Other(spelling) => return DeclarationKind.Other(str(spelling))
+
+
+def scope_discriminant(scope: &Option[RustScopeDiscriminant]) -> Option[int]:
+    """Copy the native tuple carrier's optional scope-table position into a source-owned integer fact."""
+    match scope:
+        Some(value) => return Some(int(value.0))
+        None => return None
+
+
+def stable_location(location: &RustStableDeclarationLocation, package_version: str) -> StableDeclarationLocation:
+    """Flatten recursive native owners into a root-to-nearest-owner path while retaining every stable field."""
+    match location:
+        RustStableDeclarationLocation.ModuleLevel => return StableDeclarationLocation.ModuleLevel
+        RustStableDeclarationLocation.Nested(owner=owner, binding_ordinal=ordinal) =>
+            mut owners = stable_owner_path(owner, package_version)
+            return StableDeclarationLocation.Nested(owners, int(ordinal))
+
+
+def stable_owner_path(owner: &RustStableDeclarationId, package_version: str) -> list[StableDeclarationComponent]:
+    """Recursively project one native owner and all of its ancestors without storing a Rust `Box` in the record."""
+    mut ancestors: list[StableDeclarationComponent] = []
+    match owner.location:
+        RustStableDeclarationLocation.ModuleLevel => pass
+        RustStableDeclarationLocation.Nested(owner=parent, binding_ordinal=_ordinal) =>
+            ancestors = stable_owner_path(parent, package_version)
+    ancestors.append(stable_component(owner, package_version))
+    return ancestors
+
+
+def stable_component(owner: &RustStableDeclarationId, package_version: str) -> StableDeclarationComponent:
+    """Copy one recursive owner, retaining the ordinal by which its own parent distinguishes it."""
+    return StableDeclarationComponent(
+        namespace=symbol_namespace(owner.namespace),
+        origin=symbol_origin(owner.origin, package_version),
+        declaration_name=str(owner.declaration_name),
+        kind=declaration_kind(owner.kind),
+        binding_ordinal=owner_binding_ordinal(owner.location),
+        signature=declaration_signature(owner.signature),
+    )
+
+
+def owner_binding_ordinal(location: &RustStableDeclarationLocation) -> Option[int]:
+    """Retain only the collision-local ordinal for this owner; its parent is already present in the flattened path."""
+    match location:
+        RustStableDeclarationLocation.ModuleLevel => return None
+        RustStableDeclarationLocation.Nested(owner=_owner, binding_ordinal=ordinal) => return Some(int(ordinal))
+
+
+def declaration_signature(signature: &Option[RustDeclarationSignature]) -> Option[DeclarationSignature]:
+    """Copy the checked span-free signature spelling through its public native accessor."""
+    match signature:
+        Some(value) => return Some(DeclarationSignature(spelling=str(value.as_str())))
+        None => return None

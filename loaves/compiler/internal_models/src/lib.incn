@@ -6,6 +6,26 @@ The compiler's shared record contracts, one module per contract; none names Oven
 `from pub::internal_models.checker_records import encode_record`, or the read and producer contracts from this facade.
 """
 
+pub from compiler_records import (
+    IDENTITY_ADAPTER_PROFILE,
+    IDENTITY_ADAPTER_SOURCE,
+    IDENTITY_ADAPTER_GENERATION,
+    IDENTITY_ADAPTER_REMOVAL_GATE,
+    SymbolNamespace,
+    PackageIdentity,
+    SymbolOrigin,
+    DeclarationKind,
+    HirSourceSpan,
+    PlanSourceSpanRecord,
+    CanonicalSymbolId,
+    DeclarationSignature,
+    StableDeclarationComponent,
+    StableDeclarationLocation,
+    StableDeclarationId,
+    valid_hir_source_span,
+    valid_canonical_symbol_id,
+    valid_stable_declaration_id,
+)
 pub from records import (
     RecordKey,
     ReadScope,
