@@ -1,4 +1,4 @@
-# behavior: loops reuse enclosing text and model owners across repeated calls, conditions, continue, and nested loops
+# behavior: loops lend local, parameter and field text across repeated read-only calls, while moved, stored and mutable string inputs keep owned behavior (#2851)
 # expect-stdout:
 #   3
 #   4
@@ -6,6 +6,9 @@
 #   4
 #   2
 #   2
+#   kept
+#   stored
+#   7
 
 model Word:
     """One owned text value reused by a loop."""
@@ -15,14 +18,19 @@ model Word:
 
 def present(text: str) -> bool:
     """Observe owned text through an ordinary function argument."""
-    return len(text) > 0
+    return len(text) > 0 and len(text[0:1]) == 1 and text != "missing"
+
+
+def ignored(text: str) -> int:
+    """Ignore a lent string without requiring a caller snapshot."""
+    return 1
 
 
 def repeated(text: str) -> int:
     """Read a parameter on every iteration although its final textual use is inside the loop."""
     mut count = 0
     for index in range(3):
-        if present(text):
+        if ignored(text) == 1 and present(text):
             count += 1
     return count
 
@@ -69,6 +77,21 @@ def outer_loop_after_break(text: str) -> int:
     return count
 
 
+def moved(text: str) -> str:
+    """Keep a transfer control whose result owns the input text."""
+    return text
+
+
+def stored(text: str) -> list[str]:
+    """Keep an aggregate control whose element owns the input text."""
+    return [text]
+
+
+def mutable(mut text: str) -> int:
+    """Keep a mutable-input control on its exclusive passing rule."""
+    return len(text)
+
+
 def main() -> None:
     """Exercise repeated, conditional, and nested reads."""
     println(repeated("yes"))
@@ -78,3 +101,6 @@ def main() -> None:
     println(nested(Word(text="yes")))
     println(returned_loop("yes"))
     println(outer_loop_after_break("yes"))
+    println(moved("kept"))
+    println(stored("stored")[0])
+    println(mutable("mutable"))
