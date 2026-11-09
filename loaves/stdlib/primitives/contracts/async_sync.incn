@@ -1,0 +1,26 @@
+"""Proposed std.primitives.async.sync boundary; not compiled.
+Guard acquisition explicitly retains the lock, matching the existing native owned guard.
+"""
+import std.primitives.async
+
+pub class Mutex[T]:
+    """Retained mutex storage; owning a handle does not itself grant access to its value."""
+
+pub class MutexGuard[T]:
+    """Owns lock release responsibility and independently retains the mutex storage."""
+
+pub def mutex[T](value: Owned[T]) -> Owned[Mutex[T]]:
+    """Transfer a value into lock-protected storage."""
+    ...
+
+pub async def lock[T](mutex: Borrowed[Mutex[T]]) -> Owned[MutexGuard[T]]:
+    """Acquire an independently retained guard; cancellation before acquisition gives up queue position."""
+    ...
+
+pub def guard_value[T](mut guard: BorrowedMut[MutexGuard[T]]) -> Reference[T] from guard:
+    """Borrow the protected place exclusively; no cloned get/set value."""
+    ...
+
+pub def unlock[T](guard: Owned[MutexGuard[T]]) -> None:
+    """Release the guard; no dependent reference may remain live."""
+    ...

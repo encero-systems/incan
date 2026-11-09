@@ -1,0 +1,11 @@
+"""Proposed accepted task transfer with no borrowed capture."""
+import std.primitives.async
+from std.primitives.async.task import spawn, wait
+from std.primitives.errors import TaskJoinError
+
+async def compute() -> int:
+    return 42
+
+async def run_one() -> Result[int, TaskJoinError]:
+    handle = spawn(compute())
+    return await wait(handle)

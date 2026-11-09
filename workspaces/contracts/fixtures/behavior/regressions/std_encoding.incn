@@ -5,6 +5,7 @@
 
 from std.encoding import base32, base58, base64, base85, bech32, hex, EncodingError
 from std.primitives import hexlify
+from std.primitives.encoding.hex import hexlify as grouped_hexlify
 from std.fs import Path
 from std.io import BytesIO
 
@@ -15,6 +16,10 @@ def fs_error(detail: str) -> EncodingError:
 
 def exercise() -> Result[None, EncodingError]:
     payload = b"hello?"
+
+    for data in [b"", payload, b"\x00\x0f\x10\x7f\x80\xff"]:
+        assert grouped_hexlify(data) == hexlify(data)
+        assert grouped_hexlify(data) == hex.hexlify(data)
 
     assert hexlify(payload) == hex.hexlify(payload)
     assert hexlify(b"") == ""
@@ -41,7 +46,8 @@ def exercise() -> Result[None, EncodingError]:
     non_ascii_target = BytesIO()
     match base64.decode(non_ascii_source, non_ascii_target, chunk_size=1):
         Ok(_) => println("accepted-non-ascii-stream")
-        Err(err) => assert err.kind == "non_ascii"
+        Err(err) =>
+            assert err.kind == "non_ascii"
 
     assert base85.a85encode(b"hello") == "BOu!rDZ"
     assert base85.a85decode("BOu!rDZ")? == b"hello"
@@ -78,10 +84,12 @@ def exercise() -> Result[None, EncodingError]:
     hex.encode(hex_path_source, hex_path_encoded, chunk_size=2)?
     assert hex.decode(hex_path_encoded, hex_path_decoded, chunk_size=2)? == payload
     match hex_path_encoded.read_bytes():
-        Ok(data) => assert data == b"68656c6c6f3f"
+        Ok(data) =>
+            assert data == b"68656c6c6f3f"
         Err(err) => return Err(fs_error(err.message()))
     match hex_path_decoded.read_bytes():
-        Ok(data) => assert data == payload
+        Ok(data) =>
+            assert data == payload
         Err(err) => return Err(fs_error(err.message()))
     match hex_path_source.unlink():
         Ok(_) => pass

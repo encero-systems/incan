@@ -1,0 +1,30 @@
+"""Proposed std.primitives.async.channel boundary; not compiled.
+Importing this family activates the one canonical async vocabulary.
+"""
+import std.primitives.async
+from std.primitives.errors import SendError
+
+pub class Sender[T]:
+    """Owns a sending endpoint; explicit duplication can retain another endpoint."""
+
+pub class Receiver[T]:
+    """Owns the receiving endpoint; receive requires exclusive access."""
+
+pub class SenderPermit[T]:
+    """Owns one reserved capacity slot and independently retains the channel."""
+
+pub def channel[T](capacity: int) -> Tuple[Owned[Sender[T]], Owned[Receiver[T]]]:
+    """Create a bounded channel with the existing capacity-validity contract."""
+    ...
+
+pub async def reserve[T](sender: Borrowed[Sender[T]]) -> Result[Owned[SenderPermit[T]], SendError[None]]:
+    """Wait for capacity before transferring a payload; cancellation loses only queue position."""
+    ...
+
+pub def send_reserved[T](permit: Owned[SenderPermit[T]], value: Owned[T]) -> Result[None, SendError[T]]:
+    """Synchronously consume permit and deliver value or return it in the error."""
+    ...
+
+pub async def receive[T](mut receiver: BorrowedMut[Receiver[T]]) -> Option[Owned[T]]:
+    """Cancel-safe receive; None means closed and fully drained."""
+    ...

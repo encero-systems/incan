@@ -1,0 +1,27 @@
+"""Future accepted provider-boundary case; the harness supplies a temporary file."""
+
+from std.primitives.fs import Path, open_read, read_chunk, close
+from std.primitives.errors import IoError
+
+
+def source_byte_count(path: Borrowed[Path]) -> Result[int, IoError]:
+    """Count a file with bounded independent chunks and an observable close result."""
+    mut file = open_read(path)?
+    mut total = 0
+
+    loop:
+        chunk = read_chunk(file, max_bytes=65536)?
+        if chunk == b"":
+            break
+        total += len(chunk)
+
+    close(file)?
+    return Ok(total)
+
+
+def first_chunk_survives_close(path: Borrowed[Path]) -> Result[Owned[bytes], IoError]:
+    """The returned data is independent of the consumed file handle."""
+    mut file = open_read(path)?
+    data = read_chunk(file, max_bytes=16)?
+    close(file)?
+    return Ok(data)

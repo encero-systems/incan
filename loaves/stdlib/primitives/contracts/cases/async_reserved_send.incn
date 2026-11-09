@@ -1,0 +1,18 @@
+"""Proposed bounded-channel acceptance case; an async test harness runs this function."""
+import std.primitives.async
+from std.primitives.async.channel import Receiver, channel, reserve, send_reserved, receive
+from std.primitives.errors import SendError
+
+async def deliver_one() -> Result[None, SendError[None]]:
+    sender, incoming = channel[int](1)
+    mut receiver: Owned[Receiver[int]] = incoming
+    permit = await reserve(sender)?
+    match send_reserved(permit, 42):
+        Ok(_) =>
+            match await receive(receiver):
+                Some(value) => assert value == 42
+                None => assert false
+        Err(error) =>
+            assert error.value == 42
+            assert false  # This test keeps its receiver alive; a send must succeed.
+    return Ok(None)

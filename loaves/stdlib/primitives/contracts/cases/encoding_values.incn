@@ -1,0 +1,15 @@
+"""Proposed accepted value conversion, without file or stream dependencies."""
+from std.primitives.encoding.hex import hexlify, unhexlify
+from std.primitives.errors import EncodingError
+
+def decode_payload(text: Borrowed[str]) -> Result[Owned[bytes], EncodingError]:
+    return unhexlify(text)
+
+def roundtrip() -> Result[None, EncodingError]:
+    assert hexlify(b"AB") == "4142"
+    assert decode_payload("4142")? == b"AB"
+    match decode_payload("4z"):
+        Ok(_) => assert false
+        Err(error) =>
+            assert error.position == 1
+    return Ok(None)

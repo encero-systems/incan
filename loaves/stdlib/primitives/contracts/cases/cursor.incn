@@ -1,0 +1,26 @@
+"""Future accepted aggregate-dependency case; no independently retained copy of input bytes."""
+
+from std.primitives.errors import IoError
+from std.primitives.io import read_cursor, read_exact, position
+
+
+def inspect_header(data: Borrowed[bytes]) -> Result[int, IoError]:
+    """Keep backing data alive through the last use of the cursor-derived view."""
+    mut cursor = read_cursor(data)
+    header = read_exact(cursor, size=4)?
+    assert len(header) == 4
+    # Last dependent use of header is above; cursor access may resume.
+    return Ok(position(cursor))
+
+
+def short_input_can_recover() -> Result[int, IoError]:
+    """A failed exact read leaves position unchanged and no live view in its error."""
+    data = b"AB"
+    mut cursor = read_cursor(data)
+    match read_exact(cursor, size=4):
+        Ok(_) => assert false
+        Err(_) =>
+            assert position(cursor) == 0
+            header = read_exact(cursor, size=2)?
+            assert header == b"AB"
+    return Ok(position(cursor))

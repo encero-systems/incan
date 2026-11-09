@@ -1,0 +1,10 @@
+"""Proposed std.primitives.encoding.hex boundary; not compiled."""
+from std.primitives.errors import EncodingError
+
+pub def hexlify(data: Borrowed[bytes]) -> Owned[str]:
+    """Return independent lowercase hexadecimal text."""
+    ...
+
+pub def unhexlify(text: Borrowed[str]) -> Result[Owned[bytes], EncodingError]:
+    """Strictly decode even-length hex; report malformed position without retaining input."""
+    ...

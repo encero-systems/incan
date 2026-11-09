@@ -1,0 +1,8 @@
+"""Future rejected case: an owned cursor still depends on consumed backing data."""
+
+from std.primitives.io import ReadCursor, read_cursor
+
+
+def invalid_cursor(data: Owned[bytes]) -> Owned[ReadCursor]:
+    """Reject borrowing from this function's consumed owner across its return."""
+    return read_cursor(data)

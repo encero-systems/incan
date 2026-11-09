@@ -1,0 +1,11 @@
+"""Proposed rejection: the exclusive projection still depends on the guard."""
+import std.primitives.async
+from std.primitives.async.sync import mutex, lock, guard_value, unlock
+
+async def release_too_early() -> int:
+    counter = mutex(0)
+    mut guard = await lock(counter)
+    mut value = guard_value(guard)
+    unlock(guard)  # Reject: consuming guard conflicts with the later use below.
+    value += 1
+    return value

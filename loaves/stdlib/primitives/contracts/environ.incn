@@ -1,0 +1,10 @@
+"""Proposed precise std.primitives.environ boundary; not compiled."""
+from std.primitives.errors import EnvironError
+
+pub def observe(key: Borrowed[str]) -> Result[Option[Owned[str]], EnvironError]:
+    """Absent is Ok(None), empty is Some empty text, invalid key/non-Unicode is Err."""
+    ...
+
+pub def args() -> Result[Owned[list[str]], EnvironError]:
+    """Read the current argument vector without lossy conversion or logging its values."""
+    ...

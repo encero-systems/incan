@@ -1,0 +1,25 @@
+"""Proposed std.primitives.hash.sha256 boundary; not compiled.
+Other algorithm families use the same explicit state pattern.
+"""
+pub class State:
+    """Private native SHA-256 state; no filesystem dependencies."""
+
+pub def new() -> Owned[State]:
+    """Create empty hashing state."""
+    ...
+
+pub def update(mut state: BorrowedMut[State], data: Borrowed[bytes]) -> None:
+    """Absorb bytes without retaining a borrow of data."""
+    ...
+
+pub def finish(state: Owned[State]) -> Owned[bytes]:
+    """Consume state and return an independent 32-byte digest."""
+    ...
+
+pub def finish_reset(mut state: BorrowedMut[State]) -> Owned[bytes]:
+    """Return a digest and reset state, preserving today's finalize-reset behavior."""
+    ...
+
+pub def digest(data: Borrowed[bytes]) -> Owned[bytes]:
+    """Hash one byte value without file, stream, or algorithm-selection policy."""
+    ...

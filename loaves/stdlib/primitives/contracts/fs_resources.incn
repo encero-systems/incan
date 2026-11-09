@@ -1,0 +1,38 @@
+"""Proposed std.primitives.fs resource operations; not compiled.
+Path is the primitive path. Mapping view retention is explicit, not a lexical borrow.
+"""
+from std.primitives.fs import Path
+from std.primitives.errors import IoError
+
+pub class MappedFile:
+    """Owns a read-only mapping; caller must uphold the immutable-file contract."""
+
+pub class MappedView:
+    """Retains a mapping owner independently; its range is not a copied byte buffer."""
+
+pub class FileLock:
+    """Owns an advisory-lock descriptor; no implicit duplicate guard."""
+
+pub def map_read(path: Borrowed[Path]) -> Result[Owned[MappedFile], IoError]:
+    """Map an immutable backing file; path values are not retained borrows."""
+    ...
+
+pub def retain_view(mapping: Borrowed[MappedFile], offset: int, length: int) -> Option[Owned[MappedView]]:
+    """Retain a bounded mapping range independently; invalid ranges return None."""
+    ...
+
+pub def view_bytes(view: Borrowed[MappedView]) -> Borrowed[bytes] from view:
+    """Expose a compatible borrowed byte projection; no copy or extra retention."""
+    ...
+
+pub def to_bytes(view: Borrowed[MappedView]) -> Owned[bytes]:
+    """Explicitly copy the view into independent bytes."""
+    ...
+
+pub def try_exclusive(path: Borrowed[Path]) -> Result[Option[Owned[FileLock]], IoError]:
+    """Acquire the existing sibling advisory lock; contention is Ok(None)."""
+    ...
+
+pub def unlock(lock: Owned[FileLock]) -> Result[None, IoError]:
+    """Consume the guard and expose explicit unlock failure; drop remains fallback cleanup."""
+    ...

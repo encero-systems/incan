@@ -1,0 +1,22 @@
+"""Proposed std.primitives.fs temporary-directory operations; not compiled."""
+from std.primitives.fs import Path
+from std.primitives.errors import IoError
+
+pub class TemporaryDirectory:
+    """Owns temporary cleanup responsibility; private state may become persisted."""
+
+pub def temporary_directory(parent: Borrowed[Path], prefix: Borrowed[str]) -> Result[Owned[TemporaryDirectory], IoError]:
+    """Acquire in an explicit parent; host default-directory policy is separate."""
+    ...
+
+pub def directory_path(temporary: Borrowed[TemporaryDirectory]) -> Borrowed[Path] from temporary:
+    """Borrow the resource's path value without extending its filesystem lifetime."""
+    ...
+
+pub def persist_directory(mut temporary: BorrowedMut[TemporaryDirectory]) -> Result[Owned[Path], IoError]:
+    """Disable cleanup only on success; preserve recoverable live state on failure."""
+    ...
+
+pub def cleanup_directory(temporary: Owned[TemporaryDirectory]) -> Result[None, IoError]:
+    """Consume cleanup responsibility and report explicit removal failure."""
+    ...

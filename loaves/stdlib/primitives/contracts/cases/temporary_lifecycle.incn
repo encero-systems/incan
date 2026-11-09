@@ -1,0 +1,9 @@
+"""Proposed explicit persistence; caller supplies an existing parent directory."""
+from std.primitives.fs import Path, temporary_directory, persist_directory
+from std.primitives.errors import IoError
+
+def keep_scratch_directory(parent: Borrowed[Path]) -> Result[Owned[Path], IoError]:
+    mut temporary = temporary_directory(parent, prefix="incan-")?
+    # Failure leaves cleanup responsibility with temporary.
+    # Success disables cleanup and returns an independent path value.
+    return persist_directory(temporary)

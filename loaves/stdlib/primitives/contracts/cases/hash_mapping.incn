@@ -1,0 +1,10 @@
+"""Proposed mapping-to-hash composition; hash itself does not import filesystem types."""
+from std.primitives.fs import Path, map_read, retain_view, view_bytes
+from std.primitives.hash.sha256 import digest
+from std.primitives.errors import IoError
+
+def hash_prefix(path: Borrowed[Path]) -> Result[Option[Owned[bytes]], IoError]:
+    mapping = map_read(path)?
+    match retain_view(mapping, offset=0, length=64):
+        Some(view) => return Ok(Some(digest(view_bytes(view))))
+        None => return Ok(None)

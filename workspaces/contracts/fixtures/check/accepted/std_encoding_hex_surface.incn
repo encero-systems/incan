@@ -3,12 +3,14 @@
 
 from std.encoding import hex, EncodingError
 from std.primitives import hexlify
+from std.primitives.encoding.hex import hexlify as grouped_hexlify
 
 
 def run() -> Result[None, EncodingError]:
     """Check shared byte and string types through primitive and compatibility imports."""
-    encoded: str = hexlify(b"Az\0")
-    assert encoded == hex.hexlify(b"Az\0")
+    encoded: str = hexlify(b"Az\x00")
+    assert encoded == grouped_hexlify(b"Az\x00")
+    assert encoded == hex.hexlify(b"Az\x00")
     println(encoded)
 
     decoded = hex.unhexlify("417A00")?

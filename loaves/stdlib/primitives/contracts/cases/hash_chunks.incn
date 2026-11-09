@@ -1,0 +1,16 @@
+"""Proposed accepted byte-algorithm consumer; all input is already bytes."""
+from std.primitives.hash.sha256 import new, update, finish, finish_reset, digest
+
+def hash_parts(parts: Borrowed[list[bytes]]) -> Owned[bytes]:
+    mut state = new()
+    for part in parts:
+        update(state, part)
+    return finish(state)
+
+def reset_preserves_existing_behavior() -> None:
+    mut state = new()
+    update(state, b"AB")
+    first = finish_reset(state)
+    assert first == digest(b"AB")
+    update(state, b"CD")
+    assert finish(state) == digest(b"CD")

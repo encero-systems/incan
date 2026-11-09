@@ -1,0 +1,8 @@
+"""Proposed vocabulary construction without serialization or compiler execution."""
+from std.primitives.models.vocab import Span, IncanExpr
+from std.primitives.vocab import path_expression, call_expression
+
+def log_value(span: Span, value: Owned[IncanExpr]) -> Owned[IncanExpr]:
+    # Caller supplies the actual invocation span and checked structured argument.
+    callee = path_expression("logger.info", span)
+    return call_expression(callee, [value])

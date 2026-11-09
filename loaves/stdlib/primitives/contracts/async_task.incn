@@ -1,0 +1,27 @@
+"""Proposed std.primitives.async.task boundary; not compiled.
+Send/Static retain their canonical native facts. RuntimeFuture/RuntimeFnOnce
+are the current checked runtime contracts, not new duck-typed wrapper traits.
+"""
+import std.primitives.async
+from std.primitives.traits import Send, Static
+from std.primitives.async import RuntimeFuture, RuntimeFnOnce
+from std.primitives.errors import TaskJoinError
+
+pub class JoinHandle[T]:
+    """Retains a running task; dropping the handle detaches, not cancels."""
+
+pub def spawn[T with (Send, Static), F with RuntimeFuture[T]](task: Owned[F]) -> Owned[JoinHandle[T]]:
+    """Transfer an admitted future to the runtime; reject invalid borrowed captures."""
+    ...
+
+pub def spawn_blocking[T with (Send, Static), F with RuntimeFnOnce[T]](task: Owned[F]) -> Owned[JoinHandle[T]]:
+    """Schedule admitted blocking work; abort cannot stop it after execution begins."""
+    ...
+
+pub async def wait[T with (Send, Static)](handle: Owned[JoinHandle[T]]) -> Result[Owned[T], TaskJoinError]:
+    """Consume the handle and await its result; dropping this wait does not imply task cancellation."""
+    ...
+
+pub def abort[T](handle: Borrowed[JoinHandle[T]]) -> None:
+    """Request task cancellation; completion must still be observed by waiting."""
+    ...

@@ -1,0 +1,16 @@
+"""Future rejected case: close consumes a handle still needed by a shared borrow."""
+
+from std.primitives.fs import File, Path, open_read, close
+from std.primitives.errors import IoError
+
+
+def file_reference(file: Borrowed[File]) -> Borrowed[File] from file:
+    return file
+
+
+def invalid_close(path: Borrowed[Path]) -> Result[None, IoError]:
+    file = open_read(path)?
+    borrowed = file_reference(file)
+    close(file)?
+    file_reference(borrowed)
+    return Ok(None)

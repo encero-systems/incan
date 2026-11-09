@@ -1,0 +1,30 @@
+"""Future std.primitives.fs declarations; not a compiled module yet.
+
+IoError is the single contract relocated from std.io into std.primitives.errors.
+Opaque resource representation and construction checks remain unspecified.
+"""
+
+from std.primitives.errors import IoError
+
+
+pub class Path:
+    """Lexical path value, constructed from text; no filesystem access or slash convenience is required."""
+
+
+pub class File:
+    """Owned read-only native file handle; no implicit cloning or independent alias retention."""
+
+
+pub def open_read(path: Borrowed[Path]) -> Result[Owned[File], IoError]:
+    """Open a read-only handle. The result does not borrow the path value."""
+    ...
+
+
+pub def read_chunk(mut file: BorrowedMut[File], max_bytes: int) -> Result[Owned[bytes], IoError]:
+    """Read at most a positive bound. Return independent bytes; empty success means EOF."""
+    ...
+
+
+pub def close(file: Owned[File]) -> Result[None, IoError]:
+    """Consume and close the handle, reporting close failure without returning ownership."""
+    ...

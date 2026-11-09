@@ -1,0 +1,53 @@
+"""Future std.primitives.io declarations; not a compiled module yet.
+
+IoError is imported from std.primitives.errors; Endian belongs to std.primitives.models.
+Both move from std.io without duplicate declarations.
+Error payloads in these operations retain no views.
+Private native storage and borrowed-field representation are not invented
+by this source sketch; their checked metadata is part of S4/S5.
+"""
+
+from std.primitives.errors import IoError
+
+
+pub class ReadCursor:
+    """Owns a byte position and retains a shared borrowing dependency on its backing bytes."""
+
+
+pub class WriteBuffer:
+    """Owns growable byte storage; no implicit copies of its mutable contents."""
+
+
+pub def read_cursor(data: Borrowed[bytes]) -> Owned[ReadCursor] from data:
+    """Create a cursor at zero without copying data; owning the cursor does not erase its source."""
+    ...
+
+
+pub def position(cursor: Borrowed[ReadCursor]) -> int:
+    """Return the current byte position."""
+    ...
+
+
+pub def read_exact(mut cursor: BorrowedMut[ReadCursor], size: int) -> Result[Borrowed[bytes], IoError] from cursor:
+    """Advance by size and return a view; invalid ranges leave position unchanged."""
+    ...
+
+
+pub def write_buffer() -> Owned[WriteBuffer]:
+    """Create an empty owned buffer."""
+    ...
+
+
+pub def append(mut buffer: BorrowedMut[WriteBuffer], data: Borrowed[bytes]) -> Result[None, IoError]:
+    """Append after validation/capacity acquisition; return success without retaining a view."""
+    ...
+
+
+pub def buffer_view(buffer: Borrowed[WriteBuffer]) -> Borrowed[bytes] from buffer:
+    """Borrow the current contents without allocating or retaining a separate owner."""
+    ...
+
+
+pub def finish_buffer(buffer: Owned[WriteBuffer]) -> Owned[bytes]:
+    """Consume storage into independent bytes; reject transfer while a dependent view remains live."""
+    ...

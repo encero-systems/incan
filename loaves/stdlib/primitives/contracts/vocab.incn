@@ -1,0 +1,12 @@
+"""Proposed std.primitives.vocab construction helpers; not compiled.
+Models are extracted from current std.vocab without JSON/serde or worker I/O.
+"""
+from std.primitives.models.vocab import Span, IncanExpr
+
+pub def path_expression(name: Borrowed[str], span: Span) -> Owned[IncanExpr]:
+    """Construct a spanned path expression with independently owned name components."""
+    ...
+
+pub def call_expression(callee: Owned[IncanExpr], arguments: Owned[list[IncanExpr]]) -> Owned[IncanExpr]:
+    """Construct a call using the current callee-span rule and preserving child spans."""
+    ...

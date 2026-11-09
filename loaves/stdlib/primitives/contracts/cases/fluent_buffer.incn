@@ -1,0 +1,15 @@
+"""Future accepted buffer case, using sequential functional operations."""
+
+from std.primitives.errors import IoError
+from std.primitives.io import write_buffer, append, buffer_view, finish_buffer
+
+
+def packet() -> Result[Owned[bytes], IoError]:
+    """Write two parts, inspect the same storage, then transfer its ownership."""
+    mut buffer = write_buffer()
+    append(buffer, b"AB")?
+    append(buffer, b"CD")?
+    view = buffer_view(buffer)
+    assert view == b"ABCD"
+    # No dependent use of view follows the ownership transfer.
+    return Ok(finish_buffer(buffer))

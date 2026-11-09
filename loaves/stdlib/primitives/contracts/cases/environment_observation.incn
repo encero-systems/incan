@@ -1,0 +1,7 @@
+"""Proposed observation case; configuration defaults are deliberately outside primitives."""
+from std.primitives.environ import observe
+from std.primitives.errors import EnvironError
+
+def optional_profile() -> Result[Option[Owned[str]], EnvironError]:
+    # Missing, empty, and invalid Unicode remain distinct; never log the returned value.
+    return observe("APP_PROFILE")

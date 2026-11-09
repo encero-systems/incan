@@ -1,0 +1,13 @@
+"""Proposed owned guard with explicit exclusive projection; requires native borrow proof."""
+import std.primitives.async
+from std.primitives.async.sync import mutex, lock, guard_value, unlock
+
+async def increment() -> int:
+    counter = mutex(0)
+    mut guard = await lock(counter)
+    mut value = guard_value(guard)
+    value += 1
+    observed = value
+    # Observed is a checked scalar copy; no guard reference escapes.
+    unlock(guard)
+    return observed

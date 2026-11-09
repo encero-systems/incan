@@ -1,0 +1,13 @@
+"""Future rejected case: mutation overlaps a shared view needed afterward."""
+
+from std.primitives.errors import IoError
+from std.primitives.io import write_buffer, append, buffer_view
+
+
+def invalid_reuse() -> Result[None, IoError]:
+    mut buffer = write_buffer()
+    append(buffer, b"AB")?
+    view = buffer_view(buffer)
+    append(buffer, b"CD")?
+    assert view == b"AB"
+    return Ok(None)
