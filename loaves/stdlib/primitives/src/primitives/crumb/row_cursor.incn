@@ -1,0 +1,115 @@
+"""Checked cursors over independently retained immutable views, with no implicit byte materialization."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.row_errors import RowError, RowFailure, failure, primitive
+from crate.primitives.views import MappedView
+
+
+pub class RowCursor:
+    """A parse-local cursor. On an error discard the cursor; only admitted outer results are exposed."""
+
+    view: MappedView
+    origin: int
+    position: int = 0
+
+    @staticmethod
+    pub def create(view: MappedView, origin: int = 0) -> Result[Self, RowError]:
+        """Check global position arithmetic once before using view-relative native operations."""
+        if origin < 0 or view.len() > 9223372036854775807 - origin:
+            return Err(failure(RowFailure.LimitExceeded, origin))
+        return Ok(RowCursor(view=view, origin=origin))
+
+    pub def absolute(self) -> int:
+        """Return the current byte position in the caller's original envelope boundary."""
+        return self.origin + self.position
+
+    pub def remaining(self) -> int:
+        """Return the bounded unread range without copying it."""
+        return self.view.len() - self.position
+
+    pub def consumed(self) -> int:
+        """Return consumed bytes relative to this frame, for an explicit concatenated-envelope caller."""
+        return self.position
+
+    pub def byte(mut self, mut budget: Budget) -> Result[int, RowError]:
+        """Charge one examined byte and refuse truncation before advancing the cursor."""
+        offset = self.absolute()
+        if self.remaining() == 0:
+            return Err(failure(RowFailure.Truncated, offset))
+        budget.charge_bytes(1).map_err((e) => primitive(e, offset))?
+        observed = self.view.read_u8(self.position)
+        match observed:
+            None => return Err(failure(RowFailure.Truncated, offset))
+            Some(value) =>
+                self.position += 1
+                return Ok(int(value))
+
+    pub def take(mut self, size: int, mut budget: Budget) -> Result[MappedView, RowError]:
+        """Retain a checked range. This does not copy its bytes; processing still consumes the request budget."""
+        offset = self.absolute()
+        if size < 0:
+            return Err(failure(RowFailure.LimitExceeded, offset))
+        if size > self.remaining():
+            return Err(failure(RowFailure.Truncated, self.origin + self.view.len()))
+        budget.charge_bytes(size).map_err((e) => primitive(e, offset))?
+        bounded = self.view.slice(self.position, size)
+        match bounded:
+            None => return Err(failure(RowFailure.Truncated, offset))
+            Some(result) =>
+                self.position += size
+                return Ok(result)
+
+    pub def length(mut self, mut budget: Budget) -> Result[int, RowError]:
+        """Read shortest u64 L, then check the host range before converting or using it as a count."""
+        start = self.absolute()
+        mut value: u64 = 0
+        mut factor: u64 = 1
+        for index in range(10):
+            budget.charge_elements(1).map_err((e) => primitive(e, start))?
+            octet = self.byte(budget)?
+            group = octet & 127
+            if index == 9 and (group > 1 or octet >= 128):
+                return Err(failure(RowFailure.IntegerOverflow, start))
+            value += group.saturating_resize[u64]() * factor
+            if octet < 128:
+                if index > 0 and group == 0:
+                    return Err(failure(RowFailure.NoncanonicalInteger, start))
+                converted: Option[int] = value.try_resize()
+                match converted:
+                    None => return Err(failure(RowFailure.LimitExceeded, start))
+                    Some(count) => return Ok(count)
+            if index < 9:
+                factor *= 128u64
+        return Err(failure(RowFailure.IntegerOverflow, start))
+
+    pub def frame(mut self, mut budget: Budget) -> Result[MappedView, RowError]:
+        """Read a shortest length then retain only that frame; failure never returns a partial view."""
+        size = self.length(budget)?
+        return self.take(size, budget)
+
+    pub def groups(mut self, mut budget: Budget) -> Result[list[int], RowError]:
+        """Read arbitrary-width shortest U/Z groups under the same byte and work limits."""
+        start = self.absolute()
+        mut result: list[int] = []
+        loop:
+            budget.charge_elements(1).map_err((e) => primitive(e, start))?
+            octet = self.byte(budget)?
+            group = octet & 127
+            if octet < 128 and len(result) > 0 and group == 0:
+                return Err(failure(RowFailure.NoncanonicalInteger, start))
+            budget.charge_bytes(8).map_err((e) => primitive(e, start))?
+            result.append(group)
+            if octet < 128:
+                return Ok(result)
+
+    pub def finished(self) -> Result[None, RowError]:
+        """Require exact consumption of this selected frame, even when the outer caller permits a stream."""
+        if self.remaining() != 0:
+            return Err(failure(RowFailure.TrailingBytes, self.absolute()))
+        return Ok(None)
+
+
+pub def copied(view: MappedView, offset: int, mut budget: Budget) -> Result[bytes, RowError]:
+    """Materialize only an explicitly requested bounded range, charging its independent storage first."""
+    budget.charge_bytes(view.len()).map_err((e) => primitive(e, offset))?
+    return Ok(view.to_bytes())

@@ -1,0 +1,165 @@
+"""Projection has an independently retained backing, exact absence and whole-envelope admission."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.row_reader import read_rows, read_prefix
+from std.primitives.crumb.row_writer import RowRecord
+from std.primitives.crumb.row_errors import RowFailure
+from std.primitives.crumb.types import AbsentPolicy
+from std.primitives.crumb.values import Value, ValueField
+from std.primitives.views import MappedView
+from row_test_support import description, member, backing, encoded, admitted, require_view
+
+
+def retained_field() -> Result[MappedView, str]:
+    """The set itself leaves scope too; the returned field still owns a valid immutable byte anchor."""
+    declared = description(b"record\x00", [member(b"field1", "i8")])
+    value = ValueField(identity=b"field1", canonical=true, absent=AbsentPolicy.Required, value=Value.Integer("7"))
+    record = RowRecord(key=b"record\x00", value=Value.Record([value]))
+    rows = admitted(encoded([declared], [record], true)?)?
+    mut budget = Budget.create(bytes=64, elements=64, depth=16).map_err((e) => e.message())?
+    view = rows.field_view(0, b"field1", budget).map_err((e) => e.message())?
+    return require_view(view)
+
+
+def test_selected_view_outlives_source_and_set() -> Result[None, str]:
+    """An owned immutable anchor, not a borrowed model or a copy of the selected cell, survives return."""
+    view = retained_field()?
+    assert view.len() == 1
+    assert view.read_u8(0) == Some(7u8)
+    assert view.read_u8(1) == None
+    return Ok(None)
+
+
+def test_selected_field_does_not_decode_large_neighbor() -> Result[None, str]:
+    """A tiny post-admission budget reads the small field beside a large binary field in reversed declaration order."""
+    declared = description(b"record\x00", [member(b"field2", "binary"), member(b"field1", "i8")])
+    large: bytes = [42u8 for _ in range(16384)]
+    values = [
+        ValueField(identity=b"field2", canonical=true, absent=AbsentPolicy.Required, value=Value.Binary(large)),
+        ValueField(identity=b"field1", canonical=true, absent=AbsentPolicy.Required, value=Value.Integer("7")),
+    ]
+    rows = admitted(encoded([declared], [RowRecord(key=b"record\x00", value=Value.Record(values))], false)?)?
+    mut tiny = Budget.create(bytes=128, elements=64, depth=16).map_err((e) => e.message())?
+    selected = rows.read_field(0, b"field1", tiny).map_err((e) => e.message())?
+    match selected:
+        Value.Integer(value) =>
+            assert value == "7"
+        _ => return Err("selected value type changed")
+    mut full = Budget.create(bytes=128, elements=64, depth=16).map_err((e) => e.message())?
+    match rows.read_record(0, full):
+        Ok(_) => return Err("full record bypassed the materialization budget")
+        Err(error) =>
+            assert error.kind == RowFailure.LimitExceeded
+    return Ok(None)
+
+
+def test_absence_unknown_field_and_invalid_record_are_distinct() -> Result[None, str]:
+    """An absent optional value exists in the shape; an unknown field or record index never becomes None."""
+    declared = description(b"record\x00", [member(b"field1", "option<i8>", "none")])
+    value = ValueField(identity=b"field1", canonical=true, absent=AbsentPolicy.NoneValue, value=Value.NoneValue)
+    rows = admitted(encoded([declared], [RowRecord(key=b"record\x00", value=Value.Record([value]))], false)?)?
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    assert rows.field_view(0, b"field1", budget).map_err((e) => e.message())?.is_none()
+    result = rows.read_field(0, b"field1", budget).map_err((e) => e.message())?
+    match result:
+        Value.NoneValue => pass
+        _ => return Err("declared absence was changed")
+    match rows.field_view(0, b"absent", budget):
+        Ok(_) => return Err("unknown field accepted")
+        Err(error) =>
+            assert error.kind == RowFailure.MissingField
+    for index in [-1, 1]:
+        match rows.read_record(index, budget):
+            Ok(_) => return Err("invalid record accepted")
+            Err(error) =>
+                assert error.kind == RowFailure.RecordIndex
+    return Ok(None)
+
+
+def test_stream_prefix_is_explicit_and_preserves_next_envelope() -> Result[None, str]:
+    """Two independently complete envelopes are only allowed through the explicit prefix operation."""
+    first = b"CRMB\x01\x01\x00\x02\x00\x00"
+    joined: bytes = [first[index % len(first)] for index in range(len(first) * 2)]
+    view = backing(joined)?
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    match read_rows(view, [], registry, false, budget):
+        Ok(_) => return Err("single envelope accepted trailing data")
+        Err(error) =>
+            assert error.kind == RowFailure.TrailingBytes
+    rows, consumed = read_prefix(view, [], registry, false, budget).map_err((e) => e.message())?
+    assert rows.len() == 0
+    assert consumed == len(first)
+    remainder = require_view(view.slice(consumed, view.len() - consumed))?
+    second = read_rows(remainder, [], registry, false, budget).map_err((e) => e.message())?
+    assert second.len() == 0
+    return Ok(None)
+
+
+def test_bad_unselected_cell_prevents_any_set() -> Result[None, str]:
+    """The final boolean is corrupt even if a caller would only request the preceding valid integer."""
+    declared = description(b"record\x00", [member(b"field1", "i8"), member(b"field2", "boolean")])
+    values = [
+        ValueField(identity=b"field1", canonical=true, absent=AbsentPolicy.Required, value=Value.Integer("7")),
+        ValueField(identity=b"field2", canonical=true, absent=AbsentPolicy.Required, value=Value.Boolean(true)),
+    ]
+    original = encoded([declared], [RowRecord(key=b"record\x00", value=Value.Record(values))], false)?
+    mut corrupt: list[u8] = [byte.saturating_resize[u8]() for byte in original]
+    corrupt[len(corrupt) - 1] = 2u8
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    match read_rows(backing(corrupt)?, [], registry, false, budget):
+        Ok(_) => return Err("invalid unselected field exposed a set")
+        Err(error) =>
+            assert error.kind == RowFailure.InvalidCell
+            assert error.field == Some(b"field2")
+            assert error.offset == len(corrupt) - 1
+    return Ok(None)
+
+
+def test_bitmap_rank_across_bytes_with_interleaved_required_fields() -> Result[None, str]:
+    """Nine eligible fields cross a bitmap byte while required fields do not consume bits."""
+    identities = [
+        b"000000",
+        b"000001",
+        b"000002",
+        b"000003",
+        b"000004",
+        b"000005",
+        b"000006",
+        b"000007",
+        b"000008",
+        b"000009",
+        b"000010",
+    ]
+    mut members = [member(identities[0], "option<i8>", "none")]
+    mut values: list[ValueField] = []
+    for index in range(len(identities)):
+        required = index == 4 or index == 9
+        mut policy = AbsentPolicy.NoneValue
+        mut value = Value.NoneValue
+        if required:
+            policy = AbsentPolicy.Required
+            value = Value.Integer(str(index))
+        elif index % 2 == 0:
+            value = Value.Some([Value.Integer(str(index))])
+        values.append(ValueField(identity=identities[index], canonical=true, absent=policy, value=value))
+        if index > 0:
+            if required:
+                members.append(member(identities[index], "i8"))
+            else:
+                members.append(member(identities[index], "option<i8>", "none"))
+    declared = description(b"record\x00", [members[index] for index in range(len(members) - 1, -1, -1)])
+    rows = admitted(encoded([declared], [RowRecord(key=b"record\x00", value=Value.Record(values))], false)?)?
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    for index in range(len(identities)):
+        required = index == 4 or index == 9
+        view = rows.field_view(0, identities[index], budget).map_err((e) => e.message())?
+        if required or index % 2 == 0:
+            cell = require_view(view)?
+            assert cell.len() == 1
+            assert cell.read_u8(0) == Some(index.saturating_resize[u8]())
+        else:
+            assert view.is_none()
+    return Ok(None)

@@ -1,0 +1,67 @@
+"""Explicit test declarations for projection, recursion and retained-view lifetime controls."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.row_descriptions import Description, DescriptionMode
+from std.primitives.crumb.row_reader import RowSet, read_rows
+from std.primitives.crumb.row_writer import RowRecord, write_rows
+from std.primitives.crumb.values import Metadata, MetadataEntry
+from std.primitives.views import MappedFile, MappedView
+
+
+pub def member(identity: bytes, storage: str, absent: str = "required") -> Metadata:
+    """A complete stored field contract, independent of the production admission helpers."""
+    return Metadata.Map(
+        [
+            MetadataEntry(key="id", value=Metadata.Binary(identity)),
+            MetadataEntry(key="name", value=Metadata.Text("stored")),
+            MetadataEntry(key="type", value=Metadata.Text(storage)),
+            MetadataEntry(key="canonical", value=Metadata.Boolean(true)),
+            MetadataEntry(key="absent", value=Metadata.Text(absent)),
+            MetadataEntry(key="properties", value=Metadata.Map([])),
+        ],
+    )
+
+
+pub def description(key: bytes, members: list[Metadata]) -> Description:
+    """Declaration order intentionally remains caller-controlled for identity-order tests."""
+    return Description(
+        metadata=Metadata.Map(
+            [
+                MetadataEntry(key="kind", value=Metadata.Text("Record")),
+                MetadataEntry(key="nominal", value=Metadata.Binary(key)),
+                MetadataEntry(key="path", value=Metadata.Text("example.Stored")),
+                MetadataEntry(key="fields", value=Metadata.List(members)),
+                MetadataEntry(key="properties", value=Metadata.Map([])),
+                MetadataEntry(key="unknown", value=Metadata.List([Metadata.Text("retained")])),
+            ],
+        ),
+        mode=DescriptionMode.Inline,
+    )
+
+
+pub def backing(data: bytes) -> Result[MappedView, str]:
+    """Let the owning handle leave scope before any read, retaining only its independent view anchor."""
+    owner = MappedFile.owned(data)?
+    return require_view(owner.view(0, owner.len()))
+
+
+pub def require_view(value: Option[MappedView]) -> Result[MappedView, str]:
+    """A missing setup range is a test error, never a successful format refusal."""
+    match value:
+        Some(view) => return Ok(view)
+        None => return Err("missing test view")
+
+
+pub def encoded(descriptions: list[Description], records: list[RowRecord], sealed: bool) -> Result[bytes, str]:
+    """Writer-built inputs supplement rather than replace the separately authored literal corpus."""
+    mut budget = Budget.create(bytes=16777216, elements=1048576, depth=128).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    return write_rows(descriptions, records, registry, sealed, budget).map_err((e) => e.message())
+
+
+pub def admitted(data: bytes) -> Result[RowSet, str]:
+    """The returned set retains the data after both the original byte argument and handle leave scope."""
+    mut budget = Budget.create(bytes=16777216, elements=1048576, depth=128).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    return read_rows(backing(data)?, [], registry, false, budget).map_err((e) => e.message())
