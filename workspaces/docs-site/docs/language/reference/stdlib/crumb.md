@@ -160,4 +160,23 @@ Stored comparison is numeric for integers and decimals, preserves signed-zero or
 
 ### Complete metadata inputs
 
-`Metadata` supports `Null`, `Boolean(bool)`, `Integer(str)`, `Text(str)`, `Binary(bytes)`, `List(list[Metadata])` and `Map(list[MetadataEntry])`. `MetadataEntry(key: str, value: Metadata)` uses exact string keys. Duplicate keys are refused; map entries encode in UTF-8 key order, while lists retain order. Every supplied property participates in the digest, including properties this layer does not interpret. A consumer must separately admit its profile's property semantics before decoding or reconstructing data.
+`Metadata` supports `Null`, `Boolean(bool)`, `Integer(str)`, `Text(str)`, `Binary(bytes)`, `List(list[Metadata])` and `Map(list[MetadataEntry])`. `MetadataEntry(key: str, value: Metadata)` uses exact string keys. Duplicate keys are refused; map entries encode in UTF-8 key order, while lists retain order. Every supplied property participates in the digest, including properties this layer does not interpret. A consumer must separately admit any property interpretation that changes value decoding or reconstruction. Uninterpreted metadata remains data and is retained in full.
+
+## Profile kind registrations
+
+`std.primitives.crumb.registrations` supplies local shape and printing-order facts. It does not load a profile, resolve its type names or authorize code execution.
+
+| Type | Fields |
+| --- | --- |
+| `PropertyGroupOrder` | `name: str`, `order: list[str]` |
+| `KindRegistration` | `kind: str`, `shape: NominalKind`, `property_order: Option[list[str]]`, `property_groups: list[PropertyGroupOrder]` |
+
+`NominalKind` comes from `.types` and is `Record` or `Enum`. `property_order=None` means the profile's property ordering is unknown; `Some([])` supplies a known empty order. Group orders apply independently to the named nested property. These lists are ordering facts, not lists of allowed properties. Codecs retain unknown properties as data in their original read order, including unknown nested groups.
+
+| API | Return type | Contract |
+| --- | --- | --- |
+| `KindRegistry.create(registrations: list[KindRegistration], mut budget: Budget)` | `Result[KindRegistry, CrumbError]` | Retain a checked local registry. Reject empty names, duplicate kinds, duplicate group or ordering names, and attempts to redefine core kinds. |
+| `registry.shape(kind: str, mut budget: Budget)` | `Result[NominalKind, CrumbError]` | Resolve core `Record`/`Enum` or an explicitly registered profile kind. Unknown profile kinds are invalid input. |
+| `registry.registration(kind: str, mut budget: Budget)` | `Result[Option[KindRegistration], CrumbError]` | Return retained profile facts, or `None` for a core kind. Unknown profile kinds fail. The codec supplies the core kinds' property orders. |
+
+All calls share the request budget. Construction and returned registration copies charge name storage and list work before allocation; name accounting reserves a UTF-8 upper bound. Registration does not check a description's field table, absence rules, identities or value-changing property interpretations. Those checks remain mandatory at the codec's admission boundary. A registered shape with unknown profile semantics can retain metadata without treating it as executable behavior.
