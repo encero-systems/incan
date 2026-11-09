@@ -99,7 +99,7 @@ pub def lower_function(
     cached_decorator, initializing_decorator = frame_decorator_role(module, body, role)?
     validate_callable_representation(body)?
     mut declared_carrier = PlanType.Unit
-    match native_source_type(constructors, nominals, enums, unions, body.return_type, intrinsics):
+    match native_source_type(constructors, nominals, enums, unions, body.return_type, intrinsics, file):
         Ok(carrier) => declared_carrier = carrier
         Err(reason) =>
             mut frame = str(body.name)
@@ -516,7 +516,7 @@ def body_frame_type(
     file: str,
 ) -> Result[PlanType, str]:
     """Resolve a frame local, retaining its location and Body IR's own unsupported-construct explanation on failure."""
-    match frame_type(constructors, nominals, enums, local, intrinsics):
+    match frame_type(constructors, nominals, enums, local, intrinsics, file):
         Ok(ty) => return Ok(ty)
         Err(reason) =>
             mut context = f"{reason} in {body.name} frame local {int(local.id.index())} in {file}"
