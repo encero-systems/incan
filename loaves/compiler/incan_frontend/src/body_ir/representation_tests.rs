@@ -1162,3 +1162,136 @@ def take(node: Node, dictionary: Dictionary) -> str:
     }
     Ok(())
 }
+
+/// An immediate error callback borrows the input it only observes, without turning a stored closure into an alias.
+#[test]
+fn immediate_error_callbacks_borrow_read_only_captures() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+class Cursor:
+    items: list[int]
+    index: int = 0
+    pub def peek(self) -> int:
+        return self.items[self.index]
+    pub def take(mut self) -> int:
+        value = self.items[self.index]
+        self.index += 1
+        return value
+model Shape:
+    identity: str
+    metadata: list[str]
+model Field:
+    shape: Shape
+
+def parser(mut cursor: Cursor, outcome: Result[int, str]) -> Result[int, str]:
+    outcome.map_err((_) => f"at {cursor.peek()}")?
+    return Ok(cursor.take())
+
+def read_field(field: Field, outcome: Result[int, str]) -> Result[int, str]:
+    return outcome.map_err((error) => f"{field.shape.identity}: {error}")
+
+def retained(field: Field) -> int:
+    callback = () => len(field.shape.metadata)
+    return callback()
+
+def take_field(field: Field) -> Field:
+    return field
+
+def through_owned(field: Field) -> str:
+    return take_field(field).shape.identity
+
+def dependent(field: Field, outcome: Result[int, str]) -> Result[int, str]:
+    return outcome.map_err((_) => through_owned(field))
+
+def returned(field: Field, outcome: Result[int, str]) -> Result[int, Field]:
+    return outcome.map_err((_) => field)
+
+def store_text(text: str) -> list[str]:
+    return [text]
+
+def text_message(error: str, text: str) -> str:
+    stored = store_text(text)
+    return error + str(len(stored))
+
+def field_dependent(field: Field, outcome: Result[int, str]) -> Result[int, str]:
+    return outcome.map_err((error) => text_message(error, field.shape.identity))
+
+def invoke(callback: Callable[str, str]) -> str:
+    return callback("invalid")
+
+class Runner:
+    pub def map_err(self, callback: Callable[str, str]) -> str:
+        return callback("invalid")
+
+def direct(field: Field) -> str:
+    return invoke((error) => f"{field.shape.identity}: {error}")
+
+def method(field: Field, runner: Runner) -> str:
+    return runner.map_err((error) => f"{field.shape.identity}: {error}")
+
+def advance(mut cursor: Cursor, callback: Callable[(), int]) -> int:
+    cursor.take()
+    return callback()
+
+def overlap(mut cursor: Cursor) -> int:
+    return advance(cursor, () => cursor.peek())
+
+"#;
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    for name in [
+        "parser",
+        "read_field",
+        "direct",
+        "method",
+        "overlap",
+        "retained",
+        "dependent",
+        "returned",
+        "field_dependent",
+    ] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing callback body")?;
+        let captures = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Assign {
+                    rvalue: bir::Rvalue::Closure { captured_operands, .. },
+                    ..
+                } => Some(captured_operands),
+                _ => None,
+            })
+            .ok_or("missing closure capture")?;
+        let Some(bir::Operand::Place(capture)) = captures.first() else {
+            return Err("missing captured source place".into());
+        };
+        if matches!(name, "parser" | "read_field" | "direct" | "method") {
+            assert_eq!(capture.fact, bir::OwnershipFact::Borrow, "{name}: {body:#?}");
+            assert!(!capture.last_use);
+        } else {
+            assert_ne!(
+                capture.fact,
+                bir::OwnershipFact::Borrow,
+                "stored or consuming closure changed: {body:#?}"
+            );
+        }
+        if matches!(name, "read_field" | "direct" | "method") {
+            assert_eq!(
+                body.params[0].input_access,
+                incan_semantics_core::IncanInputAccess::InferredShared,
+                "{body:#?}"
+            );
+        } else if name != "parser" {
+            assert_eq!(
+                body.params[0].input_access,
+                incan_semantics_core::IncanInputAccess::Inferred,
+                "{name}: {body:#?}"
+            );
+        }
+    }
+    Ok(())
+}
