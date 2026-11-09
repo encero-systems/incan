@@ -2,7 +2,7 @@
 # expect-stdout:
 #   true
 #   7
-#   Card { rank = 7 }
+#   Card(rank=7)
 
 
 enum Suit:
