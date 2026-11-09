@@ -218,6 +218,12 @@ impl NativeDesugarerRuntime {
     ) -> Result<Option<Output>, VocabDesugarPassError> {
         let provider = self.provider(loaves, block)?;
         let failure = |message| native_error(&provider, message);
+        if !self.covered_by.contains_key(&provider.name) {
+            self.record(&provider, module.unwrap_or(""), "not-trusted");
+            return Err(VocabDesugarPassError::NotTrusted {
+                provider: provider.name,
+            });
+        }
         if !self.admitted.contains(&provider.identity) {
             self.record(&provider, module.unwrap_or(""), "denied");
             return Err(failure(

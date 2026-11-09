@@ -329,6 +329,12 @@ pub struct VocabBlockStmt {
     pub header_args: Vec<Spanned<Expr>>,
     pub body: Vec<Spanned<Statement>>,
     pub body_item_trailing_commas: Vec<bool>,
+    /// Whether unattended analysis retained this block without running its untrusted provider.
+    ///
+    /// The typechecker treats such a block as an opaque placeholder. Ordinary compilation must never set this bit:
+    /// a trusted or explicit request either expands the block or reports the provider failure that prevented it.
+    #[serde(skip)]
+    pub not_checked: bool,
 }
 
 /// Generic function-like vocabulary declaration head.

@@ -3,6 +3,7 @@ use crate::diagnostics::CompileError;
 use crate::loaf_index::LoafIndex;
 use crate::vocab_ast_bridge::{internal_vocab_block_to_public, public_declarations_to_internal_with_anchor};
 
+use super::errors::NOT_TRUSTED_CODE;
 use super::surface::Output;
 use super::{NativeDesugarerRuntime, VocabDesugarPassError};
 
@@ -69,7 +70,7 @@ impl Rewrite<'_> {
             let leading_blank_lines = declaration.leading_blank_lines;
             let required_features = declaration.required_features.clone();
             match declaration.node {
-                ast::Declaration::VocabBlock(block) => {
+                ast::Declaration::VocabBlock(mut block) => {
                     let mut lowered = match self.vocab_declaration(&block, span) {
                         Ok(Some(declarations)) => declarations,
                         Ok(None) => {
@@ -82,6 +83,15 @@ impl Rewrite<'_> {
                             continue;
                         }
                         Err(error) => {
+                            if error.stable_code() == Some(NOT_TRUSTED_CODE) {
+                                block.not_checked = true;
+                                rewritten.push(ast::Spanned {
+                                    node: ast::Declaration::VocabBlock(block),
+                                    span,
+                                    leading_blank_lines,
+                                    required_features,
+                                });
+                            }
                             self.errors.push(error);
                             continue;
                         }
@@ -252,11 +262,20 @@ impl Rewrite<'_> {
     }
 
     /// Rewrite one statement-position vocabulary block into its statements; a collected block is kept as it is.
-    fn vocab_statement(&mut self, block: ast::VocabBlockStmt, span: ast::Span) -> Vec<ast::Spanned<ast::Statement>> {
+    fn vocab_statement(
+        &mut self,
+        mut block: ast::VocabBlockStmt,
+        span: ast::Span,
+    ) -> Vec<ast::Spanned<ast::Statement>> {
         let desugared = match self.desugar(&block, span) {
             Ok(Some(output)) => output,
             Ok(None) => return vec![ast::Spanned::new(ast::Statement::VocabBlock(block), span)],
             Err(error) => {
+                if error.stable_code() == Some(NOT_TRUSTED_CODE) {
+                    block.not_checked = true;
+                    self.errors.push(error);
+                    return vec![ast::Spanned::new(ast::Statement::VocabBlock(block), span)];
+                }
                 self.errors.push(error);
                 return Vec::new();
             }
@@ -502,7 +521,7 @@ impl Rewrite<'_> {
     /// for a refused block, which leaves a `None` placeholder beside its diagnostic.
     fn vocab_expr(&mut self, expr: &mut ast::Spanned<ast::Expr>) -> bool {
         let placeholder = ast::Expr::Literal(ast::Literal::None);
-        let block = match std::mem::replace(&mut expr.node, placeholder) {
+        let mut block = match std::mem::replace(&mut expr.node, placeholder) {
             ast::Expr::VocabBlock(block) => block,
             other => {
                 expr.node = other;
@@ -519,6 +538,10 @@ impl Rewrite<'_> {
                 false
             }
             Err(error) => {
+                if error.stable_code() == Some(NOT_TRUSTED_CODE) {
+                    block.not_checked = true;
+                    expr.node = ast::Expr::VocabBlock(block);
+                }
                 self.errors.push(error);
                 false
             }
@@ -641,6 +664,14 @@ fn unsupported_output(block: &ast::VocabBlockStmt, span: ast::Span) -> CompileEr
 /// These are infrastructure failures (artifact I/O, worker execution, checksum mismatches), not semantic type errors,
 /// so we use the generic `Error` kind rather than `Type`.
 fn error_from_pass_error(error: VocabDesugarPassError, fallback_span: ast::Span) -> CompileError {
+    if let VocabDesugarPassError::NotTrusted { provider } = &error {
+        return CompileError::new(
+            format!("vocabulary block from Loaf `{provider}` is not yet checked"),
+            fallback_span,
+        )
+        .with_stable_code(NOT_TRUSTED_CODE)
+        .with_hint("Review the provider before adding the trust entry offered by the editor");
+    }
     let span = match &error {
         VocabDesugarPassError::Native { span: Some(span), .. } => *span,
         _ => fallback_span,
