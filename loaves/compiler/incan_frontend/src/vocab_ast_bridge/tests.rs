@@ -35,6 +35,7 @@ fn bridges_block_context_keywords_as_clauses() -> Result<(), Box<dyn std::error:
         )],
         body: Vec::new(),
         body_item_trailing_commas: Vec::new(),
+        not_checked: false,
     };
     let declaration_block = ast::VocabBlockStmt {
         keyword: "query".to_string(),
@@ -47,6 +48,7 @@ fn bridges_block_context_keywords_as_clauses() -> Result<(), Box<dyn std::error:
             ast::Span::default(),
         )],
         body_item_trailing_commas: vec![false],
+        not_checked: false,
     };
 
     let bridged = internal_vocab_block_to_public(&declaration_block, ast::Span::default())?;
@@ -84,6 +86,7 @@ fn bridges_owned_clause_even_when_compatibility_metadata_uses_block_declaration(
             ast::Span::default(),
         )],
         body_item_trailing_commas: vec![false],
+        not_checked: false,
     };
     let window_clause_block = ast::VocabBlockStmt {
         keyword: "WINDOW".to_string(),
@@ -97,6 +100,7 @@ fn bridges_owned_clause_even_when_compatibility_metadata_uses_block_declaration(
         header_args: Vec::new(),
         body: Vec::new(),
         body_item_trailing_commas: Vec::new(),
+        not_checked: false,
     };
     let declaration_block = ast::VocabBlockStmt {
         keyword: "query".to_string(),
@@ -116,6 +120,7 @@ fn bridges_owned_clause_even_when_compatibility_metadata_uses_block_declaration(
             ast::Spanned::new(ast::Statement::VocabBlock(window_clause_block), ast::Span::default()),
         ],
         body_item_trailing_commas: vec![false, false, false],
+        not_checked: false,
     };
 
     let bridged = internal_vocab_block_to_public(&declaration_block, ast::Span::default())?;
@@ -148,6 +153,7 @@ fn bridges_compound_declaration_tokens() -> Result<(), Box<dyn std::error::Error
         header_args: Vec::new(),
         body: Vec::new(),
         body_item_trailing_commas: Vec::new(),
+        not_checked: false,
     };
 
     let bridged = internal_vocab_block_to_public(&block, ast::Span::default())?;
@@ -236,6 +242,7 @@ fn bridges_expression_list_clause_alias_items() -> Result<(), Box<dyn std::error
             ),
         ],
         body_item_trailing_commas: vec![false, false],
+        not_checked: false,
     };
 
     let clause = internal_vocab_clause_to_public(&clause_block, ast::Span::default())?;
@@ -273,6 +280,7 @@ fn infers_declaration_head_name_from_first_identifier_arg() -> Result<(), Box<dy
         ],
         body: Vec::new(),
         body_item_trailing_commas: Vec::new(),
+        not_checked: false,
     };
 
     let bridged = internal_vocab_block_to_public(&block, ast::Span::default())?;

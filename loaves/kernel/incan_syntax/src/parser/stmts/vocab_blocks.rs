@@ -109,6 +109,7 @@ impl<'a> Parser<'a> {
             header_args,
             body,
             body_item_trailing_commas,
+            not_checked: false,
         }))
     }
 

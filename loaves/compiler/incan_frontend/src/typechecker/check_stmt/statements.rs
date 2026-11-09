@@ -164,6 +164,7 @@ impl TypeChecker {
             Statement::While(while_stmt) => self.check_while_stmt(while_stmt, stmt.span),
             Statement::For(for_stmt) => self.check_for_stmt(for_stmt, stmt.span),
             Statement::Unsafe(unsafe_stmt) => self.check_unsafe_stmt(unsafe_stmt),
+            Statement::VocabBlock(vocab_block) if vocab_block.not_checked => {}
             Statement::VocabBlock(vocab_block) => {
                 self.errors.push(crate::diagnostics::CompileError::new(
                     format!(
