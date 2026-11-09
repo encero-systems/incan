@@ -3,3 +3,20 @@
 pub from crate.primitives.crumb.budget import Budget
 pub from crate.primitives.crumb.errors import CrumbError, CrumbFailure
 pub from crate.primitives.crumb.framing import Reader, encode_signed, encode_unsigned, frame
+pub from crate.primitives.crumb.text_printer import print_comic
+pub from crate.primitives.crumb.text_reader import read_comic, read_comic_text
+pub from crate.primitives.crumb.text_types import (
+    TextContext,
+    TextDescription,
+    TextDocument,
+    TextError,
+    TextField,
+    TextMapEntry,
+    TextNamedValue,
+    TextPosition,
+    TextProperty,
+    TextPropertyValue,
+    TextType,
+    TextValue,
+    TextVariant,
+)

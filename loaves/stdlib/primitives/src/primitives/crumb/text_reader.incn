@@ -1,0 +1,205 @@
+"""Inert COMIC document reading over caller-admitted descriptions and limits."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.text_syntax import parse_type
+from crate.primitives.crumb.text_tokens import TextTokenKind, TextTokens, tokenize
+from crate.primitives.crumb.text_types import (
+    TextContext,
+    TextDescription,
+    TextDocument,
+    TextError,
+    TextField,
+    TextPosition,
+    TextProperty,
+    TextPropertyValue,
+    TextVariant,
+    TextValue,
+)
+from crate.primitives.crumb.text_values import parse_root_values
+from crate.primitives.crumb.types import AbsentPolicy, NominalKind
+from crate.primitives.text import decode_utf8
+
+
+pub def read_comic(data: bytes, context: TextContext, mut budget: Budget) -> Result[TextDocument, TextError]:
+    """Read one UTF-8 COMIC snapshot without loading code, following references or evaluating properties."""
+    budget.charge_bytes(len(data)).map_err((_) => limit_error(TextPosition(line=1, column=1)))?
+    valid, source = decode_utf8(data, false)
+    if not valid:
+        return Err(TextError(kind="invalid_utf8", position=TextPosition(line=1, column=1)))
+    return read_comic_text(source, context, budget)
+
+
+pub def read_comic_text(source: str, context: TextContext, mut budget: Budget) -> Result[TextDocument, TextError]:
+    """Read one owned text snapshot under the same bounded token and value budget."""
+    mut tokens = tokenize(source, budget)?
+    mut descriptions: list[TextDescription] = []
+    mut values: list[TextValue] = []
+    while tokens.peek().kind != TextTokenKind.End:
+        if tokens.peek_at(1).text == "=":
+            declaration_position = tokens.peek().position
+            description = parse_description(tokens, context, budget)?
+            refuse_duplicate_declaration(descriptions, description, declaration_position)?
+            descriptions.append(description)
+        elif tokens.peek_at(1).text == "<<":
+            for value in parse_root_values(tokens, descriptions, budget)?:
+                values.append(value)
+        else:
+            return Err(TextError(kind="invalid_entry", position=tokens.peek().position))
+    return Ok(TextDocument(descriptions=descriptions, values=values))
+
+
+def parse_description(
+    mut tokens: TextTokens,
+    context: TextContext,
+    mut budget: Budget,
+) -> Result[TextDescription, TextError]:
+    """Read one core or locally registered declaration without resolving profile code."""
+    budget.enter().map_err((_) => limit_error(tokens.peek().position))?
+    path = require_word(tokens, "invalid_path")?
+    tokens.require("=")?
+    kind_token = tokens.peek()
+    kind = require_word(tokens, "unknown_kind")?
+    shape = registered_shape(kind, context, kind_token.position, budget)?
+    tokens.require("{")?
+    mut properties: list[TextProperty] = []
+    mut fields: list[TextField] = []
+    mut variants: list[TextVariant] = []
+    while not tokens.accepts("}"):
+        if tokens.peek().kind == TextTokenKind.End:
+            return Err(TextError(kind="unexpected_end", position=tokens.peek().position))
+        if tokens.peek_at(1).text == "=":
+            properties.append(parse_property(tokens, budget)?)
+        elif shape == "Enum":
+            variants.append(parse_variant(tokens, budget)?)
+        else:
+            fields.append(parse_field(tokens, budget)?)
+        tokens.accepts(",")
+    budget.leave().map_err((_) => limit_error(tokens.peek().position))?
+    return Ok(
+        TextDescription(path=path, kind=kind, shape=shape, properties=properties, fields=fields, variants=variants),
+    )
+
+
+def registered_shape(
+    kind: str,
+    context: TextContext,
+    position: TextPosition,
+    mut budget: Budget,
+) -> Result[str, TextError]:
+    """Map core kinds directly and every profile kind only through caller-supplied registration."""
+    match context.kinds.shape(kind, budget):
+        Ok(NominalKind.Record) => return Ok("Record")
+        Ok(NominalKind.Enum) => return Ok("Enum")
+        Err(_) => return Err(TextError(kind="unknown_kind", position=position))
+
+
+def parse_field(mut tokens: TextTokens, mut budget: Budget) -> Result[TextField, TextError]:
+    """Read a field, retaining metadata while projecting canonical and absent policies."""
+    name_token = tokens.peek()
+    name = require_word(tokens, "invalid_field")?
+    if name.startswith("___"):
+        return Err(TextError(kind="reserved_field", position=name_token.position))
+    mut properties: list[TextProperty] = []
+    if tokens.accepts("["):
+        while not tokens.accepts("]"):
+            properties.append(parse_property(tokens, budget)?)
+            tokens.accepts(",")
+    tokens.require(":")?
+    storage = parse_type(tokens, budget)?
+    mut absent = AbsentPolicy.Required
+    if tokens.accepts("="):
+        if tokens.accepts("None"):
+            absent = AbsentPolicy.NoneValue
+        elif tokens.accepts("["):
+            tokens.require("]")?
+            absent = AbsentPolicy.Empty
+        elif tokens.accepts("{"):
+            tokens.require("}")?
+            absent = AbsentPolicy.Empty
+        else:
+            return Err(TextError(kind="invalid_absent_value", position=tokens.peek().position))
+    mut canonical = true
+    for property in properties:
+        if property.name == "canonical":
+            match property.value:
+                TextPropertyValue.Boolean(value) => canonical = value
+                _ => return Err(TextError(kind="invalid_metadata", position=name_token.position))
+    return Ok(TextField(name=name, storage_type=storage, absent=absent, canonical=canonical, properties=properties))
+
+
+def parse_variant(mut tokens: TextTokens, mut budget: Budget) -> Result[TextVariant, TextError]:
+    """Read one enum variant and its optional named payload description."""
+    name = require_word(tokens, "invalid_variant")?
+    mut fields: list[TextField] = []
+    if tokens.accepts("("):
+        while not tokens.accepts(")"):
+            fields.append(parse_field(tokens, budget)?)
+            if tokens.accepts(")"):
+                break
+            tokens.require(",")?
+    return Ok(TextVariant(name=name, fields=fields))
+
+
+def parse_property(mut tokens: TextTokens, mut budget: Budget) -> Result[TextProperty, TextError]:
+    """Read inert description metadata in its authored order."""
+    name = require_word(tokens, "invalid_property")?
+    tokens.require("=")?
+    return Ok(TextProperty(name=name, value=parse_property_value(tokens, budget)?))
+
+
+def parse_property_value(mut tokens: TextTokens, mut budget: Budget) -> Result[TextPropertyValue, TextError]:
+    """Read symbols, scalars, lists and nested property groups without evaluation."""
+    budget.enter().map_err((_) => limit_error(tokens.peek().position))?
+    token = tokens.peek()
+    mut result = TextPropertyValue.Symbol("")
+    if token.kind == TextTokenKind.String:
+        result = TextPropertyValue.Text(tokens.take().text)
+    elif token.text in ["true", "false"]:
+        result = TextPropertyValue.Boolean(tokens.take().text == "true")
+    elif token.kind == TextTokenKind.Number:
+        result = TextPropertyValue.Integer(tokens.take().text)
+    elif tokens.accepts("["):
+        mut items: list[TextPropertyValue] = []
+        while not tokens.accepts("]"):
+            items.append(parse_property_value(tokens, budget)?)
+            if tokens.accepts("]"):
+                break
+            tokens.require(",")?
+        result = TextPropertyValue.List(items)
+    elif tokens.accepts("{"):
+        mut properties: list[TextProperty] = []
+        while not tokens.accepts("}"):
+            properties.append(parse_property(tokens, budget)?)
+            tokens.accepts(",")
+        result = TextPropertyValue.Group(properties)
+    elif token.kind == TextTokenKind.Word:
+        result = TextPropertyValue.Symbol(tokens.take().text)
+    else:
+        return Err(TextError(kind="invalid_property", position=token.position))
+    budget.leave().map_err((_) => limit_error(token.position))?
+    return Ok(result)
+
+
+def require_word(mut tokens: TextTokens, kind: str) -> Result[str, TextError]:
+    """Consume one nonempty word token or return the caller-selected refusal category."""
+    token = tokens.peek()
+    if token.kind != TextTokenKind.Word or token.text == "":
+        return Err(TextError(kind=kind, position=token.position))
+    return Ok(tokens.take().text)
+
+
+def refuse_duplicate_declaration(
+    descriptions: list[TextDescription],
+    candidate: TextDescription,
+    position: TextPosition,
+) -> Result[None, TextError]:
+    """Refuse a second declaration of the same kind at one absolute path."""
+    for description in descriptions:
+        if description.path == candidate.path and description.kind == candidate.kind:
+            return Err(TextError(kind="duplicate_declaration_kind", position=position))
+    return Ok(None)
+
+
+def limit_error(position: TextPosition) -> TextError:
+    """Keep resource limits distinct from malformed document categories."""
+    return TextError(kind="limit", position=position)

@@ -1,0 +1,477 @@
+"""Execute COMIC text cases against independent JSON expectations and pinned text bytes."""
+
+from std.json import JsonValue
+from std.primitives.crumb import Budget
+from std.primitives.crumb.registrations import KindRegistration, PropertyGroupOrder
+from std.primitives.crumb.text_printer import print_comic
+from std.primitives.crumb.text_reader import read_comic
+from std.primitives.crumb.text_syntax import parse_type, type_spelling
+from std.primitives.crumb.text_tokens import TextTokenKind, tokenize
+from std.primitives.crumb.text_types import (
+    TextContext,
+    TextDescription,
+    TextDocument,
+    TextField,
+    TextMapEntry,
+    TextNamedValue,
+    TextProperty,
+    TextPropertyValue,
+    TextType,
+    TextValue,
+    TextVariant,
+)
+from std.primitives.crumb.types import AbsentPolicy, NominalKind
+from std.primitives.hex import hexlify
+from case_data import absence as parse_absence, array, field, hex_bytes, text
+
+
+pub def check_text_read(value: JsonValue, texts: dict[str, bytes], mut budget: Budget) -> Result[bool, str]:
+    """Compare accepted semantics or exact refusal category and scalar position."""
+    source = copied_bytes(texts[text(value, "input_file")?])
+    expected = field(value, "expected")?
+    context = case_context(value, budget)?
+    match read_comic(source, context, budget):
+        Ok(document) =>
+            if text(expected, "status")? != "accepted":
+                return Ok(false)
+            actual_text = document_json(document).to_json().map_err((error) => error.message())?
+            expected_text = field(expected, "document")?.to_json().map_err((error) => error.message())?
+            return Ok(actual_text == expected_text)
+        Err(error) =>
+            if text(expected, "status")? != "refused":
+                return Err(error.message())
+            line = field(expected, "line")?.expect_int().map_err((failure) => failure.message())?
+            column = field(expected, "column")?.expect_int().map_err((failure) => failure.message())?
+            same_kind = error.kind == text(expected, "kind")?
+            return Ok(same_kind and error.position.line == line and error.position.column == column)
+
+
+pub def check_text_print(value: JsonValue, texts: dict[str, bytes], mut budget: Budget) -> Result[bool, str]:
+    """Construct the independent typed input, compare exact bytes, then read the expected text back."""
+    context = case_context(value, budget)?
+    document_value = field(value, "document")?
+    document = corpus_document(document_value, context, budget)?
+    actual = print_comic(document, context, budget).map_err((error) => error.message())?
+    expected = copied_bytes(texts[text(value, "expected_file")?])
+    if actual != expected:
+        return Ok(false)
+    parsed = read_comic(expected, context, budget).map_err((error) => error.message())?
+    reprinted = print_comic(parsed, context, budget).map_err((error) => error.message())?
+    return Ok(actual == reprinted)
+
+
+pub def case_context(value: JsonValue, mut budget: Budget) -> Result[TextContext, str]:
+    """Translate only the case's explicit local registrations and admitted external type names."""
+    match value.get("context"):
+        None => return TextContext.core(budget).map_err((error) => error.message())
+        Some(context) =>
+            mut registrations: list[KindRegistration] = []
+            for item in array(context, "kind_registrations")?:
+                mut property_order: Option[list[str]] = None
+                if let Some(order) = item.get("property_order"):
+                    if not order.is_null():
+                        property_order = Some(strings(order.expect_array().map_err((error) => error.message())?)?)
+                mut groups: list[PropertyGroupOrder] = []
+                if let Some(group_values) = item.get("property_groups"):
+                    for pair in group_values.items():
+                        name, order = pair
+                        groups.append(
+                            PropertyGroupOrder(
+                                name=name,
+                                order=strings(order.expect_array().map_err((error) => error.message())?)?,
+                            ),
+                        )
+                mut shape = NominalKind.Record
+                if text(item, "shape")? == "Enum":
+                    shape = NominalKind.Enum
+                registrations.append(
+                    KindRegistration(
+                        kind=text(item, "kind")?,
+                        shape=shape,
+                        property_order=property_order,
+                        property_groups=groups,
+                    ),
+                )
+            mut names: list[str] = []
+            if let Some(items) = context.get("admitted_type_names"):
+                names = strings(items.expect_array().map_err((error) => error.message())?)?
+            return TextContext.create(registrations, names, budget).map_err((error) => error.message())
+
+
+def strings(values: list[JsonValue]) -> Result[list[str], str]:
+    """Require an ordered array of strings without coercion."""
+    mut result: list[str] = []
+    for value in values:
+        result.append(value.expect_str().map_err((error) => error.message())?)
+    return Ok(result)
+
+
+def copied_bytes(value: bytes) -> bytes:
+    """Return independent owned bytes for a production API that consumes its input."""
+    copied: bytes = [byte.saturating_resize[u8]() for byte in value]
+    return copied
+
+
+def corpus_document(value: JsonValue, context: TextContext, mut budget: Budget) -> Result[TextDocument, str]:
+    """Translate independent corpus notation into the production printer carrier."""
+    mut descriptions: list[TextDescription] = []
+    for item in array(value, "descriptions")?:
+        descriptions.append(corpus_description(item, context, budget)?)
+    mut values: list[TextValue] = []
+    for item in array(value, "values")?:
+        values.append(corpus_value(item, descriptions)?)
+    return Ok(TextDocument(descriptions=descriptions, values=values))
+
+
+def corpus_description(value: JsonValue, context: TextContext, mut budget: Budget) -> Result[TextDescription, str]:
+    """Translate a declaration without deriving property or member order from expected text."""
+    path = text(value, "path")?
+    kind = text(value, "kind")?
+    shape = corpus_shape(kind, context, budget)?
+    mut properties: list[TextProperty] = []
+    if let Some(items) = value.get("properties"):
+        for item in items.expect_array().map_err((error) => error.message())?:
+            properties.append(corpus_property(item)?)
+    mut fields: list[TextField] = []
+    mut variants: list[TextVariant] = []
+    if shape == "Enum":
+        for item in array(value, "variants")?:
+            variants.append(corpus_variant(item, budget)?)
+    else:
+        for item in array(value, "fields")?:
+            fields.append(corpus_field(item, budget)?)
+    return Ok(
+        TextDescription(path=path, kind=kind, shape=shape, properties=properties, fields=fields, variants=variants),
+    )
+
+
+def corpus_shape(kind: str, context: TextContext, mut budget: Budget) -> Result[str, str]:
+    """Resolve only core kinds and the case's explicit local registrations."""
+    match context.kinds.shape(kind, budget):
+        Ok(NominalKind.Record) => return Ok("Record")
+        Ok(NominalKind.Enum) => return Ok("Enum")
+        Err(error) => return Err(error.message())
+
+
+def corpus_variant(value: JsonValue, mut budget: Budget) -> Result[TextVariant, str]:
+    """Translate one enum variant and its declaration-ordered payload fields."""
+    mut fields: list[TextField] = []
+    for item in array(value, "fields")?:
+        fields.append(corpus_field(item, budget)?)
+    return Ok(TextVariant(name=text(value, "name")?, fields=fields))
+
+
+def corpus_field(value: JsonValue, mut budget: Budget) -> Result[TextField, str]:
+    """Translate exact field type, absence and canonical metadata facts."""
+    canonical = field(value, "canonical")?.expect_bool().map_err((error) => error.message())?
+    mut properties: list[TextProperty] = []
+    if not canonical:
+        properties.append(TextProperty(name="canonical", value=TextPropertyValue.Boolean(false)))
+    return Ok(
+        TextField(
+            name=text(value, "name")?,
+            storage_type=corpus_type(text(value, "type")?, budget)?,
+            absent=parse_absence(text(value, "absent")?)?,
+            canonical=canonical,
+            properties=properties,
+        ),
+    )
+
+
+def corpus_type(spelling: str, mut budget: Budget) -> Result[TextType, str]:
+    """Use the production type grammar for independent corpus type spellings."""
+    mut tokens = tokenize(spelling, budget).map_err((error) => error.message())?
+    value = parse_type(tokens, budget).map_err((error) => error.message())?
+    if tokens.peek().kind != TextTokenKind.End:
+        return Err("trailing corpus type tokens")
+    return Ok(value)
+
+
+def corpus_property(value: JsonValue) -> Result[TextProperty, str]:
+    """Translate one inert property in the corpus's explicit list order."""
+    return Ok(TextProperty(name=text(value, "name")?, value=corpus_property_value(field(value, "value")?)?))
+
+
+def corpus_property_value(value: JsonValue) -> Result[TextPropertyValue, str]:
+    """Translate the corpus's closed property-value notation without evaluation."""
+    match text(value, "kind")?:
+        "symbol" => return Ok(TextPropertyValue.Symbol(text(value, "name")?))
+        "string" => return Ok(TextPropertyValue.Text(text(value, "value")?))
+        "boolean" =>
+            flag = field(value, "value")?.expect_bool().map_err((error) => error.message())?
+            return Ok(TextPropertyValue.Boolean(flag))
+        "int" => return Ok(TextPropertyValue.Integer(text(value, "value")?))
+        "list" =>
+            mut items: list[TextPropertyValue] = []
+            for item in array(value, "items")?:
+                items.append(corpus_property_value(item)?)
+            return Ok(TextPropertyValue.List(items))
+        "property_group" =>
+            mut properties: list[TextProperty] = []
+            for item in array(value, "properties")?:
+                properties.append(corpus_property(item)?)
+            return Ok(TextPropertyValue.Group(properties))
+        _ => return Err("unknown corpus property value")
+
+
+def corpus_value(value: JsonValue, descriptions: list[TextDescription]) -> Result[TextValue, str]:
+    """Translate one fully tagged value while preserving exact integers and float bits."""
+    match text(value, "kind")?:
+        "none" => return Ok(TextValue.NoneValue)
+        "some" => return Ok(TextValue.Some([corpus_value(field(value, "value")?, descriptions)?]))
+        "boolean" =>
+            flag = field(value, "value")?.expect_bool().map_err((error) => error.message())?
+            return Ok(TextValue.Boolean(flag))
+        "int" => return Ok(TextValue.Integer(text(value, "type")?, text(value, "value")?))
+        "float" => return corpus_float(value)
+        "decimal" =>
+            precision = field(value, "precision")?.expect_int().map_err((error) => error.message())?
+            scale = field(value, "scale")?.expect_int().map_err((error) => error.message())?
+            return Ok(TextValue.Decimal(text(value, "coefficient")?, precision, scale))
+        "string" => return Ok(TextValue.Text(text(value, "value")?))
+        "binary" => return Ok(TextValue.Binary(hex_bytes(text(value, "hex")?)?))
+        "withheld" => return Ok(TextValue.Withheld(text(value, "type")?))
+        "list" => return Ok(TextValue.List(corpus_values(array(value, "items")?, descriptions)?))
+        "set" => return Ok(TextValue.Set(corpus_values(array(value, "items")?, descriptions)?))
+        "map" => return corpus_map(value, descriptions)
+        "record" => return corpus_record(value, descriptions)
+        "enum" => return corpus_enum(value, descriptions)
+        "union" =>
+            member = text(value, "member")?
+            item = corpus_value(field(value, "value")?, descriptions)?
+            return Ok(TextValue.Union(member, [item]))
+        "reference" => return Ok(TextValue.Reference(text(value, "target_type")?, text(value, "identity")?))
+        _ => return Err("unknown corpus text value")
+
+
+def corpus_values(values: list[JsonValue], descriptions: list[TextDescription]) -> Result[list[TextValue], str]:
+    """Translate an ordered value sequence without host collection coercion."""
+    mut result: list[TextValue] = []
+    for value in values:
+        result.append(corpus_value(value, descriptions)?)
+    return Ok(result)
+
+
+def corpus_float(value: JsonValue) -> Result[TextValue, str]:
+    """Retain exact IEEE bytes without deriving expected spelling in the corpus adapter."""
+    width = field(value, "width")?.expect_int().map_err((error) => error.message())?
+    bits_text = text(value, "bits")?
+    return Ok(TextValue.Float(width, hex_bytes(bits_text)?))
+
+
+def corpus_map(value: JsonValue, descriptions: list[TextDescription]) -> Result[TextValue, str]:
+    """Translate explicit map pairs without JSON object key semantics."""
+    mut entries: list[TextMapEntry] = []
+    for item in array(value, "entries")?:
+        pair = item.expect_array().map_err((error) => error.message())?
+        if len(pair) != 2:
+            return Err("corpus map entry arity")
+        entries.append(
+            TextMapEntry(key=corpus_value(pair[0], descriptions)?, value=corpus_value(pair[1], descriptions)?),
+        )
+    return Ok(TextValue.Map(entries))
+
+
+def corpus_record(value: JsonValue, descriptions: list[TextDescription]) -> Result[TextValue, str]:
+    """Order a corpus record's object fields by its own description."""
+    storage_type = text(value, "type")?
+    description = corpus_description_at(descriptions, storage_type)?
+    source = field(value, "fields")?
+    mut values: list[TextNamedValue] = []
+    for declared in description.fields:
+        values.append(
+            TextNamedValue(name=declared.name, value=corpus_value(field(source, declared.name)?, descriptions)?),
+        )
+    return Ok(TextValue.Record(storage_type, values))
+
+
+def corpus_enum(value: JsonValue, descriptions: list[TextDescription]) -> Result[TextValue, str]:
+    """Order a corpus enum payload's object fields by its declared variant."""
+    storage_type = text(value, "type")?
+    variant_name = text(value, "variant")?
+    description = corpus_description_at(descriptions, storage_type)?
+    source = field(value, "fields")?
+    mut values: list[TextNamedValue] = []
+    for variant in description.variants:
+        if variant.name == variant_name:
+            for declared in variant.fields:
+                item = corpus_value(field(source, declared.name)?, descriptions)?
+                values.append(TextNamedValue(name=declared.name, value=item))
+            return Ok(TextValue.Enum(storage_type, variant_name, values))
+    return Err("unknown corpus enum variant")
+
+
+def corpus_description_at(descriptions: list[TextDescription], path: str) -> Result[TextDescription, str]:
+    """Find exactly one value-bearing description by absolute path."""
+    mut found: list[TextDescription] = []
+    for description in descriptions:
+        if description.path == path:
+            found.append(description)
+    if len(found) != 1:
+        return Err("corpus value type has no single description")
+    return Ok(found[0])
+
+
+def document_json(document: TextDocument) -> JsonValue:
+    """Render the production carrier in the corpus's independent semantic notation."""
+    descriptions = [description_json(description) for description in document.descriptions]
+    values = [value_json(value) for value in document.values]
+    mut fields: dict[str, JsonValue] = {}
+    fields["descriptions"] = JsonValue.array(descriptions)
+    fields["values"] = JsonValue.array(values)
+    return JsonValue.object(fields)
+
+
+def description_json(description: TextDescription) -> JsonValue:
+    """Preserve declaration and property read order while omitting absent notation sections."""
+    mut fields: dict[str, JsonValue] = {}
+    fields["path"] = JsonValue.string(description.path)
+    fields["kind"] = JsonValue.string(description.kind)
+    if len(description.properties) > 0:
+        fields["properties"] = JsonValue.array([property_json(value) for value in description.properties])
+    if description.shape == "Enum":
+        fields["variants"] = JsonValue.array([variant_json(value) for value in description.variants])
+    else:
+        fields["fields"] = JsonValue.array([field_json(value) for value in description.fields])
+    return JsonValue.object(fields)
+
+
+def field_json(value: TextField) -> JsonValue:
+    """Translate one declared field into exact corpus notation."""
+    mut fields: dict[str, JsonValue] = {}
+    fields["name"] = JsonValue.string(value.name)
+    fields["type"] = JsonValue.string(type_spelling(value.storage_type))
+    fields["absent"] = JsonValue.string(absence(value.absent))
+    fields["canonical"] = JsonValue.bool(value.canonical)
+    return JsonValue.object(fields)
+
+
+def variant_json(value: TextVariant) -> JsonValue:
+    """Translate one enum variant and its payload fields."""
+    mut fields: dict[str, JsonValue] = {}
+    fields["name"] = JsonValue.string(value.name)
+    fields["fields"] = JsonValue.array([field_json(field_value) for field_value in value.fields])
+    return JsonValue.object(fields)
+
+
+def property_json(value: TextProperty) -> JsonValue:
+    """Translate one inert property while retaining its authored sequence."""
+    mut fields: dict[str, JsonValue] = {}
+    fields["name"] = JsonValue.string(value.name)
+    fields["value"] = property_value_json(value.value)
+    return JsonValue.object(fields)
+
+
+def property_value_json(value: TextPropertyValue) -> JsonValue:
+    """Translate the metadata variants selected by the text corpus."""
+    mut fields: dict[str, JsonValue] = {}
+    match value:
+        TextPropertyValue.Symbol(name) =>
+            fields["kind"] = JsonValue.string("symbol")
+            fields["name"] = JsonValue.string(name)
+        TextPropertyValue.Text(text_value) =>
+            fields["kind"] = JsonValue.string("string")
+            fields["value"] = JsonValue.string(text_value)
+        TextPropertyValue.Boolean(flag) =>
+            fields["kind"] = JsonValue.string("boolean")
+            fields["value"] = JsonValue.bool(flag)
+        TextPropertyValue.Integer(decimal) =>
+            fields["kind"] = JsonValue.string("int")
+            fields["value"] = JsonValue.string(decimal)
+        TextPropertyValue.List(items) =>
+            fields["kind"] = JsonValue.string("list")
+            fields["items"] = JsonValue.array([property_value_json(item) for item in items])
+        TextPropertyValue.Group(properties) =>
+            fields["kind"] = JsonValue.string("property_group")
+            fields["properties"] = JsonValue.array([property_json(property) for property in properties])
+    return JsonValue.object(fields)
+
+
+def value_json(value: TextValue) -> JsonValue:
+    """Translate one typed production value without deriving any expected value from text."""
+    mut fields: dict[str, JsonValue] = {}
+    match value:
+        TextValue.NoneValue => fields["kind"] = JsonValue.string("none")
+        TextValue.Some(items) =>
+            fields["kind"] = JsonValue.string("some")
+            fields["value"] = value_json(items[0])
+        TextValue.Boolean(flag) =>
+            fields["kind"] = JsonValue.string("boolean")
+            fields["value"] = JsonValue.bool(flag)
+        TextValue.Integer(storage_type, decimal) =>
+            fields["kind"] = JsonValue.string("int")
+            fields["type"] = JsonValue.string(storage_type)
+            fields["value"] = JsonValue.string(decimal)
+        TextValue.Float(width, bits) =>
+            fields["kind"] = JsonValue.string("float")
+            fields["width"] = JsonValue.int(width)
+            fields["bits"] = JsonValue.string(hexlify(bits))
+        TextValue.Decimal(coefficient, precision, scale) =>
+            fields["kind"] = JsonValue.string("decimal")
+            fields["precision"] = JsonValue.int(precision)
+            fields["scale"] = JsonValue.int(scale)
+            fields["coefficient"] = JsonValue.string(coefficient)
+        TextValue.Text(text_value) =>
+            fields["kind"] = JsonValue.string("string")
+            fields["value"] = JsonValue.string(text_value)
+        TextValue.Binary(data) =>
+            fields["kind"] = JsonValue.string("binary")
+            fields["hex"] = JsonValue.string(hexlify(data))
+        TextValue.Withheld(storage_type) =>
+            fields["kind"] = JsonValue.string("withheld")
+            fields["type"] = JsonValue.string(storage_type)
+        TextValue.List(items) => return sequence_json("list", items)
+        TextValue.Set(items) => return sequence_json("set", items)
+        TextValue.Map(entries) => return map_json(entries)
+        TextValue.Record(storage_type, values) => return record_json("record", storage_type, "", values)
+        TextValue.Enum(storage_type, variant, values) => return record_json("enum", storage_type, variant, values)
+        TextValue.Union(member, items) =>
+            fields["kind"] = JsonValue.string("union")
+            fields["member"] = JsonValue.string(member)
+            fields["value"] = value_json(items[0])
+        TextValue.Reference(target_type, identity) =>
+            fields["kind"] = JsonValue.string("reference")
+            fields["target_type"] = JsonValue.string(target_type)
+            fields["identity"] = JsonValue.string(identity)
+    return JsonValue.object(fields)
+
+
+def sequence_json(kind: str, items: list[TextValue]) -> JsonValue:
+    """Translate an ordered list or canonically sorted set."""
+    mut fields: dict[str, JsonValue] = {}
+    fields["kind"] = JsonValue.string(kind)
+    fields["items"] = JsonValue.array([value_json(item) for item in items])
+    return JsonValue.object(fields)
+
+
+def map_json(entries: list[TextMapEntry]) -> JsonValue:
+    """Translate explicit map pairs without host-object key coercion."""
+    mut items: list[JsonValue] = []
+    for entry in entries:
+        items.append(JsonValue.array([value_json(entry.key), value_json(entry.value)]))
+    mut fields: dict[str, JsonValue] = {}
+    fields["kind"] = JsonValue.string("map")
+    fields["entries"] = JsonValue.array(items)
+    return JsonValue.object(fields)
+
+
+def record_json(kind: str, storage_type: str, variant: str, values: list[TextNamedValue]) -> JsonValue:
+    """Translate records and enum payloads with declaration-ordered object keys."""
+    mut named: dict[str, JsonValue] = {}
+    for value in values:
+        named[value.name] = value_json(value.value)
+    mut fields: dict[str, JsonValue] = {}
+    fields["kind"] = JsonValue.string(kind)
+    fields["type"] = JsonValue.string(storage_type)
+    if variant != "":
+        fields["variant"] = JsonValue.string(variant)
+    fields["fields"] = JsonValue.object(named)
+    return JsonValue.object(fields)
+
+
+def absence(value: AbsentPolicy) -> str:
+    """Return the corpus spelling of one explicit absence policy."""
+    match value:
+        AbsentPolicy.Required => return "required"
+        AbsentPolicy.NoneValue => return "none"
+        AbsentPolicy.Empty => return "empty"

@@ -1,0 +1,170 @@
+"""Shared COMIC type parsing, spelling and description lookup."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.text_tokens import TextTokenKind, TextTokens
+from crate.primitives.crumb.text_types import TextDescription, TextError, TextPosition, TextType
+
+
+pub def parse_type(mut tokens: TextTokens, mut budget: Budget) -> Result[TextType, TextError]:
+    """Parse a union from primary type constructors and one optional suffix layer."""
+    budget.enter().map_err((_) => limit_error(tokens.peek().position))?
+    mut members = [parse_primary(tokens, budget)?]
+    while tokens.accepts("|"):
+        members.append(parse_primary(tokens, budget)?)
+    budget.leave().map_err((_) => limit_error(tokens.peek().position))?
+    if len(members) == 1:
+        return Ok(members[0])
+    return Ok(TextType.Union(members))
+
+
+def parse_primary(mut tokens: TextTokens, mut budget: Budget) -> Result[TextType, TextError]:
+    """Parse one scalar, named type or parameterized core constructor."""
+    token = tokens.peek()
+    if token.kind not in [TextTokenKind.Word, TextTokenKind.Number]:
+        return Err(TextError(kind="invalid_type", position=token.position))
+    name = tokens.take().text
+    mut result = TextType.Named(name)
+    if name in [
+        "boolean",
+        "i8",
+        "i16",
+        "i32",
+        "i64",
+        "u8",
+        "u16",
+        "u32",
+        "u64",
+        "fp32",
+        "fp64",
+        "string",
+        "binary",
+        "secret_string",
+        "secret_bytes",
+    ]:
+        result = TextType.Scalar(name)
+    elif name == "decimal":
+        result = parse_decimal(tokens)?
+    elif name in ["list", "set", "option", "ref", "map"]:
+        result = parse_constructor(name, tokens, budget)?
+    if tokens.accepts("?"):
+        result = TextType.Option([result])
+    return Ok(result)
+
+
+def parse_decimal(mut tokens: TextTokens) -> Result[TextType, TextError]:
+    """Parse positive precision and a scale within that precision."""
+    tokens.require("<")?
+    precision_token = tokens.take()
+    tokens.require(",")?
+    scale_token = tokens.take()
+    tokens.require(">")?
+    if not plain_unsigned(precision_token.text) or not plain_unsigned(scale_token.text):
+        return Err(TextError(kind="invalid_type", position=precision_token.position))
+    precision = int(precision_token.text)
+    scale = int(scale_token.text)
+    if precision <= 0 or scale < 0 or scale > precision:
+        return Err(TextError(kind="invalid_type", position=precision_token.position))
+    return Ok(TextType.Decimal(precision, scale))
+
+
+def parse_constructor(name: str, mut tokens: TextTokens, mut budget: Budget) -> Result[TextType, TextError]:
+    """Parse the fixed arity of one core type constructor."""
+    tokens.require("<")?
+    first = parse_type(tokens, budget)?
+    if name == "map":
+        tokens.require(",")?
+        second = parse_type(tokens, budget)?
+        tokens.require(">")?
+        return Ok(TextType.Map([first, second]))
+    tokens.require(">")?
+    match name:
+        "list" => return Ok(TextType.List([first]))
+        "set" => return Ok(TextType.Set([first]))
+        "option" => return Ok(TextType.Option([first]))
+        "ref" => return Ok(TextType.Reference([first]))
+        _ => return Err(TextError(kind="invalid_type", position=tokens.peek().position))
+
+
+pub def type_spelling(value: TextType) -> str:
+    """Return the canonical core spelling of one admitted text type."""
+    match value:
+        TextType.Scalar(name) | TextType.Named(name) => return name
+        TextType.Decimal(precision, scale) => return f"decimal<{precision}, {scale}>"
+        TextType.List(items) => return f"list<{type_spelling(items[0])}>"
+        TextType.Set(items) => return f"set<{type_spelling(items[0])}>"
+        TextType.Map(items) => return f"map<{type_spelling(items[0])}, {type_spelling(items[1])}>"
+        TextType.Option(items) =>
+            inner = type_spelling(items[0])
+            if option_suffix(items[0]):
+                return inner + "?"
+            return f"option<{inner}>"
+        TextType.Union(items) => return " | ".join([type_spelling(item) for item in items])
+        TextType.Reference(items) => return f"ref<{type_spelling(items[0])}>"
+    return ""
+
+
+def option_suffix(value: TextType) -> bool:
+    """Use the short suffix unless it would collapse a nested optional layer."""
+    match value:
+        TextType.Option(_) => return false
+        _ => return true
+
+
+pub def description_at(
+    descriptions: list[TextDescription],
+    path: str,
+    position: TextPosition,
+) -> Result[TextDescription, TextError]:
+    """Require exactly one value-bearing declaration at a path."""
+    mut found: list[TextDescription] = []
+    for description in descriptions:
+        if description.path == path and description.shape in ["Record", "Enum"]:
+            found.append(description)
+    if len(found) == 0:
+        return Err(TextError(kind="unknown_description", position=position))
+    if len(found) != 1:
+        return Err(TextError(kind="value_type_no_single_declaration", position=position))
+    return Ok(found[0])
+
+
+pub def resolve_named(
+    descriptions: list[TextDescription],
+    spelling: str,
+    position: TextPosition,
+) -> Result[TextDescription, TextError]:
+    """Resolve an exact path or one unambiguous final path segment."""
+    mut exact: list[TextDescription] = []
+    mut short: list[TextDescription] = []
+    for description in descriptions:
+        if description.path == spelling:
+            exact.append(description)
+        elif last_segment(description.path) == spelling:
+            short.append(description)
+    if len(exact) == 1:
+        return Ok(exact[0])
+    if len(exact) > 1:
+        return Err(TextError(kind="value_type_no_single_declaration", position=position))
+    if len(short) == 1:
+        return Ok(short[0])
+    return Err(TextError(kind="ambiguous_or_unknown_type", position=position))
+
+
+pub def last_segment(path: str) -> str:
+    """Return the final dotted path segment."""
+    parts = path.split(".")
+    return parts[len(parts) - 1]
+
+
+def plain_unsigned(value: str) -> bool:
+    """Return whether text is nonempty canonical decimal digits."""
+    if value == "" or (len(value) > 1 and value.startswith("0")):
+        return false
+    for character in value:
+        if character < "0" or character > "9":
+            return false
+    return true
+
+
+def limit_error(position: TextPosition) -> TextError:
+    """Preserve caller-limit refusal as a category separate from grammar errors."""
+    return TextError(kind="limit", position=position)
