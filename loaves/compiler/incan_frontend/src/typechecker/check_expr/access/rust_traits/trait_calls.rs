@@ -151,6 +151,8 @@ impl TypeChecker {
         let mut variables = vec!["Self".to_owned()];
         variables.extend(call.trait_info.type_params.iter().cloned());
         variables.extend(original.type_params.iter().cloned());
+        let const_parameters = Self::rust_signature_const_parameters(original);
+        variables.extend(const_parameters.iter().cloned());
         let bindings = self.infer_rust_signature_bindings(
             original,
             "",
@@ -159,16 +161,21 @@ impl TypeChecker {
             call.arg_types,
             call.expected_return_ty,
         );
-        let arguments = variables
+        let inferred_arguments = variables
             .iter()
             .map(|name| bindings.get(name).cloned())
             .collect::<Option<Vec<_>>>()?;
-        if arguments
+        if inferred_arguments
             .iter()
             .any(|argument| matches!(argument, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
         {
             return None;
         }
+        let arguments = variables
+            .iter()
+            .filter(|name| !const_parameters.contains(name))
+            .map(|name| bindings.get(name).cloned())
+            .collect::<Option<Vec<_>>>()?;
         let owner = bindings.get("Self")?;
         let displays = bindings
             .iter()
@@ -182,11 +189,18 @@ impl TypeChecker {
         let errors_before = self.errors.len();
         let path = format!("{}::{}", call.rust_path, call.method);
         self.validate_rust_method_call(&path, &signature, call.args, call.arg_types, false, call.span);
-        let mut result = self.instantiate_rust_signature_type(
-            &self.native_rust_signature_type(&original.return_type, ""),
-            &variables,
-            &bindings,
-        );
+        let mut result = if Self::rust_display_const_parameters(&original.return_type)
+            .iter()
+            .any(|parameter| const_parameters.contains(parameter))
+        {
+            self.native_rust_signature_type(&signature.return_type, "")
+        } else {
+            self.instantiate_rust_signature_type(
+                &self.native_rust_signature_type(&original.return_type, ""),
+                &variables,
+                &bindings,
+            )
+        };
         if original.return_type.contains(" as ") {
             let failed = Cell::new(false);
             result = map_resolved_type_leaves(&result, &|leaf| {
@@ -216,12 +230,19 @@ impl TypeChecker {
             .call_site_callable_params(call.span)
             .unwrap_or(&[])
             .to_vec();
-        for (parameter, declared) in parameters.iter_mut().zip(&original.params) {
-            parameter.ty = self.instantiate_rust_signature_type(
-                &self.native_rust_signature_type(&declared.type_display, ""),
-                &variables,
-                &bindings,
-            );
+        for ((parameter, declared), closed) in parameters.iter_mut().zip(&original.params).zip(&signature.params) {
+            parameter.ty = if Self::rust_display_const_parameters(&declared.type_display)
+                .iter()
+                .any(|parameter| const_parameters.contains(parameter))
+            {
+                self.native_rust_signature_type(&closed.type_display, "")
+            } else {
+                self.instantiate_rust_signature_type(
+                    &self.native_rust_signature_type(&declared.type_display, ""),
+                    &variables,
+                    &bindings,
+                )
+            };
         }
         self.type_info.rust.checked_calls.insert(
             call.span,
@@ -282,6 +303,7 @@ impl TypeChecker {
         known_arguments.truncate(info.type_params.len());
         let mut variables = info.type_params.clone();
         variables.extend(original.type_params.iter().cloned());
+        variables.extend(Self::rust_signature_const_parameters(original));
         let mut bindings = info
             .type_params
             .iter()
@@ -550,7 +572,12 @@ impl TypeChecker {
             RustTraitAssoc::Function { name, signature } if name == call.method => Some(signature),
             _ => None,
         })?;
-        if original.is_async || original.is_unsafe || !original.type_params.is_empty() || !call.type_args.is_empty() {
+        if original.is_async
+            || original.is_unsafe
+            || !original.type_params.is_empty()
+            || !Self::rust_signature_const_parameters(original).is_empty()
+            || !call.type_args.is_empty()
+        {
             return None;
         }
         let borrowed_self = original.params.first().and_then(|parameter| {
