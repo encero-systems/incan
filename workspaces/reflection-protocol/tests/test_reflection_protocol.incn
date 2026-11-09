@@ -1,0 +1,225 @@
+"""Ordinary handwritten adoption, recursive defaults and checked exact-decimal boundaries."""
+
+from std.primitives.reflection import (
+    DecimalValue,
+    DecimalValueError,
+    DecimalValueErrorKind,
+    LifecycleInfo,
+    SequenceKind,
+    ShapeInfo,
+    Walk,
+    Walker,
+)
+from std.reflection import DecimalValue as PublicDecimalValue, ShapeInfo as PublicShapeInfo
+from protocol_test_support import (
+    NestedReferences,
+    ReferenceCollector,
+    ReferenceValue,
+    QuietWalker,
+    RecordingWalker,
+    TextSource,
+    TextValue,
+    text_shape,
+)
+
+
+def test_recursive_defaults_retain_state() -> Result[None, str]:
+    """Optional, element and key/value recursion use the same caller-owned walker."""
+    mut walker = RecordingWalker(values=[])
+    first = TextValue(text="a")
+    second = TextValue(text="b")
+    walker.some(first)?
+    walker.begin_sequence(SequenceKind.List, 1)?
+    walker.element(second)?
+    walker.end_sequence()?
+    walker.begin_dict(1)?
+    walker.entry(first, second)?
+    walker.end_dict()?
+    assert walker.values == ["a", "b", "a", "b"]
+    return Ok(None)
+
+
+def test_default_failure_is_not_swallowed() -> Result[None, str]:
+    """A nested failure travels unchanged through a structural default."""
+    mut walker = RecordingWalker(values=[], refuse=true)
+    match walker.some(TextValue(text="unrecorded")):
+        Err(error) =>
+            assert error == "located failure"
+        Ok(_) => return Err("failure swallowed")
+    assert len(walker.values) == 0
+    return Ok(None)
+
+
+def test_all_scalar_defaults() -> Result[None, str]:
+    """An otherwise empty adopter accepts every declared scalar protocol member."""
+    mut walker = QuietWalker()
+    walker.bool(true)?
+    walker.str("text")?
+    walker.bytes(b"bytes")?
+    walker.integer(-170141183460469231731687303715884105728)?
+    walker.unsigned(340282366920938463463374607431768211455)?
+    walker.float(1.5)?
+    value = DecimalValue.new(coefficient=1990, precision=10, scale=2).map_err((_) => "decimal")?
+    walker.decimal(value)?
+    walker.none()?
+    walker.member("string")?
+    walker.reference("record", b"identity")?
+    return Ok(None)
+
+
+def test_manual_reconstruction_and_errors() -> Result[None, str]:
+    """A custom class restores through the real source bound; errors retain format context."""
+    mut source = TextSource(text="restored")
+    value = TextValue.__reconstruct__(source)?
+    assert value.text == "restored"
+    assert source.reads == 1
+    mut failed = TextSource(text="", fail=true)
+    match TextValue.__reconstruct__(failed):
+        Err(error) =>
+            assert error == "input:1: bad text"
+        Ok(_) => return Err("invalid source accepted")
+    assert failed.collected() == Some("input:1: bad text")
+    return Ok(None)
+
+
+def test_shape_aliases_and_no_value_construction() -> Result[None, str]:
+    """Both imports select one carrier and the shape comes from the adopter's static member."""
+    shape: PublicShapeInfo = ShapeInfo.of[TextValue]()
+    assert shape.spelling == "string"
+    assert len(shape.identity) == 0
+    history = LifecycleInfo(since=Some("1.0"), by=Some("review"))
+    assert history.since == Some("1.0")
+    value: PublicDecimalValue = DecimalValue.new(coefficient=1990, precision=10, scale=2).map_err((_) => "decimal")?
+    assert value.coefficient == 1990
+    return Ok(None)
+
+
+def assert_decimal_error(
+    result: Result[DecimalValue, DecimalValueError],
+    kind: DecimalValueErrorKind,
+    coefficient: i128,
+    precision: u8,
+    scale: u8,
+) -> Result[None, str]:
+    """Every failed decimal retains its category and all original numeric inputs."""
+    match result:
+        Err(error) =>
+            expected = DecimalValueError(kind=kind, coefficient=coefficient, precision=precision, scale=scale)
+            assert error == expected
+        Ok(_) => return Err("invalid decimal accepted")
+    return Ok(None)
+
+
+def test_decimal_range_and_scale() -> Result[None, str]:
+    """Reject invalid precision, excessive scale and exact positive/negative overflow."""
+    assert_decimal_error(DecimalValue.new(coefficient=0, precision=0, scale=0), DecimalValueErrorKind.Precision, 0, 0, 0)?
+    assert_decimal_error(
+        DecimalValue.new(coefficient=0, precision=39, scale=0),
+        DecimalValueErrorKind.Precision,
+        0,
+        39,
+        0,
+    )?
+    assert_decimal_error(DecimalValue.new(coefficient=0, precision=2, scale=3), DecimalValueErrorKind.Scale, 0, 2, 3)?
+    assert_decimal_error(
+        DecimalValue.new(coefficient=100, precision=2, scale=0),
+        DecimalValueErrorKind.Coefficient,
+        100,
+        2,
+        0,
+    )?
+    assert_decimal_error(
+        DecimalValue.new(coefficient=-100, precision=2, scale=0),
+        DecimalValueErrorKind.Coefficient,
+        -100,
+        2,
+        0,
+    )?
+    assert_decimal_error(
+        DecimalValue.new(coefficient=-170141183460469231731687303715884105728, precision=38, scale=0),
+        DecimalValueErrorKind.Coefficient,
+        -170141183460469231731687303715884105728,
+        38,
+        0,
+    )?
+    value = DecimalValue
+        .new(coefficient=-99999999999999999999999999999999999999, precision=38, scale=38)
+        .map_err((_) => "boundary")?
+    assert value.scale == 38
+    zero = DecimalValue.new(coefficient=0, precision=1, scale=1).map_err((_) => "zero")?
+    assert zero.coefficient == 0
+    return Ok(None)
+
+
+def test_nested_reference_only_override() -> Result[None, str]:
+    """One reference override sees both leaves without concrete overrides for containers."""
+
+    nested = NestedReferences(values=[ReferenceValue(identity=b"first"), ReferenceValue(identity=b"second")])
+    mut walker = ReferenceCollector(identities=[])
+    nested.__walk__(walker)?
+    assert walker.identities == [b"first", b"second"]
+    return Ok(None)
+
+
+def test_field_default_and_source_absence() -> Result[None, str]:
+    """Existing field metadata retains its identity through both protocols."""
+    fields = TextValue.__fields__()
+    assert len(fields) == 1
+    mut walker = RecordingWalker(values=[])
+    walker.field(fields[0], TextValue(text="field"))?
+    assert walker.values == ["field"]
+    mut source = TextSource(text="unused")
+    absent = source.field[TextValue](fields[0])?
+    assert absent.is_none()
+    assert not source.takes_default(fields[0])
+    assert source.collected().is_none()
+    error = source.missing(fields[0])
+    assert error == "input:1: missing text"
+    assert source.collected() == Some(error)
+    return Ok(None)
+
+
+def test_structural_noop_defaults() -> Result[None, str]:
+    """Every begin/end default is callable without overriding the scalar observations."""
+    mut walker = QuietWalker()
+    shape = text_shape()
+    walker.begin_model(shape)?
+    walker.end_model()?
+    for kind in [SequenceKind.List, SequenceKind.Set, SequenceKind.Tuple]:
+        walker.begin_sequence(kind, 0)?
+        walker.end_sequence()?
+    walker.begin_dict(0)?
+    walker.end_dict()?
+    return Ok(None)
+
+
+def test_source_refusals_and_collection() -> Result[None, str]:
+    """Unsupported reads remain errors and distinct failure factories retain source context."""
+    mut source = TextSource(text="unused")
+    assert source.bool().is_err()
+    assert source.bytes().is_err()
+    assert source.integer().is_err()
+    assert source.unsigned().is_err()
+    assert source.float().is_err()
+    assert source.decimal().is_err()
+    assert source.none().is_err()
+    assert source.some[TextValue]().is_err()
+    assert source.element[TextValue]().is_err()
+    assert source.entry[TextValue, TextValue]().is_err()
+    assert source.member().is_err()
+    assert source.reference("object").is_err()
+    assert source.reads == 0
+    assert len(source.failures) == 12
+    assert source.collects()
+    assert source.numeric_range("i8") == "input:1: range i8"
+    assert source.shape_mismatch("string", "bool") == "input:1: shape string != bool"
+    assert len(source.failures) == 14
+    original = ValidationError("negative stored state")
+    original_text = str(original)
+    assert source.invalid(original) == "input:1: validation"
+    match source.validation_failure:
+        Some(error) =>
+            assert str(error) == original_text
+        None => return Err("original validation error lost")
+    assert len(source.failures) == 15
+    return Ok(None)
