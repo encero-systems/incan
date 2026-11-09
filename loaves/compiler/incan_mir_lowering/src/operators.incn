@@ -31,6 +31,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from rust::incan_semantics_core import SemanticSourceTargetKind
 from frozen_equality import compare_frozen
+from optional_text_equality import optional_text_equality
 from element_places import is_element_place
 from enums import unit_variant, validate_unit_comparison, validate_unit_ordering
 from enum_display import native_enum_owner
@@ -40,6 +41,7 @@ from numbers import float_operand
 from numerics import integer_carrier
 from strings import emit_text_helper
 from equality import emit_collection_equality, equality_shape
+from frozen_list_equality import supports_frozen_list_equality, frozen_list_equality
 from frame import place_type, Builder, temporary, terminate_call, read_place, value_type, literal
 from collections import is_collection
 from lists import is_list
@@ -186,6 +188,10 @@ def native_enum_comparison(
         return Ok(None)
     ty = place_type(builder.locals, left)
     if ty != place_type(builder.locals, right):
+        if operator == BinOp.Eq or operator == BinOp.Ne:
+            match optional_text_equality(builder, left, right, operator == BinOp.Ne, span)?:
+                Some(result) => return Ok(Some(result))
+                None => pass
         return Err("unsupported Body IR mixed enum comparison")
     mut owner = -1
     mut reference = PlanType.Unit
@@ -523,6 +529,13 @@ def collection_equality(
     right_shape = equality_shape(comparison_operand_type(builder, right, span)?)
     if left_shape == None or right_shape == None:
         return Ok(None)
+    match (left_shape, right_shape):
+        (Some(first), Some(second)) =>
+            if supports_frozen_list_equality(first, second):
+                first_place = comparison_collection_place(builder, left, span)?
+                second_place = comparison_collection_place(builder, right, span)?
+                return Ok(Some(frozen_list_equality(builder, first_place, second_place, operator == BinOp.Ne, span)?))
+        _ => pass
     if left_shape != right_shape:
         return Err("unsupported Body IR collection equality across different layouts")
     places = [comparison_collection_place(builder, left, span)?, comparison_collection_place(builder, right, span)?]

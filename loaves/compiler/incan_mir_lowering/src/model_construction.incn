@@ -53,13 +53,14 @@ pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSp
     Materialize the checker's clone fact through a source nominal's real derived Clone implementation.
 
     A shared model reference, such as a receiver, already is the borrow that Clone takes. An immutable scalar
-    reference, including a text reference, or function pointer copies the value through the ordinary carrier-payload read.
+    reference, including a text reference, function pointer or static frozen wrapper copies the value through the ordinary carrier-payload read.
     """
     match place_type(builder.locals, value):
         PlanType.FunctionPointer(_signature) => return carrier_payload_value(builder, value, span)
         PlanType.ScalarRef(_elements) => return carrier_payload_value(builder, value, span)
         PlanType.TupleRef(_elements) => return Ok(read_place(value, false, span))
         PlanType.FrozenCollectionRef(_name, _elements) => return Ok(read_place(value, false, span))
+        PlanType.FrozenStr | PlanType.FrozenBytes => return carrier_payload_value(builder, value, span)
         PlanType.StringRef => return carrier_payload_value(builder, value, span)
         PlanType.ValidationError => return carrier_payload_value(builder, value, span)
         PlanType.ValidationErrorRef =>

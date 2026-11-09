@@ -1,0 +1,11 @@
+# behavior: ordinary runtime bytes and text do not implicitly acquire the program-lifetime frozen storage of a field (#2864)
+# expect-diagnostic: INCAN-T0001
+
+model FrozenValue:
+    pub data: FrozenBytes
+    pub text: FrozenStr
+
+
+def make(data: bytes, text: str) -> FrozenValue:
+    """Runtime inputs cannot become baked frozen storage through a constructor."""
+    return FrozenValue(data=data, text=text)
