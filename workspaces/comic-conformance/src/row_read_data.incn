@@ -1,0 +1,41 @@
+"""Translate decoder facts to test notation and typed failures to independent corpus categories."""
+
+from std.json import JsonValue
+from std.primitives.crumb.row_errors import RowFailure
+from std.primitives.crumb.values import Metadata
+from std.primitives.hex import hexlify
+
+
+pub def metadata_notation(value: Metadata) -> JsonValue:
+    """Retain every decoded description property; only expected field flags consume these facts."""
+    mut result: dict[str, JsonValue] = {}
+    match value:
+        Metadata.Null => result["kind"] = JsonValue.string("null")
+        Metadata.Boolean(item) =>
+            result["kind"] = JsonValue.string("boolean")
+            result["value"] = JsonValue.bool(item)
+        Metadata.Integer(item) =>
+            result["kind"] = JsonValue.string("int")
+            result["value"] = JsonValue.string(item)
+        Metadata.Text(item) =>
+            result["kind"] = JsonValue.string("string")
+            result["value"] = JsonValue.string(item)
+        Metadata.Binary(item) =>
+            result["kind"] = JsonValue.string("binary")
+            result["hex"] = JsonValue.string(hexlify(item))
+        Metadata.List(items) =>
+            result["kind"] = JsonValue.string("list")
+            result["items"] = JsonValue.array([metadata_notation(item) for item in items])
+        Metadata.Map(entries) =>
+            mut items: list[JsonValue] = []
+            for entry in entries:
+                key = metadata_notation(Metadata.Text(entry.key))
+                items.append(JsonValue.array([key, metadata_notation(entry.value)]))
+            result["kind"] = JsonValue.string("map")
+            result["entries"] = JsonValue.array(items)
+    return JsonValue.object(result)
+
+
+pub def category(kind: RowFailure) -> str:
+    """Match typed refusal categories; diagnostic wording is never parsed as a test outcome."""
+    return kind.value()

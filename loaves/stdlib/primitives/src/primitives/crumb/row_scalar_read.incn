@@ -1,0 +1,86 @@
+"""Decode exact scalar cells without normalization that could conceal malformed physical bytes."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.row_cursor import RowCursor, copied
+from crate.primitives.crumb.row_errors import RowError, RowFailure, failure, primitive
+from crate.primitives.crumb.row_metadata_read import read_text
+from crate.primitives.crumb.row_numbers import fixed_integer, signed_decimal
+from crate.primitives.crumb.row_scalars import float_cell
+from crate.primitives.crumb.values import Value
+from crate.primitives.views import MappedView
+
+
+pub def scalar(name: str, view: MappedView, origin: int, mut budget: Budget) -> Result[Value, RowError]:
+    """The admitted description supplies scalar width/type; no tag or unconsumed bytes may change it."""
+    names = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"]
+    widths = [1, 2, 4, 8]
+    for index in range(8):
+        if name == names[index]:
+            width = widths[index % 4]
+            if view.len() != width:
+                return Err(failure(RowFailure.InvalidCell, origin))
+            data = copied(view, origin, budget)?
+            return Ok(Value.Integer(fixed_integer(data, index < 4, origin, budget)?))
+    if name == "fp32" or name == "fp64":
+        mut width = 32
+        if name == "fp64":
+            width = 64
+        return floating(view, width, origin, budget)
+    mut cursor = RowCursor.create(view, origin)?
+    mut result = Value.NoneValue
+    match name:
+        "boolean" =>
+            if view.len() != 1:
+                return Err(failure(RowFailure.InvalidCell, origin))
+            flag = cursor.byte(budget)?
+            if flag > 1:
+                return Err(failure(RowFailure.InvalidCell, origin))
+            result = Value.Boolean(flag == 1)
+        "string" => result = Value.Text(read_text(cursor, budget)?)
+        "binary" =>
+            data = cursor.frame(budget)?
+            result = Value.Binary(copied(data, origin, budget)?)
+        "secret_string" | "secret_bytes" =>
+            if view.len() != 1 or cursor.byte(budget)? != 0:
+                return Err(failure(RowFailure.InvalidCell, origin))
+            result = Value.Withheld
+        "reference" =>
+            target = cursor.frame(budget)?
+            identity = cursor.frame(budget)?
+            result = Value.Reference(copied(target, origin, budget)?, copied(identity, origin, budget)?)
+        _ => return Err(failure(RowFailure.InvalidCell, origin))
+    if cursor.remaining() != 0:
+        return Err(failure(RowFailure.InvalidCell, cursor.absolute()))
+    return Ok(result)
+
+
+def floating(view: MappedView, width: int, origin: int, mut budget: Budget) -> Result[Value, RowError]:
+    """NaN canonicalization is checked against original bits, not silently applied by the decoder."""
+    if view.len() != width // 8:
+        return Err(failure(RowFailure.InvalidCell, origin))
+    data = copied(view, origin, budget)?
+    budget.charge_bytes(len(data)).map_err((e) => primitive(e, origin))?
+    bits: bytes = [data[index] for index in range(len(data) - 1, -1, -1)]
+    canonical = float_cell(width, bits, width, budget).map_err((e) => primitive(e, origin))?
+    if canonical != data:
+        return Err(failure(RowFailure.NoncanonicalNan, origin))
+    return Ok(Value.Float(width, bits))
+
+
+pub def decimal(
+    precision: int,
+    scale: int,
+    view: MappedView,
+    origin: int,
+    mut budget: Budget,
+) -> Result[Value, RowError]:
+    """The physical coefficient is already at the declared scale; validate precision without rounding."""
+    mut cursor = RowCursor.create(view, origin)?
+    groups = cursor.groups(budget)?
+    coefficient = signed_decimal(groups, origin, budget)?
+    mut digits = len(coefficient)
+    if coefficient.startswith("-"):
+        digits -= 1
+    if precision <= 0 or scale < 0 or scale > precision or digits > precision or cursor.remaining() != 0:
+        return Err(failure(RowFailure.InvalidCell, origin))
+    return Ok(Value.Decimal(coefficient, str(scale)))

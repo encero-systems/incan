@@ -1,0 +1,68 @@
+"""Report actual binary decoder executions and original-shape decode/re-encode comparisons."""
+
+from rust::std::env import args
+from rust::std::process import exit
+from std.fs import Path
+from std.json import JsonValue
+from corpus import load
+from case_data import field, text, hex_bytes
+from row_reader_cases import check_reader
+
+
+def run(manifest: str) -> Result[i32, str]:
+    """Counts include only verified checks; failures never receive unexecuted prefix or roundtrip credit."""
+    corpus = load(Path(manifest))?
+    mut passed = 0
+    mut failed = 0
+    mut executions = 0
+    mut roundtrips = 0
+    mut results: list[JsonValue] = []
+    for item in corpus.cases:
+        if item.operation != "binary_decode" or not item.id.startswith("bytes-"):
+            continue
+        mut result: dict[str, JsonValue] = {}
+        result["id"] = JsonValue.string(item.id)
+        checked = check_reader(item.document)
+        match checked:
+            Ok(true) =>
+                passed += 1
+                result["status"] = JsonValue.string("passed")
+                if item.document.get("transform").is_some():
+                    executions += len(hex_bytes(text(item.document, "input_hex")?)?)
+                else:
+                    executions += 1
+                if text(field(item.document, "expected")?, "status")? == "accepted":
+                    roundtrips += 1
+            Ok(false) =>
+                failed += 1
+                result["status"] = JsonValue.string("failed")
+                result["detail"] = JsonValue.string("computed result differs")
+            Err(error) =>
+                failed += 1
+                result["status"] = JsonValue.string("failed")
+                result["detail"] = JsonValue.string(error)
+        results.append(JsonValue.object(result))
+    document = JsonValue.object(
+        {"schema": JsonValue.string("comic.row-reader-receipt/1"), "manifest_sha256": JsonValue.string(
+            corpus.manifest_digest,
+        ), "selected": JsonValue.int(len(results)), "passed": JsonValue.int(passed), "failed": JsonValue.int(failed), "verified_decode_executions": JsonValue.int(
+            executions,
+        ), "verified_original_shape_roundtrips": JsonValue.int(roundtrips), "cases": JsonValue.array(results)},
+    )
+    println(document.to_json().map_err((e) => e.message())?)
+    if failed != 0 or passed != 81 or executions != 163 or roundtrips != 33:
+        return Ok(1)
+    return Ok(0)
+
+
+def main() -> None:
+    """Refuse incomplete invocation and retain ordinary nonzero failure behavior."""
+    arguments = [argument for argument in args()]
+    if len(arguments) != 2:
+        println("usage: comic-row-reader MANIFEST")
+        exit(2)
+    match run(arguments[1]):
+        Ok(code) => exit(code)
+        Err(error) =>
+            println("FAILED: " + error)
+            exit(1)
