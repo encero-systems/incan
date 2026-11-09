@@ -617,11 +617,12 @@ pub def format_carrier(mut builder: Builder, source: Place, span: SourceSpan) ->
 
 
 pub def carrier_payload_value(mut builder: Builder, place: Place, span: SourceSpan) -> Result[Operand, str]:
-    """Copy primitive, function-pointer and immutable scalar-reference payloads, or clone an owned active payload."""
+    """Copy primitive, static frozen, function-pointer and immutable scalar-reference payloads, or clone an owned active payload."""
     ty = frame_place_type(builder.locals, place)
     if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit:
         return Ok(read_place(place, false, span))
     match ty:
+        PlanType.FrozenStr | PlanType.FrozenBytes => return Ok(read_place(place, false, span))
         PlanType.FunctionPointer(_signature) => return Ok(read_place(place, false, span))
         PlanType.ScalarRef(_elements) => return Ok(read_place(place, false, span))
         PlanType.StringRef => return Ok(read_place(place, false, span))
@@ -683,10 +684,10 @@ pub def lower_carrier_method_plan(
     mut present = 0
     if declaration.carrier == Carrier.Option:
         present = 1
-    predicate = option_method in [Some(RustOptionMethodId.IsSome), Some(RustOptionMethodId.IsNone)] or result_method in [
-        Some(RustResultMethodId.IsOk),
-        Some(RustResultMethodId.IsErr),
-    ]
+    predicate = (
+        option_method in [Some(RustOptionMethodId.IsSome), Some(RustOptionMethodId.IsNone)]
+        or result_method in [Some(RustResultMethodId.IsOk), Some(RustResultMethodId.IsErr)]
+    )
     if predicate:
         if option_method == Some(RustOptionMethodId.IsNone) or result_method == Some(RustResultMethodId.IsErr):
             present = 1 - present
