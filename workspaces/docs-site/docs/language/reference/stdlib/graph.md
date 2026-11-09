@@ -26,10 +26,10 @@ from std.graph import Dag, DiGraph, GraphPageBudget, GraphRead, MultiDiGraph, Re
 | `GraphRead[K, I, F]` | Storage-independent protocol for scoped, bounded structural graph reads. |
 | `GraphReadErrorKind` | Inspectable category of a graph read failure. |
 | `GraphReadError[F]` | Typed read failure preserving the backend failure type `F`. |
-| `MemoryGraphFailure` | Unconstructible source-failure type used by in-memory readers. |
+| `MemoryReadError` | `GraphReadError[GraphError]` for in-memory readers, which never produce `Source`. |
 | `GraphScope` | Provider, selection, revision, and ordering fixed for one read scope. |
 | `GraphProvider` | Backend family serving a read scope; the memory implementation reports `Memory`. |
-| `GraphSelection` | Finite selection fixed for a read scope; relation graphs initially report `Whole`. |
+| `GraphSelection` | Finite selection fixed for a read scope: `Whole` or `Selected`. |
 | `GraphOrdering` | Stable ordering profile; memory pages report `Insertion`. |
 | `GraphPageBudget` | Maximum structural records requested from one page, or an unbounded request. |
 | `GraphPageToken` | Opaque owned continuation for one compatible page stream. |
@@ -37,6 +37,8 @@ from std.graph import Dag, DiGraph, GraphPageBudget, GraphRead, MultiDiGraph, Re
 | `EdgePage[K, I]` | Structural edges, continuation, and counters from one bounded page. |
 | `GraphEdgeItem[K, I]` | One edge identity and its directed source and target keys. |
 | `PageCounters` | Physical work and materialization counters for one structural page. |
+| `TraversalBudget` | Required positive node, edge, byte, and retained-state limits for one traversal call. |
+| `TraversalPage` | Walk visits, explicit completion outcome, and a `TraversalReport`. |
 
 ## `NodeId` and `EdgeId`
 
@@ -68,12 +70,14 @@ Construct a typed directed multigraph with `RelationGraph[N, E]()`.
 | `g.replace_edge(edge, value)` | `Result[None, GraphError]` | Replace one edge payload by identity. |
 | `g.contains_node(node)` | `Result[bool, GraphReadError[MemoryGraphFailure]]` | Return scoped node membership. |
 | `g.contains_edge(edge)` | `bool` | Return whether one scoped edge is live in this graph. |
+| `g.read_view()` | `MemoryGraphReader[N, E]` | Open a whole-graph reader borrowing `g`. |
+| `g.read_selected(...)` | `Result[reader, MemoryReadError]` | Open a fixed selected reader; omitted selectors select all, `node_keys` are copied and filters are owned. |
 
 Node and edge identities are never reused within one graph instance. Equal payloads remain separate nodes or edges. Parallel edges retain distinct identities, and replacement addresses exactly one identity. A wrong-scope or unknown endpoint is rejected before an edge becomes visible.
 
 ## `GraphRead[K, I, F]`
 
-`RelationGraph[N, E]` implements `GraphRead[ScopedNodeId, ScopedEdgeId, MemoryGraphFailure]`. `MemoryGraphFailure` has no public constructor, and memory readers do not produce `GraphReadError.Source`.
+`RelationGraph[N, E]`, `MemoryGraphReader[N, E]`, and `FilteredMemoryGraphReader[N, E]` implement `GraphRead[ScopedNodeId, ScopedEdgeId, GraphError]`. Memory readers do not produce `GraphReadError.Source`.
 
 | Member | Returns | Meaning |
 | --- | --- | --- |
@@ -100,7 +104,7 @@ Node and edge identities are never reused within one graph instance. Equal paylo
 | `NodePage[K]` | `values: list[K]`, `next: Option[GraphPageToken]`, `counters: PageCounters` |
 | `EdgePage[K, I]` | `values: list[GraphEdgeItem[K, I]]`, `next: Option[GraphPageToken]`, `counters: PageCounters` |
 | `GraphEdgeItem[K, I]` | `id: I`, `source: K`, `target: K` |
-| `PageCounters` | `index_seeks: int`, `node_slots_examined: int`, `adjacency_entries_examined: int`, `live_entries: int`, `tombstones_examined: int`, `payloads_materialized: int`, `bytes_copied: int` |
+| `PageCounters` | `index_seeks: int`, `node_slots_examined: int`, `adjacency_entries_examined: int`, `live_entries: int`, `tombstones_examined: int`, `payloads_materialized: int`, `bytes_copied: int`, `rejected_candidates: int` |
 
 `NodePage.values` holds node keys. `EdgePage.values` holds directed structural edges without payloads.
 
@@ -120,21 +124,25 @@ Node and edge identities are never reused within one graph instance. Equal paylo
 
 ### Read errors
 
-`GraphReadError[F]` exposes `kind: GraphReadErrorKind`, `unknown_id: Option[int]`, `resource_detail: Option[str]`, and `source: Option[F]`.
+`GraphReadError[F]` exposes `kind: GraphReadErrorKind`, `argument: Option[str]`, `limit_reason: Option[LimitReason]`, and `source: Option[F]`.
 
 | Constructor | Meaning |
 | --- | --- |
-| `GraphReadError.UnknownNode(node)` | The scoped local node identity is not live. |
-| `GraphReadError.UnknownEdge(edge)` | The scoped local edge identity is not live. |
-| `GraphReadError.ScopeMismatch()` | A key or cursor belongs to another graph scope. |
-| `GraphReadError.StaleCursor()` | A cursor predates the current graph revision. |
-| `GraphReadError.IncompatibleCursor()` | A cursor belongs to another selection, ordering, stream, or adjacency subject. |
-| `GraphReadError.UnsupportedSelection()` | The reader cannot serve the requested selection. |
-| `GraphReadError.Resource(detail)` | A resource request is invalid or exhausted; `resource_detail` contains `detail`. |
-| `GraphReadError.Cancelled()` | The caller cancelled the read. |
+| `GraphReadError.UnknownKey(argument)` | A key is not visible in the reader's fixed selection. |
+| `GraphReadError.ScopeMismatch(argument)` | A key or cursor belongs to another graph scope. |
+| `GraphReadError.UnsupportedSelection(argument)` | The reader cannot serve the requested selector. |
+| `GraphReadError.InvalidBudget(argument)` | A required budget count is not positive. |
+| `GraphReadError.StaleCursor()` | A cursor's reader, selection, revision, ordering, stream, or subject does not match. |
+| `GraphReadError.ResourceLimit(reason)` | A hard resource bound stopped a cursor or traversal. |
 | `GraphReadError.Source(failure)` | The backend produced the typed source failure `failure`. |
 
-`GraphReadErrorKind` has the corresponding `UnknownNode`, `UnknownEdge`, `ScopeMismatch`, `StaleCursor`, `IncompatibleCursor`, `UnsupportedSelection`, `Resource`, `Cancelled`, and `Source` variants. Only `unknown_id`, `resource_detail`, or `source` relevant to the selected kind is present.
+`GraphReadErrorKind` is a string-valued enum with `UnknownKey`, `ScopeMismatch`, `UnsupportedSelection`, `InvalidBudget`, `StaleCursor`, `ResourceLimit`, and `Source`. Only the fields relevant to the selected kind are present.
+
+## Bounded traversal
+
+`breadth_first(reader, starts, direction, budget)`, `depth_first(...)`, and `find_path(reader, start, target, direction, budget)` borrow one fixed reader. `Direction` is `Outgoing` or `Incoming`; there is no default. `TraversalBudget` requires positive `max_nodes`, `max_edges`, `max_bytes`, and `max_retained` values.
+
+A walk returns visits with `node`, `depth`, and the edge identity in `via`. Its outcome is `Complete`, `Limited(reason, continuation)`, `Cancelled`, or `Failed(error)`. A continuation resumes the same walk against the same reader and fixed selection. `find_path` returns `Found(path)`, `NoPath`, `Inconclusive(reason)`, `Cancelled`, or `Failed(error)`; `Found` is shortest by edge count and stable reader order.
 
 ## `DiGraph[T]`
 
