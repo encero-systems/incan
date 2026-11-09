@@ -2,7 +2,7 @@
 
 from std.json import JsonValue
 from std.encoding.hex import unhexlify
-from std.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, NominalKind, TypeNode
+from std.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, NominalKind, TypeNode, VariantShape
 
 
 pub def text(value: JsonValue, key: str) -> Result[str, str]:
@@ -63,6 +63,11 @@ pub def node(value: JsonValue) -> Result[TypeNode, str]:
         None => pass
     if kind == "record":
         return Ok(TypeNode.Record(text(value, "key")?, fields(value)?))
+    if kind == "enum":
+        mut variants: list[VariantShape] = []
+        for variant in array(value, "variants")?:
+            variants.append(VariantShape(identity=hex_bytes(text(variant, "id")?)?, fields=fields(variant)?))
+        return Ok(TypeNode.Enum(text(value, "key")?, variants))
     if kind == "recur":
         return Ok(TypeNode.Recursive(text(value, "key")?))
     return Err("unsupported corpus type notation: " + kind)
@@ -78,6 +83,11 @@ pub def nodes(values: list[JsonValue]) -> Result[list[TypeNode], str]:
 
 pub def selector_text(spelling: str) -> Result[TypeNode, str]:
     """Decode the corpus's nominal selector strings; production receives typed nodes instead."""
+    if spelling.startswith("decimal<") and spelling.endswith(">"):
+        parts = spelling[8:len(spelling) - 1].split(",")
+        if len(parts) != 2:
+            return Err("decimal corpus parameters")
+        return Ok(TypeNode.Decimal(int(parts[0]), int(parts[1])))
     mut prefix = 0
     mut kind_name = ""
     if spelling.startswith("record@"):
