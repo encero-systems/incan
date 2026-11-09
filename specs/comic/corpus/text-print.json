@@ -2177,6 +2177,203 @@
       },
       "read_case": "read-declaration-reference",
       "expected_file": "text/read-declaration-reference.comic"
+    },
+    {
+      "id": "print-profile-invoice-properties",
+      "context": {
+        "kind_registrations": [
+          {
+            "kind": "Incan.Model",
+            "shape": "Record",
+            "property_order": [
+              "visibility"
+            ]
+          }
+        ],
+        "admitted_type_names": [
+          "Int",
+          "Str",
+          "shop.billing.Cents"
+        ]
+      },
+      "document": {
+        "descriptions": [
+          {
+            "path": "shop.billing.Invoice",
+            "kind": "Incan.Model",
+            "properties": [
+              {
+                "name": "visibility",
+                "value": {
+                  "kind": "symbol",
+                  "name": "Public"
+                }
+              }
+            ],
+            "fields": [
+              {
+                "name": "id",
+                "type": "Int",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "customer",
+                "type": "Str",
+                "absent": "required",
+                "canonical": true
+              },
+              {
+                "name": "total",
+                "type": "shop.billing.Cents",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": []
+      },
+      "read_case": "read-profile-invoice-properties",
+      "expected_file": "text/profile-invoice-properties.comic"
+    },
+    {
+      "id": "print-profile-function-declared-property-order",
+      "context": {
+        "kind_registrations": [
+          {
+            "kind": "Incan.Function",
+            "shape": "Record",
+            "property_order": [
+              "visibility",
+              "decorators",
+              "type",
+              "body"
+            ],
+            "property_groups": {
+              "type": [
+                "parameters",
+                "returns",
+                "requires"
+              ]
+            }
+          }
+        ],
+        "admitted_type_names": [
+          "Int"
+        ]
+      },
+      "document": {
+        "descriptions": [
+          {
+            "path": "shop.billing.charge",
+            "kind": "Incan.Function",
+            "properties": [
+              {
+                "name": "body",
+                "value": {
+                  "kind": "list",
+                  "items": []
+                }
+              },
+              {
+                "name": "type",
+                "value": {
+                  "kind": "property_group",
+                  "properties": [
+                    {
+                      "name": "requires",
+                      "value": {
+                        "kind": "list",
+                        "items": []
+                      }
+                    },
+                    {
+                      "name": "returns",
+                      "value": {
+                        "kind": "symbol",
+                        "name": "Int"
+                      }
+                    },
+                    {
+                      "name": "parameters",
+                      "value": {
+                        "kind": "list",
+                        "items": []
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "decorators",
+                "value": {
+                  "kind": "list",
+                  "items": []
+                }
+              },
+              {
+                "name": "visibility",
+                "value": {
+                  "kind": "symbol",
+                  "name": "Public"
+                }
+              }
+            ],
+            "fields": []
+          }
+        ],
+        "values": []
+      },
+      "read_case": "read-profile-function-properties-shuffled",
+      "expected_file": "text/profile-function-properties-canonical.comic"
+    },
+    {
+      "id": "print-registered-opaque-property-order",
+      "context": {
+        "kind_registrations": [
+          {
+            "kind": "Example.Widget",
+            "shape": "Record",
+            "property_order": null
+          }
+        ]
+      },
+      "document": {
+        "descriptions": [
+          {
+            "path": "example.Widget",
+            "kind": "Example.Widget",
+            "properties": [
+              {
+                "name": "zeta",
+                "value": {
+                  "kind": "string",
+                  "value": "last"
+                }
+              },
+              {
+                "name": "alpha",
+                "value": {
+                  "kind": "string",
+                  "value": "first"
+                }
+              }
+            ],
+            "fields": [
+              {
+                "name": "id",
+                "type": "i64",
+                "absent": "required",
+                "canonical": true
+              }
+            ]
+          }
+        ],
+        "values": []
+      },
+      "read_case": "read-registered-opaque-property-order",
+      "expected_file": "text/registered-opaque-property-order.comic"
     }
   ]
 }

@@ -2588,6 +2588,315 @@
       },
       "purpose": "The target path is retained as an identity without resolving it or requiring the referenced declaration to be loaded.",
       "input_file": "text/read-declaration-reference.comic"
+    },
+    {
+      "id": "read-profile-invoice-properties",
+      "context": {
+        "kind_registrations": [
+          {
+            "kind": "Incan.Model",
+            "shape": "Record",
+            "property_order": [
+              "visibility"
+            ]
+          }
+        ],
+        "admitted_type_names": [
+          "Int",
+          "Str",
+          "shop.billing.Cents"
+        ]
+      },
+      "input_file": "text/profile-invoice-properties.comic",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "shop.billing.Invoice",
+              "kind": "Incan.Model",
+              "properties": [
+                {
+                  "name": "visibility",
+                  "value": {
+                    "kind": "symbol",
+                    "name": "Public"
+                  }
+                }
+              ],
+              "fields": [
+                {
+                  "name": "id",
+                  "type": "Int",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "customer",
+                  "type": "Str",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "total",
+                  "type": "shop.billing.Cents",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": []
+        }
+      }
+    },
+    {
+      "id": "read-profile-function-properties-shuffled",
+      "context": {
+        "kind_registrations": [
+          {
+            "kind": "Incan.Function",
+            "shape": "Record",
+            "property_order": [
+              "visibility",
+              "decorators",
+              "type",
+              "body"
+            ],
+            "property_groups": {
+              "type": [
+                "parameters",
+                "returns",
+                "requires"
+              ]
+            }
+          }
+        ],
+        "admitted_type_names": [
+          "Int"
+        ]
+      },
+      "input_file": "text/profile-function-properties-shuffled.comic",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "shop.billing.charge",
+              "kind": "Incan.Function",
+              "properties": [
+                {
+                  "name": "body",
+                  "value": {
+                    "kind": "list",
+                    "items": []
+                  }
+                },
+                {
+                  "name": "type",
+                  "value": {
+                    "kind": "property_group",
+                    "properties": [
+                      {
+                        "name": "requires",
+                        "value": {
+                          "kind": "list",
+                          "items": []
+                        }
+                      },
+                      {
+                        "name": "returns",
+                        "value": {
+                          "kind": "symbol",
+                          "name": "Int"
+                        }
+                      },
+                      {
+                        "name": "parameters",
+                        "value": {
+                          "kind": "list",
+                          "items": []
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "name": "decorators",
+                  "value": {
+                    "kind": "list",
+                    "items": []
+                  }
+                },
+                {
+                  "name": "visibility",
+                  "value": {
+                    "kind": "symbol",
+                    "name": "Public"
+                  }
+                }
+              ],
+              "fields": []
+            }
+          ],
+          "values": []
+        }
+      }
+    },
+    {
+      "id": "read-profile-function-properties-canonical",
+      "context": {
+        "kind_registrations": [
+          {
+            "kind": "Incan.Function",
+            "shape": "Record",
+            "property_order": [
+              "visibility",
+              "decorators",
+              "type",
+              "body"
+            ],
+            "property_groups": {
+              "type": [
+                "parameters",
+                "returns",
+                "requires"
+              ]
+            }
+          }
+        ],
+        "admitted_type_names": [
+          "Int"
+        ]
+      },
+      "input_file": "text/profile-function-properties-canonical.comic",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "shop.billing.charge",
+              "kind": "Incan.Function",
+              "properties": [
+                {
+                  "name": "visibility",
+                  "value": {
+                    "kind": "symbol",
+                    "name": "Public"
+                  }
+                },
+                {
+                  "name": "decorators",
+                  "value": {
+                    "kind": "list",
+                    "items": []
+                  }
+                },
+                {
+                  "name": "type",
+                  "value": {
+                    "kind": "property_group",
+                    "properties": [
+                      {
+                        "name": "parameters",
+                        "value": {
+                          "kind": "list",
+                          "items": []
+                        }
+                      },
+                      {
+                        "name": "returns",
+                        "value": {
+                          "kind": "symbol",
+                          "name": "Int"
+                        }
+                      },
+                      {
+                        "name": "requires",
+                        "value": {
+                          "kind": "list",
+                          "items": []
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "name": "body",
+                  "value": {
+                    "kind": "list",
+                    "items": []
+                  }
+                }
+              ],
+              "fields": []
+            }
+          ],
+          "values": []
+        }
+      }
+    },
+    {
+      "id": "read-registered-opaque-property-order",
+      "context": {
+        "kind_registrations": [
+          {
+            "kind": "Example.Widget",
+            "shape": "Record",
+            "property_order": null
+          }
+        ]
+      },
+      "input_file": "text/registered-opaque-property-order.comic",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Widget",
+              "kind": "Example.Widget",
+              "properties": [
+                {
+                  "name": "zeta",
+                  "value": {
+                    "kind": "string",
+                    "value": "last"
+                  }
+                },
+                {
+                  "name": "alpha",
+                  "value": {
+                    "kind": "string",
+                    "value": "first"
+                  }
+                }
+              ],
+              "fields": [
+                {
+                  "name": "id",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": []
+        }
+      }
+    },
+    {
+      "id": "read-unregistered-profile-kind-refused",
+      "context": {
+        "kind_registrations": []
+      },
+      "input_file": "text/registered-opaque-property-order.comic",
+      "expected": {
+        "kind": "unknown_kind",
+        "line": 1,
+        "column": 18,
+        "status": "refused"
+      }
     }
   ]
 }
