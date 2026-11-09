@@ -1,4 +1,4 @@
-# behavior: reading fields below list indices preserves selected values, evaluation order and independent owned results (#2845).
+# behavior: reading fields below owned and returned-view list indices preserves selected values, source dependencies, nested fields, evaluation order and independent owned results (#2801, #2845).
 # expect-stdout:
 #   indexed field reads passed
 
@@ -19,6 +19,23 @@ class Counter:
         return -1
 
 
+model ViewDetail:
+    pub label: str
+
+
+model ViewEntry:
+    pub value: str
+    pub labels: list[str]
+    pub detail: ViewDetail
+
+
+class Table:
+    pub values: list[ViewEntry]
+
+    pub def view(self) -> Borrowed[list[ViewEntry]] from self.values:
+        return self.values
+
+
 def selected(dictionary: Dictionary, index: int) -> int:
     return dictionary.entries[index].tag
 
@@ -31,7 +48,19 @@ def selected_metadata(entries: list[Entry]) -> list[str]:
     return entries[0].metadata
 
 
+def returned_view_reads() -> None:
+    table = Table(
+        values=[ViewEntry(value="returned", labels=["owned"], detail=ViewDetail(label="nested"))],
+    )
+    values = table.view()
+    assert values[0].value == "returned"
+    assert values[0].labels == ["owned"]
+    assert values[0].detail.label == "nested"
+    assert table.values[0].value == "returned"
+
+
 def main() -> None:
+    returned_view_reads()
     dictionary = Dictionary(entries=[Entry(metadata=["first"], tag=7), Entry(metadata=["last"], tag=11)])
     assert selected(dictionary, 0) == 7
     assert selected(dictionary, -1) == 11
