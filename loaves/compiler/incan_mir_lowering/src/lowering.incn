@@ -99,6 +99,8 @@ pub model UnitContinuation:
     pub enum_layouts: list[EnumLayout]
     pub static_layouts: list[RustCanonicalSymbolId]
     pub intrinsic_layouts: list[EnumDeclaration]
+    pub models: list[ModelDeclaration]
+    pub enums: list[EnumDeclaration]
     pub functions: list[Function]
     pub externals: list[ExternalFunction]
     pub instances: list[Instance]
@@ -300,6 +302,8 @@ def lowered_plan(
                     enum_layouts=enum_layout_order(context),
                     static_layouts=static_layout_order(context),
                     intrinsic_layouts=list(intrinsics),
+                    models=models,
+                    enums=list(enums),
                     functions=functions,
                     externals=externals,
                     instances=instances,
@@ -361,6 +365,8 @@ pub def resume_unit_plan(
         false,
     )?
     mut context = specialized_context
+    previous_nominal_count = len(continuation.nominal_layouts)
+    previous_model_count = len(continuation.models)
     preserve_nominal_layout_order(context, continuation.nominal_layouts)?
     mut retained_nominals = nominal_instances
     merge_nominal_instances(retained_nominals, continuation.nominal_instances)
@@ -370,12 +376,12 @@ pub def resume_unit_plan(
     constructor_table, unions, initial_intrinsics = layout_tables(context, files[entry], continuation.intrinsic_layouts)?
     constructors = Arc.new(constructor_table)
     mut intrinsics = initial_intrinsics
-    mut models: list[ModelDeclaration] = []
-    mut enums: list[EnumDeclaration] = []
-    mut functions: list[Function] = []
-    mut externals: list[ExternalFunction] = []
-    mut instances: list[Instance] = []
-    mut program = initial_plan_roots(
+    mut models = continuation.models
+    mut enums = continuation.enums
+    mut functions = continuation.functions
+    mut externals = continuation.externals
+    mut instances = continuation.instances
+    mut program = resume_plan_roots(
         constructors,
         context,
         files[entry],
@@ -384,9 +390,9 @@ pub def resume_unit_plan(
         kind,
         unions,
         overflow_checks,
-        false,
+        previous_nominal_count,
+        previous_model_count,
         models,
-        enums,
         functions,
         externals,
         instances,
@@ -404,9 +410,6 @@ pub def resume_unit_plan(
         instances,
         previous_static_count,
     )?
-    merge_planned_functions(functions, continuation.functions)?
-    merge_externals(externals, continuation.externals)?
-    merge_instance_requests(instances, continuation.instances)
     emitted_frames = rebase_emitted_frames(context, continuation.emitted_frames)
     mut statics = continuation.statics
     for cell in resolved_statics:
@@ -421,6 +424,8 @@ pub def resume_unit_plan(
                     enum_layouts=enum_layout_order(context),
                     static_layouts=static_layout_order(context),
                     intrinsic_layouts=list(intrinsics),
+                    models=models,
+                    enums=list(enums),
                     functions=functions,
                     externals=externals,
                     instances=instances,
@@ -456,24 +461,6 @@ pub def resume_unit_plan(
         published,
         trace,
     )
-
-
-def merge_planned_functions(mut functions: list[Function], additions: list[Function]) -> Result[None, str]:
-    """Merge preserved frames with freshly rebuilt declaration roots, refusing any same-name plan drift."""
-    for addition_position in range(len(additions)):
-        addition = borrowed_at(additions, addition_position)
-        mut retained = false
-        for function_position in range(len(functions)):
-            function = borrowed_at(functions, function_position)
-            if function.name != addition.name:
-                continue
-            if function != addition:
-                return Err(f"runtime continuation changed planned function {addition.name}")
-            retained = true
-            break
-        if not retained:
-            functions.append(addition.clone())
-    return Ok(None)
 
 
 def rebase_emitted_frames(context: &BodyIrModule, previous: EmittedFrames) -> EmittedFrames:
@@ -677,6 +664,8 @@ def finish_unit_plan(
                 enum_layouts=retry_enum_layouts,
                 static_layouts=retry_static_layouts,
                 intrinsic_layouts=retry_intrinsic_layouts,
+                models=models,
+                enums=list(enums),
                 functions=retry_functions,
                 externals=retry_externals,
                 instances=retry_instances,
@@ -800,6 +789,64 @@ pub def initial_plan_roots(
     merge_externals(externals, conversion_runtime)?
     merge_instance_requests(instances, checked_instances)
     merge_instance_requests(instances, comparison_bridge_instances(context, models, enums))
+    return Ok(program)
+
+
+def resume_plan_roots(
+    constructors: Arc[ConstructorIndex],
+    context: &BodyIrModule,
+    file: str,
+    mut intrinsics: list[EnumDeclaration],
+    nominal_instances: &list[NominalInstance],
+    kind: str,
+    unions: list[RustType],
+    overflow_checks: bool,
+    previous_nominal_count: int,
+    previous_model_count: int,
+    mut models: list[ModelDeclaration],
+    mut functions: list[Function],
+    mut externals: list[ExternalFunction],
+    mut instances: list[Instance],
+) -> Result[ProgramContext, str]:
+    """
+    Append roots introduced since the preserved attempt, then rebuild only the shared lookup context.
+
+    `previous_nominal_count` separates newly resolved runtime declarations from layouts an earlier generic-instance
+    pass appended. `previous_model_count` also admits those already-closed layouts without rebuilding older models.
+    """
+    checked_functions, checked_runtime, checked_instances = lower_checked_deserialize(
+        constructors,
+        context,
+        nominal_instances,
+        file,
+        intrinsics,
+        previous_nominal_count,
+    )?
+    string_functions, conversion_runtime = lower_string_conversions(
+        constructors,
+        context,
+        file,
+        intrinsics,
+        previous_nominal_count,
+    )?
+    new_models = lower_model_declarations(
+        constructors.as_ref(),
+        context,
+        file,
+        intrinsics,
+        nominal_instances,
+        kind == "library",
+        previous_model_count,
+    )?
+    program = program_context(constructors, context, intrinsics, unions, overflow_checks)?
+    functions.extend(checked_functions)
+    functions.extend(string_functions)
+    externals.extend(checked_runtime)
+    merge_externals(externals, conversion_runtime)?
+    merge_instance_requests(instances, checked_instances)
+    new_enums: list[EnumDeclaration] = []
+    merge_instance_requests(instances, comparison_bridge_instances(context, new_models, new_enums))
+    models.extend(new_models)
     return Ok(program)
 
 
