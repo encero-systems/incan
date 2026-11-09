@@ -176,6 +176,7 @@ def registry_unit(item: JsonValue, entries: str, closure_directory: Path) -> Res
         RegistryUnit(
             loaf=required_text(item, "loaf")?,
             version=required_text(item, "version")?,
+            registry=registry_text(item, "registry")?,
             domain=required_text(item, "domain")?,
             directory=directory,
             features=registry_features(item)?,
@@ -188,6 +189,8 @@ def registry_unit(item: JsonValue, entries: str, closure_directory: Path) -> Res
             crate_hash=registry_text(item, "crate_hash")?,
             artifact=registry_artifact_path(item, closure_directory)?,
             refusal=registry_text(item, "refusal")?,
+            source_archive=registry_source_path(item, closure_directory)?,
+            source_digest=registry_text(item, "checksum")?,
         ),
     )
 
@@ -200,6 +203,14 @@ def registry_artifact_path(item: JsonValue, closure_directory: Path) -> Result[s
             if value.is_null():
                 return Ok("")
             return Ok(located(closure_directory, value.expect_str().map_err((error) => error.message())?))
+
+
+def registry_source_path(item: JsonValue, closure_directory: Path) -> Result[str, str]:
+    """Locate an admitted source archive relative to its closure; legacy rows carry no source evidence."""
+    source = registry_text(item, "source")?
+    if source == "":
+        return Ok("")
+    return Ok(located(closure_directory, source))
 
 
 def registry_text(item: JsonValue, key: str) -> Result[str, str]:

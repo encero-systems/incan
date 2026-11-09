@@ -121,7 +121,7 @@ Writes the selected source's unit description as a JSON object. Execution-only o
 | `vocab`, `vocab_entry` | String or null | Prepared vocabulary registration path and declared vocabulary entry path. |
 | `vocabulary`, `vocab_desugarer` | Booleans | Whether vocabulary is active and whether this unit supplies its desugarer. |
 | `vocab_admissions` | Array of strings | Admitted vocabulary dependency keys. |
-| `covered_by` | Object of strings | Compile-time Loaf package identities mapped to the trust entry, installed-toolchain digest or `explicit-request` that authorized execution. |
+| `covered_by` | Object of strings | Compile-time Loaf package identities mapped to the trust entry, installed-toolchain digest or `explicit-request` that authorized execution. Coverage through a published lock appends `through NAME's published lock`, where `NAME` is the directly covered Loaf whose exact identity, version and source digest pin authorized the selected package. |
 | `not_prepared_loaves` | Array of strings | Selected Loaf identities not prepared under the unattended trust policy. |
 | `trust_stop` | String | Empty when preparation is complete; otherwise the stable `INCAN-T0134` stop also written to standard error. |
 | `vocab_policy` | String | Vocabulary policy identity. |
