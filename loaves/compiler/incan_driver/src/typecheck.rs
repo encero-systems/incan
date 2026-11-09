@@ -79,6 +79,14 @@ pub fn typecheck_modules(
 
     for (idx, module) in modules.iter().enumerate() {
         let deps_for_module = imported_module_deps_for(modules, idx, &module_idx_by_key, own_standard_package);
+        let _module_trace = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_driver::typecheck_module",
+            module = %module.file_path.display(),
+            declarations = module.ast.declarations.len(),
+            dependencies = deps_for_module.len(),
+        )
+        .entered();
 
         // Parser warnings were already rendered at parse time; collect them here so both warning classes reach
         // machine-readable reports from one deterministic sweep.

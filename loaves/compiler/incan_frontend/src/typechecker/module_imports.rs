@@ -411,6 +411,14 @@ impl TypeChecker {
         program: &Program,
         dependencies: &[(&str, &Program)],
     ) -> Result<(), Vec<CompileError>> {
+        let prepare = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::prepare_dependency_interfaces",
+            declarations = program.declarations.len(),
+            dependencies = dependencies.len(),
+            public_only = true,
+        )
+        .entered();
         self.dependency_semantics_pending = false;
         self.hash_key_inference.type_params.clear();
         self.transitive_pub_types.clear();
@@ -441,13 +449,38 @@ impl TypeChecker {
                 .insert(name.to_string(), exported_symbols(dep_ast));
         }
         self.predeclare_dependency_interfaces(dependencies, true);
+        drop(prepare);
         // First: import all dependencies
-        for (name, dep_ast) in dependencies {
-            self.import_module(dep_ast, name);
+        {
+            let _trace = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_frontend::import_dependency_interfaces",
+                dependencies = dependencies.len(),
+                public_only = true,
+            )
+            .entered();
+            for (name, dep_ast) in dependencies {
+                self.import_module(dep_ast, name);
+            }
         }
-        self.refresh_dependency_member_symbols(dependencies, true);
+        {
+            let _trace = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_frontend::refresh_dependency_interfaces",
+                dependencies = dependencies.len(),
+                public_only = true,
+            )
+            .entered();
+            self.refresh_dependency_member_symbols(dependencies, true);
+        }
 
         // Then check the main program
+        let _trace = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::check_program",
+            declarations = program.declarations.len(),
+        )
+        .entered();
         self.check_program_with_dependency_semantics(program)
     }
 
@@ -462,6 +495,14 @@ impl TypeChecker {
         program: &Program,
         dependencies: &[(&str, &Program)],
     ) -> Result<(), Vec<CompileError>> {
+        let prepare = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::prepare_dependency_interfaces",
+            declarations = program.declarations.len(),
+            dependencies = dependencies.len(),
+            public_only = false,
+        )
+        .entered();
         self.dependency_semantics_pending = false;
         self.hash_key_inference.type_params.clear();
         self.transitive_pub_types.clear();
@@ -493,10 +534,35 @@ impl TypeChecker {
                 .insert(name.to_string(), exported_symbols(dep_ast));
         }
         self.predeclare_dependency_interfaces(dependencies, false);
-        for (name, dep_ast) in dependencies {
-            self.import_module_all(dep_ast, name);
+        drop(prepare);
+        {
+            let _trace = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_frontend::import_dependency_interfaces",
+                dependencies = dependencies.len(),
+                public_only = false,
+            )
+            .entered();
+            for (name, dep_ast) in dependencies {
+                self.import_module_all(dep_ast, name);
+            }
         }
-        self.refresh_dependency_member_symbols(dependencies, false);
+        {
+            let _trace = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_frontend::refresh_dependency_interfaces",
+                dependencies = dependencies.len(),
+                public_only = false,
+            )
+            .entered();
+            self.refresh_dependency_member_symbols(dependencies, false);
+        }
+        let _trace = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::check_program",
+            declarations = program.declarations.len(),
+        )
+        .entered();
         self.check_program_with_dependency_semantics(program)
     }
 }
