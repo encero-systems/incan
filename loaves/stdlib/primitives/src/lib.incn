@@ -36,6 +36,16 @@ import primitives.crumb.row_descriptions
 import primitives.crumb.row_dictionary
 import primitives.crumb.row_cells
 import primitives.crumb.row_writer
+import primitives.crumb.row_errors
+import primitives.crumb.row_cursor
+import primitives.crumb.row_numbers
+import primitives.crumb.row_metadata_read
+import primitives.crumb.row_description_read
+import primitives.crumb.row_index
+import primitives.crumb.row_scalar_read
+import primitives.crumb.row_cell_read
+import primitives.crumb.row_projection
+import primitives.crumb.row_reader
 import primitives.environ
 import primitives.fs
 import primitives.fs.file
