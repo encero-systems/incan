@@ -1,0 +1,15 @@
+# behavior: borrowing an indexed element field still forbids replacing that storage before the view's last use (#2845).
+# expect-diagnostic: INCAN-T0126
+
+class Entry:
+    pub label: str
+
+    pub def view(self) -> Borrowed[str] from self.label:
+        return self.label
+
+
+def main() -> None:
+    mut entries = [Entry(label="before")]
+    label = entries[0].view()
+    entries[0].label = "after"
+    println(label)

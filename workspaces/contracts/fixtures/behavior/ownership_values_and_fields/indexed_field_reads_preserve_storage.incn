@@ -1,0 +1,49 @@
+# behavior: reading fields below list indices preserves selected values, evaluation order and independent owned results (#2845).
+# expect-stdout:
+#   indexed field reads passed
+
+model Entry:
+    pub metadata: list[str]
+    pub tag: int
+
+
+model Dictionary:
+    pub entries: list[Entry]
+
+
+class Counter:
+    pub calls: int
+
+    pub def next(mut self) -> int:
+        self.calls += 1
+        return -1
+
+
+def selected(dictionary: Dictionary, index: int) -> int:
+    return dictionary.entries[index].tag
+
+
+def temporary_entries() -> list[Entry]:
+    return [Entry(metadata=["temporary"], tag=17)]
+
+
+def selected_metadata(entries: list[Entry]) -> list[str]:
+    return entries[0].metadata
+
+
+def main() -> None:
+    dictionary = Dictionary(entries=[Entry(metadata=["first"], tag=7), Entry(metadata=["last"], tag=11)])
+    assert selected(dictionary, 0) == 7
+    assert selected(dictionary, -1) == 11
+    assert temporary_entries()[0].tag == 17
+    mut counter = Counter(calls=0)
+    assert dictionary.entries[counter.next()].tag == 11
+    assert counter.calls == 1
+    nested = [[(Entry(metadata=["nested"], tag=23), 9)]]
+    assert nested[0][0].0.tag == 23
+    mut copied = selected_metadata(dictionary.entries)
+    copied.append("independent")
+    assert dictionary.entries[0].metadata == ["first"]
+    assert copied == ["first", "independent"]
+    assert dictionary.entries[1].tag == 11
+    println("indexed field reads passed")
