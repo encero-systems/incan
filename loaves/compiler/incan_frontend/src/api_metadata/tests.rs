@@ -1081,3 +1081,174 @@ pub get = partial route(method="GET")
     );
     Ok(())
 }
+
+/// Generated validation constructors must survive the API metadata used by standard packages and source interfaces.
+#[test]
+fn checked_api_preserves_generated_validation_constructor() -> Result<(), String> {
+    let source = r#"
+@derive(Validate)
+pub model Checked:
+    pub value: int
+    pub label: str = "default"
+
+    def validate(self) -> Result[Checked, str]:
+        if self.value > 9:
+            return Err("too large")
+        return Ok(self)
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = typechecker::TypeChecker::new();
+    checker.set_current_package_identity(Some("incan_stdlib_primitives".into()));
+    checker.set_current_module_path(Some(vec!["reflection".into()]));
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let exports = collect_checked_public_exports(&program, &checker);
+    let checked = exports
+        .iter()
+        .find_map(|export| match &export.kind {
+            CheckedExportKind::Model(model) => model.methods.iter().find(|method| method.name == "new"),
+            _ => None,
+        })
+        .ok_or("missing checked constructor")?;
+    let metadata = collect_checked_api_metadata(&program, &checker, vec!["reflection".into()]);
+    let model = metadata
+        .declarations
+        .iter()
+        .find_map(|declaration| match declaration {
+            ApiDeclaration::Model(model) => Some(model),
+            _ => None,
+        })
+        .ok_or("missing API model")?;
+    let method = model
+        .methods
+        .iter()
+        .find(|method| method.name == "new")
+        .ok_or("API metadata discarded the generated validation constructor")?;
+    assert_eq!(method.canonical, canonical_identity_export(checked.canonical.as_ref()));
+    assert_eq!(method.params.len(), 1);
+    assert_eq!(method.params[0].name, "value");
+    assert_eq!(method.return_type, type_ref_from_resolved(&checked.return_type));
+    assert_eq!(method.receiver, None);
+    assert!(method.has_body);
+    assert!(method.decorators.is_empty());
+    assert_eq!(method.docstring, None);
+    assert_eq!(method.anchor.span, model.anchor.span);
+    let manifest = model_export_from_api(model);
+    let constructor = manifest
+        .methods
+        .iter()
+        .find(|method| method.name == "new")
+        .ok_or("manifest discarded the generated constructor")?;
+    assert_eq!(constructor.canonical, method.canonical);
+    assert_eq!(constructor.params, method.params);
+    Ok(())
+}
+
+/// Publish a minimal standard package through the checked API projection shared by interfaces and native libraries.
+fn standard_validation_fixture()
+-> Result<(std::sync::Arc<crate::loaf_index::LoafIndex>, tempfile::TempDir), Box<dyn std::error::Error>> {
+    let mut modules = Vec::new();
+    let mut checked_exports = Vec::new();
+    for (path, source) in [
+        (vec!["reflection".to_owned()], VALIDATED_MODEL),
+        (
+            vec!["primitives".to_owned(), "reflection".to_owned()],
+            "pub from crate.reflection import Checked\n",
+        ),
+    ] {
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_package_identity(Some("incan_stdlib_primitives".into()));
+        checker.set_current_module_path(Some(path.clone()));
+        if path.len() == 1 {
+            checker
+                .check_program(&program)
+                .map_err(|errors| format!("{errors:?}"))?;
+        } else {
+            let dependency_tokens = lexer::lex(VALIDATED_MODEL).map_err(|errors| format!("{errors:?}"))?;
+            let dependency = parser::parse(&dependency_tokens).map_err(|errors| format!("{errors:?}"))?;
+            checker
+                .check_with_imports(&program, &[("reflection", &dependency)])
+                .map_err(|errors| format!("{errors:?}"))?;
+        }
+        checked_exports.push((path.clone(), collect_checked_public_exports(&program, &checker)));
+        modules.push(collect_checked_api_metadata(&program, &checker, path));
+    }
+    let mut api = CheckedApiMetadataPackage {
+        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        package: None,
+        modules,
+        public_namespaces: Vec::new(),
+    };
+    materialize_checked_api_public_namespaces(&mut api)?;
+    let mut manifest = crate::library_manifest::LibraryManifest::new("incan_stdlib_primitives", "0.6.0");
+    manifest.contract_metadata.identity_graph.extend_checked_api_exports(
+        "incan_stdlib_primitives",
+        &api,
+        &checked_exports,
+    )?;
+    manifest.contract_metadata.api = Some(api);
+    let directory = tempfile::tempdir()?;
+    std::fs::write(
+        directory.path().join("incan_stdlib_primitives.incnlib"),
+        manifest.to_json_string()?,
+    )?;
+    let entry = crate::loaf_index::LoafIndex::standard("incan_stdlib_primitives", directory.path())?;
+    Ok((
+        std::sync::Arc::new(crate::loaf_index::LoafIndex::new([entry])?),
+        directory,
+    ))
+}
+
+const VALIDATED_MODEL: &str = r#"
+@derive(Validate)
+pub model Checked:
+    pub value: int
+    pub label: str = "default"
+
+    def validate(self) -> Result[Checked, str]:
+        if self.value > 9:
+            return Err("too large")
+        return Ok(self)
+"#;
+
+/// Local checked construction is the unchanged control for standard-package imports.
+#[test]
+fn local_validation_constructor_is_accepted() -> Result<(), String> {
+    metadata_for(&format!(
+        "{VALIDATED_MODEL}\ndef main() -> None:\n    value = Checked.new(value=1)\n    assert value.is_ok()\n"
+    ))
+    .map_err(|errors| format!("{errors:?}"))?;
+    Ok(())
+}
+
+/// Both public import paths retain checked construction without granting raw construction.
+#[test]
+fn standard_validation_constructor_imports_and_raw_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    let (loaves, _directory) = standard_validation_fixture()?;
+    for import in ["std.primitives.reflection", "std.reflection"] {
+        for (call, accepted) in [("Checked.new(value=1)", true), ("Checked(value=1)", false)] {
+            let source = format!("from {import} import Checked\ndef main() -> None:\n    value = {call}\n");
+            let tokens = lexer::lex(&source).map_err(|errors| format!("{errors:?}"))?;
+            let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            let mut checker = TypeChecker::new();
+            checker.set_loaves(loaves.clone());
+            let result = checker.check_program(&program);
+            if accepted {
+                result.map_err(|errors| format!("{import}: {errors:?}"))?;
+            } else {
+                let errors = result.err().ok_or("raw construction unexpectedly accepted")?;
+                assert!(
+                    errors.iter().any(|error| error
+                        .message
+                        .contains("Direct construction 'Checked'(...) is not allowed")),
+                    "{import}: {errors:?}"
+                );
+            }
+        }
+    }
+    Ok(())
+}

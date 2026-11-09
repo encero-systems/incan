@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Pair AST method declarations with checked method metadata for documentation output.
+/// Project authored, aliased and compiler-generated checked methods into API metadata without losing callable facts.
 pub(super) fn methods(
     ast_methods: &[Spanned<MethodDecl>],
     ast_aliases: &[Spanned<MethodAliasDecl>],
@@ -72,34 +72,71 @@ pub(super) fn methods(
             if checked.alias_of.as_deref() != Some(alias.node.target.as_str()) {
                 continue;
             }
-            let ownership = checked_api_ownership(checked.ownership.as_ref(), checker);
-            let mut params = params_from_checked(&checked.params, &checked.param_defaults);
-            let mut return_type = type_ref_from_resolved(&checked.return_type);
-            crate::library_manifest::ownership::mark_types(ownership.as_ref(), &mut params, &mut return_type);
-            out.push(ApiMethod {
-                ownership,
-                name: checked.name.clone(),
-                canonical: canonical_identity_export(checked.canonical.as_ref()),
-                visibility: checked.visibility.into(),
-                alias_of: checked.alias_of.clone(),
-                anchor: anchor(module_path, &format!("{owner}.{}", checked.name), alias.span),
-                docstring: None,
-                docstring_sections: None,
-                decorators: Vec::new(),
-                type_params: type_params(&checked.type_params),
-                receiver: checked.receiver.map(|receiver| match receiver {
-                    crate::ast::Receiver::Immutable => ReceiverExport::Immutable,
-                    crate::ast::Receiver::Mutable => ReceiverExport::Mutable,
-                }),
-                params,
-                return_type,
-                is_async: checked.is_async,
-                has_body: checked.has_body,
-                made_private: checked.made_private.as_ref().map(Into::into),
-            });
+            out.push(method_without_source_body(
+                checked,
+                checker,
+                module_path,
+                owner,
+                alias.span,
+            ));
         }
     }
+    // Generated methods have no AST declaration to visit. Carry only checker-proven generated identities,
+    // retaining their owner span rather than inventing a method token or another constructor contract.
+    for checked in checked_methods {
+        let Some(identity) = checked
+            .canonical
+            .as_ref()
+            .filter(|identity| checker.type_info().is_compiler_generated_member_identity(identity))
+        else {
+            continue;
+        };
+        out.push(method_without_source_body(
+            checked,
+            checker,
+            module_path,
+            owner,
+            identity.declaration_span,
+        ));
+    }
     out
+}
+
+/// Project a checked alias or generated member without inventing an authored body, docstring or decorator.
+/// The caller supplies the alias token span or generated member's checked owner span; all callable facts remain
+/// those of the checked export, including canonical identity and ownership.
+fn method_without_source_body(
+    checked: &CheckedMethod,
+    checker: &TypeChecker,
+    module_path: &[String],
+    owner: &str,
+    span: Span,
+) -> ApiMethod {
+    let ownership = checked_api_ownership(checked.ownership.as_ref(), checker);
+    let mut params = params_from_checked(&checked.params, &checked.param_defaults);
+    let mut return_type = type_ref_from_resolved(&checked.return_type);
+    crate::library_manifest::ownership::mark_types(ownership.as_ref(), &mut params, &mut return_type);
+    ApiMethod {
+        ownership,
+        name: checked.name.clone(),
+        canonical: canonical_identity_export(checked.canonical.as_ref()),
+        visibility: checked.visibility.into(),
+        alias_of: checked.alias_of.clone(),
+        anchor: anchor(module_path, &format!("{owner}.{}", checked.name), span),
+        docstring: None,
+        docstring_sections: None,
+        decorators: Vec::new(),
+        type_params: type_params(&checked.type_params),
+        receiver: checked.receiver.map(|receiver| match receiver {
+            crate::ast::Receiver::Immutable => ReceiverExport::Immutable,
+            crate::ast::Receiver::Mutable => ReceiverExport::Mutable,
+        }),
+        params,
+        return_type,
+        is_async: checked.is_async,
+        has_body: checked.has_body,
+        made_private: checked.made_private.as_ref().map(Into::into),
+    }
 }
 
 /// Remove the checked method that best matches one AST method declaration.
