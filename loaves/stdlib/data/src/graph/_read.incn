@@ -11,7 +11,6 @@ from crate.graph._ids import (
     unknown_node,
     wrong_graph_scope,
 )
-
 const NODE_STREAM: int = 0
 const OUT_EDGE_STREAM: int = 1
 const IN_EDGE_STREAM: int = 2
@@ -20,6 +19,7 @@ const INSERTION_ORDERING: int = 0
 
 
 static next_scope_id: int = 1
+static next_selection_id: int = 1
 
 
 @derive(Clone, Copy, Eq, Hash, Ord)
@@ -99,6 +99,13 @@ def fresh_scope() -> _ScopeToken:
     return _ScopeToken.fresh()
 
 
+def fresh_selection_id() -> int:
+    """Issue one process-local identity for a fixed selected-reader profile."""
+    value = next_selection_id
+    next_selection_id += 1
+    return value
+
+
 def issue_node(token: _ScopeToken, local: NodeId) -> ScopedNodeId:
     """Bind one local node id to its graph capability."""
     return ScopedNodeId.issue(token, local)
@@ -110,24 +117,25 @@ def issue_edge(token: _ScopeToken, local: EdgeId) -> ScopedEdgeId:
 
 
 @derive(Eq)
-pub enum GraphProvider:
+pub enum GraphProvider(str):
     """Backend family serving one graph read scope."""
 
-    Memory
+    Memory = "memory"
 
 
 @derive(Eq)
-pub enum GraphSelection:
+pub enum GraphSelection(str):
     """Finite graph selection fixed by one read scope."""
 
-    Whole
+    Whole = "whole"
+    Selected = "selected"
 
 
 @derive(Eq)
-pub enum GraphOrdering:
+pub enum GraphOrdering(str):
     """Stable ordering profile used by one graph read scope."""
 
-    Insertion
+    Insertion = "insertion"
 
 
 @derive(Clone, Eq)
@@ -242,6 +250,7 @@ pub model PageCounters:
     pub tombstones_examined: int
     pub payloads_materialized: int
     pub bytes_copied: int
+    pub rejected_candidates: int
 
 
 @derive(Clone)
@@ -271,112 +280,98 @@ pub model EdgePage[K, I]:
     pub counters: PageCounters
 
 
-pub model MemoryGraphFailure:
-    """Unconstructible source failure reserved for infallible memory reads."""
-
-    _detail: str
+pub type MemoryGraphFailure = GraphError
 
 
 @derive(Clone, Copy, Eq)
-pub enum GraphReadErrorKind:
+pub enum LimitReason(str):
+    """Deterministic traversal or cursor bound that stopped further work."""
+
+    Nodes = "nodes"
+    Edges = "edges"
+    Bytes = "bytes"
+    Retained = "retained"
+    Deadline = "deadline"
+
+
+@derive(Clone, Copy, Eq)
+pub enum GraphReadErrorKind(str):
     """Inspectable category of one storage-independent graph read failure."""
 
-    UnknownNode
-    UnknownEdge
-    ScopeMismatch
-    StaleCursor
-    IncompatibleCursor
-    UnsupportedSelection
-    Resource
-    Cancelled
-    Source
+    UnknownKey = "unknown_key"
+    ScopeMismatch = "scope_mismatch"
+    UnsupportedSelection = "unsupported_selection"
+    InvalidBudget = "invalid_budget"
+    StaleCursor = "stale_cursor"
+    ResourceLimit = "resource_limit"
+    Source = "source"
 
 
 pub class GraphReadError[F]:
     """Typed, inspectable failure from a storage-independent structural read."""
 
     pub kind: GraphReadErrorKind
-    pub unknown_id: Option[int]
-    pub resource_detail: Option[str]
+    pub argument: Option[str]
+    pub limit_reason: Option[LimitReason]
     pub source: Option[F]
 
     @staticmethod
-    pub def UnknownNode(node: int) -> GraphReadError[F]:
-        """Construct an unknown-node failure for one scoped local identity."""
+    pub def UnknownKey(argument: str) -> GraphReadError[F]:
+        """Construct a failure for a key outside the reader's fixed selection."""
         return GraphReadError(
-            kind=GraphReadErrorKind.UnknownNode,
-            unknown_id=Some(node),
-            resource_detail=None,
+            kind=GraphReadErrorKind.UnknownKey,
+            argument=Some(argument),
+            limit_reason=None,
             source=None,
         )
 
     @staticmethod
-    pub def UnknownEdge(edge: int) -> GraphReadError[F]:
-        """Construct an unknown-edge failure for one scoped local identity."""
-        return GraphReadError(
-            kind=GraphReadErrorKind.UnknownEdge,
-            unknown_id=Some(edge),
-            resource_detail=None,
-            source=None,
-        )
-
-    @staticmethod
-    pub def ScopeMismatch() -> GraphReadError[F]:
-        """Construct a failure for a key issued by another graph scope."""
+    pub def ScopeMismatch(argument: str) -> GraphReadError[F]:
+        """Construct a failure for a key or cursor issued by another graph scope."""
         return GraphReadError(
             kind=GraphReadErrorKind.ScopeMismatch,
-            unknown_id=None,
-            resource_detail=None,
+            argument=Some(argument),
+            limit_reason=None,
+            source=None,
+        )
+
+    @staticmethod
+    pub def UnsupportedSelection(argument: str) -> GraphReadError[F]:
+        """Construct a failure for a selector the reader cannot serve."""
+        return GraphReadError(
+            kind=GraphReadErrorKind.UnsupportedSelection,
+            argument=Some(argument),
+            limit_reason=None,
+            source=None,
+        )
+
+    @staticmethod
+    pub def InvalidBudget(argument: str) -> GraphReadError[F]:
+        """Construct a failure for a non-positive required budget count."""
+        return GraphReadError(
+            kind=GraphReadErrorKind.InvalidBudget,
+            argument=Some(argument),
+            limit_reason=None,
             source=None,
         )
 
     @staticmethod
     pub def StaleCursor() -> GraphReadError[F]:
-        """Construct a failure for a cursor issued at another graph revision."""
+        """Construct a failure for a cursor whose fixed reader profile no longer matches."""
         return GraphReadError(
             kind=GraphReadErrorKind.StaleCursor,
-            unknown_id=None,
-            resource_detail=None,
+            argument=None,
+            limit_reason=None,
             source=None,
         )
 
     @staticmethod
-    pub def IncompatibleCursor() -> GraphReadError[F]:
-        """Construct a failure for a cursor from another page stream or profile."""
+    pub def ResourceLimit(reason: LimitReason) -> GraphReadError[F]:
+        """Construct a hard cursor or traversal resource-limit failure."""
         return GraphReadError(
-            kind=GraphReadErrorKind.IncompatibleCursor,
-            unknown_id=None,
-            resource_detail=None,
-            source=None,
-        )
-
-    @staticmethod
-    pub def UnsupportedSelection() -> GraphReadError[F]:
-        """Construct a failure for a selection the reader cannot serve."""
-        return GraphReadError(
-            kind=GraphReadErrorKind.UnsupportedSelection,
-            unknown_id=None,
-            resource_detail=None,
-            source=None,
-        )
-
-    @staticmethod
-    pub def Resource(detail: str) -> GraphReadError[F]:
-        """Construct a resource failure with an inspectable explanation."""
-        return GraphReadError(
-            kind=GraphReadErrorKind.Resource,
-            unknown_id=None,
-            resource_detail=Some(detail),
-            source=None,
-        )
-
-    @staticmethod
-    pub def Cancelled() -> GraphReadError[F]:
-        """Construct a failure for a caller-cancelled read."""
-        return GraphReadError(
-            kind=GraphReadErrorKind.Cancelled,
-            unknown_id=None,
-            resource_detail=None,
+            kind=GraphReadErrorKind.ResourceLimit,
+            argument=None,
+            limit_reason=Some(reason),
             source=None,
         )
 
@@ -385,10 +380,13 @@ pub class GraphReadError[F]:
         """Construct a failure that preserves its source-specific value."""
         return GraphReadError(
             kind=GraphReadErrorKind.Source,
-            unknown_id=None,
-            resource_detail=None,
+            argument=None,
+            limit_reason=None,
             source=Some(failure),
         )
+
+
+pub type MemoryReadError = GraphReadError[GraphError]
 
 
 def issue_page_token(
@@ -574,7 +572,7 @@ pub model _GraphStore[T]:
     ) -> Result[NodePage[ScopedNodeId], GraphReadError[MemoryGraphFailure]]:
         """Return one insertion-order page of live scoped node keys without materializing payloads."""
         if budget.is_empty_request():
-            return Err(GraphReadError.Resource("page budget must admit at least one record"))
+            return Err(GraphReadError.InvalidBudget("budget"))
         position = page_position(scope, revision, cursor, NODE_STREAM, -1)?
         mut values: list[ScopedNodeId] = []
         mut examined = 0
@@ -628,8 +626,8 @@ pub model _GraphStore[T]:
             Some(local) =>
                 if self.contains_edge(local):
                     return self.read_edge_item(scope, local)
-                return Err(GraphReadError.UnknownEdge(local.to_int()))
-            None => return Err(GraphReadError.ScopeMismatch())
+                return Err(GraphReadError.UnknownKey("key"))
+            None => return Err(GraphReadError.ScopeMismatch("key"))
 
     def read_node(self, scope: _ScopeToken, key: ScopedNodeId) -> Result[NodeId, GraphReadError[MemoryGraphFailure]]:
         """Resolve a live scoped node for one shared structural read."""
@@ -637,8 +635,8 @@ pub model _GraphStore[T]:
             Some(local) =>
                 if self.contains_node(local):
                     return Ok(local)
-                return Err(GraphReadError.UnknownNode(local.to_int()))
-            None => return Err(GraphReadError.ScopeMismatch())
+                return Err(GraphReadError.UnknownKey("key"))
+            None => return Err(GraphReadError.ScopeMismatch("key"))
 
     def read_adjacency(
         self,
@@ -651,7 +649,7 @@ pub model _GraphStore[T]:
     ) -> Result[EdgePage[ScopedNodeId, ScopedEdgeId], GraphReadError[MemoryGraphFailure]]:
         """Read one bounded incoming or outgoing adjacency page without allocating a complete neighbor list."""
         if budget.is_empty_request():
-            return Err(GraphReadError.Resource("page budget must admit at least one record"))
+            return Err(GraphReadError.InvalidBudget("budget"))
         end = self.read_adjacency_count(node, stream)?
         mut position = page_position(scope, revision, cursor, stream, node.to_int())?
         mut values: list[GraphEdgeItem[ScopedNodeId, ScopedEdgeId]] = []
@@ -678,7 +676,7 @@ pub model _GraphStore[T]:
             result = self.incoming_entry_count(node)
         match result:
             Ok(count) => return Ok(count)
-            Err(_) => return Err(GraphReadError.UnknownNode(node.to_int()))
+            Err(_) => return Err(GraphReadError.UnknownKey("key"))
 
     def read_adjacency_edge(
         self,
@@ -692,7 +690,7 @@ pub model _GraphStore[T]:
             result = self.incoming_edge_at(node, position)
         match result:
             Ok(edge) => return Ok(edge)
-            Err(_) => return Err(GraphReadError.UnknownNode(node.to_int()))
+            Err(_) => return Err(GraphReadError.UnknownKey("key"))
 
     def read_edge_item(
         self,
@@ -709,7 +707,7 @@ pub model _GraphStore[T]:
                         target=issue_node(scope, target),
                     ),
                 )
-            Err(_) => return Err(GraphReadError.UnknownEdge(edge.to_int()))
+            Err(_) => return Err(GraphReadError.UnknownKey("key"))
 
     pub def node_slot_count(self) -> int:
         """Return the number of allocated node slots, including tombstones."""
@@ -967,13 +965,13 @@ def page_position(
         None => return Ok(0)
         Some(token) =>
             if token.scope_id() != scope.id():
-                return Err(GraphReadError.ScopeMismatch())
+                return Err(GraphReadError.ScopeMismatch("cursor"))
             if token.revision() != revision:
                 return Err(GraphReadError.StaleCursor())
             if token.selection_id() != WHOLE_SELECTION or token.ordering_id() != INSERTION_ORDERING:
-                return Err(GraphReadError.IncompatibleCursor())
+                return Err(GraphReadError.StaleCursor())
             if token.stream_id() != stream or token.subject_id() != subject:
-                return Err(GraphReadError.IncompatibleCursor())
+                return Err(GraphReadError.StaleCursor())
             return Ok(token.position())
 
 
@@ -1007,6 +1005,7 @@ def page_counters(
         tombstones_examined=tombstones,
         payloads_materialized=0,
         bytes_copied=bytes_copied,
+        rejected_candidates=0,
     )
 
 
@@ -1095,6 +1094,23 @@ pub model RelationGraph[N, E] with GraphRead[ScopedNodeId, ScopedEdgeId, MemoryG
             Some(local) => return self.store.contains_edge(local)
             None => return false
 
+    pub def read_view(self) -> MemoryGraphReader[N, E] from self:
+        """Borrow this graph as one whole-selection reader fixed at its current revision."""
+        return MemoryGraphReader.open(self)
+
+    pub def read_selected(
+        self,
+        node_keys: Option[list[ScopedNodeId]] = None,
+        node_filter: Option[Callable[GraphNodeValue[N], bool]] = None,
+        edge_filter: Option[Callable[GraphEdgeValue[E], bool]] = None,
+    ) -> Result[FilteredMemoryGraphReader[N, E], MemoryReadError] from self:
+        """Borrow one fixed selection whose omitted selector kinds admit every candidate."""
+        mut selected: Option[set[ScopedNodeId]] = None
+        match node_keys:
+            Some(keys) => selected = Some(selected_node_keys(self.store, self.scope_token, keys)?)
+            None => pass
+        return Ok(FilteredMemoryGraphReader.open(self, selected, node_filter, edge_filter))
+
     def scope(self) -> GraphScope:
         """Return this graph's whole-selection insertion-order read scope."""
         return GraphScope(
@@ -1108,7 +1124,7 @@ pub model RelationGraph[N, E] with GraphRead[ScopedNodeId, ScopedEdgeId, MemoryG
         """Return scoped node membership without scanning payloads."""
         match key.local_id(self.scope_token):
             Some(local) => return Ok(self.store.contains_node(local))
-            None => return Err(GraphReadError.ScopeMismatch())
+            None => return Err(GraphReadError.ScopeMismatch("key"))
 
     def nodes(
         self,
@@ -1160,3 +1176,453 @@ pub model RelationGraph[N, E] with GraphRead[ScopedNodeId, ScopedEdgeId, MemoryG
                     return Ok(local)
                 return Err(unknown_edge(local))
             None => return Err(wrong_graph_scope())
+
+
+@derive(Clone)
+pub model GraphNodeValue[N]:
+    """One selected memory-graph node presented to a read predicate."""
+
+    pub key: ScopedNodeId
+    pub value: N
+
+
+@derive(Clone)
+pub model GraphEdgeValue[E]:
+    """One selected memory-graph edge presented to a read predicate."""
+
+    pub key: ScopedEdgeId
+    pub source: ScopedNodeId
+    pub target: ScopedNodeId
+    pub value: E
+
+
+pub class MemoryGraphReader[N, E] with GraphRead[ScopedNodeId, ScopedEdgeId, MemoryGraphFailure]:
+    """Borrowed in-memory reader over a whole or copied-key induced selection."""
+
+    graph: Borrowed[RelationGraph[N, E]]
+    scope_token: _ScopeToken
+    revision: int
+    selected: Option[set[ScopedNodeId]]
+    selection: GraphSelection
+    selection_id: int
+    edge_marker: Option[E]
+
+    @staticmethod
+    pub def open(
+        graph: Borrowed[RelationGraph[N, E]],
+    ) -> MemoryGraphReader[N, E] from graph:
+        """Open a whole-selection reader without copying graph structure."""
+        return MemoryGraphReader(
+            graph=graph,
+            scope_token=graph.scope_token,
+            revision=graph.revision,
+            selected=None,
+            selection=GraphSelection.Whole,
+            selection_id=WHOLE_SELECTION,
+            edge_marker=None,
+        )
+
+    @staticmethod
+    pub def open_selected(
+        graph: Borrowed[RelationGraph[N, E]],
+        node_keys: list[ScopedNodeId],
+    ) -> Result[MemoryGraphReader[N, E], MemoryReadError] from graph:
+        """Open a selected reader after copying live keys and rejecting foreign scopes."""
+        selected = selected_node_keys(graph.store, graph.scope_token, node_keys)?
+        return Ok(
+            MemoryGraphReader(
+                graph=graph,
+                scope_token=graph.scope_token,
+                revision=graph.revision,
+                selected=Some(selected),
+                selection=GraphSelection.Selected,
+                selection_id=fresh_selection_id(),
+                edge_marker=None,
+            ),
+        )
+
+    @staticmethod
+    pub def open_all_selected(
+        graph: Borrowed[RelationGraph[N, E]],
+    ) -> MemoryGraphReader[N, E] from graph:
+        """Open an explicit selected reader with every selector omitted."""
+        return MemoryGraphReader(
+            graph=graph,
+            scope_token=graph.scope_token,
+            revision=graph.revision,
+            selected=None,
+            selection=GraphSelection.Selected,
+            selection_id=fresh_selection_id(),
+            edge_marker=None,
+        )
+
+    def scope(self) -> GraphScope:
+        """Return the fixed provider, selection, revision, and ordering profile."""
+        return memory_scope(self.revision, self.selection)
+
+    def contains_node(self, key: ScopedNodeId) -> Result[bool, MemoryReadError]:
+        """Return whether a same-scope live key is visible in this reader."""
+        match key.local_id(self.scope_token):
+            None => return Err(GraphReadError.ScopeMismatch("key"))
+            Some(local) =>
+                if not self.graph.store.contains_node(local):
+                    return Ok(false)
+                return Ok(key_in_selection(self.selected, key))
+
+    def nodes(
+        self,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+    ) -> Result[NodePage[ScopedNodeId], MemoryReadError]:
+        """Return one candidate-bounded page of visible node keys."""
+        store_cursor = cursor_for_store(self.scope_token, self.revision, self.selection_id, cursor)?
+        page = self.graph.store.read_nodes(self.scope_token, self.revision, budget, store_cursor)?
+        mut values: list[ScopedNodeId] = []
+        for key in page.values:
+            if key_in_selection(self.selected, key):
+                values.append(key)
+        return Ok(selected_node_page(page, values, 0, self.scope_token, self.selection_id))
+
+    def out_edges(
+        self,
+        key: ScopedNodeId,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+    ) -> Result[EdgePage[ScopedNodeId, ScopedEdgeId], MemoryReadError]:
+        """Return one candidate-bounded outgoing page within the induced selection."""
+        return self.read_adjacency(key, budget, cursor, true)
+
+    def in_edges(
+        self,
+        key: ScopedNodeId,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+    ) -> Result[EdgePage[ScopedNodeId, ScopedEdgeId], MemoryReadError]:
+        """Return one candidate-bounded incoming page within the induced selection."""
+        return self.read_adjacency(key, budget, cursor, false)
+
+    def edge(self, key: ScopedEdgeId) -> Result[GraphEdgeItem[ScopedNodeId, ScopedEdgeId], MemoryReadError]:
+        """Return one structural edge only when both endpoints are visible."""
+        edge = self.graph.store.read_edge(self.scope_token, key)?
+        if not self.edge_is_visible(edge):
+            return Err(GraphReadError.UnknownKey("key"))
+        return Ok(edge)
+
+    def read_adjacency(
+        self,
+        key: ScopedNodeId,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+        outgoing: bool,
+    ) -> Result[EdgePage[ScopedNodeId, ScopedEdgeId], MemoryReadError]:
+        """Filter one indexed adjacency page without scanning another component."""
+        if not self.contains_node(key)?:
+            return Err(GraphReadError.UnknownKey("key"))
+        store_cursor = cursor_for_store(self.scope_token, self.revision, self.selection_id, cursor)?
+        mut page = self.graph.store.read_in_edges(self.scope_token, self.revision, key, budget, store_cursor)?
+        if outgoing:
+            page = self.graph.store.read_out_edges(self.scope_token, self.revision, key, budget, store_cursor)?
+        mut values: list[GraphEdgeItem[ScopedNodeId, ScopedEdgeId]] = []
+        for edge in page.values:
+            if self.edge_is_visible(edge):
+                values.append(edge)
+        return Ok(selected_edge_page(page, values, 0, self.scope_token, self.selection_id))
+
+    def edge_is_visible(self, edge: GraphEdgeItem[ScopedNodeId, ScopedEdgeId]) -> bool:
+        """Apply the induced-node rule to one structural edge."""
+        return key_in_selection(self.selected, edge.source) and key_in_selection(self.selected, edge.target)
+
+
+pub class FilteredMemoryGraphReader[N, E] with GraphRead[ScopedNodeId, ScopedEdgeId, MemoryGraphFailure]:
+    """Borrowed selected reader whose owned predicates judge only their current candidate."""
+
+    graph: Borrowed[RelationGraph[N, E]]
+    scope_token: _ScopeToken
+    revision: int
+    selected: Option[set[ScopedNodeId]]
+    selection_id: int
+    node_filter: Option[Callable[GraphNodeValue[N], bool]]
+    edge_filter: Option[Callable[GraphEdgeValue[E], bool]]
+
+    @staticmethod
+    pub def open(
+        graph: Borrowed[RelationGraph[N, E]],
+        selected: Option[set[ScopedNodeId]],
+        node_filter: Option[Callable[GraphNodeValue[N], bool]],
+        edge_filter: Option[Callable[GraphEdgeValue[E], bool]],
+    ) -> FilteredMemoryGraphReader[N, E] from graph:
+        """Open a filtered reader whose only borrowed source is the graph storage."""
+        return FilteredMemoryGraphReader(
+            graph=graph,
+            scope_token=graph.scope_token,
+            revision=graph.revision,
+            selected=selected,
+            selection_id=fresh_selection_id(),
+            node_filter=node_filter,
+            edge_filter=edge_filter,
+        )
+
+    def scope(self) -> GraphScope:
+        """Return this reader's fixed selected scope."""
+        return memory_scope(self.revision, GraphSelection.Selected)
+
+    def contains_node(self, key: ScopedNodeId) -> Result[bool, MemoryReadError]:
+        """Return whether one same-scope live key passes the fixed node selection."""
+        match key.local_id(self.scope_token):
+            None => return Err(GraphReadError.ScopeMismatch("key"))
+            Some(local) =>
+                if not self.graph.store.contains_node(local) or not key_in_selection(self.selected, key):
+                    return Ok(false)
+                return Ok(self.node_is_visible(key))
+
+    def nodes(
+        self,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+    ) -> Result[NodePage[ScopedNodeId], MemoryReadError]:
+        """Return visible nodes while bounding candidates rather than accepted values."""
+        store_cursor = cursor_for_store(self.scope_token, self.revision, self.selection_id, cursor)?
+        page = self.graph.store.read_nodes(self.scope_token, self.revision, budget, store_cursor)?
+        mut values: list[ScopedNodeId] = []
+        mut payloads = 0
+        for key in page.values:
+            if key_in_selection(self.selected, key):
+                visible, read_payloads = self.node_visibility(key)
+                payloads += read_payloads
+                if visible:
+                    values.append(key)
+        return Ok(selected_node_page(page, values, payloads, self.scope_token, self.selection_id))
+
+    def out_edges(
+        self,
+        key: ScopedNodeId,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+    ) -> Result[EdgePage[ScopedNodeId, ScopedEdgeId], MemoryReadError]:
+        """Return one candidate-bounded filtered outgoing page."""
+        return self.read_adjacency(key, budget, cursor, true)
+
+    def in_edges(
+        self,
+        key: ScopedNodeId,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+    ) -> Result[EdgePage[ScopedNodeId, ScopedEdgeId], MemoryReadError]:
+        """Return one candidate-bounded filtered incoming page."""
+        return self.read_adjacency(key, budget, cursor, false)
+
+    def edge(self, key: ScopedEdgeId) -> Result[GraphEdgeItem[ScopedNodeId, ScopedEdgeId], MemoryReadError]:
+        """Return one edge only when its endpoints and payload pass the fixed selection."""
+        edge = self.graph.store.read_edge(self.scope_token, key)?
+        if not self.edge_is_visible(edge):
+            return Err(GraphReadError.UnknownKey("key"))
+        return Ok(edge)
+
+    def read_adjacency(
+        self,
+        key: ScopedNodeId,
+        budget: GraphPageBudget,
+        cursor: Option[GraphPageToken],
+        outgoing: bool,
+    ) -> Result[EdgePage[ScopedNodeId, ScopedEdgeId], MemoryReadError]:
+        """Apply fixed predicates to one indexed candidate page."""
+        if not self.contains_node(key)?:
+            return Err(GraphReadError.UnknownKey("key"))
+        store_cursor = cursor_for_store(self.scope_token, self.revision, self.selection_id, cursor)?
+        mut page = self.graph.store.read_in_edges(self.scope_token, self.revision, key, budget, store_cursor)?
+        if outgoing:
+            page = self.graph.store.read_out_edges(self.scope_token, self.revision, key, budget, store_cursor)?
+        mut values: list[GraphEdgeItem[ScopedNodeId, ScopedEdgeId]] = []
+        mut payloads = 0
+        for edge in page.values:
+            visible, read_payloads = self.edge_visibility(edge)
+            payloads += read_payloads
+            if visible:
+                values.append(edge)
+        return Ok(selected_edge_page(page, values, payloads, self.scope_token, self.selection_id))
+
+    def node_is_visible(self, key: ScopedNodeId) -> bool:
+        """Apply the node predicate to one selected live key."""
+        visible, _ = self.node_visibility(key)
+        return visible
+
+    def node_visibility(self, key: ScopedNodeId) -> Tuple[bool, int]:
+        """Apply the node predicate and return whether it materialized a payload."""
+        match self.node_filter:
+            None => return (true, 0)
+            Some(_) => pass
+        match key.local_id(self.scope_token):
+            None => return (false, 0)
+            Some(local) =>
+                match self.graph.store.node_payload(local):
+                    Err(_) => return (false, 0)
+                    Ok(value) =>
+                        match self.node_filter:
+                            None => return (false, 0)
+                            Some(accept) => return (accept(GraphNodeValue(key=key, value=value)), 1)
+
+    def edge_is_visible(self, edge: GraphEdgeItem[ScopedNodeId, ScopedEdgeId]) -> bool:
+        """Apply the induced endpoint rule and edge predicate to one candidate."""
+        visible, _ = self.edge_visibility(edge)
+        return visible
+
+    def edge_visibility(self, edge: GraphEdgeItem[ScopedNodeId, ScopedEdgeId]) -> Tuple[bool, int]:
+        """Apply the induced predicates and count exactly the payloads they inspect."""
+        if not key_in_selection(self.selected, edge.source) or not key_in_selection(self.selected, edge.target):
+            return (false, 0)
+        source_visible, source_payloads = self.node_visibility(edge.source)
+        if not source_visible:
+            return (false, source_payloads)
+        target_visible, target_payloads = self.node_visibility(edge.target)
+        node_payloads = source_payloads + target_payloads
+        if not target_visible:
+            return (false, node_payloads)
+        match self.edge_filter:
+            None => return (true, node_payloads)
+            Some(_) => pass
+        match edge.id.local_id(self.scope_token):
+            None => return (false, node_payloads)
+            Some(local) =>
+                value = self.graph.edge_values[local.to_int()]
+                match self.edge_filter:
+                    None => return (false, node_payloads)
+                    Some(accept) =>
+                        return (
+                            accept(GraphEdgeValue(key=edge.id, source=edge.source, target=edge.target, value=value)),
+                            node_payloads + 1,
+                        )
+
+
+def selected_node_keys[N](
+    store: Borrowed[_GraphStore[N]],
+    scope_token: _ScopeToken,
+    node_keys: list[ScopedNodeId],
+) -> Result[set[ScopedNodeId], MemoryReadError]:
+    """Copy live selected keys while refusing a key from another graph scope."""
+    mut selected: set[ScopedNodeId] = set()
+    for key in node_keys:
+        match key.local_id(scope_token):
+            None => return Err(GraphReadError.ScopeMismatch("node_keys"))
+            Some(local) =>
+                if store.contains_node(local):
+                    selected.add(key)
+    return Ok(selected)
+
+
+def key_in_selection(selected: Option[set[ScopedNodeId]], key: ScopedNodeId) -> bool:
+    """Return whether a key belongs to a whole or explicit node selection."""
+    match selected:
+        None => return true
+        Some(keys) => return key in keys
+
+
+def memory_scope(revision: int, selection: GraphSelection) -> GraphScope:
+    """Build the stable scope descriptor shared by memory readers."""
+    return GraphScope(
+        provider=GraphProvider.Memory,
+        selection=selection,
+        revision=revision,
+        ordering=GraphOrdering.Insertion,
+    )
+
+
+def cursor_for_store(
+    scope_token: _ScopeToken,
+    revision: int,
+    selection_id: int,
+    cursor: Option[GraphPageToken],
+) -> Result[Option[GraphPageToken], MemoryReadError]:
+    """Validate a reader cursor and retag it for the underlying whole-graph page engine."""
+    match cursor:
+        None => return Ok(None)
+        Some(token) =>
+            if token.scope_id() != scope_token.id():
+                return Err(GraphReadError.ScopeMismatch("cursor"))
+            if token.revision() != revision or token.selection_id() != selection_id:
+                return Err(GraphReadError.StaleCursor())
+            return Ok(
+                Some(
+                    issue_page_token(
+                        scope_token,
+                        revision,
+                        WHOLE_SELECTION,
+                        token.ordering_id(),
+                        token.stream_id(),
+                        token.subject_id(),
+                        token.position(),
+                    ),
+                ),
+            )
+
+
+def cursor_for_reader(
+    scope_token: _ScopeToken,
+    selection_id: int,
+    cursor: Option[GraphPageToken],
+) -> Option[GraphPageToken]:
+    """Retag one store continuation with its fixed selected-reader identity."""
+    match cursor:
+        None => return None
+        Some(token) =>
+            return Some(
+                issue_page_token(
+                    scope_token,
+                    token.revision(),
+                    selection_id,
+                    token.ordering_id(),
+                    token.stream_id(),
+                    token.subject_id(),
+                    token.position(),
+                ),
+            )
+
+
+def selected_node_page(
+    page: NodePage[ScopedNodeId],
+    values: list[ScopedNodeId],
+    payloads: int,
+    scope_token: _ScopeToken,
+    selection_id: int,
+) -> NodePage[ScopedNodeId]:
+    """Retain one candidate page's cursor while reporting accepted and rejected values."""
+    rejected = page.counters.live_entries - len(values)
+    return NodePage(
+        values=values,
+        next=cursor_for_reader(scope_token, selection_id, page.next),
+        counters=selected_counters(page.counters, len(values), payloads, rejected),
+    )
+
+
+def selected_edge_page(
+    page: EdgePage[ScopedNodeId, ScopedEdgeId],
+    values: list[GraphEdgeItem[ScopedNodeId, ScopedEdgeId]],
+    payloads: int,
+    scope_token: _ScopeToken,
+    selection_id: int,
+) -> EdgePage[ScopedNodeId, ScopedEdgeId]:
+    """Retain one adjacency cursor while reporting accepted and rejected candidates."""
+    rejected = page.counters.live_entries - len(values)
+    return EdgePage(
+        values=values,
+        next=cursor_for_reader(scope_token, selection_id, page.next),
+        counters=selected_counters(page.counters, len(values), payloads, rejected),
+    )
+
+
+def selected_counters(
+    counters: PageCounters,
+    accepted: int,
+    payloads: int,
+    rejected: int,
+) -> PageCounters:
+    """Project candidate-page work into selected-reader counters without hiding rejected work."""
+    return PageCounters(
+        index_seeks=counters.index_seeks,
+        node_slots_examined=counters.node_slots_examined,
+        adjacency_entries_examined=counters.adjacency_entries_examined,
+        live_entries=accepted,
+        tombstones_examined=counters.tombstones_examined,
+        payloads_materialized=payloads,
+        bytes_copied=counters.bytes_copied,
+        rejected_candidates=rejected,
+    )
