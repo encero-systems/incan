@@ -100,6 +100,7 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_builtin_method_identities()?;
     assert_generic_view_carrier_storage()?;
     assert_nested_generic_static_call_arguments()?;
+    assert_frozen_literal_bound_method_identity()?;
     assert_nested_generic_static_call_bound_mismatch()?;
     let mut changed = seed.clone();
     changed.bodies[0].native_attributes.push(bir::NativeAttribute {
@@ -157,6 +158,66 @@ fn assert_nested_generic_static_call_arguments() -> Result<(), Box<dyn std::erro
         .ok_or("nested static call omitted its Body IR type arguments")?;
     assert!(retained.canonical.is_some());
     assert!(retained.direct_call_id.is_some());
+    Ok(())
+}
+
+/// Literal-only frozen argument adaptation must select a real trait declaration rather than the diagnostic fallback.
+fn assert_frozen_literal_bound_method_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+trait Observe:
+    def reference(self, kind: FrozenStr, identity: FrozenBytes) -> int: ...
+def positional[W with Observe](walker: W) -> int:
+    return walker.reference("object", b"a")
+def named[W with Observe](walker: W) -> int:
+    return walker.reference(identity=b"a", kind="object")
+trait Dynamic:
+    def label(self, value: str) -> int: ...
+trait Static:
+    def label(self, value: FrozenStr) -> int: ...
+def prefer[W with (Dynamic, Static)](walker: W) -> int:
+    return walker.label("object")
+"#;
+    let (_, facts, module) = checked_seed(source)?;
+    let selected = facts
+        .calls
+        .resolved_method_calls
+        .values()
+        .find(|call| call.method == "label")
+        .ok_or("missing overload selection")?;
+    let crate::typechecker::ResolvedMethodDispatch::Trait { trait_name, .. } = &selected.dispatch;
+    assert_eq!(trait_name, "Dynamic");
+    for name in ["positional", "named"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing bound caller")?;
+        let target = body
+            .block
+            .stmts
+            .iter()
+            .find_map(|statement| match &statement.kind {
+                bir::StatementKind::Call {
+                    callee: bir::Callee::Method(target),
+                    ..
+                } => Some(target),
+                _ => None,
+            })
+            .ok_or("missing bound method call")?;
+        let identity = target
+            .canonical
+            .as_ref()
+            .ok_or("frozen literal lost the selected trait method")?;
+        assert_eq!(identity.declaration_name, "reference");
+    }
+    for arguments in ["kind, b'a'", "'object', identity"] {
+        let invalid = format!(
+            "trait Observe:\n    def reference(self, kind: FrozenStr, identity: FrozenBytes) -> int: ...\ndef runtime[W with Observe](walker: W, kind: str, identity: bytes) -> int:\n    return walker.reference({arguments})\n"
+        );
+        let tokens = crate::lexer::lex(&invalid).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        assert!(TypeChecker::new().check_program(&program).is_err());
+    }
     Ok(())
 }
 
