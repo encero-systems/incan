@@ -17,6 +17,7 @@ from std.primitives.hash import sha256
 from corpus import Corpus, CorpusCase, receipt
 from adaptation_cases import check_adaptation
 from hash_cases import check_preimage, check_relation
+from row_reader_cases import check_reader
 from case_data import field, fields, hex_bytes, nodes, text
 
 
@@ -76,6 +77,7 @@ def evaluate(item: CorpusCase) -> Outcome:
         "adaptation",
         "hash_preimage",
         "value_relation",
+        "binary_decode",
     ]:
         return Outcome.Unsupported("operation not implemented")
     match check(item):
@@ -117,6 +119,7 @@ def check(item: CorpusCase) -> Result[bool, str]:
         "adaptation" => return check_adaptation(item.document, budget)
         "hash_preimage" => return check_preimage(item.document, budget)
         "value_relation" => return check_relation(item.document, budget)
+        "binary_decode" => return check_reader(item.document)
         _ => return Err("operation dispatcher mismatch")
 
 
