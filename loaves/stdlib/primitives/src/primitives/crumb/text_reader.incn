@@ -55,7 +55,9 @@ def parse_description(
     mut budget: Budget,
 ) -> Result[TextDescription, TextError]:
     """Read one core or locally registered declaration without resolving profile code."""
-    budget.enter().map_err((_) => limit_error(tokens.peek().position))?
+    match budget.enter():
+        Err(_) => return Err(limit_error(tokens.peek().position))
+        Ok(_) => pass
     path = require_word(tokens, TextFailure.InvalidEntry)?
     tokens.require("=")?
     kind_token = tokens.peek()
@@ -78,7 +80,9 @@ def parse_description(
         else:
             fields.append(parse_field(tokens, budget)?)
         tokens.accepts(",")
-    budget.leave().map_err((_) => limit_error(tokens.peek().position))?
+    match budget.leave():
+        Err(_) => return Err(limit_error(tokens.peek().position))
+        Ok(_) => pass
     return Ok(
         TextDescription(
             path=path,
@@ -196,7 +200,9 @@ def parse_property(mut tokens: TextTokens, mut budget: Budget) -> Result[Metadat
 
 def parse_property_value(mut tokens: TextTokens, mut budget: Budget) -> Result[Metadata, TextError]:
     """Read symbols, scalars, lists and nested property groups without evaluation."""
-    budget.enter().map_err((_) => limit_error(tokens.peek().position))?
+    match budget.enter():
+        Err(_) => return Err(limit_error(tokens.peek().position))
+        Ok(_) => pass
     token = tokens.peek()
     mut result = Metadata.Symbol("")
     if token.kind == TextTokenKind.String:

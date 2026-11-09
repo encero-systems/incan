@@ -8,11 +8,15 @@ from crate.primitives.crumb.types import ContainerKind, NominalKind, ScalarKind,
 
 pub def parse_type(mut tokens: TextTokens, mut budget: Budget) -> Result[TypeNode, TextError]:
     """Parse a union from primary type constructors and one optional suffix layer."""
-    budget.enter().map_err((_) => limit_error(tokens.peek().position))?
+    match budget.enter():
+        Err(_) => return Err(limit_error(tokens.peek().position))
+        Ok(_) => pass
     mut members = [parse_primary(tokens, budget)?]
     while tokens.accepts("|"):
         members.append(parse_primary(tokens, budget)?)
-    budget.leave().map_err((_) => limit_error(tokens.peek().position))?
+    match budget.leave():
+        Err(_) => return Err(limit_error(tokens.peek().position))
+        Ok(_) => pass
     if len(members) == 1:
         return Ok(members[0])
     return Ok(TypeNode.Container(ContainerKind.Union, members))
