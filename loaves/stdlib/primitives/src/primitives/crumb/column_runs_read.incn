@@ -49,10 +49,10 @@ pub def read_runs(block: BlockData, node: TypeNode, keys: Option[ColumnKeys], di
             for _ in range(length):
                 budget.charge_bytes(16).map_err((e) => primitive(e, offset))?
                 validate(value, budget).map_err((e) => primitive(e, offset))?
-                validate(value, budget).map_err((e) => primitive(e, offset))?
-            result.append(value)
+                result.append(value)
         elif target >= total and target - total < length:
             budget.charge_bytes(16).map_err((e) => primitive(e, offset))?
+            validate(value, budget).map_err((e) => primitive(e, offset))?
             result.append(value)
         total += length
     if total != block.present:
