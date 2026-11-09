@@ -27,6 +27,7 @@ import primitives.crumb.value_admission
 import primitives.crumb.contributions
 import primitives.crumb.metadata
 import primitives.crumb.hashes
+import primitives.crumb.registrations
 import primitives.environ
 import primitives.fs
 import primitives.fs.file

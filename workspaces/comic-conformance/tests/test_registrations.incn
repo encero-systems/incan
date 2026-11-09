@@ -1,0 +1,146 @@
+"""Profile shape registration without loading code or discarding unknown metadata."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.registrations import KindRegistration, KindRegistry, PropertyGroupOrder
+from std.primitives.crumb.types import NominalKind
+
+
+def test_core_kinds_and_explicit_profile_registration() -> Result[None, str]:
+    """Core kinds are built in; the same unknown kind fails until explicitly registered."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    empty = KindRegistry.create([], budget).map_err((e) => e.message())?
+    assert empty.shape("Record", budget).map_err((e) => e.message())? == NominalKind.Record
+    assert empty.shape("Enum", budget).map_err((e) => e.message())? == NominalKind.Enum
+    assert empty.shape("Example.Widget", budget).is_err()
+    opaque = KindRegistration(kind="Example.Widget", shape=NominalKind.Record, property_order=None, property_groups=[])
+    registry = KindRegistry.create([opaque], budget).map_err((e) => e.message())?
+    assert registry.shape("Example.Widget", budget).map_err((e) => e.message())? == NominalKind.Record
+    found = registry.registration("Example.Widget", budget).map_err((e) => e.message())?
+    match found:
+        Some(value) =>
+            assert value.property_order.is_none()
+        None => return Err("registered profile kind was lost")
+    assert registry.registration("Record", budget).map_err((e) => e.message())?.is_none()
+    return Ok(None)
+
+
+def test_declared_orders_are_retained_without_interpreting_values() -> Result[None, str]:
+    """A known outer order and independent nested group order cross the shared seam intact."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    signature = PropertyGroupOrder(name="type", order=["parameters", "returns", "requires"])
+    function = KindRegistration(
+        kind="Incan.Function",
+        shape=NominalKind.Record,
+        property_order=Some(["visibility", "decorators", "type", "body"]),
+        property_groups=[signature],
+    )
+    registry = KindRegistry.create([function], budget).map_err((e) => e.message())?
+    found = registry.registration("Incan.Function", budget).map_err((e) => e.message())?
+    match found:
+        Some(value) =>
+            match value.property_order:
+                Some(order) =>
+                    assert order == ["visibility", "decorators", "type", "body"]
+                None => return Err("declared order was lost")
+            assert value.property_groups[0].name == "type"
+            assert value.property_groups[0].order == ["parameters", "returns", "requires"]
+        None => return Err("registered function was lost")
+    return Ok(None)
+
+
+def test_ambiguous_registrations_and_core_redefinitions_are_refused() -> Result[None, str]:
+    """A registry never silently picks a duplicate registration or property ordering."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    item = KindRegistration(kind="Example.Item", shape=NominalKind.Enum, property_order=None, property_groups=[])
+    assert KindRegistry.create([item, item], budget).is_err()
+    core = KindRegistration(kind="Record", shape=NominalKind.Enum, property_order=None, property_groups=[])
+    assert KindRegistry.create([core], budget).is_err()
+    repeated = KindRegistration(
+        kind="Example.Item",
+        shape=NominalKind.Record,
+        property_order=Some(["x", "x"]),
+        property_groups=[],
+    )
+    assert KindRegistry.create([repeated], budget).is_err()
+    group = PropertyGroupOrder(name="type", order=["x"])
+    repeated_group = KindRegistration(
+        kind="Example.Item",
+        shape=NominalKind.Record,
+        property_order=None,
+        property_groups=[group, group],
+    )
+    assert KindRegistry.create([repeated_group], budget).is_err()
+    repeated_member = PropertyGroupOrder(name="type", order=["x", "x"])
+    invalid_group = KindRegistration(
+        kind="Example.Item",
+        shape=NominalKind.Record,
+        property_order=None,
+        property_groups=[repeated_member],
+    )
+    assert KindRegistry.create([invalid_group], budget).is_err()
+    return Ok(None)
+
+
+def test_registry_construction_and_lookup_share_resource_limits() -> Result[None, str]:
+    """Untrusted registration names and orders cannot escape the caller's work/byte limits."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    item = KindRegistration(kind="Example.Item", shape=NominalKind.Record, property_order=None, property_groups=[])
+    registry = KindRegistry.create([item], budget).map_err((e) => e.message())?
+    mut no_work = Budget.create(bytes=65536, elements=0, depth=64).map_err((e) => e.message())?
+    assert KindRegistry.create([item], no_work).is_err()
+    mut no_bytes = Budget.create(bytes=0, elements=65536, depth=64).map_err((e) => e.message())?
+    assert registry.shape("Example.Item", no_bytes).is_err()
+    mut no_copy = Budget.create(bytes=1, elements=65536, depth=64).map_err((e) => e.message())?
+    assert KindRegistry.create([item], no_copy).is_err()
+    return Ok(None)
+
+
+def test_unicode_names_charge_bytes_and_empty_orders_remain_known() -> Result[None, str]:
+    """UTF-8 names must not be charged as one byte per code point; empty is not unknown."""
+    item = KindRegistration(kind="éé", shape=NominalKind.Record, property_order=Some([]), property_groups=[])
+    mut small = Budget.create(bytes=3, elements=65536, depth=64).map_err((e) => e.message())?
+    assert KindRegistry.create([item], small).is_err()
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([item], budget).map_err((e) => e.message())?
+    found = registry.registration("éé", budget).map_err((e) => e.message())?
+    match found:
+        Some(value) =>
+            match value.property_order:
+                Some(order) =>
+                    assert len(order) == 0
+                None => return Err("known empty ordering became unknown")
+        None => return Err("registered Unicode name was lost")
+    empty = KindRegistration(kind="", shape=NominalKind.Record, property_order=None, property_groups=[])
+    assert KindRegistry.create([empty], budget).is_err()
+    return Ok(None)
+
+
+def test_registry_retains_its_own_registration_snapshot() -> Result[None, str]:
+    """Later caller edits must not change the admitted kind or its retained group order."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    mut item = KindRegistration(
+        kind="Example.Item",
+        shape=NominalKind.Record,
+        property_order=None,
+        property_groups=[PropertyGroupOrder(name="type", order=["first"])],
+    )
+    registry = KindRegistry.create([item], budget).map_err((e) => e.message())?
+    item.kind = "Example.Changed"
+    item.property_groups[0].order.append("second")
+    assert registry.shape("Example.Changed", budget).is_err()
+    found = registry.registration("Example.Item", budget).map_err((e) => e.message())?
+    match found:
+        Some(value) =>
+            assert value.kind == "Example.Item"
+            assert value.property_groups[0].order == ["first"]
+            mut copy = value
+            copy.property_groups[0].order.append("third")
+        None => return Err("registered item was lost")
+    again = registry.registration("Example.Item", budget).map_err((e) => e.message())?
+    match again:
+        Some(value) =>
+            assert value.property_groups[0].order == ["first"]
+        None => return Err("registered item was lost")
+    mut lookup_only = Budget.create(bytes=48, elements=65536, depth=64).map_err((e) => e.message())?
+    assert registry.registration("Example.Item", lookup_only).is_err()
+    return Ok(None)
