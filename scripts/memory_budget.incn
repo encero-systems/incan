@@ -5,6 +5,9 @@ Run `incan run scripts/memory_budget.incn -- OVEN OUT [--runs N] [--budget MIB]`
 clone, target and bakery plus a unique worker generation. The sampler records the concurrent footprint of the command
 and every descendant every 50 ms. `OUT/memory.tsv` is the stable machine record; `OUT/memory-report.txt`, per-run
 summaries, timelines and command logs retain the human evidence.
+
+The standard-package stand-in and contract runner must stay within the selected budget on every run. Oven remains a
+recorded non-gating workload because its single large source unit has a separate product decision.
 """
 
 from rust::std::env import args
@@ -21,6 +24,7 @@ pub const MIB: int = 1048576
 pub const DEFAULT_BUDGET_MIB: int = 2048
 pub const DEFAULT_RUNS: int = 3
 pub const INTERVAL_MS: u64 = 50
+const GATED_COMMANDS: FrozenList[str] = ["stdlib-primitives", "contracts"]
 const USAGE: str = "usage: memory_budget.incn OVEN OUT [--runs N] [--budget MIB]"
 
 
@@ -135,6 +139,7 @@ pub def measure(options: Options) -> Result[str, str]:
     1. Resolve the exact committed source once.
     2. Give every command run a fresh clone, target, bakery and worker generation.
     3. Write the stable TSV and human table after every run succeeds.
+    4. Require every standard-package and contract-runner measurement to fit the selected budget.
     """
     root = repository_root()?
     source = committed_source(root)?
@@ -150,6 +155,7 @@ pub def measure(options: Options) -> Result[str, str]:
         .joinpath("memory-report.txt")
         .write_text(report, "utf-8", "strict", None)
         .map_err((error) => error.message())?
+    require_budget(results, options.budget_bytes)?
     return Ok(report)
 
 
@@ -355,6 +361,17 @@ pub def budget_outcome(peak_bytes: int, budget_bytes: int) -> str:
     if peak_bytes <= budget_bytes:
         return "under"
     return "over"
+
+
+pub def require_budget(results: list[Measurement], budget_bytes: int) -> Result[None, str]:
+    """Refuse any standard-package or contract-runner measurement above the process-tree footprint budget."""
+    mut exceeded: list[str] = []
+    for result in results:
+        if result.command in GATED_COMMANDS and result.tree_peak_bytes > budget_bytes:
+            exceeded.append(f"{result.command} run {result.run}: {result.tree_peak_bytes} > {budget_bytes} bytes")
+    if len(exceeded) > 0:
+        return Err("process-tree footprint budget exceeded: " + "; ".join(exceeded))
+    return Ok(None)
 
 
 def summary(result: Measurement) -> str:
