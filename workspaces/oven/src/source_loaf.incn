@@ -33,11 +33,13 @@ pub def create_source_loaf(
     adopted: bool,
 ) -> Result[SourceLoaf, str]:
     """
-    Publish selected source files with the project's own resolved lock inside the archive digest.
+    Publish selected source files with the project's own resolved lock inside the archive digest:
 
-    The caller selects the publish facet. This boundary verifies that every selected regular file remains inside the
-    project, requires the manifest, and adds only the selected member's reachable lock slice. Adoption adds no lock.
+    1. Validate and read the caller-selected publish facet inside the project boundary.
+    2. Carry only the selected member's reachable lock slice, unless the source Loaf is adopted.
+    3. Encode and atomically publish canonical archive bytes, then return their checked view.
     """
+    # 1. Read only canonical selected files that remain inside the project.
     local = read_project(project).map_err((error) => error.message())?
     mut contents: Dict[str, bytes] = {}
     for relative in selected:
@@ -50,10 +52,14 @@ pub def create_source_loaf(
         contents[relative] = source.read_bytes().map_err((error) => f"{source.0}: {error.message()}")?
     if "loaf.toml" not in contents:
         return Err(f"source Loaf must contain {MANIFEST}")
+
+    # 2. Add the selected member's exact resolved closure when publication owns that lock.
     if not adopted:
         complete = read_lock(workspace_lock)?
         carried = published_lock(complete, local.intent.name, local.intent.version)?
         contents["oven.lock"] = lock_text(carried)?.encode("utf-8")
+
+    # 3. Publish canonical bytes and decode the same bytes returned to the caller.
     archive = archive_bytes(contents)?
     make_directory(output.parent())?
     publish_binary(output, archive)?
@@ -97,9 +103,8 @@ def archive_bytes(contents: Dict[str, bytes]) -> Result[bytes, str]:
     buffer.write_bytes(ARCHIVE_MAGIC).map_err((error) => error.message())?
     put_number(buffer, len(contents))?
     for name in sorted([name for name in contents.keys()]):
-        data = contents[name]
         put_bytes(buffer, name.encode("utf-8"))?
-        put_bytes(buffer, data)?
+        put_bytes(buffer, contents[name])?
     return Ok(buffer.getvalue())
 
 
@@ -174,7 +179,9 @@ def read_bytes(reader: _BytesIO, provenance: str) -> Result[bytes, str]:
 def read_text(reader: _BytesIO, provenance: str) -> Result[str, str]:
     """Read one strict UTF-8 member name."""
     data = read_bytes(reader, provenance)?
-    return RustString.from_utf8(data).map((value) => str(value)).map_err((_) => f"{provenance}: member name is not UTF-8")
+    return RustString.from_utf8(data).map((value) => str(value)).map_err(
+        (_) => f"{provenance}: member name is not UTF-8",
+    )
 
 
 def digest_bytes(archive: bytes) -> str:
