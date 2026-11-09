@@ -101,6 +101,7 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_generic_view_carrier_storage()?;
     assert_nested_generic_static_call_arguments()?;
     assert_frozen_literal_bound_method_identity()?;
+    assert_native_provider_field_layout()?;
     assert_nested_generic_static_call_bound_mismatch()?;
     let mut changed = seed.clone();
     changed.bodies[0].native_attributes.push(bir::NativeAttribute {
@@ -158,6 +159,71 @@ fn assert_nested_generic_static_call_arguments() -> Result<(), Box<dyn std::erro
         .ok_or("nested static call omitted its Body IR type arguments")?;
     assert!(retained.canonical.is_some());
     assert!(retained.direct_call_id.is_some());
+    Ok(())
+}
+
+/// A native-backed declaration uses the same physical owner while its provider builds and after import.
+fn assert_native_provider_field_layout() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+pub class FieldInfo:
+    pub name: FrozenStr
+    pub identity: FrozenBytes
+    pub canonical: bool
+    pub renamed_from: FrozenList[FrozenStr]
+    pub alias: Option[FrozenStr]
+    pub description: Option[FrozenStr]
+    pub wire_name: FrozenStr
+    pub type_name: FrozenStr
+    pub has_default: bool
+    pub extra: FrozenDict[FrozenStr, FrozenStr]
+pub model Holder:
+    pub fields: FrozenList[FieldInfo]
+"#;
+    for (package, module_name, native) in [
+        (None, "reflection", false),
+        (Some("application"), "reflection", false),
+        (Some("incan_stdlib_primitives"), "ordinary", false),
+        (Some("incan_stdlib_primitives"), "reflection", true),
+    ] {
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let module_path = vec![module_name.to_owned()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker.set_current_package_identity(package.map(str::to_owned));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let facts = checker.into_type_info();
+        let providers = ProviderOperationCatalog::new();
+        let context = BodyIrContext {
+            modules: &[],
+            provider_operations: &providers,
+            registry_package: None,
+            library_package: package,
+            include_inline_tests: false,
+        };
+        let seed = super::build_module_seed(&program, &module_path, &facts, &context);
+        let declaration = seed
+            .nominal_declarations
+            .iter()
+            .find(|value| value.canonical.declaration_name == "FieldInfo")
+            .ok_or("missing provider FieldInfo declaration")?;
+        let holder = seed
+            .nominal_declarations
+            .iter()
+            .find(|value| value.canonical.declaration_name == "Holder")
+            .ok_or("missing containing model")?;
+        let consumer = bir::native_nominal_item(&declaration.canonical).unwrap_or_default();
+        assert_eq!(!consumer.is_empty(), native);
+        if declaration.native_item != consumer {
+            return Err(format!(
+                "provider layout {:?}; consumer layout {:?}; declaration {:?}; containing field types {:?}",
+                declaration.native_item, consumer, declaration.canonical, holder.field_types
+            )
+            .into());
+        }
+    }
     Ok(())
 }
 
