@@ -69,7 +69,9 @@ def parse_cells(
     mut budget: Budget,
 ) -> Result[list[TextNamedValue], TextError]:
     """Apply positions first, then names or indexes, and materialize every declared absence."""
-    budget.enter().map_err((_) => limit_error(tokens.peek().position))?
+    match budget.enter():
+        Err(_) => return Err(limit_error(tokens.peek().position))
+        Ok(_) => pass
     tokens.require("(")?
     # Explicit appends preserve the recursive Option payload through native lowering.
     # #2803: a comprehension loses the recursive Option element type here.
@@ -165,8 +167,11 @@ def parse_value(
     mut tokens: TextTokens,
     mut budget: Budget,
 ) -> Result[TextValue, TextError]:
-    """Read one value only through its declared slot type."""
-    budget.charge_elements(1).map_err((_) => limit_error(tokens.peek().position))?
+    """Read through the declared slot; inspect refusal position without capturing the owned token snapshot."""
+    # #2831: capturing this mutable cursor in map_err copies every token on each value.
+    match budget.charge_elements(1):
+        Err(_) => return Err(limit_error(tokens.peek().position))
+        Ok(_) => pass
     match storage_type:
         TextType.Scalar(name) => return parse_scalar(name, tokens, budget)
         TextType.Decimal(precision, scale) => return parse_decimal(precision, scale, tokens)
