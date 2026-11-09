@@ -191,6 +191,8 @@ def test_invocations_follow_the_former_order_and_exclusions() -> Result[None, st
     ]
     assert [item.directory for item in planned] == [oven.0, oven.0, lowering.0, loaf_b.0, loaf_a.0, loaf_a.0, ""]
     assert [item.reservation for item in planned] == [4 * GIB, 4 * GIB, 6 * GIB, 4 * GIB, 4 * GIB, 4 * GIB, 6 * GIB]
+    assert [item.serial for item in planned] == [true, true, false, false, false, false, false]
+    assert [item.alone for item in planned] == [false, false, false, false, false, false, false]
     assert planned[6].log.0 == logs.joinpath("006-test_record_scope.log").0
     return Ok(None)
 
