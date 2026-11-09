@@ -89,11 +89,13 @@ pub def lower_model_declarations(
     mut intrinsics: list[EnumDeclaration],
     nominal_instances: &list[NominalInstance],
     publish_generics: bool = false,
+    start: int = 0,
 ) -> Result[list[ModelDeclaration], str]:
     """
     Retain checked field layout and derives for admitted plain model, class, and newtype declarations.
 
     Instance selection borrows the retained inventory; only the resulting native declaration plan is owned here.
+    `start` lets a resumed unit append layouts for declarations absent from its preserved plan.
 
     A derived Default is built at each `default()` call from the declared field defaults, so the native struct never
     derives Default: a Rust derive would give every field its zero value instead.
@@ -104,7 +106,7 @@ pub def lower_model_declarations(
     comparisons = comparison_functions(constructors, module, intrinsics)?
     # Foreign storage names are collected once; each owner then checks membership instead of rescanning the module.
     native_names = native_argument_names(module)?
-    for owner in range(len(module.nominal_declarations)):
+    for owner in range(start, len(module.nominal_declarations)):
         declaration = borrowed_at(module.nominal_declarations, owner)
         mut item = library_item(declaration)
         if publish_generics and item == "" and len(declaration.type_parameters) != 0:

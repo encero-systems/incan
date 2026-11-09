@@ -34,6 +34,7 @@ from pub::incan_mir_plan import source_span as plan_span
 pub def generic_models(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
+    referenced: list[str],
     instances: list[NominalInstance],
     file: str,
 ) -> Result[list[GenericModelDeclaration], str]:
@@ -44,8 +45,6 @@ pub def generic_models(
     2. Select public, instantiated or referenced source templates.
     3. Validate their fields and derives before emitting native declarations.
     """
-    # 1. Inventory references before a consumer closes the producer's governed bodies.
-    referenced = referenced_templates(module)
     mut models: list[GenericModelDeclaration] = []
     # 2. Keep private templates that a retained source frame or field can instantiate later.
     for declaration_position in range(len(module.nominal_declarations)):

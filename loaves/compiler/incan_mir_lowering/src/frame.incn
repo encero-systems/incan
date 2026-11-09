@@ -42,11 +42,20 @@ from rust::incan_semantics_core::body_ir import (
 from table_views import borrowed_at
 
 
+pub model CleanupChain:
+    """One reusable unwind path for an exact initialized-owner and partial-transfer state."""
+
+    pub owners: list[int]
+    pub moved_tuple_fields: list[tuple[int, int]]
+    pub target: int
+
+
 pub model Builder:
     """
     Construction state for one function's native frame.
 
     `owned` lists the locals that currently hold an initialized value needing a drop, in initialization order.
+    `cleanup_chains` shares one unwind path among calls with that exact owner and partial-transfer state.
     `closed` marks blocks whose terminator is final, so an `if` whose branches both return leaves its join closed.
     `parameter_count` separates invocation-long argument storage from locals with explicit storage lifetimes.
     `loops` holds each enclosing loop's (header, after) blocks, and `loop_owners` the owners live when it began.
@@ -82,6 +91,7 @@ pub model Builder:
     pub loop_owners: list[list[int]]
     pub externals: list[ExternalFunction]
     pub owned: list[int]
+    pub cleanup_chains: list[CleanupChain] = []
     pub closed: list[bool]
     pub iterators: list[tuple[int, int]]
     pub borrowed_items: list[int]
@@ -202,19 +212,28 @@ pub def forget_owned(mut builder: Builder, index: int) -> None:
     builder.moved_tuple_fields = [(local, slot) for local, slot in builder.moved_tuple_fields if local != index]
 
 
-def remaining_owned_places(mut builder: Builder, index: int, span: SourceSpan) -> list[Place]:
-    """Drop a whole owner unless checked tuple transfers have left only individual initialized fields."""
+def remaining_owned_places(
+    locals: &list[Local],
+    moved_tuple_fields: &list[tuple[int, int]],
+    index: int,
+    span: SourceSpan,
+) -> list[Place]:
+    """Describe one state's initialized remainder without borrowing the Builder that will receive its drop blocks."""
     mut has_transfers = false
-    for position in range(len(builder.moved_tuple_fields)):
-        if builder.moved_tuple_fields[position][0] == index:
+    for position in range(len(moved_tuple_fields)):
+        if moved_tuple_fields[position][0] == index:
             has_transfers = true
     if not has_transfers:
         return [plan_place(index, span)]
     mut places: list[Place] = []
-    match borrowed_at(builder.locals, index).ty:
+    match borrowed_at(locals, index).ty:
         PlanType.Tuple(elements) =>
             for slot in range(len(elements)):
-                if (index, slot) not in builder.moved_tuple_fields:
+                mut transferred = false
+                for position in range(len(moved_tuple_fields)):
+                    if moved_tuple_fields[position] == (index, slot):
+                        transferred = true
+                if not transferred:
                     places.append(
                         Place(
                             local=index,
@@ -230,7 +249,7 @@ pub def drop_owned(mut builder: Builder, index: int, span: SourceSpan) -> None:
     """Drop a known initialized owner and continue in a fresh normal block."""
     if index not in builder.owned:
         return
-    places = remaining_owned_places(builder, index, span)
+    places = remaining_owned_places(builder.locals, builder.moved_tuple_fields, index, span)
     forget_owned(builder, index)
     for place in places:
         successor = builder.new_block(span)
@@ -300,26 +319,55 @@ pub def forget_moved_arguments(mut builder: Builder, arguments: list[Operand]) -
 
 pub def cleanup_exit(mut builder: Builder, span: SourceSpan) -> int:
     """
-    Build the unwind path for the current owners and return its first block.
+    Reuse or build the unwind path for the current owners and return its first block.
 
     The chain drops owners newest first and ends in `UnwindResume`. It is built back to front: each new block drops
-    one more owner and continues to the block built before it. A destructor that panics while unwinding terminates
-    rather than unwinding twice.
+    one more owner and continues to the block built before it. Calls with the same initialized locals and transferred
+    tuple fields can target that same MIR path; the first call's span names its compiler-owned drop blocks. A
+    destructor that panics while unwinding terminates rather than unwinding twice.
     """
-    mut target = builder.new_block(span)
-    builder.blocks[target].cleanup = true
-    builder.blocks[target].terminator = Terminator(kind=TerminatorKind.UnwindResume, span=span)
-    # Index rather than iterate: each step allocates a block on `builder`, which a live borrow of `owned` would forbid.
-    for slot in range(len(builder.owned)):
-        index = builder.owned[slot]
-        for place in remaining_owned_places(builder, index, span):
-            current = builder.new_block(span)
-            builder.blocks[current].cleanup = true
-            builder.blocks[current].terminator = Terminator(
-                kind=TerminatorKind.Drop(place, target, Unwind.Terminate),
-                span=span,
-            )
-            target = current
+    return cleanup_chain(builder, builder.owned.clone(), builder.moved_tuple_fields.clone(), span)
+
+
+def cleanup_chain(
+    mut builder: Builder,
+    owners: list[int],
+    moved_tuple_fields: list[tuple[int, int]],
+    span: SourceSpan,
+) -> int:
+    """
+    Reuse one exact cleanup state, or prepend its newest owner to the shared predecessor tail.
+
+    Removing the newest initialized owner also removes its partial-transfer facts. The predecessor therefore names the
+    exact state reached after that owner has finished dropping. Remaining tuple fields are prepended in their existing
+    order, preserving the reverse field order produced by the former whole-chain construction.
+    """
+    for chain in builder.cleanup_chains:
+        if chain.owners == owners and chain.moved_tuple_fields == moved_tuple_fields:
+            return chain.target
+    if len(owners) == 0:
+        target = builder.new_block(span)
+        builder.blocks[target].cleanup = true
+        builder.blocks[target].terminator = Terminator(kind=TerminatorKind.UnwindResume, span=span)
+        builder.cleanup_chains.append(CleanupChain(owners=owners, moved_tuple_fields=moved_tuple_fields, target=target))
+        return target
+
+    newest = owners[-1]
+    predecessor_owners = [owners[position] for position in range(len(owners) - 1)]
+    predecessor_transfers = [
+        (local, slot) for local, slot in moved_tuple_fields if local != newest
+    ]
+    places = remaining_owned_places(builder.locals, moved_tuple_fields, newest, span)
+    mut target = cleanup_chain(builder, predecessor_owners, predecessor_transfers, span)
+    for place in places:
+        current = builder.new_block(span)
+        builder.blocks[current].cleanup = true
+        builder.blocks[current].terminator = Terminator(
+            kind=TerminatorKind.Drop(place, target, Unwind.Terminate),
+            span=span,
+        )
+        target = current
+    builder.cleanup_chains.append(CleanupChain(owners=owners, moved_tuple_fields=moved_tuple_fields, target=target))
     return target
 
 

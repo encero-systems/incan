@@ -42,13 +42,14 @@ pub def lower_checked_deserialize(
     instances: &list[NominalInstance],
     file: str,
     mut intrinsics: list[EnumDeclaration],
+    start: int = 0,
 ) -> Result[tuple[list[Function], list[ExternalFunction], list[Instance]], str]:
-    """Borrow the instance registry to close each checked ingress before admitting its concrete tuple Deserialize."""
+    """Close checked ingress roots from `start`, so a resumed plan visits only newly resolved declarations."""
     constructors = constructor_owner.as_ref()
     mut functions: list[Function] = []
     mut externals: list[ExternalFunction] = []
     mut pending: list[Instance] = []
-    for owner_index in range(len(module.nominal_declarations)):
+    for owner_index in range(start, len(module.nominal_declarations)):
         declaration = borrowed_at(module.nominal_declarations, owner_index)
         if declaration.canonical.kind != SemanticSourceTargetKind.Newtype or library_item(declaration) != "":
             continue

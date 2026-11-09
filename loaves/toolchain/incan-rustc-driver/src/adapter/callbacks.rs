@@ -2,7 +2,7 @@
 
 use super::*;
 
-impl Callbacks<'_> {
+impl Callbacks {
     /// Replace the session's plan with one refined against native metadata; MIR building reads the replacement.
     pub(super) fn replace_plan(&mut self, tcx: TyCtxt<'_>, plan: Plan) {
         self.plan = Arc::new(plan);
@@ -79,7 +79,7 @@ impl Callbacks<'_> {
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }
         // A library unit re-exports its public names at the crate root (see `library_exports`).
-        match crate::library_exports::items(&self.plan, self.manifest, krate.spans.inner_span) {
+        match crate::library_exports::items(&self.plan, &self.library_facades, krate.spans.inner_span) {
             Ok(items) => krate.items.extend(items),
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }
@@ -111,7 +111,7 @@ impl Callbacks<'_> {
     }
 }
 
-impl rustc_driver::Callbacks for Callbacks<'_> {
+impl rustc_driver::Callbacks for Callbacks {
     /// Install the source-free root and the MIR query override. `INCAN_NATIVE_TIMING` opts into rustc's phase timings
     /// into the trace sink without enabling unstable command-line options or changing compilation policy.
     /// The source map owns one filename copied from the plan's shared file handle.
@@ -276,6 +276,9 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
     /// Snapshot dynamic library generations after analysis, before codegen and linking can publish an executable.
     fn after_analysis(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
         self.timing.mark("rustc_analysis");
+        if let Err(error) = crate::native_plan_report::write(&self.plan, tcx) {
+            tcx.dcx().fatal(error);
+        }
         if self.development {
             self.loaded = match crate::native_shared::loaded(tcx) {
                 Ok(loaded) => loaded,

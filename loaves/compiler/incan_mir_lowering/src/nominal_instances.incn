@@ -106,8 +106,8 @@ def retains_declaration(declarations: &list[NominalDeclaration], declaration: &N
 
 pub def specialize_nominals_with_instances(
     constructors: &ConstructorIndex,
-    module: &BodyIrModule,
-) -> Result[tuple[BodyIrModule, list[NominalInstance]], str]:
+    mut module: &mut BodyIrModule,
+) -> Result[list[NominalInstance], str]:
     """
     Retain checked instances beside concrete layouts and dispatch records for native planning.
 
@@ -143,14 +143,12 @@ pub def specialize_nominals_with_instances(
         for local in body.locals:
             _ = collect_nominal_type(constructors, module, local.ty, instances, [])?
         _ = collect_nominal_type(constructors, module, body.return_type, instances, [])?
-    mut result = module.clone()
-    result.nominal_declarations.clear()
-    retained: list[TraitImplementation] = nongeneric_implementations(module)
-    result.trait_implementations = retained
+    mut declarations: list[NominalDeclaration] = []
+    mut implementations: list[TraitImplementation] = nongeneric_implementations(module)
     for nominal_position in range(len(module.nominal_declarations)):
         declaration = borrowed_at(module.nominal_declarations, nominal_position)
         if len(declaration.type_parameters) == 0:
-            result.nominal_declarations.push(declaration.clone())
+            declarations.append(declaration.clone())
             # A Rust layout's storage is rustc's. A field a body reads reaches the inventory through that body's
             # checked locals; an unread field must not demand layouts for the native type's private internals.
             if native_owner(declaration):
@@ -192,8 +190,8 @@ pub def specialize_nominals_with_instances(
     # 3. Retain concrete layouts, trait dispatch records and method frames together. Instances are borrowed, symbol
     # collisions are found by name and each owner template reaches its instances by key, so no step rescans a table.
     mut retained_names: BTreeMap[str, bool] = BTreeMap.new()
-    for retained_position in range(len(result.nominal_declarations)):
-        retained_names.insert(str(borrowed_at(result.nominal_declarations, retained_position).name), true)
+    for retained_position in range(len(declarations)):
+        retained_names.insert(str(borrowed_at(declarations, retained_position).name), true)
     mut owner_instances: BTreeMap[str, list[int]] = BTreeMap.new()
     for instance_position in range(len(instances)):
         instance = borrowed_at(instances, instance_position)
@@ -202,18 +200,18 @@ pub def specialize_nominals_with_instances(
             Some(_retained) => return Err(f"unsupported Body IR nominal instance symbol collision {declaration.name}")
             None => pass
         retained_names.insert(str(declaration.name), true)
-        result.nominal_declarations.push(declaration)
-        append_closed_implementations(module, instance, result.trait_implementations)?
+        declarations.append(declaration)
+        append_closed_implementations(module, instance, implementations)?
         owner = instance.declaration.canonical.render_compact()
         owner_instances.entry(owner).or_insert([]).push(instance_position)
-    result.bodies.clear()
+    mut bodies: list[Body] = []
     for inherited_position in range(len(inherited)):
-        result.bodies.push(borrowed_at(inherited, inherited_position).clone())
+        bodies.append(borrowed_at(inherited, inherited_position).clone())
     for index in range(len(module.bodies)):
         body = body_at(module.bodies, index)
         owner = templates[index]
         if owner < 0:
-            result.bodies.push(body.clone())
+            bodies.append(body.clone())
             continue
         canonical = nominal_at(module.nominal_declarations, owner).canonical
         match owner_instances.get(canonical.render_compact()):
@@ -223,9 +221,12 @@ pub def specialize_nominals_with_instances(
                     if instance.declaration.canonical == canonical:
                         closed: Body = close_owner_body(body, instance)?
                         if retained_body_types(constructors, module, closed, instances)?:
-                            result.bodies.push(closed)
+                            bodies.append(closed)
             None => pass
-    return Ok((result, instances))
+    module.nominal_declarations = declarations
+    module.trait_implementations = implementations
+    module.bodies = bodies
+    return Ok(instances)
 
 
 def owner_templates(constructors: &ConstructorIndex, module: &BodyIrModule) -> Result[list[int], str]:

@@ -188,7 +188,8 @@ pub(super) fn checked_modules(
                     .collect(),
                 checked_local: checked_local.clone(),
                 package: package_identity.to_owned(),
-                authored: bodies[loaf_modules..].to_vec(),
+                layout_modules: Vec::new(),
+                layout_modules_installed: false,
                 sources: sources[loaf_modules..].to_vec(),
                 files: files[loaf_modules..].to_vec(),
                 entry: entry - loaf_modules,
@@ -198,6 +199,7 @@ pub(super) fn checked_modules(
             files,
             entry,
             own: loaf_modules,
+            dependency_modules: loaf_modules,
             reached_loaves,
             manifest,
             graph,
@@ -307,22 +309,7 @@ pub(super) fn complete_dependency_context_in_place(
             }
         }
         let resolved = load_loaf_modules(loaves, &requested, checked_local)?;
-        program.reached_loaves = resolved.entries;
-        let mut expanded = resolved.modules;
-        let own = program.modules.split_off(program.own);
-        let mut files = program.files.split_off(program.own);
-        let mut sources = program.sources.split_off(program.own);
-        program.entry = program.entry - program.own + expanded.len();
-        program.own = expanded.len();
-        program.files = expanded
-            .iter()
-            .map(|module| module.module_id.path().to_owned())
-            .collect();
-        program.files.append(&mut files);
-        program.sources = vec![String::new(); expanded.len()];
-        program.sources.append(&mut sources);
-        expanded.extend(own);
-        program.modules = expanded;
+        install_dependency_modules(program, resolved);
     }
     program.dependencies.requested = requested;
     let loaf_callables = retain_linked_loaf_declarations(&mut program.modules, program.own);
@@ -379,14 +366,13 @@ pub(super) fn complete_dependency_context_in_place(
     Ok(())
 }
 
-/// Resolve a nonempty set selected by lowering, then reconstruct layout context from the immutable authored input.
+/// Resolve a nonempty set selected by lowering, then reconstruct layout context from the active authored suffix.
 /// The canonical root set must grow on every retry; a repeated missing body is an invalid producer contract.
 pub(super) fn satisfy_runtime_requirements(
     program: &mut CheckedProgram,
     requirements: Vec<RuntimeRequirement>,
 ) -> Result<(), String> {
-    let context = &mut program.dependencies;
-    let mut next = context.requested.clone();
+    let mut next = program.dependencies.requested.clone();
     for requirement in &requirements {
         if !next.insert(requirement.canonical.clone()) {
             return Err(format!(
@@ -398,35 +384,22 @@ pub(super) fn satisfy_runtime_requirements(
     if requirements.is_empty() {
         return Err("runtime planning requested an empty dependency set".to_owned());
     }
-    let resolved = load_loaf_modules(&context.loaves, &next, &context.checked_local).map_err(|error| {
-        let sites = requirements
-            .iter()
-            .map(|requirement| {
-                format!(
-                    "{} at {}:{}:{}",
-                    requirement.path, requirement.span.file, requirement.span.line, requirement.span.column
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("{error}; selected runtime operations: {sites}")
-    })?;
-    let mut modules = resolved.modules;
-    let own = modules.len();
-    let mut files = modules
-        .iter()
-        .map(|module| module.module_id.path().to_owned())
-        .collect::<Vec<_>>();
-    files.extend(context.files.iter().cloned());
-    let mut sources = vec![String::new(); own];
-    sources.extend(context.sources.iter().cloned());
-    modules.extend(context.authored.iter().cloned());
-    program.modules = modules;
-    program.files = files;
-    program.sources = sources;
-    program.entry = own + context.entry;
-    program.own = own;
-    program.reached_loaves = resolved.entries;
+    let resolved = load_loaf_modules(&program.dependencies.loaves, &next, &program.dependencies.checked_local)
+        .map_err(|error| {
+            let sites = requirements
+                .iter()
+                .map(|requirement| {
+                    format!(
+                        "{} at {}:{}:{}",
+                        requirement.path, requirement.span.file, requirement.span.line, requirement.span.column
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{error}; selected runtime operations: {sites}")
+        })?;
+    install_dependency_modules(program, resolved);
+    let context = &mut program.dependencies;
     for requirement in &requirements {
         context.origins.insert(
             requirement.canonical.clone(),
@@ -440,6 +413,84 @@ pub(super) fn satisfy_runtime_requirements(
     }
     context.requested = next;
     prepare_dependency_context(program)
+}
+
+/// Retain layout-authoritative runtime declarations without claiming that the unit selected their operations.
+///
+/// Only nominal and enum declarations survive. They remain outside `own`, have no executable bodies or storage and
+/// accompany every later dependency reconstruction, while reporting and linking continue to use the exact reached
+/// closure.
+pub(super) fn prepare_runtime_layouts(
+    program: &mut CheckedProgram,
+    requirements: Vec<RuntimeRequirement>,
+) -> Result<(), String> {
+    if requirements.is_empty() {
+        return Err("runtime layout preparation requested an empty declaration set".to_owned());
+    }
+    let requested = requirements
+        .into_iter()
+        .map(|requirement| requirement.canonical)
+        .collect::<BTreeSet<_>>();
+    let resolved = load_loaf_modules(
+        &program.dependencies.loaves,
+        &requested,
+        &program.dependencies.checked_local,
+    )?;
+    let mut layouts = Vec::new();
+    for mut module in resolved.modules {
+        let mut layout = BodyIrModule::declarations_only(module.module_id.path().to_owned());
+        layout.nominal_declarations = std::mem::take(&mut module.nominal_declarations);
+        layout.enum_declarations = std::mem::take(&mut module.enum_declarations);
+        if !layout.nominal_declarations.is_empty() || !layout.enum_declarations.is_empty() {
+            layouts.push(layout);
+        }
+    }
+    program.dependencies.layout_modules = layouts;
+    let resolved = load_loaf_modules(
+        &program.dependencies.loaves,
+        &program.dependencies.requested,
+        &program.dependencies.checked_local,
+    )?;
+    install_dependency_modules(program, resolved);
+    prepare_dependency_context(program)
+}
+
+/// Move prepared and authored modules between contexts while replacing only reached dependencies.
+///
+/// Every preparation splits the authored suffix from the active program and retains its prepared layout prefix while
+/// discarding only the prior reached dependency prefix. The retry therefore needs no second authored Body IR copy.
+fn install_dependency_modules(
+    program: &mut CheckedProgram,
+    resolved: incan_frontend::executable_resolution::ResolvedExecutableModules,
+) {
+    let mut previous = std::mem::take(&mut program.modules);
+    let mut authored = previous.split_off(program.own);
+    let mut prepared = previous.split_off(program.dependency_modules);
+    if !program.dependencies.layout_modules_installed {
+        prepared.extend(program.dependencies.layout_modules.iter().cloned());
+        program.dependencies.layout_modules_installed = true;
+    }
+    program.files.clear();
+    program.sources.clear();
+    let mut modules = resolved.modules;
+    let dependency_modules = modules.len();
+    modules.append(&mut prepared);
+    let own = modules.len();
+    let mut files = modules
+        .iter()
+        .map(|module| module.module_id.path().to_owned())
+        .collect::<Vec<_>>();
+    files.extend(program.dependencies.files.iter().cloned());
+    let mut sources = vec![String::new(); own];
+    sources.extend(program.dependencies.sources.iter().cloned());
+    modules.append(&mut authored);
+    program.modules = modules;
+    program.files = files;
+    program.sources = sources;
+    program.entry = own + program.dependencies.entry;
+    program.own = own;
+    program.dependency_modules = dependency_modules;
+    program.reached_loaves = resolved.entries;
 }
 
 /// Apply the existing context completion routine to a borrowed program without changing dependency ownership.

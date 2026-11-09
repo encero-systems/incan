@@ -13,6 +13,26 @@ use std::io;
 #[cfg(target_os = "macos")]
 use std::sync::OnceLock;
 
+#[cfg(target_os = "macos")]
+type MemoryReader = Option<
+    unsafe extern "C" fn(
+        libc::task_t,
+        libc::vm_address_t,
+        libc::vm_size_t,
+        *mut *mut libc::c_void,
+    ) -> libc::kern_return_t,
+>;
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn malloc_get_all_zones(
+        task: libc::task_t,
+        reader: MemoryReader,
+        addresses: *mut *mut libc::vm_address_t,
+        count: *mut libc::c_uint,
+    ) -> libc::kern_return_t;
+}
+
 /// Read the shared raw monotonic host clock in nanoseconds, excluding time suspended.
 ///
 /// macOS scales `mach_absolute_time` using its timebase; Linux selects `CLOCK_MONOTONIC_RAW`.
@@ -52,6 +72,53 @@ pub fn current_process_footprint() -> io::Result<u64> {
         return Err(io::Error::last_os_error());
     }
     Ok(usage.ri_phys_footprint)
+}
+
+/// Read bytes that every macOS malloc zone currently attributes to live allocations.
+///
+/// This intentionally differs from [`current_process_footprint`]: released allocations stop contributing here even
+/// when malloc retains their pages and the kernel continues charging them to the process footprint.
+#[cfg(target_os = "macos")]
+pub fn current_process_live_allocated() -> io::Result<u64> {
+    let mut addresses = std::ptr::null_mut();
+    let mut count = 0;
+    // SAFETY: the current task needs no remote-memory reader. malloc returns an internally owned array valid for this
+    // process, and writes its address and element count into the exclusive output pointers.
+    let status = unsafe { malloc_get_all_zones(libc::mach_task_self(), None, &raw mut addresses, &raw mut count) };
+    if status != libc::KERN_SUCCESS {
+        return Err(io::Error::other(format!("malloc zone enumeration failed ({status})")));
+    }
+    let count = usize::try_from(count).map_err(io::Error::other)?;
+    if addresses.is_null() && count != 0 {
+        return Err(io::Error::other("malloc zone enumeration returned no addresses"));
+    }
+    // SAFETY: successful enumeration returned exactly `count` zone addresses, valid in this current process.
+    let zones = unsafe { std::slice::from_raw_parts(addresses, count) };
+    let mut live = 0_u64;
+    for address in zones {
+        let mut statistics = libc::malloc_statistics_t {
+            blocks_in_use: 0,
+            size_in_use: 0,
+            max_size_in_use: 0,
+            size_allocated: 0,
+        };
+        // SAFETY: each enumerated address is a live malloc zone and `statistics` is an exclusive output. The
+        // allocator owns synchronization for this read-only snapshot.
+        unsafe { libc::malloc_zone_statistics(*address as *mut libc::malloc_zone_t, &raw mut statistics) };
+        live = live
+            .checked_add(u64::try_from(statistics.size_in_use).map_err(io::Error::other)?)
+            .ok_or_else(|| io::Error::other("live allocated bytes exceed u64"))?;
+    }
+    Ok(live)
+}
+
+/// Refuse live-allocation observation where the platform has no malloc-zone implementation.
+#[cfg(not(target_os = "macos"))]
+pub fn current_process_live_allocated() -> io::Result<u64> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "live allocated bytes unavailable",
+    ))
 }
 
 /// Read this process's current resident memory from `/proc/self/statm`.

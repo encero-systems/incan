@@ -3,6 +3,7 @@
 from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     semantic_type_matches,
+    source_span,
     SourceSpan,
     PlanType,
     Function,
@@ -79,6 +80,50 @@ pub def runtime_redirects() -> RuntimeRedirects:
     return RuntimeRedirects(entries=entries, bindings=[], native=native, deferred=deferred, missing=[])
 
 
+pub def selected_runtime_requirements(
+    module: &BodyIrModule,
+    externals: &list[ExternalFunction],
+    functions: &list[Function],
+) -> Result[list[RuntimeRequirement], str]:
+    """Collect only declarations demanded by the external calls and deferred coroutines already lowered for a unit."""
+    mut redirects = runtime_redirects()
+    defer_missing_runtime(module, externals, functions, redirects)?
+    return Ok(redirects.missing)
+
+
+pub def layout_runtime_requirements(modules: &list[BodyIrModule], file: str) -> list[RuntimeRequirement]:
+    """Load generic-callable state layouts before any frame publishes combined enum indices."""
+    for module_position in range(len(modules)):
+        module = borrowed_at(modules, module_position)
+        for binding_position in range(len(module.runtime_callable_bindings)):
+            binding = borrowed_at(module.runtime_callable_bindings, binding_position)
+            if binding.path != "incan_native_runtime::initialize_binding":
+                continue
+            if runtime_declaration_loaded(modules, binding.canonical):
+                return []
+            return [
+                RuntimeRequirement(
+                    canonical=binding.canonical.clone(),
+                    path=binding.path,
+                    span=source_span(file=file, line=1, column=1),
+                ),
+            ]
+    return []
+
+
+def runtime_declaration_loaded(modules: &list[BodyIrModule], canonical: &RustCanonicalSymbolId) -> bool:
+    """Whether the resolved project already retains a checked or compiled body for one runtime declaration."""
+    for module_position in range(len(modules)):
+        module = borrowed_at(modules, module_position)
+        for body_position in range(len(module.bodies)):
+            if borrowed_at(module.bodies, body_position).canonical == Some(canonical.clone()):
+                return true
+        for callable_position in range(len(module.loaf_callables)):
+            if borrowed_at(module.loaf_callables, callable_position).canonical == canonical:
+                return true
+    return false
+
+
 pub def retain_runtime_instances(
     template_constructors: &ConstructorIndex,
     mut program: ProgramContext,
@@ -104,6 +149,8 @@ pub def retain_runtime_instances(
     """
     # Defer missing declarations first, so no step below binds a call to a declaration this attempt lacks.
     defer_missing_runtime(module, externals, functions, redirects)?
+    if len(redirects.missing) != 0:
+        return Ok(None)
     # 1. Retain coroutine instances before ordinary call frames.
     retain_runtime_future_instances(
         program.constructors.as_ref(),

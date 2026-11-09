@@ -39,7 +39,11 @@ from static_storage import computed_static_type
 from native_type_identity import ConstructorIndex
 
 
-pub def specialize_project_traits(module: &BodyIrModule, modules: &list[BodyIrModule]) -> Result[BodyIrModule, str]:
+pub def append_specialized_project_trait_bodies(
+    module: &BodyIrModule,
+    modules: &list[BodyIrModule],
+    mut bodies: list[Body],
+) -> Result[None, str]:
     """
     Instantiate this module's open defaults for every adopter of the project the frontend retained.
 
@@ -52,14 +56,16 @@ pub def specialize_project_traits(module: &BodyIrModule, modules: &list[BodyIrMo
             has_default = true
             break
     if not has_default:
-        return Ok(module.clone())
+        for body_position in range(len(module.bodies)):
+            bodies.append(borrowed_at(module.bodies, body_position).clone())
+        return Ok(None)
     mut implementations: list[TraitImplementation] = []
     mut owners: list[NominalDeclaration] = []
     mut enum_owners: list[RustEnumDeclaration] = []
     for adopter in modules:
         append_records(implementations, adopter)
         append_layouts(owners, enum_owners, adopter)
-    return specialize_for(module, implementations, owners, enum_owners)
+    return append_specialized_bodies(module, implementations, owners, enum_owners, bodies)
 
 
 pub def is_default_body(module: &BodyIrModule, body: &Body) -> bool:
@@ -210,19 +216,18 @@ def append_layouts(
         enums.append(owner.clone())
 
 
-def specialize_for(
+def append_specialized_bodies(
     module: &BodyIrModule,
     implementations: list[TraitImplementation],
     mut owners: list[NominalDeclaration],
     mut enums: list[RustEnumDeclaration],
-) -> Result[BodyIrModule, str]:
+    mut result: list[Body],
+) -> Result[None, str]:
     """Replace each open default of the module by one instance per adopter whose implementation it is."""
-    mut result = module.clone()
-    result.bodies.clear()
     for body_position in range(len(module.bodies)):
         body = borrowed_at(module.bodies, body_position)
         if len(body.locals) == 0 or borrowed_at(body.locals, 0).ty != RustType.SelfType:
-            result.bodies.push(body.clone())
+            result.append(body.clone())
             continue
         # One default can fill several slots of one adopter (its own and the supertrait slots it refines); the
         # adopter still receives a single instantiation of it.
@@ -239,8 +244,8 @@ def specialize_for(
             # In particular, never substitute the adopter's U for the default's independent method U.
             if deferred_shadowed_default(body, concrete, implementation.type_arguments):
                 continue
-            result.bodies.push(specialize_body(body, concrete, implementation.type_arguments))
-    return Ok(result)
+            result.append(specialize_body(body, concrete, implementation.type_arguments))
+    return Ok(None)
 
 
 def deferred_shadowed_default(body: &Body, concrete: &RustType, arguments: list[TraitTypeArgument]) -> bool:
@@ -658,10 +663,9 @@ pub def owner_method_index(
     selected_identity = owner_method_identity(module, target, owner)?
     canonical = Some(selected_identity)
     candidate_indices = builder.program.body_indices.candidates(selected_identity)
-    bodies = builder.program.bodies.clone()
     mut selected_index = -1
     for index in candidate_indices:
-        body = body_at(bodies.as_ref(), index)
+        body = body_at(module.bodies, index)
         if body.canonical != canonical or len(body.params) == 0:
             continue
         first = borrowed_at(body.locals, 0)
@@ -673,7 +677,7 @@ pub def owner_method_index(
             None => return Err("unsupported Body IR Method without receiver")
         if selected_index >= 0:
             # Repeated publication of the same checked body is harmless; differing executable facts are ambiguous.
-            if body != body_at(bodies.as_ref(), selected_index):
+            if body != body_at(module.bodies, selected_index):
                 return Err("unsupported Body IR conflicting selected method executable bodies")
         else:
             selected_index = index
@@ -683,7 +687,7 @@ pub def owner_method_index(
     mut candidate_count = 0
     mut candidates = ""
     for index in candidate_indices:
-        body = body_at(bodies.as_ref(), index)
+        body = body_at(module.bodies, index)
         if body.canonical != canonical:
             continue
         candidate_count += 1

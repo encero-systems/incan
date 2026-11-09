@@ -681,7 +681,7 @@ impl TypeChecker {
         };
 
         let mut exported_names: HashSet<String> = HashSet::new();
-        for sym in &exports {
+        for sym in exports.iter() {
             match sym {
                 ExportedSymbol::Const(name)
                 | ExportedSymbol::Static(name)

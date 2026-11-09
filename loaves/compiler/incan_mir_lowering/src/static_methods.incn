@@ -78,10 +78,7 @@ pub def lower_static_sdk_method(
         return Err("standard library static methods cannot supply explicit trait or method type parameters")
     match target.binding:
         RustArgumentBinding.Resolved(arguments=bound, defaulted_slots=defaults) =>
-            if (
-                len(bound) + 1 != len(arguments)
-                or len(bound) + len(defaults) + 1 != len(delegation.parameters)
-            ):
+            if (len(bound) + 1 != len(arguments) or len(bound) + len(defaults) + 1 != len(delegation.parameters)):
                 return Err("standard library static method argument binding is unsupported")
         _ => return Err("standard library static method arguments have no checked binding")
     slot = static_slot(builder.program.statics.as_ref(), global)?
@@ -338,7 +335,7 @@ pub def lower_static_method_body(
         synthesize(builder, static_projection_forwarder(wrapper, symbol, root_reference, fields, inputs, result, span))
         symbol = wrapper
     callee = CalleeKind.StaticMethod(slot, symbol)
-    return emit_selected_body_call(builder, body, callee, operands, destination, span)
+    return emit_selected_body_call(module, builder, body, callee, operands, destination, span)
 
 
 def static_projection_forwarder(

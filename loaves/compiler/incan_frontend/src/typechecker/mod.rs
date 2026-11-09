@@ -156,6 +156,7 @@ use incan_lang::interop::{
     RustTypeShape, render_rust_type_shape_path, rust_display_is_owned_string, split_top_level_rust_args,
     strip_rust_borrow_lifetimes,
 };
+
 use incan_lang::lang::builtins::{self, BuiltinFnId};
 use incan_lang::lang::c_abi;
 use incan_lang::lang::conventions;
@@ -174,6 +175,13 @@ use incan_lang::lang::types::numerics::{self, NumericTypeId};
 use incan_lang::lang::types::stringlike::StringLikeId;
 use incan_lang::numeric_values::numeric_type_losslessly_widens_to;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
+
+/// Immutable public-export projections for source dependencies, keyed by the same canonical module names as the
+/// dependency AST closure.
+///
+/// The driver builds each value once per parsed module. Each checker retains its exact dependency-key set and lookup
+/// order while sharing the read-only export slices used by import visibility checks.
+pub type DependencyExportInterfaces = HashMap<String, Arc<[ExportedSymbol]>>;
 
 /// The kind of loop enclosing a `break` or `continue`, which decides whether `break` may yield a value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -751,7 +759,7 @@ pub struct TypeChecker {
     /// Current source-order boundary for borrowed declaration/environment readers.
     visibility_point: VisibilityPoint,
     /// Public exports for imported dependency modules, keyed by module name.
-    pub dependency_exports: HashMap<String, Vec<ExportedSymbol>>,
+    pub dependency_exports: DependencyExportInterfaces,
     /// Exact source-module member symbols collected from dependencies, keyed by canonical module name.
     ///
     /// Direct source imports use this map before falling back to ambient symbol lookup so `from module import name as

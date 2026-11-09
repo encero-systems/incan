@@ -199,6 +199,16 @@ pub def baseline_summary(report: BaselineReport) -> str:
     )
 
 
+pub def require_candidate_census(reference: &BaselineReport, candidate: &BaselineReport) -> Result[None, str]:
+    """Require one installed candidate census to retain the seed inventory and every seed PASS outcome."""
+    if reference.result_keys != candidate.result_keys:
+        return Err("candidate case keys differ from the integration census")
+    for key in reference.result_keys:
+        if reference.result_statuses[key] == "PASS" and candidate.result_statuses[key] != "PASS":
+            return Err(f"candidate lost integration PASS: {key}")
+    return Ok(None)
+
+
 pub def counts_json(counts: Counts) -> JsonValue:
     """Encode contract counts for release and verification receipts."""
     return JsonValue.object(

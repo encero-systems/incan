@@ -4,11 +4,13 @@ from std.fs import Path
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
 from release_support import (
+    BaselineReport,
     Counts,
     check_baseline,
     parse_release_options,
     parse_verification_options,
     release_receipt,
+    require_candidate_census,
     same_bytes,
 )
 
@@ -75,6 +77,19 @@ def test_baseline_requires_complete_unique_results_and_preserves_every_pass() ->
     return Ok(None)
 
 
+def test_one_installed_candidate_census_keeps_seed_inventory_and_passes() -> Result[None, str]:
+    """The installed candidate report supplies receipt counts while retaining the independent seed comparison."""
+    reference = check_baseline("graph/a/a\n", COMPLETE_LOG)?
+    candidate = check_baseline("behavior/a/a\n", COMPLETE_LOG)?
+    require_candidate_census(reference, candidate)?
+    failed = COMPLETE_LOG
+        .replace("PASS behavior/a/a", "FAIL behavior/a/a")
+        .replace("total: 8 passed, 0 failed", "total: 7 passed, 1 failed")
+    regressed = check_baseline("graph/a/a\n", failed)?
+    assert candidate_refusal(reference, regressed) == "candidate lost integration PASS: behavior/a/a"
+    return Ok(None)
+
+
 def test_receipt_keeps_refusal_evidence_distinct_from_success() -> Result[None, str]:
     """The stable receipt carries exact phase, compiler mode, artifacts, counts, and parity state."""
     receipt = release_receipt(
@@ -127,5 +142,12 @@ def refused_release(arguments: list[str]) -> str:
 def refused_baseline(baseline: str, log: str) -> str:
     """Return a baseline checker refusal for concise assertions."""
     match check_baseline(baseline, log):
+        Ok(_) => return "accepted"
+        Err(message) => return message
+
+
+def candidate_refusal(reference: &BaselineReport, candidate: &BaselineReport) -> str:
+    """Return one candidate-census refusal for concise assertions."""
+    match require_candidate_census(reference, candidate):
         Ok(_) => return "accepted"
         Err(message) => return message

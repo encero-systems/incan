@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use crate::dependency_report::RootOrigin;
 use incan_driver::body_ir::{load_loaf_modules, required_loaf_identities};
 use incan_driver::diagnostics::CliDiagnosticFailure;
-use incan_driver::loaf_publication::{PublicationFacts, publish_native_unions, write_loaf};
+use incan_driver::loaf_publication::{PublicationFacts, prepare_loaf_publication, publish_native_unions, write_loaf};
 use incan_driver::modules::{collect_library_modules_detailed_with_session, collect_modules_detailed_with_session};
 use incan_driver::session::{CompilationAnalysis, CompilationSession, RustFactsSetup};
 use incan_driver::unit::{UnitDescription, UnitKind};
@@ -18,7 +18,8 @@ use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_mir_lowering::{
-    RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning, program_refusals, unit_plan,
+    RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning, layout_runtime_requirements, program_refusals,
+    resume_unit_plan, unit_plan,
 };
 use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NativeUnionDeclaration, NominalDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
@@ -110,7 +111,10 @@ struct RuntimeDependencyContext {
     origins: BTreeMap<CanonicalSymbolId, RootOrigin>,
     checked_local: BTreeSet<CanonicalSymbolId>,
     package: String,
-    authored: Vec<BodyIrModule>,
+    /// Declaration-only runtime modules that stabilize lowering layouts without becoming dependency roots.
+    layout_modules: Vec<BodyIrModule>,
+    /// Whether `layout_modules` already occupy the active program's prepared prefix.
+    layout_modules_installed: bool,
     sources: Vec<String>,
     files: Vec<String>,
     entry: usize,
@@ -125,6 +129,9 @@ struct CheckedProgram {
     entry: usize,
     /// The first of the program's own modules; the Loaf declarations it reaches come before it.
     own: usize,
+    /// Number of reached dependency modules at the front; prepared layout modules between this and `own` survive
+    /// retries.
+    dependency_modules: usize,
     /// Standard native closures constrain linking only when this checked declaration closure reaches their package.
     /// Each reached package keeps the requester chains of the declarations that entered it.
     reached_loaves: BTreeMap<String, Vec<Vec<CanonicalSymbolId>>>,
@@ -374,6 +381,28 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     // ---- Exact native dependencies, including checked Loaf implementation layouts ----
     let native_externs =
         crate::native_crates::link_externs(&plan, &dependencies.externs, &loaves, &reached_names(&program))?;
+    let library_facades = crate::library_exports::resolve_facades(&plan, program.manifest.as_ref())?;
+    let publication = if let Some(mut manifest) = program.manifest.take() {
+        publish_native_unions(&mut manifest, published_unions).map_err(|error| error.to_string())?;
+        let directory = output.parent().ok_or("library output has no directory")?.to_path_buf();
+        let closure = LoafNativeClosure {
+            externs: native_externs.clone(),
+            search: published_search,
+            macro_externs: macro_externs(&manifest, &dependencies.externs, &loaf_links),
+        };
+        let prepared = prepare_loaf_publication(
+            &directory,
+            manifest,
+            &program.modules[program.own..],
+            &closure,
+            &program.graph,
+        )
+        .map_err(|error| error.to_string())?;
+        Some((directory, prepared))
+    } else {
+        None
+    };
+    drop(program);
     crate::adapter::compile(
         plan,
         &arguments[1],
@@ -386,7 +415,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         dependencies.shared_native.as_deref(),
         kind,
         overflow_checks,
-        program.manifest.as_ref(),
+        library_facades,
     )
     .map_err(|error| {
         if matches!(error, crate::adapter::DriverError::Plan(_)) {
@@ -399,22 +428,8 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     }
 
     // ---- The Loaf beside a library unit's rlib (DD-0007) ----
-    if let Some(mut manifest) = program.manifest {
-        publish_native_unions(&mut manifest, published_unions).map_err(|error| error.to_string())?;
-        let directory = output.parent().ok_or("library output has no directory")?;
-        let closure = LoafNativeClosure {
-            externs: native_externs,
-            search: published_search,
-            macro_externs: macro_externs(&manifest, &dependencies.externs, &loaf_links),
-        };
-        write_loaf(
-            directory,
-            manifest,
-            &program.modules[program.own..],
-            &closure,
-            &program.graph,
-        )
-        .map_err(|error| error.to_string())?;
+    if let Some((directory, publication)) = publication {
+        publication.write(&directory).map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -441,8 +456,8 @@ fn check_compilation_source(
     }
 }
 
-/// Retain source provenance across dependency retries while withholding incomplete publication. A lowering
-/// refusal or missing program entry receives the same deterministic certificate as ordinary unit compilation.
+/// Preserve ordinary-frame lowering while resolving only the authenticated runtime declarations it selects. A
+/// lowering refusal or missing program entry receives the same deterministic certificate as ordinary compilation.
 fn lower_compilation_plan(
     program: &mut CheckedProgram,
     kind: UnitKind,
@@ -453,6 +468,15 @@ fn lower_compilation_plan(
 ) -> Result<crate::plan::Plan, Box<dyn std::error::Error>> {
     tracing::debug!(target: "incan::invocation", modules = ?program.modules, "checked direct-route Body IR");
     let kind_name = kind.as_str().to_owned();
+    let file = program
+        .files
+        .get(program.entry)
+        .ok_or("selected Body IR entry source is missing")?;
+    let layout_requirements = layout_runtime_requirements(&program.modules, file.clone());
+    if !layout_requirements.is_empty() {
+        prepare_runtime_layouts(program, layout_requirements)?;
+    }
+    let mut continuation = None;
     loop {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
         let inputs = SourceInputs {
@@ -462,16 +486,29 @@ fn lower_compilation_plan(
             overflow_checks,
         };
         let mut attempt_unions = Vec::new();
-        match unit_plan(
-            &program.modules,
-            inputs,
-            program.entry.try_into()?,
-            &kind_name,
-            &mut attempt_unions,
-        )
-        .inspect_err(|_| receipt.deterministic())?
-        {
-            UnitPlanning::NeedsRuntime(requirements) => satisfy_runtime_requirements(program, requirements)?,
+        let planning = match continuation.take() {
+            Some(preserved) => resume_unit_plan(
+                preserved,
+                &program.modules,
+                inputs,
+                program.entry.try_into()?,
+                &kind_name,
+                &mut attempt_unions,
+            ),
+            None => unit_plan(
+                &program.modules,
+                inputs,
+                program.entry.try_into()?,
+                &kind_name,
+                &mut attempt_unions,
+            ),
+        }
+        .inspect_err(|_| receipt.deterministic())?;
+        match planning {
+            UnitPlanning::NeedsRuntime(preserved, requirements) => {
+                satisfy_runtime_requirements(program, requirements)?;
+                continuation = Some(preserved);
+            }
             UnitPlanning::Complete(Some(plan)) => {
                 published_unions.extend(attempt_unions);
                 return Ok(plan);

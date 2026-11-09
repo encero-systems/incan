@@ -9,6 +9,7 @@ from memory_budget import (
     measurements_tsv,
     parse_options,
     process_tree,
+    require_budget,
 )
 
 
@@ -54,6 +55,9 @@ def test_budget_and_records_keep_exact_bytes_and_human_units_distinct() -> Resul
     report = measurements_report([under, over], 2048 * MIB)
     assert "oven\t1\t2048\tincan-rustc-driver\t2048\t90\tunder" in report
     assert "contracts\t2\t2048\tincan-rustc-driver\t2048\t1\tover" in report
+    assert require_budget([under], 2048 * MIB) == Ok(None)
+    assert budget_refusal([measured("oven", 1, 2048 * MIB + 1, 90_000)], 2048 * MIB) == "accepted"
+    assert budget_refusal([over], 2048 * MIB) == f"process-tree footprint budget exceeded: contracts run 2: {2048 * MIB + 1} > {2048 * MIB} bytes"
     return Ok(None)
 
 
@@ -76,5 +80,12 @@ def measured(command: str, run: int, peak: int, wall_ms: int) -> Measurement:
 def refusal(arguments: list[str]) -> str:
     """Return one option refusal for concise assertions."""
     match parse_options(arguments):
+        Ok(_) => return "accepted"
+        Err(message) => return message
+
+
+def budget_refusal(results: list[Measurement], budget: int) -> str:
+    """Return one budget refusal for concise gate assertions."""
+    match require_budget(results, budget):
         Ok(_) => return "accepted"
         Err(message) => return message

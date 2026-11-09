@@ -31,6 +31,7 @@ from release_support import (
     digest,
     log_tail,
     parse_release_options,
+    require_candidate_census,
     release_receipt,
     run_step,
     write_json,
@@ -64,12 +65,11 @@ pub model ReleaseRun:
 
 
 pub model Candidate:
-    """Candidate build context and its shipped Oven, LSP, and contract runner."""
+    """Candidate build context and its shipped Oven and language server."""
 
     pub context: NativeContext
     pub oven: Path
     pub lsp: Path
-    pub runner: Path
 
 
 def main() -> None:
@@ -91,16 +91,15 @@ def main() -> None:
 
 pub def release(options: ReleaseOptions) -> Result[Path, str]:
     """
-    Produce one host release in eight directed phases.
+    Produce one host release in seven directed phases.
 
     1. Materialize the selected committed source and a seed-bound candidate home.
     2. Build the source support closure without an installed runtime provider.
     3. Build and select the candidate compiler, runtime, and standard Loaves.
-    4. Build and pack the shipped Oven and language server plus the contract runner.
-    5. Measure cold project, standard-package, contract-runner and floor builds without gating their footprint yet.
-    6. Compare the candidate census with the seed census and committed PASS baseline.
-    7. Install the bundle into a second home and repeat installed verification.
-    8. When requested, rebuild DD-0010's six named artifacts and require byte identity.
+    4. Build and pack the shipped Oven and language server.
+    5. Measure the seed census that defines the integration inventory and passing outcomes.
+    6. Install the bundle into a second home, then measure memory and the candidate census once in that context.
+    7. When requested, rebuild DD-0010's six named artifacts and require byte identity.
     """
     run = prepare_release(options)?
 
@@ -122,26 +121,21 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     phase(run, "bundle")?
     candidate = build_bundle(run, candidate)?
 
-    # 5. The first checked-in measurement records the budget evidence before a later stage makes it a gate.
-    phase(run, "memory-budget")?
-    measure_memory(run, candidate)?
-
-    # 6. Direct outcomes may repair seed failures but may not lose its cases, PASS keys, or committed baseline.
-    phase(run, "direct-verification")?
+    # 5. The seed defines the independent case inventory and outcomes the installed candidate must retain.
+    phase(run, "reference-verification")?
     reference = reference_census(run)?
-    direct = direct_census(run, candidate)?
-    compare_reference(run, reference, direct)?
 
-    # 7. A fresh home, source path, and Rust sysroot prove the packed toolchain rather than the build tree.
+    # 6. The fresh installation owns the candidate census and the release's one memory measurement.
     phase(run, "installed-verification")?
     installed = installed_verification(run, candidate)?
-    compare_installed(run, direct, installed)?
+    candidate_report = candidate_census(run, installed)?
+    compare_reference(run, reference, candidate_report)?
 
-    # 8. Fixed-point work is an explicit release gate because it intentionally doubles native production.
+    # 7. Fixed-point work is an explicit release gate because it intentionally doubles native production.
     if run.options.prove_fixed_point:
         phase(run, "fixed-point")?
         prove_fixed_point(candidate.context)?
-    complete_receipt(run, direct.counts)?
+    complete_receipt(run, candidate_report.counts)?
     return Ok(run.paths.output.joinpath("receipt.json"))
 
 
@@ -280,7 +274,7 @@ def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
     _ = build_runtime(context, helper, Some(interfaces), true, "candidate-")?
     require_unique_runtime_root(context)?
     build_standard_packages(context, helper, "")?
-    return Ok(Candidate(context=context, oven=conductor, lsp=Path(""), runner=Path("")))
+    return Ok(Candidate(context=context, oven=conductor, lsp=Path("")))
 
 
 def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
@@ -311,11 +305,11 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
     _ = build_runtime(context, helper, Some(interfaces), true)?
     require_unique_runtime_root(context)?
     build_standard_packages(context, helper, "candidate-")?
-    return Ok(Candidate(context=context, oven=candidate.oven, lsp=candidate.lsp, runner=candidate.runner))
+    return Ok(Candidate(context=context, oven=candidate.oven, lsp=candidate.lsp))
 
 
 def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
-    """Build the shipped tools and runner, copy the bundle tools, and pack the installed candidate toolchain."""
+    """Build the shipped tools, copy the bundle tools, and pack the installed candidate toolchain."""
     oven = build_tool(candidate.context, "oven", true, "oven-build")?
     bundle_oven = run.paths.bundle.joinpath("incan")
     _ = oven.copy(bundle_oven, true, true).map_err((error) => error.message())?
@@ -323,7 +317,6 @@ def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str
     lsp = build_tool(context, "lsp", false, "lsp-build")?
     bundle_lsp = run.paths.bundle.joinpath("incan-lsp")
     _ = lsp.copy(bundle_lsp, true, true).map_err((error) => error.message())?
-    runner = build_tool(context, "contracts", false, "runner-build")?
     require_release_step(
         run,
         release_step(
@@ -335,29 +328,7 @@ def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str
             build_environment(run, run.paths.home, bundle_oven),
         ),
     )?
-    return Ok(Candidate(context=context, oven=bundle_oven, lsp=bundle_lsp, runner=runner))
-
-
-def measure_memory(run: ReleaseRun, candidate: Candidate) -> Result[None, str]:
-    """Run three cold process-tree measurements through the packed candidate and retain `memory.tsv`."""
-    return require_release_step(
-        run,
-        release_step(
-            run,
-            "memory-budget",
-            candidate.oven.0,
-            [
-                "run",
-                run.paths.source.joinpath("scripts/memory_budget.incn").0,
-                "--",
-                candidate.oven.0,
-                run.paths.output.0,
-            ],
-            run.paths.source,
-            build_environment(run, run.paths.home, candidate.oven),
-            40,
-        ),
-    )
+    return Ok(Candidate(context=context, oven=bundle_oven, lsp=bundle_lsp))
 
 
 def reference_census(run: ReleaseRun) -> Result[Path, str]:
@@ -387,17 +358,8 @@ def reference_census(run: ReleaseRun) -> Result[Path, str]:
     return Ok(log)
 
 
-def direct_census(run: ReleaseRun, candidate: Candidate) -> Result[BaselineReport, str]:
-    """Run the candidate directly and enforce the committed PASS baseline."""
-    log = run.paths.output.joinpath("baseline-contracts.log")
-    mut environment = build_environment(run, run.paths.home, candidate.oven)
-    environment["INCAN_LSP"] = candidate.lsp.0
-    code = timed_release_step(
-        run,
-        census_step(run, "baseline-contracts", candidate.runner, candidate.oven, environment, log, false),
-    )?
-    if code > 1:
-        return Err(f"candidate runner exited {code}")
+def candidate_census(run: ReleaseRun, log: Path) -> Result[BaselineReport, str]:
+    """Read the installed candidate's complete census, enforce the committed baseline, and retain receipt counts."""
     report = check_baseline(
         release_baseline(run)?.read_text("utf-8", "strict").map_err((error) => error.message())?,
         log.read_text("utf-8", "strict").map_err((error) => error.message())?,
@@ -495,29 +457,14 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path
     return Ok(runs[0].joinpath("contracts.log"))
 
 
-def compare_reference(run: ReleaseRun, reference: Path, direct: BaselineReport) -> Result[None, str]:
+def compare_reference(run: ReleaseRun, reference: Path, candidate: &BaselineReport) -> Result[None, str]:
     """Require candidate case keys to equal the seed census and every seed PASS key to remain passing."""
     reference_report = census_results(reference)?
-    if reference_report.result_keys != direct.result_keys:
-        write_difference(run.paths.output.joinpath("integration-parity.diff"), reference_report, direct)?
-        return Err("candidate case keys differ from the integration census")
-    for key in reference_report.result_keys:
-        if reference_report.result_statuses[key] == "PASS" and direct.result_statuses[key] != "PASS":
-            return Err(f"candidate lost integration PASS: {key}")
-    return Ok(None)
-
-
-def compare_installed(run: ReleaseRun, direct: BaselineReport, installed: Path) -> Result[None, str]:
-    """Require a fresh installation to reproduce every direct candidate outcome exactly."""
-    installed_report = census_results(installed)?
-    if installed_report.result_keys != direct.result_keys:
-        write_difference(run.paths.output.joinpath("parity.diff"), direct, installed_report)?
-        return Err("installed case keys differ from direct candidate outcomes")
-    for key in direct.result_keys:
-        if direct.result_statuses[key] != installed_report.result_statuses[key]:
-            write_difference(run.paths.output.joinpath("parity.diff"), direct, installed_report)?
-            return Err(f"installed outcome differs: {key}")
-    return Ok(None)
+    match require_candidate_census(reference_report, candidate):
+        Ok(_) => return Ok(None)
+        Err(message) =>
+            write_difference(run.paths.output.joinpath("integration-parity.diff"), reference_report, candidate)?
+            return Err(message)
 
 
 def census_results(log: Path) -> Result[BaselineReport, str]:
@@ -798,7 +745,7 @@ def write_receipt(
     return write_json(run.paths.output.joinpath("receipt.json"), value)
 
 
-def write_difference(path: Path, left: BaselineReport, right: BaselineReport) -> Result[None, str]:
+def write_difference(path: Path, left: &BaselineReport, right: &BaselineReport) -> Result[None, str]:
     """Retain deterministic differing case outcomes without calling an external diff tool."""
     mut lines: list[str] = []
     keys = sorted(list(set(left.result_keys + right.result_keys)))
