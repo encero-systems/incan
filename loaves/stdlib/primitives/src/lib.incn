@@ -19,6 +19,14 @@ import primitives.crumb.types
 import primitives.crumb.spelling
 import primitives.crumb.identity
 import primitives.crumb.admission
+import primitives.crumb.values
+import primitives.crumb.hash_stream
+import primitives.crumb.scalars
+import primitives.crumb.ordering
+import primitives.crumb.value_admission
+import primitives.crumb.contributions
+import primitives.crumb.metadata
+import primitives.crumb.hashes
 import primitives.environ
 import primitives.fs
 import primitives.fs.file

@@ -1,0 +1,35 @@
+"""Exact scalar contributions must not round through floating-point or encoded integer order."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.scalars import compare_integer, compare_decimal, normalize_decimal, float64_bits
+from std.primitives.hex import hexlify
+
+
+def test_exact_integer_and_decimal_order() -> Result[None, str]:
+    """Widths above f64's exact domain and signed normalized scales retain their mathematical order."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((error) => error.message())?
+    assert compare_integer("9007199254740992", "9007199254740993") == -1
+    assert compare_integer("-128", "-127") == -1
+    coefficient, scale = normalize_decimal("100", "0", budget).map_err((error) => error.message())?
+    assert coefficient == "1"
+    assert scale == "-2"
+    assert compare_decimal("1990", "2", "199", "1", budget).map_err((error) => error.message())? == 0
+    assert compare_decimal("-2", "0", "-19", "1", budget).map_err((error) => error.message())? == -1
+    wide_coefficient, wide_scale = normalize_decimal("10", "-9223372036854775808", budget).map_err(
+        (error) => error.message(),
+    )?
+    assert wide_coefficient == "1"
+    assert wide_scale == "-9223372036854775809"
+    return Ok(None)
+
+
+def test_float_bits_preserve_zero_and_widen_subnormals() -> Result[None, str]:
+    """These independent IEEE encodings cover negative zero, a subnormal and a signaling NaN."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((error) => error.message())?
+    zero = float64_bits(32, b"\x80\x00\x00\x00", budget).map_err((error) => error.message())?
+    assert hexlify(zero) == "8000000000000000"
+    smallest = float64_bits(32, b"\x00\x00\x00\x01", budget).map_err((error) => error.message())?
+    assert hexlify(smallest) == "36a0000000000000"
+    nan = float64_bits(32, b"\x7f\x80\x00\x01", budget).map_err((error) => error.message())?
+    assert hexlify(nan) == "7ff8000000000000"
+    return Ok(None)
