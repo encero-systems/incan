@@ -1,0 +1,107 @@
+"""
+Incan-owned statement, rvalue and callee alternatives for the compiler-record boundary.
+
+The selected outer families are ordinary Incan enums. Payload types outside this Stage 3 family remain typed native
+leaves while their own migrations are pending; no serialized Body or debug spelling is hidden inside the contract.
+Every alternative is converted explicitly in both directions by `body_ir_record_adapters`.
+"""
+
+from rust::incan_semantics_core::body_ir import (
+    AggregateKind,
+    ArgumentElement,
+    AssertionKind,
+    BinOp,
+    CallableParam,
+    CallableTarget,
+    CheckedBridgeCall,
+    CheckedForeignCall,
+    DictEntry,
+    FieldlessEnumVariantTarget,
+    FormatPart,
+    GeneratorBody,
+    HelperOp,
+    IsInstanceTarget,
+    LocalId,
+    MatchArm,
+    MethodTarget,
+    Operand,
+    Place,
+    ProviderOperationPlan,
+    RaceArm,
+    ResultVariant,
+    TryErrorRouting,
+    TypeMetadataTarget,
+    UnOp,
+    UnsafeAcknowledgment,
+    ValueEnumVariantTarget,
+    ClosureBody,
+    IterProtocol,
+)
+from checked_types import CheckedType
+from compiler_records import HirSourceSpan
+
+
+pub enum CompilerCallee:
+    """Every current native Callee alternative, without reconstructing a selected target from source spelling."""
+
+    Function(CallableTarget)
+    Method(MethodTarget)
+    Helper(HelperOp)
+    ProviderOperation(ProviderOperationPlan)
+    TypeMetadata(TypeMetadataTarget)
+    CheckedForeign(CheckedForeignCall)
+    CheckedBridge(CheckedBridgeCall)
+
+
+pub enum CompilerRvalue:
+    """Every current native Rvalue alternative, retaining checked types and ordered evaluation payloads."""
+
+    Use(Operand)
+    UnaryOp(UnOp, Operand)
+    BinaryOp(BinOp, Operand, Operand)
+    IsInstance(Operand, CheckedType, IsInstanceTarget)
+    Aggregate(AggregateKind, list[ArgumentElement])
+    Dict(list[DictEntry])
+    ValueEnumVariant(ValueEnumVariantTarget)
+    FieldlessEnumVariant(FieldlessEnumVariantTarget)
+    ResultVariant(ResultVariant)
+    Format(list[FormatPart])
+    Closure(list[CallableParam], list[Operand], ClosureBody)
+    Generator(Operand, list[Operand], GeneratorBody)
+    Match(Operand, list[MatchArm])
+
+
+pub enum CompilerStatementKind:
+    """Every current native StatementKind alternative, including normalized control-flow and suspension facts."""
+
+    UnsafeRegion(UnsafeAcknowledgment, CompilerBlock)
+    Assign(Place, CompilerRvalue)
+    Call(Option[Place], CompilerCallee, list[ArgumentElement], bool)
+    Drop(LocalId)
+    If(Operand, CompilerBlock, list[CompilerBlock])
+    Loop(CompilerBlock)
+    Break(Option[Operand])
+    Continue
+    Return(Option[Operand])
+    Await(Option[Place], Operand)
+    Race(Option[Place], list[RaceArm])
+    Yield(Operand)
+    Assert(AssertionKind, Option[Operand], bool)
+    Expr(Operand)
+    TryPropagate(Place, Operand, TryErrorRouting)
+    IterNext(Place, Operand, IterProtocol)
+    Unsupported(str)
+
+
+pub model CompilerStatement:
+    """One normalized statement and its owned source span."""
+
+    pub kind: CompilerStatementKind
+    pub span: HirSourceSpan
+
+
+pub model CompilerBlock:
+    """A scope-bound ordered statement block; nested control-flow stays in the same authored family."""
+
+    pub scope: int
+    pub statements: list[CompilerStatement]
