@@ -1,0 +1,14 @@
+"""Source-origin controls for Incan-owned compiler facts."""
+
+from compiler_records import HirSourceSpan, valid_hir_source_span
+
+
+pub def test_source_facts() -> None:
+    """Retain mapped declaration ranges and exact expansion bytes as separate source facts."""
+    expansion = [index for index in range(32)]
+    generated = HirSourceSpan(file="src/generated.incn", start=12, end=19, expansion=Some(expansion))
+    moved = HirSourceSpan(file="src/generated.incn", start=40, end=47, expansion=None)
+    invalid = HirSourceSpan(file="src/generated.incn", start=12, end=19, expansion=Some([0, 1]))
+    assert valid_hir_source_span(generated)
+    assert generated != moved
+    assert not valid_hir_source_span(invalid)
