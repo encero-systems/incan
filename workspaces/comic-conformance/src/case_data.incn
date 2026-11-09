@@ -121,6 +121,30 @@ pub enum FixtureTypeKind(str):
     Recursive = "recur"
 
 
+pub enum FixtureNominalShape(str):
+    """The uppercase nominal-shape spelling used by independent text fixtures."""
+
+    Record = "Record"
+    Enum = "Enum"
+
+    pub def nominal_kind(self) -> NominalKind:
+        """Convert fixture notation to the shared logical shape."""
+        match self:
+            FixtureNominalShape.Record => return NominalKind.Record
+            FixtureNominalShape.Enum => return NominalKind.Enum
+
+
+pub enum FixturePropertyKind(str):
+    """The tagged property-value forms admitted by COMIC text fixtures."""
+
+    Symbol = "symbol"
+    String = "string"
+    Boolean = "boolean"
+    Integer = "int"
+    List = "list"
+    PropertyGroup = "property_group"
+
+
 pub def text(value: JsonValue, key: str) -> Result[str, str]:
     """Require one string; numeric expectations remain exact strings rather than JSON numbers."""
     return value.require(key).and_then((item) => item.expect_str()).map_err((error) => error.message())

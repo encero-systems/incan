@@ -1,0 +1,198 @@
+"""Owned COMIC text descriptions and values, separate from source-language syntax trees."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.registrations import KindRegistration, KindRegistry
+from crate.primitives.crumb.types import AbsentPolicy, NominalKind, ScalarKind
+
+
+pub model TextPosition:
+    """A one-based Unicode-scalar source position."""
+
+    pub line: int
+    pub column: int
+
+
+pub enum TextFailure(str):
+    """Closed refusal categories produced by COMIC text reading and printing."""
+
+    AmbiguousOrUnknownType = "ambiguous_or_unknown_type"
+    AmbiguousUnion = "ambiguous_union"
+    BidirectionalControl = "bidirectional_control"
+    DecimalPrecision = "decimal_precision"
+    DecimalScaleMismatch = "decimal_scale_mismatch"
+    DuplicateDeclarationKind = "duplicate_declaration_kind"
+    DuplicateField = "duplicate_field"
+    DuplicateKey = "duplicate_key"
+    FieldIndexOutOfRange = "field_index_out_of_range"
+    IntegerOutOfRange = "integer_out_of_range"
+    InvalidAbsentValue = "invalid_absent_value"
+    InvalidBinary = "invalid_binary"
+    InvalidEntry = "invalid_entry"
+    InvalidEscape = "invalid_escape"
+    InvalidFields = "invalid_fields"
+    InvalidFloat = "invalid_float"
+    InvalidFloatBits = "invalid_float_bits"
+    InvalidInteger = "invalid_integer"
+    InvalidList = "invalid_list"
+    InvalidMap = "invalid_map"
+    InvalidMetadata = "invalid_metadata"
+    InvalidOptional = "invalid_optional"
+    InvalidProperty = "invalid_property"
+    InvalidSet = "invalid_set"
+    InvalidToken = "invalid_token"
+    InvalidType = "invalid_type"
+    InvalidUnion = "invalid_union"
+    InvalidUtf8 = "invalid_utf8"
+    InvalidValue = "invalid_value"
+    Limit = "limit"
+    MissingRequiredField = "missing_required_field"
+    PositionalAfterKey = "positional_after_key"
+    ReservedField = "reserved_field"
+    RootType = "root_type"
+    TypeMismatch = "type_mismatch"
+    UnexpectedEnd = "unexpected_end"
+    UnknownDescription = "unknown_description"
+    UnknownField = "unknown_field"
+    UnknownKind = "unknown_kind"
+    UnknownStoreKey = "unknown_store_key"
+    UnknownVariant = "unknown_variant"
+    UnsupportedMarker = "unsupported_marker"
+    UnsupportedStoreKey = "unsupported_store_key"
+    ValueTypeNoSingleDeclaration = "value_type_no_single_declaration"
+
+
+pub model TextError:
+    """A stable language-neutral refusal category and its source position."""
+
+    pub kind: TextFailure
+    pub position: TextPosition
+
+    pub def message(self) -> str:
+        """Describe the refusal without reproducing untrusted document contents."""
+        return f"{self.kind.value()} at {self.position.line}:{self.position.column}"
+
+
+pub enum TextType:
+    """The admitted type vocabulary carried by a COMIC description."""
+
+    Scalar(ScalarKind)
+    Decimal(int, int)
+    List(list[TextType])
+    Set(list[TextType])
+    Map(list[TextType])
+    Option(list[TextType])
+    Union(list[TextType])
+    Reference(list[TextType])
+    Named(str)
+
+
+pub enum TextPropertyValue:
+    """Inert description metadata; symbols and groups never resolve or execute."""
+
+    Symbol(str)
+    Text(str)
+    Boolean(bool)
+    Integer(str)
+    List(list[TextPropertyValue])
+    Group(list[TextProperty])
+
+
+pub model TextProperty:
+    """One property in the order read from the declaration."""
+
+    pub name: str
+    pub value: TextPropertyValue
+
+
+pub model TextField:
+    """One declared field with text identity and admitted storage facts."""
+
+    pub name: str
+    pub storage_type: TextType
+    pub absent: AbsentPolicy
+    pub canonical: bool
+    pub properties: list[TextProperty]
+
+
+pub model TextVariant:
+    """One enum variant and its declared payload fields."""
+
+    pub name: str
+    pub fields: list[TextField]
+
+
+pub model TextDescription:
+    """A core or locally registered profile declaration."""
+
+    pub path: str
+    pub kind: str
+    pub shape: NominalKind
+    pub properties: list[TextProperty]
+    pub fields: list[TextField]
+    pub variants: list[TextVariant]
+
+
+pub model TextContext:
+    """Local profile registrations and externally admitted description-only type names."""
+
+    pub kinds: KindRegistry
+    pub admitted_type_names: list[str]
+
+    @staticmethod
+    pub def create(
+        registrations: list[KindRegistration],
+        admitted_type_names: list[str],
+        mut budget: Budget,
+    ) -> Result[Self, CrumbError]:
+        """Create text context from the shared checked profile-kind registry."""
+        return Ok(
+            TextContext(kinds=KindRegistry.create(registrations, budget)?, admitted_type_names=admitted_type_names),
+        )
+
+    @staticmethod
+    pub def core(mut budget: Budget) -> Result[Self, CrumbError]:
+        """Create the core-only context used by ordinary COMIC documents."""
+        return TextContext.create([], [], budget)
+
+
+pub model TextNamedValue:
+    """One record or payload field retained in declaration order."""
+
+    pub name: str
+    pub value: TextValue
+
+
+pub model TextMapEntry:
+    """One explicit map pair, preserving duplicate detection before canonical sorting."""
+
+    pub key: TextValue
+    pub value: TextValue
+
+
+pub enum TextValue:
+    """An admitted typed COMIC value; no variant carries executable behavior."""
+
+    NoneValue
+    Some(list[TextValue])
+    Boolean(bool)
+    Integer(str, str)
+    Float(int, bytes)
+    Decimal(str, int, int)
+    Text(str)
+    Binary(bytes)
+    Withheld(str)
+    List(list[TextValue])
+    Set(list[TextValue])
+    Map(list[TextMapEntry])
+    Record(str, list[TextNamedValue])
+    Enum(str, str, list[TextNamedValue])
+    Union(str, list[TextValue])
+    Reference(str, str)
+
+
+pub model TextDocument:
+    """Descriptions followed by their ordered root values."""
+
+    pub descriptions: list[TextDescription]
+    pub values: list[TextValue]
