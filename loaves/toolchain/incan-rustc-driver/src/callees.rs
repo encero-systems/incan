@@ -455,7 +455,7 @@ fn inherent_signature_matches(
     candidate: DefId,
     external: &crate::plan::ExternalFunction,
 ) -> Result<bool, PlanError> {
-    let arguments = arguments(tcx, candidate, &external.type_arguments)?;
+    let arguments = external_arguments(tcx, candidate, external)?;
     let signature = tcx
         .instantiate_bound_regions_with_erased(tcx.fn_sig(candidate).instantiate(tcx, arguments).skip_normalization());
     let parameters = external
@@ -465,6 +465,14 @@ fn inherent_signature_matches(
         .collect::<Result<Vec<_>, _>>()?;
     let result = crate::types::native_type(tcx, &external.return_type)?;
     Ok(signature.inputs() == parameters && signature.output() == result)
+}
+
+/// Whether a callable declares any const parameter that must be closed from its checked signature.
+pub fn has_const_parameters(tcx: TyCtxt<'_>, def: DefId) -> bool {
+    tcx.generics_of(def)
+        .own_params
+        .iter()
+        .any(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Const { .. }))
 }
 
 /// Every inherent impl rustc's method lookup reaches for a nominal owner: the impls in its defining crate and the
@@ -649,6 +657,71 @@ pub fn arguments<'tcx>(
                 })?,
         };
         arguments.push(argument);
+    }
+    Ok(tcx.mk_args(&arguments))
+}
+
+/// Close a const-generic external from its complete checked parameter and result carriers.
+///
+/// Ordinary type-only calls keep their explicit Plan arguments. A callable with const binders instead starts from
+/// fresh rustc arguments and relates every signature position to the already checked external signature. This lets
+/// exact and nested fixed-array lengths solve naturally while a mismatch or any remaining type/const variable
+/// refuses before MIR construction. Const values never enter the Plan's type-argument vector.
+pub fn external_arguments<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def: DefId,
+    external: &crate::plan::ExternalFunction,
+) -> Result<rustc_middle::ty::GenericArgsRef<'tcx>, PlanError> {
+    if !has_const_parameters(tcx, def) {
+        return arguments(tcx, def, &external.type_arguments);
+    }
+    use rustc_infer::infer::TyCtxtInferExt;
+    use rustc_middle::ty::TypeVisitableExt;
+    use rustc_trait_selection::traits::ObligationCtxt;
+
+    let invalid = |reason: &str| PlanError::Invalid {
+        function: external.path.clone(),
+        reason: reason.into(),
+    };
+    let (infcx, environment) = tcx
+        .infer_ctxt()
+        .build_with_typing_env(ty::TypingEnv::fully_monomorphized());
+    let inferred = infcx.fresh_args_for_item(rustc_span::DUMMY_SP, def);
+    let signature = tcx
+        .fn_sig(def)
+        .instantiate(tcx, inferred)
+        .skip_normalization()
+        .skip_binder();
+    if signature.inputs().len() != external.parameters.len() {
+        return Err(invalid("external parameter count differs from metadata"));
+    }
+    let planned_parameters = external
+        .parameters
+        .iter()
+        .map(|parameter| crate::types::native_type(tcx, parameter))
+        .collect::<Result<Vec<_>, _>>()?;
+    let planned_result = crate::types::native_type(tcx, &external.return_type)?;
+    let cause = rustc_middle::traits::ObligationCause::dummy();
+    let obligations = ObligationCtxt::new(&infcx);
+    for (declared, planned) in signature.inputs().iter().zip(planned_parameters) {
+        obligations
+            .eq(&cause, environment, *declared, planned)
+            .map_err(|_| invalid("external parameter type differs from metadata"))?;
+    }
+    obligations
+        .eq(&cause, environment, signature.output(), planned_result)
+        .map_err(|_| invalid("external return type differs from metadata"))?;
+    let resolved = infcx.resolve_vars_if_possible(inferred);
+    let mut arguments = Vec::with_capacity(resolved.len());
+    for argument in resolved {
+        match argument.kind() {
+            ty::GenericArgKind::Lifetime(_) => arguments.push(tcx.lifetimes.re_erased.into()),
+            ty::GenericArgKind::Type(value) if !value.has_infer() => arguments.push(value.into()),
+            ty::GenericArgKind::Const(value) if !value.has_infer() => arguments.push(value.into()),
+            ty::GenericArgKind::Type(_) | ty::GenericArgKind::Const(_) => {
+                return Err(invalid("external signature leaves a generic argument unresolved"));
+            }
+        }
     }
     Ok(tcx.mk_args(&arguments))
 }

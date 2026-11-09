@@ -292,6 +292,9 @@ pub(super) fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Res
             continue;
         }
         let def = callees::external(tcx, &external.path)?;
+        if callees::has_const_parameters(tcx, def) {
+            continue;
+        }
         if callees::arity_admits(tcx, def, 0) {
             continue;
         }
