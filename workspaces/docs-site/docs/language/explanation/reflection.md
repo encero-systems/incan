@@ -52,3 +52,9 @@ fallback: ColumnExpr = cast(col("amount"), "decimal(10,2)")
 ```
 
 Each overload declares its result type. A symbol alias such as `safe_cast = alias cast` preserves that overload set without wrapper functions. By contrast, `cast[T](expr)` has one declared result type; explicit type arguments alone do not give it a different result declaration for each `T`. A broader union is possible where that is the intended API. A future type-level return mapping would be a separate capability, not a consequence of these tokens.
+
+## Handwritten traversal and compiler-generated metadata
+
+The typed `Walk` and `Reconstruct` protocols let a library use the adopter's own code to visit or restore its stored representation. They are distinct from public-field inspection. Importing the protocols does not generate those members or make scalars and containers adopt them. Automatic adoption and complete stored-field generation are separate compiler work. The public [protocol reference](../reference/stdlib/reflection.md#handwritten-typed-value-protocols) lists the handwritten API.
+
+The primitive protocol leaves the existing native-backed `FieldInfo` carrier intact. Its planned `stored_type`, `default_is_empty`, `position` and `renamed_from_lifecycle` extensions belong to the compiler's metadata producer; an Incan-only shadow would describe facts the producer does not supply. A handwritten shape must describe the representation it actually visits, not claim that generated metadata already exists. DecimalValue preserves exact coefficient and declared scale; automatic decimal adaptation likewise belongs to that later compiler work.
