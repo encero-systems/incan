@@ -15,7 +15,7 @@ const NOTHING: str = "nothing to take"
 class SourceScores:
     """Return a source mapping without granting physical Rust-container method authority."""
 
-    marker: int
+    pub marker: int
 
     pub def values(self) -> Result[dict[str, int], str]:
         """Provide an authored mapping whose scalar lookups remain owned."""

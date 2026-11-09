@@ -47,6 +47,7 @@ digest = h.finalize_bytes()
 
 | Method | Returns | Contract |
 | --- | --- | --- |
+| `Crc32.new()` | `Crc32` | Class-owned factory for a fresh incremental hasher; `crc32.new()` delegates to it. |
 | `Crc32.update(mut self, chunk: bytes)` | `None` | Add a chunk; empty chunks preserve state. |
 | `Crc32.finalize_u32(self)` | `u32` | Snapshot the current checksum without resetting or consuming the hasher. |
 | `Crc32.finalize_bytes(self)` | `bytes` | Snapshot as four big-endian bytes. |

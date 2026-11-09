@@ -39,7 +39,7 @@ class Pair:
 
 
 class EchoBox with Echo:
-    marker: int
+    pub marker: int
 
 
 type Wrapper[U] = newtype U:
