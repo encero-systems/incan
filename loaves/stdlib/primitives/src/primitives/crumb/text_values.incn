@@ -1,0 +1,635 @@
+"""Typed COMIC value reading through document-owned descriptions."""
+
+from rust::std::primitive import f32 as RustF32, f64 as RustF64
+from rust::std::str import FromStr
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.scalars import compare_integer
+from crate.primitives.crumb.text_syntax import description_at, last_segment, resolve_named, type_spelling
+from crate.primitives.crumb.text_tokens import TextToken, TextTokenKind, TextTokens
+from crate.primitives.crumb.text_types import (
+    TextDescription,
+    TextError,
+    TextField,
+    TextMapEntry,
+    TextNamedValue,
+    TextPosition,
+    TextType,
+    TextValue,
+    TextVariant,
+)
+from crate.primitives.crumb.types import AbsentPolicy
+from crate.primitives.hex import hexlify
+
+
+pub def parse_root_values(
+    mut tokens: TextTokens,
+    descriptions: list[TextDescription],
+    mut budget: Budget,
+) -> Result[list[TextValue], TextError]:
+    """Read one root value or table after requiring its prior unique description."""
+    type_token = tokens.take()
+    description = description_at(descriptions, type_token.text, type_token.position)?
+    tokens.require("<<")?
+    mut values: list[TextValue] = []
+    if tokens.accepts("["):
+        while not tokens.accepts("]"):
+            if tokens.peek().kind == TextTokenKind.End:
+                return Err(TextError(kind="unexpected_end", position=tokens.peek().position))
+            values.append(parse_described(description, descriptions, tokens, true, budget)?)
+            if tokens.accepts("]"):
+                break
+            tokens.require(",")?
+    else:
+        values.append(parse_described(description, descriptions, tokens, false, budget)?)
+    return Ok(values)
+
+
+def parse_described(
+    description: TextDescription,
+    descriptions: list[TextDescription],
+    mut tokens: TextTokens,
+    row: bool,
+    mut budget: Budget,
+) -> Result[TextValue, TextError]:
+    """Read one record or enum through its admitted declaration."""
+    if description.shape == "Record":
+        if tokens.peek().text != "(":
+            return Err(TextError(kind="type_mismatch", position=tokens.peek().position))
+        fields = parse_cells(description.fields, descriptions, tokens, budget)?
+        return Ok(TextValue.Record(description.path, fields))
+    if description.shape == "Enum":
+        return parse_enum(description, descriptions, tokens, budget)
+    return Err(TextError(kind="unknown_kind", position=tokens.peek().position))
+
+
+def parse_cells(
+    fields: list[TextField],
+    descriptions: list[TextDescription],
+    mut tokens: TextTokens,
+    mut budget: Budget,
+) -> Result[list[TextNamedValue], TextError]:
+    """Apply positions first, then names or indexes, and materialize every declared absence."""
+    budget.enter().map_err((_) => limit_error(tokens.peek().position))?
+    tokens.require("(")?
+    # Explicit appends preserve the recursive Option payload through native lowering.
+    # #2803: a comprehension loses the recursive Option element type here.
+    mut values: list[Option[TextValue]] = []
+    for _ in fields:
+        values.append(None)
+    mut positional = 0
+    mut saw_key = false
+    while not tokens.accepts(")"):
+        if tokens.peek().kind == TextTokenKind.End:
+            return Err(TextError(kind="unexpected_end", position=tokens.peek().position))
+        key_token = tokens.peek()
+        mut selected = positional
+        if tokens.peek_at(1).text == "=":
+            saw_key = true
+            key = tokens.take().text
+            tokens.take()
+            selected = field_index(fields, key, key_token)?
+        elif saw_key:
+            return Err(TextError(kind="positional_after_key", position=key_token.position))
+        else:
+            positional += 1
+            if selected >= len(fields):
+                if key_token.text.startswith("___"):
+                    return Err(TextError(kind="unknown_store_key", position=key_token.position))
+                return Err(TextError(kind="field_index_out_of_range", position=key_token.position))
+        if selected >= len(fields):
+            return Err(TextError(kind="field_index_out_of_range", position=key_token.position))
+        match values[selected]:
+            Some(_) => return Err(TextError(kind="duplicate_field", position=key_token.position))
+            None => values[selected] = Some(parse_value(fields[selected].storage_type, descriptions, tokens, budget)?)
+        if tokens.accepts(")"):
+            break
+        tokens.require(",")?
+        if tokens.accepts(")"):
+            break
+    closing = tokens.peek_at(-1).position
+    result = fill_fields(fields, values, closing)?
+    budget.leave().map_err((_) => limit_error(closing))?
+    return Ok(result)
+
+
+def field_index(fields: list[TextField], key: str, token: TextToken) -> Result[int, TextError]:
+    """Resolve an input-only declaration index or an exact field name."""
+    if key.startswith("___"):
+        if key not in ["___id", "___revision", "___model_hash", "___canonical_hash", "___object_hash"]:
+            return Err(TextError(kind="unknown_store_key", position=token.position))
+        return Err(TextError(kind="unsupported_store_key", position=token.position))
+    if canonical_unsigned(key):
+        index = int(key)
+        if index < 0 or index >= len(fields):
+            return Err(TextError(kind="field_index_out_of_range", position=token.position))
+        return Ok(index)
+    for index in range(len(fields)):
+        if fields[index].name == key:
+            return Ok(index)
+    return Err(TextError(kind="unknown_field", position=token.position))
+
+
+def fill_fields(
+    fields: list[TextField],
+    values: list[Option[TextValue]],
+    closing: TextPosition,
+) -> Result[list[TextNamedValue], TextError]:
+    """Supply only the description's explicit outer absence or empty collection."""
+    mut result: list[TextNamedValue] = []
+    for index in range(len(fields)):
+        match values[index]:
+            Some(value) => result.append(TextNamedValue(name=fields[index].name, value=value))
+            None =>
+                match absent_value(fields[index]):
+                    Some(value) => result.append(TextNamedValue(name=fields[index].name, value=value))
+                    None => return Err(TextError(kind="missing_required_field", position=closing))
+    return Ok(result)
+
+
+def absent_value(field: TextField) -> Option[TextValue]:
+    """Return a declared absent value without inventing a constructor default."""
+    match field.absent:
+        AbsentPolicy.NoneValue => return Some(TextValue.NoneValue)
+        AbsentPolicy.Empty =>
+            match field.storage_type:
+                TextType.List(_) => return Some(TextValue.List([]))
+                TextType.Set(_) => return Some(TextValue.Set([]))
+                TextType.Map(_) => return Some(TextValue.Map([]))
+                _ => return None
+        AbsentPolicy.Required => return None
+
+
+def parse_value(
+    storage_type: TextType,
+    descriptions: list[TextDescription],
+    mut tokens: TextTokens,
+    mut budget: Budget,
+) -> Result[TextValue, TextError]:
+    """Read one value only through its declared slot type."""
+    budget.charge_elements(1).map_err((_) => limit_error(tokens.peek().position))?
+    match storage_type:
+        TextType.Scalar(name) => return parse_scalar(name, tokens, budget)
+        TextType.Decimal(precision, scale) => return parse_decimal(precision, scale, tokens)
+        TextType.Option(items) => return parse_optional(items[0], descriptions, tokens, budget)
+        TextType.List(items) => return parse_list(items[0], descriptions, tokens, budget)
+        TextType.Set(items) => return parse_set(items[0], descriptions, tokens, budget)
+        TextType.Map(items) => return parse_map(items[0], items[1], descriptions, tokens, budget)
+        TextType.Union(items) => return parse_union(items, descriptions, tokens, budget)
+        TextType.Reference(items) => return parse_reference(items[0], tokens)
+        TextType.Named(path) =>
+            description = resolve_named(descriptions, path, tokens.peek().position)?
+            return parse_described(description, descriptions, tokens, false, budget)
+    return Err(TextError(kind="type_mismatch", position=tokens.peek().position))
+
+
+def parse_scalar(name: str, mut tokens: TextTokens, mut budget: Budget) -> Result[TextValue, TextError]:
+    """Read one core scalar with exact integer widths, float bits and secret withholding."""
+    token = tokens.peek()
+    if name == "boolean":
+        if token.text not in ["true", "false"]:
+            return Err(TextError(kind="type_mismatch", position=token.position))
+        tokens.take()
+        return Ok(TextValue.Boolean(token.text == "true"))
+    if name in ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"]:
+        tokens.take()
+        if token.text in ["inf", "-inf", "nan"]:
+            return Err(TextError(kind="type_mismatch", position=token.position))
+        return parse_integer(name, token)
+    if name in ["fp32", "fp64"]:
+        tokens.take()
+        return parse_float(name, token)
+    if name == "string":
+        if token.kind != TextTokenKind.String:
+            if token.kind == TextTokenKind.Marker:
+                return Err(TextError(kind="unsupported_marker", position=token.position))
+            return Err(TextError(kind="type_mismatch", position=token.position))
+        return Ok(TextValue.Text(tokens.take().text))
+    if name == "binary":
+        if token.kind != TextTokenKind.Binary:
+            return Err(TextError(kind="type_mismatch", position=token.position))
+        return Ok(TextValue.Binary(tokens.take().data))
+    if name in ["secret_string", "secret_bytes"]:
+        if token.text != "<secret>":
+            return Err(TextError(kind="unsupported_marker", position=token.position))
+        tokens.take()
+        return Ok(TextValue.Withheld(name))
+    return Err(TextError(kind="type_mismatch", position=token.position))
+
+
+def parse_integer(name: str, token: TextToken) -> Result[TextValue, TextError]:
+    """Validate canonical decimal spelling and the declared exact storage range."""
+    value = token.text
+    if not canonical_integer(value):
+        return Err(TextError(kind="invalid_integer", position=token.position))
+    minimum, maximum = integer_range(name)
+    if compare_integer(value, minimum) < 0 or compare_integer(value, maximum) > 0:
+        return Err(TextError(kind="integer_out_of_range", position=token.position))
+    return Ok(TextValue.Integer(name, value))
+
+
+def parse_float(name: str, token: TextToken) -> Result[TextValue, TextError]:
+    """Parse through Rust's exact-width scalar and retain canonical IEEE bits."""
+    spelling = token.text
+    if spelling not in ["inf", "-inf", "nan"] and not valid_finite_float(spelling):
+        return Err(TextError(kind="invalid_float", position=token.position))
+    if name == "fp32":
+        match RustF32.from_str(spelling):
+            Ok(value) => return Ok(TextValue.Float(32, u32_bytes(value.to_bits())))
+            Err(_) => return Err(TextError(kind="type_mismatch", position=token.position))
+    match RustF64.from_str(spelling):
+        Ok(value) => return Ok(TextValue.Float(64, u64_bytes(value.to_bits())))
+        Err(_) => return Err(TextError(kind="type_mismatch", position=token.position))
+
+
+def parse_decimal(precision: int, scale: int, mut tokens: TextTokens) -> Result[TextValue, TextError]:
+    """Require exactly the declared fractional scale and retain an exact coefficient string."""
+    token = tokens.take()
+    spelling = token.text
+    if not spelling.endswith("d"):
+        return Err(TextError(kind="type_mismatch", position=token.position))
+    number = spelling[0:len(spelling) - 1]
+    parts = number.split(".")
+    if (
+        len(parts) != 2
+        or len(parts[1]) != scale
+        or not decimal_digits(parts[0], true)
+        or not decimal_digits(parts[1], false)
+    ):
+        return Err(TextError(kind="decimal_scale_mismatch", position=token.position))
+    mut coefficient = parts[0] + parts[1]
+    if coefficient.startswith("-") and coefficient[1:2] == "0" and all_zero(coefficient[1:]):
+        coefficient = "0"
+    if len(coefficient.replace("-", "")) > precision:
+        return Err(TextError(kind="decimal_precision", position=token.position))
+    return Ok(TextValue.Decimal(coefficient, precision, scale))
+
+
+def parse_optional(
+    inner: TextType,
+    descriptions: list[TextDescription],
+    mut tokens: TextTokens,
+    mut budget: Budget,
+) -> Result[TextValue, TextError]:
+    """Keep every absent layer distinct from a present nested optional."""
+    if tokens.accepts("None"):
+        return Ok(TextValue.NoneValue)
+    if tokens.accepts("Some"):
+        tokens.require("(")?
+        value = parse_value(inner, descriptions, tokens, budget)?
+        tokens.require(")")?
+        return Ok(TextValue.Some([value]))
+    return Ok(TextValue.Some([parse_value(inner, descriptions, tokens, budget)?]))
+
+
+def parse_list(
+    item_type: TextType,
+    descriptions: list[TextDescription],
+    mut tokens: TextTokens,
+    mut budget: Budget,
+) -> Result[TextValue, TextError]:
+    """Read an ordered list, including row-shaped records and variants."""
+    tokens.require("[")?
+    mut items: list[TextValue] = []
+    while not tokens.accepts("]"):
+        items.append(parse_value(item_type, descriptions, tokens, budget)?)
+        if tokens.accepts("]"):
+            break
+        tokens.require(",")?
+    return Ok(TextValue.List(items))
+
+
+def parse_set(
+    item_type: TextType,
+    descriptions: list[TextDescription],
+    mut tokens: TextTokens,
+    mut budget: Budget,
+) -> Result[TextValue, TextError]:
+    """Read a set and place its admitted values in stored scalar order."""
+    tokens.require("{")?
+    mut items: list[TextValue] = []
+    while not tokens.accepts("}"):
+        item = parse_value(item_type, descriptions, tokens, budget)?
+        if value_index(items, item) >= 0:
+            return Err(TextError(kind="duplicate_key", position=tokens.peek_at(-1).position))
+        insert_ordered(items, item)
+        if tokens.accepts("}"):
+            break
+        tokens.require(",")?
+    return Ok(TextValue.Set(items))
+
+
+def parse_map(
+    key_type: TextType,
+    value_type: TextType,
+    descriptions: list[TextDescription],
+    mut tokens: TextTokens,
+    mut budget: Budget,
+) -> Result[TextValue, TextError]:
+    """Refuse duplicate keys before sorting admitted pairs by the stored key order."""
+    tokens.require("{")?
+    mut entries: list[TextMapEntry] = []
+    while not tokens.accepts("}"):
+        key_position = tokens.peek().position
+        key = parse_value(key_type, descriptions, tokens, budget)?
+        tokens.require(":")?
+        value = parse_value(value_type, descriptions, tokens, budget)?
+        if entry_index(entries, key) >= 0:
+            return Err(TextError(kind="duplicate_key", position=key_position))
+        insert_entry(entries, TextMapEntry(key=key, value=value))
+        if tokens.accepts("}"):
+            break
+        tokens.require(",")?
+    return Ok(TextValue.Map(entries))
+
+
+def parse_union(
+    members: list[TextType],
+    descriptions: list[TextDescription],
+    mut tokens: TextTokens,
+    mut budget: Budget,
+) -> Result[TextValue, TextError]:
+    """Select a union only from an explicit wrapper or an unambiguous qualified enum variant."""
+    token = tokens.peek()
+    if tokens.peek_at(1).text == "<<":
+        selector = tokens.take().text
+        tokens.take()
+        member = union_member(members, selector, descriptions, token.position)?
+        value = parse_value(member, descriptions, tokens, budget)?
+        return Ok(TextValue.Union(type_spelling(member), [value]))
+    selected = qualified_variant_member(members, token.text, descriptions)
+    match selected:
+        Some(member) =>
+            value = parse_value(member, descriptions, tokens, budget)?
+            return Ok(TextValue.Union(type_spelling(member), [value]))
+        None => return Err(TextError(kind="ambiguous_union", position=token.position))
+
+
+def union_member(
+    members: list[TextType],
+    selector: str,
+    descriptions: list[TextDescription],
+    position: TextPosition,
+) -> Result[TextType, TextError]:
+    """Resolve one explicit union selector by exact or unambiguous short spelling."""
+    mut found: list[TextType] = []
+    for member in members:
+        spelling = type_spelling(member)
+        if spelling == selector or last_segment(spelling) == selector:
+            found.append(member)
+    if len(found) != 1:
+        return Err(TextError(kind="ambiguous_union", position=position))
+    return Ok(found[0])
+
+
+def qualified_variant_member(
+    members: list[TextType],
+    spelling: str,
+    descriptions: list[TextDescription],
+) -> Option[TextType]:
+    """Find the sole enum union member admitted by `EnumName.Variant`."""
+    parts = spelling.split(".")
+    if len(parts) < 2:
+        return None
+    enum_name = parts[len(parts) - 2]
+    variant = parts[len(parts) - 1]
+    mut found: list[TextType] = []
+    for member in members:
+        match member:
+            TextType.Named(path) =>
+                if last_segment(path) == enum_name and enum_has_variant(descriptions, path, variant):
+                    found.append(member)
+            _ => pass
+    if len(found) == 1:
+        return Some(found[0])
+    return None
+
+
+def parse_enum(
+    description: TextDescription,
+    descriptions: list[TextDescription],
+    mut tokens: TextTokens,
+    mut budget: Budget,
+) -> Result[TextValue, TextError]:
+    """Read one enum name, accepting an optional owning-enum qualifier."""
+    token = tokens.take()
+    mut name = token.text
+    parts = name.split(".")
+    if len(parts) > 1:
+        if parts[len(parts) - 2] != last_segment(description.path):
+            return Err(TextError(kind="unknown_variant", position=token.position))
+        name = parts[len(parts) - 1]
+    for variant in description.variants:
+        if variant.name == name:
+            mut fields: list[TextNamedValue] = []
+            if len(variant.fields) > 0:
+                fields = parse_cells(variant.fields, descriptions, tokens, budget)?
+            elif tokens.peek().text == "(":
+                fields = parse_cells([], descriptions, tokens, budget)?
+            return Ok(TextValue.Enum(description.path, name, fields))
+    return Err(TextError(kind="unknown_variant", position=token.position))
+
+
+def parse_reference(target: TextType, mut tokens: TextTokens) -> Result[TextValue, TextError]:
+    """Read an inert typed identity without following it."""
+    token = tokens.take()
+    if token.kind != TextTokenKind.Word:
+        return Err(TextError(kind="type_mismatch", position=token.position))
+    return Ok(TextValue.Reference(type_spelling(target), token.text))
+
+
+def enum_has_variant(descriptions: list[TextDescription], path: str, name: str) -> bool:
+    """Return whether the exact enum declaration owns a named variant."""
+    for description in descriptions:
+        if description.path == path and description.shape == "Enum":
+            for variant in description.variants:
+                if variant.name == name:
+                    return true
+    return false
+
+
+def canonical_integer(value: str) -> bool:
+    """Accept decimal digits with an optional minus and no leading zeros or negative zero."""
+    if value == "" or value.startswith("+") or "_" in value:
+        return false
+    mut digits = value
+    if value.startswith("-"):
+        digits = value[1:]
+        if digits == "0":
+            return false
+    return canonical_unsigned(digits)
+
+
+def canonical_unsigned(value: str) -> bool:
+    """Return whether text is nonempty decimal digits without leading zeros."""
+    if value == "" or (len(value) > 1 and value.startswith("0")):
+        return false
+    for digit in value:
+        if digit < "0" or digit > "9":
+            return false
+    return true
+
+
+def integer_range(name: str) -> tuple[str, str]:
+    """Return the exact inclusive decimal range of one core integer spelling."""
+    match name:
+        "i8" => return ("-128", "127")
+        "i16" => return ("-32768", "32767")
+        "i32" => return ("-2147483648", "2147483647")
+        "i64" => return ("-9223372036854775808", "9223372036854775807")
+        "u8" => return ("0", "255")
+        "u16" => return ("0", "65535")
+        "u32" => return ("0", "4294967295")
+        "u64" => return ("0", "18446744073709551615")
+        _ => return ("0", "0")
+
+
+def valid_finite_float(value: str) -> bool:
+    """Refuse integer spellings, separators, plus signs and malformed decimal exponents."""
+    if value == "" or value.startswith("+") or "_" in value:
+        return false
+    if "." not in value and "e" not in value:
+        return false
+    mut exponent_parts = value.split("e")
+    if len(exponent_parts) > 2:
+        return false
+    base = exponent_parts[0]
+    if not decimal_float_base(base):
+        return false
+    if len(exponent_parts) == 2:
+        exponent = exponent_parts[1]
+        if exponent.startswith("+") or not decimal_digits(exponent, true):
+            return false
+    return true
+
+
+def decimal_float_base(value: str) -> bool:
+    """Validate digits around an optional point, retaining a leading minus only."""
+    parts = value.split(".")
+    if len(parts) > 2:
+        return false
+    if not decimal_digits(parts[0], true):
+        return false
+    if len(parts) == 2 and not decimal_digits(parts[1], false):
+        return false
+    return true
+
+
+def decimal_digits(value: str, signed: bool) -> bool:
+    """Return whether text is a nonempty decimal digit run with an optional leading minus."""
+    mut digits = value
+    if signed and digits.startswith("-"):
+        digits = digits[1:]
+    if digits == "":
+        return false
+    for digit in digits:
+        if digit < "0" or digit > "9":
+            return false
+    return true
+
+
+def all_zero(value: str) -> bool:
+    """Return whether every scalar is the decimal zero digit."""
+    for digit in value:
+        if digit != "0":
+            return false
+    return true
+
+
+def u32_bytes(value: u32) -> bytes:
+    """Write one IEEE binary32 bit pattern in network order."""
+    return [
+        ((value >> 24) & 255u32).saturating_resize[u8](),
+        ((value >> 16) & 255u32).saturating_resize[u8](),
+        ((value >> 8) & 255u32).saturating_resize[u8](),
+        (value & 255u32).saturating_resize[u8](),
+    ]
+
+
+def u64_bytes(value: u64) -> bytes:
+    """Write one IEEE binary64 bit pattern in network order."""
+    mut result: list[u8] = []
+    for shift in [56, 48, 40, 32, 24, 16, 8, 0]:
+        result.append(((value >> shift) & 255u64).saturating_resize[u8]())
+    return result
+
+
+def value_index(items: list[TextValue], candidate: TextValue) -> int:
+    """Find an equal supported scalar value without invoking user equality code."""
+    key = order_key(candidate)
+    for index in range(len(items)):
+        if order_key(items[index]) == key:
+            return index
+    return -1
+
+
+def entry_index(entries: list[TextMapEntry], candidate: TextValue) -> int:
+    """Find an equal supported map key before insertion."""
+    key = order_key(candidate)
+    for index in range(len(entries)):
+        if order_key(entries[index].key) == key:
+            return index
+    return -1
+
+
+def insert_ordered(mut items: list[TextValue], candidate: TextValue) -> None:
+    """Insert one supported scalar into stored order."""
+    mut index = 0
+    while index < len(items) and compare_text_values(items[index], candidate) < 0:
+        index += 1
+    items.append(candidate)
+    mut current = len(items) - 1
+    while current > index:
+        previous = items[current - 1]
+        items[current - 1] = items[current]
+        items[current] = previous
+        current -= 1
+
+
+def insert_entry(mut entries: list[TextMapEntry], candidate: TextMapEntry) -> None:
+    """Insert one map pair by its supported stored key order."""
+    mut index = 0
+    while index < len(entries) and compare_text_values(entries[index].key, candidate.key) < 0:
+        index += 1
+    entries.append(candidate)
+    mut current = len(entries) - 1
+    while current > index:
+        previous = entries[current - 1]
+        entries[current - 1] = entries[current]
+        entries[current] = previous
+        current -= 1
+
+
+def compare_text_values(left: TextValue, right: TextValue) -> int:
+    """Compare the core scalar kinds currently admitted as text map and set keys."""
+    match left:
+        TextValue.Integer(_, left_value) =>
+            match right:
+                TextValue.Integer(_, right_value) => return compare_integer(left_value, right_value)
+                _ => pass
+        _ => pass
+    left_key = order_key(left)
+    right_key = order_key(right)
+    if left_key < right_key:
+        return -1
+    if left_key > right_key:
+        return 1
+    return 0
+
+
+def order_key(value: TextValue) -> str:
+    """Return a collision-free key for the supported primitive text cases."""
+    match value:
+        TextValue.Boolean(flag) =>
+            if flag:
+                return "b1"
+            return "b0"
+        TextValue.Integer(_, decimal) => return "i" + decimal
+        TextValue.Text(text) => return "s" + text
+        TextValue.Binary(data) => return "x" + hexlify(data)
+        TextValue.NoneValue => return "n"
+        _ => return "unsupported"
+
+
+def limit_error(position: TextPosition) -> TextError:
+    """Keep resource limits distinct from malformed data."""
+    return TextError(kind="limit", position=position)

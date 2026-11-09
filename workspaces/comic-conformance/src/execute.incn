@@ -19,6 +19,7 @@ from adaptation_cases import check_adaptation
 from hash_cases import check_preimage, check_relation
 from row_reader_cases import check_reader
 from case_data import field, fields, hex_bytes, nodes, text
+from text_cases import check_text_print, check_text_read
 
 
 pub enum Outcome:
@@ -46,7 +47,7 @@ pub def run(corpus: Corpus) -> RunReport:
         mut record: dict[str, JsonValue] = {}
         record["id"] = JsonValue.string(item.id)
         record["operation"] = JsonValue.string(item.operation)
-        match evaluate(item):
+        match evaluate(item, corpus.texts):
             Outcome.Passed =>
                 passed += 1
                 record["status"] = JsonValue.string("passed")
@@ -67,7 +68,7 @@ pub def run(corpus: Corpus) -> RunReport:
     return RunReport(document=receipt(corpus, records, passed, failed, unsupported), exit_code=code)
 
 
-def evaluate(item: CorpusCase) -> Outcome:
+def evaluate(item: CorpusCase, texts: dict[str, bytes]) -> Outcome:
     """Convert a checker error to one failed case; no unexpected operation receives a green result."""
     if item.operation not in [
         "member_identity",
@@ -78,16 +79,18 @@ def evaluate(item: CorpusCase) -> Outcome:
         "hash_preimage",
         "value_relation",
         "binary_decode",
+        "text_read",
+        "text_print",
     ]:
         return Outcome.Unsupported("operation not implemented")
-    match check(item):
+    match check(item, texts):
         Ok(true) => return Outcome.Passed
 
         Ok(false) => return Outcome.Failed("computed result differs from the independent expectation")
         Err(message) => return Outcome.Failed(message)
 
 
-def check(item: CorpusCase) -> Result[bool, str]:
+def check(item: CorpusCase, texts: dict[str, bytes]) -> Result[bool, str]:
     """Each case owns one shared budget; hashing supplied expected bytes is never an implementation."""
     mut budget = Budget.create(bytes=1048576, elements=1048576, depth=128).map_err((error) => error.message())?
     match item.operation:
@@ -120,6 +123,8 @@ def check(item: CorpusCase) -> Result[bool, str]:
         "hash_preimage" => return check_preimage(item.document, budget)
         "value_relation" => return check_relation(item.document, budget)
         "binary_decode" => return check_reader(item.document)
+        "text_read" => return check_text_read(item.document, texts, budget)
+        "text_print" => return check_text_print(item.document, texts, budget)
         _ => return Err("operation dispatcher mismatch")
 
 

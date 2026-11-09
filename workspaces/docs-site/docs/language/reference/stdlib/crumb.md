@@ -257,3 +257,36 @@ An absent-policy optional cell omits its outer option tag. `field_view` returns 
 | `MissingField`, `RecordIndex` | Invalid field identity/unknown field or a negative/out-of-range record lookup. |
 
 No failed finite admission exposes a partial set or unchecked view. The prefix API still requires a complete envelope; a paused transport is not successful completion. There is no column decoder, incremental record-yielding stream or generated model reconstruction in this surface.
+
+## COMIC text
+
+`std.primitives.crumb` exports the bounded COMIC reader, canonical printer and their inert typed carriers. The reader accepts UTF-8 data and never loads code, follows references or evaluates declaration properties.
+
+| API | Return type | Contract |
+| --- | --- | --- |
+| `TextContext.create(registrations: list[KindRegistration], admitted_type_names: list[str], mut budget: Budget)` | `Result[TextContext, CrumbError]` | Build a text context through the checked shared kind registry. Registration names and ordering facts consume the supplied budget. |
+| `TextContext.core(mut budget: Budget)` | `Result[TextContext, CrumbError]` | Build a context containing only the core `Record` and `Enum` kinds. |
+| `read_comic(data: bytes, context: TextContext, mut budget: Budget)` | `Result[TextDocument, TextError]` | Decode one UTF-8 COMIC snapshot. Input bytes, retained token bytes, token elements and nesting consume the shared budget. Invalid UTF-8, malformed grammar, unknown or duplicate declarations, type mismatches, ambiguous selections and limit exhaustion return `TextError`. |
+| `read_comic_text(source: str, context: TextContext, mut budget: Budget)` | `Result[TextDocument, TextError]` | Read an already decoded string under the same token, element and nesting limits. Callers that begin with bytes use `read_comic` so UTF-8 validation and the input-byte charge remain part of the operation. |
+| `print_comic(document: TextDocument, context: TextContext, mut budget: Budget)` | `Result[bytes, TextError]` | Return the unique canonical UTF-8 form with LF separators and a final newline. Output bytes and traversed document elements consume the shared budget. Invalid typed carriers, unknown kinds and limit exhaustion return `TextError`. |
+
+`TextError(kind: str, position: TextPosition)` reports a stable refusal category. `TextPosition(line: int, column: int)` is one-based and counts Unicode scalar values. `TextError.message() -> str` returns `"<kind> at <line>:<column>"`. Printer errors use position `1:1`.
+
+`TextDocument(descriptions: list[TextDescription], values: list[TextValue])` owns descriptions and root values. Descriptions are printed by path and kind; values retain their document order, and consecutive root values of one type print as one table.
+
+| Carrier | Fields or variants |
+| --- | --- |
+| `TextDescription` | `path: str`, `kind: str`, `shape: str`, `properties: list[TextProperty]`, `fields: list[TextField]`, `variants: list[TextVariant]` |
+| `TextField` | `name: str`, `storage_type: TextType`, `absent: AbsentPolicy`, `canonical: bool`, `properties: list[TextProperty]` |
+| `TextVariant` | `name: str`, `fields: list[TextField]` |
+| `TextProperty` | `name: str`, `value: TextPropertyValue` |
+| `TextNamedValue` | `name: str`, `value: TextValue` |
+| `TextMapEntry` | `key: TextValue`, `value: TextValue` |
+
+`TextType` has `Scalar(str)`, `Decimal(int, int)`, `List(list[TextType])`, `Set(list[TextType])`, `Map(list[TextType])`, `Option(list[TextType])`, `Union(list[TextType])`, `Reference(list[TextType])` and `Named(str)`. The list-backed constructor variants contain their declared fixed arity: one item for list, set, option and reference; two for map; one or more for union.
+
+`TextPropertyValue` has `Symbol(str)`, `Text(str)`, `Boolean(bool)`, `Integer(str)`, `List(list[TextPropertyValue])` and `Group(list[TextProperty])`. Symbols and groups remain inert. A known registration supplies canonical outer and nested property orders; an unknown order retains read order.
+
+`TextValue` has `NoneValue`, `Some(list[TextValue])`, `Boolean(bool)`, `Integer(str, str)`, `Float(int, bytes)`, `Decimal(str, int, int)`, `Text(str)`, `Binary(bytes)`, `Withheld(str)`, `List(list[TextValue])`, `Set(list[TextValue])`, `Map(list[TextMapEntry])`, `Record(str, list[TextNamedValue])`, `Enum(str, str, list[TextNamedValue])`, `Union(str, list[TextValue])` and `Reference(str, str)`. Integer values retain their exact storage type and decimal digits. Float values retain width and network-order IEEE bits; printing derives the shortest canonical spelling from those bits. Decimal values retain coefficient, precision and scale. Withheld secret values print only as `<secret>`.
+
+Comments are discarded. A cut between complete entries yields the shorter document; a cut inside a value or table returns `unexpected_end`. Raw Unicode bidirectional controls are refused everywhere and must use the canonical escaped spelling in string data. A reference retains its target type and identity text without resolution.
