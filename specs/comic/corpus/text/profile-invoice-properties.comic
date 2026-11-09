@@ -1,0 +1,1 @@
+shop.billing.Invoice = Incan.Model { visibility = Public, id: Int, customer: Str, total: shop.billing.Cents }
