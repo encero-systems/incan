@@ -1,0 +1,164 @@
+"""Read the committed corpus directly; never derive expectations from a codec."""
+
+from std.fs import Path
+from std.json import JsonValue, parse
+from std.primitives.hash import sha256
+from std.primitives.hex import hexlify
+from std.primitives.text import decode_utf8
+
+
+pub model CorpusCase:
+    """One independently authored case, retaining its exact JSON strings and float-bit labels."""
+
+    pub id: str
+    pub operation: str
+    pub document: JsonValue
+
+
+pub model Corpus:
+    """A fully pin-verified manifest and its globally unique cases."""
+
+    pub manifest_digest: str
+    pub data_files: int
+    pub text_files: int
+    pub cases: list[CorpusCase]
+    pub texts: dict[str, bytes]
+
+
+pub def load(manifest: Path) -> Result[Corpus, str]:
+    """
+    Load one verified corpus snapshot.
+
+    1. Read and validate the manifest once.
+    2. Verify data files and collect uniquely named cases from those same bytes.
+    3. Retain verified text bytes so later dispatch cannot reread changed files.
+    """
+    # 1. The receipt and parser use the same manifest snapshot.
+    raw = read_bytes(manifest)?
+    document = read_json(raw)?
+    if text(document, "schema")? != "comic.foundation-corpus/1":
+        return Err("unsupported corpus manifest schema")
+    files = array(document, "files")?
+    text_files = array(document, "text_files")?
+
+    # 2. Hash and parse the same bytes; reject repeated paths or case identities.
+    mut seen_paths: set[str] = set()
+    mut seen_ids: set[str] = set()
+    mut cases: list[CorpusCase] = []
+    for entry in files:
+        path = checked_path(manifest.parent(), entry, seen_paths)?
+        contents = read_json(read_pinned(path, text(entry, "sha256")?)?)?
+        append_cases(contents, entry, seen_ids, cases)?
+    if len(cases) == 0:
+        return Err("zero corpus cases selected")
+
+    # 3. Subsequent operations consume these verified bytes, not mutable paths.
+    mut texts: dict[str, bytes] = {}
+    for entry in text_files:
+        path = checked_path(manifest.parent(), entry, seen_paths)?
+        texts[text(entry, "path")?] = read_pinned(path, text(entry, "sha256")?)?
+    return Ok(
+        Corpus(
+            manifest_digest=hexlify(sha256.digest(raw)),
+            data_files=len(files),
+            text_files=len(text_files),
+            cases=cases,
+            texts=texts,
+        ),
+    )
+
+
+def append_cases(
+    contents: JsonValue,
+    entry: JsonValue,
+    mut seen: set[str],
+    mut cases: list[CorpusCase],
+) -> Result[None, str]:
+    """Admit a data file only with the declared operation, case count and unique identities."""
+    operation = text(entry, "operation")?
+    if text(contents, "operation")? != operation:
+        return Err("corpus operation differs from manifest")
+    entries = array(contents, "cases")?
+    expected = entry.require("cases").and_then((value) => value.expect_int()).map_err((error) => error.message())?
+    if len(entries) != expected:
+        return Err("corpus case count differs from manifest")
+    for item in entries:
+        identity = text(item, "id")?
+        if identity == "" or identity in seen:
+            return Err(f"empty or duplicate case id: {identity}")
+        seen.add(identity)
+        cases.append(CorpusCase(id=identity, operation=operation, document=item))
+    return Ok(None)
+
+
+pub def inventory(corpus: Corpus) -> JsonValue:
+    """Report verified inventory separately from unimplemented conformance dispatch."""
+    mut records: list[JsonValue] = []
+    for item in corpus.cases:
+        mut record: dict[str, JsonValue] = {}
+        record["id"] = JsonValue.string(item.id)
+        record["operation"] = JsonValue.string(item.operation)
+        record["status"] = JsonValue.string("unsupported")
+        records.append(JsonValue.object(record))
+    mut receipt: dict[str, JsonValue] = {}
+    receipt["schema"] = JsonValue.string("comic.conformance-receipt/1")
+    receipt["status"] = JsonValue.string("incomplete")
+    receipt["inventory_verified"] = JsonValue.bool(true)
+    receipt["manifest_sha256"] = JsonValue.string(corpus.manifest_digest)
+    receipt["data_files"] = JsonValue.int(corpus.data_files)
+    receipt["text_files"] = JsonValue.int(corpus.text_files)
+    receipt["selected"] = JsonValue.int(len(corpus.cases))
+    receipt["passed"] = JsonValue.int(0)
+    receipt["failed"] = JsonValue.int(0)
+    receipt["unsupported"] = JsonValue.int(len(corpus.cases))
+    receipt["cases"] = JsonValue.array(records)
+    return JsonValue.object(receipt)
+
+
+pub def verify_pin(path: Path, expected: str) -> Result[None, str]:
+    """Hash exact file bytes; a stale or corrupted pin is a failure before case execution."""
+    read_pinned(path, expected)?
+    return Ok(None)
+
+
+def read_pinned(path: Path, expected: str) -> Result[bytes, str]:
+    """Return the verified snapshot itself, preventing a second read from changing its meaning."""
+    raw = read_bytes(path)?
+    if hexlify(sha256.digest(raw)) != expected:
+        return Err(f"corpus digest differs for {path.0}")
+    return Ok(raw)
+
+
+def read_bytes(path: Path) -> Result[bytes, str]:
+    """Own one file snapshot and convert only the test runner's filesystem errors to text."""
+    return path.read_bytes().map_err((error) => error.message())
+
+
+def checked_path(root: Path, entry: JsonValue, mut seen: set[str]) -> Result[Path, str]:
+    """Keep manifest members relative to the corpus root and disallow repeated members."""
+    relative = text(entry, "path")?
+    if relative == "" or relative in seen or "\\" in relative or ":" in relative:
+        return Err("invalid or duplicate corpus path")
+    for segment in relative.split("/"):
+        if segment == "" or segment == "." or segment == "..":
+            return Err("corpus path escapes its declared root")
+    seen.add(relative)
+    return Ok(root.joinpath(relative))
+
+
+def read_json(raw: bytes) -> Result[JsonValue, str]:
+    """Parse the hashed snapshot; numeric expectations remain tagged strings and bit labels."""
+    valid, contents = decode_utf8(raw, false)
+    if not valid:
+        return Err("corpus document is not valid UTF-8")
+    return parse(contents).map_err((error) => error.message())
+
+
+def text(value: JsonValue, key: str) -> Result[str, str]:
+    """Read one required string without coercing numeric or missing values."""
+    return value.require(key).and_then((item) => item.expect_str()).map_err((error) => error.message())
+
+
+def array(value: JsonValue, key: str) -> Result[list[JsonValue], str]:
+    """Read one required array, preserving independently authored case data."""
+    return value.require(key).and_then((item) => item.expect_array()).map_err((error) => error.message())
