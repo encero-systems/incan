@@ -1,0 +1,171 @@
+"""Fixed executable artifact prefix and selected-read evidence independent of the generated record codec."""
+
+from executable_records import EXECUTABLE_SURFACE_GENERATION, MAX_EXECUTABLE_INDEX_BYTES
+
+pub const EXECUTABLE_PREFIX_BYTES: int = 32
+
+
+@derive(Eq)
+pub model ExecutableTransportPrefix:
+    """Lengths admitted before the sealed index or any declaration RecordSet is decoded."""
+
+    pub index_length: u64
+    pub declaration_area_length: u64
+
+
+@derive(Eq)
+pub model ExecutableReadCounters:
+    """Separate whole-artifact integrity work from selected declaration admission and reconstruction."""
+
+    pub content_bytes_hashed: u64
+    pub index_bytes_decoded: u64
+    pub declaration_envelopes_admitted: u64
+    pub bodies_reconstructed: u64
+    pub requested_range_bytes: u64
+
+
+pub def encode_executable_prefix(prefix: ExecutableTransportPrefix) -> Result[bytes, str]:
+    """
+    Encode the literal generation-54 transport prefix without Postcard framing.
+
+    The fixed layout is eight magic/profile bytes followed by little-endian `u64` generation, sealed-index length
+    and declaration-area length. The sealed index and separately addressable sealed RecordSets follow this prefix.
+    """
+    validate_prefix_lengths(prefix)?
+    mut output: list[u8] = []
+    append_bytes(output, executable_magic())
+    append_u64(output, generation_u64()?)
+    append_u64(output, prefix.index_length)
+    append_u64(output, prefix.declaration_area_length)
+    return Ok(output)
+
+
+pub def decode_executable_prefix(prefix_bytes: bytes, artifact_length: u64) -> Result[ExecutableTransportPrefix, str]:
+    """
+    Admit the fixed prefix and exact artifact extent before any generated record decoder is called.
+
+    A trailing or truncated artifact refuses here. The caller next admits the bounded sealed index, then range-reads
+    only the selected declaration RecordSets from the immutable bytes whose complete content digest it verified.
+    """
+    if len(prefix_bytes) != EXECUTABLE_PREFIX_BYTES:
+        return Err("executable prefix has the wrong fixed length")
+    if prefix_bytes[0:8] != executable_magic():
+        return Err("executable artifact has the wrong profile magic")
+    generation = read_u64(prefix_bytes, 8)?
+    expected_generation = generation_u64()?
+    if generation != expected_generation:
+        return Err("executable artifact has an unsupported generation")
+    prefix = ExecutableTransportPrefix(
+        index_length=read_u64(prefix_bytes, 16)?,
+        declaration_area_length=read_u64(prefix_bytes, 24)?,
+    )
+    validate_prefix_lengths(prefix)?
+    expected_length = artifact_length(prefix)?
+    if artifact_length != expected_length:
+        return Err("executable artifact length differs from its prefix")
+    return Ok(prefix)
+
+
+pub def initial_read_counters(artifact_length: u64, index_length: u64) -> ExecutableReadCounters:
+    """Record complete content verification and bounded index admission before declaration selection."""
+    return ExecutableReadCounters(
+        content_bytes_hashed=artifact_length,
+        index_bytes_decoded=index_length,
+        declaration_envelopes_admitted=0u64,
+        bodies_reconstructed=0u64,
+        requested_range_bytes=0u64,
+    )
+
+
+pub def record_selected_declaration(
+    counters: ExecutableReadCounters,
+    range_length: u64,
+) -> Result[ExecutableReadCounters, str]:
+    """Advance only selected-range work after one sealed declaration RecordSet is admitted and reconstructed."""
+    return Ok(
+        ExecutableReadCounters(
+            content_bytes_hashed=counters.content_bytes_hashed,
+            index_bytes_decoded=counters.index_bytes_decoded,
+            declaration_envelopes_admitted=checked_increment(counters.declaration_envelopes_admitted)?,
+            bodies_reconstructed=checked_increment(counters.bodies_reconstructed)?,
+            requested_range_bytes=checked_add(counters.requested_range_bytes, range_length)?,
+        ),
+    )
+
+
+def executable_magic() -> bytes:
+    """The literal `incan.executable-surface/2` profile marker; generation remains a separate field."""
+    return b"INCEXE\x00\x02"
+
+
+def validate_prefix_lengths(prefix: ExecutableTransportPrefix) -> Result[None, str]:
+    """Bound the sealed index and prove the complete artifact length fits `u64`."""
+    if prefix.index_length > MAX_EXECUTABLE_INDEX_BYTES:
+        return Err("executable index exceeds the admitted byte limit")
+    _ = artifact_length(prefix)?
+    return Ok(None)
+
+
+def artifact_length(prefix: ExecutableTransportPrefix) -> Result[u64, str]:
+    """Compute fixed prefix plus index plus declaration area without unsigned overflow."""
+    prefix_bytes = integer_u64(EXECUTABLE_PREFIX_BYTES, "prefix length")?
+    with_index = checked_add(prefix_bytes, prefix.index_length)?
+    return checked_add(with_index, prefix.declaration_area_length)
+
+
+def checked_increment(value: u64) -> Result[u64, str]:
+    """Advance an evidence counter without wraparound."""
+    return checked_add(value, 1u64)
+
+
+def checked_add(left: u64, right: u64) -> Result[u64, str]:
+    """Add two unsigned transport quantities while refusing overflow."""
+    if 18446744073709551615u64 - left < right:
+        return Err("executable transport length or counter overflow")
+    return Ok(left + right)
+
+
+def append_bytes(mut output: list[u8], source: bytes) -> None:
+    """Append one exact byte sequence to an owned transport buffer."""
+    for value in source:
+        output.append(value)
+
+
+def append_u64(mut output: list[u8], value: u64) -> None:
+    """Append one nonnegative integer as an exact little-endian `u64`."""
+    number = int(value)
+    output.extend(
+        [
+            (number % 256).wrapping_resize(),
+            ((number // 256) % 256).wrapping_resize(),
+            ((number // 65536) % 256).wrapping_resize(),
+            ((number // 16777216) % 256).wrapping_resize(),
+            ((number // 4294967296) % 256).wrapping_resize(),
+            ((number // 1099511627776) % 256).wrapping_resize(),
+            ((number // 281474976710656) % 256).wrapping_resize(),
+            ((number // 72057594037927936) % 256).wrapping_resize(),
+        ],
+    )
+
+
+def read_u64(source: bytes, offset: int) -> Result[u64, str]:
+    """Read one little-endian `u64` from an already length-checked fixed prefix."""
+    value = int(source[offset]) + int(source[offset + 1]) * 256 + int(source[offset + 2]) * 65536 + int(
+        source[offset + 3],
+    ) * 16777216 + int(source[offset + 4]) * 4294967296 + int(source[offset + 5]) * 1099511627776 + int(
+        source[offset + 6],
+    ) * 281474976710656 + int(source[offset + 7]) * 72057594037927936
+    return integer_u64(value, "prefix integer")
+
+
+def generation_u64() -> Result[u64, str]:
+    """Return the selected representation generation in its exact wire width."""
+    return integer_u64(EXECUTABLE_SURFACE_GENERATION, "generation")
+
+
+def integer_u64(value: int, label: str) -> Result[u64, str]:
+    """Convert a nonnegative transport integer without truncation or wraparound."""
+    converted: Option[u64] = value.try_resize()
+    match converted:
+        Some(found) => return Ok(found)
+        None => return Err(f"executable {label} does not fit u64")

@@ -10,6 +10,8 @@
 | `records` | The public read boundary over `record_scope`. |
 | `record_service` | The DD-0013 compiler producer interface over those reads: stages, ranks, preparation and evaluation. |
 | `checker_records` | The canonical checker record schema, its bounded field codec and its semantic digest, for the initial free-function profile. |
+| `executable_records` | Generation-54 public and implementation coverage, bounded index admission and canonical selection closure. |
+| `executable_transport` | The fixed `incan.executable-surface/2` prefix and counters that separate whole-artifact hashing from selected RecordSet admission. |
 
 ## Contract
 
@@ -17,6 +19,14 @@
 - **Contracts only.** This Loaf does not implement record-scoped checking or plan production. The current reader's table positions and boolean witnesses cannot certify revision-bound read roots. Producers require the existing checker and Body IR operations to consume final keyed environments before they can implement this interface; whole-program checking or lowering followed by record slicing does not satisfy it.
 - **Canonical values.** A checker record is a profile, a checked stable owner, a position-free semantic root and ordered fields. Native objects never enter the codec, and an unsupported capability is refused, never silently omitted.
 - **Compatibility.** `incan_mir_lowering` re-exports the `records` and `record_service` names from its facade.
+
+## Executable surface profile
+
+`incan.executable-surface/2` allocates representation generation 54 rather than reinterpreting generation 53. Its 32-byte fixed prefix is the eight bytes `INCEXE\0\x02`, followed by three little-endian `u64` fields: generation, sealed-index length and declaration-area length. The complete artifact is exactly that prefix, one bounded sealed index and a declaration area containing separately addressable sealed declaration RecordSets. The index remains limited to 16 MiB.
+
+Index admission keeps public roots separate from private implementation dependencies, binds every local entry to the exact package name and version, and requires complete contiguous nonempty ranges. Selection may follow a local private requirement only from an authorized public root. Foreign requirements are returned to the admitted package resolver; they are never looked up as private entries in the current package.
+
+The fixed prefix and index rules do not encode compiler records themselves. That route depends on the generated RFC 173 shape, walk and reconstruct hooks and the compiler-facing typed Crumb facade. Until those dependencies are integrated, this Loaf supplies only the transport and semantic admission contracts; no production publisher or reader may substitute a handwritten per-model serializer or Postcard payload.
 
 The [record-scope cases](./tests/test_record_scope.incn) and [canonical controls](./tests/canonical_record_controls.incn) cover these contracts. The canonical controls compare against the frontend's native adapter, which stays out of this Loaf's manifest, so installed CI's Oven test step, `scripts/oven_tests.incn`, runs them in an isolated project that adds it.
 

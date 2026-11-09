@@ -15,7 +15,7 @@ pub const IDENTITY_ADAPTER_GENERATION: int = 1
 pub const IDENTITY_ADAPTER_REMOVAL_GATE: str = "remove only after every direct native identity and source-span consumer accepts the Incan-owned declarations"
 
 
-@derive(Eq)
+@derive(Eq, Ord)
 pub enum SymbolNamespace:
     """How a checked binding is resolved; equal spellings in different namespaces remain different identities."""
 
@@ -24,7 +24,7 @@ pub enum SymbolNamespace:
     ModulePath
 
 
-@derive(Eq)
+@derive(Eq, Ord)
 pub model PackageIdentity:
     """The selected package name and immutable version owning one published declaration."""
 
@@ -32,7 +32,7 @@ pub model PackageIdentity:
     pub version: str
 
 
-@derive(Eq)
+@derive(Eq, Ord)
 pub enum SymbolOrigin:
     """The semantic owner of a declaration, independent of the source spelling used to reach it."""
 
@@ -42,7 +42,7 @@ pub enum SymbolOrigin:
     Builtin
 
 
-@derive(Eq)
+@derive(Eq, Ord)
 pub enum DeclarationKind:
     """Every declaration category carried by the native `SemanticSourceTargetKind` source enum."""
 
@@ -72,7 +72,7 @@ pub enum DeclarationKind:
     Other(str)
 
 
-@derive(Eq)
+@derive(Eq, Ord)
 pub model HirSourceSpan:
     """An owned source file, inclusive-exclusive byte range and optional 32-byte expansion identity."""
 
@@ -91,7 +91,7 @@ pub model PlanSourceSpanRecord:
     pub column: int
 
 
-@derive(Eq)
+@derive(Eq, Ord)
 pub model CanonicalSymbolId:
     """One compilation's checked declaration identity, retaining its exact source and expansion origin."""
 

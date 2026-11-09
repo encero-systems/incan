@@ -1,0 +1,79 @@
+"""Literal generation-54 prefix and selected-read evidence controls for the executable transport."""
+
+from executable_records import MAX_EXECUTABLE_INDEX_BYTES
+from executable_transport import (
+    ExecutableReadCounters,
+    ExecutableTransportPrefix,
+    decode_executable_prefix,
+    encode_executable_prefix,
+    initial_read_counters,
+    record_selected_declaration,
+)
+
+
+pub def test_prefix_has_one_fixed_non_postcard_layout() -> None:
+    """Freeze profile magic, generation and two little-endian lengths as an independent literal case."""
+    prefix = ExecutableTransportPrefix(index_length=3u64, declaration_area_length=5u64)
+    expected = b"INCEXE\x00\x026\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x00\x00\x00\x00\x00\x05\x00\x00\x00\x00\x00\x00\x00"
+    assert encode_executable_prefix(prefix) == Ok(expected)
+    assert decode_executable_prefix(expected, 40u64) == Ok(prefix)
+
+
+pub def test_prefix_refuses_wrong_profile_and_generation() -> None:
+    """Refuse a different profile marker and generation before metadata decoding."""
+    wrong_profile = b"XNCEXE\x00\x026\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+    assert refused(wrong_profile, 32u64, "executable artifact has the wrong profile magic")
+    wrong_generation = b"INCEXE\x00\x025\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+    assert refused(wrong_generation, 32u64, "executable artifact has an unsupported generation")
+
+
+pub def test_prefix_refuses_truncation_trailing_bytes_and_oversized_index() -> None:
+    """Refuse structural extent mismatches and the retained 16 MiB index limit."""
+    assert refused(b"INCEXE", 6u64, "executable prefix has the wrong fixed length")
+    prefix = ExecutableTransportPrefix(index_length=0u64, declaration_area_length=0u64)
+    encoded = encoded_prefix(prefix)
+    assert refused(encoded, 33u64, "executable artifact length differs from its prefix")
+    oversized = ExecutableTransportPrefix(index_length=MAX_EXECUTABLE_INDEX_BYTES + 1u64, declaration_area_length=0u64)
+    match encode_executable_prefix(oversized):
+        Err(reason) =>
+            assert reason == "executable index exceeds the admitted byte limit"
+        Ok(_bytes) =>
+            assert false
+
+
+pub def test_selected_read_counters_separate_hashing_from_semantic_work() -> None:
+    """Growing unused bytes changes hashing while one selected range still admits and reconstructs once."""
+    small = record_selected_declaration(initial_read_counters(100u64, 20u64), 30u64)
+    large = record_selected_declaration(initial_read_counters(1000u64, 20u64), 30u64)
+    assert small == Ok(
+        ExecutableReadCounters(
+            content_bytes_hashed=100u64,
+            index_bytes_decoded=20u64,
+            declaration_envelopes_admitted=1u64,
+            bodies_reconstructed=1u64,
+            requested_range_bytes=30u64,
+        ),
+    )
+    assert large == Ok(
+        ExecutableReadCounters(
+            content_bytes_hashed=1000u64,
+            index_bytes_decoded=20u64,
+            declaration_envelopes_admitted=1u64,
+            bodies_reconstructed=1u64,
+            requested_range_bytes=30u64,
+        ),
+    )
+
+
+def encoded_prefix(prefix: ExecutableTransportPrefix) -> bytes:
+    """Return a known-valid prefix for refusal controls that mutate only the artifact extent."""
+    match encode_executable_prefix(prefix):
+        Ok(encoded) => return encoded
+        Err(_reason) => return b""
+
+
+def refused(prefix: bytes, artifact_length: u64, expected: str) -> bool:
+    """Require prefix admission to refuse with one exact stable structural reason."""
+    match decode_executable_prefix(prefix, artifact_length):
+        Err(reason) => return reason == expected
+        Ok(_prefix) => return false

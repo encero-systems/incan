@@ -36,13 +36,7 @@ pub from checked_types import (
     CheckedType,
     valid_checked_type,
 )
-pub from body_ir_values import (
-    CompilerBlock,
-    CompilerCallee,
-    CompilerRvalue,
-    CompilerStatement,
-    CompilerStatementKind,
-)
+pub from body_ir_values import CompilerBlock, CompilerCallee, CompilerRvalue, CompilerStatement, CompilerStatementKind
 pub from body_ir_declarations import (
     BODY_IR_ADAPTER_PROFILE,
     BODY_IR_ADAPTER_SOURCE,
@@ -67,6 +61,27 @@ pub from body_ir_declarations import (
     valid_invocation_view,
     valid_published_expanded_body,
     invalidate_owned_callable_fields,
+)
+pub from executable_records import (
+    EXECUTABLE_SURFACE_PROFILE,
+    EXECUTABLE_SURFACE_GENERATION,
+    MAX_EXECUTABLE_INDEX_BYTES,
+    CoverageReason,
+    ExecutableDeclarationCoverage,
+    ExecutableIndexEntry,
+    ExecutableSurfaceIndex,
+    ExecutableSelection,
+    valid_executable_surface_index,
+    select_execution_closure,
+)
+pub from executable_transport import (
+    EXECUTABLE_PREFIX_BYTES,
+    ExecutableTransportPrefix,
+    ExecutableReadCounters,
+    encode_executable_prefix,
+    decode_executable_prefix,
+    initial_read_counters,
+    record_selected_declaration,
 )
 pub from records import (
     RecordKey,

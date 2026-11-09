@@ -1,0 +1,266 @@
+"""Authored executable-surface index records and admission rules for the Crumb transport profile."""
+
+from compiler_records import CanonicalSymbolId, DeclarationKind, SymbolOrigin, valid_canonical_symbol_id
+
+pub const EXECUTABLE_SURFACE_PROFILE: str = "incan.executable-surface/2"
+pub const EXECUTABLE_SURFACE_GENERATION: int = 54
+pub const MAX_EXECUTABLE_INDEX_BYTES: u64 = 16777216u64
+
+
+@derive(Eq)
+pub enum CoverageReason(str):
+    """Stable reason a public declaration has no executable record in this profile."""
+
+    UnsupportedConstruct = "unsupported-construct"
+    PrivateDependency = "private-dependency"
+    UnresolvedReference = "unresolved-reference"
+    RequiredDeclarationUnavailable = "required-declaration-unavailable"
+    NoExecutableDeclaration = "no-executable-declaration"
+
+
+@derive(Eq)
+pub enum ExecutableDeclarationCoverage:
+    """One declaration's selected record range, deliberate absence or owning type context."""
+
+    Covered(u64, u64, list[CanonicalSymbolId])
+    Uncovered(CoverageReason)
+    TypeContext(CanonicalSymbolId)
+
+
+@derive(Eq)
+pub model ExecutableIndexEntry:
+    """One canonical declaration and its explicit executable coverage."""
+
+    pub identity: CanonicalSymbolId
+    pub coverage: ExecutableDeclarationCoverage
+
+
+@derive(Eq)
+pub model ExecutableSurfaceIndex:
+    """Bounded public roots and private implementation dependencies for one selected package."""
+
+    pub library: str
+    pub package_version: str
+    pub public: list[ExecutableIndexEntry]
+    pub implementation: list[ExecutableIndexEntry]
+
+
+@derive(Eq)
+pub model ExecutableSelection:
+    """Local declaration records and foreign requirements selected for one authorized public root."""
+
+    pub declarations: list[CanonicalSymbolId]
+    pub external_requirements: list[CanonicalSymbolId]
+
+
+pub def valid_executable_surface_index(
+    index: ExecutableSurfaceIndex,
+    index_length: u64,
+    payload_length: u64,
+) -> Result[None, str]:
+    """
+    Admit one complete executable index before any declaration is reconstructed.
+
+    1. Validate the package header and each strictly ordered partition.
+    2. Merge public and implementation entries and validate their complete contiguous ranges.
+    3. Validate type-context owners only after every covered declaration is known.
+    """
+    # 1. Empty or oversized metadata cannot bind an artifact, and each partition owns unique sorted identities.
+    if index.library == "" or index.package_version == "":
+        return Err("executable index has no package identity or version")
+    if index_length > MAX_EXECUTABLE_INDEX_BYTES:
+        return Err("executable index exceeds the admitted byte limit")
+    validate_partition(index.public, index.library, index.package_version, "public")?
+    validate_partition(index.implementation, index.library, index.package_version, "implementation")?
+    if partitions_overlap(index.public, index.implementation):
+        return Err("public and implementation identities overlap")
+    # 2. Covered fragments fill one finite payload exactly, in canonical identity order.
+    entries = merged_entries(index.public, index.implementation)
+    mut next_offset: u64 = 0u64
+    for entry in entries:
+        match entry.coverage:
+            ExecutableDeclarationCoverage.Covered(offset, length, requirements) =>
+                if offset != next_offset or length == 0u64:
+                    return Err("fragment ranges overlap, contain gaps, or are empty")
+                if 18446744073709551615u64 - offset < length:
+                    return Err("fragment range overflow")
+                validate_requirements(requirements)?
+                next_offset = offset + length
+            ExecutableDeclarationCoverage.Uncovered(_reason) => pass
+            ExecutableDeclarationCoverage.TypeContext(_owner) => pass
+    if next_offset != payload_length:
+        return Err("executable index does not match payload length")
+    # 3. Member contexts name a covered owner in this same package and of the right declaration kind.
+    for entry in entries:
+        match entry.coverage:
+            ExecutableDeclarationCoverage.TypeContext(owner) => validate_type_context(entry.identity, owner, entries)?
+            _ => pass
+    return Ok(None)
+
+
+pub def select_execution_closure(
+    index: ExecutableSurfaceIndex,
+    root: CanonicalSymbolId,
+) -> Result[ExecutableSelection, str]:
+    """
+    Select an authorized public root and its finite executable dependency closure.
+
+    A private implementation can satisfy a checked requirement but can never start selection. Type-context members
+    select their owner, and uncovered declarations refuse instead of falling back to another profile.
+    """
+    match public_coverage(index, root):
+        None => return Err("selected declaration is not a public executable root")
+        Some(_coverage) => pass
+    mut pending = [root]
+    mut visited: list[CanonicalSymbolId] = []
+    mut selected: list[CanonicalSymbolId] = []
+    mut external_requirements: list[CanonicalSymbolId] = []
+    mut cursor = 0
+    while cursor < len(pending):
+        identity = pending[cursor]
+        cursor += 1
+        if identity in visited:
+            continue
+        visited.append(identity)
+        match execution_coverage(index, identity):
+            None => return Err("required executable declaration is absent from the index")
+            Some(ExecutableDeclarationCoverage.Uncovered(_reason)) =>
+                return Err("required executable declaration is deliberately uncovered")
+            Some(ExecutableDeclarationCoverage.TypeContext(owner)) => pending.append(owner)
+            Some(ExecutableDeclarationCoverage.Covered(_offset, _length, requirements)) =>
+                selected.append(identity)
+                for requirement in requirements:
+                    if owned_by(requirement, index.library, index.package_version):
+                        pending.append(requirement)
+                    elif requirement not in external_requirements:
+                        external_requirements.append(requirement)
+    return Ok(ExecutableSelection(declarations=selected, external_requirements=external_requirements))
+
+
+def validate_partition(
+    entries: list[ExecutableIndexEntry],
+    library: str,
+    package_version: str,
+    label: str,
+) -> Result[None, str]:
+    """Require one identity-sorted, duplicate-free partition owned by the selected package."""
+    for index in range(len(entries)):
+        if not valid_canonical_symbol_id(entries[index].identity):
+            return Err(f"{label} executable identity is malformed")
+        if not owned_by(entries[index].identity, library, package_version):
+            return Err(f"{label} executable identity belongs to another package")
+        if index > 0 and not entries[index - 1].identity < entries[index].identity:
+            return Err(f"{label} executable identities are duplicated or unsorted")
+    return Ok(None)
+
+
+def validate_requirements(requirements: list[CanonicalSymbolId]) -> Result[None, str]:
+    """Require complete valid canonical requirements in strict identity order."""
+    for index in range(len(requirements)):
+        if not valid_canonical_symbol_id(requirements[index]):
+            return Err("executable requirement identity is malformed")
+        if index > 0 and not requirements[index - 1] < requirements[index]:
+            return Err("executable requirements are duplicated or unsorted")
+    return Ok(None)
+
+
+def partitions_overlap(public: list[ExecutableIndexEntry], implementation: list[ExecutableIndexEntry]) -> bool:
+    """Report whether an implementation identity is also exposed as a public root."""
+    mut public_index = 0
+    mut implementation_index = 0
+    while public_index < len(public) and implementation_index < len(implementation):
+        if public[public_index].identity == implementation[implementation_index].identity:
+            return true
+        if public[public_index].identity < implementation[implementation_index].identity:
+            public_index += 1
+        else:
+            implementation_index += 1
+    return false
+
+
+def merged_entries(
+    public: list[ExecutableIndexEntry],
+    implementation: list[ExecutableIndexEntry],
+) -> list[ExecutableIndexEntry]:
+    """Merge two already sorted partitions without changing either entry's coverage."""
+    mut entries: list[ExecutableIndexEntry] = []
+    mut public_index = 0
+    mut implementation_index = 0
+    while public_index < len(public) or implementation_index < len(implementation):
+        if implementation_index >= len(implementation):
+            entries.append(public[public_index])
+            public_index += 1
+        elif public_index >= len(public):
+            entries.append(implementation[implementation_index])
+            implementation_index += 1
+        elif public[public_index].identity < implementation[implementation_index].identity:
+            entries.append(public[public_index])
+            public_index += 1
+        else:
+            entries.append(implementation[implementation_index])
+            implementation_index += 1
+    return entries
+
+
+def validate_type_context(
+    identity: CanonicalSymbolId,
+    owner: CanonicalSymbolId,
+    entries: list[ExecutableIndexEntry],
+) -> Result[None, str]:
+    """Require a member context to name a covered owner of the right kind in the same package."""
+    if identity.origin != owner.origin:
+        return Err("public member context names an owner from another package")
+    if not context_kinds(identity.kind, owner.kind):
+        return Err("public member context names an incompatible declaration kind")
+    match coverage_in(entries, owner):
+        Some(ExecutableDeclarationCoverage.Covered(_offset, _length, _requirements)) => return Ok(None)
+        _ => return Err("public member context does not select a covered declaring type")
+
+
+def context_kinds(member: DeclarationKind, owner: DeclarationKind) -> bool:
+    """Admit only fields, variants and trait methods under their checked declaring type."""
+    match (member, owner):
+        (DeclarationKind.Field, DeclarationKind.Model) => return true
+        (DeclarationKind.Field, DeclarationKind.Class) => return true
+        (DeclarationKind.Variant, DeclarationKind.Enum) => return true
+        (DeclarationKind.Method, DeclarationKind.Trait) => return true
+        _ => return false
+
+
+def owned_by(identity: CanonicalSymbolId, library: str, package_version: str) -> bool:
+    """Whether this declaration belongs to the package whose artifact carries the index."""
+    match identity.origin:
+        SymbolOrigin.Package(package, _module_path) =>
+            return package.name == library and package.version == package_version
+        _ => return false
+
+
+def public_coverage(
+    index: ExecutableSurfaceIndex,
+    identity: CanonicalSymbolId,
+) -> Option[ExecutableDeclarationCoverage]:
+    """Find coverage only in the public-root partition."""
+    return coverage_in(index.public, identity)
+
+
+def execution_coverage(
+    index: ExecutableSurfaceIndex,
+    identity: CanonicalSymbolId,
+) -> Option[ExecutableDeclarationCoverage]:
+    """Find a selected root or one of its private implementation dependencies."""
+    match coverage_in(index.public, identity):
+        Some(coverage) => return Some(coverage)
+        None => return coverage_in(index.implementation, identity)
+
+
+def coverage_in(
+    entries: list[ExecutableIndexEntry],
+    identity: CanonicalSymbolId,
+) -> Option[ExecutableDeclarationCoverage]:
+    """Find exact canonical coverage without accepting a same-spelled declaration from another owner."""
+    for entry in entries:
+        if entry.identity == identity:
+            return Some(entry.coverage)
+        if identity < entry.identity:
+            return None
+    return None
