@@ -1,0 +1,104 @@
+"""Shared crumb1 digest domains over admitted logical inputs, never over encoded row bytes."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.hash_stream import HashOutput, OutputMode
+from crate.primitives.crumb.values import Metadata, Projection, Value
+from crate.primitives.crumb.types import TypeNode
+from crate.primitives.crumb.spelling import shape_spelling
+from crate.primitives.crumb.value_admission import validate
+from crate.primitives.crumb.contributions import emit
+from crate.primitives.crumb.metadata import emit_metadata
+
+
+pub model HashResult:
+    """A complete digest and an optional independently owned preimage, present only in capture mode."""
+
+    pub digest: bytes
+    pub preimage: Option[bytes]
+
+
+pub def value_hash(
+    value: Value,
+    projection: Projection,
+    mut budget: Budget,
+    capture: bool = false,
+) -> Result[HashResult, CrumbError]:
+    """Validate the complete original value before object/canonical projection and incremental hashing."""
+    validate(value, budget)?
+    mut output = start(capture)
+    if projection == Projection.Object:
+        output.write(b"crumb1\x00\x01", budget)?
+    else:
+        output.write(b"crumb1\x00\x02", budget)?
+    emit(value, projection, output, budget)?
+    return finish(output, budget)
+
+
+pub def model_hash(node: TypeNode, mut budget: Budget, capture: bool = false) -> Result[HashResult, CrumbError]:
+    """Hash the framed structural S spelling; this is not nominal authority or a description digest."""
+    spelling = shape_spelling(node, budget)?
+    mut output = start(capture)
+    output.write(b"crumb1\x00\x03", budget)?
+    output.text(spelling, budget)?
+    return finish(output, budget)
+
+
+pub def description_hash(
+    description: Metadata,
+    mut budget: Budget,
+    capture: bool = false,
+) -> Result[HashResult, CrumbError]:
+    """
+    Hash the complete caller-admitted metadata tree, preserving every property and declaration order.
+
+    This checks metadata encoding and integrity, not profile semantics, binding authority or model
+    validation. A binding must admit the complete description before using it to decode values.
+    """
+    mut output = start(capture)
+    output.write(b"crumb1\x00\x05", budget)?
+    emit_metadata(description, output, budget)?
+    return finish(output, budget)
+
+
+pub def verify_description_digest(
+    description: Metadata,
+    expected: bytes,
+    mut budget: Budget,
+) -> Result[None, CrumbError]:
+    """Compare a derived full D digest; a supplied digest alone never stands in for deriving metadata."""
+    if len(expected) != 32:
+        return Err(CrumbError.invalid_input("description digest width"))
+    actual = description_hash(description, budget)?
+    if actual.digest != expected:
+        return Err(CrumbError.invalid_input("description digest mismatch"))
+    return Ok(None)
+
+
+pub def seal_hash(values: list[Value], mut budget: Budget, capture: bool = false) -> Result[HashResult, CrumbError]:
+    """Commit to ordered complete object contributions, counting each repeatable frame before streaming it."""
+    for value in values:
+        validate(value, budget)?
+    mut output = start(capture)
+    output.write(b"crumb1\x00\x04", budget)?
+    output.unsigned(len(values), budget)?
+    for value in values:
+        mut counter = HashOutput.create(OutputMode.Count)
+        emit(value, Projection.Object, counter, budget)?
+        output.unsigned(counter.count(), budget)?
+        emit(value, Projection.Object, output, budget)?
+    return finish(output, budget)
+
+
+def start(capture: bool) -> HashOutput:
+    """Only explicit capture retains the preimage; normal output owns incremental SHA-256 state."""
+    if capture:
+        return HashOutput.create(OutputMode.Capture)
+    return HashOutput.create(OutputMode.Hash)
+
+
+def finish(mut output: HashOutput, mut budget: Budget) -> Result[HashResult, CrumbError]:
+    """Do not expose either digest or captured bytes until every contribution and final allocation succeeds."""
+    preimage = output.captured(budget)?
+    digest = output.digest(budget)?
+    return Ok(HashResult(digest=digest, preimage=preimage))

@@ -119,3 +119,45 @@ Plans permit declared integer range inclusion, `fp32` to `fp64`, optional wrappi
 `AdmissionError` stores `kind: AdmissionFailure`, `path: str` and `cause: Option[CrumbError]`. `AdmissionFailure` is a string-valued enum whose values are `IdentityWidth`, `DuplicateIdentity`, `IdentityOrder`, `InvalidType`, `NominalMismatch`, `MissingField`, `IncompatibleType`, `MissingDescription` and `ResourceLimit`. Only `ResourceLimit` sets `cause`; `.message() -> str` renders `<kind> at <path>` without stored contents. Paths use identities, such as `/fields/82244417f956`, rather than treating a display-name match as identity evidence.
 
 Description-digest verification, full metadata admission, display-name rename hints, logical hash projections, codecs and generated-model reconstruction are separate work. Structural success alone must not be advertised as complete-description or record admission.
+
+## Logical hashes
+
+`std.primitives.crumb.hashes` hashes explicit logical values. Its input types live in `.values`. These APIs do not parse COMIC text or Crumb row/column bytes, generate model hooks, resolve reference targets or authorize reconstruction. A binding supplies already admitted model values, including its range, constraint and nominal checks.
+
+| API | Return type | Contract |
+| --- | --- | --- |
+| `value_hash(value: Value, projection: Projection, mut budget: Budget, capture: bool = false)` | `Result[HashResult, CrumbError]` | Validate original logical values, then hash the object or canonical contribution. |
+| `model_hash(node: TypeNode, mut budget: Budget, capture: bool = false)` | `Result[HashResult, CrumbError]` | Hash the framed structural S spelling from explicit definitions. |
+| `description_hash(description: Metadata, mut budget: Budget, capture: bool = false)` | `Result[HashResult, CrumbError]` | Hash every entry in the complete metadata tree. |
+| `verify_description_digest(description: Metadata, expected: bytes, mut budget: Budget)` | `Result[None, CrumbError]` | Derive the complete metadata digest and compare it with an exactly 32-byte expectation; mismatch is invalid input. |
+| `seal_hash(values: list[Value], mut budget: Budget, capture: bool = false)` | `Result[HashResult, CrumbError]` | Hash the ordered, individually framed object contributions. |
+
+`HashResult` contains `digest: bytes` and `preimage: Option[bytes]`. Digests are SHA-256 bytes. Ordinary hashing updates incremental state without retaining the whole preimage. Explicit `capture=true` retains and returns an independent preimage within the supplied budget. No error returns a partial digest. A seal counts each repeatable contribution before streaming its frame. It is not an incremental RecordStream writer.
+
+Domains start with the exact bytes `crumb1`, zero, then purpose byte: object `01`, canonical `02`, model `03`, seal `04`, description `05`. A description digest checks integrity of the supplied complete tree; it is not authentication, binding authority, property-semantic admission or a model's validation.
+
+### Logical inputs
+
+`Projection` is a string-valued enum: `Object = "object"` and `Canonical = "canonical"`; `from_value` parses those corpus spellings. `Value` has these variants:
+
+| Variant | Input contract |
+| --- | --- |
+| `NoneValue`, `Some(list[Value])` | Some has exactly one child. Nested absent states remain distinct; present optional wrappers do not change their child's contribution. |
+| `Boolean(bool)`, `Integer(str)` | Integers use canonical exact decimal strings and may exceed host width. |
+| `Float(int, bytes)` | Width is 32 or 64; bytes are the corresponding IEEE bits in big-endian order. Binary32 widens exactly. All NaNs normalize; signed zeros remain distinct. |
+| `Decimal(str, str)` | Exact coefficient and scale. Trailing coefficient zeros are removed and scale adjusted without host-width limits; zero normalizes to coefficient and scale zero. |
+| `Text(str)`, `Binary(bytes)`, `Withheld` | Text is exact UTF-8 with no Unicode normalization. Withheld is a distinct contribution, not an empty value. |
+| `List(list[Value])`, `Tuple(list[Value])`, `Set(list[Value])` | Lists and tuples retain order. Sets are ordered by stored-value comparison; duplicate original values are invalid. |
+| `Map(list[MapEntry])` | `MapEntry(key: Value, value: Value)` retains original entries; duplicate original keys are invalid. |
+| `Record(list[ValueField])` | Fields contribute in identity order. Duplicate or non-six-byte identities are invalid. |
+| `Enum(bytes, list[ValueField])` | An exactly six-byte variant identity and its anonymous record payload. |
+| `Union(TypeNode, list[Value])` | An explicit selected closed member and exactly one payload; the selector remains significant even for equal payloads. |
+| `Reference(bytes, bytes)` | Opaque target-type identity and reference identity; target contents are not read. |
+
+`ValueField(identity: bytes, canonical: bool, absent: AbsentPolicy, value: Value)` describes a stored field value. Outer `NoneValue` is omitted only for `NoneValue` absence policy; an empty list/set/map is omitted only for `Empty`. Canonical projection also omits fields with `canonical=false`, recursively. Every original field value is checked before omission. These values do not carry declared scalar widths or complete model constraints; their owning binding must check those before calling this layer.
+
+Stored comparison is numeric for integers and decimals, preserves signed-zero order and places normalized NaN after positive infinity. It is not lexicographic comparison of encoded contribution bytes. Map/set projection happens before ordering. Distinct original objects that become equal canonically retain their multiplicity; projected map-key ties compare projected values. Unrelated value kinds require an explicit union discriminator instead of implicit cross-type ordering.
+
+### Complete metadata inputs
+
+`Metadata` supports `Null`, `Boolean(bool)`, `Integer(str)`, `Text(str)`, `Binary(bytes)`, `List(list[Metadata])` and `Map(list[MetadataEntry])`. `MetadataEntry(key: str, value: Metadata)` uses exact string keys. Duplicate keys are refused; map entries encode in UTF-8 key order, while lists retain order. Every supplied property participates in the digest, including properties this layer does not interpret. A consumer must separately admit its profile's property semantics before decoding or reconstructing data.
