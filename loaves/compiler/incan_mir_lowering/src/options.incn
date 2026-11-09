@@ -23,6 +23,7 @@ from rust::incan_semantics_core::body_ir import (
 )
 from lists import taking_iterator_locals
 from table_views import borrowed_at
+from compiler_record_adapters import authored_plan_checked_type, semantic_key_matches_native
 from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     BinaryOp,
@@ -474,9 +475,8 @@ pub def retain_carrier(
             if not is_option and not is_result and not ty.is_union():
                 return Ok(None)
             # Wrap the checked type once and compare each borrowed carrier's key in place, copying neither.
-            key = Some(ty.clone())
             for retained_position in range(len(declarations)):
-                if borrowed_at(declarations, retained_position).semantic_key == key:
+                if semantic_key_matches_native(borrowed_at(declarations, retained_position).semantic_key, ty)?:
                     return Ok(None)
             if ty.is_union():
                 declaration = lower_union_declaration(constructors, module, ty, file, declarations)?
@@ -510,7 +510,14 @@ pub def retain_carrier(
                     derives=["Clone"],
                     span=plan_span(file=file, line=1, column=1),
                     carrier=carrier,
-                    semantic_key=Some(ty.clone()),
+                    semantic_key=Some(
+                        authored_plan_checked_type(
+                            ty,
+                            file,
+                            constructors.source_files,
+                            constructors.package_versions,
+                        )?,
+                    ),
                     source_type=str(ty),
                     comparison_methods=[],
                 ),

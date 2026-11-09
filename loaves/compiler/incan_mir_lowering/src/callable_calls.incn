@@ -616,6 +616,7 @@ pub def emit_selected_body_call(
         builder.unions,
         body.return_type,
         builder.intrinsics,
+        builder.file,
     )?
     result_type = return_representation(body, declared)?
     output = call_destination(builder, destination, result_type, span)?

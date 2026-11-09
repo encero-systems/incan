@@ -14,7 +14,6 @@ from rust::incan_semantics_core::body_ir import (
 )
 from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
-    semantic_type_matches,
     ListLeaf,
     list_leaf_type,
     PlanType,
@@ -36,6 +35,7 @@ from enums import validate_payload_patterns, enum_owner
 from layout_types import native_source_type
 from nominal_frames import declaration_storage
 from table_views import borrowed_at
+from compiler_record_adapters import authored_plan_checked_type, semantic_key_matches_native
 from pub::incan_mir_plan import source_span as plan_span
 
 
@@ -222,11 +222,10 @@ pub def publish_unions(
     """Publish the emitted wrapper and payload order, preserving the checker's semantic carrier and nominal owners."""
     unions: list[RustType] = []
     for ty in collect_unions(module):
-        key = Some(ty.clone())
         for index in range(len(intrinsics)):
             declaration = borrowed_at(intrinsics, index)
             if (
-                declaration.semantic_key != key
+                not semantic_key_matches_native(declaration.semantic_key, ty)?
                 or declaration.carrier != Carrier.Declared
                 or declaration.library_item != ""
             ):
@@ -289,10 +288,12 @@ pub def require_native_union_signature(
                 _ = require_native_union_signature(argument, intrinsics, source_carriers)?
             if not ty.is_union():
                 return Ok(None)
-            key = Some(ty.clone())
             for declaration_position in range(len(intrinsics)):
                 declaration = borrowed_at(intrinsics, declaration_position)
-                if declaration.semantic_key == key and (source_carriers or declaration.library_item != ""):
+                if (
+                    semantic_key_matches_native(declaration.semantic_key, ty)?
+                    and (source_carriers or declaration.library_item != "")
+                ):
                     return Ok(None)
             return Err("unsupported Body IR Loaf union without admitted native representation")
         RustType.Tuple(elements) =>
@@ -372,7 +373,14 @@ pub def lower_union_declaration(
             library_item=native_item,
             span=plan_span(file=file, line=1, column=1),
             source_type=str(ty),
-            semantic_key=Some(ty.clone()),
+            semantic_key=Some(
+                authored_plan_checked_type(
+                    ty,
+                    file,
+                    constructors.source_files,
+                    constructors.package_versions,
+                )?,
+            ),
             member_debug=member_debug,
             closure_items=closure_items,
         ),
@@ -436,7 +444,7 @@ def retained_union(
         return Err("unsupported Body IR nonunion enum isinstance")
     carrier = borrowed_at(intrinsics, index)
     for ty in unions:
-        if semantic_type_matches(carrier, ty):
+        if semantic_key_matches_native(carrier.semantic_key, ty)?:
             return Ok(ty)
     return Err("invalid Body IR unretained union layout")
 

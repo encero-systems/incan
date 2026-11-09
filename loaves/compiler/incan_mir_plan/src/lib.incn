@@ -6,7 +6,7 @@ order. Blocks are indexed from zero. Every source-bearing node keeps its Incan
 location, including operands and places, so native diagnostics retain provenance.
 """
 
-from rust::incan_semantics_core import IncanType as SemanticType
+from pub::internal_models.checked_types import CheckedType as SemanticType
 pub from _types import (
     TupleElement,
     SourceSpan,
@@ -331,7 +331,7 @@ pub model ExternalFunction:
 pub def semantic_type_matches(declaration: &EnumDeclaration, ty: &SemanticType) -> bool:
     """Compare a retained carrier's exact checked type without reconstructing identity from diagnostic text."""
     match declaration.semantic_key:
-        Some(retained) => return retained == ty
+        Some(retained) => return retained == ty.clone()
         None => return false
 
 
