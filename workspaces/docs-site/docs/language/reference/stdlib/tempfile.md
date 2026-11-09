@@ -6,7 +6,7 @@
 from std.tempfile import NamedTemporaryFile, SpooledTemporaryFile, TemporaryDirectory
 ```
 
-Named file and directory acquisition returns `Result` and never opens an existing entry as the new temporary resource. Use `try_new()` for default acquisition and `try_new_with(prefix, suffix, dir)` for configured acquisition. Direct `NamedTemporaryFile(...)` and `TemporaryDirectory(...)` construction is ordinary infallible class construction and is not the resource-acquisition API. `SpooledTemporaryFile(max_size=...)` is infallible and creates a temporary file only when it rolls over.
+Named file and directory creation returns `Result[..., IoError]`. Each acquisition chooses an unpredictable name, uses exclusive creation, and never opens an existing entry as the new temporary resource. Use `try_new()` for default acquisition and `try_new_with(prefix, suffix, dir)` for configured acquisition. Direct `NamedTemporaryFile(...)` and `TemporaryDirectory(...)` construction is ordinary infallible class construction and is not the resource-acquisition API. `SpooledTemporaryFile(max_size=...)` is infallible; filesystem errors are returned when it rolls over.
 
 ## NamedTemporaryFile
 
@@ -45,7 +45,7 @@ Dropping an unpersisted `TemporaryDirectory` removes the whole temporary tree. U
 | `spool.path()` | `Result[Path, IoError]` | Return the temporary file path after rollover. |
 | `spool.persist()` | `Result[Path, IoError]` | Roll over if needed, keep the file, and disable automatic deletion. |
 
-Before rollover, `path()` returns `Err(IoError)`. After rollover, dropping an unpersisted spool deletes the temporary file; `persist()` keeps it and returns the ordinary `Path`.
+Before rollover, `path()` returns `Err(IoError)`. After rollover, the `NamedTemporaryFile` cleanup contract applies. Dropping an unpersisted rolled spool deletes the temporary file; `persist()` keeps it and returns the ordinary `Path`.
 
 ## Parent Directory
 
