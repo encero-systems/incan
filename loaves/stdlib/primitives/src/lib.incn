@@ -15,6 +15,10 @@ import primitives.crumb
 import primitives.crumb.budget
 import primitives.crumb.errors as crumb_errors
 import primitives.crumb.framing
+import primitives.crumb.types
+import primitives.crumb.spelling
+import primitives.crumb.identity
+import primitives.crumb.admission
 import primitives.environ
 import primitives.fs
 import primitives.fs.file
