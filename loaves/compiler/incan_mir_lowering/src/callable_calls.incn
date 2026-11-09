@@ -222,7 +222,7 @@ def lower_validated_constructor(
                     track_rvalue_moves(builder, construction)
                     builder.emit(plan_assign(value, construction, span))
                     builder.owned.append(value.local)
-                    match validated_method_body(builder, owner, contract.validator)?:
+                    match validated_method_body(module, builder, owner, contract.validator)?:
                         Some(body) =>
                             receiver_type = frame_type(
                                 builder.constructors,
@@ -236,6 +236,7 @@ def lower_validated_constructor(
                             builder.emit(plan_assign(receiver, RvalueKind.Borrow(value), span))
                             callee = CalleeKind.Planned(function_name(module, body))
                             emit_selected_body_call(
+                                module,
                                 builder,
                                 body,
                                 callee,
@@ -405,6 +406,7 @@ def validated_model_fields(
 
 
 def validated_method_body(
+    module: &BodyIrModule,
     mut builder: Builder,
     owner: int,
     identity: RustCanonicalSymbolId,
@@ -412,7 +414,7 @@ def validated_method_body(
     """Select one local validator body, leaving a compiled dependency validator to its retained callable."""
     mut selected = -1
     for index in builder.program.body_indices.candidates(identity.clone()):
-        body = body_at(builder.program.bodies.as_ref(), index)
+        body = body_at(module.bodies, index)
         if body.canonical != Some(identity.clone()) or len(body.params) != 1 or len(body.locals) == 0 or body.is_async:
             continue
         if len(body.type_parameters) != 0:
@@ -427,7 +429,7 @@ def validated_method_body(
         selected = index
     if selected < 0:
         return Ok(None)
-    return Ok(Some(body_at(builder.program.bodies.as_ref(), selected).clone()))
+    return Ok(Some(body_at(module.bodies, selected).clone()))
 
 
 def require_validated_receiver(owner: int, receiver_type: PlanType) -> Result[None, str]:
