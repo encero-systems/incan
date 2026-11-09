@@ -70,9 +70,9 @@ pub enum SequenceKind:
 
 pub enum DecimalValueError:
     """Why an exact decimal carrier cannot represent a valid declared decimal."""
-    Precision(value: u8)
-    Scale(precision: u8, scale: u8)
-    Coefficient(precision: u8)
+    Precision(u8)
+    Scale(u8, u8)
+    Coefficient(u8)
 
 
 @derive(Validate)
@@ -91,14 +91,14 @@ pub model DecimalValue:
     def validate(self) -> Result[DecimalValue, DecimalValueError]:
         """Check P in 1..38, S in 0..P and abs(coefficient) below 10**P without negating i128 minimum."""
         if self.precision < 1 or self.precision > 38:
-            return Err(DecimalValueError.Precision(value=self.precision))
+            return Err(DecimalValueError.Precision(self.precision))
         if self.scale > self.precision:
-            return Err(DecimalValueError.Scale(precision=self.precision, scale=self.scale))
+            return Err(DecimalValueError.Scale(self.precision, self.scale))
         mut limit: i128 = 1
         for _ in range(int(self.precision)):
             limit *= 10
         if self.coefficient <= -limit or self.coefficient >= limit:
-            return Err(DecimalValueError.Coefficient(precision=self.precision))
+            return Err(DecimalValueError.Coefficient(self.precision))
         return Ok(self)
 
 
