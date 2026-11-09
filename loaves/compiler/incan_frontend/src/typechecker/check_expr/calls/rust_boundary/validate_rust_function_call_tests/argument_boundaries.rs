@@ -114,6 +114,26 @@ fn rust_array_inference_retains_only_exact_literal_lengths() {
     assert_eq!(nested.get("T"), Some(&ResolvedType::RustPath("[u8;8]".to_string())));
     assert_eq!(nested.get("N"), Some(&ResolvedType::RustPath("4".to_string())));
 
+    let option_target = checker.rust_inference_type(
+        &ResolvedType::RustPath("std::option::Option<[u8; 32]>".to_string()),
+        &[],
+    );
+    let provisional_option = ResolvedType::Generic(
+        "Option".to_string(),
+        vec![ResolvedType::RustPath("[u8; N]".to_string())],
+    );
+    assert_eq!(
+        option_target,
+        ResolvedType::Generic(
+            "Option".to_string(),
+            vec![ResolvedType::RustPath("[u8; 32]".to_string())],
+        )
+    );
+    assert!(TypeChecker::rust_call_arg_wants_owner_expectation(
+        &provisional_option,
+        &option_target
+    ));
+
     let callback_signature = RustFunctionSig {
         receiver_contract: None,
         bounds: vec![RustTraitBound {

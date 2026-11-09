@@ -151,16 +151,19 @@ impl TypeChecker {
     /// Recheck an argument whose Rust boundary supplies information unavailable during its first provisional pass.
     ///
     /// Nested calls in particular receive the specialized fixed-array target only after their parent call closes its
-    /// own binders. Keeping this policy shared between method and free-function validation prevents either boundary
-    /// from retaining the provisional open type.
+    /// own binders. A native collection wrapper is first projected to its source collection shape so a constructor
+    /// such as `Some(from_fn(...))` can carry the exact nested array target into its payload. Keeping this policy
+    /// shared between method and free-function validation prevents either boundary from retaining the provisional
+    /// open type.
     fn contextual_rust_argument_type(
         &mut self,
         argument: &Spanned<Expr>,
         provisional: &ResolvedType,
         target: &ResolvedType,
     ) -> Option<ResolvedType> {
+        let inference_target = self.rust_inference_type(target, &[]);
         let nested_call_needs_context = matches!(argument.node, Expr::Call(..) | Expr::MethodCall(..))
-            && Self::rust_call_arg_wants_owner_expectation(provisional, target);
+            && Self::rust_call_arg_wants_owner_expectation(provisional, &inference_target);
         let needs_context = (matches!(argument.node, Expr::Closure(_, _))
             && matches!(target, ResolvedType::Function(_, _)))
             || super::super::ops::is_unsuffixed_integer_literal(argument)
@@ -169,7 +172,14 @@ impl TypeChecker {
                 Expr::Literal(_) | Expr::Unary(_, _) | Expr::List(_) | Expr::Dict(_) | Expr::Set(_) | Expr::Tuple(_)
             )
             || nested_call_needs_context;
-        needs_context.then(|| self.check_expr_with_expected(argument, Some(target)))
+        needs_context.then(|| {
+            let expected = if nested_call_needs_context {
+                &inference_target
+            } else {
+                target
+            };
+            self.check_expr_with_expected(argument, Some(expected))
+        })
     }
 }
 
