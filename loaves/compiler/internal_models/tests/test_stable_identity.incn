@@ -1,0 +1,63 @@
+"""Edit-stable and nominal-owner controls for Incan-owned compiler identities."""
+
+from compiler_records import (
+    DeclarationKind,
+    DeclarationSignature,
+    PackageIdentity,
+    StableDeclarationComponent,
+    StableDeclarationId,
+    StableDeclarationLocation,
+    SymbolNamespace,
+    SymbolOrigin,
+    same_stable_declaration_id,
+    valid_stable_declaration_id,
+)
+
+
+pub def test_stable_identity() -> None:
+    """Keep comment moves stable while package version, module owner and nested ordinal remain identity inputs."""
+    before = stable("1.4.0", "models")
+    after_comment_move = stable("1.4.0", "models")
+    other_module = stable("1.4.0", "archive")
+    successor = stable("2.0.0", "models")
+    assert same_stable_declaration_id(before, after_comment_move)
+    assert not same_stable_declaration_id(before, other_module)
+    assert not same_stable_declaration_id(before, successor)
+    nested = StableDeclarationId(
+        namespace=SymbolNamespace.Member,
+        origin=package_origin("1.4.0", "models"),
+        declaration_name="total",
+        kind=DeclarationKind.Field,
+        location=StableDeclarationLocation.Nested(
+            [
+                StableDeclarationComponent(
+                    namespace=SymbolNamespace.OrdinaryLexical,
+                    origin=package_origin("1.4.0", "models"),
+                    declaration_name="Invoice",
+                    kind=DeclarationKind.Model,
+                    binding_ordinal=None,
+                    signature=None,
+                ),
+            ],
+            3,
+        ),
+        signature=Some(DeclarationSignature(spelling="Decimal")),
+    )
+    assert valid_stable_declaration_id(nested)
+
+
+def stable(version: str, module: str) -> StableDeclarationId:
+    """Build one module-level stable identity without positional source input."""
+    return StableDeclarationId(
+        namespace=SymbolNamespace.OrdinaryLexical,
+        origin=package_origin(version, module),
+        declaration_name="Invoice",
+        kind=DeclarationKind.Model,
+        location=StableDeclarationLocation.ModuleLevel,
+        signature=None,
+    )
+
+
+def package_origin(version: str, module: str) -> SymbolOrigin:
+    """Build a structured selected-package owner without display-text parsing."""
+    return SymbolOrigin.Package(PackageIdentity(name="billing", version=version), [module])
