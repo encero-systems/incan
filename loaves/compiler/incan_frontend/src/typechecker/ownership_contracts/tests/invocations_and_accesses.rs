@@ -112,6 +112,12 @@ fn invocation_projection_retains_slots_and_loans() -> Result<(), Box<dyn std::er
             "accepted out-of-range invocation link {corruption}"
         );
     }
+    let mut borrow_only = checker.type_info.clone();
+    borrow_only.protocols.explicit_input_copy.remove(owner);
+    assert!(
+        borrow_only.checked_input_body(owner)?.is_some(),
+        "borrowed invocation arguments required an unrelated Copy decision"
+    );
     Ok(())
 }
 
@@ -574,25 +580,19 @@ fn source_accesses_preserve_multiplicity_and_order() -> Result<(), Box<dyn std::
 /// as a required transfer merely because a legacy ABI projection cannot describe the nominal layout.
 #[test]
 fn source_access_retains_checked_copy_derives() -> Result<(), Box<dyn std::error::Error>> {
-    for (index, source) in [
-            "def derived(value: Owned[Point]) -> Point:\n    first = value\n    return value\n@derive(Copy)\nmodel Point:\n    x: int\n",
-            "def optional(value: Owned[Option[int]]) -> Option[int]:\n    first = value\n    return value\n",
-            "def use(value: Owned[Point]) -> int:\n    return consume(value)\ndef consume(value: Owned[Point]) -> int:\n    return value.x\n@derive(Copy)\nmodel Point:\n    x: int\n",
-            "def use(value: Owned[Point]) -> Point:\n    let local: Owned[Point] = value\n    return local\n@derive(Copy)\nmodel Point:\n    x: int\n",
-            "def equal(value: Borrowed[Point]) -> bool:\n    return value == value\n@derive(Copy, PartialEq)\nmodel Point:\n    x: int\n",
-        ].into_iter().enumerate() {
-            let checker = checked(source)?;
-            if matches!(index, 2 | 3) {
-                assert!(!checker.errors.is_empty());
-                assert!(checker.errors.iter().all(|error| error.stable_code() == Some("INCAN-T0123")
-                    && error.message.contains("compatible native input carrier")), "{source}\n{:?}", checker.errors);
-            } else {
-                assert!(checker.errors.is_empty(), "{source}\n{:?}", checker.errors);
-            }
-            for owner in checker.type_info.protocols.explicit_input_flow.keys() {
-                assert!(checker.type_info.checked_input_body(owner)?.is_some());
-            }
+    for source in [
+        "def derived(value: Owned[Point]) -> Point:\n    first = value\n    return value\n@derive(Copy)\nmodel Point:\n    x: int\n",
+        "def optional(value: Owned[Option[int]]) -> Option[int]:\n    first = value\n    return value\n",
+        "def use(value: Owned[Point]) -> int:\n    return consume(value)\ndef consume(value: Owned[Point]) -> int:\n    return value.x\n@derive(Copy)\nmodel Point:\n    x: int\n",
+        "def use(value: Owned[Point]) -> Point:\n    let local: Owned[Point] = value\n    return local\n@derive(Copy)\nmodel Point:\n    x: int\n",
+        "def equal(value: Borrowed[Point]) -> bool:\n    return value == value\n@derive(Copy, PartialEq)\nmodel Point:\n    x: int\n",
+    ] {
+        let checker = checked(source)?;
+        assert!(checker.errors.is_empty(), "{source}\n{:?}", checker.errors);
+        for owner in checker.type_info.protocols.explicit_input_flow.keys() {
+            assert!(checker.type_info.checked_input_body(owner)?.is_some());
         }
+    }
     Ok(())
 }
 

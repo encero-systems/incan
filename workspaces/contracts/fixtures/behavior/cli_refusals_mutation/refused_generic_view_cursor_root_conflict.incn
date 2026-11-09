@@ -1,0 +1,39 @@
+# behavior: mutating a graph while a cursor returned from its reader and selection chain is used later is refused at the mutation (#2500, #2524)
+# expect-diagnostic: INCAN-T0126
+
+
+class MemoryGraph:
+    pub edges: list[int]
+
+    pub def add_edge(mut self, edge: int) -> None:
+        self.edges.append(edge)
+
+    pub def read_view(self) -> Borrowed[MemoryGraph] from self:
+        return self
+
+    pub def incoming(self) -> Selection[Borrowed[MemoryGraph]] from self:
+        return Selection[Borrowed[MemoryGraph]](reader=self)
+
+
+class Cursor[S]:
+    pub selection: S
+
+
+class Selection[R]:
+    pub reader: R
+
+    pub def cursor(self) -> Cursor[Borrowed[Selection[R]]] from self:
+        return Cursor[Borrowed[Selection[R]]](selection=self)
+
+
+def conflict(mut graph: BorrowedMut[MemoryGraph]) -> int:
+    reader = graph.read_view()
+    selection = reader.incoming()
+    cursor = selection.cursor()
+    graph.add_edge(2)
+    return len(cursor.selection.reader.edges)
+
+
+def main() -> int:
+    mut graph = MemoryGraph(edges=[1])
+    return conflict(graph)

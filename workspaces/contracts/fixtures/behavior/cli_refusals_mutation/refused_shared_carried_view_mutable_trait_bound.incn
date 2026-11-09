@@ -1,0 +1,28 @@
+# behavior: a shared carried view is refused as the type argument of a mutable-receiver trait bound, because generic dispatch could select its exclusive member (#2500)
+# expect-diagnostic: INCAN-T0001
+
+
+trait MutableGraph:
+    def clear(mut self) -> None: ...
+
+
+trait ReadableGraph with MutableGraph:
+    def node_count(self) -> int: ...
+
+
+class Graph with ReadableGraph:
+    pub nodes: list[int]
+
+    def clear(mut self) -> None:
+        self.nodes = []
+
+    def node_count(self) -> int:
+        return len(self.nodes)
+
+
+class Holder[G with ReadableGraph]:
+    pub graph: G
+
+
+def hold(graph: Borrowed[Graph]) -> Holder[Borrowed[Graph]] from graph:
+    return Holder[Borrowed[Graph]](graph=graph)

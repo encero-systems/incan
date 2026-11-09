@@ -190,6 +190,51 @@ impl TypeChecker {
         }
     }
 
+    /// Give an open `Ok` or `Err` operand the concrete `Result` type of its comparison partner.
+    ///
+    /// A standalone constructor deliberately leaves the opposite `Result` side open. In a comparison such as
+    /// `reader.contains(key) == Ok(True)`, the concrete left operand is the type context for that side, just as a
+    /// concrete list is the context for an empty-list operand. Re-checking only a recognized, unshadowed constructor
+    /// records the closed type for Body IR; compatibility and comparison semantics remain unchanged.
+    pub(super) fn adopt_partner_type_for_open_result_constructor_operand(
+        &mut self,
+        operand: &Spanned<Expr>,
+        operand_ty: ResolvedType,
+        partner_ty: &ResolvedType,
+    ) -> ResolvedType {
+        let Some(constructor) = self.returned_result_constructor(operand) else {
+            return operand_ty;
+        };
+        let (ResolvedType::Generic(operand_name, operand_sides), ResolvedType::Generic(partner_name, partner_sides)) =
+            (&operand_ty, partner_ty)
+        else {
+            return operand_ty;
+        };
+        if collection_type_id(operand_name.as_str()) != Some(CollectionTypeId::Result)
+            || collection_type_id(partner_name.as_str()) != Some(CollectionTypeId::Result)
+            || operand_sides.len() != 2
+            || partner_sides.len() != 2
+        {
+            return operand_ty;
+        }
+        let open_side = match constructor {
+            ConstructorId::Ok => 1,
+            ConstructorId::Err => 0,
+            ConstructorId::Some | ConstructorId::None => return operand_ty,
+        };
+        let is_open = |ty: &ResolvedType| {
+            matches!(
+                ty,
+                ResolvedType::Unknown | ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer
+            )
+        };
+        if is_open(&operand_sides[open_side]) && !is_open(&partner_sides[open_side]) {
+            self.check_expr_with_expected(operand, Some(partner_ty))
+        } else {
+            operand_ty
+        }
+    }
+
     /// Type-check a binary operation with an optional contextual result type for overload disambiguation.
     pub(in crate::typechecker::check_expr) fn check_binary_with_expected(
         &mut self,
@@ -483,7 +528,7 @@ impl TypeChecker {
         ResolvedType::Unknown
     }
 
-    /// Adopt empty-list context before checking numeric, derived and explicit comparison contracts.
+    /// Adopt literal and constructor context before checking numeric, derived and explicit comparison contracts.
     pub(super) fn check_comparison_binary(
         &mut self,
         left: (&Spanned<Expr>, ResolvedType),
@@ -495,6 +540,8 @@ impl TypeChecker {
         let (right, right_ty) = right;
         let left_ty = self.adopt_partner_type_for_empty_list_operand(left, left_ty, &right_ty);
         let right_ty = self.adopt_partner_type_for_empty_list_operand(right, right_ty, &left_ty);
+        let left_ty = self.adopt_partner_type_for_open_result_constructor_operand(left, left_ty, &right_ty);
+        let right_ty = self.adopt_partner_type_for_open_result_constructor_operand(right, right_ty, &left_ty);
         if matches!(left_ty, ResolvedType::TypeToken(_)) || matches!(right_ty, ResolvedType::TypeToken(_)) {
             self.errors
                 .push(errors::type_token_operation_not_supported("comparison", span));

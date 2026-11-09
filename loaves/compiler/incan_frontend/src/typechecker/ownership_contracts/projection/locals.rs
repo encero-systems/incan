@@ -140,20 +140,22 @@ impl<'a> CheckedInputBody<'a> {
         let Some(loans) = self.graph.dependent_locals.get(destination) else {
             return Ok(None);
         };
-        let [id] = loans.as_slice() else {
-            return Err("aggregate view local must retain exactly one source loan");
+        if loans.is_empty() {
+            return Err("aggregate view local must retain at least one source loan");
         };
-        let loan = self
-            .graph
-            .loans
-            .get(id.0)
-            .ok_or("aggregate view local has no retained source loan")?;
         let call = super::super::builtins::view_call(initializer);
         let Some((access, ..)) = self.facts.selected_aggregate_view(call.span) else {
             return Ok(None);
         };
-        if loan.span != call.span {
-            return Err("aggregate view local differs from its initializer call");
+        for id in loans {
+            let loan = self
+                .graph
+                .loans
+                .get(id.0)
+                .ok_or("aggregate view local has no retained source loan")?;
+            if loan.span != call.span {
+                return Err("aggregate view local differs from its initializer call");
+            }
         }
         Ok(Some(access))
     }

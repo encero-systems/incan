@@ -137,6 +137,8 @@ A returned view can itself be the source of a further view or a fluent call; eve
 
 A model or class type parameter can be instantiated with `Borrowed[T]` or `Reference[T]`. A result whose type contains that instantiation and whose `from` clause names the view source carries the source dependency through the user-defined value. A field declared as that type parameter stores shared or exclusive access according to the instantiated mode; constructing the value from the source place, an alias of it or a view of it does not copy the referent. Binding, moving, passing, returning, field access, method calls and storage inside another aggregate preserve the dependency through the carrying value's last use. A method can return another generic carrier `from self`, and that carrier also retains every source dependency already held by `self`.
 
+For a type parameter with a trait bound, `Borrowed[T]` satisfies the bound when `T` satisfies it and every method available through the trait and its supertraits has a `self` receiver. `Reference[T]` also satisfies a bound that includes `mut self` methods. A method call through either view dispatches to the referent and retains the view's source dependency.
+
 ```incan
 class Cursor[S]:
     pub selection: S

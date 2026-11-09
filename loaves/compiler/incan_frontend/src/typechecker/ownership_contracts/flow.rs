@@ -911,6 +911,15 @@ fn check_event(
             continue;
         }
         let loan = &graph.loans[id.0];
+        // A carried dependency creates a new loan whose ancestry already keeps every earlier link live. Report the
+        // deepest active link for one source; sibling loans remain distinct because neither is the other's parent.
+        if state.loans.iter().any(|candidate| {
+            candidate != id
+                && validated.parents[candidate.0].contains(id)
+                && graph.loans[candidate.0].source == loan.source
+        }) {
+            continue;
+        }
         if loan.source.overlaps(place) && (loan.kind == LoanKind::Exclusive || access != Access::Read) {
             conflicts.insert(Conflict {
                 node,
