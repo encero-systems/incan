@@ -25,3 +25,17 @@ pub model Columns[T, Stored with Display]:
 
     pub def describe(self) -> str:
         return f"{self.sql} {self.sample}"
+
+
+@derive(Validate)
+pub model Checked:
+    """Publish one generated validated constructor through the dependency surface."""
+
+    pub value: int
+    pub label: str = "published"
+
+    def validate(self) -> Result[Checked, str]:
+        """Accept single-digit values and preserve the complete constructed record."""
+        if self.value > 9:
+            return Err("dependency value too large")
+        return Ok(self)

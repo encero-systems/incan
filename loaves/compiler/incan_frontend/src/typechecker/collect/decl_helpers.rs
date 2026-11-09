@@ -6,7 +6,7 @@ use crate::ast::*;
 use crate::symbols::{CallableParam, FieldInfo, MethodInfo, MethodScope, PropertyInfo, ResolvedType, TypeBoundInfo};
 use crate::typechecker::{BodyIrPropertyBindingInfo, FunctionBindingInfo, TypeChecker};
 use incan_lang::lang::derives::{self, DeriveId};
-use incan_semantics_core::SemanticSourceTargetKind;
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 /// Build the resolved surface type for a declaration owner while that owner is still being collected.
 ///
@@ -504,33 +504,33 @@ pub(super) fn collect_properties(
         .collect()
 }
 
-/// Inject a `TypeName.new(...) -> Result[TypeName, E]` constructor for `@derive(Validate)` models.
+/// Inject the checked `TypeName.new(...) -> Result[TypeName, E]` surface for `@derive(Validate)` models.
 ///
-/// This is a *typechecker-only* method injection to allow `User.new(...)` calls to typecheck even though the backend
-/// generates the actual Rust implementation.
+/// The exact generated identity crosses into Body IR with the owning model's validated-construction fact. Runtime
+/// lowering therefore selects this semantic constructor without dispatching on the source spelling.
 pub(super) fn inject_validate_methods(
     methods: &mut HashMap<String, MethodInfo>,
     overloads: &mut HashMap<String, Vec<MethodInfo>>,
-    _type_name: &str,
+    owner: &CanonicalSymbolId,
     fields: &HashMap<String, FieldInfo>,
     field_order: &[Ident],
     derives: &[String],
-) {
+) -> Option<CanonicalSymbolId> {
     let has_validate = derives
         .iter()
         .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Validate));
     if !has_validate {
-        return;
+        return None;
     }
 
     // Only inject if the user didn't already define it.
-    if methods.contains_key("new") {
-        return;
+    if methods.contains_key(incan_lang::lang::conventions::NEW_METHOD) {
+        return None;
     }
 
     // Use the return type of validate() if present; otherwise use Unknown (second pass will report a better error).
     let return_type = methods
-        .get("validate")
+        .get(incan_lang::lang::conventions::VALIDATE_METHOD)
         .map(|m| m.return_type.clone())
         .unwrap_or(ResolvedType::Unknown);
 
@@ -548,12 +548,16 @@ pub(super) fn inject_validate_methods(
         }
     }
 
+    let identity = owner.generated_member(
+        incan_lang::lang::conventions::NEW_METHOD,
+        SemanticSourceTargetKind::Method,
+    );
     insert_injected_method(
         methods,
         overloads,
-        "new",
+        incan_lang::lang::conventions::NEW_METHOD,
         MethodInfo {
-            identity: None,
+            identity: Some(identity.clone()),
             scope: MethodScope::Public,
             owner: None,
             type_params: Vec::new(),
@@ -569,4 +573,5 @@ pub(super) fn inject_validate_methods(
             made_private: None,
         },
     );
+    Some(identity)
 }
