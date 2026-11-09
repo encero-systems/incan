@@ -1,0 +1,97 @@
+"""Focused safety and boundary tests for COMIC text reading and canonical printing."""
+
+from std.primitives.crumb import Budget, TextContext, TextFailure, print_comic, read_comic
+from std.primitives.crumb.identity import member_identity
+from std.primitives.text import decode_utf8, encode_utf8
+
+
+def test_malformed_utf8_and_raw_bidirectional_controls_are_refused() -> Result[None, str]:
+    """Malformed UTF-8 and an unescaped bidirectional control never become inert text data."""
+    mut invalid_budget = large_budget()?
+    invalid_context = TextContext.core(invalid_budget).map_err((error) => error.message())?
+    match read_comic(b"\xff", invalid_context, invalid_budget):
+        Ok(_) => return Err("malformed UTF-8 was accepted")
+        Err(error) =>
+            assert error.kind == TextFailure.InvalidUtf8
+            assert error.position.line == 1
+            assert error.position.column == 1
+
+    valid, control = decode_utf8(b"\xe2\x80\xae", false)
+    assert valid
+    source = "example.Value = Record { value: string }\n\nexample.Value << (value=\"" + control + "\")\n"
+    mut bidi_budget = large_budget()?
+    bidi_context = TextContext.core(bidi_budget).map_err((error) => error.message())?
+    match read_comic(encode_utf8(source), bidi_context, bidi_budget):
+        Ok(_) => return Err("raw bidirectional control was accepted")
+        Err(error) =>
+            assert error.kind == TextFailure.BidirectionalControl
+            assert error.position.line == 3
+    return Ok(None)
+
+
+def test_comments_are_discarded_before_canonical_printing() -> Result[None, str]:
+    """Comments affect neither the admitted document nor its exact canonical output."""
+    source = "".join(
+        [
+            "# leading\nexample.Point = Record { x: i64, y: i64 } # declaration\n\n",
+            "example.Point << (x=1, # cell\n y=2)\n",
+        ],
+    )
+    mut budget = large_budget()?
+    context = TextContext.core(budget).map_err((error) => error.message())?
+    document = read_comic(encode_utf8(source), context, budget).map_err((error) => error.message())?
+    expected = encode_utf8("example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n")
+    assert print_comic(document, context, budget).map_err((error) => error.message())? == expected
+
+    renamed_source = "example.Renamed = Record { current [renamed_from = [original]]: i64 }\n"
+    renamed = read_comic(encode_utf8(renamed_source), context, budget).map_err((error) => error.message())?
+    assert renamed.descriptions[0].fields[0].name == "current"
+    assert renamed.descriptions[0].fields[0].renamed_from == ["original"]
+    assert renamed.descriptions[0].fields[0].identity == member_identity("original", budget).map_err(
+        (error) => error.message(),
+    )?
+    assert print_comic(renamed, context, budget).map_err((error) => error.message())? == encode_utf8(renamed_source)
+    return Ok(None)
+
+
+def test_entry_boundary_cut_is_shorter_but_value_cut_refuses() -> Result[None, str]:
+    """A complete prefix is a shorter document, while an open value is unexpected end."""
+    description = "example.Point = Record { x: i64, y: i64 }\n"
+    mut prefix_budget = large_budget()?
+    prefix_context = TextContext.core(prefix_budget).map_err((error) => error.message())?
+    prefix = read_comic(encode_utf8(description), prefix_context, prefix_budget).map_err((error) => error.message())?
+    assert len(prefix.descriptions) == 1
+    assert len(prefix.values) == 0
+
+    cut = description + "\nexample.Point << (x=1,"
+    mut cut_budget = large_budget()?
+    cut_context = TextContext.core(cut_budget).map_err((error) => error.message())?
+    match read_comic(encode_utf8(cut), cut_context, cut_budget):
+        Ok(_) => return Err("truncated value was accepted")
+        Err(error) =>
+            assert error.kind == TextFailure.UnexpectedEnd
+    return Ok(None)
+
+
+def test_input_and_token_allowances_refuse_before_unbounded_work() -> Result[None, str]:
+    """The shared budget accounts for input bytes and retained tokens before allocation."""
+    source = encode_utf8("example.Point = Record { x: i64 }\n")
+    mut input_budget = Budget.create(bytes=1, elements=1024, depth=32).map_err((error) => error.message())?
+    input_context = TextContext.core(input_budget).map_err((error) => error.message())?
+    match read_comic(source, input_context, input_budget):
+        Ok(_) => return Err("input byte limit was ignored")
+        Err(error) =>
+            assert error.kind == TextFailure.Limit
+
+    mut token_budget = Budget.create(bytes=4096, elements=1, depth=32).map_err((error) => error.message())?
+    token_context = TextContext.core(token_budget).map_err((error) => error.message())?
+    match read_comic(source, token_context, token_budget):
+        Ok(_) => return Err("token element limit was ignored")
+        Err(error) =>
+            assert error.kind == TextFailure.Limit
+    return Ok(None)
+
+
+def large_budget() -> Result[Budget, str]:
+    """Create one explicit focused-test allowance without a format-wide default."""
+    return Budget.create(bytes=65536, elements=65536, depth=64).map_err((error) => error.message())
