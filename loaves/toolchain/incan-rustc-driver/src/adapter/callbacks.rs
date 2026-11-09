@@ -216,7 +216,7 @@ impl rustc_driver::Callbacks for Callbacks {
                 Ok(def) => def,
                 Err(error) => refuse(tcx, error),
             };
-            let args = match callees::arguments(tcx, def, &external.type_arguments) {
+            let args = match callees::external_arguments(tcx, def, external) {
                 Ok(args) => args,
                 Err(error) => refuse(tcx, error),
             };
