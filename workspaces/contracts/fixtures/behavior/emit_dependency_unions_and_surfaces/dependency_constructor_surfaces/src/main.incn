@@ -1,4 +1,4 @@
-# behavior: dependency types construct through their published surface: a class with private required state is built under an import alias through a public provider factory, while same-named classes and models retain their identities through the remaining constructor surfaces (RFC 149: private fields reserve construction and hide data; RFC 122: inaccessible private state cannot be bound through another construction path)
+# behavior: dependency types construct through their published surface: a class with private required state is built under an import alias through a public provider factory, a validated model publishes its generated checked constructor, and same-named classes and models retain their identities through the remaining constructor surfaces (#2811; RFC 149: private fields reserve construction and hide data; RFC 122: inaccessible private state cannot be bound through another construction path)
 # expect-stdout:
 #   sealed:42
 #   named:7
@@ -8,8 +8,10 @@
 #   12
 #   3
 #   3
+#   4 published
+#   dependency value too large
 
-from pub::sealed import Vault as PublicVault, Envelope, Columns
+from pub::sealed import Checked, Vault as PublicVault, Envelope, Columns
 from pub::decoy import Vault as DecoyVault
 from pub::modulelib import hyperquant
 
@@ -26,3 +28,9 @@ def main() -> None:
     builder = hyperquant.IndexBuilder()
     println(builder.size)
     println(builder.build().size)
+    match Checked.new(value=4):
+        Ok(value) => println(f"{value.value} {value.label}")
+        Err(error) => println(error)
+    match Checked.new(value=14):
+        Ok(_value) => println("accepted")
+        Err(error) => println(error)

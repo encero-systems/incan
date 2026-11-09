@@ -347,6 +347,21 @@ pub(super) fn project_nominal(
     audit.type_parameters.extend(source.type_parameters.iter().cloned());
     audit.identity(&mut nominal.canonical, false)?;
     nominal.direct_declaration_id = declaration_id(&nominal.canonical)?;
+    if let Some(contract) = &mut nominal.validated_constructor {
+        if contract.constructor
+            != source.canonical.generated_member(
+                incan_lang::lang::conventions::NEW_METHOD,
+                crate::SemanticSourceTargetKind::Method,
+            )
+        {
+            return Err(CoverageReason::UnresolvedReference);
+        }
+        contract.constructor = nominal.canonical.generated_member(
+            incan_lang::lang::conventions::NEW_METHOD,
+            crate::SemanticSourceTargetKind::Method,
+        );
+        audit.identity(&mut contract.validator, true)?;
+    }
     for ty in &nominal.field_types {
         audit.ty(ty)?;
     }

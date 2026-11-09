@@ -97,8 +97,8 @@ pub def lower_model_declarations(
     Instance selection borrows the retained inventory; only the resulting native declaration plan is owned here.
     `start` lets a resumed unit append layouts for declarations absent from its preserved plan.
 
-    A derived Default is built at each `default()` call from the declared field defaults, so the native struct never
-    derives Default: a Rust derive would give every field its zero value instead.
+    Semantic construction derives stay in checked Body IR rather than becoming Rust derives. `Default` is built at
+    each `default()` call from declared field defaults, and `Validate` is executed by its retained generated constructor.
     """
     mut unions = collect_unions(module)
     reached = serde_propagation(module)?
@@ -123,7 +123,7 @@ pub def lower_model_declarations(
         mut derives: list[str] = []
         for derive in declaration.derives:
             if (
-                derive != "Default"
+                derive not in ["Default", "Validate"]
                 and not (len(comparisons[owner]) != 0 and derive in ["PartialEq", "Eq", "PartialOrd", "Ord"])
             ):
                 derives.append(derive)
@@ -217,14 +217,7 @@ def type_view_lifetimes(ty: &RustType) -> int:
         RustType.Ref(inner) => return 1 + type_view_lifetimes(inner)
         RustType.RefMut(inner) => return 1 + type_view_lifetimes(inner)
         RustType.Generic(base=base, args=arguments) =>
-            if base in [
-                "FrozenList",
-                "FrozenSet",
-                "FrozenDict",
-                "$FrozenList",
-                "$FrozenSet",
-                "$FrozenDict",
-            ]:
+            if base in ["FrozenList", "FrozenSet", "FrozenDict", "$FrozenList", "$FrozenSet", "$FrozenDict"]:
                 return 0
             return element_view_lifetimes(arguments)
         RustType.Tuple(elements) => return element_view_lifetimes(elements)
