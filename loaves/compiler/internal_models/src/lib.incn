@@ -26,6 +26,16 @@ pub from compiler_records import (
     valid_canonical_symbol_id,
     valid_stable_declaration_id,
 )
+pub from checked_types import (
+    CheckedNumericType,
+    CheckedPrimitiveType,
+    CheckedInputAccess,
+    CheckedCallableParamKind,
+    CheckedRuntimeBuiltin,
+    CheckedCallableParam,
+    CheckedType,
+    valid_checked_type,
+)
 pub from records import (
     RecordKey,
     ReadScope,

@@ -19,6 +19,15 @@ from pub::internal_models.compiler_records import (
     SymbolNamespace,
     SymbolOrigin,
 )
+from pub::internal_models.checked_types import (
+    CheckedCallableParam,
+    CheckedCallableParamKind,
+    CheckedInputAccess,
+    CheckedNumericType,
+    CheckedPrimitiveType,
+    CheckedRuntimeBuiltin,
+    CheckedType,
+)
 from pub::incan_mir_plan import SourceSpan as PlanSourceSpan
 from rust::std::sync import Arc
 from rust::incan_semantics_core import (
@@ -28,6 +37,13 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind as RustDeclarationKind,
     SymbolNamespace as RustSymbolNamespace,
     SymbolOrigin as RustSymbolOrigin,
+    IncanCallableParam as RustCallableParam,
+    IncanCallableParamKind as RustCallableParamKind,
+    IncanInputAccess as RustInputAccess,
+    IncanPrimitiveType as RustPrimitiveType,
+    IncanType as RustType,
+    NumericTypeId as RustNumericType,
+    RuntimeBuiltinType as RustRuntimeBuiltin,
 )
 from rust::incan_semantics_core::stable_identity import (
     DeclarationSignature as RustDeclarationSignature,
@@ -92,6 +108,45 @@ pub def authored_plan_source_span(span: &PlanSourceSpan) -> PlanSourceSpanRecord
 pub def native_plan_source_span(span: &PlanSourceSpanRecord) -> PlanSourceSpan:
     """Allocate one shared Plan filename when restoring the authored record projection for native lowering."""
     return PlanSourceSpan(file=Arc.new(str(span.file)), line=span.line, column=span.column)
+
+
+# The reverse companion remains pending on #2810 because expansion identity requires a concrete Rust `[u8; 32]`
+# that Incan cannot yet construct from the authored byte list.
+pub def checked_type(ty: &RustType, source_file: str, package_version: str) -> CheckedType:
+    """Copy every semantic type alternative recursively without using diagnostic display text as identity."""
+    match ty:
+        RustType.Never => return CheckedType.Never
+        RustType.Primitive(primitive) => return CheckedType.Primitive(checked_primitive_type(primitive))
+        RustType.Named(name) => return CheckedType.Named(str(name))
+        RustType.Generic(base=base, args=arguments) =>
+            return CheckedType.Generic(str(base), checked_types(arguments, source_file, package_version))
+        RustType.Decimal(precision=precision, scale=scale) => return CheckedType.Decimal(precision, scale)
+        RustType.Function(params=parameters, return_type=result) =>
+            return CheckedType.Function(
+                checked_parameters(parameters, source_file, package_version),
+                [checked_type(result, source_file, package_version)],
+            )
+        RustType.TypeToken(represented) =>
+            return CheckedType.TypeToken([checked_type(represented, source_file, package_version)])
+        RustType.Tuple(elements) => return CheckedType.Tuple(checked_types(elements, source_file, package_version))
+        RustType.TypeVar(name) => return CheckedType.TypeVar(str(name))
+        RustType.SelfType => return CheckedType.SelfType
+        RustType.Ref(referent) => return CheckedType.Ref([checked_type(referent, source_file, package_version)])
+        RustType.RefMut(referent) => return CheckedType.RefMut([checked_type(referent, source_file, package_version)])
+        RustType.RustInteropPath(path) => return CheckedType.RustInteropPath(str(path))
+        RustType.NativeBuiltin(runtime) => return CheckedType.NativeBuiltin(checked_runtime_builtin(runtime))
+        RustType.Unsupported(reason) => return CheckedType.Unsupported(str(reason))
+        RustType.Infer => return CheckedType.Infer
+        RustType.Unknown => return CheckedType.Unknown
+        RustType.NativeArray(element=element, length=length) =>
+            return CheckedType.NativeArray([checked_type(element, source_file, package_version)], length)
+        RustType.NativeTraitObject(path=path, send=send, sync=sync) =>
+            return CheckedType.NativeTraitObject(str(path), send, sync)
+        RustType.NativePointer(mutable=mutable, pointee=pointee) =>
+            return CheckedType.NativePointer(mutable, [checked_type(pointee, source_file, package_version)])
+        RustType.NativeCChar => return CheckedType.NativeCChar
+        RustType.Trait(identity) =>
+            return CheckedType.Trait(canonical_symbol_id(identity, source_file, package_version))
 
 
 def symbol_namespace(namespace: RustSymbolNamespace) -> SymbolNamespace:
@@ -195,3 +250,93 @@ def declaration_signature(signature: &Option[RustDeclarationSignature]) -> Optio
     match signature:
         Some(value) => return Some(DeclarationSignature(spelling=str(value.as_str())))
         None => return None
+
+
+def checked_types(types: &list[RustType], source_file: str, package_version: str) -> list[CheckedType]:
+    """Copy an ordered recursive checked-type sequence without changing its arity."""
+    return [checked_type(ty, source_file, package_version) for ty in types]
+
+
+def checked_parameters(
+    parameters: &list[RustCallableParam],
+    source_file: str,
+    package_version: str,
+) -> list[CheckedCallableParam]:
+    """Copy every callable parameter fact, keeping binder shape, mutability, native ownership and access independent."""
+    mut retained: list[CheckedCallableParam] = []
+    for parameter in parameters:
+        mut name: Option[str] = None
+        match parameter.name.as_ref():
+            Some(value) => name = Some(str(value))
+            None => pass
+        retained.append(
+            CheckedCallableParam(
+                name=name,
+                ty=checked_type(parameter.ty, source_file, package_version),
+                kind=checked_parameter_kind(parameter.kind),
+                has_default=parameter.has_default,
+                is_partial_preset=parameter.is_partial_preset,
+                is_mut=parameter.is_mut,
+                native_owned=parameter.native_owned,
+                input_access=checked_input_access(parameter.input_access),
+            ),
+        )
+    return retained
+
+
+def checked_primitive_type(primitive: &RustPrimitiveType) -> CheckedPrimitiveType:
+    """Map every checked primitive alternative without recovering identity from its display spelling."""
+    match primitive:
+        RustPrimitiveType.Int => return CheckedPrimitiveType.Int
+        RustPrimitiveType.Float => return CheckedPrimitiveType.Float
+        RustPrimitiveType.Numeric(numeric) => return CheckedPrimitiveType.Numeric(checked_numeric_type(numeric))
+        RustPrimitiveType.Bool => return CheckedPrimitiveType.Bool
+        RustPrimitiveType.Str => return CheckedPrimitiveType.Str
+        RustPrimitiveType.Bytes => return CheckedPrimitiveType.Bytes
+        RustPrimitiveType.FrozenStr => return CheckedPrimitiveType.FrozenStr
+        RustPrimitiveType.FrozenBytes => return CheckedPrimitiveType.FrozenBytes
+        RustPrimitiveType.Unit => return CheckedPrimitiveType.Unit
+
+
+def checked_numeric_type(numeric: RustNumericType) -> CheckedNumericType:
+    """Map all numeric registry identities exhaustively."""
+    match numeric:
+        RustNumericType.I8 => return CheckedNumericType.I8
+        RustNumericType.I16 => return CheckedNumericType.I16
+        RustNumericType.I32 => return CheckedNumericType.I32
+        RustNumericType.I64 => return CheckedNumericType.I64
+        RustNumericType.I128 => return CheckedNumericType.I128
+        RustNumericType.U8 => return CheckedNumericType.U8
+        RustNumericType.U16 => return CheckedNumericType.U16
+        RustNumericType.U32 => return CheckedNumericType.U32
+        RustNumericType.U64 => return CheckedNumericType.U64
+        RustNumericType.U128 => return CheckedNumericType.U128
+        RustNumericType.F32 => return CheckedNumericType.F32
+        RustNumericType.F64 => return CheckedNumericType.F64
+        RustNumericType.ISize => return CheckedNumericType.ISize
+        RustNumericType.USize => return CheckedNumericType.USize
+        RustNumericType.Bool => return CheckedNumericType.Bool
+
+
+def checked_parameter_kind(kind: RustCallableParamKind) -> CheckedCallableParamKind:
+    """Map every callable binder shape exhaustively."""
+    match kind:
+        RustCallableParamKind.Normal => return CheckedCallableParamKind.Normal
+        RustCallableParamKind.RestPositional => return CheckedCallableParamKind.RestPositional
+        RustCallableParamKind.RestKeyword => return CheckedCallableParamKind.RestKeyword
+
+
+def checked_input_access(access: RustInputAccess) -> CheckedInputAccess:
+    """Map every checked access mode independently of mutability and native ownership."""
+    match access:
+        RustInputAccess.Inferred => return CheckedInputAccess.Inferred
+        RustInputAccess.Shared => return CheckedInputAccess.Shared
+        RustInputAccess.Exclusive => return CheckedInputAccess.Exclusive
+        RustInputAccess.Owned => return CheckedInputAccess.Owned
+        RustInputAccess.InferredShared => return CheckedInputAccess.InferredShared
+
+
+def checked_runtime_builtin(runtime: &RustRuntimeBuiltin) -> CheckedRuntimeBuiltin:
+    """Map every admitted compiler-managed runtime builtin."""
+    match runtime:
+        RustRuntimeBuiltin.ValidationError => return CheckedRuntimeBuiltin.ValidationError
