@@ -93,6 +93,7 @@ fn public_default_trait_body_requires_its_declaring_context() -> Result<(), Box<
     let mut default = body("touch", 3);
     default.canonical = Some(slot.clone());
     default.span = slot.declaration_span;
+    default.return_type = IncanType::SelfType;
     let mut source = module(vec![default]);
     source.trait_declarations.push(owner.clone());
     let bytes = publish(&source, &BTreeSet::from([owner.clone(), slot.clone()]))?;

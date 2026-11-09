@@ -52,7 +52,7 @@ pub def append_specialized_project_trait_bodies(
     mut has_default = false
     for body_position in range(len(module.bodies)):
         body = borrowed_at(module.bodies, body_position)
-        if len(body.locals) > 0 and borrowed_at(body.locals, 0).ty == RustType.SelfType:
+        if is_default_body(module, body):
             has_default = true
             break
     if not has_default:
@@ -69,9 +69,7 @@ pub def append_specialized_project_trait_bodies(
 
 
 pub def is_default_body(module: &BodyIrModule, body: &Body) -> bool:
-    """Identify a retained trait instance method so only the selected adopter schedules its default."""
-    if len(body.locals) == 0 or receiver_mode(body.locals[0].origin) == None:
-        return false
+    """Identify a retained trait method body, including receiver-free associated defaults."""
     match body.canonical:
         None => return false
         Some(identity) =>
@@ -226,7 +224,7 @@ def append_specialized_bodies(
     """Replace each open default of the module by one instance per adopter whose implementation it is."""
     for body_position in range(len(module.bodies)):
         body = borrowed_at(module.bodies, body_position)
-        if len(body.locals) == 0 or borrowed_at(body.locals, 0).ty != RustType.SelfType:
+        if not is_default_body(module, body):
             result.append(body.clone())
             continue
         # One default can fill several slots of one adopter (its own and the supertrait slots it refines); the
@@ -808,8 +806,7 @@ def nominal_owner(module: &BodyIrModule, actual: PlanType) -> Option[PlanType]:
     """A retained model or source enum owns trait slots, including a receiver reached through stored reference."""
     match actual:
         PlanType.Model(owner, name) => return Some(PlanType.Model(owner, name))
-        (PlanType.ModelRef(owner, name) | PlanType.ModelMutRef(owner, name)) =>
-            return Some(PlanType.Model(owner, name))
+        (PlanType.ModelRef(owner, name) | PlanType.ModelMutRef(owner, name)) => return Some(PlanType.Model(owner, name))
         PlanType.Enum(owner, name) =>
             if owner < len(module.enum_declarations):
                 return Some(PlanType.Enum(owner, name))
@@ -824,11 +821,12 @@ pub def validate_static_receiver(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
     target: &NamedCallableTarget,
+    environment: Option[TraitDefaultInstantiation],
     names: list[str],
     arguments: list[RustType],
 ) -> Result[None, str]:
     """Close the checked receiver in its active frame; only a retained model or enum admits an associated call."""
-    _ = static_receiver_owner(constructors, module, target, names, arguments)?
+    _ = static_receiver_owner(constructors, module, target, environment, names, arguments)?
     return Ok(None)
 
 
@@ -836,20 +834,22 @@ pub def static_receiver_target(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
     target: &NamedCallableTarget,
+    environment: Option[TraitDefaultInstantiation],
     names: list[str],
     arguments: list[RustType],
 ) -> Result[NamedCallableTarget, str]:
     """
     Select the concrete implementation of a trait associated call after closing its bounded receiver.
 
-    Body IR retains the trait slot selected by checking and the receiver template independently. Lowering closes that
-    template in the active generic frame, then uses the same owner/implementation records as instance dispatch. When
-    the selected implementation has a body in this module, lowering replaces the trait slot's local call identity with
-    that body's exact identity, including when the trait itself came from an imported package.
+    Body IR retains the trait slot selected by checking and the receiver template independently. Lowering first closes
+    a default's Self through its adopting trait environment, then closes the active generic frame and uses the same
+    owner/implementation records as instance dispatch. When the selected implementation has a body in this module,
+    lowering replaces the trait slot's local call identity with that body's exact identity, including when the trait
+    itself came from an imported package.
     """
     if not is_trait_associated_target(module, target):
         return Ok(target.clone())
-    match static_receiver_owner(constructors, module, target, names, arguments)?:
+    match static_receiver_owner(constructors, module, target, environment, names, arguments)?:
         None => return Ok(target.clone())
         Some(owner) =>
             selected_identity = owner_callable_identity(module, target.canonical, str(target.name), None, owner)?
@@ -882,14 +882,20 @@ def static_receiver_owner(
     constructors: &ConstructorIndex,
     module: &BodyIrModule,
     target: &NamedCallableTarget,
+    environment: Option[TraitDefaultInstantiation],
     names: list[str],
     arguments: list[RustType],
 ) -> Result[Option[PlanType], str]:
     """Close an associated call's checked receiver and return its retained nominal owner when present."""
     match target.receiver_type:
         Some(template) =>
+            mut retained: RustType = template.clone()
+            match environment:
+                Some(instantiation) =>
+                    retained = instantiate_type(template, instantiation.receiver_type, instantiation.arguments)
+                None => pass
             target_name = str(target.name)
-            closed: RustType = substitute(template, names, arguments).map_err(
+            closed: RustType = substitute(retained, names, arguments).map_err(
                 (reason) => f"{reason} in static receiver of {target_name}",
             )?
             match enum_type(borrowed_table(module.enum_declarations), closed):
@@ -899,3 +905,60 @@ def static_receiver_owner(
                 PlanType.Model(owner, name) => return Ok(Some(PlanType.Model(owner, name)))
                 _ => return Err("unsupported Body IR nonnominal static receiver")
         None => return Ok(None)
+
+
+pub def associated_body_index(
+    module: &BodyIrModule,
+    target: &NamedCallableTarget,
+    mut builder: Builder,
+) -> Result[Option[int], str]:
+    """Select the adopter-specific body only for a receiver-free trait default with a shared canonical identity."""
+    if not is_trait_associated_target(module, target):
+        return Ok(None)
+    owner = static_receiver_owner(
+        builder.constructors,
+        module,
+        target,
+        builder.trait_environment,
+        builder.type_parameters,
+        builder.type_arguments,
+    )?
+    match owner:
+        None => return Ok(None)
+        Some(selected_owner) =>
+            selected_identity = owner_callable_identity(module, target.canonical, str(target.name), None, selected_owner)?
+            candidate_indices = builder.program.body_indices.candidates(selected_identity)
+            mut selected = -1
+            for index in candidate_indices:
+                body = body_at(builder.program.bodies.as_ref(), index)
+                if body.canonical != Some(selected_identity):
+                    continue
+                match body.trait_default_instantiation:
+                    None => continue
+                    Some(instantiation) =>
+                        mut concrete: Option[PlanType] = enum_type(
+                            borrowed_table(module.enum_declarations),
+                            instantiation.receiver_type,
+                        )
+                        match concrete:
+                            Some(_owner) => pass
+                            None =>
+                                concrete = nominal_owner(
+                                    module,
+                                    model_type(
+                                        builder.constructors,
+                                        module.nominal_declarations,
+                                        instantiation.receiver_type,
+                                    )?,
+                                )
+                        match concrete:
+                            Some(candidate_owner) =>
+                                if candidate_owner != selected_owner:
+                                    continue
+                            None => continue
+                if selected >= 0 and body != body_at(builder.program.bodies.as_ref(), selected):
+                    return Err("unsupported Body IR conflicting associated default executable bodies")
+                selected = index
+            if selected >= 0:
+                return Ok(Some(selected))
+            return Ok(None)
