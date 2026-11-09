@@ -100,17 +100,27 @@ pub def inventory(corpus: Corpus) -> JsonValue:
         record["operation"] = JsonValue.string(item.operation)
         record["status"] = JsonValue.string("unsupported")
         records.append(JsonValue.object(record))
+    return receipt(corpus, records, 0, 0, len(corpus.cases))
+
+
+pub def receipt(corpus: Corpus, records: list[JsonValue], passed: int, failed: int, unsupported: int) -> JsonValue:
+    """Render execution results without confusing verified input inventory with passed codec cases."""
+    mut status = "passed"
+    if failed > 0:
+        status = "failed"
+    elif unsupported > 0:
+        status = "incomplete"
     mut receipt: dict[str, JsonValue] = {}
     receipt["schema"] = JsonValue.string("comic.conformance-receipt/1")
-    receipt["status"] = JsonValue.string("incomplete")
+    receipt["status"] = JsonValue.string(status)
     receipt["inventory_verified"] = JsonValue.bool(true)
     receipt["manifest_sha256"] = JsonValue.string(corpus.manifest_digest)
     receipt["data_files"] = JsonValue.int(corpus.data_files)
     receipt["text_files"] = JsonValue.int(corpus.text_files)
     receipt["selected"] = JsonValue.int(len(corpus.cases))
-    receipt["passed"] = JsonValue.int(0)
-    receipt["failed"] = JsonValue.int(0)
-    receipt["unsupported"] = JsonValue.int(len(corpus.cases))
+    receipt["passed"] = JsonValue.int(passed)
+    receipt["failed"] = JsonValue.int(failed)
+    receipt["unsupported"] = JsonValue.int(unsupported)
     receipt["cases"] = JsonValue.array(records)
     return JsonValue.object(receipt)
 
