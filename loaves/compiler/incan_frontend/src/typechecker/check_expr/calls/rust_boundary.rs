@@ -71,10 +71,17 @@ impl TypeChecker {
             self.errors
                 .push(errors::async_call_without_await(callable_display, span));
         }
-        let callable_returns =
-            self.infer_rust_signature_bindings(sig, owner_path, &sig.type_params, args, arg_types, expected_return_ty);
+        let inference_parameters = Self::rust_signature_inference_parameters(sig);
+        let callable_returns = self.infer_rust_signature_bindings(
+            sig,
+            owner_path,
+            &inference_parameters,
+            args,
+            arg_types,
+            expected_return_ty,
+        );
         self.validate_rust_scalar_predicates(sig, &callable_returns, span);
-        self.record_inferred_rust_arguments(callable_display, &sig.type_params, &callable_returns, span);
+        self.record_inferred_rust_arguments(callable_display, sig, &callable_returns, span);
         let declared_sig = sig;
         let declared_params = if Self::rust_signature_has_receiver(sig) {
             &sig.params[1..]
@@ -114,25 +121,7 @@ impl TypeChecker {
                 param.type_display.as_str(),
                 owner_path,
             );
-            let contextual_arg_ty = if (matches!(arg_expr.node, Expr::Closure(_, _))
-                && matches!(&target_ty, ResolvedType::Function(_, _)))
-                || super::super::ops::is_unsuffixed_integer_literal(arg_expr)
-                || matches!(
-                    arg_expr.node,
-                    Expr::Literal(_)
-                        | Expr::Unary(_, _)
-                        | Expr::List(_)
-                        | Expr::Dict(_)
-                        | Expr::Set(_)
-                        | Expr::Tuple(_)
-                )
-                || (matches!(arg_expr.node, Expr::Call(..) | Expr::MethodCall(..))
-                    && Self::rust_call_arg_wants_owner_expectation(binding.arg_ty, &target_ty))
-            {
-                Some(self.check_expr_with_expected(arg_expr, Some(&target_ty)))
-            } else {
-                None
-            };
+            let contextual_arg_ty = self.contextual_rust_argument_type(arg_expr, binding.arg_ty, &target_ty);
             let arg_ty = contextual_arg_ty.as_ref().unwrap_or(binding.arg_ty);
             if preserves_lookup_arg_shape && self.rust_lookup_probe_boundary_match(arg_ty, &target_ty) {
                 continue;
@@ -140,7 +129,7 @@ impl TypeChecker {
             let instantiated = declared_params.get(binding.parameter_index).map(|declared| {
                 self.instantiate_rust_signature_type(
                     &self.native_rust_signature_type(&declared.type_display, owner_path),
-                    &declared_sig.type_params,
+                    &inference_parameters,
                     &callable_returns,
                 )
             });
@@ -157,6 +146,30 @@ impl TypeChecker {
         let ret = self.resolved_rust_call_type_from_sig(sig, owner_path, span);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
         ret
+    }
+
+    /// Recheck an argument whose Rust boundary supplies information unavailable during its first provisional pass.
+    ///
+    /// Nested calls in particular receive the specialized fixed-array target only after their parent call closes its
+    /// own binders. Keeping this policy shared between method and free-function validation prevents either boundary
+    /// from retaining the provisional open type.
+    fn contextual_rust_argument_type(
+        &mut self,
+        argument: &Spanned<Expr>,
+        provisional: &ResolvedType,
+        target: &ResolvedType,
+    ) -> Option<ResolvedType> {
+        let nested_call_needs_context = matches!(argument.node, Expr::Call(..) | Expr::MethodCall(..))
+            && Self::rust_call_arg_wants_owner_expectation(provisional, target);
+        let needs_context = (matches!(argument.node, Expr::Closure(_, _))
+            && matches!(target, ResolvedType::Function(_, _)))
+            || super::super::ops::is_unsuffixed_integer_literal(argument)
+            || matches!(
+                argument.node,
+                Expr::Literal(_) | Expr::Unary(_, _) | Expr::List(_) | Expr::Dict(_) | Expr::Set(_) | Expr::Tuple(_)
+            )
+            || nested_call_needs_context;
+        needs_context.then(|| self.check_expr_with_expected(argument, Some(target)))
     }
 }
 

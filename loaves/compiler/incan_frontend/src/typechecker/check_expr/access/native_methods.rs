@@ -583,10 +583,13 @@ impl TypeChecker {
         }
         // ---- Value-constrained owner arguments ----
         if specializes_owner && arguments.is_empty() {
+            let mut inference_parameters = owner.type_params.clone();
+            inference_parameters.extend(signature.type_params.iter().cloned());
+            inference_parameters.extend(Self::rust_signature_const_parameters(signature));
             let inferred = self.infer_rust_signature_bindings(
                 signature,
                 call.rust_path,
-                &owner.type_params,
+                &inference_parameters,
                 call.args,
                 call.arg_types,
                 call.expected_return_ty,
