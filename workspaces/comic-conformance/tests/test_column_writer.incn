@@ -1,0 +1,98 @@
+"""Whole-input admission, physical choices and logical-seal invariants for column writing."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.column_block_write import write_block
+from std.primitives.crumb.column_data_write import write_column
+from std.primitives.crumb.column_types import BlockEncoding, ColumnChoice, GroupChoice
+from std.primitives.crumb.column_writer import write_columns
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.description_dictionary import admit_dictionary
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.row_writer import write_rows
+from std.primitives.crumb.types import AbsentPolicy, ContainerKind, ScalarKind, TypeNode
+from std.primitives.crumb.values import Value, ValueField
+from encoding_test_support import description, member
+
+
+def record(value: Value, absent: AbsentPolicy = AbsentPolicy.Required) -> RowRecord:
+    """A complete logical record with explicit stored identity and policy, without constructor defaults."""
+    field = ValueField(identity=b"field1", canonical=true, absent=absent, value=value)
+    return RowRecord(key=b"record\x00", value=Value.Record([field]))
+
+
+def test_writer_choices_change_bytes_but_not_the_logical_seal() -> Result[None, str]:
+    """Indexed, FOR and row encodings of the same records share the exact last 32 seal bytes."""
+    mut budget = Budget.create(bytes=16777216, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    declared = description(b"record\x00", [member(b"field1", "i8")])
+    records = [record(Value.Integer("-2")), record(Value.Integer("1")), record(Value.Integer("0"))]
+    selected = [GroupChoice(columns=[ColumnChoice(blocks=[BlockEncoding.FrameOfReference])])]
+    plain = write_columns([declared], records, registry, true, [], budget).map_err((e) => e.message())?
+    packed = write_columns([declared], records, registry, true, selected, budget).map_err((e) => e.message())?
+    row = write_rows([declared], records, registry, true, budget).map_err((e) => e.message())?
+    assert plain != packed
+    assert plain[len(plain) - 32:] == packed[len(packed) - 32:]
+    assert row[len(row) - 32:] == packed[len(packed) - 32:]
+    return Ok(None)
+
+
+def test_column_writer_rejects_bad_contracts_and_choice_cardinality() -> Result[None, str]:
+    """An empty input cannot hide invalid descriptions; a plan cannot omit or invent field blocks."""
+    mut budget = Budget.create(bytes=16777216, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    declared = description(b"record\x00", [member(b"field1", "i8")])
+    rows = [record(Value.Integer("7"))]
+    assert write_columns([declared, declared], [], registry, false, [], budget).is_err()
+    assert write_columns([declared], [record(Value.Integer("128"))], registry, false, [], budget).is_err()
+    assert write_columns([declared], rows, registry, false, [GroupChoice(columns=[])], budget).is_err()
+    missing_block = [GroupChoice(columns=[ColumnChoice(blocks=[])])]
+    assert write_columns([declared], rows, registry, false, missing_block, budget).is_err()
+    assert write_columns([declared], [], registry, false, missing_block, budget).is_err()
+    missing_field = RowRecord(key=b"record\x00", value=Value.Record([]))
+    assert write_columns([declared], [missing_field], registry, false, [], budget).is_err()
+    wrong_absence = record(Value.Integer("7"), AbsentPolicy.NoneValue)
+    assert write_columns([declared], [wrong_absence], registry, false, [], budget).is_err()
+    return Ok(None)
+
+
+def test_absence_and_zero_field_rows_still_obey_resource_limits() -> Result[None, str]:
+    """Empty logical data does not exempt counts, wrong types or explicit encoding choices from admission."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    dictionary = admit_dictionary([], registry, budget).map_err((e) => e.message())?
+    list_type = TypeNode.Container(ContainerKind.List, [TypeNode.Scalar(ScalarKind.I8)])
+    wrong = write_block(list_type, AbsentPolicy.Empty, [Value.Map([])], BlockEncoding.Indexed, None, dictionary, budget)
+    assert wrong.is_err()
+    optional = TypeNode.Container(ContainerKind.Option, [TypeNode.Scalar(ScalarKind.I8)])
+    empty_numeric = write_block(
+        optional,
+        AbsentPolicy.NoneValue,
+        [Value.NoneValue],
+        BlockEncoding.FrameOfReference,
+        None,
+        dictionary,
+        budget,
+    )
+    assert empty_numeric.is_err()
+    declared = description(b"record\x00", [])
+    rows = [RowRecord(key=b"record\x00", value=Value.Record([])) for _ in range(2048)]
+    mut empty_budget = Budget.create(bytes=1048576, elements=1024, depth=64).map_err((e) => e.message())?
+    write_columns([declared], [], registry, false, [], empty_budget).map_err((e) => e.message())?
+    mut limited = Budget.create(bytes=1048576, elements=1024, depth=64).map_err((e) => e.message())?
+    assert write_columns([declared], rows, registry, false, [], limited).is_err()
+    return Ok(None)
+
+
+def test_dictionary_includes_values_from_noncode_blocks() -> Result[None, str]:
+    """One complete-column dictionary includes a key occurring only in an indexed second block."""
+    mut budget = Budget.create(bytes=16777216, elements=1048576, depth=64).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    dictionary = admit_dictionary([], registry, budget).map_err((e) => e.message())?
+    mut values = [Value.Text("a") for _ in range(256)]
+    values.append(Value.Text("z"))
+    choice = ColumnChoice(blocks=[BlockEncoding.DictionaryPacked, BlockEncoding.Indexed])
+    raw = write_column(TypeNode.Scalar(ScalarKind.String), AbsentPolicy.Required, values, choice, dictionary, budget)
+    encoded = raw.map_err((e) => e.message())?
+    # The literal dictionary prefix contains both full keys a and z, before any block directory.
+    assert encoded[:13] == b"\x01\x0b\x02\x09\x01\x00\x06\x00\x01a\x00\x01z"
+    return Ok(None)
