@@ -1,0 +1,34 @@
+# behavior: optional frozen and ordinary text compare by variant and text, in both directions, without consuming either field or parameter (#2863)
+# expect-stdout:
+#   optional text equality
+
+model History:
+    pub since: Option[FrozenStr]
+
+
+def same(left: Option[FrozenStr], right: Option[str]) -> bool:
+    """Compare borrowed optional inputs repeatedly without moving their text."""
+    return left == right and right == left and not (left != right)
+
+
+def main() -> None:
+    """Exercise Some/None pairs, fields, literals, parameters and independent owned text."""
+    history = History(since=Some("1.0"))
+    assert history.since == Some("1.0")
+    assert Some("1.0") == history.since
+    assert history.since != Some("2.0")
+    assert Some("2.0") != history.since
+    text = "1." + "0"
+    present: Option[str] = Some(text)
+    absent: Option[str] = None
+    missing = History(since=None)
+    assert same(history.since, present)
+    assert not same(history.since, absent)
+    assert not same(missing.since, present)
+    assert same(missing.since, absent)
+    assert history.since != absent
+    assert absent != history.since
+    assert missing.since == absent
+    assert present == Some("1.0")
+    assert history.since == Some("1.0")
+    println("optional text equality")

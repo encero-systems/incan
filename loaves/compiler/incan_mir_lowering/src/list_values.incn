@@ -314,8 +314,10 @@ pub def projected_element_read(
     Each index clones its element, or the value its key selects in a dictionary, and each slice copies a new sequence, so
     the container stays whole; a field of a copied element is read from that copy.
     """
-    mut place = sequence_read_storage(builder, container, span)?
+    mut place = container
     for slot in range(start, len(source.projection)):
+        # A preceding list index or field can expose frozen storage just as the root can.
+        place = sequence_read_storage(builder, place, span)?
         match source.projection[slot]:
             PlaceElem.Slice(start=_start, end=_end, step=_step) =>
                 place = read_sequence_slice(builder, place, source.projection[slot], span)?
