@@ -56,6 +56,12 @@ The reader receipt requires all 107 column cases, 292 actual decode executions a
 
 Focused controls exercise independently retained packed-field handles, a small selected field beside a large unselected field, corruption in an unselected block, complete-prefix boundaries, bounded dictionary restart lookup, repeated-run expansion and reconstructed-prefix resource accounting. These are finite format-value operations. Generated application model reconstruction and transport streaming are not claimed.
 
+## Column-reader callback cost
+
+Column admission and record materialization attach a field identity only when a nested operation fails. These paths use direct Result matching so that error-context callbacks do not capture the complete descriptor dictionary on successful reads. The projection test also exercises a complete-record byte refusal and verifies that the failing field and original cause survive; the malformed-unselected-column case checks the same attribution during admission.
+
+This removes a particular avoidable copy, not every copy in binary decoding. Profile a fixed wide recordset at 100, 1,000 and 10,000 records using the same input bytes, separate decode processes and consumed checksums. Compare admission and record-scan stages separately. Retain native stack samples to distinguish callback capture from parameter passing, retained backing and explicit output construction. Functional budget tests do not detect uncharged allocation costs, and no machine-dependent timing threshold belongs in them.
+
 ## Text-reader scaling contract
 
 For a fixed declaration and fixed-width records, multiplying the number of records must multiply tokenization and value-reading work proportionally. A successful per-value budget check must not copy the document's token snapshot. This includes work hidden in callback captures: referring to the cursor from an error callback can copy the entire cursor when the callback is constructed, even if the operation succeeds. Inspecting the cursor only in a direct error branch avoids that cost and preserves the refusal's exact position.
