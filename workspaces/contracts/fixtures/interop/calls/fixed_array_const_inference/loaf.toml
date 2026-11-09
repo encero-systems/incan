@@ -1,0 +1,9 @@
+[project]
+name = "fixed_array_const_inference"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+array_probe = { loaf = "array_probe", path = "rust/array_probe" }
