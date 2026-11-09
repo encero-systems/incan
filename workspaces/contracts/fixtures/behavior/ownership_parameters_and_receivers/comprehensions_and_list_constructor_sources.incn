@@ -1,4 +1,4 @@
-# behavior: comprehensions and list constructors preserve their sources; uniform range comprehensions evaluate bounds once, preserve empty ranges, indexing, sum and independent mutable storage (#2256)
+# behavior: comprehensions and list constructors preserve their sources; an annotated list comprehension contextually types its element, including when nested (#2803); uniform range comprehensions evaluate bounds once, preserve empty ranges, indexing, sum and independent mutable storage (#2256)
 # expect-stdout:
 #   ["ab", "def"] 3
 #   [3, 1, 2] 9 4
@@ -12,9 +12,16 @@
 #   0 0 0
 #   4 5
 #   1 2
+#   1
+#   1
+#   1
 
 const FROZEN_TEXT: FrozenList[str] = ["x", "y"]
 const FROZEN_NUMBERS: FrozenSet[int] = {7, 8}
+
+
+enum RecursiveValue:
+    Items(list[RecursiveValue])
 
 
 def doubled(mut items: list[int]) -> list[int]:
@@ -39,18 +46,41 @@ def bound() -> int:
 
 def uniform_ranges() -> None:
     """Observe exact scalar fills, empty ranges, independent storage and non-unit fallback iteration."""
-    mut flags = [True for item in range(bound())]
+    mut flags = [true for item in range(bound())]
     copy = flags
     println(f"{len(flags)} {flags[-1]} {sum(flags)}")
-    flags[1] = False
+    flags[1] = false
     println(f"{sum(flags)} {sum(copy)}")
     negative = [7 for item in range(-2)]
     empty = [1.5 for item in range(0)]
-    explicit = [False for item in range(0, 0, 1)]
+    explicit = [false for item in range(0, 0, 1)]
     println(f"{len(negative)} {len(empty)} {len(explicit)}")
     regular = [4 for item in range(0, 2)]
     stepped = [5 for item in range(1, 6, 2)]
     println(f"{regular[1]} {stepped[2]}")
+
+
+def annotated_option_comprehension() -> int:
+    """Take the Option element type from the annotated comprehension destination."""
+    fields = [1]
+    values: list[Option[RecursiveValue]] = [None for _ in fields]
+    return len(values)
+
+
+def annotated_option_comprehension_control() -> int:
+    """Fill the same annotated Option list through the established loop control."""
+    fields = [1]
+    mut values: list[Option[RecursiveValue]] = []
+    for _ in fields:
+        values.append(None)
+    return len(values)
+
+
+def nested_annotated_option_comprehension() -> int:
+    """Carry the destination element type through both nested comprehensions."""
+    fields = [1]
+    values: list[list[Option[RecursiveValue]]] = [[None for _ in fields] for _ in fields]
+    return len(values[0])
 
 
 def main() -> None:
@@ -76,3 +106,6 @@ def main() -> None:
     uniform_ranges()
     races = [1, 2]
     println(" ".join([str(race) for race in races]))
+    println(annotated_option_comprehension())
+    println(annotated_option_comprehension_control())
+    println(nested_annotated_option_comprehension())
