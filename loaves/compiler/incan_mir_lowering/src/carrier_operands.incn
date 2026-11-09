@@ -2,7 +2,6 @@
 
 from pub::incan_mir_plan import (
     Carrier,
-    semantic_type_matches,
     Constant,
     ListLeaf,
     Operand,
@@ -55,6 +54,7 @@ from static_storage import snapshot_owns
 from list_values import sequence_read_storage
 from matches import bind_enum_payload, bind_structural_pattern, enum_payload_read
 from result_carriers import frozen_operand, typed_carrier_operand
+from compiler_record_adapters import semantic_key_matches_native
 
 
 pub def boundary_operand(
@@ -165,7 +165,10 @@ pub def boundary_plan_operand(
                 ):
                     mut convert = false
                     for union in builder.unions:
-                        if not semantic_type_matches(builder.intrinsics[owner - len(builder.enums)], union):
+                        if not semantic_key_matches_native(
+                            builder.intrinsics[owner - len(builder.enums)].semantic_key,
+                            union,
+                        )?:
                             continue
                         mut members: list[PlanType] = []
                         for variant in builder.intrinsics[owner - len(builder.enums)].variants:
