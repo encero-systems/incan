@@ -265,15 +265,7 @@ def validated_model_owner(
     match target.canonical:
         None => return Ok(None)
         Some(identity) =>
-            mut recognized = false
-            for position in range(len(builder.nominals)):
-                declaration = builder.nominals[position]
-                match declaration.validated_constructor:
-                    Some(contract) =>
-                        if contract.constructor == identity.clone():
-                            recognized = true
-                    None => pass
-            if not recognized:
+            if not builder.constructors.validated_constructors.contains(identity):
                 return Ok(None)
             if len(target.type_args) != 0:
                 return Err("unsupported Body IR type arguments on a validated constructor")
