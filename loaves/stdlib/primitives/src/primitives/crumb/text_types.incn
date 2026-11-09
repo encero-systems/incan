@@ -1,0 +1,152 @@
+"""Owned COMIC text descriptions and values, separate from source-language syntax trees."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.registrations import KindRegistration, KindRegistry
+from crate.primitives.crumb.types import FieldShape, NominalKind, TypeNode, VariantShape
+from crate.primitives.crumb.values import Metadata, Value
+
+
+pub model TextPosition:
+    """A one-based Unicode-scalar source position."""
+
+    pub line: int
+    pub column: int
+
+
+pub enum TextFailure(str):
+    """Closed refusal categories produced by COMIC text reading and printing."""
+
+    AmbiguousOrUnknownType = "ambiguous_or_unknown_type"
+    AmbiguousUnion = "ambiguous_union"
+    BidirectionalControl = "bidirectional_control"
+    DecimalPrecision = "decimal_precision"
+    DecimalScaleMismatch = "decimal_scale_mismatch"
+    DuplicateDeclarationKind = "duplicate_declaration_kind"
+    DuplicateField = "duplicate_field"
+    DuplicateKey = "duplicate_key"
+    FieldIndexOutOfRange = "field_index_out_of_range"
+    IntegerOutOfRange = "integer_out_of_range"
+    InvalidAbsentValue = "invalid_absent_value"
+    InvalidBinary = "invalid_binary"
+    InvalidEntry = "invalid_entry"
+    InvalidEscape = "invalid_escape"
+    InvalidFields = "invalid_fields"
+    InvalidFloat = "invalid_float"
+    InvalidFloatBits = "invalid_float_bits"
+    InvalidInteger = "invalid_integer"
+    InvalidList = "invalid_list"
+    InvalidMap = "invalid_map"
+    InvalidMetadata = "invalid_metadata"
+    InvalidOptional = "invalid_optional"
+    InvalidProperty = "invalid_property"
+    InvalidSet = "invalid_set"
+    InvalidToken = "invalid_token"
+    InvalidType = "invalid_type"
+    InvalidUnion = "invalid_union"
+    InvalidUtf8 = "invalid_utf8"
+    InvalidValue = "invalid_value"
+    Limit = "limit"
+    MissingRequiredField = "missing_required_field"
+    PositionalAfterKey = "positional_after_key"
+    ReservedField = "reserved_field"
+    RootType = "root_type"
+    TypeMismatch = "type_mismatch"
+    UnexpectedEnd = "unexpected_end"
+    UnknownDescription = "unknown_description"
+    UnknownField = "unknown_field"
+    UnknownKind = "unknown_kind"
+    UnknownStoreKey = "unknown_store_key"
+    UnknownVariant = "unknown_variant"
+    UnsupportedMarker = "unsupported_marker"
+    UnsupportedStoreKey = "unsupported_store_key"
+    ValueTypeNoSingleDeclaration = "value_type_no_single_declaration"
+
+
+pub model TextError:
+    """A stable language-neutral refusal category and its source position."""
+
+    pub kind: TextFailure
+    pub position: TextPosition
+
+    pub def message(self) -> str:
+        """Describe the refusal without reproducing untrusted document contents."""
+        return f"{self.kind.value()} at {self.position.line}:{self.position.column}"
+
+
+pub model TextDescription:
+    """One admitted declaration around the shared logical node and metadata domains."""
+
+    pub path: str
+    pub kind: str
+    pub shape: NominalKind
+    pub identity: Option[bytes]
+    pub properties: Metadata
+    pub fields: list[FieldShape]
+    pub variants: list[VariantShape]
+
+
+pub model TextContext:
+    """Local profile registrations plus logical types admitted by the caller or the active profile."""
+
+    pub kinds: KindRegistry
+    pub admitted_type_names: list[str]
+    pub admitted_type_shapes: dict[str, NominalKind]
+    pub admitted_type_identities: dict[str, bytes]
+
+    @staticmethod
+    pub def create(
+        registrations: list[KindRegistration],
+        admitted_type_names: list[str],
+        mut budget: Budget,
+    ) -> Result[Self, CrumbError]:
+        """Create a context for name-only profile types whose shape and identity are not supplied."""
+        mut shapes: dict[str, NominalKind] = {}
+        mut identities: dict[str, bytes] = {}
+        for name in admitted_type_names:
+            shapes[name] = NominalKind.Record
+            identities[name] = b"\x00"
+        return TextContext.create_nominals(registrations, admitted_type_names, shapes, identities, budget)
+
+    @staticmethod
+    pub def create_nominals(
+        registrations: list[KindRegistration],
+        admitted_type_names: list[str],
+        admitted_type_shapes: dict[str, NominalKind],
+        admitted_type_identities: dict[str, bytes],
+        mut budget: Budget,
+    ) -> Result[Self, CrumbError]:
+        """Create a context from caller/profile nominal facts; one zero octet means text-only None."""
+        for name in admitted_type_names:
+            if name not in admitted_type_shapes or name not in admitted_type_identities:
+                return Err(CrumbError.invalid_input("text nominal admission missing fact"))
+            identity = admitted_type_identities[name]
+            if identity != b"\x00" and len(identity) != 6:
+                return Err(CrumbError.invalid_input("text nominal identity width"))
+        return Ok(
+            TextContext(
+                kinds=KindRegistry.create(registrations, budget)?,
+                admitted_type_names=admitted_type_names,
+                admitted_type_shapes=admitted_type_shapes,
+                admitted_type_identities=admitted_type_identities,
+            ),
+        )
+
+    @staticmethod
+    pub def core(mut budget: Budget) -> Result[Self, CrumbError]:
+        """Create the core-only context used by ordinary COMIC documents."""
+        return TextContext.create([], [], budget)
+
+
+pub model TextRootValue:
+    """A root keeps its resolved logical type beside the shared value whose variants carry no display names."""
+
+    pub storage_type: TypeNode
+    pub value: Value
+
+
+pub model TextDocument:
+    """Descriptions followed by their ordered root values."""
+
+    pub descriptions: list[TextDescription]
+    pub values: list[TextRootValue]
