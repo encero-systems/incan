@@ -221,7 +221,7 @@ pub trait Reconstruct with Walk:
 ### Which types have them
 
 - `Walk` and `Reconstruct` must be automatic derives of `model`, `enum` and `newtype`, holding for a declaration when every field, payload or underlying type has them. They hold for a generic declaration at each instantiation whose type arguments do.
-- `bool`, every integer and float type, `decimal`, `str`, `bytes`, `None`, `Option`, `Result`, `list`, `dict`, `set`, tuples, union types and their frozen forms must have them when their element types do.
+- `bool`, every integer, float and decimal type, `str`, `bytes`, `None`, `Option`, `Result`, `list`, `dict`, `set`, tuples, union types and their frozen forms must have them when their element types do.
 - A `class`, a callable, a `rust::` type and a live runtime resource must not have them unless the type's author writes them. `SecretStr` and `SecretBytes` must not have them at all, so every format refuses a value holding one by the same rule (RFC 103).
 - A declaration without the members must not be refused for that. A use is refused: a call, or a bound through a type parameter. The diagnostic must name the field path and show the field's declaration as a second location. For an author-extensible type it must explain that the type can supply the members; for `SecretStr` or `SecretBytes` it must explain the non-disclosure restriction rather than suggest implementing a forbidden protocol.
 - A program that reaches none of these members must compile and run as if they did not exist.
@@ -254,7 +254,8 @@ A walker sees kinds of value, and each kind has its members. A source answers wi
 
 | Kind | `Walker[E]` members | `Source[E]` members |
 | --- | --- | --- |
-| `bool`, `str`, `bytes`, `decimal` | One member each, named for the kind and taking the value | One member each, named for the kind and returning the value |
+| `bool`, `str`, `bytes` | One member each, named for the kind and taking the value | One member each, named for the kind and returning the value |
+| Decimals | `decimal(value: DecimalValue)`; a `decimal[P, S]` arrives as its exact value with its precision and scale | `decimal()`, returning `DecimalValue` |
 | Integers | `integer(value: i128)`, and `unsigned(value: u128)` for `u128` | `integer()`, `unsigned()` |
 | Floats | `float(value: f64)`; an `f32` arrives as the `f64` it equals | `float()` |
 | `None` | `none()` | `none()`, returning `None` |
@@ -272,6 +273,21 @@ A walker sees kinds of value, and each kind has its members. A source answers wi
 - Numeric decoding must preserve the requested type's value constraints. A narrower integer must refuse an out-of-range value through the source's typed failure channel; a float conversion must follow the selected codec profile rather than silently choose a lossy conversion.
 - Source implementations must expose typed failure conversion for malformed values, numeric range failures, and shape mismatches. End operations validate that the selected container or frame is complete under the format's contract. Tuple arity, enum variant selection, union membership and nested declared types are checked rather than guessed.
 - Depth, sizes and allocation are the format's to bound. The generated recursion must carry the source or walker's accounting through nested values; calling a nested model must not reset its limits. The members add no arbitrary universal limit.
+
+### Decimal values
+
+`std.primitives.reflection` owns `DecimalValue`, which holds any decimal exactly, together with the type it was declared as:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `coefficient` | `i128` | The value times 10 to the power `scale`, so `19.90` in a `decimal[10, 2]` is `1990` |
+| `precision` | `u8` | The declared precision `P`, from 1 to 38 |
+| `scale` | `u8` | The declared scale `S`, from 0 to `P` |
+
+- Constructing a `DecimalValue` must refuse a precision outside 1 to 38, a scale above the precision and a coefficient with more than `precision` digits.
+- A walker receives the declared precision and scale with the value, because a format may write a decimal at its type's scale, as `19.90d`, and an element of a `list[decimal[10, 2]]` reaches the walker without a `FieldInfo`.
+- Reconstruction must convert the returned `DecimalValue` into the requested `decimal[P, S]` by exact value, and refuse a value that type cannot hold exactly, such as `19.95` into a `decimal[10, 1]`, through the source's numeric range failure.
+- Whether a value written as one decimal type fits a field of another is the format's rule. RFC 165 fits a decimal only into the same type.
 
 ### Shape
 
