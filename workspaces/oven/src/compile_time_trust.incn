@@ -4,10 +4,12 @@ from std.fs import Path
 from intake import ManifestReader, read_project
 from loaf_identity import is_adopted_scope
 from loaf_local_graph import LocalFacet
+from lock_format import OvenLock
 from rust_manifest import rust_facet
+from source_loaf import read_source_loaf
 from trust_policy import coverage, load
 from toolchain import installation, toolchain_directory
-from registry_units import RegistryUnits
+from registry_units import RegistryUnit, RegistryUnits
 
 
 pub const MISSING_TRUST_CODE: str = "INCAN-T0134"
@@ -43,6 +45,21 @@ pub model TrustDecision:
                 lines.append(f"  Loaf `{missing.loaf}` at `{missing.project}`")
                 lines.append(f"  trust with `oven trust add project {missing.project}`")
         return "\n".join(lines)
+
+
+model CoveredPublishedLock:
+    """One directly covered source Loaf whose checked published lock may extend that exact authority once."""
+
+    loaf: str
+    label: str
+    lock: OvenLock
+
+
+pub model DirectCoverage:
+    """Direct trust evidence and whether that authority may extend once through the covered Loaf's published lock."""
+
+    pub label: str
+    pub extends_lock: bool = true
 
 
 pub def decide(
@@ -109,18 +126,102 @@ pub def decide_registry(
     project_root: str,
     unattended: bool,
 ) -> Result[TrustDecision, str]:
-    """Decide selected registry procedural-macro artifacts before a compiler process could load them."""
+    """
+    Decide registry compile-time trust in two ordered steps:
+
+    1. Establish direct coverage without consulting published dependency locks.
+    2. Allow those directly covered source Loaves to extend authority through exact lock pins once.
+    """
+    # 1. Establish direct coverage for each selected registry producer.
+    mut direct: Dict[str, DirectCoverage] = {}
+    for unit in registry.units:
+        mut artifact: Option[Path] = None
+        if unit.artifact != "":
+            artifact = Some(Path(unit.artifact))
+        covered = cover_loaf(unit.loaf, None, artifact, project_root, unattended)?
+        match covered:
+            Some(label) => direct[registry_key(unit)] = DirectCoverage(label=label)
+            None => pass
+
+    # 2. Evaluate compile-time units against direct coverage and checked published locks.
+    return decide_registry_from_coverage(registry, direct, project_root)
+
+
+pub def decide_registry_from_coverage(
+    registry: RegistryUnits,
+    direct: Dict[str, DirectCoverage],
+    project_root: str,
+) -> Result[TrustDecision, str]:
+    """
+    Extend direct coverage through checked published locks in two ordered steps:
+
+    1. Read checked locks only from directly covered, non-project source Loaves.
+    2. Cover exact compile-time pins once, without adding them to the direct-coverage authority set.
+    """
+    # 1. Retain checked published locks only from authority that may extend.
+    locks = directly_covered_locks(registry.units, direct)?
+
+    # 2. Decide each procedural macro from direct coverage or one exact published-lock pin.
     mut result = TrustDecision()
     mut seen: list[str] = []
     for unit in registry.units:
         if unit.kind != "proc-macro" or unit.loaf in seen:
             continue
         seen.append(unit.loaf)
-        covered = cover_loaf(unit.loaf, None, Some(Path(unit.artifact)), project_root, unattended)?
-        match covered:
+        key = registry_key(unit)
+        if key in direct:
+            result.covered_by[unit.loaf] = direct[key].label
+            continue
+        match published_lock_label(unit, locks):
             Some(label) => result.covered_by[unit.loaf] = label
             None => result.missing.append(MissingTrust(loaf=unit.loaf, project=project_root))
     return Ok(result)
+
+
+def directly_covered_locks(
+    units: list[RegistryUnit],
+    direct: Dict[str, DirectCoverage],
+) -> Result[list[CoveredPublishedLock], str]:
+    """Read each directly covered non-project source archive once and retain only a present checked lock."""
+    mut locks: list[CoveredPublishedLock] = []
+    mut read: list[str] = []
+    for unit in units:
+        key = registry_key(unit)
+        if key not in direct or not direct[key].extends_lock:
+            continue
+        if unit.source_archive == "" or unit.source_digest == "":
+            continue
+        identity = unit.source_archive + "\x00" + unit.source_digest
+        if identity in read:
+            continue
+        read.append(identity)
+        source = read_source_loaf(Path(unit.source_archive), unit.source_digest)?
+        if let Some(lock) = source.lock:
+            locks.append(CoveredPublishedLock(loaf=unit.loaf, label=direct[key].label, lock=lock))
+    return Ok(locks)
+
+
+def published_lock_label(unit: RegistryUnit, locks: list[CoveredPublishedLock]) -> Option[str]:
+    """Name direct authority plus the pinning Loaf only for an exact identity, version and source-digest pin."""
+    if unit.registry == "" or unit.source_digest == "":
+        return None
+    for covered in locks:
+        for pinned in covered.lock.loaves:
+            if (
+                pinned.name == unit.loaf
+                and pinned.registry == unit.registry
+                and pinned.version == unit.version
+                and pinned.checksum == unit.source_digest
+            ):
+                return Some(f"{covered.label} through {covered.loaf}'s published lock")
+    return None
+
+
+def registry_key(unit: RegistryUnit) -> str:
+    """Name one selected compiled producer for its direct-coverage decision."""
+    if unit.entry != "":
+        return unit.entry
+    return unit.directory
 
 
 pub def combine(left: TrustDecision, right: TrustDecision) -> TrustDecision:
