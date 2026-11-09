@@ -526,23 +526,17 @@ impl TypeChecker {
         let mut named_seen = std::collections::HashSet::new();
         for (arg, arg_ty) in args.iter().zip(arg_types.iter()) {
             match arg {
-                CallArg::Positional(_) => {
+                CallArg::Positional(expression) => {
                     if let Some(param) = normal_params.get(positional_index) {
-                        if !self.types_compatible(arg_ty, &param.ty) {
-                            return None;
-                        }
-                        score += self.type_match_score(arg_ty, &param.ty);
+                        score += self.method_argument_match_score(expression, arg_ty, &param.ty)?;
                         normal_bound[positional_index] = true;
                         positional_index += 1;
                     } else {
                         let param = rest_positional?;
-                        if !self.types_compatible(arg_ty, &param.ty) {
-                            return None;
-                        }
-                        score += self.type_match_score(arg_ty, &param.ty);
+                        score += self.method_argument_match_score(expression, arg_ty, &param.ty)?;
                     }
                 }
-                CallArg::Named(name, _) => {
+                CallArg::Named(name, expression) => {
                     if !named_seen.insert(name.node.as_str()) {
                         return None;
                     }
@@ -554,17 +548,11 @@ impl TypeChecker {
                         if normal_bound[normal_idx] {
                             return None;
                         }
-                        if !self.types_compatible(arg_ty, &param.ty) {
-                            return None;
-                        }
-                        score += self.type_match_score(arg_ty, &param.ty);
+                        score += self.method_argument_match_score(expression, arg_ty, &param.ty)?;
                         normal_bound[normal_idx] = true;
                     } else {
                         let param = rest_keyword?;
-                        if !self.types_compatible(arg_ty, &param.ty) {
-                            return None;
-                        }
-                        score += self.type_match_score(arg_ty, &param.ty);
+                        score += self.method_argument_match_score(expression, arg_ty, &param.ty)?;
                     }
                 }
                 CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => return Some(score),
@@ -575,6 +563,24 @@ impl TypeChecker {
             .zip(normal_bound.iter())
             .all(|(param, bound)| *bound || param.has_default)
             .then_some(score)
+    }
+
+    /// Rank ordinary matches before literal-only frozen storage adaptation. Runtime text and bytes remain
+    /// incompatible with frozen parameters; only the same literal forms accepted by contextual checking qualify.
+    fn method_argument_match_score(
+        &self,
+        expression: &Spanned<Expr>,
+        actual: &ResolvedType,
+        expected: &ResolvedType,
+    ) -> Option<usize> {
+        if self.types_compatible(actual, expected) {
+            return Some(self.type_match_score(actual, expected));
+        }
+        match &expression.node {
+            Expr::Literal(Literal::String(_)) if is_frozen_str(expected) => Some(0),
+            Expr::Literal(Literal::Bytes(_)) if is_frozen_bytes(expected) => Some(0),
+            _ => None,
+        }
     }
 
     /// Score how directly `actual` matches `expected` for overload ranking.
