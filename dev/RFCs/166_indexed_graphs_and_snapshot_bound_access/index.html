@@ -9895,6 +9895,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#selecting-a-read-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Selecting a read scope
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#read-failures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read failures
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#read-scopes-ownership-and-cursor-lifetime" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9932,6 +9954,17 @@
     <span class="md-ellipsis">
       
         Traversal, limits and completeness
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#traversal-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Traversal operations
       
     </span>
   </a>
@@ -10123,7 +10156,10 @@
 <li>RFC 047 (lightweight directed graph types)</li>
 <li>RFC 101 (ordinal maps)</li>
 <li>RFC 106 (compiler-backed context graphs)</li>
+<li>RFC 107 (<code>Variant[E]</code> tokens for relationship kinds)</li>
 <li>RFC 115 (fallible iteration)</li>
+<li>RFC 122 (construction-safe filters)</li>
+<li>RFC 142 (cancellation tokens and deadlines)</li>
 <li>RFC 150 (deprecation diagnostics; <code>made_private</code> for the sealed fields)</li>
 <li>RFC 161 (semantic core IR)</li>
 <li>RFC 165 (typed embedded storage)</li>
@@ -10286,7 +10322,51 @@
 <p>An existing function record can participate in a call graph and a type-use graph. Each graph has its own membership and relationships; the underlying model revision can be shared. Graph membership does not grant permission to delete that shared record, nor does removal of a node imply that an independently retained model record disappears.</p>
 <h3 id="read-only-the-selected-graph">Read only the selected graph<a class="headerlink" href="#read-only-the-selected-graph" title="Permanent link">&para;</a></h3>
 <p>The proposed <code>read_view()</code> on an in-memory graph produces a consistent, scoped read borrow. A database snapshot produces a reader over explicitly selected node and relation families. Both implement the reading protocol below.</p>
-<p>Algorithms accept this protocol, a start key, direction and a budget. A bounded walk returns a page with visited keys, observed edges and a completion outcome. The caller may continue with the returned cursor or stop. It must not treat a budget-limited result as the complete descendant set.</p>
+<p><code>read_view()</code> reads the whole graph, and <code>read_selected(...)</code> reads part of it. The selection is fixed when the reader opens, as a database projection fixes its families:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">MemoryReadError</span><span class="p">,</span> <span class="nc">RelationGraph</span><span class="p">,</span> <span class="nc">ScopedNodeId</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">title_reads</span><span class="p">(</span>
+    <span class="n">graph</span><span class="p">:</span> <span class="nc">RelationGraph</span><span class="p">[</span><span class="nc">Region</span><span class="p">,</span> <span class="nc">ReadsState</span><span class="p">],</span>
+    <span class="n">editor</span><span class="p">:</span> <span class="nc">ScopedNodeId</span><span class="p">,</span>
+    <span class="n">preview</span><span class="p">:</span> <span class="nc">ScopedNodeId</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">MemoryReadError</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Count the title dependencies leaving the editor within two regions.&quot;&quot;&quot;</span>
+    <span class="n">view</span> <span class="o">=</span> <span class="n">graph</span><span class="o">.</span><span class="n">read_selected</span><span class="p">(</span>
+        <span class="n">node_keys</span><span class="o">=</span><span class="p">[</span><span class="n">editor</span><span class="p">,</span> <span class="n">preview</span><span class="p">],</span>
+        <span class="n">edge_filter</span><span class="o">=</span><span class="p">(</span><span class="n">edge</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">edge</span><span class="o">.</span><span class="n">value</span><span class="o">.</span><span class="n">field</span> <span class="o">==</span> <span class="nc">StateField</span><span class="o">.</span><span class="nc">Title</span><span class="p">,</span>
+    <span class="p">)</span><span class="o">?</span>
+    <span class="k">mut</span> <span class="nb">count</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">with</span> <span class="n">view</span><span class="o">.</span><span class="n">outgoing</span><span class="p">(</span><span class="n">editor</span><span class="p">)</span><span class="o">.</span><span class="n">cursor</span><span class="p">(</span><span class="n">max_records</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">max_bytes</span><span class="o">=</span><span class="mi">65_536</span><span class="p">)</span> <span class="k">as</span> <span class="n">cursor</span><span class="p">:</span>
+        <span class="k">while</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="nb">batch</span><span class="p">)</span> <span class="o">=</span> <span class="n">cursor</span><span class="o">.</span><span class="n">next_batch</span><span class="p">()</span><span class="o">?</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">edge</span> <span class="ow">in</span> <span class="nb">batch</span><span class="p">:</span>
+                <span class="nb">count</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nb">count</span><span class="p">)</span>
+</code></pre></div>
+<p>Over the graph built by <code>region_dependencies()</code>, the count is 1: the body read between the same regions fails the filter. An edge from the editor to a third region would not count either, because its target is outside <code>node_keys</code>, even though the edge exists in the graph.</p>
+<p>Algorithms accept this protocol, start keys, a direction and a budget. A bounded walk returns a page of visits and a completion outcome. The caller may resume from the page's continuation or stop. It must not treat a budget-limited result as the complete descendant set.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.graph</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Direction</span><span class="p">,</span> <span class="nc">ScopedNodeId</span><span class="p">,</span> <span class="nc">TraversalBudget</span><span class="p">,</span> <span class="nc">TraversalOutcome</span><span class="p">,</span> <span class="n">breadth_first</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">affected_regions</span><span class="p">(</span>
+    <span class="n">graph</span><span class="p">:</span> <span class="nc">RelationGraph</span><span class="p">[</span><span class="nc">Region</span><span class="p">,</span> <span class="nc">ReadsState</span><span class="p">],</span>
+    <span class="n">edited</span><span class="p">:</span> <span class="nc">ScopedNodeId</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Report which regions an edit can reach, and whether the answer is whole.&quot;&quot;&quot;</span>
+    <span class="n">budget</span> <span class="o">=</span> <span class="nc">TraversalBudget</span><span class="p">(</span>
+        <span class="n">max_nodes</span><span class="o">=</span><span class="mi">1_000</span><span class="p">,</span> <span class="n">max_edges</span><span class="o">=</span><span class="mi">10_000</span><span class="p">,</span> <span class="n">max_bytes</span><span class="o">=</span><span class="mi">1_048_576</span><span class="p">,</span> <span class="n">max_retained</span><span class="o">=</span><span class="mi">4_096</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">view</span> <span class="o">=</span> <span class="n">graph</span><span class="o">.</span><span class="n">read_view</span><span class="p">()</span>
+    <span class="n">page</span> <span class="o">=</span> <span class="n">breadth_first</span><span class="p">(</span><span class="n">view</span><span class="p">,</span> <span class="p">[</span><span class="n">edited</span><span class="p">],</span> <span class="nc">Direction</span><span class="o">.</span><span class="nc">Outgoing</span><span class="p">,</span> <span class="n">budget</span><span class="p">)</span>
+    <span class="k">match</span> <span class="n">page</span><span class="o">.</span><span class="n">outcome</span><span class="p">:</span>
+        <span class="nc">TraversalOutcome</span><span class="o">.</span><span class="nc">Complete</span> <span class="o">=&gt;</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">page</span><span class="o">.</span><span class="n">visits</span><span class="p">)</span><span class="si">}</span><span class="s2"> regions affected&quot;</span><span class="p">)</span>
+        <span class="nc">TraversalOutcome</span><span class="o">.</span><span class="nc">Limited</span><span class="p">(</span><span class="n">reason</span><span class="p">,</span> <span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;partial: stopped at the </span><span class="si">{</span><span class="n">reason</span><span class="si">}</span><span class="s2"> bound after </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">page</span><span class="o">.</span><span class="n">visits</span><span class="p">)</span><span class="si">}</span><span class="s2"> regions&quot;</span><span class="p">)</span>
+        <span class="nc">TraversalOutcome</span><span class="o">.</span><span class="nc">Cancelled</span> <span class="o">=&gt;</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;cancelled&quot;</span><span class="p">)</span>
+        <span class="nc">TraversalOutcome</span><span class="o">.</span><span class="nc">Failed</span><span class="p">(</span><span class="n">error</span><span class="p">)</span> <span class="o">=&gt;</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;read failed: </span><span class="si">{</span><span class="n">error</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>A limited page carries a continuation. <code>resume(budget)</code> on it returns the next page of the same walk.</p>
 <p>Read-only access does not require a writable graph. A database graph view must not load every node into <code>DiGraph</code> before answering a neighbor query.</p>
 <h3 id="one-source-several-appearances">One source, several appearances<a class="headerlink" href="#one-source-several-appearances" title="Permanent link">&para;</a></h3>
 <p>A publisher should be able to distinguish a source document, its parsed revision, and each route/profile-specific rendered occurrence. An interactive framework should likewise distinguish a shared model record from two component instances observing it.</p>
@@ -10296,7 +10376,7 @@
 <p>RFC 047 remains the contract for existing constructors and eager methods. This RFC adds indexed implementations and new read surfaces. Existing eager list-returning methods may remain as documented convenience APIs; they must not become the hidden implementation of bounded graph readers.</p>
 <p>The source representation of a container is not its semantic identity. Implementations may use adjacency indexes, dense slots, ordinal maps or persistent pages, but arbitrary mutation of internal storage fields must not become a supported way to bypass graph invariants.</p>
 <p>Existing graph-local <code>NodeId</code> and <code>EdgeId</code> handles do not become globally unique or durable. <code>to_int()</code> remains a representation for diagnostics or caller-managed interchange, not a credential, persistent record identity or safe cross-graph key. A new read protocol must carry scope separately when adapting such handles.</p>
-<p>The new in-memory read surface uses <code>ScopedNodeId</code> and <code>ScopedEdgeId</code>, combining graph-instance identity with the existing local handle. Standard adapters must validate that identity before lookup. Bare legacy ids remain accepted by legacy container methods only; readers issue scoped keys for their own nodes and edges and must not offer an unchecked integer-to-scoped-key cast. An adapter cannot recover provenance that a legacy bare integer never carried and must not claim otherwise. A legacy container may offer a checked conversion from one of its own bare ids to a scoped key, so that code holding legacy ids can reach the bounded readers. The conversion checks only that the node or edge is live in that container, trusts the caller about where the id came from exactly as the container's other legacy methods do, and must document that it establishes nothing more. A reader never accepts a bare id. Persistent adapters use typed record keys instead, not these scoped in-memory handles.</p>
+<p>The new in-memory read surface uses <code>ScopedNodeId</code> and <code>ScopedEdgeId</code>, combining graph-instance identity with the existing local handle. Standard adapters must validate that identity before lookup. Bare legacy ids remain accepted by legacy container methods only; readers issue scoped keys for their own nodes and edges and must not offer an unchecked integer-to-scoped-key cast. An adapter cannot recover provenance that a legacy bare integer never carried and must not claim otherwise. A legacy container may offer a checked conversion from one of its own bare ids to a scoped key, so that code holding legacy ids can reach the bounded readers. The conversion checks only that the node or edge is live in that container, trusts the caller about where the id came from exactly as the container's other legacy methods do, and must document that it establishes nothing more. A reader never accepts a bare id. Persistent adapters use their own typed node keys, one for each graph membership, not these scoped in-memory handles.</p>
 <p>With indexed containers, raw structural fields (<code>nodes</code>, <code>edges</code>, and identity counters) become private. This is an explicit source compatibility change; the implementation must ship migration documentation and a diagnostic at each former public-field access, explaining the supported operation or reader that replaces it. Each member made private carries RFC 150's <code>made_private</code> facts, so the visibility refusal at a former public access is that diagnostic and names the replacement. Existing constructor and method behavior remains governed by RFC 047. The migration must not return a copied list under the old field name or silently ignore direct edits.</p>
 <p>Graph-owned mutations must pass through supported operations, including payload replacement when indexes depend on the changed fields. This does not require all application models to be frozen. An independently reconstructed or copied model can be edited normally; editing it alone does not publish a change to the graph. No exposed alias may change structural or indexed state behind the maintained indexes.</p>
 <h3 id="typed-relationship-graph">Typed relationship graph<a class="headerlink" href="#typed-relationship-graph" title="Permanent link">&para;</a></h3>
@@ -10388,6 +10468,86 @@
 <p>The protocol separates structural reads from node/edge payload materialization. Typed container access or family adapters retrieve only the payloads a consumer requests. A graph projection must declare whether a selector restricts stored relation families, indexed keys or a post-read predicate. Cost accounting must include rejected candidates for the last case.</p>
 <p>The default selection is an induced graph: an edge is visible only when both endpoints and its relation are in the selected scope. Completeness and no-path results apply only to that scope, never to an unexamined containing graph. Reporting boundary references requires an explicit projection profile; an adapter must not silently leave the selected scope to fetch additional nodes.</p>
 <p>An adapter may normalize backend-specific keys into a tagged key type, but the mapping must retain origin and family scope. It must not require an eager whole-graph key map. Database-local row offsets must not escape as durable keys.</p>
+<h3 id="selecting-a-read-scope">Selecting a read scope<a class="headerlink" href="#selecting-a-read-scope" title="Permanent link">&para;</a></h3>
+<p>A reader's selection is fixed when the reader opens. An open reader is never narrowed or widened; another selection means another reader.</p>
+<p>On an in-memory graph, <code>graph.read_view()</code> selects the whole graph, and <code>graph.read_selected(...)</code> selects through the arguments below. Each argument is one of the three selector kinds a projection declares:</p>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Selector kind</th>
+<th>Selects</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>node_keys</code></td>
+<td>Indexed keys</td>
+<td>Nodes, as a collection of the graph's own scoped node keys.</td>
+</tr>
+<tr>
+<td><code>edge_kinds</code></td>
+<td>Relation families</td>
+<td>Relationship kinds, as <code>Variant[E]</code> tokens written <code>E.Name</code> (RFC 107). The family/variant index serves this selection, so no other payload is read.</td>
+</tr>
+<tr>
+<td><code>node_filter</code></td>
+<td>Post-read predicate</td>
+<td>Nodes for which the filter returns <code>true</code>. The filter receives a node item: <code>key</code> and <code>value</code>.</td>
+</tr>
+<tr>
+<td><code>edge_filter</code></td>
+<td>Post-read predicate</td>
+<td>Edges for which the filter returns <code>true</code>. The filter receives the edge item an adjacency batch yields: <code>key</code>, <code>source</code>, <code>target</code> and <code>value</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>An omitted argument selects everything of its kind. An empty collection selects nothing. The induced rule combines the arguments. A node is visible when it is in <code>node_keys</code> and passes <code>node_filter</code>. An edge is visible when both endpoints are visible, its kind is in <code>edge_kinds</code>, and it passes <code>edge_filter</code>. Rejected candidates, and the payloads the filters read, count in the traversal report.</p>
+<p><code>edge_kinds</code> requires <code>E</code> to be an enum. Passing it to a graph whose edge payload is a model, or to a container without edge payloads, is a compile-time error. Because a <code>Variant[E]</code> token carries its enum, a variant of another type cannot reach the reader.</p>
+<p>A filter judges only the candidate it receives, and receives payloads read-only. It must be a construction-safe callable under RFC 122: synchronous, deterministic and free of observable effects. Its captures must carry no borrow. A capture that depends on the graph, on a reader or on any other borrowed source is a compile-time error. Keys are values and carry no borrow, so a filter may capture them. This keeps a filter from hiding a scan of the graph. A reader's only source is its graph.</p>
+<p><code>read_selected</code> copies <code>node_keys</code> into the reader, at a cost proportional to the selection, never to the graph. It validates the keys and is fallible. A key from another graph instance fails with <code>ScopeMismatch("node_keys")</code>. A key of a removed node selects nothing and is not an error.</p>
+<p>A database reader takes the same arguments: <code>snapshot.graph[N, E](name, node_keys=..., edge_kinds=..., node_filter=..., edge_filter=...)</code>, with the database graph's node keys in place of scoped node keys. A node key names one graph membership, so a record attached twice has two keys. The explicit projection form keeps its family descriptors. An algorithm's relation selection applies within its reader's scope and never widens it.</p>
+<h3 id="read-failures">Read failures<a class="headerlink" href="#read-failures" title="Permanent link">&para;</a></h3>
+<p>Every read surface fails with <code>GraphReadError[F]</code>, where <code>F</code> is the source's own failure type:</p>
+<table>
+<thead>
+<tr>
+<th>Case</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>UnknownKey(argument)</code></td>
+<td>A key is not visible in the reader's selection.</td>
+</tr>
+<tr>
+<td><code>ScopeMismatch(argument)</code></td>
+<td>A key belongs to another graph instance or snapshot.</td>
+</tr>
+<tr>
+<td><code>UnsupportedSelection(argument)</code></td>
+<td>A selection the reader cannot serve, such as a kind outside its selection.</td>
+</tr>
+<tr>
+<td><code>InvalidBudget(argument)</code></td>
+<td>A budget count that is not positive.</td>
+</tr>
+<tr>
+<td><code>StaleCursor</code></td>
+<td>A cursor whose reader, selection or ordering no longer matches.</td>
+</tr>
+<tr>
+<td><code>ResourceLimit(reason)</code></td>
+<td>A cursor's hard limit, as a <code>LimitReason</code>.</td>
+</tr>
+<tr>
+<td><code>Source(F)</code></td>
+<td>A failure of the underlying source, kept inspectable.</td>
+</tr>
+</tbody>
+</table>
+<p><code>argument</code> names the argument at fault, such as <code>"starts"</code>, <code>"target"</code> or <code>"node_keys"</code>. An in-memory reader has no source failures: its <code>F</code> is RFC 047's <code>GraphError</code> and it never produces <code>Source</code>. <code>std.graph</code> names that type <code>MemoryReadError</code>.</p>
 <h3 id="read-scopes-ownership-and-cursor-lifetime">Read scopes, ownership and cursor lifetime<a class="headerlink" href="#read-scopes-ownership-and-cursor-lifetime" title="Permanent link">&para;</a></h3>
 <p>RFC 164 owns explicit borrowing and returned reference contracts. Read-only projections use <code>Borrowed[T]</code>; <code>Reference[T]</code> is exclusive access and must not be used as a generic name for every retained view. A borrowed in-memory reader and its cursor must preserve their source dependencies. A database reader may instead own a lease retaining one immutable selection and may outlive the local snapshot binding when its complete resource contract permits that escape. Neither <code>Owned</code> nor a cursor type name alone proves independent retention. Views into reusable buffers remain borrowed until their last dependent use; advancing must not invalidate them. Implementation declarations must carry RFC 164 source dependencies in public metadata; neither a reader wrapper nor a cursor may erase them.</p>
 <p>A traversal must observe one consistent read revision. The default in-memory <code>read_view()</code> holds a scoped read borrow preventing conflicting mutation and cannot outlive its source. A separate explicit snapshot operation may retain an immutable version with a documented copy or copy-on-write cost. Neither may quietly mix pre-edit and post-edit adjacency, and opening a reader must not conceal a whole-graph copy.</p>
@@ -10408,6 +10568,10 @@
 <td>A shared reader that borrows the graph. Its public source dependency is the graph receiver; it cannot escape that owner or permit conflicting graph mutation.</td>
 </tr>
 <tr>
+<td><code>graph.read_selected(...)</code> on an in-memory graph</td>
+<td><code>Result[reader, MemoryReadError]</code>: a shared reader over the validated selection, with the same borrow of the graph. Its only public source dependency is the graph receiver; it owns its copied keys and its filters.</td>
+</tr>
+<tr>
 <td><code>snapshot.graph[N, E](name)</code></td>
 <td>A fallible database reader that owns a lease on the selected snapshot, graph definition and indexes. Successful acquisition establishes that retention; the handle may outlive the binding used to obtain it.</td>
 </tr>
@@ -10421,7 +10585,11 @@
 </tr>
 <tr>
 <td><code>cursor.next_batch()</code></td>
-<td><code>Result[Option[Batch], F]</code>, with typed edge identity/endpoints and requested payloads. Absence means completed adjacency, never exhaustion of a work budget.</td>
+<td><code>Result[Option[Batch], GraphReadError[F]]</code>, with edge items carrying <code>key</code>, <code>source</code>, <code>target</code> and the requested <code>value</code>. A batch examines at most <code>max_records</code> candidates, so a batch whose candidates the filters all rejected is empty. An empty batch is not exhaustion: only <code>None</code> means the selected adjacency is complete, never the end of a work budget.</td>
+</tr>
+<tr>
+<td>Traversal functions</td>
+<td>They borrow their reader. A result depends on that reader (<code>from reader</code>) through its continuation. Under RFC 164, a branch that matched an outcome without a continuation holds nothing borrowed.</td>
 </tr>
 <tr>
 <td>Explicit bounded traversal page</td>
@@ -10438,6 +10606,98 @@
 <p>Budgets must cover visited nodes, examined edges, returned bytes, retained frontier/membership state and cancellation. A time budget may supplement deterministic count/byte bounds, but must not be the only protection against unbounded materialization. Exhaustion must return a limited result or a typed resource failure, never an apparently complete result.</p>
 <p>Results must distinguish <code>Complete</code>, <code>Limited</code> with reason and optional continuation, <code>Cancelled</code> and <code>Failed</code>. If a traversal cannot retain a safe continuation within the budget, it must say that continuation is unavailable. It must not silently restart and duplicate effects. Traversals themselves must be effect-free.</p>
 <p>Reachability must distinguish a witnessed path, a completed proof of no path, and an inconclusive bounded search. A partially scanned graph is not evidence of acyclicity or a complete topological order. Topological and component results must identify the selected subgraph they describe. Paths and component membership must preserve parallel edge identities where those identities affect the question.</p>
+<h3 id="traversal-operations">Traversal operations<a class="headerlink" href="#traversal-operations" title="Permanent link">&para;</a></h3>
+<p>The bounded algorithms are functions in <code>std.graph</code> over any <code>GraphRead</code> reader, so memory and database readers share one engine. The reader is the call's scope; no algorithm reads outside it.</p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>breadth_first(reader, starts, direction, budget, edge_kinds=...)</code></td>
+<td><code>TraversalPage[R]</code>: visits in breadth-first order</td>
+</tr>
+<tr>
+<td><code>depth_first(reader, starts, direction, budget, edge_kinds=...)</code></td>
+<td><code>TraversalPage[R]</code>: visits in depth-first preorder</td>
+</tr>
+<tr>
+<td><code>find_path(reader, start, target, direction, budget, edge_kinds=...)</code></td>
+<td><code>PathSearch[R]</code>: a shortest path, a proof of none, or an inconclusive search</td>
+</tr>
+<tr>
+<td><code>topological_order(reader, direction, budget, edge_kinds=...)</code></td>
+<td><code>OrderResult[R]</code> over the reader's whole selection</td>
+</tr>
+<tr>
+<td><code>strongly_connected_components(reader, direction, budget, edge_kinds=...)</code></td>
+<td><code>ComponentsResult[R]</code> over the reader's whole selection</td>
+</tr>
+</tbody>
+</table>
+<p><code>R</code> is the reader's type, and the key type <code>K</code>, edge identity type <code>I</code> and failure type <code>F</code> follow from it.</p>
+<p>Common arguments:</p>
+<ul>
+<li><code>starts</code> is a collection of node keys; one start is a one-element collection. A repeated start is visited once, at its first position. An empty collection is <code>Complete</code> with no visits.</li>
+<li><code>direction</code> is <code>Direction.Outgoing</code> or <code>Direction.Incoming</code> and has no default. <code>Incoming</code> follows the same edges from target to source.</li>
+<li><code>edge_kinds</code> narrows the reader's relation selection for one call, with the same <code>Variant[E]</code> tokens <code>read_selected</code> takes. A kind outside the reader's selection fails with <code>UnsupportedSelection("edge_kinds")</code>.</li>
+<li>An algorithm calls no user code except the reader's filters and construction-safe projections that its own signature declares. There is no visitor callback; a caller acts on a result after it returns.</li>
+</ul>
+<p>Inputs are checked before any work. A start or target that is not visible in the reader's selection fails with <code>UnknownKey</code>, and a key from another graph or snapshot fails with <code>ScopeMismatch</code>; either names its argument. A budget count that is not positive fails with <code>InvalidBudget</code>.</p>
+<p><code>TraversalBudget(max_nodes, max_edges, max_bytes, max_retained, stop=None, deadline=None)</code> bounds one call:</p>
+<ul>
+<li><code>max_nodes</code> counts visited nodes. An algorithm visits a node when it first reaches it, and <code>topological_order</code> and <code>strongly_connected_components</code> visit every selected node once.</li>
+<li><code>max_edges</code> counts examined edges: every candidate the call reads, including those that the induced rule or a filter rejects. Edges that <code>edge_kinds</code> excludes are never read and never count.</li>
+<li><code>max_bytes</code> counts the RFC 165 encoded size of the payloads the call reads, whichever backend serves it. A structural walk without payload filters reads none.</li>
+<li><code>max_retained</code> counts frontier, visited-set and continuation entries held at once.</li>
+<li><code>stop</code> is an RFC 142 <code>CancellationToken</code>. It is checked before the first read and between steps, as RFC 142's consumers check it.</li>
+<li><code>deadline</code> is an RFC 142 <code>Instant</code>, checked at the same points. It supplements the four counts and never replaces them.</li>
+</ul>
+<p>The four counts have no defaults, so an unbounded traversal cannot be written by leaving a bound out. A step is one node visited or one edge examined. A call stops only when its next step would exceed a count, so a count can be reached exactly. When several conditions hold at the same step, the outcome is the first of <code>Failed</code>, <code>Complete</code>, <code>Cancelled</code> and <code>Limited</code>.</p>
+<p>A walk returns <code>TraversalPage[R]</code> with <code>visits</code>, <code>outcome</code> and <code>report</code>:</p>
+<ul>
+<li>Each <code>Visit</code> has <code>node</code>, <code>depth</code> and <code>via</code>. <code>via</code> is the identity of the edge that first reached the node, or <code>None</code> for a start. Following <code>via</code> back reconstructs a path, with parallel edges kept distinct.</li>
+<li><code>breadth_first</code> seeds every start at depth 0, in the order given, and <code>depth</code> is the distance from the nearest start. <code>depth_first</code> runs from each start in turn and skips a start an earlier one already reached; <code>depth</code> and <code>via</code> describe its depth-first forest. Neighbors are taken in the reader's ordering profile, so equal inputs give equal pages.</li>
+<li><code>outcome</code> is a <code>TraversalOutcome</code>:<ul>
+<li><code>Complete</code>: the frontier is empty, so every node reachable from <code>starts</code> within the scope was visited.</li>
+<li><code>Limited(reason, continuation)</code>: <code>reason</code> is a <code>LimitReason</code> (<code>Nodes</code>, <code>Edges</code>, <code>Bytes</code>, <code>Retained</code> or <code>Deadline</code>). <code>continuation</code> is <code>None</code> when the remaining state does not fit <code>max_retained</code>.</li>
+<li><code>Cancelled</code>: the token fired. There is no continuation.</li>
+<li><code>Failed(error)</code>: a <code>GraphReadError[F]</code>.</li>
+</ul>
+</li>
+<li>The visits made before a <code>Limited</code>, <code>Cancelled</code> or <code>Failed</code> outcome stay in the page.</li>
+</ul>
+<p><code>continuation.resume(budget)</code> returns the next result of the same call, of the same type, and consumes the continuation, so no page is produced twice. A continuation borrows the reader of the call that produced it. It therefore resumes against the same scope, selection, revision and ordering by construction. For a walk, the visits of successive pages, in order, equal the visits of one call whose budget was never reached. The state a continuation carries counts against the resumed budget's <code>max_retained</code>. A resume that cannot hold that state returns <code>Limited(Retained, None)</code>.</p>
+<p><code>find_path</code> returns <code>PathSearch[R]</code> with <code>outcome</code> and <code>report</code>. Its <code>PathOutcome</code> is one of:</p>
+<ul>
+<li><code>Found(path)</code>: a shortest path by edge count, the first in the reader's ordering among equals. A <code>Path</code> has <code>nodes</code>, from <code>start</code> to <code>target</code>, and <code>edges</code>, where <code>edges[i]</code> joins <code>nodes[i]</code> and <code>nodes[i + 1]</code>. With <code>Incoming</code>, each edge is followed against its direction. <code>start == target</code> is found with one node and no edges.</li>
+<li><code>NoPath</code>: the search exhausted the scope. This proves the absence of a path within the scope only.</li>
+<li><code>Inconclusive(reason, continuation)</code>: a bound was reached first.</li>
+<li><code>Cancelled</code> or <code>Failed(error)</code>.</li>
+</ul>
+<p><code>topological_order</code> returns <code>OrderResult[R]</code> with <code>outcome</code> and <code>report</code>. Its <code>OrderOutcome</code> is one of:</p>
+<ul>
+<li><code>Ordered(nodes)</code>: every node of the selection, each before the nodes its selected edges lead to in <code>direction</code>. With <code>Outgoing</code> a caller comes before its callees, and with <code>Incoming</code> it comes after them. The order is Kahn's, with a first-in, first-out queue. The queue is seeded with the nodes no selected edge leads to in <code>direction</code>, in the reader's ordering profile. The nodes each placed node leads to join the queue in adjacency order once nothing else leads to them.</li>
+<li><code>Cyclic(cycle)</code>: a witnessed cycle, as a <code>Path</code> whose last edge returns to its first node. The cycle is the one closed by the first back edge of a depth-first search over the nodes Kahn's order could not place. That search starts from those nodes in profile order and takes adjacency in profile order. A self-loop is a one-edge cycle. No partial order is returned in its place.</li>
+<li><code>Limited(reason, continuation)</code>, <code>Cancelled</code> or <code>Failed(error)</code>.</li>
+</ul>
+<p><code>strongly_connected_components</code> returns <code>ComponentsResult[R]</code> with <code>outcome</code> and <code>report</code>. Its <code>ComponentsOutcome</code> is one of:</p>
+<ul>
+<li><code>Components(components)</code>: every node of the selection in exactly one <code>Component</code>. A component has <code>nodes</code> and <code>cyclic</code>, which is true when it has more than one node or a self-loop. Components and their nodes come in Tarjan's emission order, which is a reverse topological order of the condensation in <code>direction</code>. Roots are tried in the reader's ordering profile, and adjacency is taken in profile order.</li>
+<li><code>Limited(reason, continuation)</code>, <code>Cancelled</code> or <code>Failed(error)</code>.</li>
+</ul>
+<p>A limited, cancelled or failed <code>topological_order</code> or <code>strongly_connected_components</code> result carries no partial answer; only a final result holds the order, cycle or components. These algorithms need <code>max_retained</code> at least the size of the selection to finish.</p>
+<p>Every <code>report</code> is a <code>TraversalReport</code>. It names the scope, the effective selection and the ordering profile, so a topological or component result identifies the subgraph it describes. The effective selection is the reader's selection narrowed by the call's <code>edge_kinds</code>. The report also gives the budget and these counters:
+- nodes visited;
+- edges examined;
+- candidates rejected;
+- payloads read and bytes counted;
+- the retained high-water mark;
+- index seeks and pages, when the backend supplies them;
+- the reason the call stopped.</p>
 <h3 id="ordering-and-determinism">Ordering and determinism<a class="headerlink" href="#ordering-and-determinism" title="Permanent link">&para;</a></h3>
 <p>RFC 047's documented legacy ordering must remain observable through legacy methods. New readers must advertise a stable ordering profile. The default in-memory profile enumerates nodes by node insertion order and adjacency by edge insertion order among retained live identities; the default database profile is the declared stable key/index order. Equality of payloads must not be used as a tie-breaker for identity.</p>
 <p>Given the same graph revision, selection, ordering and deterministic budgets, paginated and unpaginated execution must yield the same logical order and membership. Changing only page size must not change the answer. Cross-backend byte-identical results require an explicitly shared ordering and encoding profile; they must not be claimed solely because both backends implement <code>GraphRead</code>.</p>
@@ -10537,7 +10797,9 @@
 <li><strong>Typed payloads and direction:</strong> nodes and edges accept full models, with explicit payload enums for multiple kinds. Directed edges preserve separate identities and payloads; incoming lookup does not create reverse edges. Endpoint legality follows declared adapters, not naming conventions.</li>
 <li><strong>Graph-first storage:</strong> named typed graphs can be authored directly through a database transaction. Existing record attachment and explicit projections avoid model duplication. RFC 165 handles Crumb, snapshots, storage placement and publication; large graphs never require whole-graph materialization.</li>
 <li><strong>Storage ownership:</strong> graph definitions, node memberships and edge records are logical structures. Incoming/outgoing indexes are derived access paths. Raw structural fields become private in indexed containers, with migration diagnostics and supported replacements; constructor and method compatibility remains governed by RFC 047.</li>
+<li><strong>Selection at opening:</strong> a reader's selection is fixed when it opens, through the same arguments in memory and in a database. Filters judge only the candidate they receive, so cost accounting stays exact and a reader carries no hidden second view of its graph.</li>
 <li><strong>Reader lifetime:</strong> memory readers and ordinary cursors borrow their actual source. Database snapshot graph readers own acquired leases; explicitly retained continuations may do the same. Borrowed buffers cannot outlive or be invalidated by their owners, and ordinary users rely on duckborrowing.</li>
+<li><strong>Traversal operations:</strong> the algorithms are <code>std.graph</code> functions over any reader, so every backend shares one engine. A budget has no default bounds, counting is exact at a bound, and a result names complete, limited, cancelled or failed work. Orders and components are defined to the node, so equal inputs give equal answers on every backend. A continuation resumes once, against the reader it borrows.</li>
 <li><strong>Traversal surface:</strong> explicit pages and scoped batch cursors are required. Fallible iterator convenience uses the same engine and preserves limited outcomes; it is not a separate prerequisite. Limits must never look like successful exhaustion.</li>
 <li><strong>Record-set boundary:</strong> RFC 169 owns general projections over records of several kinds, record streams and change streams. Supporting multiple graph payload kinds and implementing the graph reader do not depend on that surface.</li>
 </ul>
