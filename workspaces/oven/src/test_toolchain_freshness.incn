@@ -18,6 +18,7 @@ from scratch import scratch_directory
 from rust_registry import read_registry_units
 from rust_target import compiler_version, deployment_target
 from toolchain import Toolchain, load_toolchain, rust_compiler
+from toolchain_archive import source_archive_name
 from unit_publication import record_path, record_payload
 from unit_freshness import fingerprint
 from freshness_fixtures import compiler_fingerprint, fixture, reconcile, unit_key, write
@@ -189,6 +190,11 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
     published["crate_hash"] = JsonValue.string(first.crate_hash)
     published["artifact"] = artifact
     published["kind"] = JsonValue.string(first.kind)
+    published["registry"] = JsonValue.string("loaves.pub")
+    source_archive = directory.joinpath("source.loaf")
+    write(source_archive, "checked source archive fixture")?
+    published["source"] = JsonValue.string("source.loaf")
+    published["checksum"] = JsonValue.string("sha256:source-fixture")
     published["dependencies"] = JsonValue.array(
         [JsonValue.object({"entry": JsonValue.string(entry)}) for entry in first.dependencies],
     )
@@ -209,7 +215,10 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
             ),
         )?,
     )?
-    assert read_registry_units(baked_closure)?.units[0].name == "baked_native_name"
+    baked = read_registry_units(baked_closure)?.units[0]
+    assert baked.name == "baked_native_name"
+    assert baked.registry == "loaves.pub"
+    assert baked.source_archive == source_archive.0 and baked.source_digest == "sha256:source-fixture"
     assert read_registry_units(baked_closure)?.units[1].refusal == "producer recorded an unavailable alternative"
     # Relative artifacts belong to the closure's directory, including a closure outside its artifact store.
     relative = artifact.expect_str().map_err((error) => error.message())?
@@ -293,6 +302,31 @@ def check_registry_page_codec(scratch: Path, catalog: Catalog) -> Result[None, s
                         Ok(_) =>
                             assert false, "a truncated registry page was accepted"
                         Err(_) => pass
+    mut sourced = catalog.units[0].clone()
+    sourced.registry = "loaves.pub"
+    sourced.source_archive = "registry/sources/sha256-source.loaf"
+    sourced.source_digest = "sha256:source"
+    sourced_catalog = Catalog(units=[sourced], listings=[catalog.listings[0]], artifacts=[catalog.artifacts[0]])
+    sourced_page = scratch.joinpath("registry-codec-source.page")
+    sourced_page.write_bytes(encode_catalog(sourced_catalog)?).map_err((error) => error.message())?
+    sourced_mapping = sourced_page.map_read().map_err((error) => error.message())?
+    if let Some(view) = sourced_mapping.view(0, sourced_mapping.len()):
+        decoded = decode_catalog(view)?.units[0]
+        assert decoded.registry == sourced.registry
+        assert decoded.source_archive == sourced.source_archive and decoded.source_digest == sourced.source_digest
+    valid_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    assert source_archive_name(valid_digest)? == (
+        "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.loaf"
+    )
+    for invalid in [
+        "sha256:../escape",
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    ]:
+        match source_archive_name(invalid):
+            Ok(_) =>
+                assert false, f"invalid source digest was accepted: {invalid}"
+            Err(_) => pass
     # Malformed scalar counts and versions are rejected before any row allocation.
     mut invalid_index = 0
     for damaged in [b"\xff\xff\xff\xff\xff\xff\xff\xff", b"\x00\x00\x00\x00\x00\x00\x00\x00"]:

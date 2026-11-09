@@ -2,8 +2,10 @@
 
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
+from compile_time_trust import DirectCoverage, MISSING_TRUST_CODE, decide_registry_from_coverage
 from files import write
 from lock_format import LockDependency, LockFeatures, LockLoaf, LockToolchain, OvenLock, graph_identity, lock_text
+from registry_units import RegistryUnit, RegistryUnits
 from source_loaf import create_source_loaf, read_source_loaf
 
 
@@ -26,7 +28,9 @@ pub def test_source_loaf_carries_only_its_resolved_lock_and_adoption_carries_non
     match first.lock:
         None => return Err("published source Loaf carried no lock")
         Some(carried) =>
-            assert [entry.name for entry in carried.loaves] == ["acme/widgets", "crates-io/widget-macro"], f"lock: {carried.loaves}"
+            assert [entry.name for entry in carried.loaves] == ["acme/widgets", "crates-io/widget-macro"], (
+                f"lock: {carried.loaves}"
+            )
             assert carried.loaves[0].origin == "root" and carried.loaves[0].path == ""
             assert carried.loaves[1].checksum == "sha256:macro-v1"
     checked = read_source_loaf(first_path, first.digest)?
@@ -50,6 +54,86 @@ pub def test_source_loaf_carries_only_its_resolved_lock_and_adoption_carries_non
     adopted = create_source_loaf(member, lock_path, adopted_path, ["loaf.toml", "src/lib.incn"], true)?
     assert adopted.members == ["loaf.toml", "src/lib.incn"], f"adopted members: {adopted.members}"
     assert adopted.lock is None, "an adopted Loaf carried a lock"
+    return Ok(None)
+
+
+pub def test_only_directly_covered_source_loaves_extend_trust_through_exact_lock_pins() -> Result[None, str]:
+    """
+    A publisher entry extends through its Loaf's checked lock only for the exact selected version and source digest.
+    A project entry does not extend, and a Loaf covered through that lock cannot extend again through its own lock.
+    """
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    publisher = source_fixture(
+        scratch.path().joinpath("publisher"),
+        "acme/widgets",
+        "1.0.0",
+        "crates-io/widget-macro",
+        "1.2.0",
+        "sha256:macro-v1",
+    )?
+    publisher_source, publisher_digest = publisher
+    mut exact = registry(publisher_source, publisher_digest, "1.2.0", "sha256:macro-v1")
+    exact.resolution_mode = "lowest"
+    direct = {"publisher-entry": DirectCoverage(label="entry trust.publishers.acme")}
+    covered = decide_registry_from_coverage(exact, direct, "/consumer")?
+    assert len(covered.missing) == 0, f"exact pin missing: {covered.missing}"
+    assert covered.covered_by["crates-io/widget-macro"] == (
+        "entry trust.publishers.acme through acme/widgets's published lock"
+    )
+
+    mut newest = registry(publisher_source, publisher_digest, "1.3.0", "sha256:macro-v1")
+    newest.resolution_mode = "newest"
+    for selected in [newest, registry(publisher_source, publisher_digest, "1.2.0", "sha256:macro-v2")]:
+        refused = decide_registry_from_coverage(selected, direct, "/consumer")?
+        assert [item.loaf for item in refused.missing] == ["crates-io/widget-macro"], str(refused.missing)
+        assert MISSING_TRUST_CODE in refused.stop()
+    mut other_registry = registry(publisher_source, publisher_digest, "1.2.0", "sha256:macro-v1")
+    other_registry.units[1].registry = "other.pub"
+    identity_refused = decide_registry_from_coverage(other_registry, direct, "/consumer")?
+    assert [item.loaf for item in identity_refused.missing] == ["crates-io/widget-macro"]
+    project_only = decide_registry_from_coverage(
+        exact,
+        {"publisher-entry": DirectCoverage(label="entry trust.projects./workspace/publisher", extends_lock=false)},
+        "/consumer",
+    )?
+    assert [item.loaf for item in project_only.missing] == ["crates-io/widget-macro"]
+    toolchain = decide_registry_from_coverage(
+        exact,
+        {"publisher-entry": DirectCoverage(label="toolchain sha256:publisher")},
+        "/consumer",
+    )?
+    assert toolchain.covered_by["crates-io/widget-macro"] == (
+        "toolchain sha256:publisher through acme/widgets's published lock"
+    )
+
+    bridge = source_fixture(
+        scratch.path().joinpath("bridge"),
+        "acme/bridge",
+        "1.0.0",
+        "crates-io/deep-macro",
+        "2.0.0",
+        "sha256:deep-v1",
+    )?
+    bridge_source, bridge_digest = bridge
+    outer = source_fixture(
+        scratch.path().joinpath("outer"),
+        "acme/widgets",
+        "1.0.0",
+        "acme/bridge",
+        "1.0.0",
+        bridge_digest,
+    )?
+    outer_source, outer_digest = outer
+    chained = RegistryUnits(
+        units=[
+            source_unit("acme/widgets", "1.0.0", "publisher-entry", outer_source, outer_digest),
+            source_unit("acme/bridge", "1.0.0", "bridge-entry", bridge_source, bridge_digest),
+            macro_unit("crates-io/deep-macro", "2.0.0", "deep-entry", "sha256:deep-v1"),
+        ],
+        search=[],
+    )
+    no_chain = decide_registry_from_coverage(chained, direct, "/consumer")?
+    assert [item.loaf for item in no_chain.missing] == ["crates-io/deep-macro"], str(no_chain.missing)
     return Ok(None)
 
 
@@ -112,3 +196,91 @@ def fixture_lock(macro_digest: str) -> Result[OvenLock, str]:
     )
     lock.graph = graph_identity(lock)?
     return Ok(lock)
+
+
+def source_fixture(
+    root: Path,
+    name: str,
+    version: str,
+    dependency: str,
+    dependency_version: str,
+    dependency_digest: str,
+) -> Result[Tuple[str, str], str]:
+    """Publish one synthetic source Loaf whose lock pins one exact dependency."""
+    write_project_named(root, name, version)?
+    features = [LockFeatures(target="aarch64-apple-darwin", domain="target")]
+    own = LockLoaf(
+        name=name,
+        version=version,
+        origin="root",
+        dependencies=[LockDependency(key="dependency", loaf=dependency, version=dependency_version)],
+        features=features,
+    )
+    selected = LockLoaf(
+        name=dependency,
+        version=dependency_version,
+        origin="registry",
+        registry="loaves.pub",
+        checksum=dependency_digest,
+        features=features,
+    )
+    mut lock = OvenLock(
+        format=1,
+        mode="lowest",
+        graph="",
+        toolchain=LockToolchain(version="0.6.0-dev.8", identity="sha256:compiler"),
+        loaves=[own, selected],
+    )
+    lock.graph = graph_identity(lock)?
+    lock_path = root.joinpath("oven.lock")
+    write(lock_path, lock_text(lock)?)?
+    archive = root.joinpath("source.loaf")
+    published = create_source_loaf(root, lock_path, archive, ["loaf.toml", "src/lib.incn"], false)?
+    return Ok((archive.0, published.digest))
+
+
+def write_project_named(root: Path, name: str, version: str) -> Result[None, str]:
+    """Write one named project for a source archive fixture."""
+    root.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(root.joinpath("loaf.toml"), f"[project]\nname = \"{name}\"\nversion = \"{version}\"\n")?
+    write(root.joinpath("src/lib.incn"), "pub def value() -> int:\n    return 1\n")?
+    return Ok(None)
+
+
+def registry(source: str, checksum: str, version: str, selected_checksum: str) -> RegistryUnits:
+    """A publisher and one selected compile-time dependency for exact-pin controls."""
+    return RegistryUnits(
+        units=[
+            source_unit("acme/widgets", "1.0.0", "publisher-entry", source, checksum),
+            macro_unit("crates-io/widget-macro", version, "macro-entry", selected_checksum),
+        ],
+        search=[],
+    )
+
+
+def source_unit(loaf: str, version: str, entry: str, source: str, checksum: str) -> RegistryUnit:
+    """One selected registry unit carrying the source archive admitted for its Loaf."""
+    return RegistryUnit(
+        loaf=loaf,
+        version=version,
+        registry="loaves.pub",
+        domain="target",
+        directory="",
+        entry=entry,
+        source_archive=source,
+        source_digest=checksum,
+    )
+
+
+def macro_unit(loaf: str, version: str, entry: str, checksum: str) -> RegistryUnit:
+    """One selected procedural macro with an exact source digest."""
+    return RegistryUnit(
+        loaf=loaf,
+        version=version,
+        registry="loaves.pub",
+        domain="host",
+        directory="",
+        entry=entry,
+        source_digest=checksum,
+        kind="proc-macro",
+    )
