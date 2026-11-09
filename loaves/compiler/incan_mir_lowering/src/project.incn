@@ -7,18 +7,16 @@ from table_views import borrowed_at
 
 pub def project_context(modules: &list[BodyIrModule], entry: int) -> Result[tuple[BodyIrModule, list[str]], str]:
     """Retain one joined planning context and the source-provenance order of its owning modules."""
-    mut context = modules[entry].clone()
-    context.bodies.clear()
-    context.nominal_declarations.clear()
-    context.enum_declarations.clear()
-    context.fieldless_enum_declarations.clear()
-    context.value_enum_declarations.clear()
-    context.trait_declarations.clear()
-    context.trait_implementations.clear()
-    context.static_declarations.clear()
-    context.decorated_bindings.clear()
-    context.loaf_callables.clear()
-    context.native_union_declarations.clear()
+    entry_module = borrowed_at(modules, entry)
+    mut context = BodyIrModule.declarations_only(str(entry_module.module_id.path()))
+    # Unit selection belongs only to the entry module. Copy those compact facts explicitly instead of cloning its
+    # complete checked body and declaration graph before replacing every joined table.
+    context.runtime_callable_bindings = list(entry_module.runtime_callable_bindings)
+    context.entrypoint_effects = list(entry_module.entrypoint_effects)
+    context.program_entrypoints = list(entry_module.program_entrypoints)
+    context.string_conversion_contract = entry_module.string_conversion_contract.clone()
+    context.constant_declarations = list(entry_module.constant_declarations)
+    context.type_alias_declarations = list(entry_module.type_alias_declarations)
     mut owners: list[str] = []
     for module_position in range(len(modules)):
         module = borrowed_at(modules, module_position)

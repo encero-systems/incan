@@ -8,6 +8,7 @@ internal_models = { path = "../internal_models" }
 
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
+incan_platform = { path = "../../platform" }
 
 [build]
 rust-edition = "2024"

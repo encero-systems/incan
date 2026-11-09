@@ -24,6 +24,7 @@ from pub::incan_mir_plan import (
 )
 from trait_links import validate_project_implementation, has_open_trait_arguments
 from rust::std::env import var_os as native_environment
+from pub::incan_platform.probes import current_footprint
 from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId as RustCanonicalSymbolId
 from rust::incan_semantics_core::body_ir import (
     NativeUnionDeclaration,
@@ -1059,20 +1060,28 @@ pub def plan_contexts(
     entry: int,
     trace: bool,
 ) -> Result[PlanContexts, str]:
-    """Validate project authority and retain checked source and specialized layouts in dependency order."""
+    """Validate project authority and retain compact templates beside one in-place-specialized execution context."""
+    footprint_trace = native_environment("INCAN_TRACE_LOWERING_FOOTPRINT").is_some()
     trace_lowering(trace, "validate modules")
     validate_plan_inputs(modules, sources, files, entry)?
+    trace_lowering_footprint(footprint_trace, "validated modules")
     trace_lowering(trace, "project context")
-    mut source_context, owners = project_context(modules, entry)?
+    mut context, owners = project_context(modules, entry)?
+    trace_lowering_footprint(footprint_trace, "joined project")
+    # Later generic-instance and publication work reads only source nominal and enum declarations. Retain that
+    # declaration authority without keeping a second copy of executable bodies or the other joined module tables.
+    mut source_context = BodyIrModule.declarations_only(str(context.module_id.path()))
+    source_context.nominal_declarations = list(context.nominal_declarations)
+    source_context.enum_declarations = list(context.enum_declarations)
     constructors = index_constructors(source_context.nominal_declarations)
+    template_references = referenced_templates(context)
+    trace_lowering_footprint(footprint_trace, "retained source templates")
     trace_lowering(trace, "specialize nominals")
-    nominal_context, nominal_instances = specialize_nominals_with_instances(constructors, source_context)?
+    nominal_instances = specialize_nominals_with_instances(constructors, context)?
+    trace_lowering_footprint(footprint_trace, "specialized nominals")
     trace_lowering(trace, "specialize enums")
-    context = specialize_enums(nominal_context)?
-    # Later template consumers read declarations, constructor authority and this compact reference inventory;
-    # executable bodies belong to `context`.
-    template_references = referenced_templates(source_context)
-    source_context.bodies.clear()
+    specialize_enums(context)?
+    trace_lowering_footprint(footprint_trace, "specialized enums")
     return Ok((source_context, constructors, owners, context, nominal_instances, template_references))
 
 
@@ -1080,6 +1089,15 @@ def trace_lowering(enabled: bool, stage: str) -> None:
     """Report one requested lowering stage without repeating diagnostic selection at each step."""
     if enabled:
         println(f"lowering: {stage}")
+
+
+def trace_lowering_footprint(enabled: bool, boundary: str) -> None:
+    """Report current process physical footprint at a requested lowering boundary, without affecting ordinary runs."""
+    if not enabled:
+        return
+    match current_footprint():
+        Ok(bytes) => println(f"lowering footprint: {boundary}: {bytes} bytes")
+        Err(reason) => println(f"lowering footprint: {boundary}: unavailable: {reason}")
 
 
 def validate_plan_inputs(

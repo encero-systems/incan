@@ -16,8 +16,8 @@ model EnumInstance:
     ancestors: list[str]
 
 
-pub def specialize_enums(module: &BodyIrModule) -> Result[BodyIrModule, str]:
-    """Close payload layouts before native type selection; open templates never become physical declarations."""
+pub def specialize_enums(mut module: &mut BodyIrModule) -> Result[None, str]:
+    """Close payload layouts in place before native type selection; open templates never become physical declarations."""
     mut instances: list[EnumInstance] = []
     for ty in declaration_storage(module):
         collect_type(module, ty, instances, [])?
@@ -30,12 +30,11 @@ pub def specialize_enums(module: &BodyIrModule) -> Result[BodyIrModule, str]:
         declaration = borrowed_at(module.nominal_declarations, nominal_position)
         for field in declaration.field_types:
             _ = collect_type(module, field, instances, [])?
-    mut result = module.clone()
-    result.enum_declarations.clear()
+    mut declarations: list[EnumDeclaration] = []
     for enum_position in range(len(module.enum_declarations)):
         declaration = borrowed_at(module.enum_declarations, enum_position)
         if len(declaration.type_parameters) == 0:
-            result.enum_declarations.push(declaration.clone())
+            declarations.append(declaration.clone())
             for variant in declaration.variants:
                 for field in variant.fields:
                     _ = collect_type(module, field, instances, [])?
@@ -44,15 +43,16 @@ pub def specialize_enums(module: &BodyIrModule) -> Result[BodyIrModule, str]:
         instance = instances[cursor]
         cursor += 1
         declaration = close_layout(instance)?
-        for retained in range(len(result.enum_declarations)):
-            if result.enum_declarations[retained].name == declaration.name:
+        for retained in range(len(declarations)):
+            if declarations[retained].name == declaration.name:
                 return Err(f"unsupported Body IR enum instance symbol collision {declaration.name}")
         lineage = instance.ancestors + [instance.declaration.canonical.render_compact()]
         for variant in declaration.variants:
             for field in variant.fields:
                 _ = collect_type(module, field, instances, lineage)?
-        result.enum_declarations.push(declaration.clone())
-    return Ok(result)
+        declarations.append(declaration.clone())
+    module.enum_declarations = declarations
+    return Ok(None)
 
 
 def collect_type(
