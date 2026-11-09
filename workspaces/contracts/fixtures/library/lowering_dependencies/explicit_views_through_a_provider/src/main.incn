@@ -1,4 +1,4 @@
-# behavior: a provider Loaf's methods that return a view directly, in a `Result` or in a generic carrier give a consumer's explicit bodies a view of the consumer's own value: `?` chains and `match` arms edit the buffer itself and recover after an error, a direct field view appends to the original list, and published generic fields keep their source dependency (#2500).
+# behavior: a provider Loaf's methods that return a view directly, in a `Result` or in a generic carrier give a consumer's explicit bodies a view of the consumer's own value: `?` chains and `match` arms edit the buffer itself and recover after an error, a direct field view appends to the original list, and published generic fields keep their source dependency; provider and imported-alias enum match bodies also check with explicit shared inputs (#2500, #2834).
 # expect-stdout:
 #   full
 #   [10, 20]
@@ -10,7 +10,7 @@
 
 """Use a provider's returned and carried views from a separately compiled consumer."""
 
-from pub::viewlib import SampleBuffer, view_buffer
+from pub::viewlib import SampleBuffer, view_buffer, ReadMode as Mode
 
 
 def fill(mut buffer: BorrowedMut[SampleBuffer]) -> Result[None, str]:
@@ -25,6 +25,14 @@ def add_or_grow(mut buffer: BorrowedMut[SampleBuffer], sample: int) -> int:
         Err(_) =>
             buffer.capacity += 1
             return 0
+
+
+def imported_match(mode: Mode, buffer: Borrowed[SampleBuffer]) -> int:
+    """An imported variant's canonical identity survives the consumer's alias."""
+    match mode:
+        Mode.Count => return len(buffer.samples)
+        Mode.Plus(extra) => return len(buffer.samples) + extra
+    return 0
 
 
 def main() -> None:

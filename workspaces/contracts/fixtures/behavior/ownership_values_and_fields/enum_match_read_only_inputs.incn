@@ -1,0 +1,53 @@
+# behavior: native enum matches preserve payloads and unrelated model reads across repeated calls (#2834).
+# expect-stdout:
+#   enum match reads passed
+
+model Dictionary:
+    pub values: list[str]
+
+
+enum Node:
+    Scalar(str)
+    Pair(str, int)
+    Other
+
+
+def inspect_node(node: Node, dictionary: Dictionary) -> int:
+    """Read an unrelated borrowed model through every checked enum arm."""
+    match node:
+        Node.Scalar(name) => return len(name) + len(dictionary.values)
+        Node.Pair(name, extra) => return len(name) + extra + len(dictionary.values)
+        Node.Other => return len(dictionary.values)
+    return 0
+
+
+def inspect_pair(node: Node, extra: Option[int], dictionary: Dictionary) -> int:
+    """Nested enum patterns in a tuple retain their checked payload bindings."""
+    match (node, extra):
+        (Node.Scalar(name), Some(amount)) => return len(name) + amount + len(dictionary.values)
+        _ => return len(dictionary.values)
+    return 0
+
+
+def take_payload(node: Node, dictionary: Dictionary) -> str:
+    """Taking this subject's payload does not take the unrelated dictionary."""
+    match node:
+        Node.Scalar(name) =>
+            assert len(dictionary.values) == 2
+            return name
+        _ => return ""
+    return ""
+
+
+def main() -> None:
+    dictionary = Dictionary(values=["metadata", "schema"])
+    assert inspect_node(Node.Scalar("row"), dictionary) == 5
+    assert inspect_node(Node.Pair("row", 4), dictionary) == 9
+    assert inspect_node(Node.Other, dictionary) == 2
+    assert inspect_pair(Node.Scalar("row"), Some(4), dictionary) == 9
+    assert inspect_pair(Node.Other, None, dictionary) == 2
+    node = Node.Scalar("payload")
+    assert take_payload(node, dictionary) == "payload"
+    assert take_payload(node, dictionary) == "payload"
+    assert dictionary.values == ["metadata", "schema"]
+    println("enum match reads passed")
