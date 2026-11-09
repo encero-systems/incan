@@ -15,7 +15,7 @@ Python equivalent:
 class Animal:
     def __init__(self, name: str):
         self.name=name
-    
+
     def speak(self) -> str:
         return "..."
 
@@ -24,6 +24,7 @@ class Dog(Animal):
         return f"{self.name} says: Woof!"
 ```
 """
+
 
 class Animal:
     pub name: str
@@ -39,6 +40,10 @@ class Animal:
 class Dog extends Animal:
     breed: str
 
+    @staticmethod
+    pub def new(name: str, age: int, breed: str) -> Dog:
+        return Dog(name=name, age=age, breed=breed)
+
     pub def speak(self) -> str:
         return f"{self.name} says: Woof!"
 
@@ -49,6 +54,10 @@ class Dog extends Animal:
 class Cat extends Animal:
     indoor: bool
 
+    @staticmethod
+    pub def new(name: str, age: int, indoor: bool) -> Cat:
+        return Cat(name=name, age=age, indoor=indoor)
+
     pub def speak(self) -> str:
         return f"{self.name} says: Meow!"
 
@@ -57,12 +66,12 @@ class Cat extends Animal:
 
 
 def main() -> None:
-    dog = Dog(name="Buddy", age=3, breed="Golden Retriever")
+    dog = Dog.new(name="Buddy", age=3, breed="Golden Retriever")
     println(dog.describe())
     println(dog.speak())
     println(dog.fetch())
-    
-    cat = Cat(name="Whiskers", age=5, indoor=true)
+
+    cat = Cat.new(name="Whiskers", age=5, indoor=true)
     println(cat.describe())
     println(cat.speak())
     println(cat.nap())

@@ -6,7 +6,7 @@
 from std.tempfile import NamedTemporaryFile, SpooledTemporaryFile, TemporaryDirectory
 ```
 
-Named file and directory creation is fallible because it reserves real host filesystem entries. Each acquisition chooses an unpredictable name and uses exclusive creation, so an existing entry is never opened as the new temporary resource. Use `try_new()` for default acquisition and `try_new_with(prefix, suffix, dir)` for configured acquisition. Direct `NamedTemporaryFile(...)` and `TemporaryDirectory(...)` construction is ordinary infallible class construction and is not the resource-acquisition API. `SpooledTemporaryFile(max_size=...)` is infallible because it starts in memory and creates a temporary file only when it rolls over.
+Named file and directory acquisition returns `Result` and never opens an existing entry as the new temporary resource. Use `try_new()` for default acquisition and `try_new_with(prefix, suffix, dir)` for configured acquisition. Direct `NamedTemporaryFile(...)` and `TemporaryDirectory(...)` construction is ordinary infallible class construction and is not the resource-acquisition API. `SpooledTemporaryFile(max_size=...)` is infallible and creates a temporary file only when it rolls over.
 
 ## NamedTemporaryFile
 
@@ -35,6 +35,7 @@ Dropping an unpersisted `TemporaryDirectory` removes the whole temporary tree. U
 | API | Returns | Description |
 | --- | --- | --- |
 | `SpooledTemporaryFile(max_size: int = 0)` | spooled temporary stream | Construct a memory-backed binary stream that rolls to disk after the buffer grows beyond `max_size`. |
+| `_SpooledTemporaryFile.new(max_size: int = 0)` | spooled temporary stream | Class-owned factory used by `SpooledTemporaryFile`; callers normally use the public function. |
 | `spool.write(data: bytes)` | `Result[int, IoError]` | Write bytes and roll over when needed. |
 | `spool.read(size: int = -1)` | `Result[bytes, IoError]` | Read bytes from the active memory or file backing. |
 | `spool.seek(offset: int, whence: int = 0)` | `Result[int, IoError]` | Move the stream cursor. |
@@ -44,7 +45,7 @@ Dropping an unpersisted `TemporaryDirectory` removes the whole temporary tree. U
 | `spool.path()` | `Result[Path, IoError]` | Return the temporary file path after rollover. |
 | `spool.persist()` | `Result[Path, IoError]` | Roll over if needed, keep the file, and disable automatic deletion. |
 
-Before rollover, data lives in `std.io.BytesIO` and `path()` returns `Err(IoError)` because there is no filesystem path. After rollover, the stream uses a `std.fs.File` handle and the `NamedTemporaryFile` cleanup contract. Dropping an unpersisted rolled spool deletes the temporary file; `persist()` keeps it and returns the ordinary `Path`.
+Before rollover, `path()` returns `Err(IoError)`. After rollover, dropping an unpersisted spool deletes the temporary file; `persist()` keeps it and returns the ordinary `Path`.
 
 ## Parent Directory
 

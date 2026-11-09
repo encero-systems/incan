@@ -21,24 +21,8 @@ const MAX_LSP_PAYLOAD_BYTES: int = 16_777_216
 
 
 pub def start(binary: str, project: Path, arguments: list[str] = [], framing: str = "lsp") -> Result[Peer, str]:
-    """Start the real stdio server: 1. Configure streams. 2. Record ownership. 3. Retain shared handles."""
-    # 1. Configure streams and diagnostic output.
-    pid_file = project.joinpath(f".{framing}-pid")
-    input, child_input = UnixStream.pair().map_err((error) => str(error))?
-    output, child_output = UnixStream.pair().map_err((error) => str(error))?
-    mut command = Command.new(binary)
-    command.stderr(File.create(project.joinpath("target").joinpath(f"{framing}.log").0).map_err((error) => str(error))?)
-    command.current_dir(project.0)
-    command.stdin(Stdio.from(OwnedFd.from(child_input))).stdout(Stdio.from(OwnedFd.from(child_output)))
-    for argument in arguments:
-        command.arg(argument)
-    child = Rc.new(RefCell.new(command.spawn().map_err((error) => str(error))?))
-    # 2. Record process ownership.
-    pid_file.write_text(str(child.borrow().id()), "utf-8", "strict", None).map_err((error) => error.message())?
-    # 3. Retain shared handles without copying foreign resources.
-    return Ok(
-        Peer(input=Some(Rc.new(RefCell.new(input))), output=Rc.new(RefCell.new(output)), child=child, framing=framing),
-    )
+    """Start the real stdio server through the peer's class-owned construction path."""
+    return Peer.start(binary, project, arguments, framing)
 
 
 pub class Peer:
@@ -48,6 +32,34 @@ pub class Peer:
     output: Rc[RefCell[UnixStream]]
     child: Rc[RefCell[Child]]
     framing: str = "lsp"
+
+    @staticmethod
+    pub def start(binary: str, project: Path, arguments: list[str], framing: str) -> Result[Peer, str]:
+        """Start the real stdio server: 1. Configure streams. 2. Record ownership. 3. Retain shared handles."""
+        # 1. Configure streams and diagnostic output.
+        pid_file = project.joinpath(f".{framing}-pid")
+        input, child_input = UnixStream.pair().map_err((error) => str(error))?
+        output, child_output = UnixStream.pair().map_err((error) => str(error))?
+        mut command = Command.new(binary)
+        command.stderr(
+            File.create(project.joinpath("target").joinpath(f"{framing}.log").0).map_err((error) => str(error))?,
+        )
+        command.current_dir(project.0)
+        command.stdin(Stdio.from(OwnedFd.from(child_input))).stdout(Stdio.from(OwnedFd.from(child_output)))
+        for argument in arguments:
+            command.arg(argument)
+        child = Rc.new(RefCell.new(command.spawn().map_err((error) => str(error))?))
+        # 2. Record process ownership.
+        pid_file.write_text(str(child.borrow().id()), "utf-8", "strict", None).map_err((error) => error.message())?
+        # 3. Retain shared handles without copying foreign resources.
+        return Ok(
+            Peer(
+                input=Some(Rc.new(RefCell.new(input))),
+                output=Rc.new(RefCell.new(output)),
+                child=child,
+                framing=framing,
+            ),
+        )
 
     def send(mut self, value: JsonValue) -> Result[None, str]:
         """Write a newline-delimited MCP message or a byte-counted LSP message."""

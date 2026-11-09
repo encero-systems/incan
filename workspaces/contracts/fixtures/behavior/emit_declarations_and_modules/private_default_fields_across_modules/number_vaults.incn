@@ -5,3 +5,8 @@ pub class Vault:
 
     pub def describe(self) -> str:
         return f"{self.label} {self.revision} {self.secret}"
+
+    @staticmethod
+    pub def create(secret: int, label: int) -> Vault:
+        """Construct a vault through its public provider-owned surface."""
+        return Vault(secret=secret, label=label)

@@ -7,9 +7,8 @@ from crate.primitives.views import MappedView
 pub trait ByteDigestHasher:
     """Incremental byte-digest contract shared by foundational and higher-level algorithms."""
 
-    def update(mut self, chunk: bytes) -> None: ...
-
-    def finalize_bytes(mut self) -> bytes: ...
+    def update(mut self, chunk: bytes) -> None
+    def finalize_bytes(mut self) -> bytes
 
 
 pub class Sha256Hasher with ByteDigestHasher:
@@ -21,6 +20,11 @@ pub class Sha256Hasher with ByteDigestHasher:
     """
 
     handle: Sha256
+
+    @staticmethod
+    pub def new() -> Sha256Hasher:
+        """Create empty incremental SHA-256 state."""
+        return Sha256Hasher(handle=Sha256.default())
 
     def update(mut self, chunk: bytes) -> None:
         """Add owned bytes to this digest."""
@@ -48,4 +52,4 @@ pub class sha256:
     @staticmethod
     pub def new() -> Sha256Hasher:
         """Create empty incremental SHA-256 state."""
-        return Sha256Hasher(handle=Sha256.default())
+        return Sha256Hasher.new()
