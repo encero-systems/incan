@@ -30,7 +30,7 @@ class Rectangle:
 
 # Class with regular methods
 class Circle:
-    radius: float
+    pub radius: float
 
     pub def area(self) -> float:
         return 3.14159 * self.radius * self.radius
@@ -41,7 +41,7 @@ class Circle:
 
 # Classes with self parameter usage and mutable methods (self mutation)
 class Counter:
-    count: int
+    pub count: int
 
     pub def increment(mut self) -> None:
         self.count += 1
@@ -57,7 +57,7 @@ class Counter:
 
 
 class Stack:
-    items: list[int]
+    pub items: list[int]
 
     pub def push(mut self, item: int) -> None:
         self.items.append(item)
@@ -76,7 +76,7 @@ class Stack:
 
 # Class with static-like methods (no self mutation)
 class Calculator:
-    name: str
+    pub name: str
 
     pub def add(self, a: int, b: int) -> int:
         return a + b
@@ -93,8 +93,8 @@ class Calculator:
 
 # Composition examples
 class Person:
-    name: str
-    age: int
+    pub name: str
+    pub age: int
 
     pub def greet(self) -> str:
         return f"Hello, I'm {self.name}"
@@ -104,8 +104,8 @@ class Person:
 
 
 class Employee:
-    person: Person
-    employee_id: int
+    pub person: Person
+    pub employee_id: int
 
     pub def get_info(self) -> str:
         greeting: str = self.person.greet()

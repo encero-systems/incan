@@ -82,6 +82,26 @@ pub class WorkerHost:
     observer: Option[Emitter] = None
     activation_clock: Option[Clock] = None
 
+    @staticmethod
+    pub def serving(
+        generation: str,
+        socket: SocketFile,
+        listener: Listener,
+        owner: u32,
+        policy: Lifecycle,
+        observer: Option[Emitter],
+    ) -> WorkerHost:
+        """Create a serving host while keeping its transport, peer and lifecycle state private to the class."""
+        return WorkerHost(
+            generation=generation,
+            phase=Phase.Serving,
+            socket=socket,
+            listener=listener,
+            owner=owner,
+            policy=policy,
+            observer=observer,
+        )
+
     pub def next(mut self) -> Option[CompileRequest]:
         """
         The next request for the compiler entry, or `None` once the worker has retired.
@@ -276,14 +296,13 @@ pub def host_for(settings: HostSettings) -> Result[WorkerHost, str]:
     # 1. Only this exact file is withdrawn later, never a replacement at the same path.
     listener = listen(settings.socket, false)?
     bound = socket_file(settings.socket, settings.home)?
-    host = WorkerHost(
-        observer=worker_observer(),
-        generation=settings.generation,
-        phase=Phase.Serving,
-        owner=served_owner(bound.uid, settings.owner),
+    host = WorkerHost.serving(
+        settings.generation,
         socket=bound,
         listener=listener,
+        owner=served_owner(bound.uid, settings.owner),
         policy=lifecycle(settings.baseline, settings.bounds),
+        observer=worker_observer(),
     )
     # 2. A worker that cannot announce itself is never sent a request.
     if settings.ready != "":

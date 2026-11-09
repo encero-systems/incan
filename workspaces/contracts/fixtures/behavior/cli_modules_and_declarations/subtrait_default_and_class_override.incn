@@ -44,8 +44,8 @@ model Item with Child:
 class OffsetItem with Child:
     """Put the required field after another field to retain the adopter's exact slot."""
 
-    tag: bool
-    value: int
+    pub tag: bool
+    pub value: int
 
 
 def describe[T with Root](item: T) -> str:
@@ -55,7 +55,7 @@ def describe[T with Root](item: T) -> str:
 class Animal with Root:
     """Keep a trait adoption beside the inherited fields and instance methods."""
 
-    id: int
+    pub id: int
 
     def label(self) -> str:
         """Describe the field retained by every descendant."""
