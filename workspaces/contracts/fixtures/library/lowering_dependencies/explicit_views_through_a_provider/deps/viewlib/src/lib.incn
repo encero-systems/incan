@@ -22,3 +22,16 @@ pub class BufferView[T]:
 pub def view_buffer(buffer: Borrowed[SampleBuffer]) -> BufferView[Borrowed[SampleBuffer]] from buffer:
     """Retain a borrowed buffer in a provider-defined generic carrier."""
     return BufferView[Borrowed[SampleBuffer]](buffer=buffer)
+
+
+pub enum ReadMode:
+    Count
+    Plus(int)
+
+
+pub def inspect_mode(mode: ReadMode, buffer: Borrowed[SampleBuffer]) -> int:
+    """A provider enum match preserves an unrelated buffer's shared input contract."""
+    match mode:
+        ReadMode.Count => return len(buffer.samples)
+        ReadMode.Plus(extra) => return len(buffer.samples) + extra
+    return 0
