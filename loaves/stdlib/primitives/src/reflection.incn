@@ -56,7 +56,7 @@ pub model ShapeInfo:
     pub variants: FrozenList[VariantInfo]
 
     @staticmethod
-    def of[T with Walk]() -> ShapeInfo:
+    pub def of[T with Walk]() -> ShapeInfo:
         """Return the adopter's own stored shape without constructing or inspecting a value."""
         return T.__shape__()
 

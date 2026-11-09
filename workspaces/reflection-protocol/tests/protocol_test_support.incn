@@ -6,10 +6,14 @@ from std.primitives.reflection import (
 )
 
 
-def text_shape() -> ShapeInfo:
+const NO_RENAMES: FrozenList[FrozenStr] = []
+const NO_FIELDS: FrozenList[FieldInfo] = []
+const NO_VARIANTS: FrozenList[VariantInfo] = []
+
+pub def text_shape() -> ShapeInfo:
     """A manually declared scalar representation, with no nominal authority claim."""
-    return ShapeInfo(name="str", identity=b"", renamed_from=[], renamed_from_lifecycle=None,
-                     spelling="string", fields=[], variants=[])
+    return ShapeInfo(name="str", identity=b"", renamed_from=NO_RENAMES, renamed_from_lifecycle=None,
+                     spelling="string", fields=NO_FIELDS, variants=NO_VARIANTS)
 
 
 pub class TextValue with Walk, Reconstruct:
@@ -196,8 +200,8 @@ pub class ReferenceValue with Walk:
     @staticmethod
     def __shape__() -> ShapeInfo:
         """The test uses an explicit custom reference spelling."""
-        return ShapeInfo(name="ReferenceValue", identity=b"", renamed_from=[],
-                         renamed_from_lifecycle=None, spelling="ref@object", fields=[], variants=[])
+        return ShapeInfo(name="ReferenceValue", identity=b"", renamed_from=NO_RENAMES,
+                         renamed_from_lifecycle=None, spelling="ref@object", fields=NO_FIELDS, variants=NO_VARIANTS)
 
 
 pub class NestedReferences with Walk:
@@ -214,8 +218,8 @@ pub class NestedReferences with Walk:
     @staticmethod
     def __shape__() -> ShapeInfo:
         """Describe this custom sequence independently of its instances."""
-        return ShapeInfo(name="NestedReferences", identity=b"", renamed_from=[],
-                         renamed_from_lifecycle=None, spelling="list[ref@object]", fields=[], variants=[])
+        return ShapeInfo(name="NestedReferences", identity=b"", renamed_from=NO_RENAMES,
+                         renamed_from_lifecycle=None, spelling="list[ref@object]", fields=NO_FIELDS, variants=NO_VARIANTS)
 
 
 pub class ReferenceCollector with Walker[str]:
