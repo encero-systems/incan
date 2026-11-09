@@ -85,7 +85,7 @@ pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, st
     # 6. Every family runs once under one budget and the committed PASS baseline is a lower bound.
     report = run_contracts(installation, runner)?
 
-    # 7. Hosted CI records one run per command; local release qualification already records three.
+    # 7. The installed context records the release's one cold run per command.
     measure_memory(installation)?
 
     # 8. The caller receives one durable evidence directory even on hosts with shared temporary storage.
@@ -250,7 +250,12 @@ def run_oven_tests(installation: Installation) -> Result[None, str]:
 
 
 def run_rust_facets(installation: Installation) -> Result[int, str]:
-    """Run every production Loaf test suite that owns a Rust facet, retaining one log per project."""
+    """
+    Run every production Loaf test suite that owns a Rust facet, retaining one log per project.
+
+    The rustc-driver facet is not a duplicate of producing the release driver: its test harness runs seven unit tests
+    that a release binary build does not execute.
+    """
     output = installation.run.joinpath("rust-tests")
     output.mkdir(true, true).map_err((error) => error.message())?
     mut suites = 0
