@@ -3,7 +3,7 @@
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use incan_semantics_core::CanonicalSymbolId;
+use internal_models::{CanonicalSymbolId, DeclarationKind, SymbolNamespace, SymbolOrigin};
 use std::collections::BTreeSet;
 
 use crate::error::PlanError;
@@ -65,7 +65,7 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 }
 
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Scalar {
     CChar,
     RawPointer(bool, Vec<Scalar>),
@@ -167,7 +167,7 @@ enum Scalar {
 }
 
 /// Comparison mirror of scalar and tuple leaves; the public plan remains Incan-authored.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Leaf {
     /// One exact shared-reference carrier, never an owned copy of its referent.
     Reference(Vec<Scalar>),
@@ -415,7 +415,7 @@ fn validate_declarations(plan: &Plan, library: bool) -> Result<(), PlanError> {
     crate::checked_json::validate_source_roots(plan)?;
     validate_value_layouts(plan)?;
     validate_statics(plan)?;
-    let mut paths = BTreeSet::new();
+    let mut paths = Vec::new();
     for external in &plan.externals {
         span(&external.span)?;
         for ty in external
@@ -427,21 +427,23 @@ fn validate_declarations(plan: &Plan, library: bool) -> Result<(), PlanError> {
             validate_model_type(plan, ty)?;
         }
         let segments: Vec<_> = external.path.split("::").collect();
+        let path_key = (
+            external.path.clone(),
+            external.type_arguments.iter().map(scalar).collect::<Vec<_>>(),
+        );
         if incan_semantics_core::body_ir::rust_item_identity(&external.path).is_none()
             || !segments
                 .iter()
                 .filter(|segment| **segment != "[]")
                 .all(|segment| identifier(segment))
-            || !paths.insert((
-                external.path.clone(),
-                external.type_arguments.iter().map(scalar).collect::<Vec<_>>(),
-            ))
+            || paths.contains(&path_key)
         {
             return Err(PlanError::Invalid {
                 function: external.path.clone(),
                 reason: "invalid or duplicate canonical external path".into(),
             });
         }
+        paths.push(path_key);
         if external
             .parameters
             .iter()
