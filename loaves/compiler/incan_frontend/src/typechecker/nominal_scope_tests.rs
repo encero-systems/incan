@@ -98,6 +98,15 @@ fn nominal_scope_inventory_matches_fresh_inputs() -> Result<(), Box<dyn std::err
         checker.import_module_all(dependency, name);
         assert_current_inventory(&checker);
     }
+    let legacy_interface = checker.dependency_interface_snapshot();
+    let mut replay = TypeChecker::default();
+    for (name, dependency) in [("first", &first), ("second", &second), ("first", &first)] {
+        replay.import_module_all(dependency, name);
+    }
+    let replayed_interface = replay.dependency_interface_snapshot();
+    assert_eq!(legacy_interface, replayed_interface);
+    assert_eq!(legacy_interface.render(), replayed_interface.render());
+    assert!(legacy_interface.render().contains("[symbol_rows]"));
     assert_eq!(checker.retained_nominal_carriers.len(), 2);
     let module = program("model Local:\n    value: int\ntype Alias = Local\n")?;
     checker.set_current_module_path(Some(vec!["consumer".to_string()]));

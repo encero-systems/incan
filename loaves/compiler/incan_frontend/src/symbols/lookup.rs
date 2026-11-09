@@ -398,6 +398,21 @@ impl SymbolTable {
         &self.symbols
     }
 
+    /// Iterate declarations created while dependency interfaces were collected, retaining arena order and identities.
+    ///
+    /// The snapshot oracle uses this inventory to prove that an immutable interface preserves every collected symbol,
+    /// not only the module-keyed lookup caches derived from those symbols. Consumer lookup must not use this historical
+    /// arena directly because equal spellings from separate providers intentionally coexist here.
+    pub(crate) fn dependency_interface_symbols(
+        &self,
+    ) -> impl Iterator<Item = (SymbolId, &Symbol, Option<&CanonicalSymbolId>)> + '_ {
+        self.symbols.iter().enumerate().filter_map(|(id, symbol)| {
+            self.dependency_interface_symbol_ids
+                .contains(&id)
+                .then_some((id, symbol, self.identities.get(&id)))
+        })
+    }
+
     /// Return the index of the current scope; a scope entered later always has a larger index.
     pub fn current_scope_index(&self) -> usize {
         self.current_scope
