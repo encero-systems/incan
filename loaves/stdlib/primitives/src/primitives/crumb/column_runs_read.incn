@@ -1,0 +1,68 @@
+"""Bounded typed and dictionary-code run parsing, with minimal adjacent runs."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.column_block_data import BlockData
+from crate.primitives.crumb.column_errors import ColumnError, ColumnFailure, failure, shared, primitive
+from crate.primitives.crumb.column_key_read import ColumnKeys, key_at
+from crate.primitives.crumb.cell_read import cell
+from crate.primitives.crumb.encoding_cursor import EncodingCursor, copied
+from crate.primitives.crumb.description_dictionary import Dictionary
+from crate.primitives.crumb.types import TypeNode
+from crate.primitives.crumb.values import Value
+from crate.primitives.crumb.value_admission import validate
+
+
+pub def read_runs(
+    block: BlockData,
+    node: TypeNode,
+    keys: Option[ColumnKeys],
+    dictionary: Dictionary,
+    target: int,
+    mut budget: Budget,
+) -> Result[list[Value], ColumnError]:
+    """Target -1 expands admitted runs; a selected target retains only one value after bounded validation."""
+    mut cursor = EncodingCursor.create(block.payload, block.origin).map_err(shared)?
+    count = cursor.length(budget).map_err(shared)?
+    if count < 1 or count > block.present:
+        return Err(failure(ColumnFailure.RunLength, block.origin))
+    mut total = 0
+    mut previous_bytes: bytes = b""
+    mut previous_code = -1
+    mut result: list[Value] = []
+    for index in range(count):
+        offset = cursor.absolute()
+        length = cursor.length(budget).map_err(shared)?
+        if length < 1 or length > block.present - total:
+            return Err(failure(ColumnFailure.RunLength, offset))
+        mut value = Value.NoneValue
+        if block.encoding == 3:
+            raw = cursor.frame(budget).map_err(shared)?
+            raw_origin = cursor.absolute() - raw.len()
+            encoded = copied(raw, raw_origin, budget).map_err(shared)?
+            if index > 0 and encoded == previous_bytes:
+                return Err(failure(ColumnFailure.AdjacentRuns, raw_origin))
+            previous_bytes = encoded
+            value = cell(node, raw, raw_origin, dictionary, budget).map_err(shared)?
+        else:
+            code = cursor.length(budget).map_err(shared)?
+            if code == previous_code:
+                return Err(failure(ColumnFailure.AdjacentRuns, offset))
+            previous_code = code
+            match keys:
+                None => return Err(failure(ColumnFailure.MissingDictionary, offset))
+                Some(admitted) => value = key_at(admitted, code, dictionary, budget)?
+        budget.charge_elements(length).map_err((e) => primitive(e, offset))?
+        if target < 0:
+            for _ in range(length):
+                budget.charge_bytes(16).map_err((e) => primitive(e, offset))?
+                validate(value, budget).map_err((e) => primitive(e, offset))?
+                result.append(value)
+        elif target >= total and target - total < length:
+            budget.charge_bytes(16).map_err((e) => primitive(e, offset))?
+            validate(value, budget).map_err((e) => primitive(e, offset))?
+            result.append(value)
+        total += length
+    if total != block.present:
+        return Err(failure(ColumnFailure.RunLength, cursor.absolute()))
+    cursor.finished().map_err(shared)?
+    return Ok(result)
