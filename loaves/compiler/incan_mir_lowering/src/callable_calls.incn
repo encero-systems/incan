@@ -33,6 +33,7 @@ from string_conversion import string_conversion_callee
 from traits import (
     associated_body_index,
     close_trait_dispatch_arguments,
+    is_lazy_method_body,
     static_receiver_target,
     validate_static_receiver,
 )
@@ -179,6 +180,9 @@ pub def lower_named_target(
                         builder.type_parameters,
                         builder.type_arguments,
                     )?
+                    if is_lazy_method_body(module, body):
+                        empty_arguments: list[RustType] = []
+                        request_instance(builder.instances, body, empty_arguments, [], false)
                     return lower_local_call(module, builder, selected, body, arguments, destination, span)
 
 

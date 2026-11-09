@@ -908,7 +908,9 @@ pub def associated_body_index(
     target: &NamedCallableTarget,
     mut builder: Builder,
 ) -> Result[Option[int], str]:
-    """Select the adopter-specific body of a receiver-free trait default when its canonical identity is shared."""
+    """Select the adopter-specific body only for a receiver-free trait default with a shared canonical identity."""
+    if not is_trait_associated_target(module, target):
+        return Ok(None)
     owner = static_receiver_owner(
         builder.constructors,
         module,
