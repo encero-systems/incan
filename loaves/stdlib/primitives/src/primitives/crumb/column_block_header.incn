@@ -1,0 +1,93 @@
+"""Check block framing and retain encoding-specific direct-access ranges."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.column_bits import bit_length
+from crate.primitives.crumb.column_block_data import BlockData
+from crate.primitives.crumb.column_errors import ColumnError, ColumnFailure, failure, shared, primitive
+from crate.primitives.crumb.column_key_read import ColumnKeys
+from crate.primitives.crumb.column_numbers import numeric_type, coefficient
+from crate.primitives.crumb.column_pack_read import validate_pack, octet
+from crate.primitives.crumb.column_value_dictionary import dictionary_type
+from crate.primitives.crumb.cell_read import cell
+from crate.primitives.crumb.encoding_cursor import EncodingCursor
+from crate.primitives.crumb.description_dictionary import Dictionary
+from crate.primitives.crumb.encoding_index import read_index, rank, CellIndex
+from crate.primitives.crumb.types import TypeNode, AbsentPolicy
+from crate.primitives.views import MappedView
+
+
+pub def read_header(
+    node: TypeNode,
+    absent: AbsentPolicy,
+    rows: int,
+    view: MappedView,
+    origin: int,
+    keys: Option[ColumnKeys],
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[BlockData, ColumnError]:
+    """Check cardinality and encoding type before interpreting payload bytes or exposing an index."""
+    if rows < 1 or rows > 256:
+        return Err(failure(ColumnFailure.BlockCount, origin))
+    mut cursor = EncodingCursor.create(view, origin).map_err(shared)?
+    mut size = 0
+    if absent != AbsentPolicy.Required:
+        size = rows // 8
+        if rows % 8 != 0:
+            size += 1
+    bitmap = cursor.take(size, budget).map_err(shared)?
+    mut present = rows + 0
+    if absent != AbsentPolicy.Required:
+        if rows % 8 != 0 and octet(bitmap, size - 1, origin, budget)? >> (rows % 8) != 0:
+            return Err(failure(ColumnFailure.NonzeroPadding, origin + size - 1))
+        present = rank(bitmap, rows, origin, budget).map_err(shared)?
+    encoding = cursor.length(budget).map_err(shared)?
+    if encoding > 5:
+        return Err(failure(ColumnFailure.UnsupportedEncoding, cursor.absolute()))
+    if present == 0 and encoding != 0:
+        return Err(failure(ColumnFailure.EmptyEncoding, cursor.absolute()))
+    if encoding in [1, 2] and not numeric_type(node):
+        return Err(failure(ColumnFailure.EncodingType, cursor.absolute()))
+    if encoding in [4, 5]:
+        if not dictionary_type(node):
+            return Err(failure(ColumnFailure.EncodingType, cursor.absolute()))
+        if keys.is_none():
+            return Err(failure(ColumnFailure.MissingDictionary, cursor.absolute()))
+    mut cells: Option[CellIndex] = None
+    mut width = 0
+    mut base = "0"
+    if encoding == 0:
+        cells = Some(read_index(cursor, present, budget).map_err(shared)?)
+    elif encoding in [1, 2]:
+        raw = cursor.frame(budget).map_err(shared)?
+        raw_origin = cursor.absolute() - raw.len()
+        value = cell(node, raw, raw_origin, dictionary, budget).map_err(shared)?
+        base = coefficient(node, value, budget).map_err((e) => primitive(e, raw_origin))?
+        width = cursor.length(budget).map_err(shared)?
+    elif encoding == 4:
+        width = cursor.length(budget).map_err(shared)?
+        if let Some(admitted) = keys:
+            expected = bit_length(str(admitted.count - 1), budget).map_err((e) => primitive(e, cursor.absolute()))?
+            if width != expected:
+                return Err(failure(ColumnFailure.NonminimalBits, cursor.absolute()))
+    payload_origin = cursor.absolute()
+    payload = cursor.take(cursor.remaining(), budget).map_err(shared)?
+    if encoding in [1, 2, 4]:
+        mut count = present + 0
+        if encoding == 2:
+            count -= 1
+        validate_pack(payload, width, count, payload_origin, budget)?
+    return Ok(
+        BlockData(
+            rows=rows,
+            present=present,
+            encoding=encoding,
+            bitmap=bitmap,
+            bitmap_origin=origin,
+            payload=payload,
+            origin=payload_origin,
+            cells=cells,
+            width=width,
+            base=base,
+        ),
+    )
