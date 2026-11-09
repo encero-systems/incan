@@ -68,6 +68,14 @@ def test_projection_does_not_materialize_a_large_neighbor() -> Result[None, str]
         _ => return Err("projected field lost its type")
     mut large_budget = Budget.create(bytes=8192, elements=8192, depth=64).map_err((e) => e.message())?
     assert admitted.read_field(0, b"field2", large_budget).is_err()
+    # Complete-record access must preserve the same failing field attribution.
+    mut record_budget = Budget.create(bytes=8192, elements=8192, depth=64).map_err((e) => e.message())?
+    match admitted.read_record(0, record_budget):
+        Ok(_) => return Err("record materialization ignored its byte allowance")
+        Err(error) =>
+            assert error.field == Some(b"field2")
+            assert error.cause.is_some()
+
     return Ok(None)
 
 
