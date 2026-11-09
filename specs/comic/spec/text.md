@@ -68,6 +68,7 @@ A description is written in `{ }`. Inside it, `:` declares and `=` sets:
 - `name: Type = None`, or `= []`, `= {}` for a collection, declares the field's absent value. A field without one is required.
 - Field metadata goes in `[ ]` after the name, as in `placed_at [canonical = false]: string` and `price [renamed_from = ["unit_price"]]: decimal<10, 2>`. `canonical` defaults to `true`.
 - `key = value` sets a property of the declaration itself, such as a profile's `visibility = Public`. A property may group further properties in `{ }`, as a profile's function signature `type = { … }` does.
+- Properties come before the members and print in the order their kind declares them: the core for `Record` and `Enum`, a profile for its own kinds. `Incan.Function` declares `visibility`, `decorators`, `type` and `body`, so a function prints them in that order, whatever order a hand-written document used. Field metadata follows the same rule. A printer that has a profile's registration, which maps its kinds to `Record` or `Enum`, but not the kinds' own declarations reads the shape and keeps that profile's properties in the order it read them. A kind that no registration maps is refused.
 - In an enum, each member is a variant: `Pending`, or `Shipped(carrier: string, tracking: string)` with named payload fields.
 
 The core kinds are `Record` and `Enum`. A profile may define its own kinds, such as `Incan.Model` and `Incan.Enum`, which add that language's facts. The [profile registrations](../profiles.json) map each such kind to `Record` or `Enum`, so a reader that does not know the profile still reads the description.
@@ -183,7 +184,7 @@ In a table of stored records, each row writes the same five keys by name after i
 The printer produces exactly one text for a document:
 
 - A value stays on one line up to 120 characters, counting its indentation, unless something inside it must break, such as a list of records. Otherwise each field goes on its own line, indented 4 spaces, each followed by a comma. Inside a value, `=` takes no spaces: `id=1003`.
-- A description stays on one line up to 120 characters, with `, ` between members. Otherwise each member and property goes on its own line, indented 4 spaces, with no commas. Inside a description, `=` takes spaces: `canonical = false`.
+- A description stays on one line up to 120 characters, with its properties first and `, ` between them and its members, as `shop.billing.Invoice = Incan.Model { visibility = Public, id: Int, customer: Str, total: shop.billing.Cents }`. Otherwise each member and property goes on its own line, indented 4 spaces, with no commas. Inside a description, `=` takes spaces: `canonical = false`.
 - Lists, tuples and maps separate their elements with `, `. A list or map of more than one record, or of an enum with payloads, takes one element per line, with a trailing comma, wherever it appears, including in a description's property. A table takes one row per line.
 - A line still past 120 characters breaks at its last open bracket.
 - `#` starts a comment that runs to the end of the line. Comments are never data: they are not hashed, not stored in a Crumb, and not printed with a value. A formatter rewriting a hand-edited document keeps them.
