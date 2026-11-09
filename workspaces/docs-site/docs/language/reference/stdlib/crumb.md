@@ -119,3 +119,141 @@ Plans permit declared integer range inclusion, `fp32` to `fp64`, optional wrappi
 `AdmissionError` stores `kind: AdmissionFailure`, `path: str` and `cause: Option[CrumbError]`. `AdmissionFailure` is a string-valued enum whose values are `IdentityWidth`, `DuplicateIdentity`, `IdentityOrder`, `InvalidType`, `NominalMismatch`, `MissingField`, `IncompatibleType`, `MissingDescription` and `ResourceLimit`. Only `ResourceLimit` sets `cause`; `.message() -> str` renders `<kind> at <path>` without stored contents. Paths use identities, such as `/fields/82244417f956`, rather than treating a display-name match as identity evidence.
 
 Description-digest verification, full metadata admission, display-name rename hints, logical hash projections, codecs and generated-model reconstruction are separate work. Structural success alone must not be advertised as complete-description or record admission.
+
+## Logical hashes
+
+`std.primitives.crumb.hashes` hashes explicit logical values. Its input types live in `.values`. These APIs do not parse COMIC text or Crumb row/column bytes, generate model hooks, resolve reference targets or authorize reconstruction. A binding supplies already admitted model values, including its range, constraint and nominal checks.
+
+| API | Return type | Contract |
+| --- | --- | --- |
+| `value_hash(value: Value, projection: Projection, mut budget: Budget, capture: bool = false)` | `Result[HashResult, CrumbError]` | Validate original logical values, then hash the object or canonical contribution. |
+| `model_hash(node: TypeNode, mut budget: Budget, capture: bool = false)` | `Result[HashResult, CrumbError]` | Hash the framed structural S spelling from explicit definitions. |
+| `description_hash(description: Metadata, mut budget: Budget, capture: bool = false)` | `Result[HashResult, CrumbError]` | Hash every entry in the complete metadata tree. |
+| `verify_description_digest(description: Metadata, expected: bytes, mut budget: Budget)` | `Result[None, CrumbError]` | Derive the complete metadata digest and compare it with an exactly 32-byte expectation; mismatch is invalid input. |
+| `seal_hash(values: list[Value], mut budget: Budget, capture: bool = false)` | `Result[HashResult, CrumbError]` | Hash the ordered, individually framed object contributions. |
+
+`HashResult` contains `digest: bytes` and `preimage: Option[bytes]`. Digests are SHA-256 bytes. Ordinary hashing updates incremental state without retaining the whole preimage. Explicit `capture=true` retains and returns an independent preimage within the supplied budget. No error returns a partial digest. A seal counts each repeatable contribution before streaming its frame. It is not an incremental RecordStream writer.
+
+Domains start with the exact bytes `crumb1`, zero, then purpose byte: object `01`, canonical `02`, model `03`, seal `04`, description `05`. A description digest checks integrity of the supplied complete tree; it is not authentication, binding authority, property-semantic admission or a model's validation.
+
+### Logical inputs
+
+`Projection` is a string-valued enum: `Object = "object"` and `Canonical = "canonical"`; `from_value` parses those corpus spellings. `Value` has these variants:
+
+| Variant | Input contract |
+| --- | --- |
+| `NoneValue`, `Some(list[Value])` | Some has exactly one child. Nested absent states remain distinct; present optional wrappers do not change their child's contribution. |
+| `Boolean(bool)`, `Integer(str)` | Integers use canonical exact decimal strings and may exceed host width. |
+| `Float(int, bytes)` | Width is 32 or 64; bytes are the corresponding IEEE bits in big-endian order. Binary32 widens exactly. All NaNs normalize; signed zeros remain distinct. |
+| `Decimal(str, str)` | Exact coefficient and scale. Trailing coefficient zeros are removed and scale adjusted without host-width limits; zero normalizes to coefficient and scale zero. |
+| `Text(str)`, `Binary(bytes)`, `Withheld` | Text is exact UTF-8 with no Unicode normalization. Withheld is a distinct contribution, not an empty value. |
+| `List(list[Value])`, `Tuple(list[Value])`, `Set(list[Value])` | Lists and tuples retain order. Sets are ordered by stored-value comparison; duplicate original values are invalid. |
+| `Map(list[MapEntry])` | `MapEntry(key: Value, value: Value)` retains original entries; duplicate original keys are invalid. |
+| `Record(list[ValueField])` | Fields contribute in identity order. Duplicate or non-six-byte identities are invalid. |
+| `Enum(bytes, list[ValueField])` | An exactly six-byte variant identity and its anonymous record payload. |
+| `Union(TypeNode, list[Value])` | An explicit selected closed member and exactly one payload; the selector remains significant even for equal payloads. |
+| `Reference(bytes, bytes)` | Opaque target-type identity and reference identity; target contents are not read. |
+
+`ValueField(identity: bytes, canonical: bool, absent: AbsentPolicy, value: Value)` describes a stored field value. Outer `NoneValue` is omitted only for `NoneValue` absence policy; an empty list/set/map is omitted only for `Empty`. Canonical projection also omits fields with `canonical=false`, recursively. Every original field value is checked before omission. These values do not carry declared scalar widths or complete model constraints; their owning binding must check those before calling this layer.
+
+Stored comparison is numeric for integers and decimals, preserves signed-zero order and places normalized NaN after positive infinity. It is not lexicographic comparison of encoded contribution bytes. Map/set projection happens before ordering. Distinct original objects that become equal canonically retain their multiplicity; projected map-key ties compare projected values. Unrelated value kinds require an explicit union discriminator instead of implicit cross-type ordering.
+
+### Complete metadata inputs
+
+`Metadata` supports `Null`, `Boolean(bool)`, `Integer(str)`, `Text(str)`, `Binary(bytes)`, `List(list[Metadata])` and `Map(list[MetadataEntry])`. `MetadataEntry(key: str, value: Metadata)` uses exact string keys. Duplicate keys are refused; map entries encode in UTF-8 key order, while lists retain order. Every supplied property participates in the digest, including properties this layer does not interpret. A consumer must separately admit any property interpretation that changes value decoding or reconstruction. Uninterpreted metadata remains data and is retained in full.
+
+## Profile kind registrations
+
+`std.primitives.crumb.registrations` supplies local shape and printing-order facts. It does not load a profile, resolve its type names or authorize code execution.
+
+| Type | Fields |
+| --- | --- |
+| `PropertyGroupOrder` | `name: str`, `order: list[str]` |
+| `KindRegistration` | `kind: str`, `shape: NominalKind`, `property_order: Option[list[str]]`, `property_groups: list[PropertyGroupOrder]` |
+
+`NominalKind` comes from `.types` and is `Record` or `Enum`. `property_order=None` means the profile's property ordering is unknown; `Some([])` supplies a known empty order. Group orders apply independently to the named nested property. These lists are ordering facts, not lists of allowed properties. Codecs retain unknown properties as data in their original read order, including unknown nested groups.
+
+| API | Return type | Contract |
+| --- | --- | --- |
+| `KindRegistry.create(registrations: list[KindRegistration], mut budget: Budget)` | `Result[KindRegistry, CrumbError]` | Retain a checked local registry. Reject empty names, duplicate kinds, duplicate group or ordering names, and attempts to redefine core kinds. |
+| `registry.shape(kind: str, mut budget: Budget)` | `Result[NominalKind, CrumbError]` | Resolve core `Record`/`Enum` or an explicitly registered profile kind. Unknown profile kinds are invalid input. |
+| `registry.registration(kind: str, mut budget: Budget)` | `Result[Option[KindRegistration], CrumbError]` | Return retained profile facts, or `None` for a core kind. Unknown profile kinds fail. The codec supplies the core kinds' property orders. |
+
+All calls share the request budget. Construction and returned registration copies charge name storage and list work before allocation; name accounting reserves a UTF-8 upper bound. Registration does not check a description's field table, absence rules, identities or value-changing property interpretations. Those checks remain mandatory at the codec's admission boundary. A registered shape with unknown profile semantics can retain metadata without treating it as executable behavior.
+
+## Finite row writer
+
+`std.primitives.crumb.row_writer` writes one complete experimental `crumb-row/1` envelope. It accepts explicit final stored values and complete descriptions. It does not invoke constructors, normalize virtual construction inputs, fetch descriptions or resolve reference targets.
+
+| Type | Fields |
+| --- | --- |
+| `.row_descriptions.Description` | `metadata: Metadata`, `mode: DescriptionMode` |
+| `.row_descriptions.DescriptionMode` | `Inline` or `Reference` |
+| `.row_writer.RowRecord` | `key: bytes`, `value: Value` |
+
+`key` is the complete closed nominal selector K, including its argument framing. A record's `Value.Record` fields retain their exact stored identities, canonical flags and absent policies. Enum roots use `Value.Enum` with their stored variant identity. A reference-mode description still supplies its complete metadata to the writer; the envelope carries K and the derived complete-description digest instead of inline metadata.
+
+```incan
+from std.primitives.crumb.row_writer import RowRecord, write_rows
+from std.primitives.crumb.row_descriptions import Description, DescriptionMode
+```
+
+| API | Return type | Contract |
+| --- | --- | --- |
+| `write_rows(descriptions: list[Description], records: list[RowRecord], registry: KindRegistry, sealed: bool, mut budget: Budget)` | `Result[bytes, CrumbError]` | Admit the entire dictionary, check every typed stored value, then return one independent owned envelope. All arguments are explicit; there is no default sealing or budget policy. |
+
+The complete metadata has the core `kind`, `nominal`, `path` and `properties` fields plus `fields` or `variants`. Stored fields have `id`, `name`, `type`, `canonical`, `absent` and `properties`. Names are display information; exact identities determine dictionary and member lookup. Unknown metadata is retained, including in inline headers. Unknown kinds need an explicit registry entry; unsupported value-changing interpretations still need an admitted binding.
+
+Dictionary entries and stored members use identity order while their complete metadata retains declaration order. Every nominal dependency must exist in this local dictionary before any rows are written. Missing descriptions, duplicate identities, wrong scalar ranges, wrong field types or mismatched canonical/absence flags return `CrumbError.InvalidInput`. Invalid shapes cannot be hidden by an empty record set or by an omitted absent field. Resource failures return `CrumbError.Limit`; no error returns a successful output prefix.
+
+Presence bits remove only the declared outer absence. Nested `Some(None)` remains distinct from absence. Maps and sets use the primitive's stored-value comparison and reject duplicate original entries. Numeric conversion is exact: integer widths are range checked, decimal rescaling refuses rounding, and binary64 values must be exactly representable when stored as binary32. NaNs normalize and signed zero remains distinct.
+
+`sealed=true` adds the count and ordered logical-value seal. It does not hash physical row bytes or authenticate a sender. This API builds a finite owned result under the shared request budget. It does not promise bounded-memory streaming, spooling, a column codec or a decoder.
+
+## Finite row reader and field access
+
+`std.primitives.crumb.row_reader` reads the same experimental row profile. It admits a complete finite envelope before returning a `RowSet`, including every reachable typed cell and any logical seal. Dictionary references resolve only from the supplied complete descriptions. There is no implicit fetch, approximate shape match or application constructor call.
+
+```incan
+from std.primitives.crumb.row_reader import RowSet, read_rows, read_prefix
+from std.primitives.crumb.row_errors import RowError, RowFailure
+from std.primitives.views import MappedView
+```
+
+| API | Return type | Contract |
+| --- | --- | --- |
+| `read_rows(view: MappedView, supplied: list[Description], registry: KindRegistry, require_sealed: bool, mut budget: Budget)` | `Result[RowSet, RowError]` | Admit exactly one complete envelope. Any bytes after its framed boundary are trailing data. Every argument is explicit. |
+| `read_prefix(view: MappedView, supplied: list[Description], registry: KindRegistry, require_sealed: bool, mut budget: Budget)` | `Result[tuple[RowSet, int], RowError]` | Admit one complete leading envelope and return its consumed byte length. Remaining bytes belong to the caller; this does not report transport completion. |
+| `rows.len()` | `int` | Return the admitted record count. |
+| `rows.is_sealed()` | `bool` | Report whether the complete logical seal was verified, not merely whether a flag was present. |
+| `rows.descriptions(mut budget: Budget)` | `Result[list[Description], RowError]` | Copy complete written descriptions and original inline/reference modes, retaining unknown metadata and declaration order. |
+| `rows.read_record(index: int, mut budget: Budget)` | `Result[RowRecord, RowError]` | Explicitly materialize one complete format value with its original K. No application constructor, normalization or final model validation runs. |
+| `rows.field_view(index: int, identity: bytes, mut budget: Budget)` | `Result[Option[MappedView], RowError]` | Return an independently retained encoded cell range. `None` means declared stored absence. An unknown field is an error. |
+| `rows.read_field(index: int, identity: bytes, mut budget: Budget)` | `Result[Value, RowError]` | Materialize only the selected stored field after complete admission; declared absence becomes its typed `Value`. |
+
+Record indexes are zero-based and nonnegative. A field identity is exactly six bytes. Enum records select fields from their admitted variant payload. Selection binary-searches identity order, counts preceding present eligible bits and reads two directly addressed offsets. The offset lookup does not scan preceding offsets; bitmap rank still scans preceding bitmap bytes. It is not a constant-time lookup claim for arbitrarily wide records.
+
+A `RowSet` retains its backing and row indexes, not all decoded records. Admission may temporarily materialize one row's format-value tree for validation, ordering and sealing. Selection does not reconstruct neighboring fields. The shared byte/work/depth budget governs both admission and subsequent explicit operations; callers may supply a new budget for later access. These allowances are not an exact allocator or process-memory bound.
+
+A returned `MappedView` independently retains the complete backing, even when the original owner or `RowSet` leaves scope. It is not a lifetime-bound borrowed model reference, and it does not copy the selected bytes. `view.to_bytes()` explicitly copies. Keeping a small view can therefore keep a much larger backing alive. A mapped file's stable contents remain the caller/store's responsibility; retaining a handle does not prevent another process from changing a file. Use immutable owned backing when that guarantee cannot be made.
+
+An absent-policy optional cell omits its outer option tag. `field_view` returns that encoded inner cell; `read_field` restores the outer `Some`. Neither operation applies constructor defaults or virtual construction inputs. Binding-specific final validation and reconstruction remain separate from the byte codec.
+
+### Row failures
+
+`RowError` contains `kind: RowFailure`, `offset: int`, `field: Option[bytes] = None`, `variant: Option[bytes] = None` and `cause: Option[CrumbError] = None`. Offsets are relative to the supplied view. Field and variant identities identify the deepest available context. `message() -> str` reports the category and position without including input payloads.
+
+| `RowFailure` categories | Meaning |
+| --- | --- |
+| `BadMagic`, `UnsupportedProfile`, `ReservedFlags` | Invalid header or unsupported codec/value profile/dictionary mode. |
+| `NoncanonicalInteger`, `IntegerOverflow`, `Truncated`, `TrailingBytes` | Nonminimal number, length beyond u64, incomplete frame or bytes beyond an exact boundary. A valid u64 length beyond the host range is `LimitExceeded`. |
+| `MissingDescription`, `DescriptionMismatch`, `DuplicateSelector`, `DescriptionOrder`, `DescriptionIndex` | Unavailable exact description, mismatched digest, duplicate/unsorted K or an out-of-range dictionary selection. |
+| `InvalidDescription`, `InvalidSelector`, `DuplicateMember`, `MemberPosition`, `MemberOrder` | Invalid complete metadata/type facts, duplicate member identity, invalid declaration-position permutation or unsorted wire members. |
+| `InvalidOffsets`, `InvalidOffsetWidth`, `NonminimalOffsetWidth`, `BitmapPadding` | Invalid cell boundaries, unsupported/nonminimal table width or set unused presence bits. |
+| `InvalidCell`, `InvalidUtf8`, `RedundantPresence`, `NoncanonicalNan` | Typed bytes violate their written contract. Required empty collections remain valid; redundant present empty absent-policy collections do not. |
+| `ArityMismatch`, `DuplicateKey`, `CollectionOrder`, `UnionIndex`, `VariantIndex` | Wrong tuple size, duplicate/descending map or set entries, or an invalid union/enum selection. |
+| `SealRequired`, `SealCount`, `SealMismatch` | Missing required seal, wrong trailer count or a mismatched logical seal. No set is returned. |
+| `LimitExceeded` | Shared resource allowance or host representation exhausted. |
+| `MissingField`, `RecordIndex` | Invalid field identity/unknown field or a negative/out-of-range record lookup. |
+
+No failed finite admission exposes a partial set or unchecked view. The prefix API still requires a complete envelope; a paused transport is not successful completion. There is no column decoder, incremental record-yielding stream or generated model reconstruction in this surface.

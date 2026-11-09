@@ -16,6 +16,8 @@ from std.primitives.hex import hexlify
 from std.primitives.hash import sha256
 from corpus import Corpus, CorpusCase, receipt
 from adaptation_cases import check_adaptation
+from hash_cases import check_preimage, check_relation
+from row_reader_cases import check_reader
 from case_data import field, fields, hex_bytes, nodes, text
 
 
@@ -67,16 +69,19 @@ pub def run(corpus: Corpus) -> RunReport:
 
 def evaluate(item: CorpusCase) -> Outcome:
     """Convert a checker error to one failed case; no unexpected operation receives a green result."""
-    if item.operation not in ["member_identity", "nominal_identity", "type_selector", "shape_admission", "adaptation"]:
+    if item.operation not in [
+        "member_identity",
+        "nominal_identity",
+        "type_selector",
+        "shape_admission",
+        "adaptation",
+        "hash_preimage",
+        "value_relation",
+        "binary_decode",
+    ]:
         return Outcome.Unsupported("operation not implemented")
     match check(item):
-        Ok(true) =>
-            if item.operation == "adaptation":
-                match field(item.document, "expected").and_then((value) => text(value, "status")):
-                    Ok("accepted") =>
-                        return Outcome.Unsupported("adapted values checked; projection assertions pending")
-                    _ => pass
-            return Outcome.Passed
+        Ok(true) => return Outcome.Passed
 
         Ok(false) => return Outcome.Failed("computed result differs from the independent expectation")
         Err(message) => return Outcome.Failed(message)
@@ -112,6 +117,9 @@ def check(item: CorpusCase) -> Result[bool, str]:
         "type_selector" => return check_selector(item.document, budget)
         "shape_admission" => return check_shape(item.document, budget)
         "adaptation" => return check_adaptation(item.document, budget)
+        "hash_preimage" => return check_preimage(item.document, budget)
+        "value_relation" => return check_relation(item.document, budget)
+        "binary_decode" => return check_reader(item.document)
         _ => return Err("operation dispatcher mismatch")
 
 

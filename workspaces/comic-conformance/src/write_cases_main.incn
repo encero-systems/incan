@@ -1,0 +1,31 @@
+"""Run physical writer comparisons separately from the decoder conformance receipt."""
+
+from rust::std::env import args
+from rust::std::process import exit
+from std.fs import Path
+from std.json import parse
+from corpus import load
+from row_writer_cases import run_writers
+
+
+def run(manifest: str, descriptions: str) -> Result[i32, str]:
+    """Read the neutral pinned corpus and explicit inline writer inputs, then report every comparison."""
+    corpus = load(Path(manifest))?
+    contents = Path(descriptions).read_text("utf-8", "strict").map_err((e) => e.message())?
+    inputs = parse(contents).map_err((e) => e.message())?
+    report = run_writers(corpus, inputs)
+    println(report.document.to_json().map_err((e) => e.message())?)
+    return Ok(report.exit_code)
+
+
+def main() -> None:
+    """Exit successfully only when all33 independent writer cases match their original literal bytes."""
+    arguments = [argument for argument in args()]
+    if len(arguments) != 3:
+        println("usage: comic-row-writer MANIFEST INLINE_DESCRIPTIONS")
+        exit(2)
+    match run(arguments[1], arguments[2]):
+        Ok(code) => exit(code)
+        Err(error) =>
+            println("FAILED: " + error)
+            exit(1)

@@ -1,0 +1,70 @@
+"""Independent framing, exact numerics and metadata controls over retained immutable views."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.row_cursor import RowCursor
+from std.primitives.crumb.row_errors import RowFailure
+from std.primitives.crumb.row_metadata_read import read_metadata
+from std.primitives.crumb.row_metadata import encode
+from std.primitives.crumb.row_numbers import signed_decimal, fixed_integer
+from std.primitives.views import MappedFile, MappedView
+from std.primitives.hex import hexlify
+
+
+def retained(data: bytes) -> Result[MappedView, str]:
+    """The returned view deliberately owns an independent anchor after the original handle leaves scope."""
+    owner = MappedFile.owned(data)?
+    match owner.view(0, owner.len()):
+        Some(view) => return Ok(view)
+        None => return Err("missing retained test view")
+
+
+def test_lengths_refuse_nonminimal_overflow_and_host_truncation() -> Result[None, str]:
+    """Shortest framing, u64 overflow and a valid but unrepresentable host length are different failures."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    mut cursor = RowCursor.create(retained(b"\x80\x01")?).map_err((e) => e.message())?
+    assert cursor.length(budget).map_err((e) => e.message())? == 128
+    cursor.finished().map_err((e) => e.message())?
+    mut overlong = RowCursor.create(retained(b"\x80\x00")?).map_err((e) => e.message())?
+    match overlong.length(budget):
+        Ok(_) => return Err("accepted nonminimal length")
+        Err(error) =>
+            assert error.kind == RowFailure.NoncanonicalInteger
+    mut overflow = RowCursor.create(retained(b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x02")?).map_err((e) => e.message())?
+    match overflow.length(budget):
+        Ok(_) => return Err("accepted overflowing length")
+        Err(error) =>
+            assert error.kind == RowFailure.IntegerOverflow
+    mut host = RowCursor.create(retained(b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01")?).map_err((e) => e.message())?
+    match host.length(budget):
+        Ok(_) => return Err("truncated a valid u64 into the host range")
+        Err(error) =>
+            assert error.kind == RowFailure.LimitExceeded
+    return Ok(None)
+
+
+def test_exact_numeric_reconstruction_without_host_narrowing() -> Result[None, str]:
+    """The full signed/unsigned64 endpoints are literal expectations, not outputs from a paired encoder."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    low = signed_decimal([127, 127, 127, 127, 127, 127, 127, 127, 127, 1], 0, budget).map_err((e) => e.message())?
+    assert low == "-9223372036854775808"
+    high = fixed_integer(b"\xff\xff\xff\xff\xff\xff\xff\xff", false, 0, budget).map_err((e) => e.message())?
+    assert high == "18446744073709551615"
+    assert signed_decimal([1], 0, budget).map_err((e) => e.message())? == "-1"
+    assert signed_decimal([0], 0, budget).map_err((e) => e.message())? == "0"
+    assert signed_decimal([-1], 0, budget).is_err()
+    assert signed_decimal([128], 0, budget).is_err()
+    assert signed_decimal([9223372036854775807], 0, budget).is_err()
+    return Ok(None)
+
+
+def test_metadata_retains_unknown_keys_and_refuses_bad_order() -> Result[None, str]:
+    """A literal D map survives decoding; duplicate or unsorted encoded keys cannot be repaired by sorting."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    raw = b"\x06\x01\x01x\x03\x02\xc3\xa9"
+    value = read_metadata(retained(raw)?, 0, budget).map_err((e) => e.message())?
+    assert hexlify(encode(value, budget).map_err((e) => e.message())?) == "060101780302c3a9"
+    assert read_metadata(retained(b"\x06\x02\x01x\x00\x01x\x00")?, 0, budget).is_err()
+    assert read_metadata(retained(b"\x06\x02\x01z\x00\x01a\x00")?, 0, budget).is_err()
+    assert read_metadata(retained(b"\x03\x01\xff")?, 0, budget).is_err()
+    assert read_metadata(retained(b"\x00\x00")?, 0, budget).is_err()
+    return Ok(None)

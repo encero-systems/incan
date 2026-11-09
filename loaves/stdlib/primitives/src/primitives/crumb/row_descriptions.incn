@@ -1,0 +1,225 @@
+"""Admit complete descriptions and preserve declaration positions alongside identity-sorted storage."""
+
+from crate.primitives.crumb.admission import allows_absence
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.hashes import description_hash
+from crate.primitives.crumb.registrations import KindRegistry
+from crate.primitives.crumb.row_buffer import RowBuffer
+from crate.primitives.crumb.row_selectors import parse_key, parse_type
+from crate.primitives.crumb.row_metadata import (
+    get,
+    text,
+    binary,
+    items,
+    boolean,
+    properties,
+    without,
+    encode,
+    charge_copy,
+)
+from crate.primitives.crumb.types import AbsentPolicy, FieldShape, NominalKind, TypeNode
+from crate.primitives.crumb.values import Metadata
+from crate.primitives.hex import hexlify
+
+
+pub enum DescriptionMode:
+    """A writer's explicit choice; changing it changes bytes, never the complete logical description."""
+
+    Inline
+    Reference
+
+
+pub model Description:
+    """Untrusted complete metadata plus an explicit physical dictionary mode."""
+
+    pub metadata: Metadata
+    pub mode: DescriptionMode
+
+
+pub model StoredField:
+    """An admitted field in identity order, retaining its original metadata and declaration position."""
+
+    pub position: int
+    pub metadata: Metadata
+    pub shape: FieldShape
+    pub required_before: int = 0
+    pub eligible_before: int = 0
+
+
+pub model StoredVariant:
+    """An admitted enum alternative and its identity-sorted anonymous payload fields."""
+
+    pub position: int
+    pub identity: bytes
+    pub metadata: Metadata
+    pub fields: list[StoredField]
+
+
+pub model StoredDescription:
+    """Codec-internal parsed facts; public write entry points always derive these from complete metadata."""
+
+    pub source: Description
+    pub kind: NominalKind
+    pub key: bytes
+    pub selector: TypeNode
+    pub digest: bytes
+    pub fields: list[StoredField]
+    pub variants: list[StoredVariant]
+
+
+pub def admit(source: Description, registry: KindRegistry, mut budget: Budget) -> Result[StoredDescription, CrumbError]:
+    """Check the entire D tree before extracting core facts; retain every uninterpreted property."""
+    digest = description_hash(source.metadata, budget)?
+    kind = registry.shape(text(get(source.metadata, "kind", budget)?)?, budget)?
+    key = binary(get(source.metadata, "nominal", budget)?)?
+    selector = parse_key(key, kind, budget)?
+    text(get(source.metadata, "path", budget)?)?
+    properties(get(source.metadata, "properties", budget)?)?
+    mut fields: list[StoredField] = []
+    mut variants: list[StoredVariant] = []
+    if kind == NominalKind.Record:
+        fields = admit_fields(items(get(source.metadata, "fields", budget)?)?, budget)?
+    else:
+        variants = admit_variants(items(get(source.metadata, "variants", budget)?)?, budget)?
+    charge_copy(source.metadata, budget)?
+    return Ok(
+        StoredDescription(
+            source=source,
+            kind=kind,
+            key=key,
+            selector=selector,
+            digest=digest.digest,
+            fields=fields,
+            variants=variants,
+        ),
+    )
+
+
+def admit_fields(values: list[Metadata], mut budget: Budget) -> Result[list[StoredField], CrumbError]:
+    """Build identity order without losing declaration order; duplicate identities never collapse."""
+    mut fields: list[StoredField] = []
+    mut order: list[tuple[str, int]] = []
+    mut seen: set[str] = set()
+    for index in range(len(values)):
+        budget.charge_elements(1)?
+        budget.charge_bytes(28)?
+        charge_copy(values[index], budget)?
+        # The ordinary local owns an independent subtree; its copy was charged above.
+        value = values[index]
+        identity = member_identity(value, budget)?
+        key = hexlify(identity)
+        if key in seen:
+            return Err(CrumbError.invalid_input("duplicate field identity"))
+        seen.add(key)
+        node = parse_type(text(get(value, "type", budget)?)?, budget)?
+        canonical = boolean(get(value, "canonical", budget)?)?
+        absent = absent_policy(text(get(value, "absent", budget)?)?)?
+        if not allows_absence(node, absent):
+            return Err(CrumbError.invalid_input("field absent policy"))
+        fields.append(
+            StoredField(
+                position=index,
+                metadata=value,
+                shape=FieldShape(identity=identity, storage_type=node, canonical=canonical, absent=absent),
+            ),
+        )
+        order.append((key, index))
+    mut result: list[StoredField] = []
+    mut required = 0
+    mut eligible = 0
+    for pair in sorted(order):
+        charge_copy(fields[pair[1]].metadata, budget)?
+        budget.charge_bytes(16)?
+        result.append(
+            StoredField(
+                position=fields[pair[1]].position,
+                metadata=fields[pair[1]].metadata,
+                shape=fields[pair[1]].shape,
+                required_before=required,
+                eligible_before=eligible,
+            ),
+        )
+        if fields[pair[1]].shape.absent == AbsentPolicy.Required:
+            required += 1
+        else:
+            eligible += 1
+    return Ok(result)
+
+
+def admit_variants(values: list[Metadata], mut budget: Budget) -> Result[list[StoredVariant], CrumbError]:
+    """Resolve variant payload fields without treating the payload as a second nominal declaration."""
+    mut variants: list[StoredVariant] = []
+    mut order: list[tuple[str, int]] = []
+    mut seen: set[str] = set()
+    for index in range(len(values)):
+        budget.charge_elements(1)?
+        budget.charge_bytes(28)?
+        charge_copy(values[index], budget)?
+        # The ordinary local owns an independent subtree; its copy was charged above.
+        value = values[index]
+        identity = member_identity(value, budget)?
+        key = hexlify(identity)
+        if key in seen:
+            return Err(CrumbError.invalid_input("duplicate variant identity"))
+        seen.add(key)
+        fields = admit_fields(items(get(value, "fields", budget)?)?, budget)?
+        variants.append(StoredVariant(position=index, identity=identity, metadata=value, fields=fields))
+        order.append((key, index))
+    mut result: list[StoredVariant] = []
+    for pair in sorted(order):
+        charge_copy(variants[pair[1]].metadata, budget)?
+        result.append(variants[pair[1]])
+    return Ok(result)
+
+
+def member_identity(value: Metadata, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Check stored identity width and required display/property types without deriving an ID from a current name."""
+    identity = binary(get(value, "id", budget)?)?
+    if len(identity) != 6:
+        return Err(CrumbError.invalid_input("member identity width"))
+    text(get(value, "name", budget)?)?
+    properties(get(value, "properties", budget)?)?
+    return Ok(identity)
+
+
+def absent_policy(name: str) -> Result[AbsentPolicy, CrumbError]:
+    """Only the format's three policies are admitted; constructor defaults are irrelevant."""
+    match AbsentPolicy.from_value(name):
+        Some(policy) => return Ok(policy)
+        None => return Err(CrumbError.invalid_input("unknown absent policy"))
+
+
+pub def encode_entry(description: StoredDescription, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Emit the original mode with complete D metadata; references never substitute a model hash."""
+    mut output = RowBuffer.create()
+    if description.source.mode == DescriptionMode.Reference:
+        output.octet(1, budget)?
+        output.frame(description.key, budget)?
+        output.append(description.digest, budget)?
+        return output.finish(budget)
+    mut body = RowBuffer.create()
+    if description.kind == NominalKind.Record:
+        body.frame(encode(without(description.source.metadata, "fields", budget)?, budget)?, budget)?
+        encode_fields(description.fields, body, budget)?
+    else:
+        body.frame(encode(without(description.source.metadata, "variants", budget)?, budget)?, budget)?
+        body.count(len(description.variants), budget)?
+        for variant in description.variants:
+            mut payload = RowBuffer.create()
+            payload.frame(encode(without(variant.metadata, "fields", budget)?, budget)?, budget)?
+            encode_fields(variant.fields, payload, budget)?
+            body.count(variant.position, budget)?
+            body.frame(payload.finish(budget)?, budget)?
+    output.octet(0, budget)?
+    output.frame(body.finish(budget)?, budget)?
+    return output.finish(budget)
+
+
+def encode_fields(fields: list[StoredField], mut output: RowBuffer, mut budget: Budget) -> Result[None, CrumbError]:
+    """Write identity-sorted fields with a permutation back to the original declaration sequence."""
+    output.count(len(fields), budget)?
+    for field in fields:
+        output.count(field.position, budget)?
+        output.frame(encode(field.metadata, budget)?, budget)?
+    return Ok(None)

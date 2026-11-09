@@ -1,0 +1,84 @@
+"""Writer-only comparisons against original literal row bytes, independent of the unimplemented decoder."""
+
+from std.json import JsonValue
+from std.primitives.crumb import Budget
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.row_descriptions import Description, DescriptionMode
+from std.primitives.crumb.row_writer import RowRecord, write_rows
+from std.primitives.hex import hexlify
+from case_data import array, field, text, hex_bytes
+from hash_data import metadata
+from row_case_values import record_value
+from corpus import Corpus
+from execute import RunReport
+
+
+pub def run_writers(corpus: Corpus, inline_descriptions: JsonValue) -> RunReport:
+    """The logical records are independently authored corpus data; expected bytes are never derived here."""
+    mut results: list[JsonValue] = []
+    mut passed = 0
+    mut failed = 0
+    for example in corpus.cases:
+        if example.operation != "binary_decode" or not example.id.startswith("bytes-"):
+            continue
+        if not accepted(example.document.get("expected")):
+            continue
+        mut result: dict[str, JsonValue] = {}
+        result["id"] = JsonValue.string(example.id)
+        match check_writer(example.id, example.document, inline_descriptions):
+            Ok(true) =>
+                passed += 1
+                result["status"] = JsonValue.string("passed")
+            Ok(false) =>
+                failed += 1
+                result["status"] = JsonValue.string("failed")
+                result["detail"] = JsonValue.string("encoded bytes differ from original literal input_hex")
+            Err(error) =>
+                failed += 1
+                result["status"] = JsonValue.string("failed")
+                result["detail"] = JsonValue.string(error)
+        results.append(JsonValue.object(result))
+    mut code: i32 = 0
+    if failed > 0 or passed != 33:
+        code = 1
+    mut receipt: dict[str, JsonValue] = {}
+    receipt["schema"] = JsonValue.string("comic.row-writer-receipt/1")
+    receipt["manifest_sha256"] = JsonValue.string(corpus.manifest_digest)
+    receipt["operation"] = JsonValue.string("binary_encode_literal_comparison")
+    receipt["selected"] = JsonValue.int(len(results))
+    receipt["passed"] = JsonValue.int(passed)
+    receipt["failed"] = JsonValue.int(failed)
+    receipt["decoding_executed"] = JsonValue.bool(false)
+    receipt["cases"] = JsonValue.array(results)
+    return RunReport(document=JsonValue.object(receipt), exit_code=code)
+
+
+def accepted(expected: Option[JsonValue]) -> bool:
+    """Select only original accepted row cases, without treating parser errors as successful refusals."""
+    match expected:
+        Some(value) =>
+            match text(value, "status"):
+                Ok(status) => return status == "accepted"
+                Err(_) => return false
+        None => return false
+
+
+def check_writer(identity: str, example: JsonValue, inline_descriptions: JsonValue) -> Result[bool, str]:
+    """Use reference descriptions directly; the four inline cases have explicit, separately stored inputs."""
+    mut source = array(example, "supplied_descriptions")?
+    mut mode = DescriptionMode.Reference
+    if len(source) == 0:
+        source = field(inline_descriptions, identity)?.expect_array().map_err((e) => e.message())?
+        mode = DescriptionMode.Inline
+    mut descriptions: list[Description] = []
+    for item in source:
+        descriptions.append(Description(metadata=metadata(item)?, mode=mode))
+    expected = field(example, "expected")?
+    mut records: list[RowRecord] = []
+    for record in array(expected, "records")?:
+        records.append(RowRecord(key=hex_bytes(text(record, "selector_hex")?)?, value=record_value(record, source)?))
+    sealed = field(expected, "sealed")?.expect_bool().map_err((e) => e.message())?
+    mut budget = Budget.create(bytes=16777216, elements=1048576, depth=128).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    encoded = write_rows(descriptions, records, registry, sealed, budget).map_err((e) => e.message())?
+    return Ok(hexlify(encoded) == text(example, "input_hex")?)

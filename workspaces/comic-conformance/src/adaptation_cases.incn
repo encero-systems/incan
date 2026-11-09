@@ -1,4 +1,4 @@
-"""Apply production field plans to test notation; digest projection assertions remain stage-three work."""
+"""Apply production field plans to test notation; verify reconstructed values and their digest projections."""
 
 from std.json import JsonValue
 from std.primitives.crumb import Budget
@@ -6,6 +6,7 @@ from std.primitives.crumb.admission import FieldPlan, RecordShape, ValuePlan, pl
 from std.primitives.crumb.types import AbsentPolicy, ContainerKind, TypeNode
 from std.primitives.text import encode_utf8
 from case_data import array, field, fields, text
+from hash_cases import check_projections
 
 
 pub def check_adaptation(value: JsonValue, mut budget: Budget) -> Result[bool, str]:
@@ -30,7 +31,8 @@ pub def check_adaptation(value: JsonValue, mut budget: Budget) -> Result[bool, s
                 match item.source:
                     Some(index) => output.append(convert(values[index], item.conversion)?)
                     None => output.append(absent_value(item)?)
-            return Ok(JsonValue.array(output).equals(field(expected, "values")?))
+            values_match = JsonValue.array(output).equals(field(expected, "values")?)
+            return Ok(values_match and check_projections(value, output, budget)?)
 
 
 def absent_value(plan: FieldPlan) -> Result[JsonValue, str]:
