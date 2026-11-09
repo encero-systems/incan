@@ -109,8 +109,11 @@ fn main() -> std::process::ExitCode {
 
 /// Dispatch the command the first argument names.
 fn command() -> Result<(), Box<dyn std::error::Error>> {
-    incan_driver::invocation_trace::initialize()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if matches!(args.first().map(String::as_str), Some("--unit" | "--resident")) {
+        adapter::initialize_codegen_jobserver()?;
+    }
+    incan_driver::invocation_trace::initialize()?;
     match args.first().map(String::as_str) {
         #[cfg(unix)]
         Some("--resident") => worker::serve(&args[1..]),

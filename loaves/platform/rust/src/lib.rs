@@ -54,6 +54,33 @@ pub fn current_process_footprint() -> io::Result<u64> {
     Ok(usage.ri_phys_footprint)
 }
 
+/// Read the host's installed physical memory in bytes.
+///
+/// This is an upper bound for compiler concurrency, not a reading of currently available memory. The per-process
+/// footprint supplies the live pressure input separately.
+#[cfg(target_os = "macos")]
+pub fn physical_memory_bytes() -> io::Result<u64> {
+    let mut bytes = 0_u64;
+    let mut length = std::mem::size_of::<u64>();
+    // SAFETY: `hw.memsize` writes at most `length` bytes into the aligned `u64`; no replacement value is supplied.
+    let status = unsafe {
+        libc::sysctlbyname(
+            c"hw.memsize".as_ptr(),
+            (&raw mut bytes).cast(),
+            &mut length,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if status != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if length != std::mem::size_of::<u64>() || bytes == 0 {
+        return Err(io::Error::other("physical memory query returned an invalid value"));
+    }
+    Ok(bytes)
+}
+
 /// Read this process's current resident memory from `/proc/self/statm`.
 #[cfg(target_os = "linux")]
 pub fn current_process_footprint() -> io::Result<u64> {
@@ -69,12 +96,37 @@ pub fn current_process_footprint() -> io::Result<u64> {
     Ok(pages.saturating_mul(page))
 }
 
+/// Read the host's installed physical memory in bytes.
+#[cfg(target_os = "linux")]
+pub fn physical_memory_bytes() -> io::Result<u64> {
+    // SAFETY: both `sysconf` selectors read immutable host configuration and have no pointer preconditions.
+    let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
+    let page_bytes = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if pages <= 0 || page_bytes <= 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let pages = u64::try_from(pages).map_err(io::Error::other)?;
+    let page_bytes = u64::try_from(page_bytes).map_err(io::Error::other)?;
+    pages
+        .checked_mul(page_bytes)
+        .ok_or_else(|| io::Error::other("physical memory size overflow"))
+}
+
 /// Refuse a footprint reading on a target without an implemented resource probe.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn current_process_footprint() -> io::Result<u64> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "physical footprint unavailable",
+    ))
+}
+
+/// Refuse a physical-memory reading on a target without an implemented resource probe.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub fn physical_memory_bytes() -> io::Result<u64> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "physical memory unavailable",
     ))
 }
 
