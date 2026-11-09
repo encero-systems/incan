@@ -172,6 +172,8 @@ impl TypeChecker {
 
     /// Close dependent binders from checked callable signatures, iterable elements and nominal trait adoptions.
     /// A bound can depend on a binder another bound just closed; the finite pass count follows that dependency set.
+    /// An unresolved seed does not substitute away its declaration binder before the bound's checked arguments can
+    /// close it.
     pub(in crate::typechecker) fn infer_type_param_bindings_from_source_bounds(
         &self,
         bound_details: &std::collections::HashMap<String, Vec<crate::symbols::TypeBoundInfo>>,
@@ -191,7 +193,12 @@ impl TypeChecker {
                         continue;
                     }
                     for (expected, actual) in bound.type_args.iter().zip(&arguments) {
-                        let expected = substitute_resolved_type(expected, bindings);
+                        let settled = bindings
+                            .iter()
+                            .filter(|(_, ty)| !matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+                            .map(|(name, ty)| (name.clone(), ty.clone()))
+                            .collect();
+                        let expected = substitute_resolved_type(expected, &settled);
                         self.infer_type_param_bindings(&expected, actual, bindings);
                     }
                 }
@@ -203,11 +210,22 @@ impl TypeChecker {
     }
 
     /// Read a bound's actual arguments from its existing semantic relation, preserving standard protocol identity.
+    /// An active generic placeholder contributes only the arguments of its canonically matching declared bound.
     pub(super) fn source_bound_arguments(
         &self,
         actual: &ResolvedType,
         bound: &crate::symbols::TypeBoundInfo,
     ) -> Option<Vec<ResolvedType>> {
+        if let Some(placeholder) = self.active_type_param_name(actual)
+            && let Some(arguments) = self.innermost_type_param_bounds(placeholder).and_then(|bounds| {
+                bounds
+                    .iter()
+                    .find(|active| self.type_bound_names_match(active, bound))
+                    .map(|active| active.type_args.clone())
+            })
+        {
+            return Some(arguments);
+        }
         if self.callable_trait_for_bound(bound).is_some() {
             return self.source_callable_signature_args(actual, bound);
         }
@@ -232,7 +250,8 @@ impl TypeChecker {
     /// provider-qualified spellings and the declaration carrier an imported module's signature names (`Box[T]` from
     /// `helpers`, against the caller's `Box[int]`) share that structure even when their names differ.
     /// Native re-exports compare by their shared identity; a source collection expands only when the native template
-    /// needs its metadata-defaulted owner slots. Whole type parameters still bind the source argument unchanged.
+    /// needs its metadata-defaulted owner slots. Whole type parameters still bind the source argument unchanged, and
+    /// a provisional unresolved seed can be closed by later structural evidence.
     pub(in crate::typechecker) fn infer_type_param_bindings(
         &self,
         expected: &ResolvedType,
@@ -244,7 +263,9 @@ impl TypeChecker {
                 bindings
                     .entry(name.clone())
                     .and_modify(|existing| {
-                        if !self.types_compatible(actual, existing) {
+                        if matches!(existing, ResolvedType::Unknown | ResolvedType::CallSiteInfer) {
+                            *existing = actual.clone();
+                        } else if !self.types_compatible(actual, existing) {
                             *existing = ResolvedType::Unknown;
                         }
                     })
