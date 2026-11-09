@@ -730,35 +730,50 @@ type ReturnCarriers = BTreeMap<CanonicalSymbolId, ReturnCarrier>;
 /// Bind call-result owners before opaque return refinement needs their nominal adoptions. This phase transfers only
 /// declaration-owned identities; final carrier qualification still runs after return witnesses have settled.
 pub(super) fn retain_return_owners(module: &mut bir::BodyIrModule, context: &[bir::BodyIrModule]) {
-    let returns = return_carriers(module, context);
+    let mut returns = return_carriers(module, context);
     for declaration in &mut module.nominal_declarations {
         if let Some(body) = &mut declaration.field_default_body {
-            retain_body_return_owners(body, &returns);
+            retain_body_return_owners(body, &mut returns);
         }
         for partial in &mut declaration.method_partial_defaults {
-            retain_body_return_owners(&mut partial.frame, &returns);
+            retain_body_return_owners(&mut partial.frame, &mut returns);
         }
     }
     for body in &mut module.bodies {
-        retain_body_return_owners(body, &returns);
+        retain_body_return_owners(body, &mut returns);
     }
     for binding in &mut module.decorated_bindings {
-        retain_body_return_owners(&mut binding.original_body, &returns);
+        retain_body_return_owners(&mut binding.original_body, &mut returns);
     }
     for storage in &mut module.static_declarations {
         if let bir::StaticInitializer::Computed(body) = &mut storage.initial {
-            retain_body_return_owners(body, &returns);
+            retain_body_return_owners(body, &mut returns);
         }
     }
 }
 
 /// Apply the same declaration-owned result identity boundary to the body and its deferred parameter defaults.
-fn retain_body_return_owners(body: &mut bir::Body, returns: &ReturnCarriers) {
+///
+/// The return index normally shares this body's canonical map. Release that one strong reference before the body
+/// writes canonical aliases so `Arc::make_mut` keeps the allocation instead of copying the complete map. Recursive
+/// calls read the same map directly, and the refreshed snapshot rejoins the index after the body is settled.
+fn retain_body_return_owners(body: &mut bir::Body, returns: &mut ReturnCarriers) {
+    let own_return = match body.canonical.as_ref() {
+        Some(identity)
+            if returns
+                .get(identity)
+                .is_some_and(|carrier| std::sync::Arc::ptr_eq(&carrier.identities, &body.named_type_identities)) =>
+        {
+            returns.remove(identity).map(|carrier| (identity.clone(), carrier.ty))
+        }
+        _ => None,
+    };
     retain_selected_returns(
         &body.block.stmts,
         &mut body.locals,
         std::sync::Arc::make_mut(&mut body.named_type_identities),
         returns,
+        own_return.as_ref().map(|(identity, ty)| (identity, ty)),
     );
     for parameter in &body.params {
         if let bir::CallableParamDefault::Source(default) = &parameter.default {
@@ -767,8 +782,18 @@ fn retain_body_return_owners(body: &mut bir::Body, returns: &ReturnCarriers) {
                 &mut body.locals,
                 std::sync::Arc::make_mut(&mut body.named_type_identities),
                 returns,
+                own_return.as_ref().map(|(identity, ty)| (identity, ty)),
             );
         }
+    }
+    if let Some((identity, ty)) = own_return {
+        returns.insert(
+            identity,
+            ReturnCarrier {
+                ty,
+                identities: body.named_type_identities.clone(),
+            },
+        );
     }
 }
 
@@ -798,6 +823,7 @@ fn retain_selected_returns(
     locals: &mut [bir::LocalDecl],
     identities: &mut Identities,
     returns: &ReturnCarriers,
+    own_return: Option<(&CanonicalSymbolId, &IncanType)>,
 ) {
     for statement in statements {
         match &statement.kind {
@@ -811,21 +837,24 @@ fn retain_selected_returns(
                     bir::Callee::Method(target) => target.canonical.as_ref(),
                     _ => None,
                 };
-                let Some(carrier) = selected.and_then(|identity| returns.get(identity)) else {
-                    continue;
-                };
                 let Some(local) = place.local_id().and_then(|id| locals.get_mut(id.index())) else {
                     continue;
                 };
-                retain_declared_return_type(&mut local.ty, &carrier.ty, &carrier.identities, identities);
+                if let Some((_, declared)) = own_return.filter(|(identity, _)| Some(*identity) == selected) {
+                    retain_declared_return_type_from(&mut local.ty, declared, None, identities);
+                } else if let Some(carrier) = selected.and_then(|identity| returns.get(identity)) {
+                    retain_declared_return_type(&mut local.ty, &carrier.ty, &carrier.identities, identities);
+                }
             }
             bir::StatementKind::Assign { place, rvalue } => match rvalue {
                 bir::Rvalue::Use(bir::Operand::Place(read)) => {
                     retain_local_value_carrier(place, &read.place, false, locals, identities);
                 }
-                bir::Rvalue::Closure { body, .. } => retain_selected_returns(&body.stmts, locals, identities, returns),
+                bir::Rvalue::Closure { body, .. } => {
+                    retain_selected_returns(&body.stmts, locals, identities, returns, own_return)
+                }
                 bir::Rvalue::Generator { body, .. } => {
-                    retain_selected_returns(&body.stmts, locals, identities, returns)
+                    retain_selected_returns(&body.stmts, locals, identities, returns, own_return)
                 }
                 bir::Rvalue::Match { scrutinee, arms } => {
                     let matched = match scrutinee {
@@ -840,8 +869,8 @@ fn retain_selected_returns(
                         if let Some(matched) = &matched {
                             retain_pattern_binding_carriers(&arm.pattern, matched, locals, identities);
                         }
-                        retain_selected_returns(&arm.guard_stmts, locals, identities, returns);
-                        retain_selected_returns(&arm.body_stmts, locals, identities, returns);
+                        retain_selected_returns(&arm.guard_stmts, locals, identities, returns, own_return);
+                        retain_selected_returns(&arm.body_stmts, locals, identities, returns, own_return);
                     }
                 }
                 _ => {}
@@ -856,17 +885,17 @@ fn retain_selected_returns(
             bir::StatementKind::If {
                 then_block, else_block, ..
             } => {
-                retain_selected_returns(&then_block.stmts, locals, identities, returns);
+                retain_selected_returns(&then_block.stmts, locals, identities, returns, own_return);
                 if let Some(block) = else_block {
-                    retain_selected_returns(&block.stmts, locals, identities, returns);
+                    retain_selected_returns(&block.stmts, locals, identities, returns, own_return);
                 }
             }
             bir::StatementKind::Loop { body } | bir::StatementKind::UnsafeRegion { body, .. } => {
-                retain_selected_returns(&body.stmts, locals, identities, returns)
+                retain_selected_returns(&body.stmts, locals, identities, returns, own_return)
             }
             bir::StatementKind::Race { arms, .. } => {
                 for arm in arms {
-                    retain_selected_returns(&arm.body.stmts, locals, identities, returns);
+                    retain_selected_returns(&arm.body.stmts, locals, identities, returns, own_return);
                 }
             }
             _ => {}
@@ -980,16 +1009,32 @@ pub(super) fn retain_declared_return_type(
     source: &Identities,
     destination: &mut Identities,
 ) {
+    retain_declared_return_type_from(ty, declared, Some(source), destination);
+}
+
+/// Retain a declared carrier from another frame, or from the destination itself for a recursive call.
+fn retain_declared_return_type_from(
+    ty: &mut IncanType,
+    declared: &IncanType,
+    source: Option<&Identities>,
+    destination: &mut Identities,
+) {
     match (ty, declared) {
         (IncanType::Named(name), IncanType::Named(declared)) => {
-            let Some(identity) = source.get(declared) else { return };
-            if destination.get(name).is_some_and(|existing| existing != identity) {
+            let Some(identity) = (match source {
+                Some(source) => source.get(declared),
+                None => destination.get(declared),
+            })
+            .cloned() else {
+                return;
+            };
+            if destination.get(name).is_some_and(|existing| existing != &identity) {
                 return;
             }
-            let key = nominal_carrier_key(identity).unwrap_or_else(|| name.clone());
-            if *name == *declared || *name == identity.declaration_name || destination.get(name) == Some(identity) {
+            let key = nominal_carrier_key(&identity).unwrap_or_else(|| name.clone());
+            if *name == *declared || *name == identity.declaration_name || destination.get(name) == Some(&identity) {
                 *name = key.clone();
-                destination.insert(key, identity.clone());
+                destination.insert(key, identity);
             }
         }
         (
@@ -1000,29 +1045,33 @@ pub(super) fn retain_declared_return_type(
             },
         ) if args.len() == declared_args.len() => {
             let mut owner = IncanType::Named(base.clone());
-            retain_declared_return_type(
+            retain_declared_return_type_from(
                 &mut owner,
                 &IncanType::Named(declared_base.clone()),
                 source,
                 destination,
             );
             let IncanType::Named(retained) = owner else { return };
+            let declared_identity = match source {
+                Some(source) => source.get(declared_base),
+                None => destination.get(declared_base),
+            };
             if base != declared_base
                 && *base == retained
                 && !destination
                     .get(base)
-                    .is_some_and(|identity| source.get(declared_base) == Some(identity))
+                    .is_some_and(|identity| declared_identity == Some(identity))
             {
                 return;
             }
             *base = retained;
             for (argument, declared) in args.iter_mut().zip(declared_args) {
-                retain_declared_return_type(argument, declared, source, destination);
+                retain_declared_return_type_from(argument, declared, source, destination);
             }
         }
         (IncanType::Tuple(args), IncanType::Tuple(declared_args)) if args.len() == declared_args.len() => {
             for (argument, declared) in args.iter_mut().zip(declared_args) {
-                retain_declared_return_type(argument, declared, source, destination);
+                retain_declared_return_type_from(argument, declared, source, destination);
             }
         }
         _ => {}
