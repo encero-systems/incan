@@ -10,3 +10,8 @@ pub model Vault:
 pub model Sealed:
     token: Token
     pub label: str
+
+
+pub class ClassVault:
+    secret: str
+    pub label: str

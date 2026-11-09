@@ -46,7 +46,7 @@ model Repeat[T with Clone] with Iterator[T]:
 
 
 class Countdown with Iterator[int]:
-    n: int
+    pub n: int
 
     def __next__(mut self) -> Option[int]:
         if self.n <= 0:

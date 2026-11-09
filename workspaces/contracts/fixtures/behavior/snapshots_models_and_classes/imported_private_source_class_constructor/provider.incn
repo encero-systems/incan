@@ -3,5 +3,9 @@ pub class Vault:
     pub label: str
     revision: int = 7
 
+    @staticmethod
+    pub def create(label: str, revision: int) -> Vault:
+        return Vault(label=label, revision=revision)
+
     pub def describe(self) -> str:
         return f"{self.secret} {self.revision}"

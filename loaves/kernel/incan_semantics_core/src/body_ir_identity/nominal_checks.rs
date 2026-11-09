@@ -14,6 +14,9 @@ impl BodyIrModule {
         if !Self::nominal_reflection_metadata_matches_fields(declaration) {
             return false;
         }
+        if !Self::validated_constructor_is_well_formed(declaration) {
+            return false;
+        }
         if !declaration.native_item.is_empty()
             && crate::body_ir::native_nominal_item(&declaration.canonical)
                 .or_else(|| crate::body_ir::loaf_item_path(&declaration.canonical))
@@ -121,6 +124,34 @@ impl BodyIrModule {
                             || self.inherited_field_matches(declaration, index))
                         && identity.declaration_name == *name
                 })
+    }
+
+    /// Require a validated constructor to belong to this model, select one enclosed validator, and name each required
+    /// field slot once in declaration order. Default availability is checked when the declaration-owned default frame
+    /// is attached, because collection deliberately records that frame after the nominal layout.
+    fn validated_constructor_is_well_formed(declaration: &NominalDeclaration) -> bool {
+        let Some(contract) = &declaration.validated_constructor else {
+            return true;
+        };
+        declaration.canonical.kind == SemanticSourceTargetKind::Model
+            && declaration.derives.iter().any(|derive| {
+                derive == incan_lang::lang::derives::as_str(incan_lang::lang::derives::DeriveId::Validate)
+            })
+            && contract.constructor
+                == declaration.canonical.generated_member(
+                    incan_lang::lang::conventions::NEW_METHOD,
+                    SemanticSourceTargetKind::Method,
+                )
+            && contract.validator.namespace == SymbolNamespace::Member
+            && contract.validator.kind == SemanticSourceTargetKind::Method
+            && contract.validator.declaration_name == incan_lang::lang::conventions::VALIDATE_METHOD
+            && contract.validator.origin == declaration.canonical.origin
+            && declares_member(&declaration.canonical, &contract.validator)
+            && contract
+                .required_fields
+                .iter()
+                .all(|slot| *slot < declaration.fields.len())
+            && contract.required_fields.windows(2).all(|pair| pair[0] < pair[1])
     }
 
     /// Require each retained reflection record to name its selected physical field in the same order.
