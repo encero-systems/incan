@@ -383,6 +383,7 @@ nav:
           - "DD-0014: Resolved project lock": design_records/0014_resolved_project_lock.md
           - "DD-0016: Signed toolchain releases": design_records/0016_signed_toolchain_releases.md
           - "DD-0015: The compiler producer map": design_records/0015_compiler_producer_map.md
+          - "DD-0017: Compile-time code trust": design_records/0017_compile_time_code_trust.md
       - Whitepapers:
           - Overview: whitepapers/index.md
           - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md

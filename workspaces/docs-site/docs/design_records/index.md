@@ -48,3 +48,4 @@ Start from the [design-record template](TEMPLATE.md) when proposing a new decisi
 | [DD-0014](0014_resolved_project_lock.md) | Resolved project lock | Accepted | v0.6 |
 | [DD-0016](0016_signed_toolchain_releases.md) | Signed toolchain releases | Accepted | v0.6 |
 | [DD-0015](0015_compiler_producer_map.md) | The compiler producer map | Draft | v0.6 |
+| [DD-0017](0017_compile_time_code_trust.md) | Compile-time code trust | Accepted | v0.6 |
