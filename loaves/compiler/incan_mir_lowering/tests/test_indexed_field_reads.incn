@@ -74,31 +74,43 @@ def indexed_frame(ty: PlanType, span: SourceSpan) -> Builder:
 
 
 pub def test_indexed_scalar_field_never_materializes_the_element() -> Result[None, str]:
-    """The native plan uses a shared bounds-checked lookup, then copies only the selected integer field."""
-    span = source_span(file="indexed_field_reads.incn", line=1, column=1)
-    fields = [TupleElement.List(ListLeaf.Str, 1), TupleElement.Int]
-    mut builder = indexed_frame(PlanType.ListRef(ListLeaf.Tuple(fields), 1), span)
-    mut source = CheckedPlace.from_local(LocalId(0))
-    source.projection.push(PlaceElem.Index(CheckedOperand.Constant(CheckedConstant.Int(0))))
-    source.projection.push(PlaceElem.structural_field("1"))
-    result = place_read(builder, source, OwnershipFact.Copy, span)?
-    match result.kind:
-        OperandKind.Copy(selected) =>
-            assert place_type(builder.locals, selected) == PlanType.Int
-        _ => return Err("scalar field read did not copy its selected integer")
-    mut shared_reads = 0
-    for block in builder.blocks:
-        match block.terminator.kind:
-            TerminatorKind.Call(callee, _arguments, _output, _next, _unwind) =>
-                match callee.kind:
-                    CalleeKind.Instantiated(name, _arguments) =>
-                        if name == "incan_std_primitives::collections::list_get":
-                            shared_reads += 1
-                    _ => pass
-            _ => pass
-    assert shared_reads == 1
-    for local in builder.locals:
-        assert local.ty != PlanType.Tuple(fields)
+    """The native plan uses a shared bounds-checked lookup, then copies only the selected scalar or frozen handle."""
+    cases = [
+        (TupleElement.Int, PlanType.Int),
+        (TupleElement.FrozenStr, PlanType.FrozenStr),
+        (TupleElement.FrozenBytes, PlanType.FrozenBytes),
+        (TupleElement.StaticText, PlanType.StaticText),
+        (TupleElement.StaticBytes, PlanType.StaticBytes),
+        (
+            TupleElement.FrozenCollection("FrozenList", [PlanType.Int]),
+            PlanType.FrozenCollection("FrozenList", [PlanType.Int]),
+        ),
+    ]
+    for field_type, expected in cases:
+        span = source_span(file="indexed_field_reads.incn", line=1, column=1)
+        fields = [TupleElement.List(ListLeaf.Str, 1), field_type]
+        mut builder = indexed_frame(PlanType.ListRef(ListLeaf.Tuple(fields), 1), span)
+        mut source = CheckedPlace.from_local(LocalId(0))
+        source.projection.push(PlaceElem.Index(CheckedOperand.Constant(CheckedConstant.Int(0))))
+        source.projection.push(PlaceElem.structural_field("1"))
+        result = place_read(builder, source, OwnershipFact.Copy, span)?
+        match result.kind:
+            OperandKind.Copy(selected) =>
+                assert place_type(builder.locals, selected) == expected
+            _ => return Err("scalar field read did not copy only its selected handle")
+        mut shared_reads = 0
+        for block in builder.blocks:
+            match block.terminator.kind:
+                TerminatorKind.Call(callee, _arguments, _output, _next, _unwind) =>
+                    match callee.kind:
+                        CalleeKind.Instantiated(name, _arguments) =>
+                            if name == "incan_std_primitives::collections::list_get":
+                                shared_reads += 1
+                        _ => pass
+                _ => pass
+        assert shared_reads == 1
+        for local in builder.locals:
+            assert local.ty != PlanType.Tuple(fields)
     return Ok(None)
 
 
