@@ -72,17 +72,10 @@ impl TypeChecker {
             }
             // A derive brings the derives it implies, as a model's does: a derived `Ord` needs `PartialOrd` natively.
             Self::append_implied_derives(&mut native_derives);
-            for automatic in [DeriveId::Debug, DeriveId::Clone].map(derives::as_str) {
+            for automatic in Self::enum_automatic_derives(&info).into_iter().map(derives::as_str) {
                 if !native_derives.iter().any(|name| name == automatic) {
                     native_derives.push(automatic.to_owned());
                 }
-            }
-            if Self::enum_has_automatic_partial_eq(&info)
-                && !native_derives
-                    .iter()
-                    .any(|name| derives::from_str(name) == Some(DeriveId::PartialEq))
-            {
-                native_derives.push(derives::as_str(DeriveId::PartialEq).to_owned());
             }
             let native_derives = self.body_ir_native_derive_selection(&native_derives);
             self.type_info
