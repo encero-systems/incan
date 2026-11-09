@@ -667,6 +667,260 @@ fn assert_complete_shared_read_shapes() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+/// Read-only string callees and every ordinary caller storage shape retain a loan, while ownership-changing bodies
+/// keep their existing access.
+#[test]
+fn read_only_string_calls_borrow_the_callers_storage() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Holder:
+    text: str
+
+model Greeter:
+    name: str
+
+    def greet(self, greeting: str) -> str:
+        return f"{greeting} {self.name}"
+
+    hello = partial greet(greeting="hello")
+
+model Registration:
+    kind: str
+
+model RegistrationIndex:
+    entries: dict[str, Registration]
+
+    def shape(self, kind: str) -> int:
+        if kind not in self.entries:
+            return 0
+        return len(self.entries[kind].kind)
+
+    def registration(self, kind: str) -> int:
+        self.shape(kind)
+        return charge_registration(self.entries[kind])
+
+const PREFIX: str = "pre"
+static GREETING: str = "hello"
+
+def ignored(text: str) -> int:
+    return 1
+def length(text: str) -> int:
+    return len(text)
+def sliced(text: str) -> int:
+    return len(text[0:1])
+def compared(text: str) -> bool:
+    return text == "!"
+
+def local() -> int:
+    text = "payload"
+    return ignored(text) + length(text) + sliced(text)
+def forwarded(text: str) -> int:
+    return ignored(text) + length(text) + sliced(text)
+def field(holder: Holder) -> int:
+    return ignored(holder.text) + length(holder.text) + sliced(holder.text)
+def indexed(values: list[str]) -> int:
+    return length(values[0])
+def set_contains(values: set[str], text: str) -> bool:
+    return text in values
+def keyed_pair(key: str, value: int) -> int:
+    return length(key) + value
+def keyed_call(key: str, values: dict[str, int]) -> int:
+    return keyed_pair(key, values[key])
+def dictionary_key(values: dict[str, int], key: str) -> int:
+    return values[key]
+def optional_dictionary_key(values: dict[str, Option[bool | int]], key: str) -> str:
+    match values[key]:
+        int(number) => return f"int {number}"
+        bool(truth) => return f"bool {truth}"
+        None => return "absent"
+def charge_registration(registration: Registration) -> int:
+    return len(registration.kind)
+def registration_lookup(entries: dict[str, Registration], kind: str) -> int:
+    if kind not in entries:
+        return 0
+    return charge_registration(entries[kind])
+def declaration_strings() -> int:
+    return ignored(PREFIX) + ignored(GREETING)
+
+def moved(text: str) -> str:
+    return text
+def stored(text: str) -> list[str]:
+    return [text]
+def mutated(mut text: str) -> int:
+    return len(text)
+"#;
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+
+    for name in ["ignored", "length", "sliced", "compared"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing read-only string callee")?;
+        assert_eq!(
+            body.params[0].input_access,
+            incan_semantics_core::IncanInputAccess::InferredShared,
+            "{name}: {body:#?}"
+        );
+    }
+    let sliced = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "sliced")
+        .ok_or("missing sliced string callee")?;
+    assert!(
+        sliced.locals.iter().any(|local| {
+            matches!(local.origin, bir::LocalOrigin::Temporary)
+                && local.ty == super::IncanType::Primitive(super::IncanPrimitiveType::Str)
+        }),
+        "{sliced:#?}"
+    );
+    for name in ["local", "forwarded", "field"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing string caller")?;
+        let calls = body
+            .block
+            .stmts
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                bir::StatementKind::Call {
+                    callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                    args,
+                    ..
+                } if matches!(target.name.as_str(), "ignored" | "length" | "sliced") => args.first(),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(calls.len(), 3, "{name}: {body:#?}");
+        assert!(
+            calls.iter().all(|argument| matches!(
+                argument,
+                bir::ArgumentElement::One(bir::Operand::Place(read))
+                    if read.fact == bir::OwnershipFact::Borrow && !read.last_use
+            )),
+            "{name}: {body:#?}"
+        );
+    }
+    for name in ["moved", "stored", "mutated"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing ownership-changing string control")?;
+        assert_eq!(
+            body.params[0].input_access,
+            incan_semantics_core::IncanInputAccess::Inferred,
+            "{name}: {body:#?}"
+        );
+    }
+    let indexed = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "indexed")
+        .ok_or("missing indexed string control")?;
+    let indexed_argument = indexed.block.stmts.iter().find_map(|statement| match &statement.kind {
+        bir::StatementKind::Call {
+            callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+            args,
+            ..
+        } if target.name == "length" => args.first(),
+        _ => None,
+    });
+    let Some(bir::ArgumentElement::One(bir::Operand::Place(read))) = indexed_argument else {
+        return Err("missing indexed string call argument".into());
+    };
+    assert_eq!(
+        indexed.locals[read.place.local_id().ok_or("missing indexed argument local")?.index()].ty,
+        super::IncanType::Primitive(super::IncanPrimitiveType::Str),
+        "{indexed:#?}"
+    );
+    let set_contains = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "set_contains")
+        .ok_or("missing set-key control")?;
+    assert_eq!(
+        set_contains.params[1].input_access,
+        incan_semantics_core::IncanInputAccess::Inferred,
+        "{set_contains:#?}"
+    );
+    for (name, parameter) in [
+        ("dictionary_key", 1),
+        ("optional_dictionary_key", 1),
+        ("registration_lookup", 1),
+        ("registration", 1),
+        ("greet", 1),
+    ] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing retained owned-string boundary")?;
+        assert_eq!(
+            body.params[parameter].input_access,
+            incan_semantics_core::IncanInputAccess::Inferred,
+            "{name}: {body:#?}"
+        );
+    }
+    for name in ["dictionary_key", "optional_dictionary_key"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing dictionary-key boundary")?;
+        assert!(
+            body.locals.iter().all(|local| {
+                !matches!(local.origin, bir::LocalOrigin::Temporary)
+                    || local.ty
+                        != super::IncanType::Ref(Box::new(super::IncanType::Primitive(super::IncanPrimitiveType::Str)))
+            }),
+            "{name}: {body:#?}"
+        );
+    }
+    let declaration_strings = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "declaration_strings")
+        .ok_or("missing declaration-string caller")?;
+    assert!(
+        declaration_strings.locals.iter().all(|local| {
+            !matches!(local.origin, bir::LocalOrigin::Temporary)
+                || local.ty
+                    != super::IncanType::Ref(Box::new(super::IncanType::Primitive(super::IncanPrimitiveType::Str)))
+        }),
+        "{declaration_strings:#?}"
+    );
+    let keyed_call = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "keyed_call")
+        .ok_or("missing keyed call control")?;
+    let keyed_argument = keyed_call
+        .block
+        .stmts
+        .iter()
+        .find_map(|statement| match &statement.kind {
+            bir::StatementKind::Call {
+                callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
+                args,
+                ..
+            } if target.name == "keyed_pair" => args.first(),
+            _ => None,
+        });
+    let Some(bir::ArgumentElement::One(bir::Operand::Place(read))) = keyed_argument else {
+        return Err("missing keyed call argument".into());
+    };
+    assert_eq!(
+        keyed_call.locals[read.place.local_id().ok_or("missing keyed argument local")?.index()].ty,
+        super::IncanType::Primitive(super::IncanPrimitiveType::Str),
+        "{keyed_call:#?}"
+    );
+    Ok(())
+}
+
 /// Prove a read lent to one input and moved to another of the same call clones for the move, so the callee's loan
 /// never reads moved storage.
 fn assert_lent_and_moved_read() -> Result<(), Box<dyn std::error::Error>> {
