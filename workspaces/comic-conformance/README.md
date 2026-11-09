@@ -33,3 +33,15 @@ This separate receipt requires all 81 original binary row cases, 163 actual deco
 Accepted cases check record count, sealing status, exact nominal selectors and logical object contributions against independently authored expected values. The test translator uses decoded description facts only for field flags omitted from the expected-value notation. It then re-encodes the actual decoded records and complete written descriptions, preserving inline/reference mode, and compares with the original literal input. It never returns the original bytes as its encoded result. The independently authored writer fixtures remain a separate check of those descriptions and byte layouts.
 
 Focused tests additionally cover retained backing after owner/set scope ends, selected-field materialization under a budget too small for a neighboring field, explicit concatenated-envelope boundaries, corruption in an unselected field, finite recursive values and nominal union alternatives with equal shapes. These are format-value tests: no application model reconstruction or generated-hook coverage is claimed.
+
+## Column writer controls
+
+Run the finite column writer independently of decoder conformance:
+
+```bash
+incan run workspaces/comic-conformance/src/write_columns_main.incn -- specs/comic/corpus/manifest.json workspaces/comic-conformance/fixtures/column-writer-choices.json
+```
+
+The receipt compares 52 accepted block, dictionary, complete-column and envelope vectors. Logical values and complete descriptions come from the original corpus; the choice fixture supplies only group/column/block encoding IDs for the complete cases. Those IDs were transcribed from the independent literal framing, without using the production encoder or decoder. Expected bytes and manifest pins are unchanged.
+
+These are chosen-encoding comparisons, not a claim that different valid column encodings have identical bytes. `decoding_executed=false` is explicit. Negative decoder cases and actual decode/re-encode coverage remain the reader's responsibility; the main corpus still reports unsupported column operations until that implementation exists.

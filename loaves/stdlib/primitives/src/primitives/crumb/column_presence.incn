@@ -1,0 +1,48 @@
+"""Only declared outer absence is removed from column storage."""
+
+from crate.primitives.crumb.admission import allows_absence
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.spelling import selector_spelling
+from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, TypeNode
+from crate.primitives.crumb.values import Value
+
+
+pub def cell_type(node: TypeNode, absent: AbsentPolicy, mut budget: Budget) -> Result[TypeNode, CrumbError]:
+    """Validate the selector/absence pair, then remove exactly one optional wrapper when declared."""
+    selector_spelling(node, budget)?
+    if not allows_absence(node, absent):
+        return Err(CrumbError.invalid_input("column absence contract"))
+    if absent == AbsentPolicy.NoneValue:
+        match node:
+            TypeNode.Container(ContainerKind.Option, arguments) =>
+                if len(arguments) == 1:
+                    return Ok(arguments[0])
+            _ => pass
+        return Err(CrumbError.invalid_input("optional column shape"))
+    return Ok(node)
+
+
+pub def present(value: Value, node: TypeNode, absent: AbsentPolicy) -> Result[Option[Value], CrumbError]:
+    """Return a stored value or absence without hiding a wrong empty collection type."""
+    if absent == AbsentPolicy.NoneValue:
+        match value:
+            Value.NoneValue => return Ok(None)
+            Value.Some(values) =>
+                if len(values) == 1:
+                    return Ok(Some(values[0]))
+            _ => pass
+        return Err(CrumbError.invalid_input("optional column value"))
+    if absent == AbsentPolicy.Empty:
+        match (node, value):
+            (TypeNode.Container(ContainerKind.List, _), Value.List(items)) =>
+                if len(items) == 0:
+                    return Ok(None)
+            (TypeNode.Container(ContainerKind.Set, _), Value.Set(items)) =>
+                if len(items) == 0:
+                    return Ok(None)
+            (TypeNode.Container(ContainerKind.Map, _), Value.Map(items)) =>
+                if len(items) == 0:
+                    return Ok(None)
+            _ => pass
+    return Ok(Some(value))

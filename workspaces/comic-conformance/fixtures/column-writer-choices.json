@@ -1,0 +1,117 @@
+{
+  "columns-shared-dictionary-code-256": [
+    [
+      [
+        4,
+        4
+      ]
+    ]
+  ],
+  "columns-block-boundary-256": [
+    [
+      [
+        1,
+        1
+      ]
+    ]
+  ],
+  "columns-empty-model-envelope": [
+    [
+
+    ]
+  ],
+  "columns-empty-set": [
+
+  ],
+  "columns-sealed-empty-model": [
+    [
+
+    ]
+  ],
+  "columns-three-integers-envelope": [
+    [
+      [
+        1
+      ]
+    ]
+  ],
+  "columns-same-values-plain": [
+    [
+      [
+        0
+      ]
+    ]
+  ],
+  "columns-row-column-identical-seal": [
+    [
+      [
+        1
+      ]
+    ]
+  ],
+  "columns-envelope-block-boundary": [
+    [
+      [
+        1,
+        1
+      ]
+    ]
+  ],
+  "columns-root-enum": [
+    [
+      [
+        0
+      ]
+    ]
+  ],
+  "columns-nested-list-cell": [
+    [
+      [
+        0
+      ]
+    ]
+  ],
+  "columns-mixed-group-order": [
+    [
+
+    ],
+    [
+      [
+        1
+      ]
+    ],
+    [
+
+    ]
+  ],
+  "columns-cross-block-dictionary-reuse": [
+    [
+      [
+        5,
+        4
+      ]
+    ]
+  ],
+  "columns-numeric-column": [
+    [
+      [
+        4
+      ]
+    ]
+  ],
+  "columns-numeric-cross-block-column": [
+    [
+      [
+        5,
+        4
+      ]
+    ]
+  ],
+  "columns-numeric-dictionary-envelope": [
+    [
+      [
+        4
+      ]
+    ]
+  ]
+}
