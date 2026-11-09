@@ -9,13 +9,14 @@ from generators import generator_shape, generator_constructor
 from program_context import ProgramContext, body_at
 from native_type_identity import ConstructorIndex
 from rust::std::sync import Arc
+from rust::std::collections import BTreeMap
 from nominal_instances import NominalInstance
 from table_views import borrowed_at
 from decorator_caches import DecoratorFrame
 from unions import collect_unions
 from type_parameters import Instance, merge_instance_requests
 from runtime_requirements import RuntimeRetention, RefusalPlanning
-from lowering import BodyIrModule, initial_plan_roots, layout_tables, plan_contexts
+from lowering import BodyIrModule, initial_plan_roots, layout_tables, plan_contexts, source_file_index
 from checked_values import location
 from program_entries import no_emitted_frames, ordinary_body
 from static_storage import lower_computed_statics
@@ -31,6 +32,7 @@ pub def program_refusals(
     progress: bool,
     selection: str,
     kind: str,
+    package_versions: BTreeMap[str, str],
     overflow_checks: bool,
 ) -> RefusalPlanning:
     """
@@ -47,7 +49,7 @@ pub def program_refusals(
         return RefusalPlanning.Complete(["invalid Body IR project entry"])
     if len(sources) != len(modules) or len(files) != len(modules):
         return RefusalPlanning.Complete(["invalid Body IR project source provenance"])
-    match body_refusals(modules, sources, files, entry, progress, selection, kind, overflow_checks):
+    match body_refusals(modules, sources, files, entry, progress, selection, kind, package_versions, overflow_checks):
         Ok(refusals) => return refusals
         Err(error) => return RefusalPlanning.Complete([error])
 
@@ -60,6 +62,7 @@ def body_refusals(
     progress: bool,
     selection: str,
     kind: str,
+    package_versions: BTreeMap[str, str],
     overflow_checks: bool,
 ) -> Result[RefusalPlanning, str]:
     """
@@ -69,15 +72,23 @@ def body_refusals(
     The bodies lowered and the comparison bridge instances scheduled are the ones compilation selects: both read
     `ordinary_body` and `comparison_bridge_instances`.
     """
+    source_files = source_file_index(modules, files)?
     source_context, template_constructors, owners, specialized_context, nominal_instances, _template_references = plan_contexts(
         modules,
         sources,
         files,
         entry,
         false,
+        source_files,
+        package_versions,
     )?
     mut context = specialized_context
-    constructor_table, unions, initial_intrinsics = layout_tables(context, files[entry])?
+    constructor_table, unions, initial_intrinsics = layout_tables(
+        context,
+        files[entry],
+        source_files,
+        package_versions,
+    )?
     constructors = Arc.new(constructor_table)
     mut intrinsics = initial_intrinsics
     mut models: list[ModelDeclaration] = []
