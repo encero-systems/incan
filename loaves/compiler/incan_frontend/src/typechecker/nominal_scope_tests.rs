@@ -93,6 +93,26 @@ fn nominal_scope_inventory_matches_fresh_inputs() -> Result<(), Box<dyn std::err
     // ---- Imported declarations and repeated admission ----
     let first = program("pub model First:\n    value: int\n")?;
     let second = program("pub model Second:\n    value: int\n")?;
+    let exports = Arc::from(crate::module::exported_symbols(&first));
+    let mut first_builder = TypeChecker::default();
+    first_builder.set_current_module_path(Some(vec!["first".to_string()]));
+    first_builder
+        .check_program(&first)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let first_interface =
+        first_builder.seal_current_module_dependency_interface("first", &first, Arc::clone(&exports), true);
+    let mut replay_builder = TypeChecker::default();
+    replay_builder.set_current_module_path(Some(vec!["first".to_string()]));
+    replay_builder
+        .check_program(&first)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let replayed_first_interface =
+        replay_builder.seal_current_module_dependency_interface("first", &first, exports, true);
+    assert_eq!(first_interface.snapshot, replayed_first_interface.snapshot);
+    assert_eq!(
+        first_interface.snapshot.render(),
+        replayed_first_interface.snapshot.render()
+    );
     let mut checker = TypeChecker::default();
     for (name, dependency) in [("first", &first), ("second", &second), ("first", &first)] {
         checker.import_module_all(dependency, name);
