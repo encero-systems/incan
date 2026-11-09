@@ -833,7 +833,8 @@ fn shared_statement(statement: &bir::Statement, context: &ReadContext<'_>) -> bo
 }
 
 /// Admit rvalues that either do not mention this parameter or have read-only semantics. Aggregate construction,
-/// closure capture and generator capture remain ownership boundaries when they contain the parameter.
+/// closure capture and generator capture remain ownership boundaries when they contain the parameter. Result and
+/// Option payloads may copy scalar projections, just like a direct scalar return.
 fn shared_rvalue(value: &bir::Rvalue, context: &ReadContext<'_>) -> bool {
     let local = context.local;
     match value {
@@ -875,9 +876,17 @@ fn shared_rvalue(value: &bir::Rvalue, context: &ReadContext<'_>) -> bool {
                 // walk still checks that parameter's uses inside every arm and guard.
                 && (!uses(scrutinee, local) || match_bindings_are_read_only(arms, context))
         }
+        bir::Rvalue::Aggregate(bir::AggregateKind::OptionSome, elements) => {
+            elements.iter().all(|element| match element {
+                bir::ArgumentElement::One(payload) => !uses(payload, local) || scalar_projection(payload, local),
+                _ => !argument_uses(element, local),
+            })
+        }
         bir::Rvalue::Aggregate(_, elements) => !elements.iter().any(|element| argument_uses(element, local)),
         bir::Rvalue::Dict(entries) => !entries.iter().any(|entry| dict_entry_uses(entry, local)),
-        bir::Rvalue::ResultVariant(variant) => !uses(&variant.payload, local),
+        bir::Rvalue::ResultVariant(variant) => {
+            !uses(&variant.payload, local) || scalar_projection(&variant.payload, local)
+        }
         bir::Rvalue::Closure { captured_operands, .. } => !captured_operands.iter().any(|operand| uses(operand, local)),
         bir::Rvalue::Generator {
             source,

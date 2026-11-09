@@ -1295,3 +1295,58 @@ def overlap(mut cursor: Cursor) -> int:
     }
     Ok(())
 }
+
+/// Copy projections remain reads inside value wrappers; a wrapper containing an owner still needs that owner.
+#[test]
+fn wrapped_scalar_projections_keep_inputs_shared() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Packet:
+    value: int
+    slots: dict[str, int]
+    metadata: list[str]
+
+def ok_field(packet: Packet) -> Result[int, str]:
+    return Ok(packet.value)
+def err_field(packet: Packet) -> Result[int, int]:
+    return Err(packet.value)
+def some_field(packet: Packet) -> Option[int]:
+    return Some(packet.value)
+def ok_index(packet: Packet) -> Result[int, str]:
+    return Ok(packet.slots["key"])
+def plain_field(packet: Packet) -> int:
+    return packet.value
+
+def whole_ok(packet: Packet) -> Result[Packet, str]:
+    return Ok(packet)
+def whole_some(packet: Packet) -> Option[Packet]:
+    return Some(packet)
+def owned_ok(packet: Packet) -> Result[list[str], str]:
+    return Ok(packet.metadata)
+def owned_err(packet: Packet) -> Result[int, list[str]]:
+    return Err(packet.metadata)
+def owned_some(packet: Packet) -> Option[list[str]]:
+    return Some(packet.metadata)
+"#;
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    for (name, expected) in [
+        ("ok_field", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("err_field", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("some_field", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("ok_index", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("plain_field", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("whole_ok", incan_semantics_core::IncanInputAccess::Inferred),
+        ("whole_some", incan_semantics_core::IncanInputAccess::Inferred),
+        ("owned_ok", incan_semantics_core::IncanInputAccess::Inferred),
+        ("owned_err", incan_semantics_core::IncanInputAccess::Inferred),
+        ("owned_some", incan_semantics_core::IncanInputAccess::Inferred),
+    ] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing wrapper body")?;
+        assert_eq!(body.params[0].input_access, expected, "{name}: {body:#?}");
+    }
+    Ok(())
+}
