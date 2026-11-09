@@ -1,6 +1,6 @@
 """Incan-owned checked type facts, preserving every semantic type component without display-text reconstruction."""
 
-from compiler_records import CanonicalSymbolId
+from compiler_records import CanonicalSymbolId, valid_canonical_symbol_id
 
 
 @derive(Eq)
@@ -128,6 +128,7 @@ pub def valid_checked_type(ty: CheckedType) -> bool:
         CheckedType.RustInteropPath(name) => return name != ""
         CheckedType.Unsupported(name) => return name != ""
         CheckedType.NativeTraitObject(path, _send, _sync) => return path != ""
+        CheckedType.Trait(identity) => return valid_canonical_symbol_id(identity)
         _ => return true
 
 
