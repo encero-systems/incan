@@ -299,6 +299,8 @@ def baked_registry_unit(document: JsonValue, unit: RegistryUnit) -> Result[JsonV
         ("kind", unit.kind),
         ("artifact", unit.artifact),
         ("refusal", unit.refusal),
+        ("source", unit.source_archive),
+        ("checksum", unit.source_digest),
     ]:
         baked = replaced(baked, name, JsonValue.string(value))?
     if unit.artifact == "":
@@ -312,13 +314,14 @@ def baked_registry_unit(document: JsonValue, unit: RegistryUnit) -> Result[JsonV
 def portable_unit(source: Path, unit: JsonValue, stage: Path) -> Result[JsonValue, str]:
     """Name a unit's artifact and its dependencies' artifacts from the staged registry, never the packing machine."""
     staged = staged_artifact(source, unit, stage)?
-    match staged.get("dependencies"):
-        None => return Ok(staged)
+    portable = staged_source_archive(source, staged, stage)?
+    match portable.get("dependencies"):
+        None => return Ok(portable)
         Some(listed) =>
             mut dependencies: list[JsonValue] = []
             for dependency in array_value(listed)?:
                 dependencies.append(staged_artifact(source, dependency, stage)?)
-            return replaced(staged, "dependencies", JsonValue.array(dependencies))
+            return replaced(portable, "dependencies", JsonValue.array(dependencies))
 
 
 def staged_artifact(source: Path, record: JsonValue, stage: Path) -> Result[JsonValue, str]:
@@ -330,6 +333,23 @@ def staged_artifact(source: Path, record: JsonValue, stage: Path) -> Result[Json
                 return Ok(record)
             relative = stage_artifact(Path(located(source.parent(), string_value(value)?)), stage)?
             return replaced(record, "artifact", JsonValue.string(from_registry(relative)))
+
+
+def staged_source_archive(source: Path, record: JsonValue, stage: Path) -> Result[JsonValue, str]:
+    """Stage one admitted source archive under its digest and express it from the registry closure."""
+    archive = match record.get("source"):
+        None => return Ok(record)
+        Some(value) =>
+            if value.is_null():
+                return Ok(record)
+            string_value(value)?
+    digest = required_text(record, "checksum")?
+    if not digest.startswith("sha256:"):
+        return Err(f"registry source archive has invalid digest {digest}")
+    origin = Path(located(source.parent(), archive))
+    destination = stage.joinpath("registry/sources").joinpath(digest.replace(":", "-") + ".loaf")
+    link_file(origin, destination)?
+    return replaced(record, "source", JsonValue.string(from_registry("registry/sources/" + destination.name())))
 
 
 def from_registry(relative: str) -> str:

@@ -93,28 +93,33 @@ pub def validate_mode(mode: str) -> Result[str, str]:
 pub def read_lock(path: Path) -> Result[OvenLock, str]:
     """Read and validate a format-1 lock, including its complete graph identity."""
     source = read(path).map_err((reason) => f"{path.0}: {reason}")?
-    document = parse(source).map_err((error) => f"{path.0}: {error.message()}")?
-    root = document.as_table().map_err((error) => f"{path.0}: {error.message()}")?
-    require_keys(root, ["format", "mode", "graph", "toolchain", "loaf"], path.0, "lock")?
-    format = required_int(root, "format", path.0)?
+    return read_lock_text(source, path.0)
+
+
+pub def read_lock_text(source: str, provenance: str) -> Result[OvenLock, str]:
+    """Decode checked format-1 lock text carried by another integrity-checked artifact."""
+    document = parse(source).map_err((error) => f"{provenance}: {error.message()}")?
+    root = document.as_table().map_err((error) => f"{provenance}: {error.message()}")?
+    require_keys(root, ["format", "mode", "graph", "toolchain", "loaf"], provenance, "lock")?
+    format = required_int(root, "format", provenance)?
     if format != LOCK_FORMAT:
-        return Err(f"{path.0}: unsupported lock format {format}; expected {LOCK_FORMAT}")
-    mode = validate_mode(required_text(root, "mode", path.0)?)?
-    toolchain = read_toolchain(required(root, "toolchain", path.0)?, path.0)?
+        return Err(f"{provenance}: unsupported lock format {format}; expected {LOCK_FORMAT}")
+    mode = validate_mode(required_text(root, "mode", provenance)?)?
+    toolchain = read_toolchain(required(root, "toolchain", provenance)?, provenance)?
     mut loaves: list[LockLoaf] = []
-    for value in required(root, "loaf", path.0)?.as_array().map_err((error) => f"{path.0}: {error.message()}")?:
-        loaves.append(read_loaf(value, path.0)?)
+    for value in required(root, "loaf", provenance)?.as_array().map_err((error) => f"{provenance}: {error.message()}")?:
+        loaves.append(read_loaf(value, provenance)?)
     lock = OvenLock(
         format=format,
         mode=mode,
-        graph=required_text(root, "graph", path.0)?,
+        graph=required_text(root, "graph", provenance)?,
         toolchain=toolchain,
         loaves=loaves,
     )
     expected = graph_identity(lock)?
     if lock.graph != expected:
         name = first_entry_name(lock)
-        return Err(f"{path.0}: graph differs at Loaf {name}; run `oven lock`")
+        return Err(f"{provenance}: graph differs at Loaf {name}; run `oven lock`")
     return Ok(lock)
 
 
@@ -276,6 +281,48 @@ def optional_texts(table: Dict[str, TomlValue], key: str, source: str) -> Result
         for value in values:
             result.append(value.as_str().map_err((error) => f"{source}: {error.message()}")?)
     return Ok(result)
+
+
+pub def published_lock(lock: OvenLock, name: str, version: str) -> Result[OvenLock, str]:
+    """
+    Slice a workspace lock to the exact closure reached by one published member.
+
+    The selected member becomes the slice's sole root. Its former workspace-relative location is not published, while
+    dependency identities, versions, digests, feature selections and exact edges remain unchanged.
+    """
+    mut matches: list[int] = []
+    for index in range(len(lock.loaves)):
+        if lock.loaves[index].name == name and lock.loaves[index].version == version:
+            matches.append(index)
+    if len(matches) != 1:
+        return Err(f"oven.lock names published Loaf {name} {version} {len(matches)} times")
+    reached = reachable_entries(matches[0], lock, set())?
+    mut loaves: list[LockLoaf] = []
+    for entry in lock.loaves:
+        if entry_identity(entry) not in reached:
+            continue
+        mut selected = entry.clone()
+        if selected.name == name and selected.version == version:
+            selected.origin = "root"
+            selected.path = ""
+            selected.registry = ""
+            selected.protocol = ""
+            selected.revision = 0
+            selected.checksum = ""
+            selected.source = ""
+            selected.trust = ""
+            selected.adopted = false
+            selected.entry = ""
+        loaves.append(selected)
+    mut sliced = OvenLock(
+        format=lock.format,
+        mode=lock.mode,
+        graph="",
+        toolchain=lock.toolchain,
+        loaves=loaves,
+    )
+    sliced.graph = graph_identity(sliced)?
+    return Ok(sliced)
 
 
 pub def graph_identity(lock: OvenLock) -> Result[str, str]:
