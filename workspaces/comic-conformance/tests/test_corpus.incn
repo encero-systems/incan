@@ -1,0 +1,92 @@
+"""Corrupt and ambiguous corpus inputs must fail before any conformance case is counted."""
+
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from std.primitives.hash import sha256
+from std.primitives.hex import hexlify
+from std.primitives.text import encode_utf8
+from corpus import load, verify_pin
+
+
+def test_corrupted_pin_is_refused() -> Result[None, str]:
+    """A file whose bytes changed cannot inherit an earlier corpus verification result."""
+    directory = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    path = directory.path().joinpath("data.json")
+    path.write_text("old", "utf-8", "strict", None).map_err((error) => error.message())?
+    digest = hexlify(sha256.digest(encode_utf8("old")))
+    verify_pin(path, digest)?
+    path.write_text("new", "utf-8", "strict", None).map_err((error) => error.message())?
+    assert verify_pin(path, digest).is_err()
+    return Ok(None)
+
+
+def test_empty_manifest_is_not_success() -> Result[None, str]:
+    """An empty selection is not a zero-failure conformance run."""
+    directory = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    path = directory.path().joinpath("manifest.json")
+    empty = "{\"schema\":\"comic.foundation-corpus/1\",\"files\":[],\"text_files\":[]}"
+    path.write_text(empty, "utf-8", "strict", None).map_err((error) => error.message())?
+    assert load(path).is_err()
+    return Ok(None)
+
+
+def test_duplicate_case_ids_are_refused_after_pin_verification() -> Result[None, str]:
+    """A valid digest cannot conceal two cases with one identity in the receipt."""
+    directory = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = directory.path()
+    data = "{\"operation\":\"member_identity\",\"cases\":[{\"id\":\"same\"},{\"id\":\"same\"}]}"
+    root.joinpath("cases.json").write_text(data, "utf-8", "strict", None).map_err((error) => error.message())?
+    digest = hexlify(sha256.digest(encode_utf8(data)))
+    manifest = "".join(
+        [
+            "{\"schema\":\"comic.foundation-corpus/1\",",
+            "\"files\":[{\"path\":\"cases.json\",",
+            "\"operation\":\"member_identity\",",
+            "\"cases\":2,",
+            "\"sha256\":\"",
+            digest,
+            "\"}],",
+            "\"text_files\":[]}",
+        ],
+    )
+    path = root.joinpath("manifest.json")
+    path.write_text(manifest, "utf-8", "strict", None).map_err((error) => error.message())?
+    match load(path):
+        Ok(_) => return Err("duplicate case was accepted")
+        Err(error) =>
+            assert "duplicate case id" in error
+    return Ok(None)
+
+
+def test_verified_text_is_retained_after_the_source_changes() -> Result[None, str]:
+    """Dispatch uses verified text snapshots even if a source file changes after loading."""
+    directory = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = directory.path()
+    data = "{\"operation\":\"text_parse\",\"cases\":[{\"id\":\"snapshot\"}]}"
+    root.joinpath("cases.json").write_text(data, "utf-8", "strict", None).map_err((error) => error.message())?
+    digest = hexlify(sha256.digest(encode_utf8(data)))
+    text_path = root.joinpath("input.comic")
+    text_path.write_text("old", "utf-8", "strict", None).map_err((error) => error.message())?
+    text_digest = hexlify(sha256.digest(encode_utf8("old")))
+    manifest = "".join(
+        [
+            "{\"schema\":\"comic.foundation-corpus/1\",",
+            "\"files\":[{\"path\":\"cases.json\",",
+            "\"operation\":\"text_parse\",",
+            "\"cases\":1,",
+            "\"sha256\":\"",
+            digest,
+            "\"}],",
+            "\"text_files\":[{\"path\":\"input.comic\",",
+            "\"sha256\":\"",
+            text_digest,
+            "\"}]}",
+        ],
+    )
+    path = root.joinpath("manifest.json")
+    path.write_text(manifest, "utf-8", "strict", None).map_err((error) => error.message())?
+    corpus = load(path)?
+    text_path.write_text("new", "utf-8", "strict", None).map_err((error) => error.message())?
+    assert corpus.texts["input.comic"] == b"old"
+    assert load(path).is_err()
+    return Ok(None)

@@ -1,0 +1,117 @@
+"""Independent boundary controls for Crumb's exact integer and byte framing."""
+
+from std.primitives.crumb import Budget, CrumbError, CrumbFailure, Reader, encode_signed, encode_unsigned, frame
+
+
+def test_shortest_lengths_and_zero_frame() -> Result[None, CrumbError]:
+    """Zero is one byte; 128 has two groups and a zero-length frame is not truncation."""
+    mut budget = Budget.create(bytes=128, elements=128, depth=8)?
+    mut reader = Reader.from_bytes(b"\x00\x80\x01\x00")
+    assert reader.read_length(budget)? == 0
+    assert reader.read_length(budget)? == 128
+    assert reader.read_frame(budget)? == b""
+    assert reader.remaining() == 0
+    assert encode_unsigned("128", budget)? == b"\x80\x01"
+    return Ok(None)
+
+
+def test_exact_values_exceed_the_host_integer() -> Result[None, CrumbError]:
+    """The neutral U domain includes integers beyond u64 and does not pass through float."""
+    mut budget = Budget.create(bytes=1024, elements=1024, depth=8)?
+    assert encode_unsigned("18446744073709551616", budget)? == b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x02"
+    return Ok(None)
+
+
+def test_malformed_and_truncated_reads_do_not_advance() -> Result[None, CrumbError]:
+    """The cursor is transactional; charged work remains charged after a failed read."""
+    mut budget = Budget.create(bytes=128, elements=128, depth=8)?
+    mut overlong = Reader.from_bytes(b"\x80\x00")
+    assert overlong.read_length(budget).is_err()
+    assert overlong.position() == 0
+    mut truncated = Reader.from_bytes(b"\x80")
+    assert truncated.read_length(budget).is_err()
+    assert truncated.position() == 0
+    mut huge = Reader.from_bytes(b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x02")
+    assert huge.read_length(budget).is_err()
+    assert huge.position() == 0
+    return Ok(None)
+
+
+def test_budget_is_shared_across_reads() -> Result[None, CrumbError]:
+    """Independent successful operations cannot each spend the same request allowance."""
+    mut budget = Budget.create(bytes=1, elements=8, depth=2)?
+    mut reader = Reader.from_bytes(b"\x00\x00")
+    assert reader.read_length(budget)? == 0
+    assert reader.read_length(budget).is_err()
+    assert reader.position() == 1
+    assert Budget.create(bytes=-1, elements=1, depth=1).is_err()
+    return Ok(None)
+
+
+def test_full_u64_and_failed_frame_restore_the_cursor() -> Result[None, CrumbError]:
+    """L accepts all 64 bits, while incomplete payloads retain their starting position."""
+    mut budget = Budget.create(bytes=256, elements=256, depth=2)?
+    mut maximum = Reader.from_bytes(b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01")
+    assert maximum.read_length(budget)? == 18446744073709551615u64
+    mut truncated = Reader.from_bytes(b"\x03ab")
+    match truncated.read_frame(budget):
+        Err(error) =>
+            assert error.kind == CrumbFailure.Truncated
+            assert error.detail == "3"
+        _ => return Err(CrumbError.invalid_input("wrong truncation offset"))
+    assert truncated.position() == 0
+    return Ok(None)
+
+
+def test_exact_signed_and_framed_values() -> Result[None, CrumbError]:
+    """Z crosses negative base-128 boundaries without signed overflow or truncation."""
+    mut budget = Budget.create(bytes=4096, elements=4096, depth=2)?
+    assert encode_signed("-1", budget)? == b"\x01"
+    assert encode_signed("-128", budget)? == b"\xff\x01"
+    assert encode_signed("18446744073709551616", budget)? == b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x04"
+    assert encode_signed("-0", budget).is_err()
+    assert encode_unsigned("01", budget).is_err()
+    assert encode_unsigned("1a", budget).is_err()
+    assert frame(b"abc", budget)? == b"\x03abc"
+    return Ok(None)
+
+
+def test_depth_and_work_limits_cannot_be_reset_by_children() -> Result[None, CrumbError]:
+    """The caller balances successful entries on the same budget and cannot silently underflow."""
+    mut budget = Budget.create(bytes=1024, elements=2, depth=1)?
+    budget.enter()?
+    assert budget.enter().is_err()
+    budget.leave()?
+    assert budget.leave().is_err()
+    assert encode_unsigned("100000", budget).is_err()
+    return Ok(None)
+
+
+def test_unsigned_reader_preserves_arbitrary_width_and_trailing_bytes() -> Result[None, CrumbError]:
+    """Reading U does not acquire L's u64 limit or consume the following value."""
+    mut budget = Budget.create(bytes=128, elements=128, depth=2)?
+    mut reader = Reader.from_bytes(b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x02\x00")
+    assert reader.read_unsigned(budget)? == b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x02"
+    assert reader.remaining() == 1
+    assert reader.read_length(budget)? == 0
+    return Ok(None)
+
+
+def test_refusal_categories_are_preserved() -> Result[None, CrumbError]:
+    """Malformed input and caller policy have different typed outcomes."""
+    mut budget = Budget.create(bytes=128, elements=128, depth=2)?
+    mut reader = Reader.from_bytes(b"\x80\x00")
+    match reader.read_length(budget):
+        Err(error) =>
+            assert error.kind == CrumbFailure.Nonminimal
+            assert error.detail == "0"
+        _ => return Err(CrumbError.invalid_input("wrong nonminimal classification"))
+    mut limited = Budget.create(bytes=2, elements=128, depth=2)?
+    mut payload = Reader.from_bytes(b"\x03abc")
+    match payload.read_frame(limited):
+        Err(error) =>
+            assert error.kind == CrumbFailure.Limit
+            assert error.detail == "bytes"
+        _ => return Err(CrumbError.invalid_input("wrong limit classification"))
+    assert payload.position() == 0
+    return Ok(None)

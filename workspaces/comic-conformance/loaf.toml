@@ -1,0 +1,7 @@
+[project]
+name = "comic-conformance"
+version = "0.1.0"
+description = "Direct experimental COMIC corpus runner"
+
+[project.scripts]
+main = "src/main.incn"
