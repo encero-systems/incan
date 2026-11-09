@@ -102,7 +102,7 @@ impl TypeChecker {
 
     /// Return the declared type whose method body is being checked, with its own type parameters, or `None` outside a
     /// model, class, enum or newtype method (a trait default among them).
-    pub(super) fn current_method_owner_type(&self) -> Option<ResolvedType> {
+    pub(in crate::typechecker::check_expr) fn current_method_owner_type(&self) -> Option<ResolvedType> {
         let owner = self.current_method_owner.as_ref()?;
         let type_params = match self.lookup_type_info(owner)? {
             TypeInfo::Model(model) => model.type_params.clone(),

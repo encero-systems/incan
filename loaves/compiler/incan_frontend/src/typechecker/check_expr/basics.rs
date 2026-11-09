@@ -22,8 +22,17 @@ fn rust_path_last_segment_looks_like_const(path: &str) -> bool {
 }
 
 impl TypeChecker {
-    /// Resolve an identifier to its type, materializing source-defined prelude values before reporting an unknown name.
+    /// Resolve an identifier to its type, including type-receiver `Self` in an owning method, and materialize
+    /// source-defined prelude values before reporting an unknown name.
     pub(in crate::typechecker::check_expr) fn check_ident(&mut self, name: &str, span: Span) -> ResolvedType {
+        if name == "Self" && self.is_type_receiver_span(span) {
+            let ty = self.current_method_owner_type().unwrap_or(ResolvedType::SelfType);
+            if self.current_method_owner.is_some() || self.current_trait_name.is_some() {
+                self.type_info.expressions.ident_kinds.insert(span, IdentKind::TypeName);
+                return ty;
+            }
+        }
+
         // Note: `math` module requires `import math` (like Python).
         // When imported, it's registered as a Module symbol and found via normal lookup.
 

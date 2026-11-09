@@ -220,6 +220,7 @@ impl TypeChecker {
                 self.instantiated_trait_args_for_type(name, arguments, &bound.name)
             }
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.source_bound_arguments(inner, bound),
+            ResolvedType::SelfType => self.active_trait_self_bound(bound).map(|active| active.type_args),
             _ => None,
         }
     }
