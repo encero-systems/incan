@@ -29,6 +29,18 @@ pub from compiler_records import (
     same_stable_declaration_id,
     same_declaration_kind,
 )
+pub from checked_types import (
+    CheckedNumericType,
+    CheckedPrimitiveType,
+    CheckedInputAccess,
+    CheckedCallableParamKind,
+    CheckedRuntimeBuiltin,
+    CheckedCallableParam,
+    CheckedType,
+    valid_checked_type,
+    same_checked_type,
+    same_checked_types,
+)
 pub from records import (
     RecordKey,
     ReadScope,
