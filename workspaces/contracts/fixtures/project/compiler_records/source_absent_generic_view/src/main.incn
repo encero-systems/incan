@@ -1,0 +1,23 @@
+# behavior: a fresh consumer instantiates a provider generic body, follows its private implementation and retains a returned view from admitted executable records while unused bodies stay unread (#2519)
+# cli-commands:
+#   run src/main.incn
+# expect-stdout:
+#   consumer:7
+#   [10, 20]
+# pending: the real publisher and readers still emit and admit generation 53 Postcard executable bodies
+
+from pub::record_provider import SampleBuffer, first_with_provider_tag, view_buffer
+
+
+def main() -> None:
+    """Exercise only behavior whose implementation must be recovered from the compiled provider."""
+    tagged = consumer_tag()
+    println(f"{tagged}:7")
+    buffer = SampleBuffer(capacity=2, samples=[10, 20])
+    view = view_buffer(buffer)
+    println(view.buffer.samples)
+
+
+def consumer_tag() -> str:
+    """Instantiate the provider generic outside the entry body's retained view."""
+    return first_with_provider_tag(["consumer"])

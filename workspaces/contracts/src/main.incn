@@ -26,6 +26,7 @@ from formatting import compare_format
 from graph import compare_graph
 from check_edits import compare_check_edits
 from cli import compare_cli
+from compiler_record_contract import compare_compiler_records
 from batch import run_batches, run_separate
 from group_hints import hint_path
 from timing import report as report_time
@@ -578,7 +579,11 @@ def case_failures(
     """The reasons a case's expectations are not met, or none when they are."""
     header = program.header
     mut failures: list[str] = []
-    if fixture.family == "project" and header.declares("cli-commands"):
+    if fixture.family == "project" and fixture.area == "compiler_records":
+        match compare_compiler_records(incan, project, header):
+            Err(reason) => failures.append(reason)
+            Ok(found) => failures = found
+    elif fixture.family == "project" and header.declares("cli-commands"):
         match compare_cli(incan, project, header):
             Err(reason) => failures.append(reason)
             Ok(found) => failures = found

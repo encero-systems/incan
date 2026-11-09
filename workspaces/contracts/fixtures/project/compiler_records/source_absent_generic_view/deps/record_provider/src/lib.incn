@@ -1,0 +1,40 @@
+"""A provider whose exported generic and returned view require private implementation records."""
+
+const PROVIDER_MARKER: int = 7
+
+
+pub class SampleBuffer:
+    """Owned samples exposed through a provider-defined shared view."""
+
+    pub capacity: int
+    pub samples: list[int]
+
+
+pub class BufferView[T]:
+    """A generic carrier retaining the checked dependency of its buffer field."""
+
+    pub buffer: T
+
+
+def provider_marker() -> int:
+    """Keep the implementation detail private while an exported generic body reaches it."""
+    return PROVIDER_MARKER
+
+
+pub def first_with_provider_tag[T](items: list[T]) -> T:
+    """Select a consumer-instantiated element after reaching private provider code."""
+    assert provider_marker() == 7
+    return items[0]
+
+
+pub def view_buffer(buffer: Borrowed[SampleBuffer]) -> BufferView[Borrowed[SampleBuffer]] from buffer:
+    """Retain a borrowed buffer in a provider-defined generic carrier."""
+    return BufferView[Borrowed[SampleBuffer]](buffer=buffer)
+
+
+pub def unused_large_body(seed: int) -> list[int]:
+    """Provide a deliberately unselected body whose growth must not increase reconstructed-body work."""
+    mut values: list[int] = []
+    for index in range(256):
+        values.append(seed * 31 + index)
+    return values

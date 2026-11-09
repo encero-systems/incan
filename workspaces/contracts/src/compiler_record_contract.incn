@@ -1,0 +1,168 @@
+"""
+The source-absent executable-record consumer contract.
+
+The six-byte transport prefix is `INEX`, profile byte 1 and generation byte 54. Crumb framing starts after it; the
+profile is a compiler transport contract, not a COMIC or Crumb revision.
+"""
+
+from rust::std::fs import Permissions, set_permissions
+from rust::std::os::unix::fs import PermissionsExt
+from std.fs import Path
+from std.primitives import copy_frozen_bytes
+from compare import compare
+from files import read_bytes
+from header import Header
+from run import Outcome, invoke
+
+const EXECUTABLE_RECORD_PREFIX: bytes = b"INEX\x01\x36"
+const READABLE_MODE: u32 = 420
+
+
+pub def compare_compiler_records(incan: str, project: Path, header: Header) -> Result[list[str], str]:
+    """
+    Publish a real provider and exercise its records from an independent source-inaccessible consumer.
+
+    1. Build the provider and require the new transport prefix on its actual executable artifact.
+    2. Copy only the consumer inputs and provider publication into a fresh project with fresh cache identity.
+    3. Make both provider source copies unreadable, then run and compare the consumer.
+    4. Prove a missing executable record cannot fall back and a private implementation is not a public root.
+    """
+    # 1. The candidate compiler, not the fixture, supplies the executable bytes under test.
+    provider = project.joinpath("deps/record_provider")
+    built = invoke(
+        incan,
+        ["build", "deps/record_provider/src/lib.incn"],
+        project,
+        [f"INCAN_BAKERY={project.joinpath("provider-bakery").0}"],
+    )?
+    if built.code != Some(0):
+        return Ok([f"the provider build exited {built.exit_text()}: {built.stderr}"])
+    publication = one_artifact(provider)?
+    if not has_new_prefix(publication)?:
+        return Ok(["the provider executable artifact does not use incan.executable-records/1 generation 54"])
+    # 2. The fresh consumer has no prior target and names only its own copied provider.
+    fresh = fresh_consumer(project, provider)?
+    original_source = provider.joinpath("src/lib.incn")
+    copied_source = fresh.joinpath("deps/record_provider/src/lib.incn")
+    # 3. Neither the copied dependency nor an origin retained in its publication can read provider source.
+    outcome = without_provider_source(
+        incan,
+        ["run", "src/main.incn"],
+        fresh,
+        original_source,
+        copied_source,
+        "consumer-bakery",
+    )?
+    mut failures = [f"fresh source-absent consumer: {failure}" for failure in compare("cli", header, outcome)]
+    if len(failures) > 0:
+        return Ok(failures)
+    # 4. Success must depend on the executable record, and implementation reachability must not widen its public roots.
+    for failure in missing_record_control(incan, fresh, original_source, copied_source)?:
+        failures.append(failure)
+    for failure in private_root_control(incan, fresh, original_source, copied_source)?:
+        failures.append(failure)
+    return Ok(failures)
+
+
+def one_artifact(provider: Path) -> Result[Path, str]:
+    """Return the provider's one executable publication, refusing missing or ambiguous observations."""
+    artifacts = provider.rglob("record_provider.incnbody").map_err((error) => error.message())?
+    if len(artifacts) != 1:
+        return Err(f"expected one record_provider.incnbody artifact, found {len(artifacts)}")
+    return Ok(artifacts[0])
+
+
+def has_new_prefix(artifact: Path) -> Result[bool, str]:
+    """Whether an artifact starts with the independent literal for transport profile 1, generation 54."""
+    content = read_bytes(artifact)?
+    expected = copy_frozen_bytes(EXECUTABLE_RECORD_PREFIX)
+    return Ok(len(content) >= len(expected) and content[0:len(expected)] == expected)
+
+
+def fresh_consumer(project: Path, provider: Path) -> Result[Path, str]:
+    """Copy consumer inputs and the built provider into a target-free project with its own dependency path."""
+    fresh = project.joinpath("fresh-consumer")
+    if fresh.exists():
+        fresh.remove_tree().map_err((error) => error.message())?
+    fresh.mkdir(true, true).map_err((error) => error.message())?
+    project.joinpath("loaf.toml").copy(fresh.joinpath("loaf.toml"), false, true).map_err((error) => error.message())?
+    project.joinpath("src").copy(fresh.joinpath("src"), false, true).map_err((error) => error.message())?
+    project.joinpath("controls").copy(fresh.joinpath("controls"), false, true).map_err((error) => error.message())?
+    provider.copy(fresh.joinpath("deps/record_provider"), false, true).map_err((error) => error.message())?
+    return Ok(fresh)
+
+
+def without_provider_source(
+    incan: str,
+    arguments: list[str],
+    project: Path,
+    original_source: Path,
+    copied_source: Path,
+    bakery: str,
+) -> Result[Outcome, str]:
+    """Invoke one fresh-cache consumer while both possible provider source locations are unreadable, then restore them."""
+    set_mode(original_source, 0)?
+    match set_mode(copied_source, 0):
+        Err(reason) =>
+            set_mode(original_source, READABLE_MODE)?
+            return Err(reason)
+        Ok(_) => pass
+    attempt = invoke(incan, arguments, project, [f"INCAN_BAKERY={project.joinpath(bakery).0}"])
+    restored_original = set_mode(original_source, READABLE_MODE)
+    restored_copy = set_mode(copied_source, READABLE_MODE)
+    restored_original?
+    restored_copy?
+    return attempt
+
+
+def missing_record_control(
+    incan: str,
+    fresh: Path,
+    original_source: Path,
+    copied_source: Path,
+) -> Result[list[str], str]:
+    """A new consumer with neither provider source nor its executable record must fail instead of using stale output."""
+    artifact = one_artifact(fresh.joinpath("deps/record_provider"))?
+    held = artifact.parent().joinpath("record_provider.incnbody.missing-control")
+    target = fresh.joinpath("target")
+    if target.exists():
+        target.remove_tree().map_err((error) => error.message())?
+    artifact.move(held).map_err((error) => error.message())?
+    attempted = without_provider_source(
+        incan,
+        ["run", "src/main.incn"],
+        fresh,
+        original_source,
+        copied_source,
+        "missing-record-bakery",
+    )
+    restored = held.move(artifact).map_err((error) => error.message())
+    restored?
+    outcome = attempted?
+    if outcome.code == Some(0):
+        return Ok(["the fresh consumer succeeded without the provider executable record"])
+    return Ok([])
+
+
+def private_root_control(incan: str, fresh: Path, original_source: Path, copied_source: Path) -> Result[list[str], str]:
+    """A provider-private implementation dependency remains unavailable as a direct consumer root."""
+    target = fresh.joinpath("target")
+    if target.exists():
+        target.remove_tree().map_err((error) => error.message())?
+    outcome = without_provider_source(
+        incan,
+        ["check", "controls/private_root.incn", "--format", "json"],
+        fresh,
+        original_source,
+        copied_source,
+        "private-root-bakery",
+    )?
+    if outcome.code == Some(0) or "INCAN-I0001" not in outcome.stdout:
+        return Ok(["the compiled provider did not refuse its private helper as a public root"])
+    return Ok([])
+
+
+def set_mode(path: Path, mode: u32) -> Result[None, str]:
+    """Set an exact contract-copy source mode, retaining the operating system's refusal text."""
+    set_permissions(path.0, Permissions.from_mode(mode)).map_err((error) => str(error))?
+    return Ok(None)

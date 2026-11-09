@@ -1,0 +1,7 @@
+"""A consumer cannot select a provider-private helper as a public executable root."""
+
+from pub::record_provider import provider_marker
+
+
+def main() -> None:
+    println(provider_marker())
