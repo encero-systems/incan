@@ -523,7 +523,7 @@ pub(super) fn rvalue_representation_gap(rvalue: &Rvalue) -> Option<&str> {
         Rvalue::Use(_)
         | Rvalue::UnaryOp(..)
         | Rvalue::BinaryOp(..)
-        | Rvalue::IsInstance { .. }
+        | Rvalue::IsInstance(_)
         | Rvalue::Aggregate(..)
         | Rvalue::Dict(_)
         | Rvalue::ValueEnumVariant(_)

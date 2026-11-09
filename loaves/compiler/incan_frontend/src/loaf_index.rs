@@ -323,7 +323,11 @@ pub struct LoafIndex {
     /// The Rust crates the unit declares itself, read in the unit's session rather than from a standard Loaf's
     /// closure.
     declared_rust_crates: BTreeSet<String>,
-    /// Rust facts the compiler read from rustc's crate metadata for paths no cache holds, keyed by path.
+    /// Bounded Rust-fact extractions for paths no complete cache holds, retained in the same lazy encoded form as
+    /// shipped ABI caches instead of expanding every trait implementation into the session heap.
+    rust_fact_caches: Vec<Arc<RustAbiCache>>,
+    /// Direct facts used by focused frontend tests that do not run the ABI encoder.
+    #[cfg(test)]
     rust_facts: BTreeMap<String, RustItemMetadata>,
     /// Paths the compiler asked rustc to describe that it described nothing at: no public item of the crate the unit
     /// selects has the path.
@@ -359,6 +363,8 @@ impl LoafIndex {
             entries: indexed,
             rust_abi_caches: Vec::new(),
             declared_rust_crates: BTreeSet::new(),
+            rust_fact_caches: Vec::new(),
+            #[cfg(test)]
             rust_facts: BTreeMap::new(),
             absent_rust_paths: BTreeSet::new(),
             resolved_rust_items: Arc::default(),
@@ -446,8 +452,17 @@ impl LoafIndex {
         self.forget_resolved_rust_items();
     }
 
-    /// Add the Rust facts rustc read for `requested`, the paths no cache holds; they answer last. A requested path that
-    /// rustc described nothing at is absent from the selected crate's public API.
+    /// Add one encoded bounded Rust-fact extraction for `requested`; it answers after complete ABI caches. A requested
+    /// path the extraction does not contain is absent from the selected crate's public API.
+    pub fn add_rust_fact_cache(&mut self, requested: &BTreeSet<String>, facts: Arc<RustAbiCache>) {
+        self.absent_rust_paths
+            .extend(requested.iter().filter(|path| !facts.contains(path)).cloned());
+        self.rust_fact_caches.push(facts);
+        self.forget_resolved_rust_items();
+    }
+
+    /// Add direct facts for a focused frontend test without introducing cache-format setup into that test.
+    #[cfg(test)]
     pub fn add_rust_facts(&mut self, requested: &BTreeSet<String>, facts: BTreeMap<String, RustItemMetadata>) {
         self.absent_rust_paths
             .extend(requested.iter().filter(|path| !facts.contains_key(*path)).cloned());
@@ -643,7 +658,17 @@ impl LoafIndex {
                 return Some(item);
             }
         }
-        self.rust_facts.get(canonical_path).cloned()
+        for cache in &self.rust_fact_caches {
+            if let Some(item) = self.cache_item(cache, canonical_path, || PathBuf::from("the bounded Rust facts cache"))
+            {
+                return Some(item);
+            }
+        }
+        #[cfg(test)]
+        if let Some(item) = self.rust_facts.get(canonical_path) {
+            return Some(item.clone());
+        }
+        None
     }
 
     /// Read one path from one ABI cache, retaining a read failure for `validate_demands` instead of treating it as a

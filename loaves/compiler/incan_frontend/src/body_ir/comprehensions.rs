@@ -265,8 +265,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let capture_local =
                 self.declare_new_local_with_reads(name.clone(), outer_ty, generator_scope, span, total_reads);
             self.locals[capture_local.index()].origin = bir::LocalOrigin::Captured;
-            if let Some(identity) = self.locals[outer_local.index()].identity.clone() {
-                self.locals[capture_local.index()].identity = Some(identity.clone());
+            if let Some(identity) = self.locals[outer_local.index()].identity.as_deref().cloned() {
+                self.locals[capture_local.index()].identity = Some(Box::new(identity.clone()));
                 self.identity_bindings.insert(identity, capture_local);
             }
             capture_locals.push(capture_local);

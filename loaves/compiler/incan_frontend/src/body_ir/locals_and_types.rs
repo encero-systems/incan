@@ -158,7 +158,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .values()
                 .filter(|id| self.native_enum_payload_bindings.contains(id))
                 .filter_map(|id| self.locals.get(id.index()))
-                .find(|local| local.identity.as_ref() == Some(identity))
+                .find(|local| local.identity.as_deref() == Some(identity))
         {
             return local.ty.clone();
         }
@@ -169,7 +169,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .bindings
                 .values()
                 .filter_map(|id| self.locals.get(id.index()))
-                .find(|local| local.identity.as_ref() == Some(identity) && !self.leaves_type_open(&local.ty))
+                .find(|local| local.identity.as_deref() == Some(identity) && !self.leaves_type_open(&local.ty))
         {
             return local.ty.clone();
         }
@@ -417,7 +417,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.locals.push(bir::LocalDecl {
             id,
             name: Some(name.clone()),
-            identity: identity.clone(),
+            identity: identity.clone().map(Box::new),
             ty,
             origin: bir::LocalOrigin::UserBinding,
             scope,
@@ -464,7 +464,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.locals.push(bir::LocalDecl {
             id,
             name: Some("self".to_string()),
-            identity: identity.clone(),
+            identity: identity.clone().map(Box::new),
             ty,
             origin: bir::LocalOrigin::Receiver { mutable },
             scope,
