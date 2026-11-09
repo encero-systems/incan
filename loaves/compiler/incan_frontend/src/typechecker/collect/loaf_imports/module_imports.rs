@@ -19,6 +19,11 @@ impl TypeChecker {
             .unwrap_or_else(|| library.to_string());
         self.validate_module_import_binding(&name, source_root, span);
         let Some(manifest) = self.loaf_manifest_or_refuse(library, span) else {
+            if self.loaf_is_not_prepared(library) {
+                let mut path = self.loaf_binding_root(library);
+                path.extend(import.module.iter().cloned());
+                self.define_import_symbol(name, path, false, None, span);
+            }
             return;
         };
         if !import.module.is_empty() && !Self::manifest_public_module_exists(&manifest, &import.module) {
@@ -42,6 +47,17 @@ impl TypeChecker {
         library: &str,
         span: Span,
     ) -> Option<std::sync::Arc<LibraryManifest>> {
+        if self.loaf_is_not_prepared(library) {
+            self.errors.push(
+                crate::diagnostics::CompileError::new(
+                    format!("imports from Loaf `{library}` are not yet checked"),
+                    span,
+                )
+                .with_stable_code("INCAN-T0134")
+                .with_hint("Review the Loaf before adding the trust entry offered by the editor"),
+            );
+            return None;
+        }
         if let Some(entry) = self.loaves.entry(library) {
             let manifest = std::sync::Arc::clone(&entry.artifact.manifest);
             // A provider's checked contracts govern calls to its callables exactly as a local declaration's do.
@@ -91,6 +107,11 @@ impl TypeChecker {
         None
     }
 
+    /// Whether unattended preparation explicitly withheld this dependency's compiled interface.
+    pub(in crate::typechecker::collect) fn loaf_is_not_prepared(&self, library: &str) -> bool {
+        self.not_prepared_loaves.contains(library)
+    }
+
     /// Refuse a module path the Loaf's manifest does not publish, listing the modules it does.
     pub(in crate::typechecker::collect) fn push_loaf_module_not_found(
         &mut self,
@@ -138,6 +159,33 @@ impl TypeChecker {
         let library = import.key.as_str();
         let path = import.module.as_slice();
         let Some(manifest) = self.loaf_manifest_or_refuse(library, span) else {
+            if self.loaf_is_not_prepared(library) {
+                let mut source_path = self.loaf_binding_root(library);
+                source_path.extend(path.iter().cloned());
+                for item in items {
+                    let local_name = Self::import_item_local_name(item);
+                    if self.validate_protected_builtin_binding(&local_name, span) {
+                        continue;
+                    }
+                    self.validate_root_namespace(&local_name, span);
+                    let mut binding_path = source_path.clone();
+                    binding_path.push(item.name.clone());
+                    self.symbols.define_import_binding_at_path(
+                        Symbol {
+                            name: local_name,
+                            kind: SymbolKind::Variable(VariableInfo {
+                                ty: ResolvedType::Unknown,
+                                is_mutable: false,
+                                is_used: false,
+                            }),
+                            span,
+                            scope: 0,
+                        },
+                        None,
+                        binding_path,
+                    );
+                }
+            }
             return;
         };
         if !path.is_empty() && !Self::manifest_public_module_exists(&manifest, path) {
@@ -430,5 +478,29 @@ impl TypeChecker {
             }),
             span,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An import withheld by unattended preparation reports one stable fact instead of an unknown-package error.
+    #[test]
+    fn not_prepared_loaf_import_has_no_follow_on_error() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "from pub::words import marker\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.set_not_prepared_loaves(HashSet::from(["words".to_string()]));
+
+        let errors = checker
+            .check_program(&program)
+            .err()
+            .ok_or("expected not-prepared diagnostic")?;
+
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(errors[0].stable_code(), Some("INCAN-T0134"));
+        Ok(())
     }
 }

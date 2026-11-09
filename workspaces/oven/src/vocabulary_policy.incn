@@ -25,6 +25,8 @@ pub def admit_vocabulary(unit: UnitDescription) -> Result[UnitDescription, str]:
     mut providers: list[JsonValue] = []
     # 1. The dependency graph has been built; its checked manifests select the executable units.
     for loaf in ready.loaves:
+        if loaf.name in ready.not_prepared_loaves:
+            continue
         manifest = Path(loaf.dir).joinpath(f"{loaf.name}.incnlib")
         if not manifest.is_file():
             continue

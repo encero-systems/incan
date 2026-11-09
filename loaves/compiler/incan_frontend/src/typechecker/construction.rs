@@ -134,6 +134,7 @@ impl TypeChecker {
             local_derive_facts: HashMap::new(),
             hash_key_inference: HashKeyInferenceState::default(),
             loaves: Arc::new(LoafIndex::default()),
+            not_prepared_loaves: HashSet::new(),
             standard_traits: HashMap::new(),
             transitive_pub_types: HashMap::new(),
             public_library_type_identities: NominalInventory::default(),
@@ -166,6 +167,13 @@ impl TypeChecker {
     /// Set the compiled Loaves this program imports from: its dependencies and the standard packages (DD-0007).
     pub fn set_loaves(&mut self, loaves: Arc<LoafIndex>) {
         self.loaves = loaves;
+    }
+
+    /// Name dependency bindings whose manifests are unavailable because unattended preparation stopped before
+    /// untrusted compile-time code. Imports from these bindings remain opaque and report one stable informational
+    /// diagnostic instead of being misclassified as unknown packages.
+    pub fn set_not_prepared_loaves(&mut self, names: HashSet<String>) {
+        self.not_prepared_loaves = names;
     }
 
     /// Mark the program being checked as the standard package `policy` names.

@@ -102,6 +102,7 @@ impl TypeChecker {
                 end,
                 inclusive: _,
             } => self.check_range_expr(start, end),
+            Expr::VocabBlock(block) if block.not_checked => ResolvedType::Unknown,
             Expr::VocabBlock(block) => {
                 self.errors.push(CompileError::type_error(
                     format!(

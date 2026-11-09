@@ -435,20 +435,15 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
 
 
 def with_prepared_loaves(unit: UnitDescription, missing: list[MissingTrust]) -> UnitDescription:
-    """Keep only already prepared dependency artifacts after missing trust cuts before the compile loop."""
+    """Mark dependencies unavailable after the trust cut while retaining their source binding descriptions."""
     mut ready = unit
-    mut kept: list[UnitLoaf] = []
     mut not_prepared = [item.loaf for item in missing]
     for loaf in ready.loaves:
         if not loaf.is_dependency():
-            kept.append(loaf)
             continue
         interface = Path(loaf.dir).joinpath(f"{loaf.name}.incnlib")
-        if loaf_library(loaf).is_file() and interface.is_file():
-            kept.append(loaf)
-        elif loaf.name not in not_prepared:
+        if (not loaf_library(loaf).is_file() or not interface.is_file()) and loaf.name not in not_prepared:
             not_prepared.append(loaf.name)
-    ready.loaves = kept
     ready.not_prepared_loaves = sorted(not_prepared)
     return ready
 
