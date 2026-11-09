@@ -299,9 +299,13 @@ A walker sees kinds of value, and each kind has its members. A source answers wi
 | `identity` | `FrozenBytes` | The model's or enum's identity under RFC 165, distinct from its structural model hash; empty for other types |
 | `renamed_from` | `FrozenList[FrozenStr]` | The declaration's earlier names under RFC 085, earliest first, empty when it has none |
 | `renamed_from_lifecycle` | `Option[LifecycleInfo]` | The declaration rename block's optional lifecycle facts under RFC 085, using the same carrier as fields and variants |
+| `selector` | `FrozenStr` | The text a `stored_type` uses to name this model or enum: its identity, followed by its type arguments when it is a generic instantiation, under *Generic models* in RFC 165; empty for other types |
 | `spelling` | `FrozenStr` | The type's canonical spelling, with nested models and enums folded in, under *Record hashes* in RFC 165 |
 | `fields` | `FrozenList[FieldInfo]` | Every stored field, in ascending identity order |
 | `variants` | `FrozenList[VariantInfo]` | An enum's variants, in ascending identity order |
+| `declarations` | `FrozenList[ShapeInfo]` | Every other model and enum this shape can reach, each once, in ascending `selector` order |
+
+`declarations` lets a format describe every type a value could hold without a value to walk, including the element type of an empty list, the type inside a `None` and the variants a value did not take. It holds each model and enum that a field's `stored_type` names, a variant's payload fields included, in this shape or in any shape it holds. A shape inside `declarations` has empty `declarations` of its own, because the list holding it is already the whole closure, so a recursive model lists each declaration once and a selector naming the type itself resolves to the shape itself. A written `__shape__` must list the closure of its stored form the same way; `ShapeInfo.of[T]()` gives each reached type's shape and closure to merge. A format must refuse a shape whose `stored_type` names a selector it cannot resolve, rather than guess it.
 
 `FieldInfo` must gain these, and `__fields__()` must carry them too:
 
@@ -309,7 +313,7 @@ A walker sees kinds of value, and each kind has its members. A source answers wi
 | --- | --- | --- |
 | `identity` | `FrozenBytes` | The field's identity under RFC 165 |
 | `canonical` | `bool` | RFC 085's `canonical`, true when absent |
-| `stored_type` | `FrozenStr` | The field's declared type in canonical spelling: aliases resolved, a newtype as what it holds, generic arguments concrete, a nested model or enum by its identity so that its own evolution does not move this text |
+| `stored_type` | `FrozenStr` | The field's declared type in canonical spelling: aliases resolved, a newtype as what it holds, generic arguments concrete, a nested model or enum by its `selector` so that its own evolution does not move this text |
 | `default_is_empty` | `bool` | Whether the declared default is an empty collection |
 | `position` | `int` | The field's place in declaration order |
 | `renamed_from` | `FrozenList[FrozenStr]` | The field's earlier names under RFC 085, earliest first, empty when it has none |
