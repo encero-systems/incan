@@ -43,6 +43,8 @@ pub model StoredField:
     pub position: int
     pub metadata: Metadata
     pub shape: FieldShape
+    pub required_before: int = 0
+    pub eligible_before: int = 0
 
 
 pub model StoredVariant:
@@ -124,9 +126,24 @@ def admit_fields(values: list[Metadata], mut budget: Budget) -> Result[list[Stor
         )
         order.append((key, index))
     mut result: list[StoredField] = []
+    mut required = 0
+    mut eligible = 0
     for pair in sorted(order):
         charge_copy(fields[pair[1]].metadata, budget)?
-        result.append(fields[pair[1]])
+        budget.charge_bytes(16)?
+        result.append(
+            StoredField(
+                position=fields[pair[1]].position,
+                metadata=fields[pair[1]].metadata,
+                shape=fields[pair[1]].shape,
+                required_before=required,
+                eligible_before=eligible,
+            ),
+        )
+        if fields[pair[1]].shape.absent == AbsentPolicy.Required:
+            required += 1
+        else:
+            eligible += 1
     return Ok(result)
 
 
