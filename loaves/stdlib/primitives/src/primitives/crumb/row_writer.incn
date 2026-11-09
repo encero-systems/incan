@@ -1,0 +1,64 @@
+"""Write one finite, bounded Crumb row envelope with complete descriptions and an optional logical seal."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.hashes import start_seal, append_seal
+from crate.primitives.crumb.registrations import KindRegistry
+from crate.primitives.crumb.row_buffer import RowBuffer
+from crate.primitives.crumb.row_cells import root
+from crate.primitives.crumb.row_descriptions import Description, encode_entry
+from crate.primitives.crumb.row_dictionary import admit_dictionary, slot
+from crate.primitives.crumb.value_admission import validate
+from crate.primitives.crumb.values import Value
+
+
+pub model RowRecord:
+    """A logical record or enum selected by complete closed K, never by display name or shape hash."""
+
+    pub key: bytes
+    pub value: Value
+
+
+pub def write_rows(
+    descriptions: list[Description],
+    records: list[RowRecord],
+    registry: KindRegistry,
+    sealed: bool,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """
+    Return a complete owned envelope or an error; no output prefix is reported as success.
+
+    Admit every description/dependency before rows, then validate each exact logical value and
+    typed cell. Dictionary/members use identity order while original metadata keeps declaration
+    order. The optional seal hashes logical values, not physical rows. This finite owned API is
+    bounded by the caller's budget; it does not promise a spooled or streaming output sink.
+    """
+    dictionary = admit_dictionary(descriptions, registry, budget)?
+    mut body = RowBuffer.create()
+    body.count(len(dictionary.entries), budget)?
+    for description in dictionary.entries:
+        body.append(encode_entry(description, budget)?, budget)?
+    body.count(len(records), budget)?
+    for record in records:
+        budget.charge_elements(1)?
+        validate(record.value, budget)?
+        index = slot(dictionary, record.key, budget)?
+        #2801: observe the local descriptor directly; returned-list string fields fail ownership checking.
+        encoded = root(dictionary.entries[index], record.value, dictionary, budget)?
+        body.count(index, budget)?
+        body.frame(encoded, budget)?
+    if sealed:
+        mut seal = start_seal(len(records), budget)?
+        for record in records:
+            append_seal(record.value, seal, budget)?
+        body.count(len(records), budget)?
+        body.append(seal.digest(budget)?, budget)?
+    mut envelope = RowBuffer.create()
+    envelope.append(b"CRMB\x01\x01", budget)?
+    if sealed:
+        envelope.octet(1, budget)?
+    else:
+        envelope.octet(0, budget)?
+    envelope.frame(body.finish(budget)?, budget)?
+    return envelope.finish(budget)
