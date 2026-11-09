@@ -10,6 +10,10 @@
 #   filtered first 0 more true second 1 edge 1
 #   empty 0 removed 0 foreign scope_mismatch node_keys
 #   cross stale_cursor
+#   bfs 0 1 2 complete
+#   dfs 0 1 2 complete
+#   limited nodes 0 resume 1 2 complete
+#   path 0 1 2
 
 from std.graph import (
     GraphPageBudget,
@@ -18,10 +22,19 @@ from std.graph import (
     GraphReadError,
     GraphEdgeValue,
     GraphNodeValue,
+    Direction,
     MemoryGraphFailure,
+    MemoryGraphReader,
+    PathOutcome,
     RelationGraph,
     ScopedEdgeId,
     ScopedNodeId,
+    TraversalBudget,
+    TraversalOutcome,
+    Visit,
+    breadth_first,
+    depth_first,
+    find_path,
 )
 
 
@@ -72,6 +85,67 @@ def option_text(value: Option[str]) -> str:
     match value:
         Some(text) => return text
         None => return "none"
+
+
+def node_ids(visits: list[Visit[ScopedNodeId, ScopedEdgeId]]) -> str:
+    """Render a traversal page's node identities in their emitted order."""
+    return " ".join([str(visit.node.to_int()) for visit in visits])
+
+
+def outcome_text(
+    outcome: TraversalOutcome[
+        ScopedNodeId,
+        ScopedEdgeId,
+        MemoryGraphFailure,
+        MemoryGraphReader[str, str],
+    ],
+) -> str:
+    """Render the completion state used by this traversal fixture."""
+    match outcome:
+        TraversalOutcome.Complete => return "complete"
+        TraversalOutcome.Limited(reason, _) => return reason.value()
+        TraversalOutcome.Cancelled => return "cancelled"
+        TraversalOutcome.Failed(_) => return "failed"
+
+
+def exercise_traversal() -> Result[None, GraphReadError[MemoryGraphFailure]]:
+    """Exercise deterministic walks, resumable limits, and shortest-path reconstruction."""
+    mut graph = RelationGraph[str, str]()
+    first = graph.add_node("first")
+    second = graph.add_node("second")
+    third = graph.add_node("third")
+    if graph.add_edge(first, second, "one").is_err():
+        return Ok(None)
+    if graph.add_edge(second, third, "two").is_err():
+        return Ok(None)
+    reader = graph.read_view()
+    full = TraversalBudget(max_nodes=8, max_edges=8, max_bytes=64, max_retained=16)
+
+    bfs = breadth_first(reader, [first], Direction.Outgoing, full)
+    println(f"bfs {node_ids(bfs.visits)} {outcome_text(bfs.outcome)}")
+    dfs = depth_first(reader, [first], Direction.Outgoing, full)
+    println(f"dfs {node_ids(dfs.visits)} {outcome_text(dfs.outcome)}")
+
+    limited = breadth_first(
+        reader,
+        [first],
+        Direction.Outgoing,
+        TraversalBudget(max_nodes=1, max_edges=8, max_bytes=64, max_retained=16),
+    )
+    match limited.outcome:
+        TraversalOutcome.Limited(reason, Some(continuation)) =>
+            resumed = continuation.resume(full)
+            println(
+                f"limited {reason.value()} {node_ids(limited.visits)} resume {node_ids(resumed.visits)} {outcome_text(resumed.outcome)}",
+            )
+        _ => println("limited missing")
+
+    path = find_path(reader, first, third, Direction.Outgoing, full)
+    match path.outcome:
+        PathOutcome.Found(found) =>
+            println(f"path {' '.join([str(node.to_int()) for node in found.nodes])}")
+        _ => println("path missing")
+    return Ok(None)
 
 
 def exercise_selection() -> Result[None, GraphReadError[MemoryGraphFailure]]:
@@ -202,3 +276,6 @@ def main() -> None:
     match exercise_selection():
         Ok(_) => pass
         Err(_) => println("selection error")
+    match exercise_traversal():
+        Ok(_) => pass
+        Err(_) => println("traversal error")
