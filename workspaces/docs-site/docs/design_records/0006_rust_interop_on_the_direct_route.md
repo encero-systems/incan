@@ -1,7 +1,7 @@
 ---
 id: DD-0006
 title: Rust interop values and calls on the direct route
-status: Draft
+status: Accepted
 type: design-decision
 date: 2026-10-19
 review_target: v0.6
@@ -11,7 +11,8 @@ sources:
   - https://github.com/encero-systems/incan/issues/1698
   - DD-0004
   - RFC 005
-  - RFC 130
+  - RFC 164
+  - Maintainer acceptance of 2026-11-08, preserving duckborrowing across Rust interop
 ---
 
 <!-- markdownlint-configure-file {"MD025": {"front_matter_title": ""}} -->
@@ -26,7 +27,7 @@ Incan 0.6 removes the Rust source generator, so the direct route (DD-0004) is th
 
 Rust interop compiles on the direct route from checked facts alone. The facts come from rustc's metadata (DD-0009); the accepting checker freezes native storage and declaration identities, and Body IR copies those structural facts. Nothing is re-resolved from source spellings or display strings, and nothing is listed by hand.
 
-1. **Values.** Body IR carries a Rust type structurally: its item path and its type arguments, each an ordinary Body IR type. Each closed instantiation a program uses becomes one plan declaration. An item whose public fields or variants the facts expose has that layout, so public fields are readable, variants can be matched and constructed, and named construction infers the owner's type arguments. Any other item is opaque. Lifetime arguments are erased: rustc infers them.
+1. **Values.** Body IR carries a Rust type structurally: its item path and its type arguments, each an ordinary Body IR type. Each closed instantiation a program uses becomes one plan declaration. An item whose public fields or variants the facts expose has that layout, so public fields are readable, variants can be matched and constructed, and named construction infers the owner's type arguments. Any other item is opaque. Internal representations may omit lifetime detail only where doing so preserves the checked access and source relationships needed for safety; rustc inference does not replace those contracts.
 2. **Calls.** The checker records the resolved callee of every Rust call it admits (a free function, an inherent associated function or method, or a trait method with its trait), with the instantiated signature, the receiver's mode and the type arguments it inferred, using the same unifier as Incan calls. Inherent methods come before trait methods, as in Rust. Body IR carries that record; the lowering calls it through the external-call contract that Loaf calls use, and the driver keeps rustc's signature and predicate check. A call the checker cannot resolve refuses at the call site.
 3. **Traits.** `Display`, `Debug`, `Clone` and equality on a Rust value call that value's own Rust implementation through rustc trait resolution. Native Copy receivers require a checked implementation and adapter verification.
 4. **Futures and iteration.** A Rust value that implements `Future`, or `IntoFuture`, can be awaited; `await` yields its `Output`. A Rust value that implements `IntoIterator` can be iterated in loops and comprehensions; the element type is its `Item`.
@@ -36,7 +37,7 @@ Source models and newtypes may derive builtin traits or a dependency's inspected
 
 Native trait objects retain their principal identity, arguments, and declaration-ordered associated equalities. Rustc verifies object safety; auto traits require their own retained facts.
 
-Body-local storage erases lifetimes, while native input signatures bind each metadata lifetime independently, including inside function pointers, before rustc checks outlives bounds. This input contract grants no escaping output or field borrow without a retained relationship to its owner.
+Duckborrowing remains the default across Rust interop. Crossing a Rust boundary does not by itself require explicit ownership or lifetime annotations or weaken ordinary inference. Incan preserves the checked access modes and source relationships required by RFC 164, including returned views; rustc validates the corresponding native contracts. Explicit annotations remain optional constraints on the same ownership system. An unsupported relationship produces a diagnostic at the boundary, never guessed ownership, erased dependencies or a hidden copy to repair the call.
 
 ## Consequences
 
@@ -59,10 +60,11 @@ Revisit when a consumer needs layouts with hidden fields, or a retained lifetime
 
 ## Provenance
 
-Derives from DD-0004 (the pinned driver), DD-0009 (Rust facts), RFC 005 (Rust interop surface) and RFC 130 (Incan as a second front end to rustc). Supersedes nothing.
+Accepted by the maintainer on 2026-11-08 with the explicit condition that Rust interop must not weaken duckborrowing. Derives from DD-0004 (the pinned driver), DD-0009 (Rust facts), RFC 005 (Rust interop surface) and RFC 164 (ownership and borrowing contracts). Acceptance approves the architecture, not complete support for every Rust feature. Supersedes nothing.
 
 ## References
 
 - [Issue #2256](https://github.com/encero-systems/incan/issues/2256)
 - [Issue #1698](https://github.com/encero-systems/incan/issues/1698)
-- DD-0004, DD-0009, RFC 005, RFC 130
+- DD-0004, DD-0009, RFC 005
+- [RFC 164: Explicit ownership and borrowing contracts](../RFCs/164_explicit_ownership_and_borrowing.md)

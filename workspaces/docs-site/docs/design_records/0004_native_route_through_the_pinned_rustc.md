@@ -34,13 +34,7 @@ The lowering belongs in the compiler ring; the driver executable belongs in the 
 
 ### Driver identity
 
-Every compilation rejects inherited `RUSTC_BOOTSTRAP` and verifies the complete compiler identity (`rustc -vV`) and the loaded `rustc_driver` library, which must be the one inside the selected sysroot, against their build-bound values before passing the proven identity to the adapter. Identity is content, never location: the driver accepts any sysroot path whose compiler output and library bytes match the build evidence, so a toolchain built on one machine runs against the same rustc installed anywhere else.
-
-Library bytes must match the build-bound SHA-256 digest; installed drivers may retain a complete private proof atomically after verification and reuse it only while canonical path, device, inode, size, nanosecond modification/change times, and expected digest match, with stable descriptor/path state during verification. Changed, missing, malformed, or unreadable proofs require hashing; unwritable proof storage permits compilation after successful hashing, and uninstalled drivers retain no proof.
-
-Proof reuse trusts toolchain-home ownership, offers no protection against forged proofs or filesystem metadata, and never bypasses the other identity checks.
-
-The complete compiler identity may also be reused for an unchanged canonical compiler executable under the same file-generation guards; a missing or invalid proof requires the full identity query again. Installed drivers retain the proof after successful verification, while uninstalled drivers keep full verification.
+Every compilation rejects inherited `RUSTC_BOOTSTRAP` and verifies the complete compiler identity and loaded driver library against build-bound evidence. Identity is content, not installation location. Installed drivers may reuse verification evidence only while its file-generation guards remain valid; invalid evidence requires fresh verification. This optimization trusts toolchain-home ownership and does not defend against forged local proofs or filesystem metadata.
 
 ## Consequences
 
@@ -53,6 +47,10 @@ Residence avoids repeated startup and loading while requiring lifecycle and per-
 ## Non-goals
 
 This record does not define lowering algorithms, package-publication contracts, caller APIs, the resident-process protocol, or a rustc fork; [#1337](https://github.com/encero-systems/incan/issues/1337) owns implementation evidence and RFC adjustments.
+
+## Supporting design
+
+[Native driver identity verification](../contributing/explanation/native_driver_identity_design.md) records the mechanisms and supporting evidence. Changes to those mechanisms do not change this decision unless they alter its stated boundaries or guarantees.
 
 ## Revisit condition
 
