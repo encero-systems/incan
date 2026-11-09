@@ -1,0 +1,146 @@
+"""Execute supported corpus operations from logical inputs; keep remaining operations unsupported."""
+
+from std.json import JsonValue
+from std.primitives.crumb import Budget
+from std.primitives.crumb.identity import (
+    member_identity,
+    declaration_identity,
+    declaration_preimage,
+    closed_selector,
+    check_arity,
+)
+from std.primitives.crumb.spelling import selector_spelling
+from std.primitives.crumb.types import NominalKind, TypeNode
+from std.primitives.crumb.admission import check_written
+from std.primitives.hex import hexlify
+from std.primitives.hash import sha256
+from corpus import Corpus, CorpusCase, receipt
+from adaptation_cases import check_adaptation
+from case_data import field, fields, hex_bytes, nodes, text
+
+
+pub enum Outcome:
+    """An unimplemented operation is distinct from both successful comparison and failure."""
+
+    Passed
+    Failed(str)
+    Unsupported(str)
+
+
+pub model RunReport:
+    """One inspectable receipt and the corresponding process outcome."""
+
+    pub document: JsonValue
+    pub exit_code: i32
+
+
+pub def run(corpus: Corpus) -> RunReport:
+    """Execute every case, retaining failures while continuing through the remaining corpus."""
+    mut passed = 0
+    mut failed = 0
+    mut unsupported = 0
+    mut records: list[JsonValue] = []
+    for item in corpus.cases:
+        mut record: dict[str, JsonValue] = {}
+        record["id"] = JsonValue.string(item.id)
+        record["operation"] = JsonValue.string(item.operation)
+        match evaluate(item):
+            Outcome.Passed =>
+                passed += 1
+                record["status"] = JsonValue.string("passed")
+            Outcome.Failed(message) =>
+                failed += 1
+                record["status"] = JsonValue.string("failed")
+                record["detail"] = JsonValue.string(message)
+            Outcome.Unsupported(detail) =>
+                unsupported += 1
+                record["status"] = JsonValue.string("unsupported")
+                record["detail"] = JsonValue.string(detail)
+        records.append(JsonValue.object(record))
+    mut code: i32 = 0
+    if failed > 0:
+        code = 1
+    elif unsupported > 0:
+        code = 3
+    return RunReport(document=receipt(corpus, records, passed, failed, unsupported), exit_code=code)
+
+
+def evaluate(item: CorpusCase) -> Outcome:
+    """Convert a checker error to one failed case; no unexpected operation receives a green result."""
+    if item.operation not in ["member_identity", "nominal_identity", "type_selector", "shape_admission", "adaptation"]:
+        return Outcome.Unsupported("operation not implemented")
+    match check(item):
+        Ok(true) =>
+            if item.operation == "adaptation":
+                match field(item.document, "expected").and_then((value) => text(value, "status")):
+                    Ok("accepted") =>
+                        return Outcome.Unsupported("adapted values checked; projection assertions pending")
+                    _ => pass
+            return Outcome.Passed
+
+        Ok(false) => return Outcome.Failed("computed result differs from the independent expectation")
+        Err(message) => return Outcome.Failed(message)
+
+
+def check(item: CorpusCase) -> Result[bool, str]:
+    """Each case owns one shared budget; hashing supplied expected bytes is never an implementation."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=128).map_err((error) => error.message())?
+    match item.operation:
+        "member_identity" =>
+            value = member_identity(text(item.document, "earliest_name")?, budget).map_err((error) => error.message())?
+            expected = field(item.document, "expected")?.expect_str().map_err((error) => error.message())?
+            return Ok(hexlify(value) == expected)
+        "nominal_identity" =>
+            value = declaration_identity(
+                text(item.document, "registry")?,
+                text(item.document, "package")?,
+                text(item.document, "earliest_path")?,
+                budget,
+            ).map_err((error) => error.message())?
+            preimage = declaration_preimage(
+                text(item.document, "registry")?,
+                text(item.document, "package")?,
+                text(item.document, "earliest_path")?,
+                budget,
+            ).map_err((error) => error.message())?
+            expected = field(item.document, "expected")?
+            same_identity = hexlify(value) == text(expected, "identity_hex")?
+            same_preimage = hexlify(preimage) == text(expected, "preimage_hex")?
+            same_digest = hexlify(sha256.digest(preimage)) == text(expected, "sha256")?
+            return Ok(same_identity and same_preimage and same_digest)
+
+        "type_selector" => return check_selector(item.document, budget)
+        "shape_admission" => return check_shape(item.document, budget)
+        "adaptation" => return check_adaptation(item.document, budget)
+        _ => return Err("operation dispatcher mismatch")
+
+
+def check_selector(value: JsonValue, mut budget: Budget) -> Result[bool, str]:
+    """N and K derive from declaration bytes and arguments; parameter names only constrain arity."""
+    input = field(value, "input")?
+    mut arguments: list[TypeNode] = []
+    if let Some(items) = input.get("arguments"):
+        arguments = nodes(items.expect_array().map_err((error) => error.message())?)?
+    kind = match NominalKind.from_value(text(input, "kind")?):
+        Some(value) => value
+        None => return Err("unknown nominal kind")
+
+    node = TypeNode.Nominal(kind, hex_bytes(text(input, "declaration_hex")?)?, arguments)
+    if let Some(parameters) = input.get("parameter_names"):
+        count = len(parameters.expect_array().map_err((error) => error.message())?)
+        check_arity(node, count).map_err((error) => error.message())?
+    key = closed_selector(node, budget).map_err((error) => error.message())?
+    spelling = selector_spelling(node, budget).map_err((error) => error.message())?
+    expected = field(value, "expected")?
+    return Ok(hexlify(key) == text(expected, "preimage_hex")? and spelling == text(expected, "selector")?)
+
+
+def check_shape(value: JsonValue, mut budget: Budget) -> Result[bool, str]:
+    """Compare exact refusal categories and paths, including the corpus's real identity collision."""
+    expected = field(value, "expected")?
+    match check_written(fields(field(value, "written")?)?, budget):
+        Ok(_) => return Ok(text(expected, "status")? == "accepted")
+        Err(error) =>
+            if text(expected, "status")? != "refused":
+                return Ok(false)
+            return Ok(error.kind.value() == text(expected, "kind")? and error.path == text(expected, "path")?)

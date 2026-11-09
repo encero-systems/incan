@@ -1,0 +1,130 @@
+"""Translate independent test notation to explicit primitive inputs, without deriving expectations."""
+
+from std.json import JsonValue
+from std.encoding.hex import unhexlify
+from std.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, NominalKind, TypeNode
+
+
+pub def text(value: JsonValue, key: str) -> Result[str, str]:
+    """Require one string; numeric expectations remain exact strings rather than JSON numbers."""
+    return value.require(key).and_then((item) => item.expect_str()).map_err((error) => error.message())
+
+
+pub def field(value: JsonValue, key: str) -> Result[JsonValue, str]:
+    """Require a named case input without inventing a default for missing test data."""
+    return value.require(key).map_err((error) => error.message())
+
+
+pub def array(value: JsonValue, key: str) -> Result[list[JsonValue], str]:
+    """Require the corpus's declared sequence order."""
+    return field(value, key)?.expect_array().map_err((error) => error.message())
+
+
+pub def hex_bytes(value: str) -> Result[bytes, str]:
+    """Decode literal test octets through the existing strict standard hex decoder."""
+    return unhexlify(value).map_err((error) => error.message())
+
+
+pub def fields(value: JsonValue) -> Result[list[FieldShape], str]:
+    """Translate stored field facts without sorting or repairing their identities."""
+    mut result: list[FieldShape] = []
+    for item in array(value, "fields")?:
+        identity = hex_bytes(text(item, "id")?)?
+        storage_type = node(field(item, "type")?)?
+        canonical = field(item, "canonical")?.expect_bool().map_err((error) => error.message())?
+        absent = absence(text(item, "absent")?)?
+        result.append(FieldShape(identity=identity, storage_type=storage_type, canonical=canonical, absent=absent))
+    return Ok(result)
+
+
+pub def absence(name: str) -> Result[AbsentPolicy, str]:
+    """No test-side constructor default repairs an omitted field."""
+    match AbsentPolicy.from_value(name):
+        Some(policy) => return Ok(policy)
+        None => return Err("unknown corpus absence policy")
+
+
+pub def node(value: JsonValue) -> Result[TypeNode, str]:
+    """Decode the corpus's scalar/container nodes; unsupported notation is an explicit test error."""
+    if value.is_str():
+        return selector_text(value.expect_str().map_err((error) => error.message())?)
+    kind = text(value, "kind")?
+    match ContainerKind.from_value(kind):
+        Some(container) =>
+            match container:
+                ContainerKind.Option | ContainerKind.List | ContainerKind.Set =>
+                    return Ok(TypeNode.Container(container, [node(field(value, "item")?)?]))
+                ContainerKind.Map =>
+                    key = node(field(value, "key_type")?)?
+                    item = node(field(value, "value_type")?)?
+                    return Ok(TypeNode.Container(container, [key, item]))
+                ContainerKind.Tuple | ContainerKind.Union =>
+                    return Ok(TypeNode.Container(container, nodes(array(value, "items")?)?))
+        None => pass
+    if kind == "record":
+        return Ok(TypeNode.Record(text(value, "key")?, fields(value)?))
+    if kind == "recur":
+        return Ok(TypeNode.Recursive(text(value, "key")?))
+    return Err("unsupported corpus type notation: " + kind)
+
+
+pub def nodes(values: list[JsonValue]) -> Result[list[TypeNode], str]:
+    """Preserve generic argument and container element order exactly."""
+    mut result: list[TypeNode] = []
+    for value in values:
+        result.append(node(value)?)
+    return Ok(result)
+
+
+pub def selector_text(spelling: str) -> Result[TypeNode, str]:
+    """Decode the corpus's nominal selector strings; production receives typed nodes instead."""
+    mut prefix = 0
+    mut kind_name = ""
+    if spelling.startswith("record@"):
+        prefix = 7
+        kind_name = "record"
+    elif spelling.startswith("enum@"):
+        prefix = 5
+        kind_name = "enum"
+    else:
+        return Ok(TypeNode.Scalar(spelling))
+    kind = match NominalKind.from_value(kind_name):
+        Some(value) => value
+        None => return Err("unknown nominal kind in corpus")
+
+    if len(spelling) < prefix + 12:
+        return Err("short nominal selector in corpus")
+    identity = hex_bytes(spelling[prefix:prefix + 12])?
+    tail = spelling[prefix + 12:]
+    mut arguments: list[TypeNode] = []
+    if tail != "":
+        if not tail.startswith("<") or not tail.endswith(">"):
+            return Err("malformed corpus selector arguments")
+        for part in split_arguments(tail[1:len(tail) - 1])?:
+            arguments.append(selector_text(part)?)
+    return Ok(TypeNode.Nominal(kind, identity, arguments))
+
+
+def split_arguments(contents: str) -> Result[list[str], str]:
+    """Split only top-level commas; nested closed selectors keep their complete argument text."""
+    mut depth = 0
+    mut part = ""
+    mut parts: list[str] = []
+    for character in contents:
+        if character == "<":
+            depth += 1
+        elif character == ">":
+            depth -= 1
+            if depth < 0:
+                return Err("unbalanced corpus selector")
+        if character == "," and depth == 0:
+            if part == "":
+                return Err("empty corpus selector argument")
+            parts.append(part)
+            part = ""
+        else:
+            part += character
+    if depth != 0 or part == "":
+        return Err("unbalanced or empty corpus selector")
+    parts.append(part)
+    return Ok(parts)

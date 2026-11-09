@@ -1,0 +1,266 @@
+"""Canonical structural and nominal spellings with finite recursion and shared request budgets."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, NominalKind, TypeNode, VariantShape
+from crate.primitives.hash import sha256
+from crate.primitives.hex import hexlify
+from crate.primitives.text import encode_utf8
+
+const SCALARS: FrozenList[str] = [
+    "boolean",
+    "i8",
+    "i16",
+    "i32",
+    "i64",
+    "u8",
+    "u16",
+    "u32",
+    "u64",
+    "fp32",
+    "fp64",
+    "string",
+    "binary",
+    "secret_string",
+    "secret_bytes",
+    "reference",
+]
+
+
+pub def selector_spelling(node: TypeNode, mut budget: Budget) -> Result[str, CrumbError]:
+    """Return N; explicit bound definitions are checked but never expanded into the returned selector."""
+    mut active: list[str] = []
+    return spell(node, true, active, budget)
+
+
+pub def shape_spelling(node: TypeNode, mut budget: Budget) -> Result[str, CrumbError]:
+    """Return S from explicit structural definitions; a bare nominal selector supplies no shape."""
+    mut active: list[str] = []
+    return spell(node, false, active, budget)
+
+
+def spell(node: TypeNode, nominal: bool, mut active: list[str], mut budget: Budget) -> Result[str, CrumbError]:
+    """Balance the shared depth allowance on success and failure; consumed work is never refunded."""
+    budget.charge_elements(1)?
+    budget.enter()?
+    result = spell_inner(node, nominal, active, budget)
+    budget.leave()?
+    return result
+
+
+def spell_inner(node: TypeNode, nominal: bool, mut active: list[str], mut budget: Budget) -> Result[str, CrumbError]:
+    """Dispatch a type's format meaning without executing its constructors, methods or validation."""
+    match node:
+        TypeNode.Scalar(name) =>
+            if name not in SCALARS:
+                return Err(CrumbError.invalid_input("unsupported scalar"))
+            return compose("", [name], "", "", budget)
+        TypeNode.Decimal(precision, scale) =>
+            if precision <= 0 or scale < 0 or scale > precision:
+                return Err(CrumbError.invalid_input("decimal bounds"))
+            return compose("decimal<", [str(precision), str(scale)], ",", ">", budget)
+        TypeNode.Container(kind, items) => return container(kind, items, nominal, active, budget)
+        TypeNode.Nominal(kind, identity, arguments) =>
+            if not nominal:
+                return Err(CrumbError.invalid_input("structural definition required"))
+            return nominal_type(kind, identity, arguments, budget)
+        TypeNode.Bound(items) =>
+            if len(items) != 2:
+                return Err(CrumbError.invalid_input("bound definition arity"))
+            match items[0]:
+                TypeNode.Nominal(kind, _, _) =>
+                    match items[1]:
+                        TypeNode.Record(_, _) =>
+                            if kind != NominalKind.Record:
+                                return Err(CrumbError.invalid_input("bound definition kind"))
+                        TypeNode.Enum(_, _) =>
+                            if kind != NominalKind.Enum:
+                                return Err(CrumbError.invalid_input("bound definition kind"))
+                        _ => return Err(CrumbError.invalid_input("bound definition required"))
+                _ => return Err(CrumbError.invalid_input("bound nominal required"))
+            if nominal:
+                # Validate supplied fields in their enclosing recursion context; N still contains only identity.
+                spell(items[1], true, active, budget)?
+                return spell(items[0], true, active, budget)
+            return spell(items[1], false, active, budget)
+        TypeNode.Record(key, fields) => return record(key, fields, nominal, active, budget)
+        TypeNode.Enum(key, variants) => return enumeration(key, variants, nominal, active, budget)
+        TypeNode.Recursive(key) => return back_reference(key, active, budget)
+        TypeNode.Underlying(items) =>
+            if len(items) != 1:
+                return Err(CrumbError.invalid_input("underlying type arity"))
+            return spell(items[0], nominal, active, budget)
+        TypeNode.Parameter(_) => return Err(CrumbError.invalid_input("unresolved type parameter"))
+
+
+def nominal_type(
+    kind: NominalKind,
+    identity: bytes,
+    arguments: list[TypeNode],
+    mut budget: Budget,
+) -> Result[str, CrumbError]:
+    """Keep the declaration's identity separate from its ordered closed type arguments."""
+    if len(identity) != 6:
+        return Err(CrumbError.invalid_input("nominal identity width"))
+    prefix = kind.value() + "@"
+    stem = compose(prefix, [hexlify(identity)], "", "", budget)?
+    if len(arguments) == 0:
+        return Ok(stem)
+    mut parts: list[str] = []
+    mut closed: list[str] = []
+    for argument in arguments:
+        # Generic arguments are closed independently of the surrounding fields.
+        parts.append(spell(argument, true, closed, budget)?)
+    return compose(stem + "<", parts, ",", ">", budget)
+
+
+def container(
+    kind: ContainerKind,
+    items: list[TypeNode],
+    nominal: bool,
+    mut active: list[str],
+    mut budget: Budget,
+) -> Result[str, CrumbError]:
+    """Validate constructor arity and sort unions independently of source declaration order."""
+    name = container_name(kind, len(items))?
+    mut parts: list[str] = []
+    for item in items:
+        parts.append(spell(item, nominal, active, budget)?)
+    if kind == ContainerKind.Union:
+        parts = ordered_union(parts, nominal, budget)?
+    return compose(name + "<", parts, ",", ">", budget)
+
+
+def container_name(kind: ContainerKind, count: int) -> Result[str, CrumbError]:
+    """Arity is a format rule, not a host collection convention."""
+    if kind in [ContainerKind.List, ContainerKind.Set, ContainerKind.Option] and count != 1:
+        return Err(CrumbError.invalid_input("container arity"))
+    if kind == ContainerKind.Map and count != 2:
+        return Err(CrumbError.invalid_input("container arity"))
+    if kind == ContainerKind.Union and count == 0:
+        return Err(CrumbError.invalid_input("container arity"))
+    return Ok(kind.value())
+
+
+def ordered_union(parts: list[str], nominal: bool, mut budget: Budget) -> Result[list[str], CrumbError]:
+    """Sort hashed spellings with full-spelling tie breaks; N must distinguish every alternative."""
+    mut seen: set[str] = set()
+    mut keyed: list[tuple[str, str]] = []
+    for part in parts:
+        if nominal and part in seen:
+            return Err(CrumbError.invalid_input("ambiguous union selector"))
+        seen.add(part)
+        budget.charge_bytes(len(part))?
+        budget.charge_elements(1)?
+        keyed.append((hexlify(sha256.digest(encode_utf8(part))), part))
+    return Ok([pair[1] for pair in sorted(keyed)])
+
+
+def record(
+    key: str,
+    fields: list[FieldShape],
+    nominal: bool,
+    mut active: list[str],
+    mut budget: Budget,
+) -> Result[str, CrumbError]:
+    """Expand a structural definition once per active path, not once per incidental dictionary entry."""
+    if key in active:
+        return Err(CrumbError.invalid_input("duplicate active type definition"))
+    active.append(key)
+    result = record_fields(fields, nominal, active, budget)
+    active.pop()
+    return result
+
+
+def record_fields(
+    fields: list[FieldShape],
+    nominal: bool,
+    mut active: list[str],
+    mut budget: Budget,
+) -> Result[str, CrumbError]:
+    """Sort identities while retaining each field's declared absence and canonical participation."""
+    mut by_identity: dict[str, int] = {}
+    for index in range(len(fields)):
+        budget.charge_elements(1)?
+        budget.charge_bytes(12)?
+        identity = fields[index].identity
+        if len(identity) != 6:
+            return Err(CrumbError.invalid_input("field identity width"))
+        name = hexlify(identity)
+        if name in by_identity:
+            return Err(CrumbError.invalid_input("duplicate field identity"))
+        by_identity[name] = index
+    mut parts: list[str] = []
+    for identity in sorted(by_identity.keys()):
+        field = fields[by_identity[identity]]
+        spelling = spell(field.storage_type, nominal, active, budget)?
+        mut canonical = "0"
+        if field.canonical:
+            canonical = "1"
+        parts.append(compose(identity + ":", [spelling, canonical, absent_code(field.absent)], ":", "", budget)?)
+    return compose("record{", parts, ";", "}", budget)
+
+
+def enumeration(
+    key: str,
+    variants: list[VariantShape],
+    nominal: bool,
+    mut active: list[str],
+    mut budget: Budget,
+) -> Result[str, CrumbError]:
+    """Enum payload records share the enum ancestor stack; they do not add a nominal level."""
+    if key in active:
+        return Err(CrumbError.invalid_input("duplicate active type definition"))
+    active.append(key)
+    result = variant_fields(variants, nominal, active, budget)
+    active.pop()
+    return result
+
+
+def variant_fields(
+    variants: list[VariantShape],
+    nominal: bool,
+    mut active: list[str],
+    mut budget: Budget,
+) -> Result[str, CrumbError]:
+    """Sort variants by exact identity and refuse collisions before emitting a shape spelling."""
+    mut by_identity: dict[str, int] = {}
+    for index in range(len(variants)):
+        budget.charge_elements(1)?
+        budget.charge_bytes(12)?
+        identity = variants[index].identity
+        if len(identity) != 6:
+            return Err(CrumbError.invalid_input("variant identity width"))
+        name = hexlify(identity)
+        if name in by_identity:
+            return Err(CrumbError.invalid_input("duplicate variant identity"))
+        by_identity[name] = index
+    mut parts: list[str] = []
+    for identity in sorted(by_identity.keys()):
+        payload = record_fields(variants[by_identity[identity]].fields, nominal, active, budget)?
+        parts.append(compose(identity + ":", [payload], "", "", budget)?)
+    return compose("enum{", parts, ";", "}", budget)
+
+
+def back_reference(key: str, active: list[str], mut budget: Budget) -> Result[str, CrumbError]:
+    """A recursive edge names an active record/enum ancestor, never a global dictionary index."""
+    for offset in range(len(active)):
+        if active[len(active) - 1 - offset] == key:
+            return compose("^", [str(offset)], "", "", budget)
+    return Err(CrumbError.invalid_input("unbound recursive type"))
+
+
+def absent_code(policy: AbsentPolicy) -> str:
+    """S distinguishes required values, admitted outer None and admitted empty collections."""
+    return policy.value()[0:1]
+
+
+def compose(prefix: str, parts: list[str], separator: str, suffix: str, mut budget: Budget) -> Result[str, CrumbError]:
+    """Charge all output fragments before joining, avoiding unchecked summed lengths."""
+    budget.charge_bytes(len(prefix))?
+    budget.charge_bytes(len(suffix))?
+    for index in range(len(parts)):
+        budget.charge_bytes(len(parts[index]))?
+        if index > 0:
+            budget.charge_bytes(len(separator))?
+    return Ok(prefix + separator.join(parts) + suffix)
