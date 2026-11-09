@@ -186,7 +186,7 @@ def check_fields(
     return Ok(None)
 
 
-def allows_absence(node: TypeNode, policy: AbsentPolicy) -> bool:
+pub def allows_absence(node: TypeNode, policy: AbsentPolicy) -> bool:
     """Only outer Option and list/set/map emptiness have the corresponding implicit stored values."""
     if policy == AbsentPolicy.Required:
         return true

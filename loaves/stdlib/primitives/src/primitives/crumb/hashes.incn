@@ -79,14 +79,9 @@ pub def seal_hash(values: list[Value], mut budget: Budget, capture: bool = false
     """Commit to ordered complete object contributions, counting each repeatable frame before streaming it."""
     for value in values:
         validate(value, budget)?
-    mut output = start(capture)
-    output.write(b"crumb1\x00\x04", budget)?
-    output.unsigned(len(values), budget)?
+    mut output = start_seal(len(values), budget, capture)?
     for value in values:
-        mut counter = HashOutput.create(OutputMode.Count)
-        emit(value, Projection.Object, counter, budget)?
-        output.unsigned(counter.count(), budget)?
-        emit(value, Projection.Object, output, budget)?
+        append_seal(value, output, budget)?
     return finish(output, budget)
 
 
@@ -102,3 +97,26 @@ def finish(mut output: HashOutput, mut budget: Budget) -> Result[HashResult, Cru
     preimage = output.captured(budget)?
     digest = output.digest(budget)?
     return Ok(HashResult(digest=digest, preimage=preimage))
+
+
+pub def start_seal(count: int, mut budget: Budget, capture: bool = false) -> Result[HashOutput, CrumbError]:
+    """
+    Start an ordered seal without collecting another owned copy of every record.
+
+    The caller must append exactly count validated values and discard this output on any failure.
+    A partial output is not a completed seal. Finite writers enforce count and completion themselves.
+    """
+    if count < 0:
+        return Err(CrumbError.invalid_input("negative seal count"))
+    mut output = start(capture)
+    output.write(b"crumb1\x00\x04", budget)?
+    output.unsigned(count, budget)?
+    return Ok(output)
+
+
+pub def append_seal(value: Value, mut output: HashOutput, mut budget: Budget) -> Result[None, CrumbError]:
+    """Append one already-validated object contribution using the same framing as seal_hash."""
+    mut counter = HashOutput.create(OutputMode.Count)
+    emit(value, Projection.Object, counter, budget)?
+    output.unsigned(counter.count(), budget)?
+    return emit(value, Projection.Object, output, budget)

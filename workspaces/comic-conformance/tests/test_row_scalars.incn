@@ -1,0 +1,73 @@
+"""Independent physical scalar and closed-selector boundary tests for the row writer."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.row_scalars import integer_cell, float_cell, decimal_cell
+from std.primitives.crumb.row_selectors import parse_type, parse_key
+from std.primitives.crumb.spelling import selector_spelling
+from std.primitives.crumb.types import NominalKind
+from std.primitives.crumb.values import Value
+from std.primitives.hex import hexlify
+from case_data import hex_bytes
+
+
+def test_integer_cells_keep_full_unsigned_and_signed_ranges() -> Result[None, str]:
+    """u64 max must not pass through signed int or float; signed min uses exact two's complement."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    assert hexlify(integer_cell("18446744073709551615", 8, false, budget).map_err((e) => e.message())?) == "ffffffffffffffff"
+    assert hexlify(integer_cell("-9223372036854775808", 8, true, budget).map_err((e) => e.message())?) == "0000000000000080"
+    assert hexlify(integer_cell("-1", 1, true, budget).map_err((e) => e.message())?) == "ff"
+    assert integer_cell("128", 1, true, budget).is_err()
+    assert integer_cell("-129", 1, true, budget).is_err()
+    assert integer_cell("256", 1, false, budget).is_err()
+    assert integer_cell("-1", 1, false, budget).is_err()
+    assert integer_cell("18446744073709551616", 8, false, budget).is_err()
+    assert integer_cell("01", 8, true, budget).is_err()
+    return Ok(None)
+
+
+def test_float_cells_narrow_exactly_and_keep_signed_zero() -> Result[None, str]:
+    """Narrowing accepts exact subnormals, refuses rounding, and canonicalizes every NaN payload."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    one = float_cell(64, hex_bytes("3ff0000000000000")?, 32, budget).map_err((e) => e.message())?
+    assert hexlify(one) == "0000803f"
+    tiny = float_cell(64, hex_bytes("36a0000000000000")?, 32, budget).map_err((e) => e.message())?
+    assert hexlify(tiny) == "01000000"
+    negative_zero = float_cell(32, hex_bytes("80000000")?, 64, budget).map_err((e) => e.message())?
+    assert hexlify(negative_zero) == "0000000000000080"
+    nan = float_cell(64, hex_bytes("fff0000000000001")?, 32, budget).map_err((e) => e.message())?
+    assert hexlify(nan) == "0000c07f"
+    assert float_cell(64, hex_bytes("3ff0000000000001")?, 32, budget).is_err()
+    assert float_cell(64, hex_bytes("3690000000000000")?, 32, budget).is_err()
+    return Ok(None)
+
+
+def test_decimal_cells_rescale_without_rounding_or_unbounded_zero_allocation() -> Result[None, str]:
+    """19.9 becomes coefficient1990 at scale2; excess precision and impossible scales refuse."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    value = Value.Decimal("199", "1")
+    assert hexlify(decimal_cell(10, 2, value, budget).map_err((e) => e.message())?) == "8c1f"
+    assert decimal_cell(3, 2, value, budget).is_err()
+    assert decimal_cell(10, 1, Value.Decimal("1991", "2"), budget).is_err()
+    assert decimal_cell(10, 2, Value.Decimal("1", "-99999999999999999999"), budget).is_err()
+    assert hexlify(decimal_cell(10, 2, Value.Decimal("0", "99999999999999999999"), budget).map_err((e) => e.message())?) == "00"
+    return Ok(None)
+
+
+def test_canonical_type_and_closed_selector_admission() -> Result[None, str]:
+    """Closed nesting, exact punctuation and zero-argument framing are checked independently of rows."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    name = "record@070dcdc804d5<record@070dcdc804d5<i8>>"
+    node = parse_type(name, budget).map_err((e) => e.message())?
+    assert selector_spelling(node, budget).map_err((e) => e.message())? == name
+    assert parse_type("record@070dcdc804d5<>", budget).is_err()
+    assert parse_type("option<i8, i8>", budget).is_err()
+    assert parse_type("decimal<01,0>", budget).is_err()
+    assert parse_type("decimal<999999999999999999999,0>", budget).is_err()
+    assert parse_type("i8<>", budget).is_err()
+    assert parse_type("tuple<>", budget).is_ok()
+    key = hex_bytes("070dcdc804d501026938")?
+    closed = parse_key(key, NominalKind.Record, budget).map_err((e) => e.message())?
+    assert selector_spelling(closed, budget).map_err((e) => e.message())? == "record@070dcdc804d5<i8>"
+    assert parse_key(hex_bytes("070dcdc804d5")?, NominalKind.Record, budget).is_err()
+    assert parse_key(hex_bytes("070dcdc804d50000")?, NominalKind.Record, budget).is_err()
+    return Ok(None)

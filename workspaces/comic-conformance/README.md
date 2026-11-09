@@ -11,3 +11,13 @@ incan run workspaces/comic-conformance/src/main.incn -- specs/comic/corpus/manif
 The runner executes member identities, nominal identity preimages and hashes, closed type selectors, written-shape refusals and adaptation comparisons from the corpus. Hash cases derive object, canonical, model, description and seal preimages and digests from logical input trees, comparing both with independent literals. Value-relation cases compare derived digests. Accepted adaptation cases check reconstructed values and all three declared object/canonical/model projection relations. Text and row/column codec operations remain explicitly unsupported. The bounded primitive has independent tests for nested records, enum payloads, union identity, recursive plans and shared limits. It must compare the implementation's output against the separately authored expectations; hashing a supplied expected preimage alone is not a hash-conformance test.
 
 JSON and filesystem convenience APIs are dependencies of this test project only. The production Crumb foundation belongs to `std.primitives.crumb` and imports no higher-level standard package.
+
+## Independent row writer comparisons
+
+The writer has a separate receipt so an encoding test cannot accidentally claim that `binary_decode` ran:
+
+```text
+incan run workspaces/comic-conformance/src/write_cases_main.incn -- specs/comic/corpus/manifest.json workspaces/comic-conformance/fixtures/row-writer-inline-descriptions.json
+```
+
+The runner admits the same pinned corpus, translates its independently authored logical records into writer inputs, and compares output bytes with each original literal `input_hex`. Four inline cases need complete writer descriptions, supplied explicitly in the fixture file. Those descriptions are not recovered by decoding the expected bytes. Referenced cases use their original supplied descriptions. The receipt requires all 33 accepted row cases to match, records each result, and explicitly states `decoding_executed: false`. Negative input and budget tests run through the ordinary test runner. The primary conformance receipt continues to mark decoder cases unsupported until a decoder executes them.

@@ -189,7 +189,7 @@ def compare_maps(
     return Ok(order(len(a_order), len(b_order)))
 
 
-def compare_selectors(left: TypeNode, right: TypeNode, mut budget: Budget) -> Result[int, CrumbError]:
+pub def compare_selectors(left: TypeNode, right: TypeNode, mut budget: Budget) -> Result[int, CrumbError]:
     """Nominal union members use framed K, while nonnominal members use hashed N with a full tie-break."""
     a = selector_key(left, budget)?
     b = selector_key(right, budget)?

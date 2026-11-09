@@ -1,0 +1,160 @@
+"""Exact typed scalar cells; physical widths never change logical numeric values."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.framing import encode_signed, frame
+from crate.primitives.crumb.row_buffer import RowBuffer
+from crate.primitives.crumb.scalars import compare_integer, float64_bits, normalize_decimal
+from crate.primitives.crumb.values import Value
+from crate.primitives.text import encode_utf8
+
+const SIGNED_MIN: FrozenList[str] = ["-128", "-32768", "-2147483648", "-9223372036854775808"]
+const SIGNED_MAX: FrozenList[str] = ["127", "32767", "2147483647", "9223372036854775807"]
+const UNSIGNED_MAX: FrozenList[str] = ["255", "65535", "4294967295", "18446744073709551615"]
+
+
+pub def scalar_cell(name: str, value: Value, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Match a declared scalar against the exact logical value; no coercion through host float/int."""
+    match value:
+        Value.Integer(decimal) =>
+            names = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"]
+            widths = [1, 2, 4, 8]
+            for index in range(8):
+                if names[index] == name:
+                    return integer_cell(decimal, widths[index % 4], index < 4, budget)
+        Value.Float(width, bits) =>
+            if name == "fp32":
+                return float_cell(width, bits, 32, budget)
+            if name == "fp64":
+                return float_cell(width, bits, 64, budget)
+        Value.Boolean(flag) =>
+            if name == "boolean":
+                budget.charge_bytes(1)?
+                if flag:
+                    return Ok(b"\x01")
+                return Ok(b"\x00")
+        Value.Text(text) =>
+            if name == "string":
+                for _ in range(4):
+                    budget.charge_bytes(len(text))?
+                return frame(encode_utf8(text), budget)
+        Value.Binary(data) =>
+            if name == "binary":
+                return frame(data, budget)
+        Value.Withheld =>
+            if name in ["secret_string", "secret_bytes"]:
+                budget.charge_bytes(1)?
+                return Ok(b"\x00")
+        Value.Reference(target, identity) =>
+            if name == "reference":
+                mut output = RowBuffer.create()
+                output.frame(target, budget)?
+                output.frame(identity, budget)?
+                return output.finish(budget)
+        _ => pass
+    return Err(CrumbError.invalid_input("scalar value type"))
+
+
+pub def integer_cell(decimal: str, width: int, signed: bool, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Range-check canonical decimal before producing fixed little-endian two's-complement bytes."""
+    encode_signed(decimal, budget)?
+    widths = [1, 2, 4, 8]
+    if width not in widths:
+        return Err(CrumbError.invalid_input("integer cell width"))
+    mut slot = 0
+    for index in range(4):
+        if widths[index] == width:
+            slot = index
+    if signed:
+        if compare_integer(decimal, SIGNED_MIN[slot]) < 0 or compare_integer(decimal, SIGNED_MAX[slot]) > 0:
+            return Err(CrumbError.invalid_input("signed cell range"))
+    elif compare_integer(decimal, "0") < 0 or compare_integer(decimal, UNSIGNED_MAX[slot]) > 0:
+        return Err(CrumbError.invalid_input("unsigned cell range"))
+    negative = decimal.startswith("-")
+    budget.charge_bytes(len(decimal))?
+    mut magnitude = decimal[:]
+    if negative:
+        magnitude = decimal[1:]
+    budget.charge_bytes(width * 8)?
+    mut octets: list[int] = [0 for _ in range(width)]
+    for digit in magnitude:
+        mut carry = int(digit)
+        for index in range(width):
+            budget.charge_elements(1)?
+            next = octets[index] * 10 + carry
+            octets[index] = next % 256
+            carry = next // 256
+    if negative:
+        mut carry = 1
+        for index in range(width):
+            next = 255 - octets[index] + carry
+            octets[index] = next % 256
+            carry = next // 256
+    budget.charge_bytes(width)?
+    return Ok([octet.saturating_resize[u8]() for octet in octets])
+
+
+pub def decimal_cell(precision: int, scale: int, value: Value, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Rescale exactly to the declared scale, refusing precision loss or implicit rounding."""
+    if precision <= 0 or scale < 0 or scale > precision:
+        return Err(CrumbError.invalid_input("decimal cell bounds"))
+    match value:
+        Value.Decimal(coefficient, original_scale) =>
+            normalized, power = normalize_decimal(coefficient, original_scale, budget)?
+            if normalized == "0":
+                return encode_signed("0", budget)
+            mut digits = len(normalized)
+            if normalized.startswith("-"):
+                digits -= 1
+            if digits > precision:
+                return Err(CrumbError.invalid_input("decimal cell precision"))
+            minimum_scale = scale - (precision - digits)
+            if compare_integer(power, str(minimum_scale)) < 0 or compare_integer(power, str(scale)) > 0:
+                return Err(CrumbError.invalid_input("decimal cell exact scale"))
+            # The comparisons bound power to a host-sized interval before this conversion.
+            extra = scale - int(power)
+            budget.charge_bytes(len(normalized))?
+            budget.charge_bytes(extra)?
+            budget.charge_elements(extra)?
+            return encode_signed(normalized + "".join(["0" for _ in range(extra)]), budget)
+        _ => return Err(CrumbError.invalid_input("decimal value type"))
+
+
+pub def float_cell(width: int, bits: bytes, target: int, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Normalize NaN and signed zero; binary64-to-binary32 conversion must be exactly representable."""
+    wide = float64_bits(width, bits, budget)?
+    if target == 64:
+        budget.charge_bytes(8)?
+        return Ok([wide[7 - index] for index in range(8)])
+    if target != 32:
+        return Err(CrumbError.invalid_input("float cell width"))
+    raw = narrow_float(wide, budget)?
+    mut output = RowBuffer.create()
+    output.offset(raw, 4, budget)?
+    return output.finish(budget)
+
+
+def narrow_float(bits: bytes, mut budget: Budget) -> Result[int, CrumbError]:
+    """Extract an exact binary32 representation from normalized big-endian binary64 bits."""
+    sign = int(bits[0]) // 128
+    exponent = (int(bits[0]) & 127) * 16 + int(bits[1]) // 16
+    mut fraction = int(bits[1]) & 15
+    for index in range(2, 8):
+        fraction = fraction * 256 + int(bits[index])
+    if exponent == 2047:
+        if fraction != 0:
+            return Ok(2143289344)
+        return Ok(sign * 2147483648 + 2139095040)
+    if exponent == 0 and fraction == 0:
+        return Ok(sign * 2147483648)
+    if exponent >= 897 and exponent <= 1150 and fraction % 536870912 == 0:
+        return Ok(sign * 2147483648 + (exponent - 896) * 8388608 + fraction // 536870912)
+    if exponent >= 874 and exponent <= 896:
+        mut divisor = 1
+        for _ in range(926 - exponent):
+            budget.charge_elements(1)?
+            divisor *= 2
+        significand = 4503599627370496 + fraction
+        if significand % divisor == 0:
+            return Ok(sign * 2147483648 + significand // divisor)
+    return Err(CrumbError.invalid_input("inexact binary32 cell"))
