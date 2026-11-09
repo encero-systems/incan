@@ -1,0 +1,9 @@
+# behavior: the exact decimal protocol carrier requires its checked constructor, including through a public facade
+# expect-diagnostic: INCAN-T0001
+
+from std.primitives.reflection import DecimalValue
+
+
+def main() -> None:
+    invalid = DecimalValue(coefficient=100, precision=2, scale=0)
+    println(invalid.coefficient)

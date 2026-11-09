@@ -115,3 +115,46 @@ def test_field_default_and_source_absence() -> Result[None, str]:
     assert error == "input:1: missing text"
     assert source.collected() == Some(error)
     return Ok(None)
+
+
+def test_structural_noop_defaults() -> Result[None, str]:
+    """Every begin/end default is callable without overriding the scalar observations."""
+    mut walker = QuietWalker()
+    shape = text_shape()
+    walker.begin_model(shape)?
+    walker.end_model()?
+    for kind in [SequenceKind.List, SequenceKind.Set, SequenceKind.Tuple]:
+        walker.begin_sequence(kind, 0)?
+        walker.end_sequence()?
+    walker.begin_dict(0)?
+    walker.end_dict()?
+    return Ok(None)
+
+
+def test_source_refusals_and_collection() -> Result[None, str]:
+    """Unsupported reads remain errors and distinct failure factories retain source context."""
+    mut source = TextSource(text="unused")
+    assert source.bool().is_err()
+    assert source.bytes().is_err()
+    assert source.integer().is_err()
+    assert source.unsigned().is_err()
+    assert source.float().is_err()
+    assert source.decimal().is_err()
+    assert source.none().is_err()
+    assert source.some[TextValue]().is_err()
+    assert source.element[TextValue]().is_err()
+    assert source.entry[TextValue, TextValue]().is_err()
+    assert source.member().is_err()
+    assert source.reference("object").is_err()
+    assert source.reads == 0
+    assert len(source.failures) == 12
+    assert source.collects()
+    assert source.numeric_range("i8") == "input:1: range i8"
+    assert source.shape_mismatch("string", "bool") == "input:1: shape string != bool"
+    assert len(source.failures) == 14
+    original = ValidationError("negative stored state")
+    assert source.invalid(original) == "input:1: validation"
+    assert len(source.validation_failures) == 1
+    assert str(source.validation_failures[0]) == str(original)
+    assert len(source.failures) == 15
+    return Ok(None)

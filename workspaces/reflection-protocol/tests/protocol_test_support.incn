@@ -60,6 +60,7 @@ pub class TextSource with Source[str]:
     pub fail: bool = false
     pub reads: int = 0
     pub failures: list[str] = []
+    pub validation_failures: list[ValidationError] = []
 
     def str(mut self) -> Result[str, str]:
         """Read the test's string and retain a caller-selected failure exactly once."""
@@ -161,8 +162,9 @@ pub class TextSource with Source[str]:
         return false
 
     def invalid(mut self, error: ValidationError) -> str:
-        """Preserve the original validation text within the test format's error."""
-        return self.malformed(str(error))
+        """Retain the typed original separately from the located diagnostic summary."""
+        self.validation_failures.append(error)
+        return self.malformed("validation")
 
     def collects(self) -> bool:
         """This source continues independent failures when requested by reconstruction."""

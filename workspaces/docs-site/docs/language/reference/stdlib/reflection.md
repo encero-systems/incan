@@ -1,22 +1,23 @@
 # std.reflection (reference)
 
-This page documents the `std.reflection` surface exposed by the standard library. Use it when you want to inspect field metadata produced by models and classes.
+`std.reflection` exposes declaration metadata and typed stored-value protocols.
 
 !!! info "Related pages"
-    - If you want the language-facing explanation of automatic reflection on models and classes, see: [Language → Reference → Reflection].
+    - [Language → Reference → Reflection] specifies type and instance reflection.
+    - [Reflection contracts and use](../../explanation/reflection.md) explains inspection and traversal.
 
 <!-- References -->
 [Language → Reference → Reflection]:../reflection.md
 
 ## Importing the reflection API
 
-Import with:
+The metadata carrier is imported as:
 
 ```incan
 from std.reflection import FieldInfo
 ```
 
-You only need to import `FieldInfo` when you want to spell the type explicitly in an annotation. Calling `obj.__fields__()` or generic type-level reflection such as `T.__fields__()` and inspecting the returned records does not require an explicit import.
+`obj.__fields__()` and `T.__fields__()` require no `FieldInfo` import. An annotation naming `FieldInfo` requires that type in scope.
 
 Primitive type-argument names such as `T.__class_name__()` for `T=int`, `T=float`, `T=str`, or `T=bool` are compiler-backed and also do not require a `std.reflection` import. Type-token parameters such as `Type[int]`, model, enum and trait tokens, and constrained generic overloads are part of the language type system rather than the `std.reflection` import surface. They do not grant the field metadata APIs on the token value. See the [language reflection reference](../reflection.md#type-tokens) for their expected-context, overload, storage, and operation contracts.
 
@@ -37,7 +38,7 @@ Field metadata returned by `__fields__()`.
 | `wire_name` | `FrozenStr` | Effective wire name (alias if present, else declared name) |
 | `type_name` | `FrozenStr` | Incan type display (e.g. `"str"`, `"int"`, `"Option[str]"`) |
 | `has_default` | `bool` | Whether the field has a default value |
-| `extra` | `FrozenDict[FrozenStr, FrozenStr]` | Reserved for future metadata; always empty in current version |
+| `extra` | `FrozenDict[FrozenStr, FrozenStr]` | Additional metadata; empty |
 
 Notes:
 
@@ -50,13 +51,13 @@ Model and class values expose `__field_value__(name: str) -> Option[T]` and `__f
 
 ## Handwritten typed-value protocols
 
-`std.primitives.reflection` and `std.reflection` expose the same declarations. The protocols support handwritten adopters. Automatic `Walk`/`Reconstruct` generation, scalar/container adoption and the additional complete stored-field metadata are separate compiler work; their availability is not implied by importing these traits.
+`std.primitives.reflection` and `std.reflection` expose the same declarations. These protocols require explicit adoption and handwritten traversal, reconstruction and shape members.
 
 ### `Walk` and `Reconstruct`
 
 `Walk.__walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]` visits the adopter's stored representation. Its static `__shape__() -> ShapeInfo` supplies the corresponding description without constructing a value. `Reconstruct` extends `Walk` and requires static `__reconstruct__[E, S with Source[E]](mut source: S) -> Result[Self, E]`.
 
-A handwritten reconstruction must restore complete valid state and retain the source's error context. It must not replay constructor input normalization. This slice supplies the protocol; it does not automatically insert model validation into handwritten code.
+A handwritten reconstruction must restore complete valid state and retain the source's error context. It must not replay constructor input normalization. Handwritten reconstruction owns its validation calls.
 
 ### `Walker[E]`
 
@@ -124,12 +125,10 @@ A present optional field is `Some(None)` when `V=Option[T]`; a missing field is 
 
 `LifecycleInfo` has `since`, `retire_in`, `message`, `by` and `issue`, each `Option[FrozenStr]`, defaulting to None. These are descriptive facts, not authorization. The complete shape's closed nominal identity and its structural spelling have different meanings; neither is recovered from its display name.
 
-Existing `FieldInfo` remains the carrier documented above. The planned `stored_type`, `default_is_empty`, `position` and lifecycle additions are not supplied by this protocol slice. Handwritten shapes must not claim complete generated stored-state metadata before that compiler work lands.
-
 ### `DecimalValue`
 
-`DecimalValue.new(coefficient: i128, precision: u8, scale: u8) -> Result[DecimalValue, DecimalValueError]` is checked construction using the current `Validate` derive. Direct `DecimalValue(...)` construction is refused. The public fields retain these same three types. Validation requires precision in 1..38, scale in 0..precision, and `-10**precision < coefficient < 10**precision`. It uses integer arithmetic, including for i128 minimum, and never rounds through floating point.
+`DecimalValue.new(coefficient: i128, precision: u8, scale: u8) -> Result[DecimalValue, DecimalValueError]` is checked construction using `@derive(Validate)`. Direct `DecimalValue(...)` construction is refused. The public fields retain these same three types. Validation requires precision in 1..38, scale in 0..precision, and `-10**precision < coefficient < 10**precision`. It uses integer arithmetic, including for i128 minimum, and never rounds through floating point.
 
 The coefficient is value times `10**scale`; `1990, 10, 2` represents `19.90` declared at precision 10 and scale 2. Errors are `Precision(u8)`, `Scale(u8, u8)` and `Coefficient(u8)` (precision, then scale for Scale). `validate(self) -> Result[DecimalValue, DecimalValueError]` applies the same checks. This constructor validates at construction; ordinary mutation follows the language's existing rules.
 
-The carrier preserves exact value and declared scale. Automatic conversion from/to `decimal[P, S]` belongs to the later generated protocol implementation. That conversion must be exact; the carrier alone does not add such conversion or change a format's compatibility policy.
+The carrier preserves exact value and declared scale. It provides no conversion to or from `decimal[P, S]`. Codec conversion must preserve the exact value or return the source's numeric-range failure; compatibility between declared decimal types is format policy.

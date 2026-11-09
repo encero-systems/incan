@@ -1,5 +1,5 @@
 """
-Foundational reflection helpers for models and classes.
+Typed value traversal, stored-state reconstruction and declaration metadata.
 """
 
 pub class FieldInfo:
@@ -80,7 +80,7 @@ pub model DecimalValue:
     """
     An exact decimal coefficient and its declared precision and scale.
 
-    Use DecimalValue.new(coefficient=..., precision=..., scale=...) with the currently supported
+    Use DecimalValue.new(coefficient=..., precision=..., scale=...) with the
     Validate construction contract. Invalid construction returns DecimalValueError; direct raw
     construction is refused. No floating-point conversion participates in validation.
     """
@@ -105,17 +105,23 @@ pub model DecimalValue:
 pub trait Walk:
     """Expose typed stored values to a caller-owned walker without imposing a codec or copying fields."""
 
-    def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]: ...
+    def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
+        """Visit this value's declared stored representation, propagating the walker's failure."""
+        ...
 
     @staticmethod
-    def __shape__() -> ShapeInfo: ...
+    def __shape__() -> ShapeInfo:
+        """Describe the complete stored representation without constructing a value."""
+        ...
 
 
 pub trait Reconstruct with Walk:
     """Restore complete stored state, preserving the source's failure channel and final validation."""
 
     @staticmethod
-    def __reconstruct__[E, S with Source[E]](mut source: S) -> Result[Self, E]: ...
+    def __reconstruct__[E, S with Source[E]](mut source: S) -> Result[Self, E]:
+        """Read and validate complete stored state without replaying construction normalization."""
+        ...
 
 
 pub trait Walker[E]:
@@ -139,7 +145,7 @@ pub trait Walker[E]:
         return Ok(None)
 
     def integer(mut self, value: i128) -> Result[None, E]:
-        """Observe a i128 value; the default retains no data."""
+        """Observe an i128 value; the default retains no data."""
         return Ok(None)
 
     def unsigned(mut self, value: u128) -> Result[None, E]:
