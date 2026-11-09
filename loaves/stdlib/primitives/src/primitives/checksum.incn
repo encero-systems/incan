@@ -18,10 +18,13 @@ pub class Crc32:
 
     handle: Crc32Hasher
 
+    @staticmethod
+    pub def new() -> Crc32:
+        """Create a fresh incremental CRC32 hasher."""
+        return Crc32(handle=Crc32Hasher.new())
+
     pub def update(mut self, chunk: bytes) -> None:
-        """
-        Feed one byte chunk into the checksum state.
-        """
+        """Feed one byte chunk into the checksum state."""
         self.handle.update(chunk.as_slice())
 
     pub def finalize_u32(self) -> u32:
@@ -34,43 +37,31 @@ pub class Crc32:
         return self.handle.clone().finalize()
 
     pub def finalize_bytes(self) -> bytes:
-        """
-        Return the CRC32 value as four big-endian bytes.
-        """
+        """Return the CRC32 value as four big-endian bytes."""
         return _u32_to_be_bytes(self.finalize_u32())
 
 
 pub class crc32:
-    """
-    IEEE CRC-32 namespace with one-shot and incremental helpers.
-    """
+    """IEEE CRC-32 namespace with one-shot and incremental helpers."""
 
     @staticmethod
     pub def value(data: bytes) -> u32:
-        """
-        Compute the CRC32 value for `data`.
-        """
+        """Compute the CRC32 value for `data`."""
         return crc32_hash(data.as_slice())
 
     @staticmethod
     pub def digest(data: bytes) -> bytes:
-        """
-        Compute the CRC32 digest bytes for `data` in big-endian/network byte order.
-        """
+        """Compute the CRC32 digest bytes for `data` in big-endian/network byte order."""
         return _u32_to_be_bytes(crc32.value(data))
 
     @staticmethod
     pub def new() -> Crc32:
-        """
-        Create a fresh incremental CRC32 hasher.
-        """
-        return Crc32(handle=Crc32Hasher.new())
+        """Create a fresh incremental CRC32 hasher."""
+        return Crc32.new()
 
 
 def _u32_to_be_bytes(value: u32) -> bytes:
-    """
-    Encode a 32-bit integer as big-endian bytes in Incan source.
-    """
+    """Encode a 32-bit integer as big-endian bytes in Incan source."""
     number = int(value)
     mut out: list[u8] = []
     _append_byte(out, (number // 16777216) % 256)
@@ -81,8 +72,6 @@ def _u32_to_be_bytes(value: u32) -> bytes:
 
 
 def _append_byte(mut out: list[u8], value: int) -> None:
-    """
-    Append one low byte after explicit wrapping conversion to `u8`.
-    """
+    """Append one low byte after explicit wrapping conversion to `u8`."""
     byte: u8 = value.wrapping_resize()
     out.append(byte)

@@ -10,6 +10,10 @@ pub class LazyFrame:
     _cursor: int
     pub schema: str
 
+    @staticmethod
+    pub def create(cursor: int, schema: str) -> LazyFrame:
+        return LazyFrame(_cursor=cursor, schema=schema)
+
     pub def cursor(self) -> int:
         return self._cursor
 
@@ -19,6 +23,6 @@ def schema(frame: LazyFrame) -> str:
 
 
 def main() -> None:
-    frame = LazyFrame(_cursor=3, schema="id:int")
+    frame = LazyFrame.create(3, "id:int")
     println(frame.cursor())
     println(schema(frame))

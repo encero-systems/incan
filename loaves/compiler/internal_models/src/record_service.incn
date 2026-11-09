@@ -203,11 +203,14 @@ pub def prepared_reader(
     for request in prepared.required_reads:
         if not valid_request(request):
             return Err(CompilerFaultKind.InvalidPreparation)
-    return Ok(RecordReads(
-        scope=ReadScope(snapshot=snapshot.root.digest, profile=ready.profile.identity.digest),
-        preparation=PreparationEvidence(
-            output=prepared.output, rank_certificate=prepared.rank_certificate.evidence.digest,
-            selector_witnesses=prepared.selector_witnesses.digest,
+    return Ok(
+        RecordReads.start(
+            scope=ReadScope(snapshot=snapshot.root.digest, profile=ready.profile.identity.digest),
+            preparation=PreparationEvidence(
+                output=prepared.output,
+                rank_certificate=prepared.rank_certificate.evidence.digest,
+                selector_witnesses=prepared.selector_witnesses.digest,
+            ),
+            allowed=prepared.required_reads,
         ),
-        allowed=prepared.required_reads,
-    ))
+    )

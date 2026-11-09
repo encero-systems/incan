@@ -46,6 +46,20 @@ pub fn positional_constructor_args_not_supported(type_name: &str, span: Span) ->
     .with_hint(format!("Use named arguments: {}(field=value, ...)", type_name))
 }
 
+/// Report an attempt to bind a private class field through direct construction outside its declaring class.
+pub fn private_class_constructor_field(class_name: &str, field: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Private field '{field}' cannot be set while constructing class '{class_name}' here"),
+        span,
+    )
+    .with_stable_code("INCAN-T0135")
+    .with_primary_label("private constructor field named here")
+    .with_note("Only methods on the declaring class may name its private constructor fields")
+    .with_hint(format!(
+        "Call a `pub` constructor method on '{class_name}', or make fields intended for direct construction `pub`"
+    ))
+}
+
 /// Report a newtype constructor call that does not pass exactly one positional underlying value.
 pub fn newtype_constructor_shape(type_name: &str, span: Span) -> CompileError {
     CompileError::type_error(
