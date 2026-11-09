@@ -1,0 +1,145 @@
+"""Shared column dictionaries with exact stored ordering and sixteen-key restart groups."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.column_bits import magnitude_bytes
+from crate.primitives.crumb.column_numbers import coefficient, numeric_type
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.ordering import order_values
+from crate.primitives.crumb.encoding_buffer import EncodingBuffer, indexed
+from crate.primitives.crumb.cells import cell
+from crate.primitives.crumb.description_dictionary import Dictionary
+from crate.primitives.crumb.scalars import subtract_integer
+from crate.primitives.crumb.types import ScalarKind, TypeNode
+from crate.primitives.crumb.values import Value, Projection
+from crate.primitives.hex import hexlify
+from crate.primitives.text import encode_utf8
+
+
+pub model ColumnDictionary:
+    """Operation-local exact keys; public envelope writers construct these from complete column values."""
+
+    pub values: list[Value]
+    pub codes: dict[str, int]
+
+
+pub def dictionary_type(node: TypeNode) -> bool:
+    """The profile allows raw strings/binary and exact integer/decimal keys, never floats."""
+    if numeric_type(node):
+        return true
+    match node:
+        TypeNode.Scalar(ScalarKind.String | ScalarKind.Binary) => return true
+        _ => return false
+
+
+pub def key_id(node: TypeNode, value: Value, dictionary: Dictionary, mut budget: Budget) -> Result[str, CrumbError]:
+    """Canonical typed cell bytes identify one key under this fixed column type."""
+    encoded = cell(node, value, dictionary, budget)?
+    budget.charge_bytes(len(encoded))?
+    budget.charge_bytes(len(encoded))?
+    return Ok(hexlify(encoded))
+
+
+pub def build_keys(
+    node: TypeNode,
+    values: list[Value],
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[ColumnDictionary, CrumbError]:
+    """Deduplicate all present values across the column, then sort by their shared stored comparison."""
+    if not dictionary_type(node) or len(values) == 0:
+        return Err(CrumbError.invalid_input("column dictionary type or empty keys"))
+    mut seen: set[str] = set()
+    mut distinct: list[Value] = []
+    for value in values:
+        budget.charge_elements(1)?
+        key = key_id(node, value, dictionary, budget)?
+        if key not in seen:
+            seen.add(key)
+            distinct.append(value)
+    order = order_values(distinct, Projection.Object, budget)?
+    mut result: list[Value] = []
+    mut codes: dict[str, int] = {}
+    for index in order:
+        budget.charge_elements(1)?
+        key = key_id(node, distinct[index], dictionary, budget)?
+        codes[key] = len(result)
+        result.append(distinct[index])
+    return Ok(ColumnDictionary(values=result, codes=codes))
+
+
+pub def code_for(
+    keys: ColumnDictionary,
+    node: TypeNode,
+    value: Value,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[int, CrumbError]:
+    """Find an exact stored key without treating a missing key as code zero."""
+    key = key_id(node, value, dictionary, budget)?
+    if key not in keys.codes:
+        return Err(CrumbError.invalid_input("column value missing from dictionary"))
+    return Ok(keys.codes[key])
+
+
+pub def encode_keys(
+    node: TypeNode,
+    keys: ColumnDictionary,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """Write exact prefixes or positive numeric differences and a directory for every sixteen keys."""
+    if not dictionary_type(node) or len(keys.values) == 0:
+        return Err(CrumbError.invalid_input("column dictionary type or empty keys"))
+    mut chunks: list[bytes] = []
+    mut chunk = EncodingBuffer.create()
+    mut previous: bytes = b""
+    mut previous_number = "0"
+    for index in range(len(keys.values)):
+        budget.charge_elements(1)?
+        if index != 0 and index % 16 == 0:
+            chunks.append(chunk.finish(budget)?)
+            chunk = EncodingBuffer.create()
+        if numeric_type(node):
+            number = coefficient(node, keys.values[index], budget)?
+            if index % 16 == 0:
+                chunk.frame(cell(node, keys.values[index], dictionary, budget)?, budget)?
+            else:
+                difference = subtract_integer(number, previous_number, budget)?
+                chunk.frame(magnitude_bytes(difference, budget)?, budget)?
+            previous_number = number
+        else:
+            raw = raw_key(keys.values[index], budget)?
+            mut prefix = 0
+            if index % 16 != 0:
+                prefix = common_prefix(previous, raw, budget)?
+            chunk.count(prefix, budget)?
+            budget.charge_bytes(len(raw) - prefix)?
+            chunk.frame(raw[prefix:], budget)?
+            previous = raw
+    chunks.append(chunk.finish(budget)?)
+    mut output = EncodingBuffer.create()
+    output.count(len(keys.values), budget)?
+    output.frame(indexed(chunks, budget)?, budget)?
+    return output.finish(budget)
+
+
+def raw_key(value: Value, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Prefix compression uses raw UTF-8/binary octets rather than their row length frames."""
+    match value:
+        Value.Text(text) =>
+            for _ in range(4):
+                budget.charge_bytes(len(text))?
+            return Ok(encode_utf8(text))
+        Value.Binary(data) => return Ok(data)
+        _ => return Err(CrumbError.invalid_input("raw dictionary key type"))
+
+
+def common_prefix(left: bytes, right: bytes, mut budget: Budget) -> Result[int, CrumbError]:
+    """The exact longest prefix may end inside a UTF-8 character; only full keys require UTF-8 validity."""
+    mut count = 0
+    while count < len(left) and count < len(right):
+        budget.charge_elements(1)?
+        if left[count] != right[count]:
+            break
+        count += 1
+    return Ok(count)
