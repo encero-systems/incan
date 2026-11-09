@@ -28,6 +28,14 @@ import primitives.crumb.contributions
 import primitives.crumb.metadata
 import primitives.crumb.hashes
 import primitives.crumb.registrations
+import primitives.crumb.row_buffer
+import primitives.crumb.row_selectors
+import primitives.crumb.row_scalars
+import primitives.crumb.row_metadata
+import primitives.crumb.row_descriptions
+import primitives.crumb.row_dictionary
+import primitives.crumb.row_cells
+import primitives.crumb.row_writer
 import primitives.environ
 import primitives.fs
 import primitives.fs.file

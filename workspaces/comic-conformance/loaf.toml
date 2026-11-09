@@ -5,3 +5,4 @@ description = "Direct experimental COMIC corpus runner"
 
 [project.scripts]
 main = "src/main.incn"
+row-writer = "src/write_cases_main.incn"

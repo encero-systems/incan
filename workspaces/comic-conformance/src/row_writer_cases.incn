@@ -1,0 +1,181 @@
+"""Writer-only comparisons against original literal row bytes, independent of the unimplemented decoder."""
+
+from std.json import JsonValue
+from std.primitives.crumb import Budget
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.row_descriptions import Description, DescriptionMode
+from std.primitives.crumb.row_writer import RowRecord, write_rows
+from std.primitives.crumb.values import Value, ValueField, MapEntry
+from std.primitives.hex import hexlify
+from case_data import array, field, text, hex_bytes, absence, selector_text
+from hash_data import metadata, logical
+from corpus import Corpus
+from execute import RunReport
+
+
+pub def run_writers(corpus: Corpus, inline_descriptions: JsonValue) -> RunReport:
+    """The logical records are independently authored corpus data; expected bytes are never derived here."""
+    mut results: list[JsonValue] = []
+    mut passed = 0
+    mut failed = 0
+    for example in corpus.cases:
+        if example.operation != "binary_decode" or not example.id.startswith("bytes-"):
+            continue
+        if not accepted(example.document.get("expected")):
+            continue
+        mut result: dict[str, JsonValue] = {}
+        result["id"] = JsonValue.string(example.id)
+        match check_writer(example.id, example.document, inline_descriptions):
+            Ok(true) =>
+                passed += 1
+                result["status"] = JsonValue.string("passed")
+            Ok(false) =>
+                failed += 1
+                result["status"] = JsonValue.string("failed")
+                result["detail"] = JsonValue.string("encoded bytes differ from original literal input_hex")
+            Err(error) =>
+                failed += 1
+                result["status"] = JsonValue.string("failed")
+                result["detail"] = JsonValue.string(error)
+        results.append(JsonValue.object(result))
+    mut code: i32 = 0
+    if failed > 0 or passed != 33:
+        code = 1
+    mut receipt: dict[str, JsonValue] = {}
+    receipt["schema"] = JsonValue.string("comic.row-writer-receipt/1")
+    receipt["manifest_sha256"] = JsonValue.string(corpus.manifest_digest)
+    receipt["operation"] = JsonValue.string("binary_encode_literal_comparison")
+    receipt["selected"] = JsonValue.int(len(results))
+    receipt["passed"] = JsonValue.int(passed)
+    receipt["failed"] = JsonValue.int(failed)
+    receipt["decoding_executed"] = JsonValue.bool(false)
+    receipt["cases"] = JsonValue.array(results)
+    return RunReport(document=JsonValue.object(receipt), exit_code=code)
+
+
+def accepted(expected: Option[JsonValue]) -> bool:
+    """Select only original accepted row cases, without treating parser errors as successful refusals."""
+    match expected:
+        Some(value) =>
+            match text(value, "status"):
+                Ok(status) => return status == "accepted"
+                Err(_) => return false
+        None => return false
+
+
+def check_writer(identity: str, example: JsonValue, inline_descriptions: JsonValue) -> Result[bool, str]:
+    """Use reference descriptions directly; the four inline cases have explicit, separately stored inputs."""
+    mut source = array(example, "supplied_descriptions")?
+    mut mode = DescriptionMode.Reference
+    if len(source) == 0:
+        source = field(inline_descriptions, identity)?.expect_array().map_err((e) => e.message())?
+        mode = DescriptionMode.Inline
+    mut descriptions: list[Description] = []
+    for item in source:
+        descriptions.append(Description(metadata=metadata(item)?, mode=mode))
+    expected = field(example, "expected")?
+    mut records: list[RowRecord] = []
+    for record in array(expected, "records")?:
+        records.append(RowRecord(key=hex_bytes(text(record, "selector_hex")?)?, value=record_value(record, source)?))
+    sealed = field(expected, "sealed")?.expect_bool().map_err((e) => e.message())?
+    mut budget = Budget.create(bytes=16777216, elements=1048576, depth=128).map_err((e) => e.message())?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    encoded = write_rows(descriptions, records, registry, sealed, budget).map_err((e) => e.message())?
+    return Ok(hexlify(encoded) == text(example, "input_hex")?)
+
+
+def property_value(description: JsonValue, name: str) -> Result[JsonValue, str]:
+    """Read the independent tagged metadata notation, without using production description admission."""
+    for item in array(description, "entries")?:
+        pair = item.expect_array().map_err((e) => e.message())?
+        if len(pair) != 2:
+            return Err("invalid writer metadata pair")
+        if text(pair[0], "value")? == name:
+            return Ok(pair[1])
+    return Err("missing writer metadata property: " + name)
+
+
+def find_description(key: str, descriptions: list[JsonValue]) -> Result[JsonValue, str]:
+    """Use the caller-supplied K labels for nested record inputs, never a computed model hash."""
+    for description in descriptions:
+        if text(property_value(description, "nominal")?, "hex")? == key:
+            return Ok(description)
+    return Err("missing writer input description")
+
+
+def record_value(record: JsonValue, descriptions: list[JsonValue]) -> Result[Value, str]:
+    """Attach explicitly authored field facts to stored values; do not construct or normalize a model."""
+    description = find_description(text(record, "selector_hex")?, descriptions)?
+    if let Some(tag) = record.get("variant_id"):
+        identity = tag.expect_str().map_err((e) => e.message())?
+        for variant in array(property_value(description, "variants")?, "items")?:
+            if text(property_value(variant, "id")?, "hex")? == identity:
+                fields = record_fields(record, variant, descriptions)?
+                return Ok(Value.Enum(hex_bytes(identity)?, fields))
+        return Err("missing writer input variant")
+    return Ok(Value.Record(record_fields(record, description, descriptions)?))
+
+
+def record_fields(
+    record: JsonValue,
+    description: JsonValue,
+    descriptions: list[JsonValue],
+) -> Result[list[ValueField], str]:
+    """Field identities match independent metadata; canonical/absence flags are copied from that input."""
+    mut output: list[ValueField] = []
+    declared = array(property_value(description, "fields")?, "items")?
+    for item in array(record, "fields")?:
+        identity = text(item, "id")?
+        mut found = false
+        for member in declared:
+            if text(property_value(member, "id")?, "hex")? == identity:
+                flag = field(property_value(member, "canonical")?, "value")?
+                canonical = flag.expect_bool().map_err((e) => e.message())?
+                absent = absence(text(property_value(member, "absent")?, "value")?)?
+                output.append(
+                    ValueField(
+                        identity=hex_bytes(identity)?,
+                        canonical=canonical,
+                        absent=absent,
+                        value=row_value(field(item, "value")?, descriptions)?,
+                    ),
+                )
+                found = true
+        if not found:
+            return Err("missing writer input field")
+    return Ok(output)
+
+
+def row_value(value: JsonValue, descriptions: list[JsonValue]) -> Result[Value, str]:
+    """Translate nested logical input notation without decoding any expected physical bytes."""
+    kind = text(value, "kind")?
+    match kind:
+        "record" | "enum" => return record_value(value, descriptions)
+        "some" => return Ok(Value.Some([row_value(field(value, "value")?, descriptions)?]))
+        "list" => return Ok(Value.List(row_items(array(value, "items")?, descriptions)?))
+        "tuple" => return Ok(Value.Tuple(row_items(array(value, "items")?, descriptions)?))
+        "set" => return Ok(Value.Set(row_items(array(value, "items")?, descriptions)?))
+        "map" =>
+            mut entries: list[MapEntry] = []
+            for item in array(value, "entries")?:
+                pair = item.expect_array().map_err((e) => e.message())?
+                if len(pair) != 2:
+                    return Err("writer map pair")
+                entries.append(MapEntry(key=row_value(pair[0], descriptions)?, value=row_value(pair[1], descriptions)?))
+            return Ok(Value.Map(entries))
+        "union" =>
+            return Ok(
+                Value.Union(
+                    selector_text(text(value, "member_type")?)?,
+                    [row_value(field(value, "value")?, descriptions)?],
+                ),
+            )
+        _ => return logical(value)
+
+
+def row_items(items: list[JsonValue], descriptions: list[JsonValue]) -> Result[list[Value], str]:
+    """Preserve the independent input sequence; production code owns its physical ordering rules."""
+    mut values: list[Value] = []
+    for item in items:
+        values.append(row_value(item, descriptions)?)
+    return Ok(values)
