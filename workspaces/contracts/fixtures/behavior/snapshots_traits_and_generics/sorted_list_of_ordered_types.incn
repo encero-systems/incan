@@ -1,4 +1,4 @@
-# behavior: sorted() orders a list whose element type has a total order: a model, enum and newtype that derive Ord, and tuples, lists and Options of ordered values
+# behavior: sorted() and direct ordering operators order values whose element types have a total order: a model, enum and newtype that derive Ord, and mixed and nested tuples (#2799), lists and Options of ordered values
 # expect-stdout:
 #   a
 #   true
@@ -25,6 +25,12 @@ type Rank = newtype int
 
 
 def main() -> None:
+    first = (0, "a", "x")
+    second = (1, "a", "x")
+    assert first < second
+    assert (1, "a", (2, false)) <= (1, "a", (2, true))
+    assert (2, "a", (0, false)) > (1, "z", (9, true))
+    assert (2, "b", (0, false)) >= (2, "a", (9, true))
     tasks = sorted([Task(priority=2, name="b"), Task(priority=1, name="a")])
     println(tasks[0].name)
     levels = sorted([Level.High, Level.Low])
