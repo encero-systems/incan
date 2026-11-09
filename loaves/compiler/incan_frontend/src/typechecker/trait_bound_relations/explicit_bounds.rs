@@ -99,6 +99,9 @@ impl TypeChecker {
         {
             return true;
         }
+        if self.trait_self_satisfies_own_bound(ty, bound, bindings) {
+            return true;
+        }
         if bound.name == builtin_traits::as_str(TraitId::Awaitable) {
             let expected_output = bound
                 .type_args
@@ -147,6 +150,42 @@ impl TypeChecker {
             return self.type_satisfies_explicit_bound(ty, &bound.name);
         }
         self.type_satisfies_nominal_trait_bound_with_args(ty, &bound.name, &expected_args)
+    }
+
+    /// Return whether an open `Self` inside a trait default satisfies that trait with the same type arguments.
+    ///
+    /// `Self` represents the eventual adopter while the default body is checked, so no concrete adoption record
+    /// exists yet. The active trait declaration is nevertheless the exact contract every adopter must satisfy. This
+    /// admits only that declaration and its own open generic parameters; another trait or another instantiation must
+    /// still be proved independently.
+    fn trait_self_satisfies_own_bound(
+        &self,
+        ty: &ResolvedType,
+        required: &TypeBoundInfo,
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> bool {
+        if !matches!(ty, ResolvedType::SelfType) {
+            return false;
+        }
+        let Some(trait_name) = self.current_trait_name.as_ref() else {
+            return false;
+        };
+        let Some(trait_info) = self.lookup_semantic_trait_info(trait_name) else {
+            return false;
+        };
+        let active = TypeBoundInfo {
+            name: trait_name.clone(),
+            source_name: self.trait_bound_source_name(trait_name),
+            type_args: trait_info
+                .type_params
+                .iter()
+                .map(|parameter| ResolvedType::TypeVar(parameter.clone()))
+                .collect(),
+            module_path: self.trait_bound_module_path(trait_name),
+            implementation_type_params: Vec::new(),
+            inferred: false,
+        };
+        self.type_bound_names_match(&active, required) && self.type_bound_args_match(&active, required, bindings)
     }
 
     /// Delegate a source-trait bound through a canonical ownership view when that view exposes the whole trait.
