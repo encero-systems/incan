@@ -718,7 +718,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         let canonical = self
             .type_info
-            .resolved_identity(span)
+            .resolved_adopted_default_identity(span)
+            .or_else(|| self.type_info.resolved_identity(span))
+            .or_else(|| self.type_info.traits.self_method_identities.get(&span))
             .filter(|identity| identity.kind == SemanticSourceTargetKind::Method)
             .cloned();
         let Some(canonical) = canonical else {
