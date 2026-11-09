@@ -158,6 +158,7 @@ fn generic_holder_declaration(
         public: true,
         has_field_defaults: false,
         field_default_body: None,
+        validated_constructor: None,
         method_partial_defaults: Vec::new(),
         derives: Vec::new(),
         named_type_identities: Default::default(),
@@ -208,5 +209,48 @@ fn field_record_metadata_round_trips_and_is_revalidated() -> Result<(), Box<dyn 
         .cloned()
         .ok_or("missing nominal declaration")?;
     assert!(!module.is_well_formed_nominal_declaration(&invalid));
+    Ok(())
+}
+
+/// Validated construction retains exact generated and source identities through the executable representation.
+#[test]
+fn validated_constructor_round_trips_and_rejects_another_generated_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let mut owner = identity("Checked", 2);
+    owner.origin = SymbolOrigin::Module(vec!["lib".into()]);
+    owner.kind = SemanticSourceTargetKind::Model;
+    owner.declaration_span = HirSourceSpan::new(200, 499);
+    let mut field = identity("value", 3);
+    field.origin = owner.origin.clone();
+    field.namespace = SymbolNamespace::Member;
+    field.kind = SemanticSourceTargetKind::Field;
+    field.declaration_span = HirSourceSpan::new(240, 260);
+    let mut validator = identity("validate", 4);
+    validator.origin = owner.origin.clone();
+    validator.namespace = SymbolNamespace::Member;
+    validator.kind = SemanticSourceTargetKind::Method;
+    validator.declaration_span = HirSourceSpan::new(300, 399);
+    let mut declaration = generic_holder_declaration(owner.clone(), field);
+    declaration.name = "Checked".into();
+    declaration.fields = vec!["value".into()];
+    declaration.derives = vec![incan_lang::lang::derives::as_str(incan_lang::lang::derives::DeriveId::Validate).into()];
+    declaration.validated_constructor = Some(crate::body_ir::ValidatedConstructor {
+        constructor: owner.generated_member(
+            incan_lang::lang::conventions::NEW_METHOD,
+            SemanticSourceTargetKind::Method,
+        ),
+        validator,
+        required_fields: vec![0],
+    });
+    let mut module = module(Vec::new());
+    module.nominal_declarations.push(declaration.clone());
+    assert!(module.is_well_formed_nominal_declaration(&declaration));
+    assert_eq!(decode_module(&encode_module(&module)?)?, module);
+
+    let contract = declaration
+        .validated_constructor
+        .as_mut()
+        .ok_or("missing validated constructor")?;
+    contract.constructor.declaration_span = HirSourceSpan::new(500, 599);
+    assert!(!module.is_well_formed_nominal_declaration(&declaration));
     Ok(())
 }

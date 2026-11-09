@@ -4,7 +4,8 @@ use super::*;
 
 /// Admit serde derives only after checked derive metadata resolves all selections to canonical supported paths, Copy
 /// only after checking accepted it for every field, and `@rust.derive(...)` only when checking classified every derive
-/// it names as a Rust builtin retained among the model's derives. A field alias crosses the boundary in the retained
+/// it names as a Rust builtin retained among the model's derives. `Validate` is a checked semantic derive whose exact
+/// constructor contract crosses in the nominal declaration. A field alias crosses the boundary in the retained
 /// declaration, so a serde form can rename the field as legacy does.
 pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &TypeCheckInfo) -> bool {
     if model.decorators.iter().all(|decorator| {
@@ -57,6 +58,7 @@ pub(super) fn has_checked_native_derives(
                         | DeriveId::PartialOrd
                         | DeriveId::Default
                         | DeriveId::Display
+                        | DeriveId::Validate
                 )
             )
             || [
@@ -225,7 +227,7 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
         && decorator.type_args.is_empty()
         && decorator.args.iter().all(|argument| {
             matches!(argument, ast::DecoratorArg::Positional(value) if matches!(&value.node,
-                ast::Expr::Ident(name) if matches!(derives::from_str(name), Some(DeriveId::Debug | DeriveId::Clone | DeriveId::Eq | DeriveId::PartialEq | DeriveId::Hash | DeriveId::Ord | DeriveId::PartialOrd | DeriveId::Default | DeriveId::Display))))
+                ast::Expr::Ident(name) if matches!(derives::from_str(name), Some(DeriveId::Debug | DeriveId::Clone | DeriveId::Eq | DeriveId::PartialEq | DeriveId::Hash | DeriveId::Ord | DeriveId::PartialOrd | DeriveId::Default | DeriveId::Display | DeriveId::Validate))))
         })
 }
 

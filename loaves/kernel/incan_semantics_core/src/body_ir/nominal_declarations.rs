@@ -102,6 +102,21 @@ pub struct FieldMetadata {
     pub has_default: bool,
 }
 
+/// Checked semantic contract for a model's compiler-generated validated constructor.
+///
+/// The constructor and validator identities are retained separately because the first has no source body while the
+/// second must resolve to exactly one executable method body. Required field slots are the generated constructor's
+/// complete parameter order; every other field must be supplied by its declaration-owned default frame.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ValidatedConstructor {
+    /// Exact compiler-generated `new` member selected at a checked call site.
+    pub constructor: CanonicalSymbolId,
+    /// Exact source `validate(self)` method whose `Result` is the constructor result.
+    pub validator: CanonicalSymbolId,
+    /// Canonical field slots without defaults, in declaration order.
+    pub required_fields: Vec<usize>,
+}
+
 /// The exact local declaration and canonical field layout for one direct-executable model, class, or raw newtype.
 ///
 /// The record belongs to its declaring module and excludes enums. Nominal owners retain ordered type parameters for
@@ -179,6 +194,10 @@ pub struct NominalDeclaration {
     /// a checked constructor binding. Older artifacts without this frame must refuse omitted fields.
     #[serde(default)]
     pub field_default_body: Option<Box<Body>>,
+    /// Checked `@derive(Validate)` construction contract, absent when the model defines its own `new` or does not
+    /// derive validation. A consumer must match the exact constructor identity before executing this fact.
+    #[serde(default)]
+    pub validated_constructor: Option<ValidatedConstructor>,
     /// Declaration-owned frames of the owner's method partials, one per partial binding, each selected at a call only
     /// together with its exact target method identity.
     #[serde(default)]
@@ -285,6 +304,7 @@ pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
         public: true,
         has_field_defaults: false,
         field_default_body: None,
+        validated_constructor: None,
         method_partial_defaults: Vec::new(),
         display_method: None,
         newtype_deserialize: NewtypeDeserialize::Unselected,
@@ -335,6 +355,7 @@ pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Opti
         public: true,
         has_field_defaults: false,
         field_default_body: None,
+        validated_constructor: None,
         method_partial_defaults: Vec::new(),
         display_method: None,
         newtype_deserialize: NewtypeDeserialize::Unselected,

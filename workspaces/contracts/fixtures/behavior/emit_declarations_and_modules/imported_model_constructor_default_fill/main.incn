@@ -1,4 +1,4 @@
-# behavior: imported models retain defaults, factories, enum fields and unimported collection owners, and a public direct Rust reexport keeps a return-only generic callable with explicit type arguments (#1530, #2256, RFC 171)
+# behavior: imported models retain defaults, generated validated construction, factories, enum fields and unimported collection owners, and a public direct Rust reexport keeps a return-only generic callable with explicit type arguments (#1530, #2256, #2811, RFC 171)
 # expect-stdout:
 #   7 none 0
 #   0 named 1
@@ -32,9 +32,22 @@
 #   11
 #   visible
 #   ["visible"]
+#   2 kept true
+#   too large
 
 from records import (
-    BufferedRecord, Record, State, entries, make_factory, packet, refused, reply, replies, reply_table, wrapped_replies,
+    BufferedRecord,
+    CheckedRecord,
+    Record,
+    State,
+    entries,
+    make_factory,
+    packet,
+    refused,
+    reply,
+    replies,
+    reply_table,
+    wrapped_replies,
 )
 from std.testing import fail_t
 
@@ -46,7 +59,8 @@ def label() -> str:
 
 
 def main() -> None:
-    """Check model defaults, then consume nominal results without importing their type.
+    """
+    Check model defaults, then consume nominal results without importing their type.
 
     1. Defaults preserve supplied values and allocate fresh collection fields.
     2. Function-only imports keep their nominal payloads and selected static constructors.
@@ -71,6 +85,7 @@ def main() -> None:
     show_composed_replies()
     assert packet().domain.value() == "target"
     show_unimported_entries()
+    show_validated_construction()
 
 
 def show_replies() -> Result[None, str]:
@@ -118,7 +133,7 @@ def show_collection_fields() -> None:
     values = {"kept": [2, 1]}
     println(sorted(values["kept"])[0])
     println(sum(values["kept"]))
-    println(f"{min(values['kept'])} {max(values['kept'])}")
+    println(f"{min(values["kept"])} {max(values["kept"])}")
     combined = values["kept"] + [3]
     println(combined[2])
     for index, _number in enumerate(values["kept"]):
@@ -144,3 +159,13 @@ def show_unimported_entries() -> None:
         println(item.value)
     values = [item.value for item in entries()]
     println(f"{values:?}")
+
+
+def show_validated_construction() -> None:
+    """Construct an imported model through its generated validator and declaration-owned defaults."""
+    match CheckedRecord.new(value=2):
+        Ok(value) => println(f"{value.value} {value.label} {value.enabled}")
+        Err(error) => println(error)
+    match CheckedRecord.new(10):
+        Ok(_value) => println("accepted")
+        Err(error) => println(error)
