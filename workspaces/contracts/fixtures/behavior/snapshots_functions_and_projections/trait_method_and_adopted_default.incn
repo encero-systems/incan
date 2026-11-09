@@ -10,7 +10,7 @@ trait Labeled:
 
 
 class Item with Labeled:
-    value: str
+    pub value: str
 
     def label(self) -> str:
         return self.value
@@ -22,7 +22,7 @@ trait Named:
 
 
 class Plain with Named:
-    value: str
+    pub value: str
 
 
 def describe[T with Labeled](x: T) -> str:

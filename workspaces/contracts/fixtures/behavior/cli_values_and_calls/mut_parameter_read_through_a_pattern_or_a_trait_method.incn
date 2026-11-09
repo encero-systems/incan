@@ -16,7 +16,7 @@ trait Peek:
 
 
 class Counter with Peek:
-    n: int
+    pub n: int
 
     def peek(self) -> int:
         return self.n

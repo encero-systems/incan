@@ -19,6 +19,10 @@ class Cursor:
 class Wrapper:
     _cursor: Cursor
 
+    @staticmethod
+    pub def create(cursor: Cursor) -> Wrapper:
+        return Wrapper(_cursor=cursor)
+
     pub def merge(self, other: Self) -> Self:
         return Wrapper(_cursor=self._cursor.join(other._cursor, true))
 
@@ -27,8 +31,8 @@ class Wrapper:
 
 
 def main() -> None:
-    left = Wrapper(_cursor=Cursor(name="left"))
-    right = Wrapper(_cursor=Cursor(name="right"))
+    left = Wrapper.create(Cursor(name="left"))
+    right = Wrapper.create(Cursor(name="right"))
     merged = left.merge(right)
     println(merged.label())
     println(left.label())

@@ -14,10 +14,15 @@ model MixedSettings:
 
 class RuntimeSettings:
     pub region: str
-    retries: int
+    pub retries: str
 
 class RuntimeSettingsChild extends RuntimeSettings:
     pub label: str
+
+
+class PrivateSettings:
+    pub label: str
+    hidden: int = 3
 
 
 def describe_mixed(value: str | int | bool) -> str:
@@ -94,7 +99,7 @@ def assert_class_overlay(settings: RuntimeSettingsChild) -> None:
     items: list[tuple[str, str]] = settings.__field_items__()
 
     assert describe_class_option(region) == "str:eu-west-1"
-    assert describe_class_option(retries) == "missing"
+    assert describe_class_option(retries) == "str:3"
     assert describe_class_option(label) == "str:prod"
     assert describe_class_option(missing) == "missing"
     mut names: list[str] = []
@@ -102,11 +107,22 @@ def assert_class_overlay(settings: RuntimeSettingsChild) -> None:
     for name, value in items:
         names.append(name)
         values.append(value)
-    assert names == ["region", "label"]
-    assert values == ["eu-west-1", "prod"]
+    assert names == ["region", "retries", "label"]
+    assert values == ["eu-west-1", "3", "prod"]
+
+
+def assert_private_class_overlay(settings: PrivateSettings) -> None:
+    label: Option[str] = settings.__field_value__("label")
+    hidden: Option[str] = settings.__field_value__("hidden")
+    items: list[tuple[str, str]] = settings.__field_items__()
+
+    assert describe_class_option(label) == "str:prod"
+    assert describe_class_option(hidden) == "missing"
+    assert items == [("label", "prod")]
 
 
 def main() -> None:
     assert_uniform_model(UniformSettings(region="eu-west-1", profile="prod"))
     assert_mixed_model(MixedSettings(region="eu-west-1", retries=3, enabled=true))
-    assert_class_overlay(RuntimeSettingsChild(region="eu-west-1", retries=3, label="prod"))
+    assert_class_overlay(RuntimeSettingsChild(region="eu-west-1", retries="3", label="prod"))
+    assert_private_class_overlay(PrivateSettings(label="prod"))

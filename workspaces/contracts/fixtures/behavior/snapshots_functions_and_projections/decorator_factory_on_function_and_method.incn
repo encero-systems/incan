@@ -18,7 +18,7 @@ def decorated_total(first: int, second: int) -> int:
 
 
 class Box:
-    base: int
+    pub base: int
 
     @preserve()
     pub def total(self, extra: int) -> int:
