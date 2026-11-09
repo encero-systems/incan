@@ -54,17 +54,18 @@ pub def read_group(
             )
         else:
             #2801: keep stored fields addressed through their descriptor place.
-            columns.append(
-                read_column(
-                    dictionary.entries[index].fields[position].shape.storage_type,
-                    dictionary.entries[index].fields[position].shape.absent,
-                    rows,
-                    raw,
-                    column_origin,
-                    dictionary,
-                    budget,
-                ).map_err((e) => in_field(e, dictionary.entries[index].fields[position].shape.identity))?,
-            )
+            # #2831: attach error context without capturing the complete dictionary on success.
+            match read_column(
+                dictionary.entries[index].fields[position].shape.storage_type,
+                dictionary.entries[index].fields[position].shape.absent,
+                rows,
+                raw,
+                column_origin,
+                dictionary,
+                budget,
+            ):
+                Ok(column) => columns.append(column)
+                Err(error) => return Err(in_field(error, dictionary.entries[index].fields[position].shape.identity))
     return Ok(GroupData(description=index, rows=rows, columns=columns))
 
 
@@ -84,9 +85,10 @@ pub def group_value(
     for field_index in range(len(dictionary.entries[index].fields)):
         budget.charge_elements(1).map_err((e) => primitive(e, 0))?
         budget.charge_bytes(48).map_err((e) => primitive(e, 0))?
-        value = column_at(group.columns[field_index], position, dictionary, budget).map_err(
-            (e) => in_field(e, dictionary.entries[index].fields[field_index].shape.identity),
-        )?
+        value = match column_at(group.columns[field_index], position, dictionary, budget):
+            Ok(value) => value
+            Err(error) => return Err(in_field(error, dictionary.entries[index].fields[field_index].shape.identity))
+
         fields.append(
             ValueField(
                 identity=dictionary.entries[index].fields[field_index].shape.identity,
