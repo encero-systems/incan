@@ -10,6 +10,7 @@ from crate.primitives.views import MappedView
 
 pub def validate_pack(view: MappedView, width: int, count: int, origin: int, mut budget: Budget) -> Result[None, ColumnError]:
     """Check exact packed length and unused final bits before any direct access is allowed."""
+    budget.charge_elements(width).map_err((e) => primitive(e, origin))?
     length = packed_length(width, count).map_err((e) => primitive(e, origin))?
     if length != view.len():
         return Err(shared(row_failure(RowFailure.Truncated, origin + view.len())))
