@@ -1,0 +1,76 @@
+"""Incremental digest output with explicit bounded capture and counting modes."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.framing import encode_unsigned
+from crate.primitives.hash import Sha256Hasher, sha256
+from crate.primitives.text import encode_utf8
+
+
+pub enum OutputMode:
+    """Capture is for inspecting exact preimages; ordinary hashing never retains the full output."""
+
+    Hash
+    Capture
+    Count
+
+
+pub class HashOutput:
+    """A private operation's output state; only a completely successful traversal returns its digest."""
+
+    mode: OutputMode
+    hasher: Sha256Hasher
+    data: list[u8]
+    length: int = 0
+
+    @staticmethod
+    pub def create(mode: OutputMode) -> Self:
+        """Start independent output; nested contributions share this output and their caller's budget."""
+        return HashOutput(mode=mode, hasher=sha256.new(), data=[])
+
+    pub def write(mut self, chunk: bytes, mut budget: Budget) -> Result[None, CrumbError]:
+        """Charge before processing or retaining bytes, and check length arithmetic before incrementing."""
+        budget.charge_bytes(len(chunk))?
+        if len(chunk) > 9223372036854775807 - self.length:
+            return Err(CrumbError.limit("output length"))
+        self.length += len(chunk)
+        if self.mode != OutputMode.Count:
+            self.hasher.update(chunk)
+        if self.mode == OutputMode.Capture:
+            for byte in chunk:
+                self.data.append(byte.saturating_resize[u8]())
+        return Ok(None)
+
+    pub def count(self) -> int:
+        """Return processed octets, usable for framing a repeatable logical contribution."""
+        return self.length
+
+    pub def digest(mut self, mut budget: Budget) -> Result[bytes, CrumbError]:
+        """Finish only a hashing mode; counting must never return an empty-input digest as success."""
+        if self.mode == OutputMode.Count:
+            return Err(CrumbError.invalid_input("counting output has no digest"))
+        budget.charge_bytes(32)?
+        return Ok(self.hasher.finalize_bytes())
+
+    pub def captured(self, mut budget: Budget) -> Result[Option[bytes], CrumbError]:
+        """Return an independent captured preimage only when the caller explicitly requested capture."""
+        if self.mode != OutputMode.Capture:
+            return Ok(None)
+        budget.charge_bytes(self.length)?
+        copy: bytes = self.data.clone()
+        return Ok(Some(copy))
+
+    pub def unsigned(mut self, value: int, mut budget: Budget) -> Result[None, CrumbError]:
+        """Write an exact nonnegative count with the shared shortest-U implementation."""
+        return self.write(encode_unsigned(str(value), budget)?, budget)
+
+    pub def framed(mut self, value: bytes, mut budget: Budget) -> Result[None, CrumbError]:
+        """Stream a known byte length and payload separately instead of concatenating a frame."""
+        self.unsigned(len(value), budget)?
+        return self.write(value, budget)
+
+    pub def text(mut self, value: str, mut budget: Budget) -> Result[None, CrumbError]:
+        """Charge a UTF-8 upper bound before encoding, without normalizing source text."""
+        for _ in range(4):
+            budget.charge_bytes(len(value))?
+        return self.framed(encode_utf8(value), budget)
