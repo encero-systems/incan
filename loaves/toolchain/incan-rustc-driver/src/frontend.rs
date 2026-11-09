@@ -109,6 +109,8 @@ struct RuntimeDependencyContext {
     /// Why each requested root is requested: checked source, a selected default or a runtime operation.
     origins: BTreeMap<CanonicalSymbolId, RootOrigin>,
     checked_local: BTreeSet<CanonicalSymbolId>,
+    /// Exact selected versions from the authenticated executable-resolution closure.
+    package_versions: BTreeMap<String, String>,
     package: String,
     authored: Vec<BodyIrModule>,
     sources: Vec<String>,
@@ -459,6 +461,7 @@ fn lower_compilation_plan(
             sources: program.sources.clone(),
             files: program.files.clone(),
             tests: program.tests.iter().map(|test| test.name.clone()).collect(),
+            package_versions: program.dependencies.package_versions.clone(),
             overflow_checks,
         };
         let mut attempt_unions = Vec::new();
@@ -526,6 +529,7 @@ fn census_complete(
                 sources: program.sources.clone(),
                 files: program.files.clone(),
                 tests: Vec::new(),
+                package_versions: program.dependencies.package_versions.clone(),
                 overflow_checks,
             },
             program.entry.try_into()?,
@@ -546,6 +550,7 @@ fn census_complete(
                 sources: program.sources.clone(),
                 files: program.files.clone(),
                 tests: Vec::new(),
+                package_versions: program.dependencies.package_versions.clone(),
                 overflow_checks,
             },
             program.entry.try_into()?,
