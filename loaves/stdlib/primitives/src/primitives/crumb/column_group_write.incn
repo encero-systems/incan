@@ -1,0 +1,106 @@
+"""Transpose one maximal consecutive type run without changing record order or stored field contracts."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.column_data_write import indexed_choice, write_column
+from crate.primitives.crumb.column_types import GroupChoice
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.row_buffer import RowBuffer, indexed
+from crate.primitives.crumb.row_descriptions import StoredDescription
+from crate.primitives.crumb.row_dictionary import Dictionary
+from crate.primitives.crumb.types import AbsentPolicy, NominalKind
+from crate.primitives.crumb.values import Value, ValueField
+from crate.primitives.hex import hexlify
+
+
+pub def write_group(
+    index: int,
+    description: StoredDescription,
+    values: list[Value],
+    choice: Option[GroupChoice],
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """A record has identity-ordered field columns; a root enum has one complete typed-cell column."""
+    if len(values) == 0:
+        return Err(CrumbError.invalid_input("empty column group"))
+    mut count = len(description.fields)
+    if description.kind == NominalKind.Enum:
+        count = 1
+    if let Some(plan) = choice:
+        if len(plan.columns) != count:
+            return Err(CrumbError.invalid_input("column group choice count"))
+    mut columns: list[bytes] = []
+    if description.kind == NominalKind.Enum:
+        mut selected = indexed_choice(len(values), budget)?
+        if let Some(plan) = choice:
+            selected = plan.columns[0]
+        columns.append(write_column(description.selector, AbsentPolicy.Required, values, selected, dictionary, budget)?)
+    else:
+        transposed = transpose(description, values, budget)?
+        for field_index in range(count):
+            mut selected = indexed_choice(len(values), budget)?
+            if let Some(plan) = choice:
+                selected = plan.columns[field_index]
+            #2801: observe fields through the descriptor place, not a returned borrowed list.
+            columns.append(
+                write_column(
+                    description.fields[field_index].shape.storage_type,
+                    description.fields[field_index].shape.absent,
+                    transposed[field_index],
+                    selected,
+                    dictionary,
+                    budget,
+                )?,
+            )
+    mut output = RowBuffer.create()
+    output.count(index, budget)?
+    output.append(indexed(columns, budget)?, budget)?
+    return output.finish(budget)
+
+
+def transpose(
+    description: StoredDescription,
+    values: list[Value],
+    mut budget: Budget,
+) -> Result[list[list[Value]], CrumbError]:
+    """Match each field once by exact identity, refusing duplicates, missing fields and changed contracts."""
+    mut columns: list[list[Value]] = []
+    for _ in description.fields:
+        budget.charge_elements(1)?
+        columns.append([])
+    for value in values:
+        budget.charge_elements(1)?
+        match value:
+            Value.Record(fields) =>
+                positions = field_positions(fields, budget)?
+                if len(fields) != len(description.fields):
+                    return Err(CrumbError.invalid_input("column record field count"))
+                for index in range(len(description.fields)):
+                    budget.charge_elements(1)?
+                    budget.charge_bytes(12)?
+                    key = hexlify(description.fields[index].shape.identity)
+                    if key not in positions:
+                        return Err(CrumbError.invalid_input("column record field identity"))
+                    source = positions[key]
+                    if fields[source].canonical != description.fields[index].shape.canonical:
+                        return Err(CrumbError.invalid_input("column record canonical contract"))
+                    if fields[source].absent != description.fields[index].shape.absent:
+                        return Err(CrumbError.invalid_input("column record absence contract"))
+                    columns[index].append(fields[source].value)
+            _ => return Err(CrumbError.invalid_input("column record value"))
+    return Ok(columns)
+
+
+def field_positions(fields: list[ValueField], mut budget: Budget) -> Result[dict[str, int], CrumbError]:
+    """Build an operation-local exact identity index, not a first-wins field lookup."""
+    mut positions: dict[str, int] = {}
+    for index in range(len(fields)):
+        budget.charge_elements(1)?
+        budget.charge_bytes(12)?
+        if len(fields[index].identity) != 6:
+            return Err(CrumbError.invalid_input("column field identity width"))
+        key = hexlify(fields[index].identity)
+        if key in positions:
+            return Err(CrumbError.invalid_input("duplicate column field"))
+        positions[key] = index
+    return Ok(positions)

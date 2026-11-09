@@ -1,0 +1,74 @@
+"""One complete field column with a shared dictionary and bounded independently encoded blocks."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.column_block_write import write_block
+from crate.primitives.crumb.column_dictionary import ColumnDictionary, build_keys, encode_keys
+from crate.primitives.crumb.column_presence import cell_type, present
+from crate.primitives.crumb.column_types import BlockEncoding, ColumnChoice, uses_dictionary
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.row_buffer import RowBuffer, indexed
+from crate.primitives.crumb.row_dictionary import Dictionary
+from crate.primitives.crumb.types import AbsentPolicy, TypeNode
+from crate.primitives.crumb.values import Value
+
+
+pub def block_count(rows: int) -> Result[int, CrumbError]:
+    """ceil(rows/256) without rows+255 overflow; groups must contain at least one logical row."""
+    if rows < 1:
+        return Err(CrumbError.invalid_input("empty column"))
+    mut count = rows // 256
+    if rows % 256 != 0:
+        count += 1
+    return Ok(count)
+
+
+pub def write_column(
+    node: TypeNode,
+    absent: AbsentPolicy,
+    values: list[Value],
+    choice: ColumnChoice,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """Every block shares one exact distinct-key set, even when some blocks choose plain or numeric encoding."""
+    count = block_count(len(values))?
+    if len(choice.blocks) != count:
+        return Err(CrumbError.invalid_input("column block choice count"))
+    stored_type = cell_type(node, absent, budget)?
+    budget.charge_elements(len(values))?
+    mut use_keys = false
+    for encoding in choice.blocks:
+        budget.charge_elements(1)?
+        if uses_dictionary(encoding):
+            use_keys = true
+    mut keys: Option[ColumnDictionary] = None
+    mut output = RowBuffer.create()
+    if use_keys:
+        mut stored: list[Value] = []
+        for value in values:
+            match present(value, node, absent)?:
+                Some(item) => stored.append(item)
+                None => pass
+        built = build_keys(stored_type, stored, dictionary, budget)?
+        output.octet(1, budget)?
+        output.frame(encode_keys(stored_type, built, dictionary, budget)?, budget)?
+        keys = Some(built)
+    else:
+        output.octet(0, budget)?
+    mut blocks: list[bytes] = []
+    for index in range(count):
+        start = index * 256
+        length = min([256, len(values) - start])
+        budget.charge_elements(length)?
+        selected = values[start:start + length]
+        blocks.append(write_block(node, absent, selected, choice.blocks[index], keys, dictionary, budget)?)
+    output.append(indexed(blocks, budget)?, budget)?
+    return output.finish(budget)
+
+
+pub def indexed_choice(rows: int, mut budget: Budget) -> Result[ColumnChoice, CrumbError]:
+    """An explicit simple writer policy: indexed typed cells in every nonempty logical block."""
+    count = block_count(rows)?
+    budget.charge_elements(count)?
+    budget.charge_bytes(count)?
+    return Ok(ColumnChoice(blocks=[BlockEncoding.Indexed for _ in range(count)]))

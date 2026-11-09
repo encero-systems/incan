@@ -182,3 +182,43 @@ pub def float64_bits(width: int, bits: bytes, mut budget: Budget) -> Result[byte
         for divisor in [16777216, 65536, 256, 1]:
             result.append(((word // divisor) % 256).saturating_resize[u8]())
     return Ok(result)
+
+
+pub def add_integer(left: str, right: str, mut budget: Budget) -> Result[str, CrumbError]:
+    """Add canonical signed integers exactly, without narrowing residuals or decimal coefficients."""
+    encode_signed(left, budget)?
+    encode_signed(right, budget)?
+    left_negative = left.startswith("-")
+    right_negative = right.startswith("-")
+    budget.charge_bytes(len(left))?
+    budget.charge_bytes(len(right))?
+    mut left_magnitude = left[:]
+    mut right_magnitude = right[:]
+    if left_negative:
+        left_magnitude = left[1:]
+    if right_negative:
+        right_magnitude = right[1:]
+    mut magnitude = "0"
+    mut negative = left_negative
+    if left_negative == right_negative:
+        magnitude = add_magnitudes(left_magnitude, right_magnitude, budget)?
+    elif compare_magnitude(left_magnitude, right_magnitude) >= 0:
+        magnitude = subtract_magnitudes(left_magnitude, right_magnitude, budget)?
+    else:
+        magnitude = subtract_magnitudes(right_magnitude, left_magnitude, budget)?
+        negative = right_negative
+    if negative and magnitude != "0":
+        budget.charge_bytes(len(magnitude) + 1)?
+        return Ok("-" + magnitude)
+    return Ok(magnitude)
+
+
+pub def subtract_integer(left: str, right: str, mut budget: Budget) -> Result[str, CrumbError]:
+    """Subtract signed mathematical integers, retaining the full u64 span and wider decimal results."""
+    encode_signed(right, budget)?
+    budget.charge_bytes(len(right) + 1)?
+    if right == "0":
+        return add_integer(left, "0", budget)
+    if right.startswith("-"):
+        return add_integer(left, right[1:], budget)
+    return add_integer(left, "-" + right, budget)
