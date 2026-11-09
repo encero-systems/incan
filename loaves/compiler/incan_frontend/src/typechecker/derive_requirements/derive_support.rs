@@ -310,13 +310,15 @@ impl TypeChecker {
                 self.automatic_nominal_derive(name, &class.derives, &class.traits, derive, opaque_debug)
                     .map(|derived| derived || Self::dunder_provides(&class.methods, derive))
             }
-            TypeInfo::Enum(en) => self
-                .automatic_nominal_derive(name, &en.derives, &en.traits, derive, false)
-                .map(|derived| {
-                    derived
-                        || Self::dunder_provides(&en.methods, derive)
-                        || (derive == DeriveId::PartialEq && Self::enum_has_automatic_partial_eq(en))
-                }),
+            TypeInfo::Enum(en) => {
+                let automatic = Self::enum_automatic_derives(en).contains(&derive);
+                if automatic {
+                    Some(true)
+                } else {
+                    self.automatic_nominal_derive(name, &en.derives, &en.traits, derive, false)
+                        .map(|derived| derived || Self::dunder_provides(&en.methods, derive))
+                }
+            }
             TypeInfo::Newtype(newtype) if newtype.is_rusttype => None,
             TypeInfo::Newtype(newtype) => self
                 .newtype_derive(name, newtype, derive, visiting)
@@ -341,8 +343,10 @@ impl TypeChecker {
                 .any(|field| crate::symbols::resolved_type_contains_rust_path(&field.ty))
     }
 
-    /// Whether a `model`, `class` or `enum` implements `derive` through its derives: automatic `Clone` and `Debug`
-    /// except for an opaque adapter's Debug, and other derives only when declared or implied.
+    /// Whether a nominal implements `derive` through the base automatic `Clone` and `Debug` set, or through a declared
+    /// or implied derive.
+    ///
+    /// Enum-specific automatic equality is added by [`Self::enum_automatic_derives`] before this fallback is queried.
     pub(super) fn automatic_nominal_derive(
         &self,
         name: &str,
@@ -364,19 +368,38 @@ impl TypeChecker {
         derive == DeriveId::PartialEq && methods.contains_key(magic_methods::as_str(MagicMethodId::Eq))
     }
 
-    /// Whether lowering derives `PartialEq` for an enum automatically: when it defines no `__eq__` and every payload
-    /// type is a number, `bool`, `str` or `bytes`, or a `list`, `set`, `dict`, `Option`, `Result` or tuple of those.
+    /// Return the derives lowering adds to an enum automatically.
     ///
-    /// This is the checked form of lowering's own rule (`enum_variant_payloads_default_partial_eq`), which decides the
-    /// derive on the lowered payload types; the two must agree, so a change to one is a change to both.
-    pub(in crate::typechecker) fn enum_has_automatic_partial_eq(info: &EnumInfo) -> bool {
-        !info.methods.contains_key(magic_methods::as_str(MagicMethodId::Eq))
-            && info.variant_fields.values().flatten().all(payload_defaults_partial_eq)
+    /// Every enum has `Debug` and `Clone`. Without an authored `__eq__`, payloads that support structural equality add
+    /// `PartialEq`, and those that also exclude floating point add `Eq`. This set is the single authority used by
+    /// native derive selection, operator checking and derive-member validation.
+    pub(in crate::typechecker) fn enum_automatic_derives(info: &EnumInfo) -> Vec<DeriveId> {
+        let mut automatic = vec![DeriveId::Debug, DeriveId::Clone];
+        if info.methods.contains_key(magic_methods::as_str(MagicMethodId::Eq)) {
+            return automatic;
+        }
+        if info
+            .variant_fields
+            .values()
+            .flatten()
+            .all(|payload| payload_defaults_equality(payload, DeriveId::PartialEq))
+        {
+            automatic.push(DeriveId::PartialEq);
+        }
+        if info
+            .variant_fields
+            .values()
+            .flatten()
+            .all(|payload| payload_defaults_equality(payload, DeriveId::Eq))
+        {
+            automatic.push(DeriveId::Eq);
+        }
+        automatic
     }
 
     /// Whether a comparison operator on `ty` is backed by a derive rather than a dunder: `derive` (`PartialEq` for
     /// `==` and `!=`, `PartialOrd` for the orderings) declared or implied on the type, spelled in `@rust.derive(...)`,
-    /// or, for `PartialEq`, the automatic derive of an enum.
+    /// or through the enum's automatic equality set.
     ///
     /// A dunder defines only its own operator, so the operator check dispatches a type's dunders separately and asks
     /// this only for the derived implementation.
@@ -393,8 +416,7 @@ impl TypeChecker {
             TypeInfo::Model(model) => declared(&model.derives, &model.traits),
             TypeInfo::Class(class) => declared(&class.derives, &class.traits),
             TypeInfo::Enum(en) => {
-                declared(&en.derives, &en.traits)
-                    || (derive == DeriveId::PartialEq && Self::enum_has_automatic_partial_eq(en))
+                declared(&en.derives, &en.traits) || Self::enum_automatic_derives(en).contains(&derive)
             }
             TypeInfo::Newtype(newtype) => !newtype.is_rusttype && declared(&newtype.derives, &newtype.traits),
             TypeInfo::Builtin | TypeInfo::TypeAlias => false,

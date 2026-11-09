@@ -10,7 +10,7 @@ These derives belong to every declaration of the kind, without `@derive(...)`:
 | --- | --- |
 | `model` | `Debug`, `Clone` |
 | `class` | `Debug`, `Clone` |
-| `enum` | `Debug`, `Clone`; `PartialEq` when every payload type is a number, `bool`, `str` or `bytes`, or a `list`, `set`, `dict`, `Option`, `Result` or tuple of those |
+| `enum` | `Debug`, `Clone`; `Eq` for fieldless and value enums, and when every payload is a non-floating-point number, `bool`, `str` or `bytes`, or a `list`, `set`, `dict`, `Option`, `Result` or tuple of those; `PartialEq` for the same shapes including floating point |
 | `newtype` | `Debug` when the underlying type implements it; `Clone` as listed below; `Copy` as listed under [Copy](derives/copying_default.md#copy) |
 
 - An automatic derive satisfies a generic bound on the same trait.

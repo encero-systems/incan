@@ -1,0 +1,11 @@
+# behavior: @derive(Eq) on a model with a float field remains refused because float does not implement Eq (#2879)
+# expect-diagnostic: INCAN-T0001
+
+
+@derive(Eq)
+model Measurement:
+    value: float
+
+
+def main() -> None:
+    println(Measurement(value=1.0) == Measurement(value=1.0))
