@@ -411,6 +411,30 @@ impl TypeChecker {
         program: &Program,
         dependencies: &[(&str, &Program)],
     ) -> Result<(), Vec<CompileError>> {
+        let dependency_exports = dependencies
+            .iter()
+            .map(|(name, dep_ast)| {
+                (
+                    (*name).to_string(),
+                    Arc::<[ExportedSymbol]>::from(exported_symbols(dep_ast)),
+                )
+            })
+            .collect();
+        self.check_with_imports_and_exports(program, dependencies, dependency_exports)
+    }
+
+    /// Check a module against dependency ASTs and their precomputed immutable public-export projections.
+    ///
+    /// `dependency_exports` must be keyed exactly like `dependencies`. The projection changes only where the export
+    /// list is built: every visibility lookup still uses this checker's dependency closure and all remaining
+    /// dependency-interface state is collected from the same ASTs in the same order.
+    #[tracing::instrument(skip_all, fields(decl_count = program.declarations.len(), dep_count = dependencies.len()))]
+    pub fn check_with_imports_and_exports(
+        &mut self,
+        program: &Program,
+        dependencies: &[(&str, &Program)],
+        dependency_exports: DependencyExportInterfaces,
+    ) -> Result<(), Vec<CompileError>> {
         let prepare = tracing::trace_span!(
             target: "incan::invocation",
             "incan_frontend::prepare_dependency_interfaces",
@@ -427,7 +451,7 @@ impl TypeChecker {
         self.cached_pub_libraries.clear();
         self.foreign_pub_type_remappings.clear();
         self.pub_library_declaration_scopes.clear();
-        self.dependency_exports.clear();
+        self.dependency_exports = dependency_exports;
         self.dependency_member_symbols.clear();
         self.dependency_member_type_aliases.clear();
         self.dependency_registry_definitions.clear();
@@ -444,10 +468,6 @@ impl TypeChecker {
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
         self.record_nominal_declaring_modules(program, dependencies);
-        for (name, dep_ast) in dependencies {
-            self.dependency_exports
-                .insert(name.to_string(), exported_symbols(dep_ast));
-        }
         self.predeclare_dependency_interfaces(dependencies, true);
         drop(prepare);
         // First: import all dependencies
@@ -495,6 +515,29 @@ impl TypeChecker {
         program: &Program,
         dependencies: &[(&str, &Program)],
     ) -> Result<(), Vec<CompileError>> {
+        let dependency_exports = dependencies
+            .iter()
+            .map(|(name, dep_ast)| {
+                (
+                    (*name).to_string(),
+                    Arc::<[ExportedSymbol]>::from(exported_symbols(dep_ast)),
+                )
+            })
+            .collect();
+        self.check_standard_package_with_imports_and_exports(program, dependencies, dependency_exports)
+    }
+
+    /// Check one standard-package module against sibling ASTs and their precomputed immutable public exports.
+    ///
+    /// Complete sibling interfaces still include private declarations. The shared projection is used only by the
+    /// existing source-import visibility check, which has always admitted public exports alone.
+    #[tracing::instrument(skip_all, fields(decl_count = program.declarations.len(), dep_count = dependencies.len()))]
+    pub fn check_standard_package_with_imports_and_exports(
+        &mut self,
+        program: &Program,
+        dependencies: &[(&str, &Program)],
+        dependency_exports: DependencyExportInterfaces,
+    ) -> Result<(), Vec<CompileError>> {
         let prepare = tracing::trace_span!(
             target: "incan::invocation",
             "incan_frontend::prepare_dependency_interfaces",
@@ -511,7 +554,7 @@ impl TypeChecker {
         self.cached_pub_libraries.clear();
         self.foreign_pub_type_remappings.clear();
         self.pub_library_declaration_scopes.clear();
-        self.dependency_exports.clear();
+        self.dependency_exports = dependency_exports;
         self.dependency_member_symbols.clear();
         self.dependency_member_type_aliases.clear();
         self.dependency_registry_definitions.clear();
@@ -528,11 +571,6 @@ impl TypeChecker {
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
         self.record_nominal_declaring_modules(program, dependencies);
-        // The exports drive the import check; leaving them out let a standard module import a missing name (#2595).
-        for (name, dep_ast) in dependencies {
-            self.dependency_exports
-                .insert(name.to_string(), exported_symbols(dep_ast));
-        }
         self.predeclare_dependency_interfaces(dependencies, false);
         drop(prepare);
         {

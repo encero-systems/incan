@@ -11,9 +11,10 @@ use crate::diagnostics::{
     CliDiagnostic, CliDiagnosticFailure, CliDiagnosticSource, parser_warning_diagnostics, render_module_warnings,
     typecheck_diagnostic_phase, typecheck_warning_diagnostics,
 };
-use crate::modules::{imported_module_deps_for, module_key_index, register_module_path_segments};
+use crate::modules::{imported_module_dep_indexes_for, module_key_index, register_module_path_segments};
 use crate::unit::UnitDescription;
 use incan_frontend::loaf_index::LoafIndex;
+use incan_frontend::module::{ExportedSymbol, exported_symbols};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::{CBindingDescriptor, TypeCheckInfo};
 use incan_frontend::{diagnostics, typechecker};
@@ -55,6 +56,10 @@ pub fn typecheck_modules(
         .cloned()
         .collect::<std::collections::HashSet<_>>();
     let module_idx_by_key = module_key_index(modules);
+    let dependency_exports = modules
+        .iter()
+        .map(|module| Arc::<[ExportedSymbol]>::from(exported_symbols(&module.ast)))
+        .collect::<Vec<_>>();
     let mut diagnostics_out = Vec::new();
     let mut warnings_out = Vec::new();
     let mut type_infos = Vec::with_capacity(modules.len());
@@ -78,7 +83,20 @@ pub fn typecheck_modules(
         .collect();
 
     for (idx, module) in modules.iter().enumerate() {
-        let deps_for_module = imported_module_deps_for(modules, idx, &module_idx_by_key, own_standard_package);
+        let dep_indexes = imported_module_dep_indexes_for(modules, idx, &module_idx_by_key, own_standard_package);
+        let deps_for_module = dep_indexes
+            .iter()
+            .map(|dep_idx| (modules[*dep_idx].name.as_str(), &modules[*dep_idx].ast))
+            .collect::<Vec<_>>();
+        let exports_for_module = dep_indexes
+            .iter()
+            .map(|dep_idx| {
+                (
+                    modules[*dep_idx].name.clone(),
+                    Arc::clone(&dependency_exports[*dep_idx]),
+                )
+            })
+            .collect();
         let _module_trace = tracing::trace_span!(
             target: "incan::invocation",
             "incan_driver::typecheck_module",
@@ -104,9 +122,9 @@ pub fn typecheck_modules(
 
         // A standard package checks its complete source before publishing its public checked facade.
         let check_result = if own_standard_package.is_some() {
-            checker.check_standard_package_with_imports(&module.ast, &deps_for_module)
+            checker.check_standard_package_with_imports_and_exports(&module.ast, &deps_for_module, exports_for_module)
         } else {
-            checker.check_with_imports(&module.ast, &deps_for_module)
+            checker.check_with_imports_and_exports(&module.ast, &deps_for_module, exports_for_module)
         };
         // Warnings accumulate on the checker whether or not checking succeeded, so surface them from both arms:
         // a module that also has an error should not hide its warnings from the user or from the report.
