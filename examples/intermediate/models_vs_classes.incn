@@ -27,11 +27,10 @@ Key differences:
 """
 
 from std.serde import json
-
-
 # ============================================
 # MODEL: Data-first — fields are the primary concern
 # ============================================
+
 
 # Simple data container — like a Python dataclass
 model Point:
@@ -59,9 +58,10 @@ model ApiResponse:
 # CLASS: Behavior-first — methods are the primary concern
 # ============================================
 
+
 # Trait that classes can implement
 trait Describable:
-    def describe(self) -> str: ...
+    def describe(self) -> str
 
 
 # Class with behavior and trait implementation
@@ -81,6 +81,10 @@ class Pet extends Animal:
     species: str
     owner: str
 
+    @staticmethod
+    pub def new(name: str, age: int, species: str, owner: str) -> Pet:
+        return Pet(name=name, age=age, species=species, owner=owner)
+
     # Override parent's describe method
     def describe(self) -> str:
         return f"{self.name} the {self.species}, owned by {self.owner}"
@@ -99,29 +103,29 @@ def main() -> None:
 
     # --- Models: Simple data containers ---
     println("--- Models (data-first) ---")
-    
+
     point = Point(x=10, y=20)
     println(f"Point: ({point.x}, {point.y})")
-    
+
     user = User(id=1, name="Alice", email="alice@example.com")
     println(f"User: {user.name} <{user.email}>")
-    
+
     response = ApiResponse(success=true, message="OK", data=Some("payload"))
     println(f"Response: success={response.success}")
-    
+
     println("")
 
     # --- Classes: Objects with behavior ---
     println("--- Classes (behavior-first) ---")
-    
+
     mut animal = Animal(name="Buddy", age=3)
     println(animal.describe())
     animal.have_birthday()
     println(f"After birthday: {animal.describe()}")
-    
+
     println("")
-    
-    mut pet = Pet(name="Whiskers", age=2, species="cat", owner="Bob")
+
+    mut pet = Pet.new(name="Whiskers", age=2, species="cat", owner="Bob")
     println(pet.describe())
     new_name: str = "Fluffy"
     pet.rename(new_name)

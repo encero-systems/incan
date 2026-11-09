@@ -25,7 +25,7 @@ class Hooks with Callbacks, Reporter:
     """Count the host's calls and add this instance's flag on each one."""
 
     pub calls: int = 0
-    flag: str
+    pub flag: str
 
     def config(mut self, mut config: &mut Config) -> None:
         """Record the call and add the flag to the configuration the host lends."""

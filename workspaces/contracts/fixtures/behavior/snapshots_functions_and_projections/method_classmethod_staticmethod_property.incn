@@ -8,7 +8,7 @@
 from std.datetime import DateTime
 
 class Counter:
-    value: int
+    pub value: int
 
     pub def next(self) -> int:
         return self.value + 1

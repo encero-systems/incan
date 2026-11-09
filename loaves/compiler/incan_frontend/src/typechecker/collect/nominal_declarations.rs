@@ -76,20 +76,26 @@ impl TypeChecker {
         let mut methods = collect_methods_from_overloads(&method_overloads);
 
         let derives = self.extract_derive_names(&model.decorators);
+        let owner = self
+            .symbols
+            .module_declaration_identity(&model.name, SemanticSourceTargetKind::Model, span);
         let field_order: Vec<Ident> = model
             .fields
             .iter()
             .filter(|field| self.member_binding_is_active(field.span))
             .map(|field| field.node.name.clone())
             .collect();
-        inject_validate_methods(
+        if let Some(constructor) = inject_validate_methods(
             &mut methods,
             &mut method_overloads,
-            &model.name,
+            &owner,
             &fields,
             &field_order,
             &derives,
-        );
+        ) {
+            self.type_info
+                .record_compiler_generated_member_identity(constructor, owner);
+        }
         let method_aliases = collect_method_aliases(&model.method_aliases, self, &mut methods, &mut method_overloads);
         self.collect_method_partials(&model.name, &model.method_partials, &mut methods, &mut method_overloads);
         let mut trait_adoptions =

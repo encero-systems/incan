@@ -332,7 +332,7 @@ pub def set_method(
     """Lower one checker-selected set operation without interpreting canonical text."""
     match method:
         RustSetMethodId.Contains => return collection_contains(builder, false, arguments, destination, span)
-        RustSetMethodId.Add => return collection_insert_method(builder, "Set.add", arguments, span)
+        RustSetMethodId.Add => return collection_insert_method(builder, "Set.add", arguments, destination, span)
 
 
 pub def dictionary_method(
@@ -346,7 +346,7 @@ pub def dictionary_method(
     if method == RustDictMethodId.ContainsKey:
         return collection_contains(builder, false, arguments, destination, span)
     if method == RustDictMethodId.Insert:
-        return collection_insert_method(builder, "Dict.insert", arguments, span)
+        return collection_insert_method(builder, "Dict.insert", arguments, destination, span)
     receiver = shared_receiver_place(builder, arguments, 0, span)?
     ty = place_type(builder.locals, receiver)
     if method == RustDictMethodId.Get and len(arguments) == 2:
@@ -368,13 +368,15 @@ def collection_insert_method(
     mut builder: Builder,
     member: str,
     arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
     Insert the evaluated arguments into a set or dictionary receiver.
 
     A static receiver's snapshot is read only after the arguments and committed after the insertion, as a static list
-    method's is.
+    method's is. A call retained as an expression initializes its checked Unit destination after the mutation; an
+    argument that propagated an error has already returned before this call is lowered.
     """
     types = collection_arguments(argument_type(builder, arguments, 0, span)?)
     if len(arguments) != len(types) + 1:
@@ -385,13 +387,16 @@ def collection_insert_method(
     for slot in range(len(types)):
         argument = argument_value(builder, arguments, slot + 1, span)?
         operands.append(element_plan_operand(builder, argument, types[slot], span)?)
+    output = call_destination(builder, destination, PlanType.Unit, span)?
     match static_collection_receiver(builder, arguments, true, span)?:
         Some((global, receiver)) =>
             insert_collection(builder, receiver, operands, span)?
-            return persist_static_value(builder, global, receiver, span)
-        None => pass
-    receiver = argument_place(builder, arguments, 0, span)?
-    return insert_collection(builder, receiver, operands, span)
+            persist_static_value(builder, global, receiver, span)?
+        None =>
+            receiver = argument_place(builder, arguments, 0, span)?
+            insert_collection(builder, receiver, operands, span)?
+    builder.emit(plan_assign(output, RvalueKind.Use(literal(Constant.Unit, span)), span))
+    return Ok(None)
 
 
 def optional_dictionary_get(

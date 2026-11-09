@@ -258,8 +258,12 @@ def call_callback(
         return Err("unsupported Body IR Result combinator callback signature")
     prepared, held = callback_argument(builder, argument, payload, signature[0], span)?
     match ty:
-        (PlanType.Closure(_signature) | PlanType.ClosureRef(_signature)) =>
-            call_closure(builder, callback, signature, [prepared], output, span)?
+        (
+            PlanType.Closure(_signature)
+            | PlanType.ClosureRef(_signature)
+            | PlanType.BorrowingClosure(_signature)
+            | PlanType.BorrowingClosureRef(_signature)
+        ) => call_closure(builder, callback, signature, [prepared], output, span)?
         _ =>
             lower_callable_result(
                 builder,
@@ -299,8 +303,10 @@ def shared_callback_parameter(payload: PlanType, parameter: PlanType) -> bool:
     match payload:
         PlanType.List(leaf, depth) => return parameter == PlanType.ListRef(leaf, depth)
         _ => pass
-    return is_collection(payload) and collection_owned(payload) == payload and (
-        parameter == collection_reference(payload, false)
+    return (
+        is_collection(payload)
+        and collection_owned(payload) == payload
+        and (parameter == collection_reference(payload, false))
     )
 
 

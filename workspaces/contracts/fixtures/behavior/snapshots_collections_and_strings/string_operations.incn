@@ -1,4 +1,4 @@
-# behavior: str methods for case, contains, split, replace, slicing, prefix and suffix tests, join and += concatenation give their results
+# behavior: str methods for case, contains, split, replace, Unicode scalar indexing and bounded slicing without unused suffix scans (#2851), prefix and suffix tests, join and += concatenation give their results
 # expect-stdout:
 #   HELLO WORLD hello world Hello World
 #   true false
@@ -43,6 +43,32 @@ def test_string_slice() -> None:
     text: str = "héllo"
     mid: str = text.__slice__(1, -1)
     println(mid)
+
+    ascii: str = "abcdef"
+    assert ascii[0] == "a"
+    assert ascii[-1] == "f"
+    assert ascii[0:1] == "a"
+    assert ascii[2:5] == "cde"
+    assert ascii[:3] == "abc"
+    assert ascii[3:] == "def"
+    assert ascii[::2] == "ace"
+    assert ascii[::-1] == "fedcba"
+    assert ascii[4:1:-2] == "ec"
+    assert ascii[-3:-1] == "de"
+    assert ascii[-99:2] == "ab"
+    assert ascii[99:100] == ""
+    assert ascii[4:2] == ""
+
+    unicode: str = "Aé🙂éZ"
+    assert unicode[1:5] == "é🙂é"
+    assert unicode[2] == "🙂"
+    assert unicode[-2] == "́"
+    assert unicode[2:3] == "🙂"
+    assert unicode[3:5] == "é"
+    assert unicode[:-1] == "Aé🙂é"
+    assert unicode[-3:] == "éZ"
+    assert unicode[1::2] == "éeZ"
+    assert unicode[::-1] == "Źe🙂éA"
 
 
 def test_string_startswith_endswith() -> None:

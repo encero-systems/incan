@@ -135,6 +135,14 @@ impl TypeChecker {
             .entered();
             self.record_source_declaration_identities(program);
         }
+        {
+            let _trace = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_frontend::record_type_param_declaration_spans",
+            )
+            .entered();
+            self.record_type_param_declaration_spans(program);
+        }
         self.visibility_point = VisibilityPoint::Collected;
         {
             let _trace = tracing::trace_span!(

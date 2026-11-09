@@ -1,5 +1,6 @@
-# behavior: a consumer's model that adopts a dependency's trait without defining the trait's default method is refused at check time, since a package publishes its traits' method signatures without their default bodies
-# expect-diagnostic: INCAN-T0001
+# behavior: a consumer's model can adopt a dependency's trait without overriding its provider-owned default method (#2774)
+# expect-stdout:
+#   mine!
 
 from pub::tags import Tag
 

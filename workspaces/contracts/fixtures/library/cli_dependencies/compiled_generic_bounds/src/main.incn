@@ -1,4 +1,4 @@
-# behavior: compiled library traits and bounds survive a package boundary: inferred and declared bounds of generic functions, inherent methods and trait defaults, and the methods a dependency's models get from the traits they adopt, are callable by a consumer that imports the models but not the traits, and library trait defaults call their concrete compiled methods and preserve mutable receivers
+# behavior: compiled library traits and bounds survive a package boundary, including matching Self bounds and Self associated-call dispatch in provider-owned generic defaults (#2774, RFC 173)
 # expect-stdout:
 #   1
 #   first
@@ -11,6 +11,8 @@
 #   <linked>
 #   second
 #   second
+#   provider leaf
+#   provider Self 19
 
 from generic_bounds import run_generic_bounds
 from trait_slot import run_trait_slot

@@ -1,0 +1,16 @@
+# behavior: a generic model construction whose type parameter no field, written type argument or expected type fixes is refused instead of failing to lower (#2762)
+# expect-diagnostic: INCAN-T0001
+
+"""A construction is refused when nothing at it determines one of the model's type parameters."""
+
+
+model RecordId[T]:
+    """Carry a record's value type in its type alone."""
+
+    serial: int
+
+
+def main() -> None:
+    """Build an identifier whose `T` nothing fixes."""
+    rid = RecordId(serial=1)
+    println(rid.serial)

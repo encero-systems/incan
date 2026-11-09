@@ -96,7 +96,17 @@ impl TypeChecker {
     }
 
     /// Type-check a list comprehension and retain its iterable's checked nominal element under the clause binding.
-    pub(in crate::typechecker::check_expr) fn check_list_comp(&mut self, comp: &ListComp, _span: Span) -> ResolvedType {
+    ///
+    /// An expected list destination checks the produced expression against that list's element type, just as it does
+    /// for a list literal. Nested comprehensions receive the nested element destination recursively, so an open
+    /// constructor such as `None` is settled by the annotation at every level rather than reaching Body IR as
+    /// `Option[?]`.
+    pub(in crate::typechecker::check_expr) fn check_list_comp(
+        &mut self,
+        comp: &ListComp,
+        _span: Span,
+        expected: Option<&ResolvedType>,
+    ) -> ResolvedType {
         let iter_ty = self.check_expr(&comp.iter);
         self.plan_comprehension_collection_source(&comp.iter, &iter_ty);
         let elem_ty = self.infer_iterator_element_type_from_expr(&comp.iter, &iter_ty);
@@ -114,7 +124,8 @@ impl TypeChecker {
             self.check_expr(filter);
         }
 
-        let result_elem_ty = self.check_expr(&comp.expr);
+        let expected_elem_ty = self.list_expected_element_type(expected);
+        let result_elem_ty = self.check_expr_with_expected(&comp.expr, expected_elem_ty.as_ref());
         // A side an `Ok(...)` or `Err(...)` element leaves open is built with a type all the same (#1561).
         let result_elem_ty = self.settle_open_constructor_side(&comp.expr, result_elem_ty);
         self.exit_pattern_views(previous_views);

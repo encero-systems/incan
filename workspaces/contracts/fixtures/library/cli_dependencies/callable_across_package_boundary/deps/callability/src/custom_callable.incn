@@ -5,7 +5,7 @@ pub trait Callable1[A, R]:
 
 
 pub class Adder with Callable1[int, int]:
-    amount: int
+    pub amount: int
 
     def apply(self, value: int) -> int:
         return value + self.amount

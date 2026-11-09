@@ -96,7 +96,23 @@ pub def reply_table() -> Dict[str, Reply]:
 
 pub model Entry:
     """Keep a source-owned element whose type the consumer never imports."""
+
     pub value: str
+
+
+@derive(Validate)
+pub model CheckedRecord:
+    """Publish validated construction with required and defaulted fields."""
+
+    pub value: int
+    pub label: str = "kept"
+    pub enabled: bool = true
+
+    def validate(self) -> Result[CheckedRecord, str]:
+        """Return the constructed value only while its required field stays in range."""
+        if self.value > 9:
+            return Err("too large")
+        return Ok(self)
 
 
 pub def entries() -> list[Entry]:

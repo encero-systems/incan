@@ -1,0 +1,120 @@
+"""Indexed scalar reads borrow intermediate storage instead of copying its unrelated fields."""
+
+from rust::std::sync import Arc
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    LocalId,
+    Place as CheckedPlace,
+    PlaceElem,
+    Operand as CheckedOperand,
+    Constant as CheckedConstant,
+    OwnershipFact,
+)
+from pub::incan_mir_plan import (
+    BasicBlock,
+    Local,
+    PlanType,
+    ListLeaf,
+    TupleElement,
+    EnumDeclaration,
+    ExternalFunction,
+    Function,
+    SourceSpan,
+    OperandKind,
+    CalleeKind,
+    TerminatorKind,
+    source_span,
+)
+from frame import Builder, place_type
+from program_context import synthetic_program_context
+from native_type_identity import constructor_index
+from checked_values import place_read
+
+
+def indexed_frame(ty: PlanType, span: SourceSpan) -> Builder:
+    """Build an isolated checked input frame; slot zero is the result and slot one is caller-owned storage."""
+    module = BodyIrModule.declarations_only("indexed_field_reads")
+    mut builder = Builder(
+        program=synthetic_program_context(module, Arc.new(constructor_index(module.nominal_declarations))),
+        locals=[Local(ty=PlanType.Int, span=span), Local(ty=ty, span=span)],
+        parameter_count=1,
+        blocks=[],
+        current=0,
+        source="",
+        file="indexed_field_reads.incn",
+        module_identity="indexed_field_reads",
+        callable_identity=None,
+        loops=[],
+        loop_owners=[],
+        externals=[],
+        owned=[],
+        closed=[],
+        iterators=[],
+        borrowed_items=[],
+        in_place_items=[],
+        partial_callables=[],
+        scalar_closures=[],
+        unproven_closures=[],
+        unions=[],
+        local_offset=0,
+        consuming_closure_frame=false,
+        intrinsics=[],
+        generator_handle=-1,
+        instances=[],
+        type_parameters=[],
+        type_arguments=[],
+        function_pointer_locals=[],
+        name="indexed_read",
+        synthesized=[],
+        moved_tuple_fields=[],
+    )
+    _ = builder.new_block(span)
+    return builder
+
+
+pub def test_indexed_scalar_field_never_materializes_the_element() -> Result[None, str]:
+    """The native plan uses a shared bounds-checked lookup, then copies only the selected integer field."""
+    span = source_span(file="indexed_field_reads.incn", line=1, column=1)
+    fields = [TupleElement.List(ListLeaf.Str, 1), TupleElement.Int]
+    mut builder = indexed_frame(PlanType.ListRef(ListLeaf.Tuple(fields), 1), span)
+    mut source = CheckedPlace.from_local(LocalId(0))
+    source.projection.push(PlaceElem.Index(CheckedOperand.Constant(CheckedConstant.Int(0))))
+    source.projection.push(PlaceElem.structural_field("1"))
+    result = place_read(builder, source, OwnershipFact.Copy, span)?
+    match result.kind:
+        OperandKind.Copy(selected) =>
+            assert place_type(builder.locals, selected) == PlanType.Int
+        _ => return Err("scalar field read did not copy its selected integer")
+    mut shared_reads = 0
+    for block in builder.blocks:
+        match block.terminator.kind:
+            TerminatorKind.Call(callee, _arguments, _output, _next, _unwind) =>
+                match callee.kind:
+                    CalleeKind.Instantiated(name, _arguments) =>
+                        if name == "incan_std_primitives::collections::list_get":
+                            shared_reads += 1
+                    _ => pass
+            _ => pass
+    assert shared_reads == 1
+    for local in builder.locals:
+        assert local.ty != PlanType.Tuple(fields)
+    return Ok(None)
+
+
+pub def test_indexed_owned_field_clones_only_the_selected_field() -> Result[None, str]:
+    """An independently owned list result retains its clone operation without copying the containing tuple."""
+    span = source_span(file="indexed_field_reads.incn", line=2, column=1)
+    fields = [TupleElement.List(ListLeaf.Str, 1), TupleElement.Int]
+    mut builder = indexed_frame(PlanType.ListRef(ListLeaf.Tuple(fields), 1), span)
+    mut source = CheckedPlace.from_local(LocalId(0))
+    source.projection.push(PlaceElem.Index(CheckedOperand.Constant(CheckedConstant.Int(0))))
+    source.projection.push(PlaceElem.structural_field("0"))
+    result = place_read(builder, source, OwnershipFact.Clone, span)?
+    match result.kind:
+        OperandKind.Move(selected) =>
+            assert place_type(builder.locals, selected) == PlanType.List(ListLeaf.Str, 1)
+        _ => return Err("owned field read did not return its independent list")
+    for local in builder.locals:
+        assert local.ty != PlanType.Tuple(fields)
+    return Ok(None)

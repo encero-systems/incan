@@ -96,8 +96,26 @@ pub class NamedTemporaryFile:
         builder.prefix(rust_prefix_ref)
         builder.suffix(rust_suffix_ref)
         match _dir_to_string(dir):
-            Some(parent) => return _named_temporary_file_from_result(error_path, builder.tempfile_in(parent))
-            None => return _named_temporary_file_from_result(error_path, builder.tempfile())
+            Some(parent) =>
+                match builder.tempfile_in(parent):
+                    Ok(file) =>
+                        return Ok(
+                            NamedTemporaryFile(
+                                handle=Rc.new(RefCell.new(Some(file))),
+                                persisted_path=Rc.new(RefCell.new(None)),
+                            ),
+                        )
+                    Err(detail) => return Err(_io_error(error_path, detail.to_string()))
+            None =>
+                match builder.tempfile():
+                    Ok(file) =>
+                        return Ok(
+                            NamedTemporaryFile(
+                                handle=Rc.new(RefCell.new(Some(file))),
+                                persisted_path=Rc.new(RefCell.new(None)),
+                            ),
+                        )
+                    Err(detail) => return Err(_io_error(error_path, detail.to_string()))
 
     pub def path(self) -> Path:
         """
@@ -141,8 +159,7 @@ pub class NamedTemporaryFile:
                         persisted = Path(kept.1.to_string_lossy().into_owned())
                         self.persisted_path.replace(Some(persisted.clone()))
                         return Ok(persisted)
-                    Err(err) =>
-                        return Err(_io_error(path, err.error.to_string()))
+                    Err(err) => return Err(_io_error(path, err.error.to_string()))
             None =>
                 match self.persisted_path.borrow().as_ref():
                     Some(path) => return Ok(path.clone())
@@ -214,8 +231,26 @@ pub class TemporaryDirectory:
         builder.prefix(rust_prefix_ref)
         builder.suffix(rust_suffix_ref)
         match _dir_to_string(dir):
-            Some(parent) => return _temporary_directory_from_result(error_path, builder.tempdir_in(parent))
-            None => return _temporary_directory_from_result(error_path, builder.tempdir())
+            Some(parent) =>
+                match builder.tempdir_in(parent):
+                    Ok(directory) =>
+                        return Ok(
+                            TemporaryDirectory(
+                                handle=Rc.new(RefCell.new(Some(directory))),
+                                persisted_path=Rc.new(RefCell.new(None)),
+                            ),
+                        )
+                    Err(detail) => return Err(_io_error(error_path, detail.to_string()))
+            None =>
+                match builder.tempdir():
+                    Ok(directory) =>
+                        return Ok(
+                            TemporaryDirectory(
+                                handle=Rc.new(RefCell.new(Some(directory))),
+                                persisted_path=Rc.new(RefCell.new(None)),
+                            ),
+                        )
+                    Err(detail) => return Err(_io_error(error_path, detail.to_string()))
 
     pub def path(self) -> Path:
         """
@@ -284,6 +319,11 @@ pub class _SpooledTemporaryFile:
     memory: _BytesIO
     temp_file: Option[NamedTemporaryFile]
     disk_file: Option[File]
+
+    @staticmethod
+    pub def new(max_size: int = 0) -> _SpooledTemporaryFile:
+        """Construct a memory-backed stream that rolls to disk after `max_size` bytes."""
+        return _SpooledTemporaryFile(max_size=max_size, memory=BytesIO(b""), temp_file=None, disk_file=None)
 
     pub def rolled_to_disk(self) -> bool:
         """
@@ -523,29 +563,7 @@ pub def SpooledTemporaryFile(max_size: int = 0) -> _SpooledTemporaryFile:
     Example:
         `spool = SpooledTemporaryFile(max_size=1024 * 1024)`
     """
-    return _SpooledTemporaryFile(max_size=max_size, memory=BytesIO(b""), temp_file=None, disk_file=None)
-
-
-def _named_temporary_file_from_result(path: Path, result: Result[RustNamedTemporaryFile, RustIoError]) -> Result[NamedTemporaryFile, IoError]:
-    match result:
-        Ok(file) => return Ok(
-            NamedTemporaryFile(
-                handle=Rc.new(RefCell.new(Some(file))),
-                persisted_path=Rc.new(RefCell.new(None)),
-            ),
-        )
-        Err(detail) => return Err(_io_error(path, detail.to_string()))
-
-
-def _temporary_directory_from_result(path: Path, result: Result[RustTemporaryDirectory, RustIoError]) -> Result[TemporaryDirectory, IoError]:
-    match result:
-        Ok(directory) => return Ok(
-            TemporaryDirectory(
-                handle=Rc.new(RefCell.new(Some(directory))),
-                persisted_path=Rc.new(RefCell.new(None)),
-            ),
-        )
-        Err(detail) => return Err(_io_error(path, detail.to_string()))
+    return _SpooledTemporaryFile.new(max_size)
 
 
 def _dir_to_string(dir: Option[Path]) -> Option[str]:

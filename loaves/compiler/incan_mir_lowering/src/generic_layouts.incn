@@ -82,8 +82,8 @@ pub def generic_models(
             )
         mut derives: list[str] = []
         for derive in declaration.derives:
-            # Construction defaults and reflection stay in their checked Incan records, rather than native derives.
-            if derive in ["Default", "FieldInfo", "IncanClass"]:
+            # Semantic construction and reflection stay in checked Incan records, rather than native derives.
+            if derive in ["Default", "Validate", "FieldInfo", "IncanClass"]:
                 continue
             if derive not in [
                 "Clone",

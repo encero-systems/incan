@@ -40,6 +40,9 @@ pub(super) const TYPECHECK: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/types/"),
 };
 
+/// The stable code of [`TYPECHECK`], for a type-checking diagnostic that names its code in its heading.
+pub const TYPECHECK_CODE: &str = TYPECHECK.code;
+
 pub(super) const UNREACHABLE_CODE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0101",
     title: "Unreachable code",
@@ -810,6 +813,25 @@ pub(super) const IMPORTED_TYPE_MADE_PRIVATE: DiagnosticCatalogEntry = Diagnostic
     docs_url: None,
 };
 
+pub(super) const PRIVATE_CLASS_CONSTRUCTOR_FIELD: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0135",
+    title: "Private class field named by an external constructor",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A direct class constructor outside the declaring class names one of that class's private fields.",
+    explanation: "Private class fields reserve their state as well as hiding it. Methods on the declaring class may bind that state, but external code and child classes cannot bypass the public construction surface by naming a private field in the ordinary constructor.",
+    examples: &["from vaults import Vault\n\ndef open() -> Vault:\n    return Vault(secret=\"hidden\")"],
+    common_causes: &[
+        "Directly constructing an imported class whose required state is private.",
+        "A child class trying to initialize a private field declared by its parent.",
+    ],
+    fixes: &[
+        "Call a public constructor method supplied by the declaring class.",
+        "Make fields intended for direct construction public.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/explanation/models_and_classes/classes/"),
+};
+
 pub(super) const CATALOG: &[DiagnosticCatalogEntry] = &[
     OWNERSHIP_BOUNDARY_UNPROVABLE,
     RESULT_SOURCE_INVALID,
@@ -822,6 +844,7 @@ pub(super) const CATALOG: &[DiagnosticCatalogEntry] = &[
     FIELD_RENAME_CLAIMED_TWICE,
     INVALID_MADE_PRIVATE_ANNOTATION,
     IMPORTED_TYPE_MADE_PRIVATE,
+    PRIVATE_CLASS_CONSTRUCTOR_FIELD,
     PARSER_SYNTAX,
     TYPECHECK,
     UNREACHABLE_CODE,

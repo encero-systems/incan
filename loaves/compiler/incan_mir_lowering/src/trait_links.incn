@@ -8,8 +8,9 @@ from table_views import borrowed_at
 
 pub def has_open_trait_arguments(implementation: &TraitImplementation) -> bool:
     """Identify a generic owner's open slot or inherited default arguments before validating concrete records."""
-    return not closed_arguments(implementation.slot_arguments) or not closed_arguments(
-        [binding.argument.clone() for binding in implementation.type_arguments],
+    return (
+        not closed_arguments(implementation.slot_arguments)
+        or not closed_arguments([binding.argument.clone() for binding in implementation.type_arguments])
     )
 
 
@@ -22,11 +23,10 @@ pub def validate_project_implementation(
     Validate one trait implementation record of `module` against every module of the project.
 
     A record whose trait and filling body belong to this module is the module's own to validate. A record of an
-    imported trait without type parameters names a slot another module declares: it holds only when this module retains
-    the adopter's layout, the declaring module retains the trait around the slot, the adopter's own method or the slot's
-    own default fills it, and some module retains that body under its direct-call identity. A slot of a standard-library
-    or SDK protocol has no declaring project module and holds by its identity ([`is_protocol_slot`]). Nor has a Rust
-    trait's slot: it holds when the adopter's own adoption lists it and some module retains the filling body.
+    imported trait names a slot another module declares: it holds only when this module retains the adopter's layout,
+    the adopter's own method or the slot's own default fills it, and an adopter-owned body remains retained. A package
+    default holds by its checked identity until a call demands its executable body ([`is_imported_slot`]). Nor has a
+    Rust trait's slot: it holds when the adopter's own adoption lists it and some module retains the filling body.
     Matching spellings never establish any of these.
     """
     if module.is_well_formed_trait_implementation(implementation):
@@ -37,7 +37,7 @@ pub def validate_project_implementation(
         return Err("invalid Body IR trait implementation slot filling")
     if not retains_owner(module, implementation.owner):
         return Err("invalid Body IR trait implementation owner")
-    if is_protocol_slot(implementation.method):
+    if is_imported_slot(implementation.method):
         if (
             implementation.implementation == implementation.method
             or retains_body(modules, implementation.implementation)
@@ -56,17 +56,17 @@ pub def validate_project_implementation(
     return Ok(None)
 
 
-def is_protocol_slot(slot: &CanonicalSymbolId) -> bool:
+def is_imported_slot(slot: &CanonicalSymbolId) -> bool:
     """
-    Whether a slot belongs to a standard-library or SDK protocol, by its checked source or provider identity.
+    Whether a slot belongs to a standard module or an authenticated package, by its checked provider identity.
 
-    Such a slot is filled by the adopter's own method, which a module must retain, or by the protocol's own default. The
-    default's body is the one the SDK publishes, when it publishes one; a call to a default no module retains refuses
-    where it is lowered, so the record itself holds by the slot's identity.
+    Such a slot is filled by the adopter's own method, which a module must retain, or by the provider's own default. A
+    call to that default demands its executable representation; an unavailable body refuses there, so the adoption
+    record itself holds by the exact slot identity without eagerly loading every unused default.
     """
     match slot.origin:
         SymbolOrigin.Module(path) => return len(path) > 0 and path[0] == "std"
-        SymbolOrigin.Package(library=library, module_path=_path) => return str(library).startswith("incan_stdlib_")
+        SymbolOrigin.Package(library=_library, module_path=_path) => return true
         _ => return false
 
 
@@ -184,4 +184,7 @@ def module_retains_body(module: &BodyIrModule, identity: &CanonicalSymbolId) -> 
 
 pub def contains(owner: CanonicalSymbolId, member: CanonicalSymbolId) -> bool:
     """Whether the owner's declaration span encloses the member's; callers compare origins, as spans of files nest."""
-    return owner.declaration_span.start <= member.declaration_span.start and member.declaration_span.end <= owner.declaration_span.end
+    return (
+        owner.declaration_span.start <= member.declaration_span.start
+        and member.declaration_span.end <= owner.declaration_span.end
+    )

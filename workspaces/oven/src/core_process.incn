@@ -12,6 +12,11 @@ pub class Process:
 
     child: Rc[RefCell[Child]]
 
+    @staticmethod
+    pub def from_child(child: Child) -> Process:
+        """Wrap a newly spawned native child in the retained class-owned handle."""
+        return Process(child=Rc.new(RefCell.new(child)))
+
     pub def pid(self) -> int:
         """The OS identifier belonging to this retained child handle."""
         return int(self.child.borrow().id())
@@ -44,7 +49,7 @@ pub def spawn_detached(executable: str, arguments: list[str], environment: dict[
         command.env(name, environment[name])
     command.stdin(Stdio.null()).stdout(Stdio.null()).stderr(Stdio.null()).process_group(0)
     child = command.spawn().map_err((error) => f"cannot start service: {error}")?
-    return Ok(Process(child=Rc.new(RefCell.new(child))))
+    return Ok(Process.from_child(child))
 
 
 pub def running(mut child: Process) -> Result[bool, str]:

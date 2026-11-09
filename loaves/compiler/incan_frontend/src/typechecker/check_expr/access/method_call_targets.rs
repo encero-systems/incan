@@ -634,8 +634,10 @@ impl TypeChecker {
 
     /// Check generated enum members, validate constructor arguments and retain the selected payload signature.
     ///
-    /// A constructor preserves explicit or expected type arguments instead of erasing them to the enum name. Payload
-    /// expressions are checked once with their context, then ordinary call binding validates their types and arity.
+    /// A constructor preserves explicit or expected type arguments, or infers them from its checked payloads when
+    /// neither is written, instead of erasing them to the enum name. Payload expressions are checked once with their
+    /// context, then ordinary call binding validates their types and arity. A construction that none of these
+    /// determines is refused (#2762).
     pub(super) fn check_enum_method_call(
         &mut self,
         call: &MethodCallSite<'_>,
@@ -662,50 +664,63 @@ impl TypeChecker {
             self.record_compiler_generated_member_identity(enum_name, call.method, Some(call.base.span), call.span);
             return Some(result);
         }
-        if let ResolvedType::Named(enum_name) | ResolvedType::Generic(enum_name, _) = base_ty
-            && let Some(TypeInfo::Enum(info)) = self.lookup_semantic_type_info(enum_name)
-            && (info.variants.iter().any(|variant| variant == call.method)
-                || info.variant_aliases.contains_key(call.method))
-        {
-            let identity = info.variant_identities.get(call.method).cloned();
-            let parameters = construction
-                .as_ref()
-                .map(|value| {
-                    value
-                        .payloads
-                        .iter()
-                        .cloned()
-                        .map(CallableParam::positional)
-                        .collect::<Vec<_>>()
-                })
-                .or(parameters);
-            if let Some(parameters) = parameters {
-                self.validate_callable_arg_bindings(
-                    &format!("{enum_name}.{}", call.method),
-                    &parameters,
-                    call.args,
-                    arg_types,
-                    &mut HashMap::new(),
-                    call.span,
-                );
-                self.type_info
-                    .record_call_site_callable_params_exact(call.span, &parameters);
+        let (enum_name, identity) = match base_ty {
+            ResolvedType::Named(enum_name) | ResolvedType::Generic(enum_name, _) => {
+                let Some(TypeInfo::Enum(info)) = self.lookup_semantic_type_info(enum_name) else {
+                    return None;
+                };
+                if !info.variants.iter().any(|variant| variant == call.method)
+                    && !info.variant_aliases.contains_key(call.method)
+                {
+                    return None;
+                }
+                (enum_name, info.variant_identities.get(call.method).cloned())
             }
-            if let Some(identity) = identity {
-                self.type_info.record_resolved_identity(call.span, identity);
-            }
-            let result = match construction {
-                Some(construction) => ResolvedType::Generic(enum_name.clone(), construction.arguments),
-                None => base_ty.clone(),
-            };
-            let qualified = crate::typechecker::collect::dotted_path_segments(&call.base.node)
-                .and_then(|segments| self.qualified_nominal_carrier(&segments));
-            return Some(match (qualified, result) {
-                (Some(carrier), ResolvedType::Named(_)) => ResolvedType::Named(carrier),
-                (Some(carrier), ResolvedType::Generic(_, arguments)) => ResolvedType::Generic(carrier, arguments),
-                (_, result) => result,
-            });
+            _ => return None,
+        };
+        let construction = construction
+            .or_else(|| self.inferred_enum_variant_construction(base_ty, call.method, call.args, arg_types, call.span));
+        let parameters = construction
+            .as_ref()
+            .map(|value| {
+                value
+                    .payloads
+                    .iter()
+                    .cloned()
+                    .map(CallableParam::positional)
+                    .collect::<Vec<_>>()
+            })
+            .or(parameters);
+        let errors_before_payloads = self.errors.len();
+        if let Some(parameters) = parameters {
+            self.validate_callable_arg_bindings(
+                &format!("{enum_name}.{}", call.method),
+                &parameters,
+                call.args,
+                arg_types,
+                &mut HashMap::new(),
+                call.span,
+            );
+            self.type_info
+                .record_call_site_callable_params_exact(call.span, &parameters);
         }
-        None
+        if let Some(identity) = identity {
+            self.type_info.record_resolved_identity(call.span, identity);
+        }
+        let refused = (construction.is_none() && self.errors.len() == errors_before_payloads)
+            .then(|| self.refuse_open_enum_construction(call, base_ty, arg_types))
+            .flatten();
+        let result = match (construction, refused) {
+            (Some(construction), _) => ResolvedType::Generic(enum_name.clone(), construction.arguments),
+            (None, Some(arguments)) => ResolvedType::Generic(enum_name.clone(), arguments),
+            (None, None) => base_ty.clone(),
+        };
+        let qualified = crate::typechecker::collect::dotted_path_segments(&call.base.node)
+            .and_then(|segments| self.qualified_nominal_carrier(&segments));
+        Some(match (qualified, result) {
+            (Some(carrier), ResolvedType::Named(_)) => ResolvedType::Named(carrier),
+            (Some(carrier), ResolvedType::Generic(_, arguments)) => ResolvedType::Generic(carrier, arguments),
+            (_, result) => result,
+        })
     }
 }

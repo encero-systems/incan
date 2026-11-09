@@ -260,7 +260,7 @@ enum Level(str):
 def main() -> None:
     point = Point(x=1, y=2)
     println(point)          # ✅ (1, 2)
-    println(f"{point:?}")   # ✅ the structure: Point { x = 1, y = 2 }
+    println(f"{point:?}")   # ✅ the structure: Point(x=1, y=2)
     println(Level.WARN)     # ✅ warn
     evens = (n * 2 for n in [1, 2, 3])
     println(list(evens))    # ✅ collect a generator first: [2, 4, 6]

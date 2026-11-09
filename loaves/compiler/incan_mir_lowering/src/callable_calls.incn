@@ -13,13 +13,20 @@ from pub::incan_mir_plan import (
     place as plan_place,
 )
 from explicit_arguments import validate_source_input_call
-from layout_types import native_source_type
+from layout_types import native_source_type, stored_field_type
 from derived_methods import is_std_callable_call
-from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin, canonical_module_identity
+from rust::incan_semantics_core import (
+    CanonicalSymbolId as RustCanonicalSymbolId,
+    IncanType as RustType,
+    SymbolOrigin,
+    canonical_module_identity,
+)
 from rust::incan_semantics_core::body_ir import (
     ArgumentBinding as RustArgumentBinding,
+    BoundArgument as RustBoundArgument,
     ArgumentElement as RustArgumentElement,
     Body as RustBody,
+    CallableParamDefault,
     NamedCallableTarget as RustNamedCallableTarget,
     LocalCallableTarget as RustLocalCallableTarget,
     Operand as RustOperand,
@@ -27,11 +34,19 @@ from rust::incan_semantics_core::body_ir import (
     Place as RustPlace,
     MethodTarget,
     PlaceOperand as RustPlaceOperand,
+    ValidatedConstructor as RustValidatedConstructor,
 )
-from classes import function_name, static_type_arguments
+from classes import frame_type, function_name, static_type_arguments
 from string_conversion import string_conversion_callee
-from traits import close_trait_dispatch_arguments, static_receiver_target, validate_static_receiver
+from traits import (
+    associated_body_index,
+    close_trait_dispatch_arguments,
+    is_lazy_method_body,
+    static_receiver_target,
+    validate_static_receiver,
+)
 from derived_defaults import is_derived_default, lower_derived_default
+from defaults import evaluate_default
 from reflection import lower_static_field_metadata
 from model_values import is_json_deserialize_method, lower_model_from_json
 from value_enums import value_enum_from_value_owner
@@ -67,9 +82,11 @@ from checked_values import place_read, scalar_place
 from operators import operand_type
 from statements import is_nominal_type
 from closure_lifting import synthesize
-from calls import lower_loaf_call, ordered_arguments
+from calls import instantiated_external_call, lower_loaf_call, ordered_arguments
 from value_enum_methods import lower_value_enum_from_value, lower_value_enum_ordinal_encoding
 from call_arguments import ordered_slot_operands
+from model_construction import model_field_operand
+from program_context import body_at
 from builtin_calls import lower_builtin
 from list_values import value_operand
 from list_methods import call_destination
@@ -123,6 +140,8 @@ pub def lower_named_target(
                 return Err("unsupported Body IR builtin type arguments")
             return lower_builtin(builder, builtin, arguments, destination, span)
         None => pass
+    if lower_validated_constructor(module, builder, target, arguments, destination, span)?:
+        return Ok(None)
     if is_derived_default(target):
         return lower_derived_default(module, builder, target, destination, span)
     if is_json_deserialize_method(target):
@@ -147,13 +166,18 @@ pub def lower_named_target(
         builder.constructors,
         module,
         target,
+        builder.trait_environment,
         builder.type_parameters,
         builder.type_arguments,
     )?
     match selected.canonical:
         None => return Err("unsupported Body IR builtin or unproven NamedCallableTarget")
         Some(identity) =>
-            match builder.program.body_indices.unique(identity):
+            mut candidate = associated_body_index(module, selected, builder)?
+            match candidate:
+                None => candidate = builder.program.body_indices.unique(identity)
+                Some(_index) => pass
+            match candidate:
                 None => return lower_loaf_call(module, builder, selected, arguments, destination, span)
                 Some(index) =>
                     body = module.bodies[index]
@@ -165,10 +189,316 @@ pub def lower_named_target(
                         builder.constructors,
                         module,
                         selected,
+                        builder.trait_environment,
                         builder.type_parameters,
                         builder.type_arguments,
                     )?
+                    if is_lazy_method_body(module, body):
+                        empty_arguments: list[RustType] = []
+                        request_instance(builder.instances, body, empty_arguments, [], false)
                     return lower_local_call(module, builder, selected, body, arguments, destination, span)
+
+
+def lower_validated_constructor(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &RustNamedCallableTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Construct one checked `Validate` model, then return its exact validator body's `Result`."""
+    match validated_model_owner(builder, target)?:
+        None => return Ok(false)
+        Some((owner, model_type)) =>
+            declaration = builder.nominals[owner]
+            match declaration.validated_constructor:
+                None => return Err("invalid Body IR validated constructor without a retained contract")
+                Some(contract) =>
+                    required = validated_required_operands(builder, owner, contract, target.binding, arguments, span)?
+                    fields = validated_model_fields(module, builder, owner, contract, required, span)?
+                    value = temporary(builder, model_type, span)
+                    construction = RvalueKind.Model(owner, fields)
+                    track_rvalue_moves(builder, construction)
+                    builder.emit(plan_assign(value, construction, span))
+                    builder.owned.append(value.local)
+                    match validated_method_body(builder, owner, contract.validator)?:
+                        Some(body) =>
+                            receiver_type = frame_type(
+                                builder.constructors,
+                                builder.nominals,
+                                builder.enums,
+                                body.locals[0],
+                                builder.intrinsics,
+                            )?
+                            require_validated_receiver(owner, receiver_type)?
+                            receiver = temporary(builder, receiver_type, span)
+                            builder.emit(plan_assign(receiver, RvalueKind.Borrow(value), span))
+                            callee = CalleeKind.Planned(function_name(module, body))
+                            emit_selected_body_call(
+                                builder,
+                                body,
+                                callee,
+                                [read_place(receiver, true, span)],
+                                destination,
+                                span,
+                            )?
+                        None =>
+                            lower_compiled_validator(
+                                module,
+                                builder,
+                                owner,
+                                contract.validator,
+                                value,
+                                destination,
+                                span,
+                            )?
+                    return Ok(true)
+
+
+def validated_model_owner(
+    mut builder: Builder,
+    target: &RustNamedCallableTarget,
+) -> Result[Option[tuple[int, PlanType]], str]:
+    """Resolve a generated constructor only through its checked receiver layout and retained exact identity."""
+    match target.canonical:
+        None => return Ok(None)
+        Some(identity) =>
+            mut recognized = false
+            for position in range(len(builder.nominals)):
+                declaration = builder.nominals[position]
+                match declaration.validated_constructor:
+                    Some(contract) =>
+                        if contract.constructor == identity.clone():
+                            recognized = true
+                    None => pass
+            if not recognized:
+                return Ok(None)
+            if len(target.type_args) != 0:
+                return Err("unsupported Body IR type arguments on a validated constructor")
+            match target.receiver_type:
+                None => return Err("invalid Body IR validated constructor without a receiver type")
+                Some(receiver) =>
+                    closed: RustType = substitute(receiver, builder.type_parameters, builder.type_arguments)?
+                    model_type = native_source_type(
+                        builder.constructors,
+                        builder.nominals,
+                        builder.enums,
+                        builder.unions,
+                        closed,
+                        builder.intrinsics,
+                    )?
+                    match model_type:
+                        PlanType.Model(owner, _name) =>
+                            match builder.nominals[owner].validated_constructor:
+                                Some(contract) =>
+                                    if contract.constructor != identity.clone():
+                                        return Err("invalid Body IR validated constructor owner")
+                                None => return Err("invalid Body IR validated constructor receiver")
+                            return Ok(Some((owner, model_type)))
+                        _ => return Err("invalid Body IR validated constructor receiver type")
+
+
+def validated_required_operands(
+    mut builder: Builder,
+    owner: int,
+    contract: &RustValidatedConstructor,
+    binding: &RustArgumentBinding,
+    elements: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Bind the generated constructor's written arguments to its required canonical field slots."""
+    match binding:
+        RustArgumentBinding.Resolved(arguments=bindings, defaulted_slots=defaults) =>
+            if len(defaults) != 0:
+                return Err("invalid Body IR defaults on validated constructor parameters")
+            return bound_validated_operands(builder, owner, contract, bindings, elements, span)
+        RustArgumentBinding.ResolvedDeclarationOrder(arguments=bindings, defaulted_slots=defaults) =>
+            if len(defaults) != 0:
+                return Err("invalid Body IR defaults on validated constructor parameters")
+            return bound_validated_operands(builder, owner, contract, bindings, elements, span)
+        RustArgumentBinding.UnresolvedPositional =>
+            if len(elements) != len(contract.required_fields):
+                return Err("invalid Body IR validated constructor arity")
+            mut operands: list[Operand] = []
+            for position in range(len(elements)):
+                match elements[position].as_one():
+                    Some(value) =>
+                        operands.append(
+                            model_field_operand(builder, owner, int(contract.required_fields[position]), value, span)?,
+                        )
+                    None => return Err("unsupported Body IR spread validated constructor argument")
+            return Ok(operands)
+
+
+def bound_validated_operands(
+    mut builder: Builder,
+    owner: int,
+    contract: &RustValidatedConstructor,
+    bindings: &list[RustBoundArgument],
+    elements: &list[RustArgumentElement],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Order a resolved written-argument map by generated constructor parameter slot."""
+    count = len(contract.required_fields)
+    if len(bindings) != count or len(elements) != count:
+        return Err("invalid Body IR validated constructor binding")
+    mut operands: list[Operand] = []
+    for parameter in range(count):
+        mut written = -1
+        for position in range(len(bindings)):
+            if int(bindings[position].slot) == parameter:
+                if written >= 0:
+                    return Err("invalid Body IR duplicate validated constructor binding")
+                written = position
+        if written < 0:
+            return Err("invalid Body IR incomplete validated constructor binding")
+        match elements[written].as_one():
+            Some(value) =>
+                field = int(contract.required_fields[parameter])
+                operands.append(model_field_operand(builder, owner, field, value, span)?)
+            None => return Err("unsupported Body IR spread validated constructor argument")
+    return Ok(operands)
+
+
+def validated_model_fields(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    owner: int,
+    contract: &RustValidatedConstructor,
+    required: list[Operand],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Fill required fields from constructor arguments and every remaining field from its declaration default."""
+    declaration = builder.nominals[owner]
+    mut fields: list[Operand] = []
+    mut required_position = 0
+    for slot in range(len(declaration.fields)):
+        if (
+            required_position < len(contract.required_fields)
+            and int(contract.required_fields[required_position]) == slot
+        ):
+            fields.append(required[required_position])
+            required_position += 1
+            continue
+        match declaration.field_default_body:
+            None => return Err("invalid Body IR validated constructor missing field defaults")
+            Some(defaults) =>
+                if slot >= len(defaults.params):
+                    return Err("invalid Body IR validated constructor default slot")
+                match defaults.params[slot].default:
+                    CallableParamDefault.Source(_computation) => pass
+                    _ => return Err("invalid Body IR validated constructor unavailable field default")
+                ty = stored_field_type(
+                    builder.constructors,
+                    builder.nominals,
+                    builder.enums,
+                    builder.unions,
+                    declaration,
+                    slot,
+                    builder.intrinsics,
+                )?
+                fields.append(evaluate_default(module, builder, defaults, slot, ty, span, true)?)
+    if required_position != len(required):
+        return Err("invalid Body IR validated constructor required field map")
+    return Ok(fields)
+
+
+def validated_method_body(
+    mut builder: Builder,
+    owner: int,
+    identity: RustCanonicalSymbolId,
+) -> Result[Option[RustBody], str]:
+    """Select one local validator body, leaving a compiled dependency validator to its retained callable."""
+    mut selected = -1
+    for index in builder.program.body_indices.candidates(identity.clone()):
+        body = body_at(builder.program.bodies.as_ref(), index)
+        if body.canonical != Some(identity.clone()) or len(body.params) != 1 or len(body.locals) == 0 or body.is_async:
+            continue
+        if len(body.type_parameters) != 0:
+            continue
+        match frame_type(builder.constructors, builder.nominals, builder.enums, body.locals[0], builder.intrinsics):
+            Ok(PlanType.ModelRef(candidate, _name)) =>
+                if candidate != owner:
+                    continue
+            _ => continue
+        if selected >= 0:
+            return Err("invalid Body IR validated constructor with multiple validator bodies")
+        selected = index
+    if selected < 0:
+        return Ok(None)
+    return Ok(Some(body_at(builder.program.bodies.as_ref(), selected).clone()))
+
+
+def require_validated_receiver(owner: int, receiver_type: PlanType) -> Result[None, str]:
+    """Require the validator receiver to borrow the exact model layout constructed by the generated method."""
+    match receiver_type:
+        PlanType.ModelRef(selected, _name) =>
+            if selected == owner:
+                return Ok(None)
+            return Err("invalid Body IR Validate receiver owner")
+        _ => return Err("invalid Body IR Validate receiver type")
+
+
+def lower_compiled_validator(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    owner: int,
+    identity: RustCanonicalSymbolId,
+    value: Place,
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call a dependency model's compiled validator through its producer-authenticated callable record."""
+    mut selected = -1
+    for position in range(len(module.loaf_callables)):
+        candidate = module.loaf_callables[position]
+        if candidate.canonical != identity:
+            continue
+        if selected >= 0:
+            return Err("invalid Body IR validated constructor with multiple compiled validators")
+        selected = position
+    if selected < 0:
+        return Err("unsupported Body IR validated constructor without one validator body or callable")
+    callable = module.loaf_callables[selected]
+    if len(callable.parameters) != 1 or len(callable.type_parameters) != 0:
+        return Err("unsupported Body IR compiled Validate signature")
+    receiver_type = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        callable.parameters[0],
+        builder.intrinsics,
+    )?
+    require_validated_receiver(owner, receiver_type)?
+    receiver = temporary(builder, receiver_type, span)
+    builder.emit(plan_assign(receiver, RvalueKind.Borrow(value), span))
+    mut result = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        callable.return_type,
+        builder.intrinsics,
+    )?
+    match callable.declaration_frame():
+        Some(frame) => result = return_representation(frame, result)?
+        None => return Err("invalid Body IR compiled Validate declaration frame")
+    output = call_destination(builder, destination, result, span)?
+    match callable.rust_path():
+        None => return Err("invalid Body IR compiled Validate native identity")
+        Some(path) =>
+            return instantiated_external_call(
+                builder,
+                path,
+                [],
+                [receiver_type],
+                result,
+                [read_place(receiver, true, span)],
+                output,
+                span,
+            )
 
 
 def lower_type_parameter_call(
@@ -181,7 +511,14 @@ def lower_type_parameter_call(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Schedule the checker-selected closed frame, refusing every unadmitted type argument before use."""
-    _ = validate_static_receiver(builder.constructors, module, target, builder.type_parameters, builder.type_arguments)?
+    _ = validate_static_receiver(
+        builder.constructors,
+        module,
+        target,
+        builder.trait_environment,
+        builder.type_parameters,
+        builder.type_arguments,
+    )?
     closed = checked_type_arguments(builder, static_type_arguments(module, target)?)?
     typed_body = instantiate(body, closed, [])?
     owned = owned_callable_slots(builder, body, typed_body, arguments, target.binding, 0)?

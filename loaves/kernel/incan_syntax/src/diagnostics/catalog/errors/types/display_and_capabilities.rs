@@ -396,18 +396,16 @@ pub fn conflicting_type_argument_bindings(
         ))
 }
 
-/// Refuse a call that leaves a type parameter with a declared bound open: no argument, and no expected type, fixes
-/// it (#1561).
-pub fn bounded_type_param_left_open(callee: &str, type_param: &str, bound: &str, span: Span) -> CompileError {
+/// Refuse a call or construction that leaves a type parameter of `owner` undetermined: no written type argument, no
+/// `sources` (`argument`, `field` or `payload`) and no expected type fixes it, and the checker never chooses one
+/// (#1561, #2762). The caller adds the declared parameter's location and the written form that fixes it.
+pub fn type_param_not_determined(owner: &str, type_param: &str, sources: &str, span: Span) -> CompileError {
     CompileError::type_error(
-        format!(
-            "Cannot infer type parameter '{type_param}' of '{callee}': no argument fixes it, and its bound '{bound}' needs a type"
-        ),
+        format!("Type parameter '{type_param}' of '{owner}' is not determined: no {sources} or expected type fixes it"),
         span,
     )
-    .with_hint(format!(
-        "Write the type argument, as in `{callee}[...](...)`, pass an argument whose type fixes '{type_param}', or bind the result to an annotated name"
-    ))
+    .with_stable_code(crate::diagnostics::stable::TYPECHECK_CODE)
+    .with_primary_label(format!("'{type_param}' is not determined here"))
 }
 
 /// Refuse a method call on a value of a type parameter whose bounds declare no method of that name (#1561).
@@ -424,27 +422,6 @@ pub fn type_parameter_method_not_declared(type_param: &str, method: &str, span: 
         "Bound '{type_param}' by a trait that declares '{method}' (`{type_param} with Trait`), or declare the value \
          with a concrete type"
     ))
-}
-
-/// Refuse an adopter that relies on a default method of a trait another compiled package declares (#1561).
-///
-/// A package's manifest publishes its traits' method signatures, and its generated crate declares each trait method
-/// without a body (defaults are expanded into each adopter's impl), so no default body reaches an adopter built in
-/// another package.
-pub fn package_trait_default_not_available(
-    trait_name: &str,
-    type_name: &str,
-    method: &str,
-    span: Span,
-) -> CompileError {
-    CompileError::type_error(
-        format!("'{type_name}' adopts '{trait_name}' from another package and does not define its default method '{method}'"),
-        span,
-    )
-    .with_hint(format!("Define '{method}' in '{type_name}'"))
-    .with_note(
-        "A compiled package publishes the signatures of its traits' methods, not their default bodies, so a type in another package defines each method the trait gives a default",
-    )
 }
 
 /// Refuse an RFC 088 iterator adapter or terminal called on a value that is iterable but is not an iterator (#1561).

@@ -29,7 +29,7 @@ from generators import generator_collect
 from table_views import borrowed_at
 from model_lists import model_list_read
 from element_places import is_element_place
-from element_borrows import mutable_element_place
+from element_borrows import mutable_element_place, shared_element_place
 from models import field_steps
 from tuples import is_tuple_type, tuple_fields
 from text_plan import clone_text, owned_literal
@@ -122,7 +122,12 @@ pub def checked_list_argument(
                 match read.place.global():
                     Some(_global) => return Err("unsupported Body IR mutable static borrow through source function")
                     None => pass
-            if mutable and read.fact != OwnershipFact.MutBorrow and read.fact != OwnershipFact.Move and not has_slice_projection(read.place):
+            if (
+                mutable
+                and read.fact != OwnershipFact.MutBorrow
+                and read.fact != OwnershipFact.Move
+                and not has_slice_projection(read.place)
+            ):
                 return Err("unsupported Body IR list argument without mutable borrow fact")
             if is_element_place(builder, read.place)?:
                 # A shared parameter and a fresh projected owner read through a copy that stays owned until its scope
@@ -240,9 +245,18 @@ pub def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpa
 
 
 pub def element_read(mut builder: Builder, source: RustPlace, span: SourceSpan) -> Result[Option[Operand], str]:
-    """Copy a collection element or text slice without changing its source storage; `None` for structural places."""
+    """Copy the selected value without changing its source storage; list field reads borrow intermediate elements."""
     match source.local_id():
         Some(local) =>
+            if len(source.projection) != 0:
+                match source.projection[len(source.projection) - 1]:
+                    PlaceElem.Field(name=_name, canonical=_canonical, structural=_structural) =>
+                        match shared_element_place(builder, source, span)?:
+                            Some(field) =>
+                                selected = materialize_element_field(builder, field, span)?
+                                return Ok(Some(read_place(selected, element_field_is_owned(builder, selected), span)))
+                            None => pass
+                    _ => pass
             root = plan_place(int(local.index()) + 1 + builder.local_offset, span)
             root_type = place_type(builder.locals, root)
             if (
@@ -312,9 +326,7 @@ pub def projected_element_read(
             PlaceElem.UnionMember(ty=_member) =>
                 place = read_element_field(builder, place, source.projection[slot], span)?
             _ => place = read_indexed_element(builder, place, source, slot, span)?
-    ty = place_type(builder.locals, place)
-    owned = ty == PlanType.String or is_owned_list(ty) or is_nominal_type(ty) or is_owned_collection(ty)
-    return Ok(read_place(place, owned, span))
+    return Ok(read_place(place, element_field_is_owned(builder, place), span))
 
 
 pub def sequence_read_storage(mut builder: Builder, source: Place, span: SourceSpan) -> Result[Place, str]:
@@ -532,7 +544,17 @@ def read_element_field(
     mut field = place
     for step in steps:
         field = appended_field(field, step, span)?
-    ty = steps[len(steps) - 1].ty
+    return materialize_element_field(builder, field, span)
+
+
+def materialize_element_field(mut builder: Builder, field: Place, span: SourceSpan) -> Result[Place, str]:
+    """
+    Copy a selected scalar or clone only the selected owned field, leaving its intermediate owners untouched.
+
+    Both copied-element fallbacks and shared list projections use this boundary. Logical shared references stay
+    references; exclusive references cannot be duplicated out of a container.
+    """
+    ty = place_type(builder.locals, field)
     match reference_contract(ty):
         Ok((_referent, writable)) =>
             if writable:
@@ -573,6 +595,12 @@ def read_element_field(
     return Ok(output)
 
 
+def element_field_is_owned(builder: Builder, field: Place) -> bool:
+    """Whether a materialized field result transfers its independent storage to the consuming expression."""
+    ty = place_type(builder.locals, field)
+    return ty == PlanType.String or is_owned_list(ty) or is_nominal_type(ty) or is_owned_collection(ty)
+
+
 def slice_bound(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[list[Operand], str]:
     """Pass a written slice bound or step as a present int component, presence flag first as `slice_list` takes it."""
     operand = scalar_operand(builder, value, span)?
@@ -603,11 +631,7 @@ pub def list_base_place(mut builder: Builder, source: &RustPlace, span: SourceSp
         None => return Err("unsupported Body IR global list place")
 
 
-pub def collection_read_storage(
-    mut builder: Builder,
-    place: Place,
-    span: SourceSpan,
-) -> Result[Place, str]:
+pub def collection_read_storage(mut builder: Builder, place: Place, span: SourceSpan) -> Result[Place, str]:
     """Normalize a borrowed frozen wrapper to its immutable referent while leaving every owned root unchanged."""
     match place_type(builder.locals, place):
         PlanType.FrozenCollectionRef(name, elements) =>
