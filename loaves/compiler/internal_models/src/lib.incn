@@ -36,6 +36,38 @@ pub from checked_types import (
     CheckedType,
     valid_checked_type,
 )
+pub from body_ir_values import (
+    CompilerBlock,
+    CompilerCallee,
+    CompilerRvalue,
+    CompilerStatement,
+    CompilerStatementKind,
+)
+pub from body_ir_declarations import (
+    BODY_IR_ADAPTER_PROFILE,
+    BODY_IR_ADAPTER_SOURCE,
+    BODY_IR_ADAPTER_GENERATION,
+    BODY_IR_ADAPTER_REMOVAL_GATE,
+    NamedTypeIdentity,
+    TraitTypeArgument,
+    TraitDefaultInstantiation,
+    TraitFieldWitness,
+    CompilerTraitAdoption,
+    CompilerBody,
+    CompilerNominalDeclaration,
+    CompilerLoafCallable,
+    CompilerBodyCoverage,
+    CompilerDeclarationSet,
+    CompilerBodyIrModule,
+    valid_compiler_body,
+    valid_optional_body,
+    valid_nominal_declaration,
+    valid_loaf_callable,
+    covered_body_count,
+    valid_invocation_view,
+    valid_published_expanded_body,
+    invalidate_owned_callable_fields,
+)
 pub from records import (
     RecordKey,
     ReadScope,
