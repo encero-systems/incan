@@ -51,6 +51,145 @@ fn rust_arg_boundary_rejects_structural_list_str_to_vec_i64() {
     assert!(!checker.rust_arg_matches_boundary(&arg_ty, "Vec<i64>"));
 }
 
+/// Fixed-array relation binds type and const parameters only from exact concrete lengths, including nested arrays.
+#[test]
+fn rust_array_inference_retains_only_exact_literal_lengths() {
+    let mut checker = TypeChecker::new();
+    let type_parameters = vec!["T".to_string()];
+    let const_parameters = vec!["N".to_string(), "M".to_string()];
+    let mut bindings = HashMap::new();
+
+    checker.infer_rust_array_display_bindings(
+        "[[T; M]; N]",
+        "rust::[[u8; 8]; 4]",
+        "",
+        &type_parameters,
+        &const_parameters,
+        &mut bindings,
+    );
+    assert_eq!(bindings.get("T"), Some(&ResolvedType::Numeric(NumericTypeId::U8)));
+    assert_eq!(bindings.get("M"), Some(&ResolvedType::RustPath("8".to_string())));
+    assert_eq!(bindings.get("N"), Some(&ResolvedType::RustPath("4".to_string())));
+
+    checker.infer_rust_array_display_bindings("[u8; N]", "[u8; 32]", "", &[], &const_parameters, &mut bindings);
+    assert_eq!(bindings.get("N"), Some(&ResolvedType::Unknown));
+
+    let mut unconstrained = HashMap::new();
+    checker.infer_rust_array_display_bindings("[u8; N]", "[u8; M]", "", &[], &const_parameters, &mut unconstrained);
+    assert!(!unconstrained.contains_key("N"));
+    assert!(TypeChecker::rust_call_arg_wants_owner_expectation(
+        &ResolvedType::RustPath("[u8;N]".to_string()),
+        &ResolvedType::RustPath("[u8;32]".to_string())
+    ));
+
+    let signature = RustFunctionSig {
+        receiver_contract: None,
+        bounds: Vec::new(),
+        type_params: vec!["T".to_string()],
+        params: Vec::new(),
+        return_type: "[T; N]".to_string(),
+        is_async: false,
+        is_unsafe: false,
+    };
+    let parameters = TypeChecker::rust_signature_inference_parameters(&signature);
+    let inferred = checker.infer_rust_signature_bindings(
+        &signature,
+        "std::array::from_fn",
+        &parameters,
+        &[],
+        &[],
+        Some(&ResolvedType::RustPath("[u8; 32]".to_string())),
+    );
+    assert_eq!(inferred.get("T"), Some(&ResolvedType::Numeric(NumericTypeId::U8)));
+    assert_eq!(inferred.get("N"), Some(&ResolvedType::RustPath("32".to_string())));
+
+    let nested = checker.infer_rust_signature_bindings(
+        &signature,
+        "std::array::from_fn",
+        &parameters,
+        &[],
+        &[],
+        Some(&ResolvedType::RustPath("[[u8; 8]; 4]".to_string())),
+    );
+    assert_eq!(nested.get("T"), Some(&ResolvedType::RustPath("[u8;8]".to_string())));
+    assert_eq!(nested.get("N"), Some(&ResolvedType::RustPath("4".to_string())));
+
+    let callback_signature = RustFunctionSig {
+        receiver_contract: None,
+        bounds: vec![RustTraitBound {
+            self_type: "F".to_string(),
+            path: "std::ops::FnMut".to_string(),
+            type_arguments: vec!["(usize,)".to_string()],
+            associated_type_bindings: vec![RustAssociatedTypeBinding {
+                name: "Output".to_string(),
+                value_path: "T".to_string(),
+            }],
+        }],
+        type_params: vec!["F".to_string(), "T".to_string()],
+        params: vec![RustParam {
+            name: Some("callback".to_string()),
+            type_display: "F".to_string(),
+        }],
+        return_type: "[T; N]".to_string(),
+        is_async: false,
+        is_unsafe: false,
+    };
+    let callback_parameters = TypeChecker::rust_signature_inference_parameters(&callback_signature);
+    let callback_args = [CallArg::Positional(Spanned::new(
+        Expr::Ident("callback".to_string()),
+        Span::new(4, 5),
+    ))];
+    let provisional_callback = ResolvedType::Function(
+        vec![CallableParam::positional(ResolvedType::Numeric(NumericTypeId::USize))],
+        Box::new(ResolvedType::RustPath("[T; N]".to_string())),
+    );
+    let callback_inferred = checker.infer_rust_signature_bindings(
+        &callback_signature,
+        "std::array::from_fn",
+        &callback_parameters,
+        &callback_args,
+        &[provisional_callback],
+        Some(&ResolvedType::RustPath("[[u8; 8]; 4]".to_string())),
+    );
+    assert_eq!(
+        callback_inferred.get("T"),
+        Some(&ResolvedType::RustPath("[u8;8]".to_string()))
+    );
+    assert_eq!(
+        callback_inferred.get("N"),
+        Some(&ResolvedType::RustPath("4".to_string()))
+    );
+    let retained_span = Span::new(2, 3);
+    checker.retain_checked_rust_function("std::array::from_fn", &signature, &inferred, retained_span);
+    assert_eq!(
+        checker
+            .type_info
+            .rust
+            .checked_calls
+            .get(&retained_span)
+            .map(|call| &call.return_type),
+        Some(&ResolvedType::RustPath("[u8;32]".to_string()))
+    );
+
+    let mut provisional = TypeChecker::new();
+    provisional.call_argument_depth = 1;
+    provisional.record_inferred_rust_arguments("std::array::from_fn", &signature, &HashMap::new(), Span::new(0, 1));
+    assert!(provisional.errors.is_empty());
+    assert!(!TypeChecker::rust_signature_const_parameters_are_bound(
+        &signature,
+        &HashMap::new()
+    ));
+
+    provisional.call_argument_depth = 0;
+    provisional.record_inferred_rust_arguments("std::array::from_fn", &signature, &HashMap::new(), Span::new(0, 1));
+    assert!(
+        provisional
+            .errors
+            .iter()
+            .any(|error| error.message.contains("const parameter `N` is not fixed"))
+    );
+}
+
 /// A Rust receiver does not satisfy a missing required value parameter.
 #[test]
 fn rust_method_call_rejects_missing_required_arguments_after_receiver() {
