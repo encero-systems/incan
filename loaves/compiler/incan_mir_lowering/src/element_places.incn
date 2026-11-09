@@ -86,8 +86,10 @@ def projected_type(mut builder: Builder, ty: PlanType, projection: &PlaceElem) -
         _ => pass
     match projection:
         PlaceElem.Index(_index) =>
-            if source == PlanType.String:
+            if source in [PlanType.String, PlanType.FrozenStr]:
                 return Ok(PlanType.String)
+            if source == PlanType.FrozenBytes:
+                return Ok(PlanType.U8)
             match source:
                 PlanType.NativeArray(elements, _length) =>
                     if len(elements) == 1:

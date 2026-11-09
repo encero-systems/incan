@@ -1,0 +1,101 @@
+"""Compare optional owned and frozen text without changing either payload's storage or lifetime."""
+
+from pub::incan_mir_plan import (
+    BinaryOp,
+    Carrier,
+    FieldProjection,
+    Operand,
+    Place,
+    PlanType,
+    RvalueKind,
+    SourceSpan,
+    TerminatorKind,
+    UnaryOp,
+    assign as plan_assign,
+)
+from frame import Builder, appended_field, place_type, read_place, temporary
+from calls import instantiated_external_call
+from options import variant_condition
+
+
+pub def optional_text_equality(
+    mut builder: Builder,
+    left: Place,
+    right: Place,
+    negate: bool,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """
+    Compare checked Option text carriers by tag and then by their borrowed text contents.
+
+    Only differing owned/frozen text layouts enter here. Matching carriers retain their native PartialEq path.
+    Neither payload is moved, copied into owned text, or converted into program-lifetime frozen storage.
+    """
+    left_type = place_type(builder.locals, left)
+    right_type = place_type(builder.locals, right)
+    left_payload = optional_text_payload(builder, left_type)
+    right_payload = optional_text_payload(builder, right_type)
+    if left_type == right_type or left_payload == None or right_payload == None:
+        return Ok(None)
+    # Inspect both variants before projecting either payload; None never exposes a field.
+    output = temporary(builder, PlanType.Bool, span)
+    left_present = variant_condition(builder, left, 1, span)
+    right_present = variant_condition(builder, right, 1, span)
+    builder.emit(plan_assign(output, RvalueKind.Binary(BinaryOp.Equal, left_present, right_present), span))
+    check_payload = builder.new_block(span)
+    compare_payload = builder.new_block(span)
+    joined = builder.new_block(span)
+    builder.finish(TerminatorKind.SwitchBool(left_present, joined, check_payload), span)
+    builder.current = check_payload
+    builder.finish(TerminatorKind.SwitchBool(right_present, joined, compare_payload), span)
+    builder.current = compare_payload
+    # Existing generic string equality accepts both a copyable frozen wrapper and a borrowed String.
+    match (left_payload, right_payload):
+        (Some(first), Some(second)) =>
+            first_field = appended_field(left, FieldProjection(slot=0, ty=first, variant=1), span)?
+            second_field = appended_field(right, FieldProjection(slot=0, ty=second, variant=1), span)?
+            first_argument, first_type = text_argument(builder, first_field, first, span)
+            second_argument, second_type = text_argument(builder, second_field, second, span)
+            instantiated_external_call(
+                builder,
+                "incan_std_primitives::strings::str_eq",
+                [first_type, second_type],
+                [first_type, second_type],
+                PlanType.Bool,
+                [first_argument, second_argument],
+                output,
+                span,
+            )?
+        _ => return Err("invalid Body IR optional text payload classification")
+    builder.finish(TerminatorKind.Goto(joined), span)
+    builder.current = joined
+    if negate:
+        negated = temporary(builder, PlanType.Bool, span)
+        builder.emit(plan_assign(negated, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
+        return Ok(Some(read_place(negated, false, span)))
+    return Ok(Some(read_place(output, false, span)))
+
+
+def optional_text_payload(builder: Builder, ty: PlanType) -> Option[PlanType]:
+    """Admit only a retained intrinsic Option with one owned or frozen text payload."""
+    match ty:
+        PlanType.Enum(owner, _name) =>
+            if owner < len(builder.enums):
+                return None
+            declaration = builder.intrinsics[owner - len(builder.enums)]
+            if declaration.carrier != Carrier.Option or len(declaration.variants[1].fields) != 1:
+                return None
+            payload = declaration.variants[1].fields[0]
+            if payload in [PlanType.String, PlanType.FrozenStr]:
+                return Some(payload)
+        _ => pass
+    return None
+
+
+pub def text_argument(mut builder: Builder, field: Place, ty: PlanType, span: SourceSpan) -> tuple[Operand, PlanType]:
+    """Copy a frozen wrapper or lend the original owned String, retaining the complete field projection."""
+    if ty == PlanType.FrozenStr:
+        return (read_place(field, false, span), ty)
+    reference = temporary(builder, PlanType.StringRef, span)
+    builder.emit(plan_assign(reference, RvalueKind.Borrow(field), span))
+    return (read_place(reference, false, span), PlanType.StringRef)
