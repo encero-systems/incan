@@ -46,6 +46,15 @@ import primitives.crumb.row_scalar_read
 import primitives.crumb.row_cell_read
 import primitives.crumb.row_projection
 import primitives.crumb.row_reader
+import primitives.crumb.column_bits
+import primitives.crumb.column_numbers
+import primitives.crumb.column_types
+import primitives.crumb.column_presence
+import primitives.crumb.column_dictionary
+import primitives.crumb.column_block_write
+import primitives.crumb.column_data_write
+import primitives.crumb.column_group_write
+import primitives.crumb.column_writer
 import primitives.environ
 import primitives.fs
 import primitives.fs.file

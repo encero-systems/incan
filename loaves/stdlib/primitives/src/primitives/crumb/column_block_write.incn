@@ -1,0 +1,160 @@
+"""Six explicit block encodings over at most 256 logical row positions."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.column_bits import bit_length, pack
+from crate.primitives.crumb.column_dictionary import ColumnDictionary, code_for
+from crate.primitives.crumb.column_numbers import coefficient, numeric_type, zigzag
+from crate.primitives.crumb.column_presence import cell_type, present
+from crate.primitives.crumb.column_types import BlockEncoding, encoding_id, uses_dictionary
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.row_buffer import RowBuffer, indexed
+from crate.primitives.crumb.row_cells import cell
+from crate.primitives.crumb.row_dictionary import Dictionary
+from crate.primitives.crumb.scalars import compare_integer, subtract_integer
+from crate.primitives.crumb.types import AbsentPolicy, TypeNode
+from crate.primitives.crumb.values import Value
+
+
+pub def write_block(
+    node: TypeNode,
+    absent: AbsentPolicy,
+    values: list[Value],
+    encoding: BlockEncoding,
+    keys: Option[ColumnDictionary],
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """Validate all values before constructing a complete block; no successful partial output escapes."""
+    if len(values) < 1 or len(values) > 256:
+        return Err(CrumbError.invalid_input("column block logical count"))
+    stored_type = cell_type(node, absent, budget)?
+    budget.charge_elements(len(values))?
+    mut bitmap: list[u8] = []
+    mut stored: list[Value] = []
+    mut cells: list[bytes] = []
+    for index in range(len(values)):
+        if absent != AbsentPolicy.Required and index % 8 == 0:
+            budget.charge_bytes(1)?
+            bitmap.append(0u8)
+        match present(values[index], node, absent)?:
+            None => pass
+            Some(value) =>
+                cells.append(cell(stored_type, value, dictionary, budget)?)
+                stored.append(value)
+                if absent != AbsentPolicy.Required:
+                    last = len(bitmap) - 1
+                    bitmap[last] = (int(bitmap[last]) | (1 << (index % 8))).saturating_resize[u8]()
+    if len(stored) == 0 and encoding != BlockEncoding.Indexed:
+        return Err(CrumbError.invalid_input("empty column block encoding"))
+    mut output = RowBuffer.create()
+    output.append(bitmap, budget)?
+    output.count(encoding_id(encoding), budget)?
+    output.append(payload(stored_type, stored, cells, encoding, keys, dictionary, budget)?, budget)?
+    return output.finish(budget)
+
+
+def payload(
+    node: TypeNode,
+    values: list[Value],
+    cells: list[bytes],
+    encoding: BlockEncoding,
+    keys: Option[ColumnDictionary],
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """The declared encoding owns its exact canonical bytes; no opportunistic fallback changes a choice."""
+    if encoding == BlockEncoding.Indexed:
+        return indexed(cells, budget)
+    if encoding == BlockEncoding.Runs:
+        return runs(cells, budget)
+    if uses_dictionary(encoding):
+        match keys:
+            None => return Err(CrumbError.invalid_input("missing column dictionary"))
+            Some(admitted) => return codes(node, values, encoding, admitted, dictionary, budget)
+    if not numeric_type(node) or len(values) == 0:
+        return Err(CrumbError.invalid_input("numeric block type or empty input"))
+    mut numbers: list[str] = []
+    for value in values:
+        budget.charge_elements(1)?
+        numbers.append(coefficient(node, value, budget)?)
+    return numeric(numbers, cells, encoding == BlockEncoding.ZigzagDelta, budget)
+
+
+def numeric(numbers: list[str], cells: list[bytes], delta: bool, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Compute exact mathematical differences before selecting the minimum packed width."""
+    mut base = 0
+    if not delta:
+        for index in range(1, len(numbers)):
+            budget.charge_elements(1)?
+            if compare_integer(numbers[index], numbers[base]) < 0:
+                base = index
+    mut residuals: list[str] = []
+    mut width = 0
+    for index in range(len(numbers)):
+        budget.charge_elements(1)?
+        if delta and index == 0:
+            continue
+        mut residual = "0"
+        if delta:
+            difference = subtract_integer(numbers[index], numbers[index - 1], budget)?
+            residual = zigzag(difference, budget)?
+        else:
+            residual = subtract_integer(numbers[index], numbers[base], budget)?
+        width = max([width, bit_length(residual, budget)?])
+        residuals.append(residual)
+    mut output = RowBuffer.create()
+    output.frame(cells[base], budget)?
+    output.count(width, budget)?
+    output.append(pack(width, residuals, budget)?, budget)?
+    return output.finish(budget)
+
+
+def runs(cells: list[bytes], mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Combine only adjacent identical canonical typed cells, with exact positive run lengths."""
+    mut ends: list[int] = []
+    for index in range(1, len(cells)):
+        budget.charge_elements(1)?
+        if cells[index] != cells[index - 1]:
+            ends.append(index)
+    ends.append(len(cells))
+    mut output = RowBuffer.create()
+    output.count(len(ends), budget)?
+    mut start = 0
+    for end in ends:
+        output.count(end - start, budget)?
+        output.frame(cells[start], budget)?
+        start = end
+    return output.finish(budget)
+
+
+def codes(
+    node: TypeNode,
+    values: list[Value],
+    encoding: BlockEncoding,
+    keys: ColumnDictionary,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """Codes address the shared complete-column dictionary, so they can exceed one byte."""
+    mut positions: list[int] = []
+    for value in values:
+        budget.charge_elements(1)?
+        positions.append(code_for(keys, node, value, dictionary, budget)?)
+    mut output = RowBuffer.create()
+    if encoding == BlockEncoding.DictionaryPacked:
+        width = bit_length(str(len(keys.values) - 1), budget)?
+        output.count(width, budget)?
+        output.append(pack(width, [str(code) for code in positions], budget)?, budget)?
+    else:
+        mut ends: list[int] = []
+        for index in range(1, len(positions)):
+            if positions[index] != positions[index - 1]:
+                ends.append(index)
+        ends.append(len(positions))
+        output.count(len(ends), budget)?
+        mut start = 0
+        for end in ends:
+            output.count(end - start, budget)?
+            output.count(positions[start], budget)?
+            start = end
+    return output.finish(budget)
