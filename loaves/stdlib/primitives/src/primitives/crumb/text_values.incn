@@ -72,7 +72,9 @@ def parse_cells(
     mut budget: Budget,
 ) -> Result[list[ValueField], TextError]:
     """Apply positions first, then names or indexes, and materialize every declared absence."""
-    budget.enter().map_err((_) => limit_error(tokens.peek().position))?
+    match budget.enter():
+        Err(_) => return Err(limit_error(tokens.peek().position))
+        Ok(_) => pass
     tokens.require("(")?
     # Explicit appends preserve the recursive Option payload through native lowering.
     # #2803: a comprehension loses the recursive Option element type here.
