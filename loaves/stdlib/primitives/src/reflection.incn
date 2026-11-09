@@ -1,12 +1,12 @@
-"""
-Foundational reflection helpers for models and classes.
-"""
+"""Typed value traversal, stored-state reconstruction and declaration metadata."""
+
 
 pub class FieldInfo:
     """
     Compiler-provided field metadata returned by __fields__().
     Instances are immutable and read-only.
     """
+
     pub name: FrozenStr
     pub identity: FrozenBytes
     pub canonical: bool
@@ -17,3 +17,375 @@ pub class FieldInfo:
     pub type_name: FrozenStr
     pub has_default: bool
     pub extra: FrozenDict[FrozenStr, FrozenStr]
+
+
+pub model LifecycleInfo:
+    """Descriptive rename/deprecation history; these unverified labels grant no authority."""
+
+    pub since: Option[FrozenStr] = None
+    pub retire_in: Option[FrozenStr] = None
+    pub message: Option[FrozenStr] = None
+    pub by: Option[FrozenStr] = None
+    pub issue: Option[FrozenStr] = None
+
+
+pub model VariantInfo:
+    """One enum alternative's stable identity, complete payload and descriptive metadata."""
+
+    pub name: FrozenStr
+    pub identity: FrozenBytes
+    pub description: Option[FrozenStr]
+    pub fields: FrozenList[FieldInfo]
+    pub extra: FrozenDict[FrozenStr, FrozenStr]
+    pub renamed_from: FrozenList[FrozenStr]
+    pub renamed_from_lifecycle: Option[LifecycleInfo]
+
+
+pub model ShapeInfo:
+    """
+    A complete stored shape, independently of a value or its public-field inspection view.
+
+    Identity is the closed nominal selector K; spelling is structural S. Neither grants authority
+    to a foreign type. Fields and variants use their checked six-byte identities in ascending order.
+    Recursive shapes keep finite checked selectors rather than recursively allocating metadata.
+    """
+
+    pub name: FrozenStr
+    pub identity: FrozenBytes
+    pub renamed_from: FrozenList[FrozenStr]
+    pub renamed_from_lifecycle: Option[LifecycleInfo]
+    pub spelling: FrozenStr
+    pub fields: FrozenList[FieldInfo]
+    pub variants: FrozenList[VariantInfo]
+
+    @staticmethod
+    pub def of[T with Walk]() -> ShapeInfo:
+        """Return the adopter's own stored shape without constructing or inspecting a value."""
+        return T.__shape__()
+
+
+@derive(Eq)
+pub enum SequenceKind:
+    """The value-level sequence kind; frozen collections retain their ordinary collection kind."""
+
+    List
+    Set
+    Tuple
+
+
+@derive(Eq)
+pub enum DecimalValueErrorKind(str):
+    """The exact-decimal constraint rejected during checked construction."""
+
+    Precision = "precision"
+    Scale = "scale"
+    Coefficient = "coefficient"
+
+
+@derive(Eq)
+pub model DecimalValueError:
+    """A failed decimal constraint with the complete supplied value available as named fields."""
+
+    pub kind: DecimalValueErrorKind
+    pub coefficient: i128
+    pub precision: u8
+    pub scale: u8
+
+
+@derive(Validate)
+pub model DecimalValue:
+    """
+    An exact decimal coefficient and its declared precision and scale.
+
+    Use DecimalValue.new(coefficient=..., precision=..., scale=...) with the
+    Validate construction contract. Invalid construction returns DecimalValueError; direct raw
+    construction is refused. No floating-point conversion participates in validation.
+    """
+
+    pub coefficient: i128
+    pub precision: u8
+    pub scale: u8
+
+    def validate(self) -> Result[DecimalValue, DecimalValueError]:
+        """Check P in 1..38, S in 0..P and abs(coefficient) below 10**P without negating i128 minimum."""
+        if self.precision < 1 or self.precision > 38:
+            return Err(
+                DecimalValueError(
+                    kind=DecimalValueErrorKind.Precision,
+                    coefficient=self.coefficient,
+                    precision=self.precision,
+                    scale=self.scale,
+                ),
+            )
+        if self.scale > self.precision:
+            return Err(
+                DecimalValueError(
+                    kind=DecimalValueErrorKind.Scale,
+                    coefficient=self.coefficient,
+                    precision=self.precision,
+                    scale=self.scale,
+                ),
+            )
+        mut limit: i128 = 1
+        for _ in range(int(self.precision)):
+            limit *= 10
+        if self.coefficient <= -limit or self.coefficient >= limit:
+            return Err(
+                DecimalValueError(
+                    kind=DecimalValueErrorKind.Coefficient,
+                    coefficient=self.coefficient,
+                    precision=self.precision,
+                    scale=self.scale,
+                ),
+            )
+        return Ok(self)
+
+
+pub trait Walk:
+    """Expose typed stored values to a caller-owned walker without imposing a codec or copying fields."""
+
+    def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
+        """Visit this value's declared stored representation, propagating the walker's failure."""
+        pass
+
+    @staticmethod
+    def __shape__() -> ShapeInfo:
+        """Describe the complete stored representation without constructing a value."""
+        pass
+
+
+pub trait Reconstruct with Walk:
+    """Restore complete stored state, preserving the source's failure channel and final validation."""
+
+    @staticmethod
+    def __reconstruct__[E, S with Source[E]](mut source: S) -> Result[Self, E]:
+        """Read and validate complete stored state without replaying construction normalization."""
+        pass
+
+
+pub trait Walker[E]:
+    """
+    Typed traversal with no-op scalar defaults and recursive structural defaults.
+
+    Override only the observations needed. The same mutable walker enters nested values, retaining
+    its state, limits and error type. Begin/end calls describe structure; they do not own values.
+    """
+
+    def bool(mut self, value: bool) -> Result[None, E]:
+        """Observe a bool value; the default retains no data."""
+        return Ok(None)
+
+    def str(mut self, value: str) -> Result[None, E]:
+        """Observe a str value; the default retains no data."""
+        return Ok(None)
+
+    def bytes(mut self, value: bytes) -> Result[None, E]:
+        """Observe a bytes value; the default retains no data."""
+        return Ok(None)
+
+    def integer(mut self, value: i128) -> Result[None, E]:
+        """Observe an i128 value; the default retains no data."""
+        return Ok(None)
+
+    def unsigned(mut self, value: u128) -> Result[None, E]:
+        """Observe a u128 value; the default retains no data."""
+        return Ok(None)
+
+    def float(mut self, value: f64) -> Result[None, E]:
+        """Observe a f64 value; the default retains no data."""
+        return Ok(None)
+
+    def decimal(mut self, value: DecimalValue) -> Result[None, E]:
+        """Observe a DecimalValue value; the default retains no data."""
+        return Ok(None)
+
+    def none(mut self) -> Result[None, E]:
+        """Observe None, including one explicitly absent optional layer."""
+        return Ok(None)
+
+    def some[V with Walk](mut self, value: V) -> Result[None, E]:
+        """Descend through one present optional layer with this walker's existing state."""
+        return value.__walk__(self)
+
+    def begin_sequence(mut self, kind: SequenceKind, length: int) -> Result[None, E]:
+        """Enter a list, set or tuple; the producer supplies its complete element count."""
+        return Ok(None)
+
+    def element[V with Walk](mut self, value: V) -> Result[None, E]:
+        """Walk one sequence element without materializing an intermediate untyped tree."""
+        return value.__walk__(self)
+
+    def end_sequence(mut self) -> Result[None, E]:
+        """Finish the current sequence."""
+        return Ok(None)
+
+    def begin_dict(mut self, length: int) -> Result[None, E]:
+        """Enter a dictionary with its complete entry count."""
+        return Ok(None)
+
+    def entry[K with Walk, V with Walk](mut self, key: K, value: V) -> Result[None, E]:
+        """Visit a key followed by its value, propagating the first failure unchanged."""
+        key.__walk__(self)?
+        return value.__walk__(self)
+
+    def end_dict(mut self) -> Result[None, E]:
+        """Finish the current dictionary."""
+        return Ok(None)
+
+    def begin_model(mut self, shape: ShapeInfo) -> Result[None, E]:
+        """Enter a model's complete stored shape, including its private stored fields."""
+        return Ok(None)
+
+    def field[V with Walk](mut self, info: FieldInfo, value: V) -> Result[None, E]:
+        """Walk a stored field by its checked metadata; privacy is not redaction."""
+        return value.__walk__(self)
+
+    def end_model(mut self) -> Result[None, E]:
+        """Finish the current model."""
+        return Ok(None)
+
+    def begin_variant(mut self, info: VariantInfo) -> Result[None, E]:
+        """Select the enum alternative before visiting its payload fields."""
+        return Ok(None)
+
+    def end_variant(mut self) -> Result[None, E]:
+        """Finish the current enum payload."""
+        return Ok(None)
+
+    def member(mut self, spelling: FrozenStr) -> Result[None, E]:
+        """Select the checked stored-type spelling of a union member before walking it."""
+        return Ok(None)
+
+    def reference(mut self, kind: FrozenStr, identity: FrozenBytes) -> Result[None, E]:
+        """Observe an explicitly typed reference without fetching or following its target."""
+        return Ok(None)
+
+
+pub trait Source[E]:
+    """
+    Format-owned typed reads and failure conversion used by stored-state reconstruction.
+
+    Every read keeps this source's position, budgets and policy. End operations must check the
+    selected container is exhausted. Missing fields, present optional None and failed reads are
+    distinct states. No default converts malformed input into absence or silently skips an error.
+    """
+
+    def bool(mut self) -> Result[bool, E]:
+        """Read one bool value, retaining the source's located failure on refusal."""
+        pass
+
+    def str(mut self) -> Result[str, E]:
+        """Read one str value, retaining the source's located failure on refusal."""
+        pass
+
+    def bytes(mut self) -> Result[bytes, E]:
+        """Read one bytes value, retaining the source's located failure on refusal."""
+        pass
+
+    def integer(mut self) -> Result[i128, E]:
+        """Read one i128 value, retaining the source's located failure on refusal."""
+        pass
+
+    def unsigned(mut self) -> Result[u128, E]:
+        """Read one u128 value, retaining the source's located failure on refusal."""
+        pass
+
+    def float(mut self) -> Result[f64, E]:
+        """Read one f64 value, retaining the source's located failure on refusal."""
+        pass
+
+    def decimal(mut self) -> Result[DecimalValue, E]:
+        """Read one DecimalValue value, retaining the source's located failure on refusal."""
+        pass
+
+    def none(mut self) -> Result[None, E]:
+        """Read one None value, retaining the source's located failure on refusal."""
+        pass
+
+    def some[V with Reconstruct](mut self) -> Result[Option[V], E]:
+        """Read one optional layer; a present V may itself contain further optional layers."""
+        pass
+
+    def begin_sequence(mut self, kind: SequenceKind) -> Result[None, E]:
+        """Enter the requested sequence kind or refuse a shape mismatch."""
+        pass
+
+    def element[V with Reconstruct](mut self) -> Result[Option[V], E]:
+        """Read the next typed element; None means the selected sequence has ended."""
+        pass
+
+    def end_sequence(mut self) -> Result[None, E]:
+        """Validate complete consumption of this sequence, including tuple arity."""
+        pass
+
+    def begin_dict(mut self) -> Result[None, E]:
+        """Enter a dictionary while retaining the format's duplicate-key and size policy."""
+        pass
+
+    def entry[K with Reconstruct, V with Reconstruct](mut self) -> Result[Option[tuple[K, V]], E]:
+        """Read the next typed key/value pair, or None at the dictionary's end."""
+        pass
+
+    def end_dict(mut self) -> Result[None, E]:
+        """Validate complete consumption of the current dictionary."""
+        pass
+
+    def begin_model(mut self, shape: ShapeInfo) -> Result[None, E]:
+        """Admit the requested stored shape before reading any of its fields."""
+        pass
+
+    def field[V with Reconstruct](mut self, info: FieldInfo) -> Result[Option[V], E]:
+        """Read a present typed field or report absence; a failed read is never absence."""
+        pass
+
+    def end_model(mut self) -> Result[None, E]:
+        """Validate model completion and the format's unknown-field policy."""
+        pass
+
+    def begin_variant(mut self, shape: ShapeInfo) -> Result[VariantInfo, E]:
+        """Select a checked alternative from this enum shape before reading its payload."""
+        pass
+
+    def end_variant(mut self) -> Result[None, E]:
+        """Validate complete consumption of the selected enum payload."""
+        pass
+
+    def member(mut self) -> Result[FrozenStr, E]:
+        """Read the union member's stored-type spelling; reconstruction checks membership."""
+        pass
+
+    def reference(mut self, kind: FrozenStr) -> Result[FrozenBytes, E]:
+        """Read the identity of a reference of the requested kind, without dereferencing it."""
+        pass
+
+    def missing(mut self, info: FieldInfo) -> E:
+        """Create and retain one located missing-field failure under this source's policy."""
+        pass
+
+    def takes_default(self, info: FieldInfo) -> bool:
+        """Explicitly permit a declared absence default; inspection must not run a factory."""
+        pass
+
+    def invalid(mut self, error: ValidationError) -> E:
+        """Retain the original final-state validation failure and its hierarchy."""
+        pass
+
+    def collects(self) -> bool:
+        """Whether independently decodable fields continue after a failure."""
+        pass
+
+    def collected(self) -> Option[E]:
+        """Return retained failures when present; reconstruction must never return partial state."""
+        pass
+
+    def malformed(mut self, reason: str) -> E:
+        """Convert malformed input into a located source failure without erasing its cause."""
+        pass
+
+    def numeric_range(mut self, requested_type: FrozenStr) -> E:
+        """Report that the decoded exact value cannot fit the requested numeric type."""
+        pass
+
+    def shape_mismatch(mut self, expected: FrozenStr, actual: FrozenStr) -> E:
+        """Report incompatible stored and requested shapes at the current source position."""
+        pass
