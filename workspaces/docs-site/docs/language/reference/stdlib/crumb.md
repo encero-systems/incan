@@ -290,3 +290,35 @@ No failed finite admission exposes a partial set or unchecked view. The prefix A
 `TextValue` has `NoneValue`, `Some(list[TextValue])`, `Boolean(bool)`, `Integer(str, str)`, `Float(int, bytes)`, `Decimal(str, int, int)`, `Text(str)`, `Binary(bytes)`, `Withheld(str)`, `List(list[TextValue])`, `Set(list[TextValue])`, `Map(list[TextMapEntry])`, `Record(str, list[TextNamedValue])`, `Enum(str, str, list[TextNamedValue])`, `Union(str, list[TextValue])` and `Reference(str, str)`. Integer values retain their exact storage type and decimal digits. Float values retain width and network-order IEEE bits; printing derives the shortest canonical spelling from those bits. Decimal values retain coefficient, precision and scale. Withheld secret values print only as `<secret>`.
 
 Comments are discarded. A cut between complete entries yields the shorter document; a cut inside a value or table returns `unexpected_end`. Raw Unicode bidirectional controls are refused everywhere and must use the canonical escaped spelling in string data. A reference retains its target type and identity text without resolution.
+
+## Finite column writer
+
+`std.primitives.crumb.column_writer` writes one complete experimental `crumb-columns/1` envelope from the same `Description` and `RowRecord` inputs as the row writer. It admits complete descriptions and all final stored values before returning owned bytes. It does not construct application models, resolve references, normalize constructor inputs or change logical record order.
+
+```incan
+from std.primitives.crumb.column_writer import write_columns
+from std.primitives.crumb.column_types import BlockEncoding, ColumnChoice, GroupChoice
+```
+
+| API | Return type | Contract |
+| --- | --- | --- |
+| `write_columns(descriptions: list[Description], records: list[RowRecord], registry: KindRegistry, sealed: bool, choices: list[GroupChoice], mut budget: Budget)` | `Result[bytes, CrumbError]` | Return one complete codec-2 envelope or an error. All arguments are explicit. An empty `choices` list selects indexed typed cells throughout; a nonempty list must provide every maximal consecutive nominal group's complete column/block choices. |
+
+`GroupChoice(columns: list[ColumnChoice])` follows field-identity order for record fields, or has one column containing complete root-enum cells. `ColumnChoice(blocks: list[BlockEncoding])` has one choice per 256 logical row positions, including absent positions. An empty record type has zero field columns but still counts as a logical record. Adjacent records with the same K form one group; nonadjacent runs remain separate.
+
+| `BlockEncoding` | Physical form | Stored types |
+| --- | --- | --- |
+| `Indexed` | Minimum-width offsets plus typed row cells | All row cell types |
+| `FrameOfReference` | Minimum exact value plus packed unsigned differences | Fixed integers and decimal coefficients |
+| `ZigzagDelta` | First value plus packed exact signed differences | Fixed integers and decimal coefficients |
+| `Runs` | Positive lengths and canonical typed cells | All row cell types |
+| `DictionaryPacked` | Packed codes into the shared column dictionary | String, binary, fixed integers and decimal coefficients |
+| `DictionaryRuns` | Positive lengths and dictionary codes | The same dictionary types |
+
+A group column shares one sorted distinct-key dictionary whenever any block chooses a code encoding. It includes values occurring in all of that column's blocks, including blocks using other encodings. String/binary keys use longest byte prefixes; numeric keys use exact positive differences. Both restart every 16 keys. Blocks do not create independent dictionaries. Counts and widths can exceed 255 where the profile permits; caller budgets still apply.
+
+Only the declared outer absence is removed. `Some(None)` remains present, a required empty collection retains its typed cell, and a block containing only absent values requires `Indexed`. Invalid choice cardinalities, incompatible encodings, wrong field identities/contracts, invalid stored values and missing descriptions return `CrumbError.InvalidInput`. Resource failures return `CrumbError.Limit`. No failure returns a successful byte prefix.
+
+Every selected encoding has exact canonical bytes, but column bytes are not canonical across choices or writers. Two choices can encode the same records differently. The optional seal hashes ordered logical values exactly as the row codec does; it is independent of group packing, dictionaries and encoding IDs. It does not authenticate the sender.
+
+This finite writer transposes groups in memory under the shared request budget. It does not promise minimum-size encoding, streaming output, spooling, a column reader or native-array borrowing. Byte/work allowances are explicit protocol accounting rather than an exact allocator or resident-memory bound.
