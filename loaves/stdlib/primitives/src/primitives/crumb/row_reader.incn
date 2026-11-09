@@ -36,6 +36,11 @@ pub class RowSet:
     backing: MappedView
     sealed: bool
 
+    @staticmethod
+    pub def create(dictionary: Dictionary, rows: list[StoredRow], backing: MappedView, sealed: bool) -> Self:
+        """Retain one fully admitted envelope and its independently owned backing view."""
+        return RowSet(dictionary=dictionary, rows=rows, backing=backing, sealed=sealed)
+
     pub def len(self) -> int:
         """Return the admitted record count, which also matched the trailer for a sealed set."""
         return len(self.rows)
@@ -174,7 +179,7 @@ def read_envelope(
     retained = view.slice(0, consumed)
     match retained:
         None => return Err(failure(RowFailure.Truncated, consumed))
-        Some(backing) => return Ok((RowSet(dictionary=dictionary, rows=rows, backing=backing, sealed=sealed), consumed))
+        Some(backing) => return Ok((RowSet.create(dictionary, rows, backing, sealed), consumed))
 
 
 def read_records(

@@ -13,7 +13,7 @@ pub def parse_type(text: str, mut budget: Budget) -> Result[TypeNode, CrumbError
     """Accept one complete canonical N spelling, including explicit closed nominal arguments."""
     for _ in range(4):
         budget.charge_bytes(len(text))?
-    mut parser = TypeParser(text=text, position=0)
+    mut parser = TypeParser.create(text)
     return parser.parse(budget)
 
 
@@ -47,6 +47,11 @@ class TypeParser:
 
     text: str
     position: int
+
+    @staticmethod
+    pub def create(text: str) -> Self:
+        """Start at the first byte of one canonical selector spelling."""
+        return TypeParser(text=text, position=0)
 
     pub def parse(mut self, mut budget: Budget) -> Result[TypeNode, CrumbError]:
         """Require complete canonical input without exposing mutable cursor state."""
