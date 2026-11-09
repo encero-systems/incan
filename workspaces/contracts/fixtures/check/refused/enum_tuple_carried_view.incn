@@ -1,0 +1,15 @@
+# behavior: nested tuple pattern bindings cannot discard a carried view's dependency (#2834).
+# expect-diagnostic: INCAN-T0123
+
+
+def view(source: Borrowed[str]) -> Option[Borrowed[str]] from source:
+    return Some(source)
+
+
+def invalid(mut source: BorrowedMut[str]) -> int:
+    held = view(source)
+    match (held, 1):
+        (Some(text), _) =>
+            source = "changed"
+            return len(text)
+    return 0
