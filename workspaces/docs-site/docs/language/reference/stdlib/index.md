@@ -18,6 +18,7 @@ Pages in this section are curated and checked into the repository.
 - [`std.graph`](graph.md) (curated; see also [how-to](../../how-to/working_with_graphs.md) and [model](../../explanation/graph_model.md))
 - [`std.hash`](hash.md) (curated; see also [how-to](../../how-to/hashing_data.md))
 - [`std.io`](io.md) (curated)
+- [`std.primitives.crumb`](crumb.md) (bounded experimental integer and byte framing)
 - [`std.interop`](interop.md) (curated; checked C binding foundation; see also [tutorial](../../tutorials/checked_c_binding.md), [how-to](../../how-to/checked_c_bindings.md), and [architecture](../../explanation/checked_c_interop.md))
 - [`std.json`](json.md) (curated)
 - [`std.logging`](logging.md) (curated; see also [how-to](../../how-to/logging.md))
