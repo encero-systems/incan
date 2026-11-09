@@ -26,7 +26,9 @@ pub class ColumnField:
 
     pub def read(self, mut budget: Budget) -> Result[Value, ColumnError]:
         """Decode this field after the set can leave scope; every native range retains immutable backing."""
-        value = block_at(self.block, self.node, self.absent, self.keys, self.dictionary, self.position, budget).map_err((e) => in_field(e, self.identity))?
+        value = block_at(self.block, self.node, self.absent, self.keys, self.dictionary, self.position, budget).map_err(
+            (e) => in_field(e, self.identity),
+        )?
         if self.enum_field:
             match value:
                 Value.Enum(_, fields) => return enum_member(fields, self.identity, budget)
@@ -34,7 +36,13 @@ pub class ColumnField:
         return Ok(value)
 
 
-pub def project(group: GroupData, position: int, identity: bytes, dictionary: Dictionary, mut budget: Budget) -> Result[ColumnField, ColumnError]:
+pub def project(
+    group: GroupData,
+    position: int,
+    identity: bytes,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[ColumnField, ColumnError]:
     """Select a root field by its stored identity; unknown identities differ from valid absent values."""
     if position < 0 or position >= group.rows:
         return Err(shared(failure(RowFailure.RecordIndex, 0)))
@@ -52,7 +60,16 @@ pub def project(group: GroupData, position: int, identity: bytes, dictionary: Di
     if selected < 0:
         return Err(shared(failure(RowFailure.MissingField, 0)))
     budget.charge_bytes(128).map_err((e) => primitive(e, 0))?
-    result = ColumnField(block=group.columns[selected].blocks[position // 256], node=group.columns[selected].node, absent=group.columns[selected].absent, keys=group.columns[selected].keys, dictionary=dictionary, position=position % 256, identity=identity, enum_field=is_enum)
+    result = ColumnField(
+        block=group.columns[selected].blocks[position // 256],
+        node=group.columns[selected].node,
+        absent=group.columns[selected].absent,
+        keys=group.columns[selected].keys,
+        dictionary=dictionary,
+        position=position % 256,
+        identity=identity,
+        enum_field=is_enum,
+    )
     if is_enum:
         result.read(budget)?
     return Ok(result)

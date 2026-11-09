@@ -19,7 +19,16 @@ from crate.primitives.crumb.values import Value
 from crate.primitives.views import MappedView
 
 
-pub def read_block(node: TypeNode, absent: AbsentPolicy, rows: int, view: MappedView, origin: int, keys: Option[ColumnKeys], dictionary: Dictionary, mut budget: Budget) -> Result[tuple[BlockData, list[Value]], ColumnError]:
+pub def read_block(
+    node: TypeNode,
+    absent: AbsentPolicy,
+    rows: int,
+    view: MappedView,
+    origin: int,
+    keys: Option[ColumnKeys],
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[tuple[BlockData, list[Value]], ColumnError]:
     """Decode every reachable stored cell once, then restore only declared outer absence."""
     stored_type = cell_type(node, absent, budget).map_err((e) => primitive(e, origin))?
     block = read_header(stored_type, absent, rows, view, origin, keys, dictionary, budget)?
@@ -37,7 +46,13 @@ pub def read_block(node: TypeNode, absent: AbsentPolicy, rows: int, view: Mapped
     return Ok((block, values))
 
 
-def stored_values(block: BlockData, node: TypeNode, keys: Option[ColumnKeys], dictionary: Dictionary, mut budget: Budget) -> Result[list[Value], ColumnError]:
+def stored_values(
+    block: BlockData,
+    node: TypeNode,
+    keys: Option[ColumnKeys],
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[list[Value], ColumnError]:
     """Numeric and run admission are sequential; no quadratic replay of delta prefixes."""
     if block.encoding in [1, 2]:
         return numeric_values(block, node, budget)
@@ -51,7 +66,15 @@ def stored_values(block: BlockData, node: TypeNode, keys: Option[ColumnKeys], di
     return Ok(values)
 
 
-pub def block_at(block: BlockData, node: TypeNode, absent: AbsentPolicy, keys: Option[ColumnKeys], dictionary: Dictionary, position: int, mut budget: Budget) -> Result[Value, ColumnError]:
+pub def block_at(
+    block: BlockData,
+    node: TypeNode,
+    absent: AbsentPolicy,
+    keys: Option[ColumnKeys],
+    dictionary: Dictionary,
+    position: int,
+    mut budget: Budget,
+) -> Result[Value, ColumnError]:
     """Read one logical position after admission, without touching preceding blocks or fields."""
     if position < 0 or position >= block.rows:
         return Err(shared(row_failure(RowFailure.RecordIndex, block.origin)))
@@ -65,7 +88,14 @@ pub def block_at(block: BlockData, node: TypeNode, absent: AbsentPolicy, keys: O
     return restore_present(value, absent, block.origin)
 
 
-def stored_at(block: BlockData, node: TypeNode, keys: Option[ColumnKeys], dictionary: Dictionary, position: int, mut budget: Budget) -> Result[Value, ColumnError]:
+def stored_at(
+    block: BlockData,
+    node: TypeNode,
+    keys: Option[ColumnKeys],
+    dictionary: Dictionary,
+    position: int,
+    mut budget: Budget,
+) -> Result[Value, ColumnError]:
     """Select two cell offsets, direct packed bits, or bounded delta/run replay according to encoding."""
     if position < 0 or position >= block.present:
         return Err(shared(row_failure(RowFailure.RecordIndex, block.origin)))

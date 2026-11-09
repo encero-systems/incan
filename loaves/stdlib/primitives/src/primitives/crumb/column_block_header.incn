@@ -16,7 +16,16 @@ from crate.primitives.crumb.types import TypeNode, AbsentPolicy
 from crate.primitives.views import MappedView
 
 
-pub def read_header(node: TypeNode, absent: AbsentPolicy, rows: int, view: MappedView, origin: int, keys: Option[ColumnKeys], dictionary: Dictionary, mut budget: Budget) -> Result[BlockData, ColumnError]:
+pub def read_header(
+    node: TypeNode,
+    absent: AbsentPolicy,
+    rows: int,
+    view: MappedView,
+    origin: int,
+    keys: Option[ColumnKeys],
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[BlockData, ColumnError]:
     """Check cardinality and encoding type before interpreting payload bytes or exposing an index."""
     if rows < 1 or rows > 256:
         return Err(failure(ColumnFailure.BlockCount, origin))
@@ -68,4 +77,17 @@ pub def read_header(node: TypeNode, absent: AbsentPolicy, rows: int, view: Mappe
         if encoding == 2:
             count -= 1
         validate_pack(payload, width, count, payload_origin, budget)?
-    return Ok(BlockData(rows=rows, present=present, encoding=encoding, bitmap=bitmap, bitmap_origin=origin, payload=payload, origin=payload_origin, cells=cells, width=width, base=base))
+    return Ok(
+        BlockData(
+            rows=rows,
+            present=present,
+            encoding=encoding,
+            bitmap=bitmap,
+            bitmap_origin=origin,
+            payload=payload,
+            origin=payload_origin,
+            cells=cells,
+            width=width,
+            base=base,
+        ),
+    )

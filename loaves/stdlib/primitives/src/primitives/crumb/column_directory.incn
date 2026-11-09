@@ -19,7 +19,12 @@ pub model FixedTable:
     pub final: int
 
 
-pub def read_table(mut cursor: RowCursor, count: int, strict: bool, mut budget: Budget) -> Result[FixedTable, ColumnError]:
+pub def read_table(
+    mut cursor: RowCursor,
+    count: int,
+    strict: bool,
+    mut budget: Budget,
+) -> Result[FixedTable, ColumnError]:
     """Read only table bytes; group data and any seal remain outside this parsing operation."""
     start = cursor.absolute()
     width = cursor.byte(budget).map_err(shared)?
@@ -46,7 +51,16 @@ pub def group_index(mut cursor: RowCursor, count: int, mut budget: Budget) -> Re
     table = read_table(cursor, count, true, budget)?
     origin = cursor.absolute()
     data = cursor.take(table.final, budget).map_err(shared)?
-    return Ok(CellIndex(table=table.view, data=data, table_origin=table.origin, data_origin=origin, width=table.width, count=count))
+    return Ok(
+        CellIndex(
+            table=table.view,
+            data=data,
+            table_origin=table.origin,
+            data_origin=origin,
+            width=table.width,
+            count=count,
+        ),
+    )
 
 
 pub def prefix_at(table: FixedTable, index: int, mut budget: Budget) -> Result[int, ColumnError]:

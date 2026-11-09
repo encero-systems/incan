@@ -27,7 +27,15 @@ pub model ColumnData:
     pub blocks: list[BlockData]
 
 
-pub def read_column(node: TypeNode, absent: AbsentPolicy, rows: int, view: MappedView, origin: int, dictionary: Dictionary, mut budget: Budget) -> Result[ColumnData, ColumnError]:
+pub def read_column(
+    node: TypeNode,
+    absent: AbsentPolicy,
+    rows: int,
+    view: MappedView,
+    origin: int,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[ColumnData, ColumnError]:
     """Validate every block, including unprojected values and values using a different physical encoding."""
     count = block_count(rows).map_err((e) => primitive(e, origin))?
     stored_type = cell_type(node, absent, budget).map_err((e) => primitive(e, origin))?
@@ -60,7 +68,9 @@ pub def read_column(node: TypeNode, absent: AbsentPolicy, rows: int, view: Mappe
                 match observed:
                     None => pass
                     Some(stored) =>
-                        identity = key_id(stored_type, stored, dictionary, budget).map_err((e) => primitive(e, block_origin))?
+                        identity = key_id(stored_type, stored, dictionary, budget).map_err(
+                            (e) => primitive(e, block_origin),
+                        )?
                         used.add(identity)
         budget.charge_bytes(128).map_err((e) => primitive(e, block_origin))?
         blocks.append(block)
@@ -77,8 +87,21 @@ pub def read_column(node: TypeNode, absent: AbsentPolicy, rows: int, view: Mappe
     return Ok(ColumnData(rows=rows, node=node, absent=absent, keys=keys, blocks=blocks))
 
 
-pub def column_at(column: ColumnData, position: int, dictionary: Dictionary, mut budget: Budget) -> Result[Value, ColumnError]:
+pub def column_at(
+    column: ColumnData,
+    position: int,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[Value, ColumnError]:
     """Address one fixed-size block without decoding preceding blocks, then decode only its selected value."""
     if position < 0 or position >= column.rows:
         return Err(shared(row_failure(RowFailure.RecordIndex, 0)))
-    return block_at(column.blocks[position // 256], column.node, column.absent, column.keys, dictionary, position % 256, budget)
+    return block_at(
+        column.blocks[position // 256],
+        column.node,
+        column.absent,
+        column.keys,
+        dictionary,
+        position % 256,
+        budget,
+    )

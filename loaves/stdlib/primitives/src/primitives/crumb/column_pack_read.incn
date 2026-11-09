@@ -8,7 +8,13 @@ from crate.primitives.crumb.row_numbers import unsigned_decimal
 from crate.primitives.views import MappedView
 
 
-pub def validate_pack(view: MappedView, width: int, count: int, origin: int, mut budget: Budget) -> Result[None, ColumnError]:
+pub def validate_pack(
+    view: MappedView,
+    width: int,
+    count: int,
+    origin: int,
+    mut budget: Budget,
+) -> Result[None, ColumnError]:
     """Check exact packed length and unused final bits before any direct access is allowed."""
     budget.charge_elements(width).map_err((e) => primitive(e, origin))?
     length = packed_length(width, count).map_err((e) => primitive(e, origin))?
@@ -22,7 +28,14 @@ pub def validate_pack(view: MappedView, width: int, count: int, origin: int, mut
     return Ok(None)
 
 
-pub def packed_value(view: MappedView, width: int, count: int, position: int, origin: int, mut budget: Budget) -> Result[str, ColumnError]:
+pub def packed_value(
+    view: MappedView,
+    width: int,
+    count: int,
+    position: int,
+    origin: int,
+    mut budget: Budget,
+) -> Result[str, ColumnError]:
     """Read only this value's bit range; preceding packed values need not be decoded."""
     length = packed_length(width, count).map_err((e) => primitive(e, origin))?
     if length != view.len() or position < 0 or position >= count:

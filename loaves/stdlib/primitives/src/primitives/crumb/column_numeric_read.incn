@@ -22,13 +22,17 @@ pub def numeric_values(block: BlockData, node: TypeNode, mut budget: Budget) -> 
         mut number = block.base
         if block.encoding == 1:
             residual = packed_value(block.payload, block.width, block.present, index, block.origin, budget)?
-            maximum_width = max([maximum_width, bit_length(residual, budget).map_err((e) => primitive(e, block.origin))?])
+            maximum_width = max(
+                [maximum_width, bit_length(residual, budget).map_err((e) => primitive(e, block.origin))?],
+            )
             if residual == "0":
                 has_zero = true
             number = add_integer(block.base, residual, budget).map_err((e) => primitive(e, block.origin))?
         elif index > 0:
             residual = packed_value(block.payload, block.width, block.present - 1, index - 1, block.origin, budget)?
-            maximum_width = max([maximum_width, bit_length(residual, budget).map_err((e) => primitive(e, block.origin))?])
+            maximum_width = max(
+                [maximum_width, bit_length(residual, budget).map_err((e) => primitive(e, block.origin))?],
+            )
             difference = unzigzag(residual, budget).map_err((e) => primitive(e, block.origin))?
             number = add_integer(current, difference, budget).map_err((e) => primitive(e, block.origin))?
         current = number

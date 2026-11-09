@@ -27,7 +27,13 @@ pub model ColumnKeys:
     pub restarts: CellIndex
 
 
-pub def read_keys(node: TypeNode, view: MappedView, origin: int, dictionary: Dictionary, mut budget: Budget) -> Result[ColumnKeys, ColumnError]:
+pub def read_keys(
+    node: TypeNode,
+    view: MappedView,
+    origin: int,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[ColumnKeys, ColumnError]:
     """Validate every key and exact restart boundary before returning any dictionary handle."""
     if not dictionary_type(node):
         return Err(failure(ColumnFailure.EncodingType, origin))
@@ -49,11 +55,16 @@ pub def read_keys(node: TypeNode, view: MappedView, origin: int, dictionary: Dic
     for index in range(count):
         budget.charge_elements(1).map_err((e) => primitive(e, entries.absolute()))?
         if index % 16 == 0:
-            expected = offset_at(restarts.table, index // 16, restarts.width, restarts.table_origin, budget).map_err(shared)?
+            expected = offset_at(restarts.table, index // 16, restarts.width, restarts.table_origin, budget).map_err(
+                shared,
+            )?
             if entries.consumed() != expected:
                 return Err(failure(ColumnFailure.RestartOffset, entries.absolute()))
         value = next_key(node, index, previous, entries, dictionary, budget)?
-        if index > 0 and compare(previous, value, Projection.Object, budget).map_err((e) => primitive(e, entries.absolute()))? >= 0:
+        if (
+            index > 0
+            and compare(previous, value, Projection.Object, budget).map_err((e) => primitive(e, entries.absolute()))? >= 0
+        ):
             return Err(failure(ColumnFailure.DictionaryOrder, entries.absolute()))
         previous = value
     entries.finished().map_err(shared)?
@@ -74,7 +85,14 @@ pub def key_at(keys: ColumnKeys, code: int, dictionary: Dictionary, mut budget: 
     return Ok(value)
 
 
-def next_key(node: TypeNode, index: int, previous: Value, mut cursor: RowCursor, dictionary: Dictionary, mut budget: Budget) -> Result[Value, ColumnError]:
+def next_key(
+    node: TypeNode,
+    index: int,
+    previous: Value,
+    mut cursor: RowCursor,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[Value, ColumnError]:
     """A restart is absolute; other entries reconstruct exact raw prefixes or positive numeric differences."""
     offset = cursor.absolute()
     if numeric_type(node):

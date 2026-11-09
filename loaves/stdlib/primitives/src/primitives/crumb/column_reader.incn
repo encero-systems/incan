@@ -66,7 +66,9 @@ pub class ColumnSet:
         group = locate(self.prefixes, index, budget)?
         position = index - prefix_at(self.prefixes, group, budget)?
         value = group_value(self.groups[group], position, self.dictionary, budget)?
-        budget.charge_bytes(len(self.dictionary.entries[self.groups[group].description].key)).map_err((e) => primitive(e, 0))?
+        budget
+            .charge_bytes(len(self.dictionary.entries[self.groups[group].description].key))
+            .map_err((e) => primitive(e, 0))?
         return Ok(RowRecord(key=self.dictionary.entries[self.groups[group].description].key, value=value))
 
     pub def field(self, index: int, identity: bytes, mut budget: Budget) -> Result[ColumnField, ColumnError]:
@@ -83,18 +85,37 @@ pub class ColumnSet:
         return handle.read(budget)
 
 
-pub def read_columns(view: MappedView, supplied: list[Description], registry: KindRegistry, require_sealed: bool, mut budget: Budget) -> Result[ColumnSet, ColumnError]:
+pub def read_columns(
+    view: MappedView,
+    supplied: list[Description],
+    registry: KindRegistry,
+    require_sealed: bool,
+    mut budget: Budget,
+) -> Result[ColumnSet, ColumnError]:
     """Admit exactly one envelope, refusing any trailing bytes."""
     result, _ = read_envelope(view, supplied, registry, require_sealed, true, budget)?
     return Ok(result)
 
 
-pub def read_prefix(view: MappedView, supplied: list[Description], registry: KindRegistry, require_sealed: bool, mut budget: Budget) -> Result[tuple[ColumnSet, int], ColumnError]:
+pub def read_prefix(
+    view: MappedView,
+    supplied: list[Description],
+    registry: KindRegistry,
+    require_sealed: bool,
+    mut budget: Budget,
+) -> Result[tuple[ColumnSet, int], ColumnError]:
     """Admit one complete leading envelope and report consumed bytes to an explicit stream caller."""
     return read_envelope(view, supplied, registry, require_sealed, false, budget)
 
 
-def read_envelope(view: MappedView, supplied: list[Description], registry: KindRegistry, require_sealed: bool, exact: bool, mut budget: Budget) -> Result[tuple[ColumnSet, int], ColumnError]:
+def read_envelope(
+    view: MappedView,
+    supplied: list[Description],
+    registry: KindRegistry,
+    require_sealed: bool,
+    exact: bool,
+    mut budget: Budget,
+) -> Result[tuple[ColumnSet, int], ColumnError]:
     """Validate complete descriptions, every cell and any logical seal before exposure."""
     mut cursor = RowCursor.create(view).map_err(shared)?
     magic = copied(cursor.take(4, budget).map_err(shared)?, 0, budget).map_err(shared)?
@@ -123,10 +144,17 @@ def read_envelope(view: MappedView, supplied: list[Description], registry: KindR
     consumed = cursor.consumed()
     match view.slice(0, consumed):
         None => return Err(shared(row_failure(RowFailure.Truncated, consumed)))
-        Some(backing) => return Ok((ColumnSet(dictionary=dictionary, prefixes=prefixes, groups=groups, backing=backing, sealed=sealed), consumed))
+        Some(backing) =>
+            return Ok(
+                (ColumnSet(dictionary=dictionary, prefixes=prefixes, groups=groups, backing=backing, sealed=sealed), consumed),
+            )
 
 
-def read_groups(mut cursor: RowCursor, dictionary: Dictionary, mut budget: Budget) -> Result[tuple[FixedTable, list[GroupData]], ColumnError]:
+def read_groups(
+    mut cursor: RowCursor,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[tuple[FixedTable, list[GroupData]], ColumnError]:
     """All directories and unselected cells are admitted; zero-field rows still consume work."""
     origin = cursor.absolute()
     rows = cursor.length(budget).map_err(shared)?
@@ -153,7 +181,13 @@ def read_groups(mut cursor: RowCursor, dictionary: Dictionary, mut budget: Budge
     return Ok((prefixes, groups))
 
 
-def verify_seal(mut cursor: RowCursor, count: int, groups: list[GroupData], dictionary: Dictionary, mut budget: Budget) -> Result[None, ColumnError]:
+def verify_seal(
+    mut cursor: RowCursor,
+    count: int,
+    groups: list[GroupData],
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[None, ColumnError]:
     """Hash logical record order, independently of physical codec/encoding choices."""
     origin = cursor.absolute()
     actual_count = cursor.length(budget).map_err(shared)?

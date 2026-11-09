@@ -21,7 +21,12 @@ def retained_field() -> Result[ColumnField, str]:
     declared = description(b"record\x00", [member(b"field1", "i64")])
     mut records: list[RowRecord] = []
     for number in range(257):
-        field = ValueField(identity=b"field1", canonical=true, absent=AbsentPolicy.Required, value=Value.Integer(str(number)))
+        field = ValueField(
+            identity=b"field1",
+            canonical=true,
+            absent=AbsentPolicy.Required,
+            value=Value.Integer(str(number)),
+        )
         records.append(RowRecord(key=b"record\x00", value=Value.Record([field])))
     choices = [GroupChoice(columns=[ColumnChoice(blocks=[BlockEncoding.FrameOfReference, BlockEncoding.ZigzagDelta])])]
     raw = write_columns([declared], records, registry, true, choices, budget).map_err((e) => e.message())?
@@ -39,7 +44,8 @@ def test_retained_column_field_outlives_its_set() -> Result[None, str]:
     field = retained_field()?
     mut budget = Budget.create(bytes=4096, elements=4096, depth=64).map_err((e) => e.message())?
     match field.read(budget).map_err((e) => e.message())?:
-        Value.Integer(value) => assert value == "256"
+        Value.Integer(value) =>
+            assert value == "256"
         _ => return Err("retained numeric field lost its type")
     return Ok(None)
 
@@ -57,7 +63,8 @@ def test_projection_does_not_materialize_a_large_neighbor() -> Result[None, str]
     admitted = read_columns(backing(raw)?, [], registry, false, budget).map_err((e) => e.message())?
     mut small_budget = Budget.create(bytes=8192, elements=8192, depth=64).map_err((e) => e.message())?
     match admitted.read_field(0, b"field1", small_budget).map_err((e) => e.message())?:
-        Value.Integer(value) => assert value == "7"
+        Value.Integer(value) =>
+            assert value == "7"
         _ => return Err("projected field lost its type")
     mut large_budget = Budget.create(bytes=8192, elements=8192, depth=64).map_err((e) => e.message())?
     assert admitted.read_field(0, b"field2", large_budget).is_err()
@@ -83,7 +90,8 @@ def test_corrupt_unselected_column_prevents_set_admission() -> Result[None, str]
         Err(error) =>
             assert error.field == Some(b"field2")
             match error.cause:
-                Some(cause) => assert cause.kind == RowFailure.InvalidCell
+                Some(cause) =>
+                    assert cause.kind == RowFailure.InvalidCell
                 None => return Err("shared cell failure lost its typed cause")
     return Ok(None)
 

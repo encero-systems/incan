@@ -61,7 +61,13 @@ def check_one(example: JsonValue, data: bytes) -> Result[bool, str]:
     return Err("unknown column operation")
 
 
-def check_keys(example: JsonValue, data: bytes, node: TypeNode, dictionary: Dictionary, mut setup: Budget) -> Result[bool, str]:
+def check_keys(
+    example: JsonValue,
+    data: bytes,
+    node: TypeNode,
+    dictionary: Dictionary,
+    mut setup: Budget,
+) -> Result[bool, str]:
     """Reconstruct each key through its restart, compare logical expectations and re-encode decoded keys."""
     expected = field(example, "expected")?
     mut budget = case_budget(example)?
@@ -79,7 +85,14 @@ def check_keys(example: JsonValue, data: bytes, node: TypeNode, dictionary: Dict
             return compare_bytes(encoded, data)
 
 
-def check_block(example: JsonValue, data: bytes, node: TypeNode, absent: AbsentPolicy, dictionary: Dictionary, mut setup: Budget) -> Result[bool, str]:
+def check_block(
+    example: JsonValue,
+    data: bytes,
+    node: TypeNode,
+    absent: AbsentPolicy,
+    dictionary: Dictionary,
+    mut setup: Budget,
+) -> Result[bool, str]:
     """The external key context is an input; the block's values and physical encoding must be decoded."""
     expected = field(example, "expected")?
     stored_type = cell_type(node, absent, setup).map_err((e) => e.message())?
@@ -106,11 +119,20 @@ def check_block(example: JsonValue, data: bytes, node: TypeNode, absent: AbsentP
             same_values(values, logical_items(array(expected, "values")?)?, setup)?
             if block.encoding != integer(expected, "encoding")?:
                 return Err("decoded encoding differs")
-            encoded = write_block(node, absent, values, encoding(block.encoding)?, writer_keys, dictionary, setup).map_err((e) => e.message())?
+            encoded = write_block(node, absent, values, encoding(block.encoding)?, writer_keys, dictionary, setup).map_err(
+                (e) => e.message(),
+            )?
             return compare_bytes(encoded, data)
 
 
-def check_column(example: JsonValue, data: bytes, node: TypeNode, absent: AbsentPolicy, dictionary: Dictionary, mut setup: Budget) -> Result[bool, str]:
+def check_column(
+    example: JsonValue,
+    data: bytes,
+    node: TypeNode,
+    absent: AbsentPolicy,
+    dictionary: Dictionary,
+    mut setup: Budget,
+) -> Result[bool, str]:
     """Whole-column membership is checked before selected reads and original-choice re-encoding."""
     expected = field(example, "expected")?
     mut budget = case_budget(example)?

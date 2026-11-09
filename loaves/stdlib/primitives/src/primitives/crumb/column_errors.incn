@@ -54,7 +54,13 @@ pub def failure(kind: ColumnFailure, offset: int) -> ColumnError:
 
 pub def shared(error: RowError) -> ColumnError:
     """Preserve the original typed shared cause and its deepest member context."""
-    return ColumnError(kind=ColumnFailure.Shared, offset=error.offset, field=error.field, variant=error.variant, cause=Some(error))
+    return ColumnError(
+        kind=ColumnFailure.Shared,
+        offset=error.offset,
+        field=error.field,
+        variant=error.variant,
+        cause=Some(error),
+    )
 
 
 pub def primitive(error: CrumbError, offset: int) -> ColumnError:
@@ -73,4 +79,10 @@ pub def in_field(error: ColumnError, identity: bytes) -> ColumnError:
     """Keep deeper field context; otherwise attach the root column identity."""
     if error.field.is_some():
         return error
-    return ColumnError(kind=error.kind, offset=error.offset, field=Some(identity), variant=error.variant, cause=error.cause)
+    return ColumnError(
+        kind=error.kind,
+        offset=error.offset,
+        field=Some(identity),
+        variant=error.variant,
+        cause=error.cause,
+    )

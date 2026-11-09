@@ -12,7 +12,14 @@ from crate.primitives.crumb.values import Value
 from crate.primitives.crumb.value_admission import validate
 
 
-pub def read_runs(block: BlockData, node: TypeNode, keys: Option[ColumnKeys], dictionary: Dictionary, target: int, mut budget: Budget) -> Result[list[Value], ColumnError]:
+pub def read_runs(
+    block: BlockData,
+    node: TypeNode,
+    keys: Option[ColumnKeys],
+    dictionary: Dictionary,
+    target: int,
+    mut budget: Budget,
+) -> Result[list[Value], ColumnError]:
     """Target -1 expands admitted runs; a selected target retains only one value after bounded validation."""
     mut cursor = RowCursor.create(block.payload, block.origin).map_err(shared)?
     count = cursor.length(budget).map_err(shared)?
