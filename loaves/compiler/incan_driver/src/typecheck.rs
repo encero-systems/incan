@@ -16,7 +16,7 @@ use crate::unit::UnitDescription;
 use incan_frontend::loaf_index::LoafIndex;
 use incan_frontend::module::{ExportedSymbol, exported_symbols};
 use incan_frontend::parsed_module::ParsedModule;
-use incan_frontend::typechecker::{CBindingDescriptor, TypeCheckInfo};
+use incan_frontend::typechecker::{CBindingDescriptor, ModuleDependencyInterface, TypeCheckInfo};
 use incan_frontend::{diagnostics, typechecker};
 use incan_lang::lang::standard_packages::StandardPackageNamespacePolicy;
 use incan_semantics_core::SymbolOrigin;
@@ -63,6 +63,7 @@ pub fn typecheck_modules(
     let mut diagnostics_out = Vec::new();
     let mut warnings_out = Vec::new();
     let mut type_infos = Vec::with_capacity(modules.len());
+    let mut dependency_interfaces = Vec::<Arc<ModuleDependencyInterface>>::with_capacity(modules.len());
     let related_sources = modules
         .iter()
         .map(|module| {
@@ -160,7 +161,15 @@ pub fn typecheck_modules(
             warnings_out.extend(typecheck_warning_diagnostics(module, checker.warnings()));
 
             visit(module, &checker);
-            checked.map(|()| checker.into_type_info())
+            checked.map(|()| {
+                let interface = checker.seal_current_module_dependency_interface(
+                    &module.name,
+                    &module.ast,
+                    Arc::clone(&dependency_exports[idx]),
+                    own_standard_package.is_none(),
+                );
+                (checker.into_type_info(), interface)
+            })
         };
         trace_typecheck_memory(
             memory_trace,
@@ -169,7 +178,10 @@ pub fn typecheck_modules(
             deps_for_module.len(),
         );
         match check_result {
-            Ok(type_info) => type_infos.push(type_info),
+            Ok((type_info, interface)) => {
+                type_infos.push(type_info);
+                dependency_interfaces.push(interface);
+            }
             Err(errs) => diagnostics_out.extend(errs.into_iter().map(|error| CliDiagnostic {
                 file_path: module.file_path.to_string_lossy().to_string(),
                 source: module.source.clone(),
@@ -180,6 +192,7 @@ pub fn typecheck_modules(
     }
 
     if diagnostics_out.is_empty() {
+        debug_assert_eq!(dependency_interfaces.len(), modules.len());
         verify_checked_c_bindings(modules, unit, &mut type_infos, c_abi_plan, &mut diagnostics_out);
     }
 
