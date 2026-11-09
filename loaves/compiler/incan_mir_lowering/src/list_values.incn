@@ -35,6 +35,7 @@ from tuples import is_tuple_type, tuple_fields
 from text_plan import clone_text, owned_literal
 from options import replace_owned_destination
 from numerics import numeric_carrier
+from frozen_plan import frozen_observation_type
 from builtins import list_call
 from strings import emit_text_helper
 from frame import (
@@ -590,7 +591,13 @@ def materialize_element_field(mut builder: Builder, field: Place, span: SourceSp
         match cloned_collection(builder, field, span)?.kind:
             OperandKind.Move(cloned) => return Ok(cloned)
             _ => return Err("invalid Body IR cloned collection element field")
-    if not numeric_carrier(ty) and ty != PlanType.Bool and not callable_copy_type(ty):
+    # Static frozen handles copy only their shared backing pointer, never their elements or the containing record.
+    if (
+        not numeric_carrier(ty)
+        and ty != PlanType.Bool
+        and not callable_copy_type(ty)
+        and not frozen_observation_type(ty)
+    ):
         return Err(f"unsupported Body IR list element field type {ty:?} in {builder.name}")
     output = temporary(builder, ty, span)
     builder.emit(plan_assign(output, RvalueKind.Use(read_place(field, false, span)), span))
