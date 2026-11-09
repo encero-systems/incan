@@ -1,0 +1,4 @@
+pub model Invoice:
+    """The selected nominal declaration."""
+
+    pub name: str
