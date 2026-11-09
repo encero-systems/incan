@@ -81,6 +81,7 @@ pub fn typecheck_modules(
             )
         })
         .collect();
+    let memory_trace = std::env::var_os("INCAN_TRACE_TYPECHECK_MEMORY").is_some();
 
     for (idx, module) in modules.iter().enumerate() {
         let dep_indexes = imported_module_dep_indexes_for(modules, idx, &module_idx_by_key, own_standard_package);
@@ -110,42 +111,59 @@ pub fn typecheck_modules(
         // machine-readable reports from one deterministic sweep.
         warnings_out.extend(parser_warning_diagnostics(module));
 
-        let mut checker = typechecker::TypeChecker::new();
-        checker.set_declared_crate_names(declared.clone());
-        checker.set_current_module_path(Some(module.path_segments.clone()));
-        checker.set_current_package_identity(package.map(str::to_owned));
-        register_module_path_segments(&mut checker, modules);
-        checker.set_loaves(Arc::clone(loaves));
-        if let Some(policy) = own_standard_package {
-            checker.set_own_standard_package(policy);
-        }
-
-        // A standard package checks its complete source before publishing its public checked facade.
-        let check_result = if own_standard_package.is_some() {
-            checker.check_standard_package_with_imports_and_exports(&module.ast, &deps_for_module, exports_for_module)
-        } else {
-            checker.check_with_imports_and_exports(&module.ast, &deps_for_module, exports_for_module)
-        };
-        // Warnings accumulate on the checker whether or not checking succeeded, so surface them from both arms:
-        // a module that also has an error should not hide its warnings from the user or from the report.
-        render_module_warnings(
-            module.file_path.to_string_lossy().as_ref(),
-            &module.source,
-            checker.warnings(),
-        );
-        warnings_out.extend(typecheck_warning_diagnostics(module, checker.warnings()));
-
-        visit(module, &checker);
-        match check_result {
-            Ok(()) => type_infos.push(checker.into_type_info()),
-            Err(errs) => {
-                diagnostics_out.extend(errs.into_iter().map(|error| CliDiagnostic {
-                    file_path: module.file_path.to_string_lossy().to_string(),
-                    source: module.source.clone(),
-                    phase: typecheck_diagnostic_phase(module, &error),
-                    error,
-                }));
+        let check_result = {
+            let mut checker = typechecker::TypeChecker::new();
+            checker.set_declared_crate_names(declared.clone());
+            checker.set_current_module_path(Some(module.path_segments.clone()));
+            checker.set_current_package_identity(package.map(str::to_owned));
+            register_module_path_segments(&mut checker, modules);
+            checker.set_loaves(Arc::clone(loaves));
+            if let Some(policy) = own_standard_package {
+                checker.set_own_standard_package(policy);
             }
+
+            // A standard package checks its complete source before publishing its public checked facade.
+            let checked = if own_standard_package.is_some() {
+                checker.check_standard_package_with_imports_and_exports(
+                    &module.ast,
+                    &deps_for_module,
+                    exports_for_module,
+                )
+            } else {
+                checker.check_with_imports_and_exports(&module.ast, &deps_for_module, exports_for_module)
+            };
+            trace_typecheck_memory(
+                memory_trace,
+                "checked",
+                module.file_path.as_path(),
+                deps_for_module.len(),
+            );
+            // Warnings accumulate on the checker whether or not checking succeeded, so surface them from both arms:
+            // a module that also has an error should not hide its warnings from the user or from the report.
+            render_module_warnings(
+                module.file_path.to_string_lossy().as_ref(),
+                &module.source,
+                checker.warnings(),
+            );
+            warnings_out.extend(typecheck_warning_diagnostics(module, checker.warnings()));
+
+            visit(module, &checker);
+            checked.map(|()| checker.into_type_info())
+        };
+        trace_typecheck_memory(
+            memory_trace,
+            "released",
+            module.file_path.as_path(),
+            deps_for_module.len(),
+        );
+        match check_result {
+            Ok(type_info) => type_infos.push(type_info),
+            Err(errs) => diagnostics_out.extend(errs.into_iter().map(|error| CliDiagnostic {
+                file_path: module.file_path.to_string_lossy().to_string(),
+                source: module.source.clone(),
+                phase: typecheck_diagnostic_phase(module, &error),
+                error,
+            })),
         }
     }
 
@@ -165,6 +183,24 @@ pub fn typecheck_modules(
             warnings: warnings_out,
         })
     }
+}
+
+/// Emit one opt-in memory snapshot around a module check so retained checker state and allocator-held pages can be
+/// distinguished without affecting ordinary compiler output.
+fn trace_typecheck_memory(enabled: bool, stage: &str, module: &Path, dependencies: usize) {
+    if !enabled {
+        return;
+    }
+    let footprint = incan_platform::current_process_footprint()
+        .map(|bytes| bytes.to_string())
+        .unwrap_or_else(|error| format!("unavailable:{error}"));
+    let live = incan_platform::current_process_live_allocated()
+        .map(|bytes| bytes.to_string())
+        .unwrap_or_else(|error| format!("unavailable:{error}"));
+    println!(
+        "typecheck memory: stage={stage} module={} dependencies={dependencies} footprint={footprint} live={live}",
+        module.display()
+    );
 }
 
 /// Verify every checked C descriptor against the host or explicitly selected target before any code generation.

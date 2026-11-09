@@ -188,8 +188,8 @@ pub(super) fn checked_modules(
                     .collect(),
                 checked_local: checked_local.clone(),
                 package: package_identity.to_owned(),
-                authored: bodies[loaf_modules..].to_vec(),
                 layout_modules: Vec::new(),
+                layout_modules_installed: false,
                 sources: sources[loaf_modules..].to_vec(),
                 files: files[loaf_modules..].to_vec(),
                 entry: entry - loaf_modules,
@@ -366,7 +366,7 @@ pub(super) fn complete_dependency_context_in_place(
     Ok(())
 }
 
-/// Resolve a nonempty set selected by lowering, then reconstruct layout context from the immutable authored input.
+/// Resolve a nonempty set selected by lowering, then reconstruct layout context from the active authored suffix.
 /// The canonical root set must grow on every retry; a repeated missing body is an invalid producer contract.
 pub(super) fn satisfy_runtime_requirements(
     program: &mut CheckedProgram,
@@ -457,24 +457,19 @@ pub(super) fn prepare_runtime_layouts(
 
 /// Move prepared and authored modules between contexts while replacing only reached dependencies.
 ///
-/// The immutable intake owns the authored inventory until the first preparation. Later retries retain the current
-/// prepared layout prefix and authored suffix while discarding only the prior reached dependency prefix, so no retry
-/// clones or overlaps a complete Body IR copy.
+/// Every preparation splits the authored suffix from the active program and retains its prepared layout prefix while
+/// discarding only the prior reached dependency prefix. The retry therefore needs no second authored Body IR copy.
 fn install_dependency_modules(
     program: &mut CheckedProgram,
     resolved: incan_frontend::executable_resolution::ResolvedExecutableModules,
 ) {
-    let first_preparation = !program.dependencies.authored.is_empty();
     let mut previous = std::mem::take(&mut program.modules);
-    let mut prepared = Vec::new();
-    let mut authored = if first_preparation {
+    let mut authored = previous.split_off(program.own);
+    let mut prepared = previous.split_off(program.dependency_modules);
+    if !program.dependencies.layout_modules_installed {
         prepared.extend(program.dependencies.layout_modules.iter().cloned());
-        std::mem::take(&mut program.dependencies.authored)
-    } else {
-        let authored = previous.split_off(program.own);
-        prepared = previous.split_off(program.dependency_modules);
-        authored
-    };
+        program.dependencies.layout_modules_installed = true;
+    }
     program.files.clear();
     program.sources.clear();
     let mut modules = resolved.modules;

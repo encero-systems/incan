@@ -24,7 +24,7 @@ from pub::incan_mir_plan import (
 )
 from trait_links import validate_project_implementation, has_open_trait_arguments
 from rust::std::env import var_os as native_environment
-from pub::incan_platform.probes import current_footprint
+from pub::incan_platform.probes import current_footprint, current_live_allocated
 from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId as RustCanonicalSymbolId
 from rust::incan_semantics_core::body_ir import (
     NativeUnionDeclaration,
@@ -1139,11 +1139,14 @@ def trace_lowering(enabled: bool, stage: str) -> None:
 
 
 def trace_lowering_footprint(enabled: bool, boundary: str) -> None:
-    """Report current process physical footprint at a requested lowering boundary, without affecting ordinary runs."""
+    """Report physical footprint and live allocator bytes at a requested boundary, without affecting ordinary runs."""
     if not enabled:
         return
     match current_footprint():
-        Ok(bytes) => println(f"lowering footprint: {boundary}: {bytes} bytes")
+        Ok(footprint) =>
+            match current_live_allocated():
+                Ok(live) => println(f"lowering footprint: {boundary}: {footprint} bytes; live allocated: {live} bytes")
+                Err(reason) => println(f"lowering footprint: {boundary}: {footprint} bytes; live allocated: unavailable: {reason}")
         Err(reason) => println(f"lowering footprint: {boundary}: unavailable: {reason}")
 
 
