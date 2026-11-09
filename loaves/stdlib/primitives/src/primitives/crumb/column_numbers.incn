@@ -1,0 +1,82 @@
+"""Stored integer/decimal coefficients shared by column packing and numeric dictionaries."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.framing import encode_signed, encode_unsigned
+from crate.primitives.crumb.row_numbers import signed_decimal, unsigned_decimal
+from crate.primitives.crumb.row_errors import RowError, RowFailure
+from crate.primitives.crumb.row_scalars import scalar_cell, decimal_cell
+from crate.primitives.crumb.types import TypeNode
+from crate.primitives.crumb.values import Value
+
+
+pub def numeric_type(node: TypeNode) -> bool:
+    """Only fixed integers and decimal coefficients admit numeric column encodings."""
+    match node:
+        TypeNode.Scalar(name) => return name in ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"]
+        TypeNode.Decimal(_, _) => return true
+        _ => return false
+
+
+pub def coefficient(node: TypeNode, value: Value, mut budget: Budget) -> Result[str, CrumbError]:
+    """Validate the stored range/scale before obtaining its exact mathematical coefficient."""
+    match (node, value):
+        (TypeNode.Scalar(name), Value.Integer(decimal)) =>
+            if not numeric_type(node):
+                return Err(CrumbError.invalid_input("numeric column type"))
+            scalar_cell(name, value, budget)?
+            budget.charge_bytes(len(decimal))?
+            return Ok(decimal)
+        (TypeNode.Decimal(precision, scale), Value.Decimal(_, _)) =>
+            encoded = decimal_cell(precision, scale, value, budget)?
+            budget.charge_elements(len(encoded))?
+            for _ in range(8):
+                budget.charge_bytes(len(encoded))?
+            groups = [int(byte) & 127 for byte in encoded]
+            return signed_decimal(groups, 0, budget).map_err(number_error)
+        _ => return Err(CrumbError.invalid_input("numeric column value"))
+
+
+pub def from_coefficient(node: TypeNode, decimal: str, mut budget: Budget) -> Result[Value, CrumbError]:
+    """Recheck the destination storage range before returning an exact typed numeric value."""
+    match node:
+        TypeNode.Scalar(name) =>
+            if not numeric_type(node):
+                return Err(CrumbError.invalid_input("numeric column type"))
+            value = Value.Integer(decimal)
+            scalar_cell(name, value, budget)?
+            return Ok(value)
+        TypeNode.Decimal(precision, scale) =>
+            value = Value.Decimal(decimal, str(scale))
+            decimal_cell(precision, scale, value, budget)?
+            return Ok(value)
+        _ => return Err(CrumbError.invalid_input("numeric column type"))
+
+
+pub def zigzag(decimal: str, mut budget: Budget) -> Result[str, CrumbError]:
+    """Return Z's exact unsigned magnitude for PACK, rather than its U-encoded octets."""
+    encoded = encode_signed(decimal, budget)?
+    budget.charge_elements(len(encoded))?
+    for _ in range(8):
+        budget.charge_bytes(len(encoded))?
+    groups = [int(byte) & 127 for byte in encoded]
+    return unsigned_decimal(groups, 128, 0, budget).map_err(number_error)
+
+
+pub def unzigzag(decimal: str, mut budget: Budget) -> Result[str, CrumbError]:
+    """Recover an exact signed delta from its packed unsigned magnitude."""
+    encoded = encode_unsigned(decimal, budget)?
+    budget.charge_elements(len(encoded))?
+    for _ in range(8):
+        budget.charge_bytes(len(encoded))?
+    groups = [int(byte) & 127 for byte in encoded]
+    return signed_decimal(groups, 0, budget).map_err(number_error)
+
+
+pub def number_error(error: RowError) -> CrumbError:
+    """Keep primitive causes and resource refusals when exact-number helpers cross codec boundaries."""
+    if let Some(cause) = error.cause:
+        return cause
+    if error.kind == RowFailure.LimitExceeded:
+        return CrumbError.limit("column numeric conversion")
+    return CrumbError.invalid_input("column numeric conversion")
