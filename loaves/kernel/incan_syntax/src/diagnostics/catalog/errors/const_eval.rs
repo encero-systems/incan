@@ -217,6 +217,18 @@ pub fn call_site_type_inference_unresolved(callee: &str, type_param: &str, span:
     )
 }
 
+/// Report a Rust callable const parameter that neither its arguments nor its expected result fixes.
+pub fn call_site_const_inference_unresolved(callee: &str, const_param: &str, span: Span) -> CompileError {
+    let callee = callee.strip_prefix("rust::").unwrap_or(callee);
+    CompileError::type_error(
+        format!("Rust callee `rust::{callee}`: its const parameter `{const_param}` is not fixed by the call"),
+        span,
+    )
+    .with_note(
+        "A Rust const parameter must be fixed by an exact native argument or by the type the call result is expected to have",
+    )
+}
+
 pub fn explicit_call_site_type_args_not_supported(span: Span) -> CompileError {
     CompileError::type_error(
         "Explicit call-site type arguments are not supported for this call form".to_string(),

@@ -110,10 +110,11 @@ impl TypeChecker {
                 .iter()
                 .any(|bound| rust_callable_trait(&bound.path).is_some());
         let bindings = if needs_context {
+            let inference_parameters = Self::rust_signature_inference_parameters(signature);
             self.infer_rust_signature_bindings(
                 signature,
                 owner_path,
-                &signature.type_params,
+                &inference_parameters,
                 args,
                 types,
                 expected_return,
