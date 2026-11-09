@@ -1,0 +1,51 @@
+"""Literal width boundaries and failures exercise physical framing separately from logical hashes."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.row_buffer import RowBuffer, indexed, offset_width, offset_table_length
+from std.primitives.hex import hexlify
+
+
+def test_minimum_offset_width_and_empty_row() -> Result[None, str]:
+    """Zero,255,256 and larger boundaries must select the profile's exact minimal fixed width."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    assert hexlify(indexed([], budget).map_err((e) => e.message())?) == "0100"
+    assert offset_width(255).map_err((e) => e.message())? == 1
+    assert offset_width(256).map_err((e) => e.message())? == 2
+    assert offset_width(65535).map_err((e) => e.message())? == 2
+    assert offset_width(65536).map_err((e) => e.message())? == 4
+    assert offset_width(4294967296).map_err((e) => e.message())? == 8
+    assert offset_width(-1).is_err()
+    return Ok(None)
+
+
+def test_indexed_offsets_are_relative_to_cell_data() -> Result[None, str]:
+    """Equal offsets preserve an empty typed cell; neighboring data is neither included nor overwritten."""
+    mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    encoded = indexed([b"a", b"", b"bc"], budget).map_err((e) => e.message())?
+    assert hexlify(encoded) == "0100010103616263"
+    return Ok(None)
+
+
+def test_writer_limit_is_not_a_partial_success() -> Result[None, str]:
+    """A too-small output budget returns an error instead of a prefix advertised as a complete row."""
+    mut budget = Budget.create(bytes=2, elements=65536, depth=64).map_err((e) => e.message())?
+    assert indexed([b"abc"], budget).is_err()
+    mut ample = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
+    mut writer = RowBuffer.create()
+    assert writer.octet(256, ample).is_err()
+    assert writer.length() == 0
+    assert writer.offset(256, 1, ample).is_err()
+    assert writer.length() == 0
+    return Ok(None)
+
+
+def test_offset_table_arithmetic_refuses_before_allocation() -> Result[None, str]:
+    """Host-limit tests check the arithmetic directly without allocating a giant list or byte buffer."""
+    assert offset_table_length(0, 1).map_err((e) => e.message())? == 1
+    assert offset_table_length(9223372036854775806, 1).map_err((e) => e.message())? == 9223372036854775807
+    assert offset_table_length(9223372036854775807, 1).is_err()
+    assert offset_table_length(1152921504606846974, 8).map_err((e) => e.message())? == 9223372036854775800
+    assert offset_table_length(1152921504606846975, 8).is_err()
+    assert offset_table_length(-1, 1).is_err()
+    assert offset_table_length(1, 3).is_err()
+    return Ok(None)

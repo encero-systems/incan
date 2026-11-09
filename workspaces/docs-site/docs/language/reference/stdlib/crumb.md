@@ -180,3 +180,32 @@ Stored comparison is numeric for integers and decimals, preserves signed-zero or
 | `registry.registration(kind: str, mut budget: Budget)` | `Result[Option[KindRegistration], CrumbError]` | Return retained profile facts, or `None` for a core kind. Unknown profile kinds fail. The codec supplies the core kinds' property orders. |
 
 All calls share the request budget. Construction and returned registration copies charge name storage and list work before allocation; name accounting reserves a UTF-8 upper bound. Registration does not check a description's field table, absence rules, identities or value-changing property interpretations. Those checks remain mandatory at the codec's admission boundary. A registered shape with unknown profile semantics can retain metadata without treating it as executable behavior.
+
+## Finite row writer
+
+`std.primitives.crumb.row_writer` writes one complete experimental `crumb-row/1` envelope. It accepts explicit final stored values and complete descriptions. It does not invoke constructors, normalize virtual construction inputs, fetch descriptions or resolve reference targets.
+
+| Type | Fields |
+| --- | --- |
+| `.row_descriptions.Description` | `metadata: Metadata`, `mode: DescriptionMode` |
+| `.row_descriptions.DescriptionMode` | `Inline` or `Reference` |
+| `.row_writer.RowRecord` | `key: bytes`, `value: Value` |
+
+`key` is the complete closed nominal selector K, including its argument framing. A record's `Value.Record` fields retain their exact stored identities, canonical flags and absent policies. Enum roots use `Value.Enum` with their stored variant identity. A reference-mode description still supplies its complete metadata to the writer; the envelope carries K and the derived complete-description digest instead of inline metadata.
+
+```incan
+from std.primitives.crumb.row_writer import RowRecord, write_rows
+from std.primitives.crumb.row_descriptions import Description, DescriptionMode
+```
+
+| API | Return type | Contract |
+| --- | --- | --- |
+| `write_rows(descriptions: list[Description], records: list[RowRecord], registry: KindRegistry, sealed: bool, mut budget: Budget)` | `Result[bytes, CrumbError]` | Admit the entire dictionary, check every typed stored value, then return one independent owned envelope. All arguments are explicit; there is no default sealing or budget policy. |
+
+The complete metadata has the core `kind`, `nominal`, `path` and `properties` fields plus `fields` or `variants`. Stored fields have `id`, `name`, `type`, `canonical`, `absent` and `properties`. Names are display information; exact identities determine dictionary and member lookup. Unknown metadata is retained, including in inline headers. Unknown kinds need an explicit registry entry; unsupported value-changing interpretations still need an admitted binding.
+
+Dictionary entries and stored members use identity order while their complete metadata retains declaration order. Every nominal dependency must exist in this local dictionary before any rows are written. Missing descriptions, duplicate identities, wrong scalar ranges, wrong field types or mismatched canonical/absence flags return `CrumbError.InvalidInput`. Invalid shapes cannot be hidden by an empty record set or by an omitted absent field. Resource failures return `CrumbError.Limit`; no error returns a successful output prefix.
+
+Presence bits remove only the declared outer absence. Nested `Some(None)` remains distinct from absence. Maps and sets use the primitive's stored-value comparison and reject duplicate original entries. Numeric conversion is exact: integer widths are range checked, decimal rescaling refuses rounding, and binary64 values must be exactly representable when stored as binary32. NaNs normalize and signed zero remains distinct.
+
+`sealed=true` adds the count and ordered logical-value seal. It does not hash physical row bytes or authenticate a sender. This API builds a finite owned result under the shared request budget. It does not promise bounded-memory streaming, spooling, a column codec or a decoder.

@@ -1,0 +1,159 @@
+"""Read canonical closed N/K selectors without resolving display names or loading code."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.framing import Reader
+from crate.primitives.crumb.identity import closed_selector
+from crate.primitives.crumb.spelling import selector_spelling
+from crate.primitives.crumb.types import ContainerKind, NominalKind, TypeNode
+from crate.primitives.text import decode_utf8
+
+
+pub def parse_type(text: str, mut budget: Budget) -> Result[TypeNode, CrumbError]:
+    """Accept one complete canonical N spelling, including explicit closed nominal arguments."""
+    for _ in range(4):
+        budget.charge_bytes(len(text))?
+    mut parser = TypeParser(text=text, position=0)
+    return parser.parse(budget)
+
+
+pub def parse_key(key: bytes, kind: NominalKind, mut budget: Budget) -> Result[TypeNode, CrumbError]:
+    """Read a complete K and reconstruct it exactly; kind comes from the admitted declaration."""
+    if len(key) < 7:
+        return Err(CrumbError.invalid_input("closed selector framing"))
+    budget.charge_bytes(len(key))?
+    identity = key[:6]
+    mut reader = Reader.from_bytes(key[6:])
+    count = reader.read_length(budget)?
+    if count > reader.remaining().saturating_resize[u64]():
+        return Err(CrumbError.invalid_input("closed selector argument count"))
+    mut arguments: list[TypeNode] = []
+    for _ in range(count.saturating_resize[int]()):
+        budget.charge_elements(1)?
+        valid, spelling = decode_utf8(reader.read_frame(budget)?, false)
+        if not valid:
+            return Err(CrumbError.invalid_input("selector UTF-8"))
+        arguments.append(parse_type(spelling, budget)?)
+    if reader.remaining() != 0:
+        return Err(CrumbError.invalid_input("closed selector trailing bytes"))
+    node = TypeNode.Nominal(kind, identity, arguments)
+    if closed_selector(node, budget)? != key:
+        return Err(CrumbError.invalid_input("noncanonical closed selector"))
+    return Ok(node)
+
+
+class TypeParser:
+    """A bounded cursor over canonical selector punctuation, not source-language type syntax."""
+
+    text: str
+    position: int
+
+    pub def parse(mut self, mut budget: Budget) -> Result[TypeNode, CrumbError]:
+        """Require complete canonical input without exposing mutable cursor state."""
+        node = self.node(budget)?
+        if self.position != len(self.text) or selector_spelling(node, budget)? != self.text:
+            return Err(CrumbError.invalid_input("noncanonical type selector"))
+        return Ok(node)
+
+    def node(mut self, mut budget: Budget) -> Result[TypeNode, CrumbError]:
+        """Balance shared nesting on every exit; each token is charged before copying."""
+        budget.charge_elements(1)?
+        budget.enter()?
+        result = self.node_inner(budget)
+        budget.leave()?
+        return result
+
+    def token(mut self, mut budget: Budget) -> Result[str, CrumbError]:
+        """Consume one nonempty atom, leaving its delimiter to the owning production."""
+        start = self.position + 0
+        while self.position < len(self.text) and self.text[self.position] not in ["<", ">", ","]:
+            budget.charge_elements(1)?
+            self.position += 1
+        if self.position == start:
+            return Err(CrumbError.invalid_input("empty type selector atom"))
+        for _ in range(4):
+            budget.charge_bytes(self.position - start)?
+        return Ok(self.text[start:self.position])
+
+    def node_inner(mut self, mut budget: Budget) -> Result[TypeNode, CrumbError]:
+        """Parse structural constructors and nominal identities; final spelling checks scalar admission."""
+        name = self.token(budget)?
+        if name == "decimal":
+            self.take("<")?
+            precision = host_count(self.token(budget)?, budget)?
+            self.take(",")?
+            scale = host_count(self.token(budget)?, budget)?
+            self.take(">")?
+            return Ok(TypeNode.Decimal(precision, scale))
+        arguments = self.arguments(budget)?
+        nominal = name.split("@")
+        if len(nominal) == 2:
+            if let Some(kind) = NominalKind.from_value(nominal[0]):
+                return Ok(TypeNode.Nominal(kind, identity_bytes(nominal[1], budget)?, arguments))
+        if let Some(kind) = ContainerKind.from_value(name):
+            return Ok(TypeNode.Container(kind, arguments))
+        if len(arguments) != 0:
+            return Err(CrumbError.invalid_input("scalar type arguments"))
+        return Ok(TypeNode.Scalar(name))
+
+    def arguments(mut self, mut budget: Budget) -> Result[list[TypeNode], CrumbError]:
+        """Read explicit comma-delimited arguments; final canonical comparison rejects stray empty brackets."""
+        mut arguments: list[TypeNode] = []
+        if self.position == len(self.text) or self.text[self.position] != "<":
+            return Ok(arguments)
+        self.take("<")?
+        if self.position < len(self.text) and self.text[self.position] == ">":
+            self.take(">")?
+            return Ok(arguments)
+        loop:
+            arguments.append(self.node(budget)?)
+            if self.position < len(self.text) and self.text[self.position] == ">":
+                self.take(">")?
+                return Ok(arguments)
+            self.take(",")?
+
+    def take(mut self, delimiter: str) -> Result[None, CrumbError]:
+        """Require the grammar's exact next delimiter without skipping whitespace."""
+        if self.position == len(self.text) or self.text[self.position] != delimiter:
+            return Err(CrumbError.invalid_input("type selector delimiter"))
+        self.position += 1
+        return Ok(None)
+
+
+def identity_bytes(text: str, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Decode exactly six lowercase hexadecimal bytes without permissive spelling normalization."""
+    if len(text) != 12:
+        return Err(CrumbError.invalid_input("nominal identity width"))
+    budget.charge_bytes(6)?
+    mut output: list[u8] = []
+    for index in range(6):
+        high = hex_digit(text[index * 2])?
+        low = hex_digit(text[index * 2 + 1])?
+        output.append((high * 16 + low).saturating_resize[u8]())
+    return Ok(output)
+
+
+def hex_digit(text: str) -> Result[int, CrumbError]:
+    """A selector identity accepts the canonical lowercase alphabet only."""
+    digits = "0123456789abcdef"
+    for index in range(16):
+        if digits[index] == text:
+            return Ok(index)
+    return Err(CrumbError.invalid_input("nominal hexadecimal digit"))
+
+
+def host_count(text: str, mut budget: Budget) -> Result[int, CrumbError]:
+    """Check decimal parameter arithmetic before converting to the host representation."""
+    if text == "" or (len(text) > 1 and text.startswith("0")):
+        return Err(CrumbError.invalid_input("type parameter digits"))
+    mut value = 0
+    for index in range(len(text)):
+        budget.charge_elements(1)?
+        digit = text[index]
+        if digit < "0" or digit > "9":
+            return Err(CrumbError.invalid_input("type parameter digits"))
+        amount = int(digit)
+        if value > (9223372036854775807 - amount) // 10:
+            return Err(CrumbError.limit("type parameter"))
+        value = value * 10 + amount
+    return Ok(value)
