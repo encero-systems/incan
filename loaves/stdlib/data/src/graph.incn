@@ -31,6 +31,21 @@ pub from crate.graph._read import (
     ScopedEdgeId,
     ScopedNodeId,
 )
+pub from crate.graph._traversal import (
+    Direction,
+    Path,
+    PathOutcome,
+    PathSearch,
+    TraversalBudget,
+    TraversalOutcome,
+    TraversalPage,
+    TraversalReport,
+    Visit,
+    WalkContinuation,
+    breadth_first,
+    depth_first,
+    find_path,
+)
 
 
 @made_private(since="0.6", message="Graph storage records are private; use node ids and graph operations", replacement=NodeId)
