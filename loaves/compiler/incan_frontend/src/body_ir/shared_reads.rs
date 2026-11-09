@@ -852,7 +852,9 @@ fn shared_rvalue(value: &bir::Rvalue, context: &ReadContext<'_>) -> bool {
                         .is_none_or(|guard| !uses(guard, local) || scalar_projection(guard, local))
                         && (!uses(&arm.result, local) || scalar_projection(&arm.result, local))
                 })
-                && match_bindings_are_read_only(arms, context)
+                // Payload ownership constrains the matched owner, not an unrelated parameter. The normal statement
+                // walk still checks that parameter's uses inside every arm and guard.
+                && (!uses(scrutinee, local) || match_bindings_are_read_only(arms, context))
         }
         bir::Rvalue::Aggregate(_, elements) => !elements.iter().any(|element| argument_uses(element, local)),
         bir::Rvalue::Dict(entries) => !entries.iter().any(|entry| dict_entry_uses(entry, local)),

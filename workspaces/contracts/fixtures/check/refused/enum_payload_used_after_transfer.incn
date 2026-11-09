@@ -1,0 +1,17 @@
+# behavior: taking an owned enum payload does not allow the same payload to be used again after transfer (#2834).
+# expect-diagnostic: INCAN-T0126
+
+enum Message:
+    Text(str)
+
+
+def consume(value: Owned[str]) -> None:
+    pass
+
+
+def invalid(message: Owned[Message]) -> str:
+    match message:
+        Message.Text(text) =>
+            consume(text)
+            return text
+    return ""

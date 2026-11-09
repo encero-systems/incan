@@ -1113,3 +1113,52 @@ fn checked_metadata_seed(source: &str) -> Result<(TypeCheckInfo, bir::BodyIrModu
     let module = super::build_module_seed(&program, &[], &facts, &context);
     Ok((facts, module))
 }
+
+/// A match's payload ownership constrains its subject, not an unrelated model read inside the same arm. Moving a
+/// payload out must keep the subject owned while the independently observed dictionary can still be borrowed.
+#[test]
+fn enum_match_keeps_unrelated_inputs_shared() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Dictionary:
+    values: list[str]
+enum Node:
+    Scalar(str)
+    Other
+
+def inspect(node: Node, dictionary: Dictionary) -> int:
+    match node:
+        Node.Scalar(name) => return len(name) + len(dictionary.values)
+        Node.Other => return len(dictionary.values)
+    return 0
+
+def take(node: Node, dictionary: Dictionary) -> str:
+    match node:
+        Node.Scalar(name) =>
+            assert len(dictionary.values) >= 0
+            return name
+        Node.Other => return ""
+    return ""
+"#;
+    let (_, _, mut module) = checked_seed(source)?;
+    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    for name in ["inspect", "take"] {
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .ok_or("missing enum match body")?;
+        assert_eq!(
+            body.params[1].input_access,
+            incan_semantics_core::IncanInputAccess::InferredShared,
+            "{name}: {body:#?}"
+        );
+        if name == "take" {
+            assert_eq!(
+                body.params[0].input_access,
+                incan_semantics_core::IncanInputAccess::Inferred,
+                "moving a payload must retain the owned subject: {body:#?}"
+            );
+        }
+    }
+    Ok(())
+}
