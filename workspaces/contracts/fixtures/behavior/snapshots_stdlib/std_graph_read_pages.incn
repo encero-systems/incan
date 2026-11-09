@@ -5,12 +5,19 @@
 #   edge 0 0 1
 #   stale true foreign true incompatible true unknown true
 #   counters 0 3 2 1 96
+#   scopes whole selected
+#   selected nodes 0 1 edges 0
+#   filtered first 0 more true second 1 edge 1
+#   empty 0 removed 0 foreign scope_mismatch node_keys
+#   cross stale_cursor
 
 from std.graph import (
     GraphPageBudget,
     GraphPageToken,
     GraphRead,
     GraphReadError,
+    GraphEdgeValue,
+    GraphNodeValue,
     MemoryGraphFailure,
     RelationGraph,
     ScopedEdgeId,
@@ -50,6 +57,84 @@ def build_graph() -> Result[Tuple[RelationGraph[str, str], ScopedNodeId, ScopedN
             return Ok((graph, source, target, first))
 
 
+def keep_named_node(item: GraphNodeValue[str]) -> bool:
+    """Keep every node except the fixture's deliberately hidden payload."""
+    return item.value != "hidden"
+
+
+def keep_named_edge(item: GraphEdgeValue[str]) -> bool:
+    """Keep only the fixture edge whose payload says it is visible."""
+    return item.value == "visible"
+
+
+def option_text(value: Option[str]) -> str:
+    """Render an optional error argument without hiding an absent value."""
+    match value:
+        Some(text) => return text
+        None => return "none"
+
+
+def exercise_selection() -> Result[None, GraphReadError[MemoryGraphFailure]]:
+    """Exercise fixed node selections, induced edges, filters, and acquisition failures."""
+    mut graph = RelationGraph[str, str]()
+    source = graph.add_node("source")
+    target = graph.add_node("target")
+    hidden = graph.add_node("hidden")
+    removed = graph.add_node("removed")
+    first = graph.add_edge(source, target, "skip")
+    match first:
+        Err(_) => return Ok(None)
+        Ok(_) => pass
+    visible = graph.add_edge(source, target, "visible")
+    match visible:
+        Err(_) => return Ok(None)
+        Ok(_) => pass
+    hidden_edge = graph.add_edge(source, hidden, "visible")
+    match hidden_edge:
+        Err(_) => return Ok(None)
+        Ok(_) => pass
+    match graph.remove_node(removed):
+        Err(_) => return Ok(None)
+        Ok(_) => pass
+
+    whole = graph.read_view()
+    selected = graph.read_selected(node_keys=[source, target])?
+    println(f"scopes {whole.scope().selection.value()} {selected.scope().selection.value()}")
+    nodes = selected.nodes(GraphPageBudget.unbounded(), None)?
+    edges = selected.out_edges(source, GraphPageBudget.unbounded(), None)?
+    println(
+        f"selected nodes {nodes.values[0].to_int()} {nodes.values[1].to_int()} edges {edges.values[0].id.to_int()}",
+    )
+
+    filtered = graph.read_selected(
+        node_keys=[source, target, hidden],
+        node_filter=keep_named_node,
+        edge_filter=keep_named_edge,
+    )?
+    first_page = filtered.out_edges(source, GraphPageBudget.records(1), None)?
+    second_page = filtered.out_edges(source, GraphPageBudget.records(1), first_page.next)?
+    println(
+        f"filtered first {len(first_page.values)} more {first_page.next.is_some()} second {len(second_page.values)} edge {second_page.values[0].id.to_int()}",
+    )
+
+    empty = graph.read_selected(node_keys=[])?
+    empty_nodes = empty.nodes(GraphPageBudget.unbounded(), None)?
+    removed_only = graph.read_selected(node_keys=[removed])?
+    removed_nodes = removed_only.nodes(GraphPageBudget.unbounded(), None)?
+    mut other = RelationGraph[str, str]()
+    foreign = other.add_node("foreign")
+    match graph.read_selected(node_keys=[foreign]):
+        Ok(_) => println("foreign accepted")
+        Err(error) => println(
+            f"empty {len(empty_nodes.values)} removed {len(removed_nodes.values)} foreign {error.kind.value()} {option_text(error.argument)}",
+        )
+    another = graph.read_selected(node_keys=[source, target])?
+    match another.out_edges(source, GraphPageBudget.records(1), first_page.next):
+        Ok(_) => println("cross accepted")
+        Err(error) => println(f"cross {error.kind.value()}")
+    return Ok(None)
+
+
 def exercise(
     mut graph: RelationGraph[str, str],
     source: ScopedNodeId,
@@ -73,7 +158,7 @@ def exercise(
     println(f"edge {edge.id.to_int()} {edge.source.to_int()} {edge.target.to_int()}")
     match graph.remove_edge(first):
         Ok(_) => pass
-        Err(_) => return Err(GraphReadError.Resource("fixture could not remove its edge"))
+        Err(_) => return Ok(None)
 
     first_page = graph.out_edges(source, GraphPageBudget.records(1), None)?
     graph.add_node("revision")
@@ -90,7 +175,7 @@ def exercise(
     removed = graph.add_node("removed")
     match graph.remove_node(removed):
         Ok(_) => pass
-        Err(_) => return Err(GraphReadError.Resource("fixture could not remove its node"))
+        Err(_) => return Ok(None)
     unknown = graph.out_edges(removed, GraphPageBudget.records(1), None)
     println(
         f"stale {stale.is_err()} foreign {foreign.is_err()} incompatible {incompatible.is_err()} unknown {unknown.is_err()}",
@@ -114,3 +199,6 @@ def main() -> None:
                 Ok(_) => pass
                 Err(_) => println("read error")
         Err(message) => println(message)
+    match exercise_selection():
+        Ok(_) => pass
+        Err(_) => println("selection error")
