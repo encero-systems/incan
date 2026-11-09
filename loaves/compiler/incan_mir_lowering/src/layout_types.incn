@@ -25,6 +25,7 @@ from decls import library_enum_item, library_item
 from lists import exclusive_reference, list_parameter_type
 from table_views import borrowed_at
 from native_type_identity import OWNED_CALLABLE_STORAGE, ConstructorIndex, constructor_index
+from compiler_record_adapters import authored_plan_symbol_id, semantic_key_matches_native
 
 
 pub def native_alias_boundary(nominals: &list[NominalDeclaration], source: PlanType, target: PlanType) -> bool:
@@ -95,15 +96,15 @@ pub def native_source_type(
     unions: &list[RustType],
     ty: &RustType,
     intrinsics: &list[EnumDeclaration],
+    source_file: str = "",
 ) -> Result[PlanType, str]:
     """Use retained carrier identity before recursively resolving collection elements; never reopen source syntax."""
     # This runs for every resolved type. Only Option, Result and Union carriers are intrinsic, and the checked type is
     # wrapped once so that each borrowed carrier compares its key in place instead of copying it.
     if intrinsic_carrier(ty):
-        key = Some(ty.clone())
         for index in range(len(intrinsics)):
             declaration = borrowed_at(intrinsics, index)
-            if declaration.semantic_key == key:
+            if semantic_key_matches_native(declaration.semantic_key, ty)?:
                 return Ok(PlanType.Enum(len(enums) + index, declaration.name))
     match enum_type(enums, ty):
         Some(result) => return Ok(result)
@@ -114,7 +115,7 @@ pub def native_source_type(
             return Ok(
                 PlanType.RawPointer(
                     mutable,
-                    [native_source_type(constructors, nominals, enums, unions, pointee, intrinsics)?],
+                    [native_source_type(constructors, nominals, enums, unions, pointee, intrinsics, source_file)?],
                 ),
             )
         RustType.NativeTraitObject(path=path, send=send, sync=sync) =>
@@ -126,7 +127,7 @@ pub def native_source_type(
                 return Err("unsupported Body IR native array length exceeds the plan integer range")
             return Ok(
                 PlanType.NativeArray(
-                    [native_source_type(constructors, nominals, enums, unions, element, intrinsics)?],
+                    [native_source_type(constructors, nominals, enums, unions, element, intrinsics, source_file)?],
                     int(count),
                 ),
             )
@@ -136,14 +137,30 @@ pub def native_source_type(
         RustType.Ref(inner) =>
             if is_native_str(inner):
                 return Ok(PlanType.StrRef)
-            return shared_receiver_type(native_source_type(constructors, nominals, enums, unions, inner, intrinsics)?)
+            return shared_receiver_type(
+                native_source_type(constructors, nominals, enums, unions, inner, intrinsics, source_file)?,
+            )
         RustType.RefMut(inner) =>
-            return mutable_receiver_type(native_source_type(constructors, nominals, enums, unions, inner, intrinsics)?)
+            return mutable_receiver_type(
+                native_source_type(constructors, nominals, enums, unions, inner, intrinsics, source_file)?,
+            )
         RustType.TypeToken(represented) =>
             return Ok(
-                PlanType.TypeToken([native_source_type(constructors, nominals, enums, unions, represented, intrinsics)?]),
+                PlanType.TypeToken(
+                    [native_source_type(constructors, nominals, enums, unions, represented, intrinsics, source_file)?],
+                ),
             )
-        RustType.Trait(identity) => return Ok(PlanType.Trait(identity.clone()))
+        RustType.Trait(identity) =>
+            return Ok(
+                PlanType.Trait(
+                    authored_plan_symbol_id(
+                        identity,
+                        source_file,
+                        constructors.source_files,
+                        constructors.package_versions,
+                    )?,
+                ),
+            )
         RustType.Unsupported(description) => return Err(f"unsupported Body IR type {description}")
         RustType.NativeBuiltin(RuntimeBuiltinType.ValidationError) => return Ok(PlanType.ValidationError)
         RustType.Function(params=parameters, return_type=result) =>
@@ -511,10 +528,12 @@ def hashed_leaf(
                 for argument in arguments:
                     hashed_leaf(constructors, nominals, enums, argument, intrinsics)?
                 mut index = 0
-                key = Some(ty.clone())
                 for carrier_position in range(len(intrinsics)):
                     carrier = borrowed_at(intrinsics, carrier_position)
-                    if carrier.carrier != Carrier.Declared and carrier.semantic_key == key:
+                    if (
+                        carrier.carrier != Carrier.Declared
+                        and semantic_key_matches_native(carrier.semantic_key, ty)?
+                    ):
                         return Ok(ListLeaf.Enum(len(enums) + index, carrier.name))
                     index += 1
                 return Err(f"unsupported Body IR unretained carrier hashed key {ty}")

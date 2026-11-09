@@ -1,7 +1,7 @@
 """Plan value types and source spans: scalars, sized numerics, list leaves, tuple elements and their projections."""
 
 from rust::std::sync import Arc
-from rust::incan_semantics_core import CanonicalSymbolId
+from pub::internal_models.compiler_records import CanonicalSymbolId
 
 
 @derive(Clone, PartialEq)

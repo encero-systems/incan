@@ -1,4 +1,4 @@
-# behavior: each ordering dunder called on a type that derives Ord, a model, an enum, a generic model and a newtype, on a value and on self, is the operator it defines
+# behavior: each comparison dunder called on a type that derives Eq or Ord, including payload and nested-payload enums (#2806), a model, an enum, a generic model and a newtype, on a value and on self, is the operator it defines
 # expect-stdout:
 #   false
 #   true
@@ -27,6 +27,24 @@ enum Level:
 
 
 @derive(Eq, Ord)
+model PackageOrigin:
+    scope: str
+    name: str
+
+
+@derive(Eq, Ord)
+enum Origin:
+    Module
+    Package(str)
+    Nested(PackageOrigin)
+
+
+@derive(Eq)
+model Source:
+    origin: Origin
+
+
+@derive(Eq, Ord)
 model Pair[T]:
     left: T
     right: T
@@ -36,7 +54,30 @@ model Pair[T]:
 type Rank = newtype int
 
 
+def matches_source(source: Source, expected: Origin) -> bool:
+    """Compare an enum read through a model field with a parameter."""
+    return source.origin == expected
+
+
+def matches_origin(actual: Origin, expected: Origin) -> bool:
+    """Compare two payload-enum parameters without consuming either."""
+    return actual == expected
+
+
 def main() -> None:
+    origin = Origin.Module
+    assert origin == Origin.Module
+    source = Source(origin=Origin.Package("std"))
+    assert source == Source(origin=Origin.Package("std"))
+    assert matches_source(source, Origin.Package("std"))
+    assert matches_origin(Origin.Package("std"), Origin.Package("std"))
+    assert Origin.Nested(PackageOrigin(scope="std", name="core")) != Origin.Nested(
+        PackageOrigin(scope="app", name="core"),
+    )
+    assert Origin.Package("app") < Origin.Package("std")
+    assert Origin.Package("app") <= Origin.Package("std")
+    assert Origin.Package("std") > Origin.Package("app")
+    assert Origin.Nested(PackageOrigin(scope="std", name="core")) >= Origin.Package("std")
     a = Score(points=2)
     b = Score(points=3)
     println(a.__ge__(b))

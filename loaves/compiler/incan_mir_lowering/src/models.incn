@@ -36,12 +36,14 @@ from layout_types import stored_field_type
 from ranges import range_field
 from native_type_identity import ConstructorIndex, native_owner, representation_arguments
 from unions import union_slot
+from compiler_record_adapters import authored_plan_symbol_id
 
 
 pub def model_type(
     constructors: &ConstructorIndex,
     declarations: &list[NominalDeclaration],
     ty: &RustType,
+    source_file: str = "",
 ) -> Result[PlanType, str]:
     """
     Translate checked types against retained declarations, preserving unsupported types in refusals.
@@ -73,8 +75,18 @@ pub def model_type(
             return Err(f"unsupported Body IR nominal type {source_name}")
         RustType.Primitive(primitive) => return primitive_type(primitive)
         RustType.TypeToken(represented) =>
-            return Ok(PlanType.TypeToken([model_type(constructors, declarations, represented)?]))
-        RustType.Trait(identity) => return Ok(PlanType.Trait(identity.clone()))
+            return Ok(PlanType.TypeToken([model_type(constructors, declarations, represented, source_file)?]))
+        RustType.Trait(identity) =>
+            return Ok(
+                PlanType.Trait(
+                    authored_plan_symbol_id(
+                        identity,
+                        source_file,
+                        constructors.source_files,
+                        constructors.package_versions,
+                    )?,
+                ),
+            )
         RustType.Function(params=parameters, return_type=result) => return function_pointer_type(parameters, result)
         RustType.Tuple(_elements) => return retained_model_type(constructors, declarations, ty)
         RustType.Decimal(precision=_precision, scale=_scale) => return Ok(PlanType.Decimal)

@@ -37,7 +37,8 @@ from classes import body_module_identity, is_program_entry
 from project import project_context
 from body_index import body_index
 from program_context import ProgramContext
-from native_type_identity import ConstructorIndex, constructor_index as index_constructors
+from native_type_identity import ConstructorIndex, constructor_index_with_packages as index_constructors
+from rust::std::collections import BTreeMap
 from rust::std::sync import Arc
 from nominal_instances import NominalInstance, specialize_nominals_with_instances
 from checked_json import lower_checked_deserialize
@@ -178,12 +179,13 @@ pub def unit_plan(
     kind: str,
     tests: list[str],
     mut published: list[NativeUnionDeclaration],
+    package_versions: BTreeMap[str, str],
     overflow_checks: bool = true,
 ) -> Result[UnitPlanning, str]:
     """Lower one checked unit by kind; test entries come from session collection, never from naming heuristics here."""
     if kind != "program" and kind != "library" and kind != "test":
         return Err(f"unsupported unit kind {kind}")
-    return lowered_plan(modules, sources, files, entry, kind, tests, published, overflow_checks)
+    return lowered_plan(modules, sources, files, entry, kind, tests, published, overflow_checks, package_versions)
 
 
 def program_context(
@@ -222,20 +224,29 @@ def lowered_plan(
     tests: list[str],
     mut published: list[NativeUnionDeclaration],
     overflow_checks: bool,
+    package_versions: BTreeMap[str, str],
 ) -> Result[UnitPlanning, str]:
     """Lower a checked unit once, preserving ordinary frames when exact runtime declarations need resolution."""
     trace_key: str = "INCAN_TRACE_LOWERING"
     trace = native_environment(trace_key).is_some()
     # 1. Validate the checked inputs and prepare their shared layouts.
+    source_files = source_file_index(modules, files)?
     source_context, template_constructors, owners, specialized_context, nominal_instances, template_references = plan_contexts(
         modules,
         sources,
         files,
         entry,
         trace,
+        source_files,
+        package_versions,
     )?
     mut context = specialized_context
-    constructor_table, unions, initial_intrinsics = layout_tables(context, files[entry])?
+    constructor_table, unions, initial_intrinsics = layout_tables(
+        context,
+        files[entry],
+        source_files,
+        package_versions,
+    )?
     constructors = Arc.new(constructor_table)
     mut intrinsics = initial_intrinsics
     mut models: list[ModelDeclaration] = []
@@ -352,17 +363,21 @@ pub def resume_unit_plan(
     kind: str,
     tests: list[str],
     mut published: list[NativeUnionDeclaration],
+    package_versions: BTreeMap[str, str],
     overflow_checks: bool = true,
 ) -> Result[UnitPlanning, str]:
     """Resume preserved ordinary frames against the exact runtime declaration closure the frontend resolved."""
     trace_key: str = "INCAN_TRACE_LOWERING"
     trace = native_environment(trace_key).is_some()
+    source_files = source_file_index(modules, files)?
     source_context, template_constructors, owners, specialized_context, nominal_instances, template_references = plan_contexts(
         modules,
         sources,
         files,
         entry,
         false,
+        source_files,
+        package_versions,
     )?
     mut context = specialized_context
     previous_nominal_count = len(continuation.nominal_layouts)
@@ -373,7 +388,13 @@ pub def resume_unit_plan(
     preserve_enum_layout_order(context, continuation.enum_layouts)?
     previous_static_count = len(continuation.static_layouts)
     preserve_static_layout_order(context, continuation.static_layouts)?
-    constructor_table, unions, initial_intrinsics = layout_tables(context, files[entry], continuation.intrinsic_layouts)?
+    constructor_table, unions, initial_intrinsics = layout_tables(
+        context,
+        files[entry],
+        source_files,
+        package_versions,
+        continuation.intrinsic_layouts,
+    )?
     constructors = Arc.new(constructor_table)
     mut intrinsics = initial_intrinsics
     mut models = continuation.models
@@ -853,10 +874,12 @@ def resume_plan_roots(
 pub def layout_tables(
     context: &BodyIrModule,
     file: str,
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
     retained_intrinsics: list[EnumDeclaration] = [],
 ) -> Result[tuple[ConstructorIndex, list[RustType], list[EnumDeclaration]], str]:
     """Create matched constructor, union and intrinsic tables for either planning entry point."""
-    constructors = index_constructors(context.nominal_declarations)
+    constructors = index_constructors(context.nominal_declarations, source_files, package_versions)
     unions = collect_unions(context)
     intrinsics = intrinsic_declarations(constructors, context, file, retained_intrinsics)?
     return Ok((constructors, unions, intrinsics))
@@ -1106,6 +1129,8 @@ pub def plan_contexts(
     files: &list[str],
     entry: int,
     trace: bool,
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
 ) -> Result[PlanContexts, str]:
     """Validate project authority and retain compact templates beside one in-place-specialized execution context."""
     footprint_trace = native_environment("INCAN_TRACE_LOWERING_FOOTPRINT").is_some()
@@ -1120,7 +1145,7 @@ pub def plan_contexts(
     mut source_context = BodyIrModule.declarations_only(str(context.module_id.path()))
     source_context.nominal_declarations = list(context.nominal_declarations)
     source_context.enum_declarations = list(context.enum_declarations)
-    constructors = index_constructors(source_context.nominal_declarations)
+    constructors = index_constructors(source_context.nominal_declarations, source_files, package_versions)
     template_references = referenced_templates(context)
     trace_lowering_footprint(footprint_trace, "retained source templates")
     # A closed enum payload can name a nominal instance no frame uses, and a closed nominal field or method frame can
@@ -1135,6 +1160,22 @@ pub def plan_contexts(
     specialize_enums(context)?
     trace_lowering_footprint(footprint_trace, "specialized enums")
     return Ok((source_context, constructors, owners, context, nominal_instances, template_references))
+
+
+pub def source_file_index(
+    modules: &list[BodyIrModule],
+    files: &list[str],
+) -> Result[BTreeMap[str, str], str]:
+    """Bind every checked module identity to its aligned source input without inferring files from reference sites."""
+    if len(modules) != len(files):
+        return Err("invalid Body IR project source provenance")
+    mut indexed: BTreeMap[str, str] = BTreeMap.new()
+    for position in range(len(modules)):
+        module = str(borrowed_at(modules, position).module_id.path())
+        if indexed.contains_key(module):
+            return Err(f"duplicate Body IR source provenance for module {module}")
+        indexed.insert(module, files[position])
+    return Ok(indexed)
 
 
 def trace_lowering(enabled: bool, stage: str) -> None:

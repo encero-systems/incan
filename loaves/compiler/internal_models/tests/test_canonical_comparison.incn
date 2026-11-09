@@ -1,0 +1,31 @@
+"""Focused native compilation for complete canonical identity comparison."""
+
+from compiler_records import (
+    CanonicalSymbolId,
+    DeclarationKind,
+    HirSourceSpan,
+    PackageIdentity,
+    SymbolNamespace,
+    SymbolOrigin,
+)
+
+
+pub def test_canonical_comparison() -> None:
+    """Treat package version as identity while equal complete records compare equal."""
+    left = canonical("1.4.0")
+    equal = canonical("1.4.0")
+    successor = canonical("2.0.0")
+    assert left == equal
+    assert left != successor
+
+
+def canonical(version: str) -> CanonicalSymbolId:
+    """Build one complete identity for comparison controls."""
+    return CanonicalSymbolId(
+        namespace=SymbolNamespace.Member,
+        origin=SymbolOrigin.Package(PackageIdentity(name="billing", version=version), ["models"]),
+        declaration_name="total",
+        kind=DeclarationKind.Method,
+        scope_discriminant=Some(7),
+        declaration_span=HirSourceSpan(file="src/invoice.incn", start=80, end=96),
+    )

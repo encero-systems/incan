@@ -210,7 +210,9 @@ impl TypeChecker {
     /// Check method arguments in source order, retaining deferred closure facts and contextual payload types.
     ///
     /// Fold callbacks see the preceding accumulator type. A native closure with unresolved bounds still records its
-    /// body's selected identities while its premature diagnostics are discarded (#1492); its type stays open.
+    /// body's selected identities while its premature diagnostics are discarded (#1492); its type stays open. Every
+    /// expression is marked as a call argument so a nested Rust call can defer inference diagnostics until the
+    /// selected method supplies its exact parameter type.
     pub(super) fn check_method_argument_types(
         &mut self,
         call: &MethodCallSite<'_>,
@@ -239,6 +241,7 @@ impl TypeChecker {
                         .map(|parameter| &parameter.ty)
                 })
                 .filter(|payload| !matches!(payload, ResolvedType::Unknown));
+            self.call_argument_depth += 1;
             let arg_ty = if defer_rust_closures && context.contextual_rust_callable.is_none() && is_closure {
                 let diagnostics_before = self.errors.len();
                 self.check_expr(arg_expr);
@@ -269,6 +272,7 @@ impl TypeChecker {
             } else {
                 self.check_method_arg_with_rust_callable_alias(arg, context.contextual_rust_callable.as_ref())
             };
+            self.call_argument_depth -= 1;
             arg_types.push(arg_ty);
         }
         if let Some(slot) = self.iterator_callback_slot(base_ty, call.method) {

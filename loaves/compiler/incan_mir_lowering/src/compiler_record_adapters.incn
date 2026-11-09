@@ -1,0 +1,875 @@
+"""
+One explicit adapter generation from native compiler carriers to Incan-owned identity and source facts.
+
+The Rust carriers remain transitional inputs for direct native consumers. This module names the old writer and reader,
+the source schema/profile, every field and variant disposition, and the removal gate. Conversion allocates owned text
+and path lists; no Rust `Arc`, `String`, `Vec` or allocation identity crosses into the Incan record contract.
+"""
+
+from pub::internal_models.compiler_records import (
+    CanonicalSymbolId,
+    DeclarationKind,
+    DeclarationSignature,
+    HirSourceSpan,
+    PackageIdentity,
+    PlanSourceSpanRecord,
+    StableDeclarationComponent,
+    StableDeclarationId,
+    StableDeclarationLocation,
+    SymbolNamespace,
+    SymbolOrigin,
+    valid_canonical_symbol_id,
+    valid_hir_source_span,
+)
+from pub::internal_models.checked_types import (
+    CheckedCallableParam,
+    CheckedCallableParamKind,
+    CheckedInputAccess,
+    CheckedNumericType,
+    CheckedPrimitiveType,
+    CheckedRuntimeBuiltin,
+    CheckedType,
+    valid_checked_type,
+)
+from pub::incan_mir_plan import SourceSpan as PlanSourceSpan
+from rust::std::sync import Arc
+from rust::std::array import from_fn as rust_array_from_fn
+from rust::std::collections import BTreeMap
+from rust::incan_semantics_core import (
+    CanonicalSymbolId as RustCanonicalSymbolId,
+    HirSourceSpan as RustHirSourceSpan,
+    ScopeDiscriminant as RustScopeDiscriminant,
+    SemanticSourceTargetKind as RustDeclarationKind,
+    SymbolNamespace as RustSymbolNamespace,
+    SymbolOrigin as RustSymbolOrigin,
+    IncanCallableParam as RustCallableParam,
+    IncanCallableParamKind as RustCallableParamKind,
+    IncanInputAccess as RustInputAccess,
+    IncanPrimitiveType as RustPrimitiveType,
+    IncanType as RustType,
+    NumericTypeId as RustNumericType,
+    RuntimeBuiltinType as RustRuntimeBuiltin,
+    canonical_module_identity,
+)
+from rust::incan_semantics_core::stable_identity import (
+    DeclarationSignature as RustDeclarationSignature,
+    StableDeclarationId as RustStableDeclarationId,
+    StableDeclarationLocation as RustStableDeclarationLocation,
+)
+
+pub const IDENTITY_SOURCE_WRITER: str = "incan_frontend checked identity construction"
+pub const IDENTITY_SOURCE_READER: str = "incan_mir_lowering native carrier consumers"
+pub const IDENTITY_SOURCE_PROFILE: str = "incan_semantics_core executable representation 53"
+pub const IDENTITY_ADAPTER_GENERATION: int = 1
+pub const IDENTITY_ADAPTER_REMOVAL_GATE: str = "all direct native consumers accept pub::internal_models.compiler_records declarations"
+
+
+pub def canonical_symbol_id(
+    identity: &RustCanonicalSymbolId,
+    source_file: str,
+    package_version: str,
+) -> CanonicalSymbolId:
+    """
+    Copy every native canonical field into the Incan-owned record and attach boundary-owned source facts.
+
+    `source_file` maps the declaration span to the selected source file. `package_version` completes package ownership;
+    both are explicit because the transitional Rust carrier stores neither value.
+    """
+    return CanonicalSymbolId(
+        namespace=symbol_namespace(identity.namespace),
+        origin=symbol_origin(identity.origin, package_version),
+        declaration_name=str(identity.declaration_name),
+        kind=declaration_kind(identity.kind),
+        scope_discriminant=scope_discriminant(identity.scope_discriminant),
+        declaration_span=hir_source_span(identity.declaration_span, source_file),
+    )
+
+
+pub def stable_declaration_id(identity: &RustStableDeclarationId, package_version: str) -> StableDeclarationId:
+    """Copy every stable field, recursively retaining the complete checked owner path and collision-local ordinal."""
+    return StableDeclarationId(
+        namespace=symbol_namespace(identity.namespace),
+        origin=symbol_origin(identity.origin, package_version),
+        declaration_name=str(identity.declaration_name),
+        kind=declaration_kind(identity.kind),
+        location=stable_location(identity.location, package_version),
+        signature=declaration_signature(identity.signature),
+    )
+
+
+pub def hir_source_span(span: RustHirSourceSpan, source_file: str) -> HirSourceSpan:
+    """Attach an owned source filename and copy the exact byte range and optional 32-byte expansion identity."""
+    mut expansion: Option[list[int]] = None
+    match span.expansion.as_ref():
+        Some(values) => expansion = Some([int(value) for value in values.as_slice().to_vec()])
+        None => pass
+    return HirSourceSpan(file=source_file, start=int(span.start), end=int(span.end), expansion=expansion)
+
+
+pub def authored_plan_source_span(span: &PlanSourceSpan) -> PlanSourceSpanRecord:
+    """Copy a shared Plan filename once into the authored record projection, excluding `Arc` allocation identity."""
+    return PlanSourceSpanRecord(file=str(span.file), line=span.line, column=span.column)
+
+
+pub def native_plan_source_span(span: &PlanSourceSpanRecord) -> PlanSourceSpan:
+    """Allocate one shared Plan filename when restoring the authored record projection for native lowering."""
+    return PlanSourceSpan(file=Arc.new(str(span.file)), line=span.line, column=span.column)
+
+
+pub def native_canonical_symbol_id(identity: &CanonicalSymbolId) -> Result[RustCanonicalSymbolId, str]:
+    """Restore one validated authored identity, allocating native text and reconstructing an exact expansion array."""
+    if not valid_canonical_symbol_id(identity.clone()):
+        return Err("invalid authored canonical symbol identity")
+    return Ok(
+        RustCanonicalSymbolId(
+            namespace=native_symbol_namespace(identity.namespace.clone()),
+            origin=native_symbol_origin(identity.origin.clone()),
+            declaration_name=str(identity.declaration_name),
+            kind=native_declaration_kind(identity.kind.clone()),
+            scope_discriminant=native_scope_discriminant(identity.scope_discriminant),
+            declaration_span=native_hir_source_span(identity.declaration_span)?,
+        ),
+    )
+
+
+pub def native_hir_source_span(span: &HirSourceSpan) -> Result[RustHirSourceSpan, str]:
+    """Restore a validated authored range and convert its optional 32-byte list into the native fixed array exactly."""
+    if not valid_hir_source_span(span.clone()):
+        return Err("invalid authored source span")
+    start: usize = span.start.wrapping_resize()
+    end: usize = span.end.wrapping_resize()
+    if int(start) != span.start or int(end) != span.end:
+        return Err("authored source span exceeds the native index range")
+    native = RustHirSourceSpan.new(start, end)
+    match span.expansion.clone():
+        Some(expansion) =>
+            return Ok(
+                native.with_expansion(
+                    Some(rust_array_from_fn((index) => native_expansion_byte(expansion, index))),
+                ),
+            )
+        None => return Ok(native)
+
+
+pub def checked_type(ty: &RustType, source_file: str, package_version: str) -> CheckedType:
+    """Copy every semantic type alternative recursively without using diagnostic display text as identity."""
+    match ty:
+        RustType.Never => return CheckedType.Never
+        RustType.Primitive(primitive) => return CheckedType.Primitive(checked_primitive_type(primitive))
+        RustType.Named(name) => return CheckedType.Named(str(name))
+        RustType.Generic(base=base, args=arguments) =>
+            return CheckedType.Generic(str(base), checked_types(arguments, source_file, package_version))
+        RustType.Decimal(precision=precision, scale=scale) => return CheckedType.Decimal(precision, scale)
+        RustType.Function(params=parameters, return_type=result) =>
+            return CheckedType.Function(
+                checked_parameters(parameters, source_file, package_version),
+                [checked_type(result, source_file, package_version)],
+            )
+        RustType.TypeToken(represented) =>
+            return CheckedType.TypeToken([checked_type(represented, source_file, package_version)])
+        RustType.Tuple(elements) => return CheckedType.Tuple(checked_types(elements, source_file, package_version))
+        RustType.TypeVar(name) => return CheckedType.TypeVar(str(name))
+        RustType.SelfType => return CheckedType.SelfType
+        RustType.Ref(referent) => return CheckedType.Ref([checked_type(referent, source_file, package_version)])
+        RustType.RefMut(referent) => return CheckedType.RefMut([checked_type(referent, source_file, package_version)])
+        RustType.RustInteropPath(path) => return CheckedType.RustInteropPath(str(path))
+        RustType.NativeBuiltin(runtime) => return CheckedType.NativeBuiltin(checked_runtime_builtin(runtime))
+        RustType.Unsupported(reason) => return CheckedType.Unsupported(str(reason))
+        RustType.Infer => return CheckedType.Infer
+        RustType.Unknown => return CheckedType.Unknown
+        RustType.NativeArray(element=element, length=length) =>
+            return CheckedType.NativeArray([checked_type(element, source_file, package_version)], length)
+        RustType.NativeTraitObject(path=path, send=send, sync=sync) =>
+            return CheckedType.NativeTraitObject(str(path), send, sync)
+        RustType.NativePointer(mutable=mutable, pointee=pointee) =>
+            return CheckedType.NativePointer(mutable, [checked_type(pointee, source_file, package_version)])
+        RustType.NativeCChar => return CheckedType.NativeCChar
+        RustType.Trait(identity) =>
+            return CheckedType.Trait(canonical_symbol_id(identity, source_file, package_version))
+
+
+pub def native_checked_type(ty: CheckedType) -> Result[RustType, str]:
+    """Restore every validated authored checked-type alternative without parsing diagnostic display text."""
+    if not valid_checked_type(ty.clone()):
+        return Err("invalid authored checked type")
+    match ty:
+        CheckedType.Never => return Ok(RustType.Never)
+        CheckedType.Primitive(primitive) => return Ok(RustType.Primitive(native_primitive_type(primitive)))
+        CheckedType.Named(name) => return Ok(RustType.Named(str(name)))
+        CheckedType.Generic(base, arguments) =>
+            return Ok(RustType.Generic(base=str(base), args=native_checked_types(arguments)?))
+        CheckedType.Decimal(precision, scale) =>
+            return Ok(RustType.Decimal(precision=precision, scale=scale))
+        CheckedType.Function(parameters, result) =>
+            return Ok(
+                RustType.Function(
+                    params=native_checked_parameters(parameters)?,
+                    return_type=native_checked_type(result[0].clone())?,
+                ),
+            )
+        CheckedType.TypeToken(represented) =>
+            return Ok(RustType.TypeToken(native_checked_type(represented[0].clone())?))
+        CheckedType.Tuple(elements) => return Ok(RustType.Tuple(native_checked_types(elements)?))
+        CheckedType.TypeVar(name) => return Ok(RustType.TypeVar(str(name)))
+        CheckedType.SelfType => return Ok(RustType.SelfType)
+        CheckedType.Ref(referent) => return Ok(RustType.Ref(native_checked_type(referent[0].clone())?))
+        CheckedType.RefMut(referent) => return Ok(RustType.RefMut(native_checked_type(referent[0].clone())?))
+        CheckedType.RustInteropPath(path) => return Ok(RustType.RustInteropPath(str(path)))
+        CheckedType.NativeBuiltin(runtime) => return Ok(RustType.NativeBuiltin(native_runtime_builtin(runtime)))
+        CheckedType.Unsupported(reason) => return Ok(RustType.Unsupported(str(reason)))
+        CheckedType.Infer => return Ok(RustType.Infer)
+        CheckedType.Unknown => return Ok(RustType.Unknown)
+        CheckedType.NativeArray(element, length) =>
+            return Ok(RustType.NativeArray(element=native_checked_type(element[0].clone())?, length=length))
+        CheckedType.NativeTraitObject(path, send, sync) =>
+            return Ok(RustType.NativeTraitObject(path=str(path), send=send, sync=sync))
+        CheckedType.NativePointer(mutable, pointee) =>
+            return Ok(RustType.NativePointer(mutable=mutable, pointee=native_checked_type(pointee[0].clone())?))
+        CheckedType.NativeCChar => return Ok(RustType.NativeCChar)
+        CheckedType.Trait(identity) => return Ok(RustType.Trait(native_canonical_symbol_id(identity)?))
+
+
+pub def authored_plan_symbol_id(
+    identity: &RustCanonicalSymbolId,
+    fallback_source_file: str,
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
+) -> Result[CanonicalSymbolId, str]:
+    """Attach an identity's owning module file and authenticated selected package version to one Plan fact."""
+    source_file = selected_source_file(identity, fallback_source_file, source_files)?
+    package_version = selected_package_version(identity, package_versions)?
+    authored = canonical_symbol_id(identity, source_file, package_version)
+    if not valid_canonical_symbol_id(authored.clone()):
+        return Err("Plan identity is missing complete source provenance")
+    return Ok(authored)
+
+
+pub def authored_plan_checked_type(
+    ty: &RustType,
+    fallback_source_file: str,
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
+) -> Result[CheckedType, str]:
+    """Project a Plan-owned checked fact with each nested trait's authenticated module file and package version."""
+    authored = complete_checked_type_provenance(
+        checked_type(ty, fallback_source_file, ""),
+        fallback_source_file,
+        source_files,
+        package_versions,
+    )?
+    if not valid_checked_type(authored.clone()):
+        return Err("Plan checked type is missing selected identity provenance")
+    return Ok(authored)
+
+
+def selected_source_file(
+    identity: &RustCanonicalSymbolId,
+    fallback_source_file: str,
+    source_files: &BTreeMap[str, str],
+) -> Result[str, str]:
+    """Resolve a source or package identity to its owning module input; native and builtin facts use their frame."""
+    match canonical_module_identity(identity):
+        Some(module) =>
+            owner = str(module)
+            match source_files.get(owner):
+                Some(source_file) =>
+                    if str(source_file) != "":
+                        return Ok(str(source_file))
+                None => pass
+            return Err(f"Plan identity has no source file for module {owner}")
+        None =>
+            if fallback_source_file == "":
+                return Err("Plan identity has no native or builtin source file")
+            return Ok(fallback_source_file)
+
+
+def selected_package_version(
+    identity: &RustCanonicalSymbolId,
+    package_versions: &BTreeMap[str, str],
+) -> Result[str, str]:
+    """Resolve one package origin against the authenticated invocation selection; nonpackage identities need none."""
+    match identity.origin:
+        RustSymbolOrigin.Package(library=library, module_path=_path) =>
+            name = str(library)
+            match package_versions.get(name):
+                Some(version) =>
+                    if str(version) != "":
+                        return Ok(str(version))
+                None => pass
+            return Err(f"Plan identity has no selected package version for {name}")
+        _ => return Ok("")
+
+
+def complete_checked_type_provenance(
+    ty: CheckedType,
+    fallback_source_file: str,
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
+) -> Result[CheckedType, str]:
+    """Complete every nested trait owner from aligned module files and the invocation's selected packages."""
+    match ty:
+        CheckedType.Generic(base, arguments) =>
+            return Ok(
+                CheckedType.Generic(
+                    base,
+                    complete_checked_types(arguments, fallback_source_file, source_files, package_versions)?,
+                ),
+            )
+        CheckedType.Function(parameters, result) =>
+            mut completed: list[CheckedCallableParam] = []
+            for parameter in parameters:
+                completed.append(
+                    CheckedCallableParam(
+                        name=parameter.name,
+                        ty=complete_checked_type_provenance(
+                            parameter.ty,
+                            fallback_source_file,
+                            source_files,
+                            package_versions,
+                        )?,
+                        kind=parameter.kind,
+                        has_default=parameter.has_default,
+                        is_partial_preset=parameter.is_partial_preset,
+                        is_mut=parameter.is_mut,
+                        native_owned=parameter.native_owned,
+                        input_access=parameter.input_access,
+                    ),
+                )
+            return Ok(
+                CheckedType.Function(
+                    completed,
+                    [
+                        complete_checked_type_provenance(
+                            result[0].clone(),
+                            fallback_source_file,
+                            source_files,
+                            package_versions,
+                        )?,
+                    ],
+                ),
+            )
+        CheckedType.TypeToken(represented) =>
+            return Ok(
+                CheckedType.TypeToken(
+                    [
+                        complete_checked_type_provenance(
+                            represented[0].clone(),
+                            fallback_source_file,
+                            source_files,
+                            package_versions,
+                        )?,
+                    ],
+                ),
+            )
+        CheckedType.Tuple(elements) =>
+            return Ok(
+                CheckedType.Tuple(
+                    complete_checked_types(elements, fallback_source_file, source_files, package_versions)?,
+                ),
+            )
+        CheckedType.Ref(referent) =>
+            return Ok(
+                CheckedType.Ref(
+                    [
+                        complete_checked_type_provenance(
+                            referent[0].clone(),
+                            fallback_source_file,
+                            source_files,
+                            package_versions,
+                        )?,
+                    ],
+                ),
+            )
+        CheckedType.RefMut(referent) =>
+            return Ok(
+                CheckedType.RefMut(
+                    [
+                        complete_checked_type_provenance(
+                            referent[0].clone(),
+                            fallback_source_file,
+                            source_files,
+                            package_versions,
+                        )?,
+                    ],
+                ),
+            )
+        CheckedType.NativeArray(element, length) =>
+            return Ok(
+                CheckedType.NativeArray(
+                    [
+                        complete_checked_type_provenance(
+                            element[0].clone(),
+                            fallback_source_file,
+                            source_files,
+                            package_versions,
+                        )?,
+                    ],
+                    length,
+                ),
+            )
+        CheckedType.NativePointer(mutable, pointee) =>
+            return Ok(
+                CheckedType.NativePointer(
+                    mutable,
+                    [
+                        complete_checked_type_provenance(
+                            pointee[0].clone(),
+                            fallback_source_file,
+                            source_files,
+                            package_versions,
+                        )?,
+                    ],
+                ),
+            )
+        CheckedType.Trait(identity) =>
+            return Ok(
+                CheckedType.Trait(
+                    complete_authored_provenance(
+                        identity,
+                        fallback_source_file,
+                        source_files,
+                        package_versions,
+                    )?,
+                ),
+            )
+        _ => return Ok(ty)
+
+
+def complete_checked_types(
+    types: list[CheckedType],
+    fallback_source_file: str,
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
+) -> Result[list[CheckedType], str]:
+    """Complete trait provenance in one ordered recursive type list without changing its arity."""
+    mut completed: list[CheckedType] = []
+    for ty in types:
+        completed.append(
+            complete_checked_type_provenance(ty, fallback_source_file, source_files, package_versions)?,
+        )
+    return Ok(completed)
+
+
+def complete_authored_provenance(
+    identity: CanonicalSymbolId,
+    fallback_source_file: str,
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
+) -> Result[CanonicalSymbolId, str]:
+    """Complete one nested authored identity without requiring its intentionally incomplete boundary form to validate."""
+    source_file = authored_source_file(identity.origin.clone(), fallback_source_file, source_files)?
+    mut origin = identity.origin
+    match origin:
+        SymbolOrigin.Package(package, module_path) =>
+            match package_versions.get(package.name):
+                Some(version) =>
+                    if str(version) == "":
+                        return Err(f"Plan identity has an empty selected package version for {package.name}")
+                    origin = SymbolOrigin.Package(
+                        PackageIdentity(name=package.name, version=str(version)),
+                        module_path,
+                    )
+                None => return Err(f"Plan identity has no selected package version for {package.name}")
+        _ => pass
+    span = identity.declaration_span
+    return Ok(
+        CanonicalSymbolId(
+            namespace=identity.namespace,
+            origin=origin,
+            declaration_name=identity.declaration_name,
+            kind=identity.kind,
+            scope_discriminant=identity.scope_discriminant,
+            declaration_span=HirSourceSpan(
+                file=source_file,
+                start=span.start,
+                end=span.end,
+                expansion=span.expansion,
+            ),
+        ),
+    )
+
+
+def authored_source_file(
+    origin: SymbolOrigin,
+    fallback_source_file: str,
+    source_files: &BTreeMap[str, str],
+) -> Result[str, str]:
+    """Resolve an authored origin through the same module identities carried by Body IR source inputs."""
+    mut module: Option[str] = None
+    match origin:
+        SymbolOrigin.Module(path) => module = Some(source_module_identity(path))
+        SymbolOrigin.Package(package, path) => module = Some(f"pub::{package.name}::{source_module_identity(path)}")
+        _ => pass
+    match module:
+        Some(owner) =>
+            match source_files.get(owner):
+                Some(source_file) =>
+                    if str(source_file) != "":
+                        return Ok(str(source_file))
+                None => pass
+            return Err(f"Plan identity has no source file for module {owner}")
+        None =>
+            if fallback_source_file == "":
+                return Err("Plan identity has no native or builtin source file")
+            return Ok(fallback_source_file)
+
+
+def source_module_identity(path: &list[str]) -> str:
+    """Render an authored module path with the canonical Body IR empty-module spelling."""
+    if len(path) == 0:
+        return "<module>"
+    return "::".join([str(part) for part in path])
+
+
+pub def checked_type_matches_native(authored: &CheckedType, native: &RustType) -> Result[bool, str]:
+    """Compare a Plan-owned authored fact with a transitional native consumer through the explicit reverse adapter."""
+    return Ok(native_checked_type(authored.clone())? == native.clone())
+
+
+pub def semantic_key_matches_native(authored: &Option[CheckedType], native: &RustType) -> Result[bool, str]:
+    """Compare an optional Plan semantic key with one transitional native carrier without display reconstruction."""
+    match authored:
+        Some(retained) => return checked_type_matches_native(retained, native)
+        None => return Ok(false)
+
+
+def symbol_namespace(namespace: RustSymbolNamespace) -> SymbolNamespace:
+    """Map every native namespace variant without a display-text or fallback path."""
+    match namespace:
+        RustSymbolNamespace.OrdinaryLexical => return SymbolNamespace.OrdinaryLexical
+        RustSymbolNamespace.Member => return SymbolNamespace.Member
+        RustSymbolNamespace.ModulePath => return SymbolNamespace.ModulePath
+
+
+def symbol_origin(origin: &RustSymbolOrigin, package_version: str) -> SymbolOrigin:
+    """Map every native owner variant while copying paths and completing selected package ownership."""
+    match origin:
+        RustSymbolOrigin.Module(path) => return SymbolOrigin.Module([str(part) for part in path])
+        RustSymbolOrigin.Package(library=library, module_path=path) =>
+            return SymbolOrigin.Package(
+                PackageIdentity(name=str(library), version=package_version),
+                [str(part) for part in path],
+            )
+        RustSymbolOrigin.RustCrate(path) => return SymbolOrigin.RustCrate([str(part) for part in path])
+        RustSymbolOrigin.Builtin => return SymbolOrigin.Builtin
+
+
+def declaration_kind(kind: &RustDeclarationKind) -> DeclarationKind:
+    """Map all 24 native source-target variants; a new source variant makes this match non-exhaustive."""
+    match kind:
+        RustDeclarationKind.Function => return DeclarationKind.Function
+        RustDeclarationKind.Model => return DeclarationKind.Model
+        RustDeclarationKind.Class => return DeclarationKind.Class
+        RustDeclarationKind.Newtype => return DeclarationKind.Newtype
+        RustDeclarationKind.Rusttype => return DeclarationKind.Rusttype
+        RustDeclarationKind.Enum => return DeclarationKind.Enum
+        RustDeclarationKind.TypeAlias => return DeclarationKind.TypeAlias
+        RustDeclarationKind.Partial => return DeclarationKind.Partial
+        RustDeclarationKind.Variant => return DeclarationKind.Variant
+        RustDeclarationKind.Trait => return DeclarationKind.Trait
+        RustDeclarationKind.Capability => return DeclarationKind.Capability
+        RustDeclarationKind.Field => return DeclarationKind.Field
+        RustDeclarationKind.Method => return DeclarationKind.Method
+        RustDeclarationKind.Property => return DeclarationKind.Property
+        RustDeclarationKind.Const => return DeclarationKind.Const
+        RustDeclarationKind.Static => return DeclarationKind.Static
+        RustDeclarationKind.Local => return DeclarationKind.Local
+        RustDeclarationKind.Parameter => return DeclarationKind.Parameter
+        RustDeclarationKind.Receiver => return DeclarationKind.Receiver
+        RustDeclarationKind.GenericBinder => return DeclarationKind.GenericBinder
+        RustDeclarationKind.Module => return DeclarationKind.Module
+        RustDeclarationKind.RustItem => return DeclarationKind.RustItem
+        RustDeclarationKind.Builtin => return DeclarationKind.Builtin
+        RustDeclarationKind.Other(spelling) => return DeclarationKind.Other(str(spelling))
+
+
+def scope_discriminant(scope: &Option[RustScopeDiscriminant]) -> Option[int]:
+    """Copy the native tuple carrier's optional scope-table position into a source-owned integer fact."""
+    match scope:
+        Some(value) => return Some(int(value.0))
+        None => return None
+
+
+def stable_location(location: &RustStableDeclarationLocation, package_version: str) -> StableDeclarationLocation:
+    """Flatten recursive native owners into a root-to-nearest-owner path while retaining every stable field."""
+    match location:
+        RustStableDeclarationLocation.ModuleLevel => return StableDeclarationLocation.ModuleLevel
+        RustStableDeclarationLocation.Nested(owner=owner, binding_ordinal=ordinal) =>
+            mut owners = stable_owner_path(owner, package_version)
+            return StableDeclarationLocation.Nested(owners, int(ordinal))
+
+
+def stable_owner_path(owner: &RustStableDeclarationId, package_version: str) -> list[StableDeclarationComponent]:
+    """Recursively project one native owner and all of its ancestors without storing a Rust `Box` in the record."""
+    mut ancestors: list[StableDeclarationComponent] = []
+    match owner.location:
+        RustStableDeclarationLocation.ModuleLevel => pass
+        RustStableDeclarationLocation.Nested(owner=parent, binding_ordinal=_ordinal) =>
+            ancestors = stable_owner_path(parent, package_version)
+    ancestors.append(stable_component(owner, package_version))
+    return ancestors
+
+
+def stable_component(owner: &RustStableDeclarationId, package_version: str) -> StableDeclarationComponent:
+    """Copy one recursive owner, retaining the ordinal by which its own parent distinguishes it."""
+    return StableDeclarationComponent(
+        namespace=symbol_namespace(owner.namespace),
+        origin=symbol_origin(owner.origin, package_version),
+        declaration_name=str(owner.declaration_name),
+        kind=declaration_kind(owner.kind),
+        binding_ordinal=owner_binding_ordinal(owner.location),
+        signature=declaration_signature(owner.signature),
+    )
+
+
+def owner_binding_ordinal(location: &RustStableDeclarationLocation) -> Option[int]:
+    """Retain only the collision-local ordinal for this owner; its parent is already present in the flattened path."""
+    match location:
+        RustStableDeclarationLocation.ModuleLevel => return None
+        RustStableDeclarationLocation.Nested(owner=_owner, binding_ordinal=ordinal) => return Some(int(ordinal))
+
+
+def declaration_signature(signature: &Option[RustDeclarationSignature]) -> Option[DeclarationSignature]:
+    """Copy the checked span-free signature spelling through its public native accessor."""
+    match signature:
+        Some(value) => return Some(DeclarationSignature(spelling=str(value.as_str())))
+        None => return None
+
+
+def checked_types(types: &list[RustType], source_file: str, package_version: str) -> list[CheckedType]:
+    """Copy an ordered recursive checked-type sequence without changing its arity."""
+    return [checked_type(ty, source_file, package_version) for ty in types]
+
+
+def checked_parameters(
+    parameters: &list[RustCallableParam],
+    source_file: str,
+    package_version: str,
+) -> list[CheckedCallableParam]:
+    """Copy every callable parameter fact, keeping binder shape, mutability, native ownership and access independent."""
+    mut retained: list[CheckedCallableParam] = []
+    for parameter in parameters:
+        mut name: Option[str] = None
+        match parameter.name.as_ref():
+            Some(value) => name = Some(str(value))
+            None => pass
+        retained.append(
+            CheckedCallableParam(
+                name=name,
+                ty=checked_type(parameter.ty, source_file, package_version),
+                kind=checked_parameter_kind(parameter.kind),
+                has_default=parameter.has_default,
+                is_partial_preset=parameter.is_partial_preset,
+                is_mut=parameter.is_mut,
+                native_owned=parameter.native_owned,
+                input_access=checked_input_access(parameter.input_access),
+            ),
+        )
+    return retained
+
+
+def checked_primitive_type(primitive: &RustPrimitiveType) -> CheckedPrimitiveType:
+    """Map every checked primitive alternative without recovering identity from its display spelling."""
+    match primitive:
+        RustPrimitiveType.Int => return CheckedPrimitiveType.Int
+        RustPrimitiveType.Float => return CheckedPrimitiveType.Float
+        RustPrimitiveType.Numeric(numeric) => return CheckedPrimitiveType.Numeric(checked_numeric_type(numeric))
+        RustPrimitiveType.Bool => return CheckedPrimitiveType.Bool
+        RustPrimitiveType.Str => return CheckedPrimitiveType.Str
+        RustPrimitiveType.Bytes => return CheckedPrimitiveType.Bytes
+        RustPrimitiveType.FrozenStr => return CheckedPrimitiveType.FrozenStr
+        RustPrimitiveType.FrozenBytes => return CheckedPrimitiveType.FrozenBytes
+        RustPrimitiveType.Unit => return CheckedPrimitiveType.Unit
+
+
+def checked_numeric_type(numeric: RustNumericType) -> CheckedNumericType:
+    """Map all numeric registry identities exhaustively."""
+    match numeric:
+        RustNumericType.I8 => return CheckedNumericType.I8
+        RustNumericType.I16 => return CheckedNumericType.I16
+        RustNumericType.I32 => return CheckedNumericType.I32
+        RustNumericType.I64 => return CheckedNumericType.I64
+        RustNumericType.I128 => return CheckedNumericType.I128
+        RustNumericType.U8 => return CheckedNumericType.U8
+        RustNumericType.U16 => return CheckedNumericType.U16
+        RustNumericType.U32 => return CheckedNumericType.U32
+        RustNumericType.U64 => return CheckedNumericType.U64
+        RustNumericType.U128 => return CheckedNumericType.U128
+        RustNumericType.F32 => return CheckedNumericType.F32
+        RustNumericType.F64 => return CheckedNumericType.F64
+        RustNumericType.ISize => return CheckedNumericType.ISize
+        RustNumericType.USize => return CheckedNumericType.USize
+        RustNumericType.Bool => return CheckedNumericType.Bool
+
+
+def checked_parameter_kind(kind: RustCallableParamKind) -> CheckedCallableParamKind:
+    """Map every callable binder shape exhaustively."""
+    match kind:
+        RustCallableParamKind.Normal => return CheckedCallableParamKind.Normal
+        RustCallableParamKind.RestPositional => return CheckedCallableParamKind.RestPositional
+        RustCallableParamKind.RestKeyword => return CheckedCallableParamKind.RestKeyword
+
+
+def checked_input_access(access: RustInputAccess) -> CheckedInputAccess:
+    """Map every checked access mode independently of mutability and native ownership."""
+    match access:
+        RustInputAccess.Inferred => return CheckedInputAccess.Inferred
+        RustInputAccess.Shared => return CheckedInputAccess.Shared
+        RustInputAccess.Exclusive => return CheckedInputAccess.Exclusive
+        RustInputAccess.Owned => return CheckedInputAccess.Owned
+        RustInputAccess.InferredShared => return CheckedInputAccess.InferredShared
+
+
+def checked_runtime_builtin(runtime: &RustRuntimeBuiltin) -> CheckedRuntimeBuiltin:
+    """Map every admitted compiler-managed runtime builtin."""
+    match runtime:
+        RustRuntimeBuiltin.ValidationError => return CheckedRuntimeBuiltin.ValidationError
+
+
+def native_expansion_byte(expansion: &list[int], index: usize) -> u8:
+    """Copy one already-validated expansion component into the exact native byte selected by `from_fn`."""
+    return expansion[int(index)].wrapping_resize()
+
+
+def native_symbol_namespace(namespace: SymbolNamespace) -> RustSymbolNamespace:
+    """Restore every authored namespace variant without a fallback spelling."""
+    match namespace:
+        SymbolNamespace.OrdinaryLexical => return RustSymbolNamespace.OrdinaryLexical
+        SymbolNamespace.Member => return RustSymbolNamespace.Member
+        SymbolNamespace.ModulePath => return RustSymbolNamespace.ModulePath
+
+
+def native_symbol_origin(origin: SymbolOrigin) -> RustSymbolOrigin:
+    """Restore native owner fields; the authored package version remains record metadata absent from the old carrier."""
+    match origin:
+        SymbolOrigin.Module(path) => return RustSymbolOrigin.Module([str(part) for part in path])
+        SymbolOrigin.Package(package, path) =>
+            return RustSymbolOrigin.Package(
+                library=str(package.name),
+                module_path=[str(part) for part in path],
+            )
+        SymbolOrigin.RustCrate(path) => return RustSymbolOrigin.RustCrate([str(part) for part in path])
+        SymbolOrigin.Builtin => return RustSymbolOrigin.Builtin
+
+
+def native_declaration_kind(kind: DeclarationKind) -> RustDeclarationKind:
+    """Restore all 24 authored declaration categories; source growth makes this match non-exhaustive."""
+    match kind:
+        DeclarationKind.Function => return RustDeclarationKind.Function
+        DeclarationKind.Model => return RustDeclarationKind.Model
+        DeclarationKind.Class => return RustDeclarationKind.Class
+        DeclarationKind.Newtype => return RustDeclarationKind.Newtype
+        DeclarationKind.Rusttype => return RustDeclarationKind.Rusttype
+        DeclarationKind.Enum => return RustDeclarationKind.Enum
+        DeclarationKind.TypeAlias => return RustDeclarationKind.TypeAlias
+        DeclarationKind.Partial => return RustDeclarationKind.Partial
+        DeclarationKind.Variant => return RustDeclarationKind.Variant
+        DeclarationKind.Trait => return RustDeclarationKind.Trait
+        DeclarationKind.Capability => return RustDeclarationKind.Capability
+        DeclarationKind.Field => return RustDeclarationKind.Field
+        DeclarationKind.Method => return RustDeclarationKind.Method
+        DeclarationKind.Property => return RustDeclarationKind.Property
+        DeclarationKind.Const => return RustDeclarationKind.Const
+        DeclarationKind.Static => return RustDeclarationKind.Static
+        DeclarationKind.Local => return RustDeclarationKind.Local
+        DeclarationKind.Parameter => return RustDeclarationKind.Parameter
+        DeclarationKind.Receiver => return RustDeclarationKind.Receiver
+        DeclarationKind.GenericBinder => return RustDeclarationKind.GenericBinder
+        DeclarationKind.Module => return RustDeclarationKind.Module
+        DeclarationKind.RustItem => return RustDeclarationKind.RustItem
+        DeclarationKind.Builtin => return RustDeclarationKind.Builtin
+        DeclarationKind.Other(spelling) => return RustDeclarationKind.Other(str(spelling))
+
+
+def native_scope_discriminant(scope: Option[int]) -> Option[RustScopeDiscriminant]:
+    """Restore a validated optional scope-table position without truncating its native index."""
+    match scope:
+        Some(value) =>
+            native: usize = value.wrapping_resize()
+            return Some(RustScopeDiscriminant(native))
+        None => return None
+
+
+def native_checked_types(types: &list[CheckedType]) -> Result[list[RustType], str]:
+    """Restore an ordered recursive checked-type sequence without changing its arity."""
+    mut restored: list[RustType] = []
+    for ty in types:
+        restored.append(native_checked_type(ty.clone())?)
+    return Ok(restored)
+
+
+def native_checked_parameters(parameters: &list[CheckedCallableParam]) -> Result[list[RustCallableParam], str]:
+    """Restore every callable parameter fact independently, including mutability, ownership and access."""
+    mut restored: list[RustCallableParam] = []
+    for parameter in parameters:
+        restored.append(
+            RustCallableParam(
+                name=parameter.name,
+                ty=native_checked_type(parameter.ty.clone())?,
+                kind=native_parameter_kind(parameter.kind),
+                has_default=parameter.has_default,
+                is_partial_preset=parameter.is_partial_preset,
+                is_mut=parameter.is_mut,
+                native_owned=parameter.native_owned,
+                input_access=native_input_access(parameter.input_access),
+            ),
+        )
+    return Ok(restored)
+
+
+def native_primitive_type(primitive: CheckedPrimitiveType) -> RustPrimitiveType:
+    """Restore every authored primitive alternative without display-text recognition."""
+    match primitive:
+        CheckedPrimitiveType.Int => return RustPrimitiveType.Int
+        CheckedPrimitiveType.Float => return RustPrimitiveType.Float
+        CheckedPrimitiveType.Numeric(numeric) => return RustPrimitiveType.Numeric(native_numeric_type(numeric))
+        CheckedPrimitiveType.Bool => return RustPrimitiveType.Bool
+        CheckedPrimitiveType.Str => return RustPrimitiveType.Str
+        CheckedPrimitiveType.Bytes => return RustPrimitiveType.Bytes
+        CheckedPrimitiveType.FrozenStr => return RustPrimitiveType.FrozenStr
+        CheckedPrimitiveType.FrozenBytes => return RustPrimitiveType.FrozenBytes
+        CheckedPrimitiveType.Unit => return RustPrimitiveType.Unit
+
+
+def native_numeric_type(numeric: CheckedNumericType) -> RustNumericType:
+    """Restore every authored numeric registry identity exhaustively."""
+    match numeric:
+        CheckedNumericType.I8 => return RustNumericType.I8
+        CheckedNumericType.I16 => return RustNumericType.I16
+        CheckedNumericType.I32 => return RustNumericType.I32
+        CheckedNumericType.I64 => return RustNumericType.I64
+        CheckedNumericType.I128 => return RustNumericType.I128
+        CheckedNumericType.U8 => return RustNumericType.U8
+        CheckedNumericType.U16 => return RustNumericType.U16
+        CheckedNumericType.U32 => return RustNumericType.U32
+        CheckedNumericType.U64 => return RustNumericType.U64
+        CheckedNumericType.U128 => return RustNumericType.U128
+        CheckedNumericType.F32 => return RustNumericType.F32
+        CheckedNumericType.F64 => return RustNumericType.F64
+        CheckedNumericType.ISize => return RustNumericType.ISize
+        CheckedNumericType.USize => return RustNumericType.USize
+        CheckedNumericType.Bool => return RustNumericType.Bool
+
+
+def native_parameter_kind(kind: CheckedCallableParamKind) -> RustCallableParamKind:
+    """Restore every authored callable binder shape exhaustively."""
+    match kind:
+        CheckedCallableParamKind.Normal => return RustCallableParamKind.Normal
+        CheckedCallableParamKind.RestPositional => return RustCallableParamKind.RestPositional
+        CheckedCallableParamKind.RestKeyword => return RustCallableParamKind.RestKeyword
+
+
+def native_input_access(access: CheckedInputAccess) -> RustInputAccess:
+    """Restore every authored access mode independently of mutability and native ownership."""
+    match access:
+        CheckedInputAccess.Inferred => return RustInputAccess.Inferred
+        CheckedInputAccess.Shared => return RustInputAccess.Shared
+        CheckedInputAccess.Exclusive => return RustInputAccess.Exclusive
+        CheckedInputAccess.Owned => return RustInputAccess.Owned
+        CheckedInputAccess.InferredShared => return RustInputAccess.InferredShared
+
+
+def native_runtime_builtin(runtime: CheckedRuntimeBuiltin) -> RustRuntimeBuiltin:
+    """Restore every authored compiler-managed runtime builtin."""
+    match runtime:
+        CheckedRuntimeBuiltin.ValidationError => return RustRuntimeBuiltin.ValidationError

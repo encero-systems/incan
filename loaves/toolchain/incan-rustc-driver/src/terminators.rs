@@ -175,7 +175,22 @@ pub(crate) fn call_instance<'tcx>(
         arguments.push(crate::types::model_type(tcx, name)?.into());
     }
     if let crate::plan::CalleeKind::Instantiated(_, types) = &callee.kind {
-        arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, types)?.iter());
+        let definition = callees::resolve(tcx, callee)?;
+        if callees::has_const_parameters(tcx, definition) {
+            let plan = crate::adapter::active_plan().map_err(|_| PlanError::UnknownCallee("external".into()))?;
+            let external = plan
+                .externals
+                .iter()
+                .find(|external| {
+                    external.type_arguments.as_slice() == types.as_slice()
+                        && external.path == callee_path(callee)
+                        && external.span == callee.span
+                })
+                .ok_or_else(|| PlanError::UnknownCallee(callee_path(callee).into()))?;
+            arguments.extend(callees::external_arguments(tcx, definition, external)?.iter());
+        } else {
+            arguments.extend(callees::arguments(tcx, definition, types)?.iter());
+        }
     }
     if let crate::plan::CalleeKind::FormatValue(ty, _) = &callee.kind {
         let definition = callees::resolve(tcx, callee)?;
@@ -183,10 +198,34 @@ pub(crate) fn call_instance<'tcx>(
         callees::verify_bounds(tcx, definition, closed)?;
         arguments.extend(closed.iter());
     }
-    if let crate::plan::CalleeKind::External(_) | crate::plan::CalleeKind::Planned(_) = &callee.kind {
+    if let crate::plan::CalleeKind::External(path) = &callee.kind {
+        let definition = callees::resolve(tcx, callee)?;
+        if callees::has_const_parameters(tcx, definition) {
+            let plan = crate::adapter::active_plan().map_err(|_| PlanError::UnknownCallee(path.clone()))?;
+            let external = plan
+                .externals
+                .iter()
+                .find(|external| {
+                    external.path == *path && external.type_arguments.is_empty() && external.span == callee.span
+                })
+                .ok_or_else(|| PlanError::UnknownCallee(path.clone()))?;
+            arguments.extend(callees::external_arguments(tcx, definition, external)?.iter());
+        } else {
+            arguments.extend(callees::arguments(tcx, definition, &[])?.iter());
+        }
+    }
+    if let crate::plan::CalleeKind::Planned(_) = &callee.kind {
         arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, &[])?.iter());
     }
     Ok((callees::resolve(tcx, callee)?, tcx.mk_args(&arguments)))
+}
+
+/// Return the retained external path for an instantiated native callee.
+fn callee_path(callee: &crate::plan::Callee) -> &str {
+    match &callee.kind {
+        crate::plan::CalleeKind::Instantiated(path, _) | crate::plan::CalleeKind::External(path) => path,
+        _ => "",
+    }
 }
 
 /// Instantiate the runtime method's yielded element without changing its representation.

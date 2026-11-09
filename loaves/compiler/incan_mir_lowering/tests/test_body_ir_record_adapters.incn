@@ -1,0 +1,239 @@
+"""Reversible Stage 3 adapter controls for Body IR facts, skipped dispositions and map ownership."""
+
+from body_ir_record_adapters import (
+    BodyIrRecordProvenance,
+    authored_body,
+    authored_body_ir_module,
+    native_body,
+    native_body_ir_module,
+)
+from pub::internal_models.body_ir_declarations import (
+    CompilerBody,
+    CompilerBodyIrModule,
+    CompilerLoafCallable,
+    CompilerNominalDeclaration,
+    CompilerTraitAdoption,
+    CompilerValidatedConstructor,
+    NamedTypeIdentity,
+    TraitFieldWitness,
+)
+from pub::internal_models.body_ir_values import CompilerBlock, CompilerStatement, CompilerStatementKind
+from pub::internal_models.checked_types import CheckedPrimitiveType, CheckedType
+from pub::internal_models.compiler_records import (
+    CanonicalSymbolId,
+    DeclarationKind,
+    HirSourceSpan,
+    SymbolNamespace,
+    SymbolOrigin,
+)
+from rust::std::collections import BTreeMap
+from rust::incan_semantics_core import CompilerNodeId
+from rust::incan_semantics_core::body_ir import NewtypeDeserialize, NewtypeStringConversion, StringConversionContract
+
+
+pub def test_body_record_round_trip_preserves_shared_identities_and_statements() -> Result[None, str]:
+    """Round-trip an independent named-identity map and recursive statements without depending on Arc identity."""
+    mut body = empty_body("render")
+    body.block.statements = [
+        CompilerStatement(
+            kind=CompilerStatementKind.Unsupported("adapter sentinel"),
+            span=HirSourceSpan(file="src/main.incn", start=2, end=4),
+        ),
+        CompilerStatement(kind=CompilerStatementKind.Continue, span=HirSourceSpan(file="src/main.incn", start=5, end=6)),
+    ]
+    native = native_body(body)?
+    authored = authored_body(native, provenance())?
+    assert len(authored.named_type_identities) == 1
+    assert authored.named_type_identities[0].name == "Packet"
+    assert authored.named_type_identities[0].identity.declaration_span.file == "src/main.incn"
+    assert len(authored.block.statements) == 2
+    match authored.block.statements[0].kind:
+        CompilerStatementKind.Unsupported(description) =>
+            assert description == "adapter sentinel"
+        _ =>
+            assert false
+    return Ok(None)
+
+
+pub def test_body_record_round_trip_keeps_async_and_refuses_tombstone() -> Result[None, str]:
+    """Retain stored async state and reject the retired positional payload before native reconstruction."""
+    mut body = empty_body("fetch")
+    body.is_async = true
+    native = native_body(body.clone())?
+    authored = authored_body(native, provenance())?
+    assert authored.is_async
+    body.retired_rust_facade_wire = Some(("provider", "method"))
+    assert native_body(body).is_err()
+    return Ok(None)
+
+
+pub def test_nominal_and_callable_adapters_keep_witnesses_defaults_and_frame() -> Result[None, str]:
+    """Round-trip adoption and validation witnesses, defaults, owned slots and an authenticated callable frame."""
+    owner = identity("Packet", DeclarationKind.Model)
+    method = identity("render", DeclarationKind.Function)
+    mut frame = empty_body("render")
+    frame.canonical = Some(method.clone())
+    adoption = CompilerTraitAdoption(
+        adopter=owner.clone(),
+        trait_identity=identity("Readable", DeclarationKind.Trait),
+        arguments=[],
+        methods=Some([]),
+        fields=[
+            TraitFieldWitness(
+                requirement=identity("value", DeclarationKind.Field),
+                implementation=identity("payload", DeclarationKind.Field),
+            ),
+        ],
+        primitive_adapter=None,
+    )
+    nominal = CompilerNominalDeclaration(
+        trait_adoptions=[adoption],
+        native_item="",
+        class_inheritance=None,
+        native_type_arguments=[],
+        direct_declaration_id=CompilerNodeId.declaration_span("app", 0, 10),
+        canonical=owner,
+        name="Packet",
+        fields=["payload"],
+        field_identities=[identity("payload", DeclarationKind.Field)],
+        field_types=[CheckedType.Primitive(CheckedPrimitiveType.Int)],
+        owned_callable_fields=[0],
+        field_public=[false],
+        field_aliases=[None],
+        reflection_fields=None,
+        reflection_metadata=None,
+        comparison_equality=None,
+        public=false,
+        has_field_defaults=true,
+        field_default_body=[empty_body("field_default")],
+        validated_constructor=Some(
+            CompilerValidatedConstructor(
+                constructor=identity("new", DeclarationKind.Method),
+                validator=identity("validate", DeclarationKind.Method),
+                required_fields=[0],
+            ),
+        ),
+        method_partial_defaults=[],
+        display_method=None,
+        newtype_deserialize=NewtypeDeserialize.Unselected,
+        newtype_string_conversion=NewtypeStringConversion.Unselected,
+        derives=[],
+        named_type_identities=[],
+        type_parameters=[],
+        type_parameter_count=0,
+    )
+    callable = CompilerLoafCallable(
+        canonical=method,
+        item="packet::render",
+        parameters=[],
+        return_type=CheckedType.Primitive(CheckedPrimitiveType.Unit),
+        type_parameters=[],
+        native_type_arguments=[],
+        native_callable_parameters=[],
+        parameter_defaults=[],
+        declaration_frame=[frame],
+    )
+    mut module = empty_module()
+    module.nominal_declarations = [nominal]
+    module.loaf_callables = [callable]
+    native = native_body_ir_module(module)?
+    authored = authored_body_ir_module(native, provenance())?
+    assert len(authored.nominal_declarations[0].trait_adoptions[0].fields) == 1
+    assert len(authored.nominal_declarations[0].field_default_body) == 1
+    assert authored.nominal_declarations[0].owned_callable_fields == [0]
+    match authored.nominal_declarations[0].validated_constructor:
+        Some(contract) =>
+            assert contract.constructor.declaration_name == "new"
+            assert contract.validator.declaration_name == "validate"
+            assert contract.required_fields == [0]
+        None => assert false
+    assert len(authored.loaf_callables[0].declaration_frame) == 1
+    return Ok(None)
+
+
+pub def test_module_adapter_keeps_invocation_selections_explicit() -> Result[None, str]:
+    """Round-trip a selected main as invocation data instead of deriving it from every dependency declaration."""
+    mut module = empty_module()
+    module.program_entrypoints = [identity("main", DeclarationKind.Function)]
+    native = native_body_ir_module(module)?
+    authored = authored_body_ir_module(native, provenance())?
+    assert len(authored.program_entrypoints) == 1
+    assert authored.program_entrypoints[0].declaration_name == "main"
+    return Ok(None)
+
+
+def empty_body(name: str) -> CompilerBody:
+    """Build one complete scalar Body for reversible adapter controls."""
+    return CompilerBody(
+        nominal_instantiation=[],
+        trait_default_instantiation=None,
+        type_parameters=[],
+        declaration_id=CompilerNodeId.declaration("app", name),
+        direct_call_id=CompilerNodeId.declaration_span("app", 0, 10),
+        canonical=Some(identity(name, DeclarationKind.Function)),
+        name=str(name),
+        span=HirSourceSpan(file="src/main.incn", start=0, end=10),
+        return_type=CheckedType.Primitive(CheckedPrimitiveType.Unit),
+        callable_representation=None,
+        checked_input_profile=None,
+        explicit_input_bindings=[],
+        returned_view=None,
+        named_type_identities=[NamedTypeIdentity(name="Packet", identity=identity("Packet", DeclarationKind.Model))],
+        locals=[],
+        params=[],
+        param_locals=[],
+        scopes=[],
+        block=CompilerBlock(scope=0, statements=[]),
+        runtime_requirements=[],
+        panic_facts=[],
+        is_async=false,
+        retired_rust_facade_wire=None,
+        native_attributes=[],
+    )
+
+
+def empty_module() -> CompilerBodyIrModule:
+    """Build one complete module record without declarations or invocation selection."""
+    return CompilerBodyIrModule(
+        runtime_callable_bindings=[],
+        decorated_bindings=[],
+        entrypoint_effects=[],
+        program_entrypoints=[],
+        string_conversion_contract=StringConversionContract.Unselected,
+        constant_declarations=[],
+        type_alias_declarations=[],
+        enum_declarations=[],
+        loaf_callables=[],
+        native_union_declarations=[],
+        static_declarations=[],
+        module_id=CompilerNodeId.module("app"),
+        nominal_declarations=[],
+        fieldless_enum_declarations=[],
+        value_enum_declarations=[],
+        trait_declarations=[],
+        trait_implementations=[],
+        bodies=[],
+    )
+
+
+def provenance() -> BodyIrRecordProvenance:
+    """Bind the sample module to its exact source file and an empty package selection."""
+    mut files: BTreeMap[str, str] = BTreeMap.new()
+    files.insert("app", "src/main.incn")
+    return BodyIrRecordProvenance(
+        fallback_source_file="src/main.incn",
+        source_files=files,
+        package_versions=BTreeMap.new(),
+    )
+
+
+def identity(name: str, kind: DeclarationKind) -> CanonicalSymbolId:
+    """Build one authored module declaration identity with complete source provenance."""
+    return CanonicalSymbolId(
+        namespace=SymbolNamespace.OrdinaryLexical,
+        origin=SymbolOrigin.Module(["app"]),
+        declaration_name=str(name),
+        kind=kind,
+        scope_discriminant=None,
+        declaration_span=HirSourceSpan(file="src/main.incn", start=0, end=10),
+    )

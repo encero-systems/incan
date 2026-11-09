@@ -146,6 +146,8 @@ pub(super) fn checked_modules(
     let checked_local = checked_local_identities(manifest.as_ref());
     let runtime_callable_bindings = runtime_declarations(&session, manifest.as_ref());
     let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
+    let mut package_versions = resolved.package_versions;
+    package_versions.insert(unit.package.clone(), unit.version.clone());
     let reached_loaves = resolved.entries;
     let mut bodies = resolved.modules;
     // Loaf declarations retain canonical spans but carry no source text. Do not attribute those spans to the entry.
@@ -187,6 +189,7 @@ pub(super) fn checked_modules(
                     .map(|identity| (identity.clone(), RootOrigin::Source))
                     .collect(),
                 checked_local: checked_local.clone(),
+                package_versions,
                 package: package_identity.to_owned(),
                 layout_modules: Vec::new(),
                 layout_modules_installed: false,
@@ -436,6 +439,7 @@ pub(super) fn prepare_runtime_layouts(
         &requested,
         &program.dependencies.checked_local,
     )?;
+    program.dependencies.package_versions.extend(resolved.package_versions);
     let mut layouts = Vec::new();
     for mut module in resolved.modules {
         let mut layout = BodyIrModule::declarations_only(module.module_id.path().to_owned());
@@ -463,6 +467,7 @@ fn install_dependency_modules(
     program: &mut CheckedProgram,
     resolved: incan_frontend::executable_resolution::ResolvedExecutableModules,
 ) {
+    program.dependencies.package_versions.extend(resolved.package_versions);
     let mut previous = std::mem::take(&mut program.modules);
     let mut authored = previous.split_off(program.own);
     let mut prepared = previous.split_off(program.dependency_modules);

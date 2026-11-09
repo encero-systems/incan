@@ -68,6 +68,7 @@ pub def call_parameter_type(
         builder.unions,
         parameter.ty,
         builder.intrinsics,
+        builder.file,
     )?
     ty = parameter_representation(body, int(parameter.local.index()), declared)?
     if parameter.input_access == IncanInputAccess.Inferred and parameter.mutable and lacks_exclusive_parameter(ty):

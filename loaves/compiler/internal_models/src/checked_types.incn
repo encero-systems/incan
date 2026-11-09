@@ -1,0 +1,153 @@
+"""Incan-owned checked type facts, preserving every semantic type component without display-text reconstruction."""
+
+from compiler_records import CanonicalSymbolId, valid_canonical_symbol_id
+
+
+@derive(Eq)
+pub enum CheckedNumericType:
+    """Every numeric registry identity carried by a checked primitive type."""
+
+    I8
+    I16
+    I32
+    I64
+    I128
+    U8
+    U16
+    U32
+    U64
+    U128
+    F32
+    F64
+    ISize
+    USize
+    Bool
+
+
+@derive(Eq)
+pub enum CheckedPrimitiveType:
+    """Primitive and primitive-like checked types with compiler-owned semantics."""
+
+    Int
+    Float
+    Numeric(CheckedNumericType)
+    Bool
+    Str
+    Bytes
+    FrozenStr
+    FrozenBytes
+    Unit
+
+
+@derive(Eq)
+pub enum CheckedInputAccess:
+    """Checked callable input access, separate from binding mutability and native ownership."""
+
+    Inferred
+    Shared
+    Exclusive
+    Owned
+    InferredShared
+
+
+@derive(Eq)
+pub enum CheckedCallableParamKind:
+    """The source-level position shape of one semantic callable parameter."""
+
+    Normal
+    RestPositional
+    RestKeyword
+
+
+@derive(Eq)
+pub enum CheckedRuntimeBuiltin:
+    """Dependency-owned builtin runtime storage admitted by checked identity proof."""
+
+    ValidationError
+
+
+@derive(Eq)
+pub model CheckedCallableParam:
+    """Every callable-parameter fact retained in a semantic function type."""
+
+    pub name: Option[str]
+    pub ty: CheckedType
+    pub kind: CheckedCallableParamKind
+    pub has_default: bool
+    pub is_partial_preset: bool
+    pub is_mut: bool
+    pub native_owned: bool
+    pub input_access: CheckedInputAccess
+
+
+@derive(Eq)
+pub enum CheckedType:
+    """
+    The complete checked `IncanType` universe at executable representation 53.
+
+    Rust `Box` indirection becomes a one-element list so the authored recursive enum has finite storage. Validators
+    require exactly one child. Derived equality compares the complete recursive structure.
+    """
+
+    Never
+    Primitive(CheckedPrimitiveType)
+    Named(str)
+    Generic(str, list[CheckedType])
+    Decimal(u8, u8)
+    Function(list[CheckedCallableParam], list[CheckedType])
+    TypeToken(list[CheckedType])
+    Tuple(list[CheckedType])
+    TypeVar(str)
+    SelfType
+    Ref(list[CheckedType])
+    RefMut(list[CheckedType])
+    RustInteropPath(str)
+    NativeBuiltin(CheckedRuntimeBuiltin)
+    Unsupported(str)
+    Infer
+    Unknown
+    NativeArray(list[CheckedType], u64)
+    NativeTraitObject(str, bool, bool)
+    NativePointer(bool, list[CheckedType])
+    NativeCChar
+    Trait(CanonicalSymbolId)
+
+
+pub def valid_checked_type(ty: CheckedType) -> bool:
+    """Validate every recursive child and each one-element projection of a native boxed type."""
+    match ty:
+        CheckedType.Generic(base, arguments) => return base != "" and valid_types(arguments)
+        CheckedType.Function(parameters, result) => return valid_parameters(parameters) and valid_single_type(result)
+        CheckedType.TypeToken(represented) => return valid_single_type(represented)
+        CheckedType.Tuple(elements) => return valid_types(elements)
+        CheckedType.Ref(referent) | CheckedType.RefMut(referent) => return valid_single_type(referent)
+        CheckedType.NativeArray(element, _length) => return valid_single_type(element)
+        CheckedType.NativePointer(_mutable, pointee) => return valid_single_type(pointee)
+        CheckedType.Named(name) => return name != ""
+        CheckedType.TypeVar(name) => return name != ""
+        CheckedType.RustInteropPath(name) => return name != ""
+        CheckedType.Unsupported(name) => return name != ""
+        CheckedType.NativeTraitObject(path, _send, _sync) => return path != ""
+        CheckedType.Trait(identity) => return valid_canonical_symbol_id(identity)
+        _ => return true
+
+
+def valid_types(types: list[CheckedType]) -> bool:
+    """Validate every child in an ordered recursive type sequence."""
+    for ty in types:
+        if not valid_checked_type(ty):
+            return false
+    return true
+
+
+def valid_single_type(types: list[CheckedType]) -> bool:
+    """Validate a Rust `Box` projection as exactly one complete authored child."""
+    return len(types) == 1 and valid_checked_type(types[0])
+
+
+def valid_parameters(parameters: list[CheckedCallableParam]) -> bool:
+    """Validate every callable parameter type without imposing source-level default ordering here."""
+    for parameter in parameters:
+        if not valid_checked_type(parameter.ty):
+            return false
+    return true

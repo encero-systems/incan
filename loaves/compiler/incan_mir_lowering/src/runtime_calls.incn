@@ -2,7 +2,6 @@
 
 from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
-    semantic_type_matches,
     source_span,
     SourceSpan,
     PlanType,
@@ -46,6 +45,7 @@ from collections import is_owned_collection
 from options import retain_body_carriers
 from table_views import borrowed_at, borrowed_table
 from rust::std::collections import BTreeMap
+from compiler_record_adapters import native_canonical_symbol_id, semantic_key_matches_native
 
 
 pub model RuntimeRedirect:
@@ -795,7 +795,7 @@ def runtime_argument(
             if len(represented) != 1:
                 return Err("invalid governed runtime type token arity")
             return Ok(RustType.TypeToken(runtime_argument(module, represented[0], intrinsics, unions)?))
-        PlanType.Trait(identity) => return Ok(RustType.Trait(identity))
+        PlanType.Trait(identity) => return Ok(RustType.Trait(native_canonical_symbol_id(identity)?))
         PlanType.Generator(leaf, depth) =>
             mut element = runtime_argument(module, list_leaf_type(leaf), intrinsics, unions)?
             for _level in range(depth):
@@ -871,7 +871,7 @@ def runtime_enum_argument(
     if declaration.carrier != Carrier.Option and declaration.carrier != Carrier.Result:
         for position in range(len(unions)):
             union = borrowed_at(unions, position)
-            if semantic_type_matches(declaration, union):
+            if semantic_key_matches_native(declaration.semantic_key, union)?:
                 return Ok(union.clone())
         return Err("unsupported governed runtime intrinsic enum argument")
     for variant in declaration.variants:

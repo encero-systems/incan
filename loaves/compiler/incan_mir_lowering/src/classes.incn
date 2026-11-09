@@ -40,6 +40,7 @@ pub def frame_type(
     enums: &list[RustEnumDeclaration],
     local: &RustLocal,
     intrinsics: &list[EnumDeclaration],
+    source_file: str = "",
 ) -> Result[PlanType, str]:
     """
     Map checked receiver origins and retained types to native slots through borrowed declaration tables.
@@ -51,7 +52,7 @@ pub def frame_type(
     if range_value_local(local.ty, local.origin):
         return Ok(PlanType.RangeValue)
     unions: list[RustType] = []
-    ty = native_source_type(constructors, nominals, enums, unions, local.ty, intrinsics)?
+    ty = native_source_type(constructors, nominals, enums, unions, local.ty, intrinsics, source_file)?
     match receiver_mode(local.origin):
         Some(mutable) =>
             match ty:
