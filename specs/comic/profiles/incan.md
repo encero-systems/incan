@@ -139,7 +139,7 @@ oven.Locked = Incan.Model {
     loaf: Loaf
     version: str
     digest: str
-    trust [canonical = false]: oven.Trust
+    signature [canonical = false]: oven.Signature
     satisfied_by [canonical = false]: oven.Satisfied
     target_features: list[str] = []
     dependencies: list[Loaf] = []
@@ -151,7 +151,7 @@ oven.Registry = Incan.Model { endpoint: str, protocol: str }
 
 oven.Satisfied = Incan.Enum { Source, Asset }
 
-oven.Trust = Incan.Enum { Verified(signer: str), Unverified }
+oven.Signature = Incan.Enum { Verified(signer: str), Unverified }
 
 oven.Locked << [
     (pub.crates-io.aho-corasick, "1.1.4", "sha256:558ce675…", Verified("…"), Source, ["perf-literal", "std"], [pub.crates-io.memchr]),
@@ -168,7 +168,7 @@ oven.Lock << (
 )
 ~~~
 
-`satisfied_by` and `trust` are noncanonical, so a newly baked asset moves the object projection and not the graph identity. The resolved graph identity binds each entry's origin, name, version and dependency edges, shaped like RFC 106's closure digest. `oven.lock` stays TOML until this proposal is adopted.
+`signature` records the signature check made when the Loaf was locked. It is not compile-time trust, which RFC 117 decides from the consumer's own trust entries and never from a field a lock carries. `satisfied_by` and `signature` are noncanonical, so a newly baked asset moves the object projection and not the graph identity. The resolved graph identity binds each entry's origin, name, version and dependency edges, shaped like RFC 106's closure digest. `oven.lock` stays TOML until this proposal is adopted.
 
 ## Open
 
