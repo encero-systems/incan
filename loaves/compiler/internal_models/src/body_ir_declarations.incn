@@ -1,0 +1,300 @@
+"""
+Incan-owned Body IR, nominal, trait-adoption and callable declaration contracts.
+
+Direct semantic identities and checked types use the authored contracts. Native leaf types outside this selected
+Stage 3 family remain typed transitional dependencies; the adapters never store a serialized Body or diagnostic
+spelling. Recursive optional bodies use zero-or-one lists so the generated representation is finite and validators
+can reject malformed arity.
+"""
+
+from rust::incan_semantics_core import AbiV0RuntimeRequirement, CompilerNodeId
+from rust::incan_semantics_core::body_ir import (
+    CallableParam,
+    CallableParamDefault,
+    CallableRepresentation,
+    CheckedInputProfile,
+    ClassInheritance,
+    DecoratedBinding,
+    EntrypointEffect,
+    ExplicitInputBinding,
+    FieldMetadata,
+    FieldlessEnumDeclaration,
+    LocalDecl,
+    MethodPartialDefaults,
+    NativeAttribute,
+    NativeCallableParameter,
+    NativeUnionDeclaration,
+    NewtypeDeserialize,
+    NewtypeStringConversion,
+    PanicFact,
+    PrimitiveTraitAdapter,
+    ReturnedView,
+    RuntimeCallableBinding,
+    ScopeInfo,
+    StaticDeclaration,
+    StringConversionContract,
+    TraitImplementation,
+    TypeAliasDeclaration,
+    ValueEnumDeclaration,
+    ConstantDeclaration,
+    EnumDeclaration,
+)
+from body_ir_values import CompilerBlock
+from checked_types import CheckedType
+from compiler_records import CanonicalSymbolId, HirSourceSpan
+
+pub const BODY_IR_ADAPTER_PROFILE: str = "incan.body-ir-records/1"
+pub const BODY_IR_ADAPTER_SOURCE: str = "incan_semantics_core Body IR at executable representation 53"
+pub const BODY_IR_ADAPTER_GENERATION: int = 1
+pub const BODY_IR_ADAPTER_REMOVAL_GATE: str = "remove native leaves only after their owning semantic families and every direct consumer accept the authored declarations"
+
+
+pub model NamedTypeIdentity:
+    """One immutable SharedIdentities entry; allocation and pointer identity are deliberately absent."""
+
+    pub name: str
+    pub identity: CanonicalSymbolId
+
+
+pub model TraitTypeArgument:
+    """One checked trait binder and its authored semantic argument."""
+
+    pub parameter: str
+    pub argument: CheckedType
+
+
+pub model TraitDefaultInstantiation:
+    """The selected adoption receiver and trait binders, kept separate from method binders."""
+
+    pub receiver_type: CheckedType
+    pub arguments: list[TraitTypeArgument]
+
+
+pub model TraitFieldWitness:
+    """One required trait field and the exact adopter field that checking selected."""
+
+    pub requirement: CanonicalSymbolId
+    pub implementation: CanonicalSymbolId
+
+
+pub model CompilerTraitAdoption:
+    """
+    A checked adoption owned by one concrete adopter.
+
+    `methods=None` means coverage is unavailable; `Some([])` proves an authenticated marker trait. Required-field
+    witnesses live here rather than in a trailing side channel.
+    """
+
+    pub adopter: CanonicalSymbolId
+    pub trait_identity: CanonicalSymbolId
+    pub arguments: list[CheckedType]
+    pub methods: Option[list[CanonicalSymbolId]]
+    pub fields: list[TraitFieldWitness]
+    pub primitive_adapter: Option[PrimitiveTraitAdapter]
+
+
+pub model CompilerValidatedConstructor:
+    """The exact derived constructor, validator and ordered required-field slots for one checked model."""
+
+    pub constructor: CanonicalSymbolId
+    pub validator: CanonicalSymbolId
+    pub required_fields: list[int]
+
+
+pub model CompilerBody:
+    """
+    A complete selected Body contract with all 24 live fields and explicit dispositions for the three skipped facts.
+
+    The retired facade field is retained only for validation: a record with a nonempty tombstone is refused and no
+    consumer may interpret it. Shared identities are copied as entries rather than sharing the native Arc map.
+    """
+
+    pub nominal_instantiation: list[TraitTypeArgument]
+    pub trait_default_instantiation: Option[TraitDefaultInstantiation]
+    pub type_parameters: list[str]
+    pub declaration_id: CompilerNodeId
+    pub direct_call_id: CompilerNodeId
+    pub canonical: Option[CanonicalSymbolId]
+    pub name: str
+    pub span: HirSourceSpan
+    pub return_type: CheckedType
+    pub callable_representation: Option[CallableRepresentation]
+    pub checked_input_profile: Option[CheckedInputProfile]
+    pub explicit_input_bindings: list[ExplicitInputBinding]
+    pub returned_view: Option[ReturnedView]
+    pub named_type_identities: list[NamedTypeIdentity]
+    pub locals: list[LocalDecl]
+    pub params: list[CallableParam]
+    pub param_locals: list[int]
+    pub scopes: list[ScopeInfo]
+    pub block: CompilerBlock
+    pub runtime_requirements: list[AbiV0RuntimeRequirement]
+    pub panic_facts: list[PanicFact]
+    pub is_async: bool
+    pub retired_rust_facade_wire: Option[tuple[str, str]]
+    pub native_attributes: list[NativeAttribute]
+
+
+pub model CompilerNominalDeclaration:
+    """All 28 live NominalDeclaration fields, including validation, adoption and owned-callable facts."""
+
+    pub trait_adoptions: list[CompilerTraitAdoption]
+    pub native_item: str
+    pub class_inheritance: Option[ClassInheritance]
+    pub native_type_arguments: list[CheckedType]
+    pub direct_declaration_id: CompilerNodeId
+    pub canonical: CanonicalSymbolId
+    pub name: str
+    pub fields: list[str]
+    pub field_identities: list[CanonicalSymbolId]
+    pub field_types: list[CheckedType]
+    pub owned_callable_fields: list[int]
+    pub field_public: list[bool]
+    pub field_aliases: list[Option[str]]
+    pub reflection_fields: Option[list[int]]
+    pub reflection_metadata: Option[list[FieldMetadata]]
+    pub comparison_equality: Option[CanonicalSymbolId]
+    pub public: bool
+    pub has_field_defaults: bool
+    pub field_default_body: list[CompilerBody]
+    pub validated_constructor: Option[CompilerValidatedConstructor]
+    pub method_partial_defaults: list[MethodPartialDefaults]
+    pub display_method: Option[CanonicalSymbolId]
+    pub newtype_deserialize: NewtypeDeserialize
+    pub newtype_string_conversion: NewtypeStringConversion
+    pub derives: list[str]
+    pub named_type_identities: list[NamedTypeIdentity]
+    pub type_parameters: list[str]
+    pub type_parameter_count: int
+
+
+pub model CompilerLoafCallable:
+    """All nine live LoafCallable fields, with an authenticated declaration-only frame rather than a second body."""
+
+    pub canonical: CanonicalSymbolId
+    pub item: str
+    pub parameters: list[CheckedType]
+    pub return_type: CheckedType
+    pub type_parameters: list[str]
+    pub native_type_arguments: list[CheckedType]
+    pub native_callable_parameters: list[NativeCallableParameter]
+    pub parameter_defaults: list[CallableParamDefault]
+    pub declaration_frame: list[CompilerBody]
+
+
+pub enum CompilerBodyCoverage:
+    """Declaration coverage that keeps a covered empty body set distinct from an uncovered declaration."""
+
+    Uncovered(str)
+    Covered(list[CompilerBody])
+
+
+pub model CompilerDeclarationSet:
+    """Public roots and their private implementation dependencies remain distinct declaration inventories."""
+
+    pub public_roots: list[CanonicalSymbolId]
+    pub private_implementations: list[CompilerBody]
+
+
+pub model CompilerBodyIrModule:
+    """All 18 live BodyIrModule fields, including invocation-only facts that publication must not import."""
+
+    pub runtime_callable_bindings: list[RuntimeCallableBinding]
+    pub decorated_bindings: list[DecoratedBinding]
+    pub entrypoint_effects: list[EntrypointEffect]
+    pub program_entrypoints: list[CanonicalSymbolId]
+    pub string_conversion_contract: StringConversionContract
+    pub constant_declarations: list[ConstantDeclaration]
+    pub type_alias_declarations: list[TypeAliasDeclaration]
+    pub enum_declarations: list[EnumDeclaration]
+    pub loaf_callables: list[CompilerLoafCallable]
+    pub native_union_declarations: list[NativeUnionDeclaration]
+    pub static_declarations: list[StaticDeclaration]
+    pub module_id: CompilerNodeId
+    pub nominal_declarations: list[CompilerNominalDeclaration]
+    pub fieldless_enum_declarations: list[FieldlessEnumDeclaration]
+    pub value_enum_declarations: list[ValueEnumDeclaration]
+    pub trait_declarations: list[CanonicalSymbolId]
+    pub trait_implementations: list[TraitImplementation]
+    pub bodies: list[CompilerBody]
+
+
+pub def valid_compiler_body(body: CompilerBody) -> bool:
+    """Refuse the retired facade payload and malformed identity/body projections before a record can be admitted."""
+    match body.retired_rust_facade_wire:
+        Some(_legacy) => return false
+        None => return true
+
+
+pub def valid_optional_body(bodies: list[CompilerBody]) -> bool:
+    """Require a recursive optional Body projection to contain zero or one value, never an ambiguous tail."""
+    return len(bodies) <= 1
+
+
+pub def valid_nominal_declaration(declaration: CompilerNominalDeclaration) -> bool:
+    """Validate parallel fields, recursive defaults, ordered validation slots and concrete adoption owners."""
+    count = len(declaration.fields)
+    if (
+        len(declaration.field_identities) != count
+        or len(declaration.field_types) != count
+        or len(declaration.field_public) != count
+        or len(declaration.field_aliases) != count
+        or not valid_optional_body(declaration.field_default_body)
+    ):
+        return false
+    if declaration.has_field_defaults and len(declaration.field_default_body) != 1:
+        return false
+    for slot in declaration.owned_callable_fields:
+        if slot < 0 or slot >= count:
+            return false
+    match declaration.validated_constructor:
+        Some(contract) =>
+            mut previous = -1
+            for slot in contract.required_fields:
+                if slot < 0 or slot >= count or slot <= previous:
+                    return false
+                previous = slot
+        None => pass
+    for adoption in declaration.trait_adoptions:
+        if adoption.adopter != declaration.canonical:
+            return false
+    return true
+
+
+pub def valid_loaf_callable(callable: CompilerLoafCallable) -> bool:
+    """Keep parameter defaults aligned and permit at most one authenticated declaration-only frame."""
+    if (
+        len(callable.parameter_defaults) != len(callable.parameters)
+        or not valid_optional_body(callable.declaration_frame)
+    ):
+        return false
+    if len(callable.declaration_frame) == 1:
+        if (
+            callable.declaration_frame[0].canonical != Some(callable.canonical)
+            or len(callable.declaration_frame[0].block.statements) != 0
+        ):
+            return false
+    return true
+
+
+pub def covered_body_count(coverage: CompilerBodyCoverage) -> Option[int]:
+    """Return a count for covered declarations, including zero, while preserving Uncovered as None."""
+    match coverage:
+        CompilerBodyCoverage.Uncovered(_reason) => return None
+        CompilerBodyCoverage.Covered(bodies) => return Some(len(bodies))
+
+
+pub def valid_invocation_view(module: CompilerBodyIrModule) -> bool:
+    """Admit runtime bindings and selected mains only as an invocation view; a persistent provider record has neither."""
+    return len(module.runtime_callable_bindings) != 0 or len(module.program_entrypoints) != 0
+
+
+pub def valid_published_expanded_body(body: CompilerBody) -> bool:
+    """Require an already-expanded published body to omit provider macro inputs so loading cannot rerun macros."""
+    return len(body.native_attributes) == 0 and valid_compiler_body(body)
+
+
+pub def invalidate_owned_callable_fields(mut declaration: CompilerNominalDeclaration) -> CompilerNominalDeclaration:
+    """Clear derived callable ownership slots before any checked field-type substitution can publish stale indexes."""
+    declaration.owned_callable_fields = []
+    return declaration
