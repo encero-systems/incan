@@ -134,7 +134,7 @@ The printer writes one form:
 
 **Wrapped values.** Where a slot admits more than one type, a value names its type with `<<`: `Month << 4` for a newtype, `i64 << 3` in an `i64 | string` slot. Elsewhere a newtype or union member is written bare.
 
-`Type << ( … )` lists stored fields. It is not a constructor call, and reading one never runs a constructor, field method or default. It rebuilds the stored state and runs the type's final validation, the same as decoding a Crumb.
+`Type << ( … )` lists stored fields. It is not a constructor call, and reading one never runs a constructor, field method or default. It rebuilds the stored state, and the requested type's final validation then checks that state, the same as after decoding a Crumb.
 
 `<<` takes one value or a list of them, and every value in either is the same cell list. `Type << [(…)]` reads exactly as `Type << (…)`. Consecutive values of one type may be written one at a time or as one table; the printer writes a single value as `Type << ( … )` and two or more consecutive values as one table. Each row is one value with its own hashes. A table is layout only; no hash covers it.
 
@@ -193,7 +193,7 @@ Readers accept any whitespace between tokens. The printer's output must not depe
 
 ## Reading safely
 
-Reading builds data and runs nothing. A reader runs under caller-visible limits on bytes, nesting depth, the length of one string or number, and memory. It checks each table row and nested value against them as it reads, so a short document cannot make it allocate far more than its own size. A reference never expands into a copy of its target, so a document has no alias to multiply.
+Reading runs nothing from the document: a document holds no code, and a description grants none. The only code a read reaches is the final validation of the type the caller requested, which the caller's own implementation of that type supplies, as the [reconstruction boundary](values.md#reconstruction-boundary) states. A reader runs under caller-visible limits on bytes, nesting depth, the length of one string or number, and memory. It checks each table row and nested value against them as it reads, so a short document cannot make it allocate far more than its own size. A reference never expands into a copy of its target, so a document has no alias to multiply.
 
 One text reads as one value or is refused. A key given twice, two declarations of one kind at one path, a value type that names no single declaration values can have, a value of a type with no description, an unknown `___` key and an ambiguous short name are refused, never settled by keeping the first or the last. Reading a value as a type means it fits that type's description, not that the type's owner wrote it.
 
