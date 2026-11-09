@@ -1,4 +1,4 @@
-# behavior: reading fields below owned and returned-view list indices preserves selected values, source dependencies, nested fields, evaluation order and independent owned results (#2801, #2845).
+# behavior: indexed field reads preserve selected values, source dependencies, nested fields, evaluation order and independent owned/frozen results (#2801, #2845, #2884).
 # expect-stdout:
 #   indexed field reads passed
 
@@ -9,6 +9,27 @@ model Entry:
 
 model Dictionary:
     pub entries: list[Entry]
+
+
+model FrozenLeaf:
+    """A non-Copy record inside immutable static storage."""
+
+    pub label: FrozenStr
+
+
+model FrozenEntry:
+    """Static handle reads preserve the same backing values across list projections."""
+
+    pub text: FrozenStr
+    pub data: FrozenBytes
+    pub records: FrozenList[FrozenLeaf]
+    pub tags: FrozenSet[FrozenStr]
+    pub counts: FrozenDict[FrozenStr, int]
+
+
+const RECORDS: FrozenList[FrozenLeaf] = [FrozenLeaf(label="nested")]
+const TAGS: FrozenSet[FrozenStr] = {"tag"}
+const COUNTS: FrozenDict[FrozenStr, int] = {"tag": 3}
 
 
 class Counter:
@@ -75,4 +96,16 @@ def main() -> None:
     assert dictionary.entries[0].metadata == ["first"]
     assert copied == ["first", "independent"]
     assert dictionary.entries[1].tag == 11
+    frozen = [FrozenEntry(text="retained", data=b"AB", records=RECORDS, tags=TAGS, counts=COUNTS)]
+    assert str(frozen[0].text) == "retained"
+    assert frozen[0].data[1] == 66
+    assert len(frozen[0].records) == 1
+    assert str(frozen[0].records[0].label) == "nested"
+    assert "tag" in frozen[0].tags
+    assert frozen[0].counts["tag"] == 3
+    assert len(RECORDS) == 1
+    assert len(frozen[counter.next()].records) == 1
+    assert counter.calls == 2
+    assert frozen[counter.next()].tags == TAGS
+    assert counter.calls == 3
     println("indexed field reads passed")

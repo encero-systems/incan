@@ -15,12 +15,24 @@ from checked_values import scalar_place
 from list_values import value_operand
 from calls import instantiated_external_call
 from static_storage import computed_static_root
+from element_places import is_element_place, element_place_type
 
 
 pub def frozen_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
     """Keep a frozen owner or field; a bare baked aggregate gets its existing typed temporary."""
     match value:
         RustOperand.Place(read) =>
+            # Determine the selected type before emitting an accessor: unrelated comparisons must not evaluate twice.
+            if is_element_place(builder, read.place)?:
+                match element_place_type(builder, read.place)?:
+                    PlanType.FrozenCollection(_name, _elements) =>
+                        operand = value_operand(builder, value, span)?
+                        match operand.kind:
+                            OperandKind.Copy(place) => return Ok(Some(place))
+                            OperandKind.Move(place) => return Ok(Some(place))
+                            _ => return Err("unsupported Body IR frozen element storage")
+                    _ => return Ok(None)
+            # Paths outside the checked local-element classifier keep their existing fallback without evaluating them.
             for projection in read.place.projection:
                 match projection:
                     PlaceElem.Index(_index) => return Ok(None)
@@ -44,7 +56,7 @@ def frozen_storage_place(
     value: RustPlace,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Read a computed static's exact field through its snapshot; ordinary local places retain their checked projection."""
+    """Read a computed static's field through its snapshot; local places retain their checked projection."""
     match computed_static_root(builder, value, span)?:
         Some(snapshot) => return Ok(snapshot)
         None => return scalar_place(builder, value, span)

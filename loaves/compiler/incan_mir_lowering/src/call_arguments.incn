@@ -243,9 +243,10 @@ pub def call_argument_operand(
         PlanType.FrozenCollectionRef(_name, _elements) =>
             match value:
                 RustOperand.Place(read) =>
-                    existing = scalar_place(builder, read.place, span)?
-                    if place_type(builder.locals, existing) == ty:
-                        return Ok(read_place(existing, false, span))
+                    if not is_element_place(builder, read.place)?:
+                        existing = scalar_place(builder, read.place, span)?
+                        if place_type(builder.locals, existing) == ty:
+                            return Ok(read_place(existing, false, span))
                 _ => pass
             match frozen_place(builder, value, span)?:
                 Some(storage) =>
