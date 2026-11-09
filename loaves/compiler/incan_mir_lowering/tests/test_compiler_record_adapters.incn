@@ -1,12 +1,34 @@
 """The one native-to-Incan compiler-record adapter copies every available field and attaches missing boundary facts."""
 
-from compiler_record_adapters import authored_plan_source_span, canonical_symbol_id, native_plan_source_span
+from compiler_record_adapters import (
+    authored_plan_source_span,
+    canonical_symbol_id,
+    checked_type,
+    native_plan_source_span,
+)
 from pub::incan_mir_plan import source_span
+from pub::internal_models.checked_types import (
+    CheckedCallableParam,
+    CheckedCallableParamKind,
+    CheckedInputAccess,
+    CheckedPrimitiveType,
+    CheckedType,
+)
 from pub::internal_models.compiler_records import DeclarationKind, SymbolOrigin
 from rust::incan_semantics_core import (
     CanonicalSymbolId as RustCanonicalSymbolId,
     HirSourceSpan as RustHirSourceSpan,
+    IncanCallableParam as RustCallableParam,
+    IncanCallableParamKind as RustCallableParamKind,
+    IncanInputAccess as RustInputAccess,
+    IncanPrimitiveType as RustPrimitiveType,
+    IncanType as RustType,
+    NumericTypeId as RustNumericType,
+    RuntimeBuiltinType as RustRuntimeBuiltin,
     SemanticSourceTargetKind as RustDeclarationKind,
+    function_type,
+    generic,
+    native_array_type,
 )
 
 
@@ -38,3 +60,94 @@ pub def test_compiler_record_adapters() -> None:
     assert str(restored_span.file) == "src/main.incn"
     assert restored_span.line == 12
     assert restored_span.column == 9
+    native_type = RustType.Ref(RustType.TypeVar("T"))
+    authored_type = checked_type(native_type, "src/main.incn", "1.4.0")
+    assert authored_type == CheckedType.Ref([CheckedType.TypeVar("T")])
+    decimal = RustType.Decimal(precision=38u8, scale=4u8)
+    assert checked_type(decimal, "src/main.incn", "1.4.0") == CheckedType.Decimal(38u8, 4u8)
+    trait_object = RustType.NativeTraitObject(path="std::fmt::Debug", send=true, sync=false)
+    assert checked_type(trait_object, "src/main.incn", "1.4.0") == CheckedType.NativeTraitObject(
+        "std::fmt::Debug",
+        true,
+        false,
+    )
+    pointer = RustType.NativePointer(mutable=true, pointee=RustType.NativeCChar)
+    assert checked_type(pointer, "src/main.incn", "1.4.0") == CheckedType.NativePointer(
+        true,
+        [CheckedType.NativeCChar],
+    )
+
+
+pub def test_all_native_checked_types_convert() -> None:
+    """Convert every native type alternative with nested callable, binder, ownership, array and trait controls."""
+    parameter = RustCallableParam(
+        name=Some("value"),
+        ty=RustType.TypeVar("T"),
+        kind=RustCallableParamKind.RestKeyword,
+        has_default=true,
+        is_partial_preset=true,
+        is_mut=true,
+        native_owned=true,
+        input_access=RustInputAccess.Exclusive,
+    )
+    trait_identity = RustCanonicalSymbolId.module_declaration(
+        ["contracts"],
+        "Readable",
+        RustDeclarationKind.Trait,
+        RustHirSourceSpan.new(4, 12),
+    )
+    native_types: list[RustType] = [
+        RustType.Never,
+        RustType.Primitive(RustPrimitiveType.Numeric(RustNumericType.I64)),
+        RustType.Named("Invoice"),
+        generic("Result", [RustType.TypeVar("T"), RustType.Ref(RustType.TypeVar("T"))]),
+        RustType.Decimal(precision=38u8, scale=4u8),
+        function_type([parameter], RustType.Ref(RustType.TypeVar("T"))),
+        RustType.TypeToken(RustType.Named("Invoice")),
+        RustType.Tuple([RustType.Primitive(RustPrimitiveType.Bool)]),
+        RustType.TypeVar("T"),
+        RustType.SelfType,
+        RustType.Ref(RustType.TypeVar("T")),
+        RustType.RefMut(RustType.TypeVar("T")),
+        RustType.RustInteropPath("std::path::PathBuf"),
+        RustType.NativeBuiltin(RustRuntimeBuiltin.ValidationError),
+        RustType.Unsupported("opaque"),
+        RustType.Infer,
+        RustType.Unknown,
+        native_array_type(RustType.Primitive(RustPrimitiveType.Bytes), 18446744073709551615u64),
+        RustType.NativeTraitObject(path="std::fmt::Debug", send=true, sync=false),
+        RustType.NativePointer(mutable=true, pointee=RustType.NativeCChar),
+        RustType.NativeCChar,
+        RustType.Trait(trait_identity),
+    ]
+    authored = [checked_type(ty, "src/main.incn", "1.4.0") for ty in native_types]
+    assert len(authored) == 22
+    assert authored[3] == CheckedType.Generic(
+        "Result",
+        [CheckedType.TypeVar("T"), CheckedType.Ref([CheckedType.TypeVar("T")])],
+    )
+    assert authored[5] == CheckedType.Function(
+        [
+            CheckedCallableParam(
+                name=Some("value"),
+                ty=CheckedType.TypeVar("T"),
+                kind=CheckedCallableParamKind.RestKeyword,
+                has_default=true,
+                is_partial_preset=true,
+                is_mut=true,
+                native_owned=true,
+                input_access=CheckedInputAccess.Exclusive,
+            ),
+        ],
+        [CheckedType.Ref([CheckedType.TypeVar("T")])],
+    )
+    assert authored[17] == CheckedType.NativeArray(
+        [CheckedType.Primitive(CheckedPrimitiveType.Bytes)],
+        18446744073709551615u64,
+    )
+    match authored[21]:
+        CheckedType.Trait(identity) =>
+            assert identity.declaration_name == "Readable"
+            assert identity.declaration_span.file == "src/main.incn"
+        _ =>
+            assert false
