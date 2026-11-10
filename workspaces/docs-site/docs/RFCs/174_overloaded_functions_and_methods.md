@@ -41,15 +41,16 @@ Declare the same name more than once, with parameters that tell the calls apart:
 
 ```incan
 class Writer:
-    def write(self, data: bytes) -> int:
+    pub def write(self, data: bytes) -> int:
         """Write raw bytes and return how many were written."""
         ...
 
-    def write(self, text: str, encoding: str = "utf-8") -> int:
+    pub def write(self, text: str, encoding: str = "utf-8") -> int:
         """Encode text and write it."""
         ...
 
 
+writer = Writer()
 writer.write(b"\x00\x01")                # bytes overload
 writer.write("héllo")                    # text overload
 writer.write("héllo", encoding="latin-1")

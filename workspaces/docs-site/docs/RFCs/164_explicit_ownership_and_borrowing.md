@@ -335,10 +335,16 @@ A `class`, `model`, `enum` or newtype may declare a field or payload whose type 
 class GraphReader:
     graph: Borrowed[Graph]
 
+    @staticmethod
+    pub def from_graph(graph: Borrowed[Graph]) -> GraphReader from graph:
+        return GraphReader(graph=graph)
+
 class Graph:
-    def read_view(self) -> GraphReader from self:
-        return GraphReader(graph=self)
+    pub def read_view(self) -> GraphReader from self:
+        return GraphReader.from_graph(self)
 ```
+
+`GraphReader.from_graph` initializes its own private field under RFC 176. Both producing methods retain the same source dependency; passing through the factory does not detach the reader from the graph.
 
 - Every borrow a value holds must come from one source, and the call that produces the value names it with its `from` clause. A value built from borrows of two independent sources is refused, and the diagnostic names both, because that would need a lifetime per field.
 - The value cannot outlive its source, and it prevents conflicting access to the source until its last dependent use. Storing it in a field, a container, a result or a closure keeps the dependency, so a type with a field of a view type is itself a view type.
