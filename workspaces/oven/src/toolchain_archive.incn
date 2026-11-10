@@ -33,6 +33,7 @@ from cli_help import render, unknown_option
 from jec import begin, record
 from installation_check import verify_installed_runtime
 from surfaces import expose_entry_points
+from compiler_record_admission import convert
 
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
@@ -679,8 +680,8 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     2. Unpack it.
     3. It is a toolchain of this Oven, and its manifest paths are portable.
     4. Every artifact the manifest names is present.
-    5. Bind the machine's sysroot, and prove the driver's identity against it.
-    6. Publish the installation.
+    5. Bind the machine's sysroot, prove the driver's identity, and admit this installation's compiler records.
+    6. Re-admit the completed pin and publish the installation.
     """
     # 1. Nothing in the archive can land outside the stage or plant the machine's sysroot link.
     mut clock = begin()
@@ -698,15 +699,14 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     )?
     record(Operation.ArchiveUnpack, archive.0, clock)
     # 3. The archive is a toolchain of this Oven, and every path its manifest names stays inside the toolchain.
-    document = read_json(stage.joinpath("toolchain.json"))?
+    mut document = read_json(stage.joinpath("toolchain.json"))?
     name = required_text(document, "name")?
     if name != TOOLCHAIN:
         return Err(f"archive toolchain {name} does not match this Oven's {TOOLCHAIN}")
     validate_paths(document)?
     # 4. Every artifact and directory the manifest names is in the archive, so the installation is complete.
     clock = begin()
-    toolchain, admission = prepare_installation(stage)?
-    record(Operation.ToolchainAdmission, stage.0, clock)
+    toolchain, _initial_admission = prepare_installation(stage)?
     verify_contents(toolchain)?
     # 5. The machine's Rust installation is linked in, and the driver proves it is the compiler it was built against.
     sysroot = local_sysroot()?
@@ -717,7 +717,13 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     run_command(toolchain.driver, ["--identity", toolchain.sysroot]).map_err(
         (error) => f"cannot verify compiler {toolchain.driver} against Rust sysroot {toolchain.sysroot}: {error}",
     )?
-    # 6. Only a verified toolchain replaces the installed one.
+    pin = convert(toolchain.driver, stage, stage)?
+    document = read_json(stage.joinpath("toolchain.json"))?
+    document = replaced(document, "compiler_records", pin.to_json())?
+    write_json(stage.joinpath("toolchain.json"), document)?
+    # 6. The completed pin and its new store are admitted together; only that verified generation is published.
+    _completed, admission = prepare_installation(stage)?
+    record(Operation.ToolchainAdmission, stage.0, clock)
     publish_install(stage, target, admission)?
     println(f"installed {TOOLCHAIN}: {target.0}")
     return Ok(None)

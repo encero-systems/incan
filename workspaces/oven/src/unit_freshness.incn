@@ -138,6 +138,9 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
     """
     # 1. Metadata avoids reading unchanged compiler facts but never enters the compiler identity.
     mut facts = [fact_identity(Path(toolchain.driver))?] + cache_identities(toolchain.rust_abi)?
+    match toolchain.compiler_records:
+        Some(pin) => facts.append(f"compiler-records {pin.digest}")
+        None => pass
     # 2. Native dependencies carry identities recorded by their producers, never inferred from payloads.
     natives = native_identities(toolchain.externs)?
     # 3. Registry selection and search directories locate providers; the exact linked identities select them.

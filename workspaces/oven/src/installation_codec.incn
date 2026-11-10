@@ -6,11 +6,12 @@ from manifest_intent import ProjectIntent
 from installation_intent import read_intent, write_intent
 from page_codec import Reader, put_number, put_text, put_texts
 from toolchain_types import NativeCrate, InstalledCompiler
+from compiler_record_admission import CompilerRecordPin
 from frozen_inputs import Document
 from page_values import read_value, write_value
 from payload_types import InstalledPayload, PayloadAdmission
 
-pub const PROFILE: str = "incan.installation-page/5"
+pub const PROFILE: str = "incan.installation-page/6"
 
 
 pub model StandardManifest:
@@ -160,6 +161,7 @@ def read_toolchain(mut reader: Reader) -> Result[InstalledCompiler, str]:
             registry_lock=reader.text()?,
             c_compiler=reader.text()?,
             target=reader.text()?,
+            compiler_records=read_compiler_record_pin(reader)?,
         ),
     )
 
@@ -177,4 +179,22 @@ def write_toolchain(buffer: _BytesIO, toolchain: InstalledCompiler) -> Result[No
     put_text(buffer, toolchain.registry_units)?
     put_text(buffer, toolchain.registry_lock)?
     put_text(buffer, toolchain.c_compiler)?
-    return put_text(buffer, toolchain.target)
+    put_text(buffer, toolchain.target)?
+    match toolchain.compiler_records:
+        None => return put_number(buffer, 0)
+        Some(pin) =>
+            put_number(buffer, 1)?
+            put_text(buffer, pin.root)?
+            return put_text(buffer, pin.digest)
+
+
+def read_compiler_record_pin(mut reader: Reader) -> Result[Option[CompilerRecordPin], str]:
+    """Read the optional installed record authority; any non-Boolean discriminator is malformed."""
+    present = reader.count(1)?
+    if present == 0:
+        return Ok(None)
+    root = reader.text()?
+    digest = reader.text()?
+    if root == "" or len(digest) != 64:
+        return Err("installation page has an invalid compiler-record pin")
+    return Ok(Some(CompilerRecordPin(root=root, digest=digest)))
