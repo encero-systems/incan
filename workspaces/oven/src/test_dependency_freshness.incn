@@ -1,12 +1,13 @@
 """Dependency reuse contracts: a changed dependency artifact, worker or installed interface rekeys its consumers."""
 
-from rust::std::fs import metadata, rename
+from rust::std::fs import metadata, remove_dir_all, rename
 from rust::std::process import Command
+from rust::std::time import Instant
 from std.fs import Path
 from std.encoding.hex import hexlify
 from std.hash import sha256
 from std.io import BytesIO
-from std.json import JsonValue
+from std.json import JsonValue, parse
 from pub::incan_platform.trace import flush as flush_trace
 from std.environ import get_or
 from installation_check import verify_runtime
@@ -20,7 +21,7 @@ from files import json_text, make_directory, read, read_json, remove
 from json_fields import required_items
 from store_path_conversion import payload_path
 from bakery import bakery, library_directory
-from observation import file_digest
+from observation import file_digest, observe
 from vocabulary import published_workers, stage_vocabulary
 from native_closure_input import NativeClosureInput, native_bindings
 from standalone_rust import published_bindings
@@ -38,6 +39,10 @@ from compiler_facts import admit_fact, verified_fact, relocate_fact, fact_identi
 from unit_rust import add_extern, compile_library_unit, prepare_linked
 from unit_publication import published_identity, record_path, record_payload, verified_payload, relocate_payload
 from unit_freshness import artifact_files, record, fingerprint
+from engine_client import service_identity
+from engine_endpoint import connect_with
+from engine_messages import Message, Stop
+from engine_wire import zero_id
 from freshness_fixtures import fixture, make_executable, reconcile, unit_key, write
 
 
@@ -77,7 +82,469 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     verify_native_alias_artifacts(scratch.path().joinpath("aliases"))?
     verify_requested_loaf_roots(scratch.path().joinpath("requested-roots"))?
     verify_checked_product_context(scratch.path().joinpath("checked-products"))?
+    verify_semantic_edit_matrix(scratch.path().joinpath("semantic-edit-matrix"))?
     return Ok(None)
+
+
+@derive(Eq)
+enum SemanticEdit(str):
+    """The fixed E2 source-edit matrix; each spelling is stable evidence in failures and timing rows."""
+
+    Body = "body-only"
+    Signature = "signature"
+    AddDeclaration = "add-declaration"
+    RemoveDeclaration = "remove-declaration"
+    RenameDeclaration = "rename-declaration"
+    FieldType = "field-type"
+    Import = "import"
+    Documentation = "documentation"
+    GenericInstantiation = "generic-instantiation"
+    Dependency = "dependency"
+
+
+@derive(Eq)
+enum MatrixFixture(str):
+    """The three Incan-only fixture shapes whose compiler records E2 compares."""
+
+    Hello = "hello"
+    Siblings = "siblings"
+    Library = "library"
+
+
+@derive(Eq)
+enum MatrixBuildKind(str):
+    """The three builds that establish one matrix row's retained and cold states."""
+
+    Base = "base"
+    Warm = "warm"
+    Cold = "cold"
+
+
+model MatrixCase:
+    """One edit's complete base and edited source trees and the build request that observes them."""
+
+    edit: SemanticEdit
+    fixture: MatrixFixture
+    target: str
+    base: Dict[str, str]
+    edited: Dict[str, str]
+
+
+model PhaseCounts:
+    """Actual producer work at the five executing compiler phases retained by the existing work trace."""
+
+    declarations: int = 0
+    bodies: int = 0
+    body_ir: int = 0
+    lowering: int = 0
+    llvm: int = 0
+
+    def display(self) -> str:
+        """Render one stable compact count row for a failure or timing receipt."""
+        return f"{self.declarations}/{self.bodies}/{self.body_ir}/{self.lowering}/{self.llvm}"
+
+    def after(self, before: PhaseCounts) -> PhaseCounts:
+        """Return work added after an earlier cumulative trace snapshot from the same records service."""
+        return PhaseCounts(
+            declarations=self.declarations - before.declarations,
+            bodies=self.bodies - before.bodies,
+            body_ir=self.body_ir - before.body_ir,
+            lowering=self.lowering - before.lowering,
+            llvm=self.llvm - before.llvm,
+        )
+
+
+model MatrixBuild:
+    """The comparable outputs and work evidence from one completed edited or cold build."""
+
+    artifacts: Dict[str, str]
+    counts: PhaseCounts
+    wall_ms: int
+
+
+model SemanticEditMatrix:
+    """Own one E2 run's fixtures, compiler process, failures and optional measurement rows."""
+
+    root: Path
+    binary: str
+    failures: list[str] = []
+    rows: list[str] = []
+
+    pub def verify(mut self) -> Result[None, str]:
+        """
+        Compare every warm edit with a target-clean cold build of the edited source.
+
+        1. Build the unedited source and then the edit against its retained private compiler records.
+        2. Keep exact digests of the warm records and selected native artifacts, then remove only this scratch target.
+        3. Build the edited source cold and require every cold record and artifact to have identical warm bytes.
+        """
+        for scenario in semantic_edit_cases():
+            match self.verify_case(scenario):
+                Ok(_) => pass
+                Err(reason) => self.failures.append(f"{scenario.edit.value()}: {reason}")
+        self.write_rows()?
+        if len(self.failures) != 0:
+            return Err("E2 cold-oracle differences:\n- " + "\n- ".join(self.failures))
+        return Ok(None)
+
+    def verify_case(mut self, scenario: MatrixCase) -> Result[None, str]:
+        """Run one warm/cold pair, retaining the edit name in every reported mismatch."""
+        project = self.root.joinpath(scenario.edit.value())
+        self.write_sources(project, scenario.base)?
+        base = self.build(scenario, project, MatrixBuildKind.Base)?
+        self.write_sources(project, scenario.edited)?
+        mut warm = self.build(scenario, project, MatrixBuildKind.Warm)?
+        warm.counts = warm.counts.after(base.counts)
+        self.stop_engine(project.joinpath("warm-store"))?
+        target = project.joinpath("target")
+        if not target.is_dir():
+            return Err("warm build produced no target directory")
+        remove_dir_all(target.0).map_err((error) => str(error))?
+        cold = self.build(scenario, project, MatrixBuildKind.Cold)?
+        self.stop_engine(project.joinpath("cold-store"))?
+        for path in cold.artifacts.keys():
+            if path not in warm.artifacts:
+                return Err(f"cold output {path} is absent from the incremental build")
+            if cold.artifacts[path] != warm.artifacts[path]:
+                return Err(f"incremental and cold bytes differ for {path}")
+        if len(cold.artifacts) == 0:
+            return Err("the cold build exposed no compiler records or selected artifacts")
+        self.rows.append(
+            "\t".join(
+                [
+                    scenario.edit.value(),
+                    scenario.fixture.value(),
+                    warm.counts.display(),
+                    str(warm.wall_ms),
+                    str(cold.wall_ms),
+                    "identical",
+                ],
+            ),
+        )
+        return Ok(None)
+
+    def write_sources(self, project: Path, sources: Dict[str, str]) -> Result[None, str]:
+        """Materialize one complete source state under its owned scratch fixture."""
+        for relative in sources.keys():
+            write(project.joinpath(relative), sources[relative])?
+        return Ok(None)
+
+    def build(self, scenario: MatrixCase, project: Path, kind: MatrixBuildKind) -> Result[MatrixBuild, str]:
+        """Build one matrix state with compiler-work tracing and retain only semantic records and selected artifacts."""
+        mut trace_name = "retained"
+        if kind == MatrixBuildKind.Cold:
+            trace_name = "cold"
+        trace = project.joinpath(f"e2-trace-{trace_name}")
+        trace.mkdir(true, true).map_err((error) => error.message())?
+        native = project.joinpath(f"e2-native-{trace_name}.trace")
+        target = project.joinpath(scenario.target)
+        mut store = project.joinpath("warm-store")
+        if kind == MatrixBuildKind.Cold:
+            store = project.joinpath("cold-store")
+        started = Instant.now()
+        output = Command
+            .new(self.binary)
+            .arg("build")
+            .arg(target.0)
+            .args(["--profile", "release"])
+            .env("OVEN_OWNER", "off")
+            .env("INCAN_ENGINE", "records")
+            .env("INCAN_BAKERY", store.0)
+            .env("INCAN_NATIVE_TIMING", "1")
+            .env("INCAN_TRACE_DIR", trace.0)
+            .env("OVEN_TRACE", native.0)
+            .output()
+            .map_err((error) => str(error))?
+        wall_ms = int(started.elapsed().as_millis())
+        if not output.status.success():
+            stdout = decoded(output.stdout)
+            stderr = decoded(output.stderr)
+            return Err(f"{kind.value()} build refused: status={output.status.code()} stdout={stdout} stderr={stderr}")
+        return Ok(
+            MatrixBuild(
+                artifacts=self.artifact_digests(project.joinpath("target"))?,
+                counts=self.phase_counts(trace, native)?,
+                wall_ms=wall_ms,
+            ),
+        )
+
+    def stop_engine(self, store: Path) -> Result[None, str]:
+        """Stop one disposable records service after its final matrix request has completed."""
+        mut identity = service_identity(store)?
+        identity.service_generation = fingerprint([self.binary, observe(Path(self.binary))?.stamp])?
+        mut channel = connect_with(store, identity, self.binary).map_err((error) => error.detail)?
+        channel
+            .send(zero_id(), Message.Stop(Stop(reason="semantic edit matrix row completed")))
+            .map_err((error) => error.detail)?
+        stopped = channel.receive().map_err((error) => error.detail)?
+        match stopped.message:
+            Message.Event(value) =>
+                if value.status != "Stopping":
+                    return Err(f"records service returned stop status {value.status}")
+            _ => return Err("records service did not acknowledge matrix stop")
+        _ = channel.transport.close()
+        return Ok(None)
+
+    def artifact_digests(self, target: Path) -> Result[Dict[str, str], str]:
+        """Hash compiler records and final artifacts, excluding mutable receipts and observations."""
+        mut result: Dict[str, str] = {}
+        mut pending: list[Path] = [target]
+        while len(pending) > 0:
+            directory = pending.pop()
+            for entry in directory.iterdir().map_err((error) => error.message())?:
+                if entry.is_dir():
+                    pending.append(entry)
+                elif entry.is_file():
+                    relative = entry.0[len(target.0) + 1:]
+                    if comparable_matrix_output(relative):
+                        result[relative] = file_digest(entry)?
+        return Ok(result)
+
+    def phase_counts(self, traces: Path, native: Path) -> Result[PhaseCounts, str]:
+        """Count actual work observations from the edited build, never inventories of retained products."""
+        mut counts = PhaseCounts()
+        for trace in traces.iterdir().map_err((error) => error.message())?:
+            if not trace.is_file():
+                continue
+            for line in trace.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+                if "\"phase\":\"checking\"" in line and "\"action\":\"declaration\"" in line:
+                    counts.declarations += 1
+                elif "\"phase\":\"checking\"" in line and "\"action\":\"body\"" in line:
+                    counts.bodies += 1
+                elif "\"phase\":\"body_ir\"" in line and "\"action\":\"built\"" in line:
+                    counts.body_ir += 1
+        if native.is_file():
+            for line in native.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+                if line.startswith("redo-item: lowering\t"):
+                    counts.lowering += 1
+                elif line.startswith("redo-codegen: "):
+                    document = parse(line[len("redo-codegen: "):]).map_err((error) => error.message())?
+                    execution = document.require("execution").map_err((error) => error.message())?.expect_str().map_err(
+                        (error) => error.message(),
+                    )?
+                    if execution == "all_on_success":
+                        partitions = document.require("partitions").map_err((error) => error.message())?
+                        counts.llvm += partitions.expect_int().map_err((error) => error.message())?
+        return Ok(counts)
+
+    def write_rows(self) -> Result[None, str]:
+        """Write optional development-loop samples without changing the test's verdict or ordinary console."""
+        destination = get_or("INCAN_E2_MATRIX_REPORT", "")
+        if destination != "":
+            header = "edit\tfixture\tdeclarations/bodies/body_ir/lowering/llvm\twarm_ms\tcold_ms\tverdict\n"
+            Path(destination)
+                .write_text(header + "\n".join(self.rows) + "\n", "utf-8", "strict", None)
+                .map_err((error) => error.message())?
+        return Ok(None)
+
+
+def verify_semantic_edit_matrix(root: Path) -> Result[None, str]:
+    """Run DD-0015's fixed Incan-only E2 matrix through the installed compiler selected by this Oven test."""
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    return SemanticEditMatrix(root=root, binary=binary).verify()
+
+
+def comparable_matrix_output(relative: str) -> bool:
+    """Select semantic compiler records and final artifact bytes while excluding ledgers and publication receipts."""
+    if "/.products/" in "/" + relative:
+        return relative.endswith(".incnitems") or relative.endswith(".incnfunction")
+    if "/release/bin/" in "/" + relative:
+        return true
+    if not relative.startswith("incan/loaves/") or "/release/" not in relative:
+        return false
+    for suffix in [".rlib", ".incnlib", ".incnbody", ".incngraph", ".native.json", ".rustabi"]:
+        if relative.endswith(suffix):
+            return true
+    return false
+
+
+def semantic_edit_cases() -> list[MatrixCase]:
+    """Define the fixed E2 matrix over hello, sibling declarations and one sibling library module."""
+    return [
+        MatrixCase(
+            edit=SemanticEdit.Body,
+            fixture=MatrixFixture.Hello,
+            target="hello.incn",
+            base={"hello.incn": fixture_source(
+                [
+                    "def greeting() -> str:",
+                    "    return \"hello\"",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(greeting())",
+                ],
+            )},
+            edited={"hello.incn": fixture_source(
+                [
+                    "def greeting() -> str:",
+                    "    return \"hullo\"",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(greeting())",
+                ],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.Signature,
+            fixture=MatrixFixture.Hello,
+            target="hello.incn",
+            base={"hello.incn": fixture_source(
+                ["def value() -> str:", "    return \"one\"", "", "", "def main() -> None:", "    println(value())"],
+            )},
+            edited={"hello.incn": fixture_source(
+                ["def value() -> int:", "    return 1", "", "", "def main() -> None:", "    println(value())"],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.AddDeclaration,
+            fixture=MatrixFixture.Siblings,
+            target="fixture.incn",
+            base={"fixture.incn": fixture_source(["def main() -> None:", "    println(\"stable\")"])},
+            edited={"fixture.incn": fixture_source(
+                ["def other() -> int:", "    return 2", "", "", "def main() -> None:", "    println(\"stable\")"],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.RemoveDeclaration,
+            fixture=MatrixFixture.Siblings,
+            target="fixture.incn",
+            base={"fixture.incn": fixture_source(
+                ["def other() -> int:", "    return 2", "", "", "def main() -> None:", "    println(\"stable\")"],
+            )},
+            edited={"fixture.incn": fixture_source(["def main() -> None:", "    println(\"stable\")"])},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.RenameDeclaration,
+            fixture=MatrixFixture.Siblings,
+            target="fixture.incn",
+            base={"fixture.incn": fixture_source(
+                ["def changed() -> int:", "    return 2", "", "", "def main() -> None:", "    println(changed())"],
+            )},
+            edited={"fixture.incn": fixture_source(
+                ["def renamed() -> int:", "    return 2", "", "", "def main() -> None:", "    println(renamed())"],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.FieldType,
+            fixture=MatrixFixture.Siblings,
+            target="fixture.incn",
+            base={"fixture.incn": fixture_source(
+                ["model Item:", "    value: int", "", "", "def main() -> None:", "    println(Item(value=1).value)"],
+            )},
+            edited={"fixture.incn": fixture_source(
+                [
+                    "model Item:",
+                    "    value: str",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(Item(value=\"one\").value)",
+                ],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.Import,
+            fixture=MatrixFixture.Siblings,
+            target="main.incn",
+            base={"main.incn": fixture_source(
+                ["from helper import greeting", "", "", "def main() -> None:", "    println(greeting())"],
+            ), "helper.incn": fixture_source(
+                [
+                    "pub def greeting() -> str:",
+                    "    return \"hello\"",
+                    "",
+                    "",
+                    "pub def salutation() -> str:",
+                    "    return \"hello\"",
+                ],
+            )},
+            edited={"main.incn": fixture_source(
+                ["from helper import salutation", "", "", "def main() -> None:", "    println(salutation())"],
+            ), "helper.incn": fixture_source(
+                [
+                    "pub def greeting() -> str:",
+                    "    return \"hello\"",
+                    "",
+                    "",
+                    "pub def salutation() -> str:",
+                    "    return \"hello\"",
+                ],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.Documentation,
+            fixture=MatrixFixture.Hello,
+            target="hello.incn",
+            base={"hello.incn": fixture_source(
+                [
+                    "def greeting() -> str:",
+                    "    return \"hello\"",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(greeting())",
+                ],
+            )},
+            edited={"hello.incn": fixture_source(
+                [
+                    "def greeting() -> str:",
+                    "    \"\"\"Return the greeting.\"\"\"",
+                    "    return \"hello\"",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(greeting())",
+                ],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.GenericInstantiation,
+            fixture=MatrixFixture.Siblings,
+            target="fixture.incn",
+            base={"fixture.incn": fixture_source(
+                [
+                    "def identity[T](value: T) -> T:",
+                    "    return value",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(identity[int](1))",
+                ],
+            )},
+            edited={"fixture.incn": fixture_source(
+                [
+                    "def identity[T](value: T) -> T:",
+                    "    return value",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(identity[str](\"one\"))",
+                ],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.Dependency,
+            fixture=MatrixFixture.Library,
+            target="main.incn",
+            base={"main.incn": fixture_source(
+                ["from values import selected", "", "", "def main() -> None:", "    println(selected())"],
+            ), "values.incn": fixture_source(
+                ["pub def selected() -> int:", "    return 1", "", "", "pub def stable() -> int:", "    return 7"],
+            )},
+            edited={"main.incn": fixture_source(
+                ["from values import selected", "", "", "def main() -> None:", "    println(selected())"],
+            ), "values.incn": fixture_source(
+                ["pub def selected() -> int:", "    return 2", "", "", "pub def stable() -> int:", "    return 7"],
+            )},
+        ),
+    ]
+
+
+def fixture_source(lines: list[str]) -> str:
+    """Render readable source-line fixtures with one final newline."""
+    return "\n".join(lines) + "\n"
 
 
 def verify_checked_product_context(scratch: Path) -> Result[None, str]:
