@@ -13,9 +13,124 @@ from std.primitives.crumb.types import (
 )
 
 
+pub enum CaseOperation(str):
+    """Every operation admitted from the pinned corpus manifest, including operations implemented later in the stack."""
+
+    MemberIdentity = "member_identity"
+    NominalIdentity = "nominal_identity"
+    TypeSelector = "type_selector"
+    ShapeAdmission = "shape_admission"
+    Adaptation = "adaptation"
+    HashPreimage = "hash_preimage"
+    ValueRelation = "value_relation"
+    BinaryDecode = "binary_decode"
+    TextRead = "text_read"
+    TextPrint = "text_print"
+    ColumnCodec = "column_codec"
+    ColumnBlock = "column_block"
+    ColumnData = "column_data"
+    ColumnDictionary = "column_dictionary"
+
+
+pub enum ExpectedStatus(str):
+    """The corpus contract's closed accepted/refused outcome vocabulary."""
+
+    Accepted = "accepted"
+    Refused = "refused"
+
+
+pub enum CaseStatus(str):
+    """Per-case execution states emitted by the conformance runner."""
+
+    Passed = "passed"
+    Failed = "failed"
+    Unsupported = "unsupported"
+
+
+pub enum ReceiptStatus(str):
+    """Aggregate execution states emitted after all selected cases finish."""
+
+    Passed = "passed"
+    Failed = "failed"
+    Incomplete = "incomplete"
+
+
+pub enum CaseTransform(str):
+    """Closed corpus transformations applied before a codec invocation."""
+
+    AllProperPrefixes = "all_proper_prefixes"
+
+
+pub enum HashExpectation(str):
+    """Closed digest relations authored independently in the corpus."""
+
+    Same = "same"
+    Changed = "changed"
+    Distinct = "distinct"
+
+
+pub enum HashKind(str):
+    """Closed hash domains selected by hash-preimage fixtures."""
+
+    Object = "object"
+    Canonical = "canonical"
+    Model = "model"
+    Description = "description"
+    Seal = "seal"
+
+
+pub enum FixtureValueKind(str):
+    """The tagged logical-value forms admitted from corpus JSON."""
+
+    NoneValue = "none"
+    Some = "some"
+    Boolean = "boolean"
+    Integer = "int"
+    Float = "float"
+    Decimal = "decimal"
+    String = "string"
+    Binary = "binary"
+    Withheld = "withheld"
+    List = "list"
+    Tuple = "tuple"
+    Set = "set"
+    Map = "map"
+    Record = "record"
+    Enum = "enum"
+    Union = "union"
+    Reference = "reference"
+
+
+pub enum FixtureMetadataKind(str):
+    """The tagged metadata forms admitted from corpus JSON."""
+
+    Null = "null"
+    Boolean = "boolean"
+    Integer = "int"
+    String = "string"
+    Binary = "binary"
+    List = "list"
+    Map = "map"
+
+
+pub enum FixtureTypeKind(str):
+    """The structured type-node forms admitted from corpus JSON."""
+
+    Record = "record"
+    Enum = "enum"
+    Recursive = "recur"
+
+
 pub def text(value: JsonValue, key: str) -> Result[str, str]:
     """Require one string; numeric expectations remain exact strings rather than JSON numbers."""
     return value.require(key).and_then((item) => item.expect_str()).map_err((error) => error.message())
+
+
+pub def expected_status(value: JsonValue) -> Result[ExpectedStatus, str]:
+    """Parse one expected outcome at the corpus boundary so checkers never dispatch on raw status text."""
+    match ExpectedStatus.from_value(text(value, "status")?):
+        Some(status) => return Ok(status)
+        None => return Err("unknown expected status")
 
 
 pub def field(value: JsonValue, key: str) -> Result[JsonValue, str]:
@@ -69,16 +184,15 @@ pub def node(value: JsonValue) -> Result[TypeNode, str]:
                 ContainerKind.Tuple | ContainerKind.Union =>
                     return Ok(TypeNode.Container(container, nodes(array(value, "items")?)?))
         None => pass
-    if kind == "record":
-        return Ok(TypeNode.Record(text(value, "key")?, fields(value)?))
-    if kind == "enum":
-        mut variants: list[VariantShape] = []
-        for variant in array(value, "variants")?:
-            variants.append(VariantShape(identity=hex_bytes(text(variant, "id")?)?, fields=fields(variant)?))
-        return Ok(TypeNode.Enum(text(value, "key")?, variants))
-    if kind == "recur":
-        return Ok(TypeNode.Recursive(text(value, "key")?))
-    return Err("unsupported corpus type notation: " + kind)
+    match FixtureTypeKind.from_value(kind):
+        Some(FixtureTypeKind.Record) => return Ok(TypeNode.Record(text(value, "key")?, fields(value)?))
+        Some(FixtureTypeKind.Enum) =>
+            mut variants: list[VariantShape] = []
+            for variant in array(value, "variants")?:
+                variants.append(VariantShape(identity=hex_bytes(text(variant, "id")?)?, fields=fields(variant)?))
+            return Ok(TypeNode.Enum(text(value, "key")?, variants))
+        Some(FixtureTypeKind.Recursive) => return Ok(TypeNode.Recursive(text(value, "key")?))
+        None => return Err("unsupported corpus type notation: " + kind)
 
 
 pub def nodes(values: list[JsonValue]) -> Result[list[TypeNode], str]:
@@ -97,20 +211,16 @@ pub def selector_text(spelling: str) -> Result[TypeNode, str]:
             return Err("decimal corpus parameters")
         return Ok(TypeNode.Decimal(int(parts[0]), int(parts[1])))
     mut prefix = 0
-    mut kind_name = ""
+    mut kind = NominalKind.Record
     if spelling.startswith("record@"):
         prefix = 7
-        kind_name = "record"
     elif spelling.startswith("enum@"):
         prefix = 5
-        kind_name = "enum"
+        kind = NominalKind.Enum
     else:
         match ScalarKind.from_value(spelling):
-            Some(kind) => return Ok(TypeNode.Scalar(kind))
+            Some(scalar) => return Ok(TypeNode.Scalar(scalar))
             None => return Err("unknown scalar in corpus")
-    kind = match NominalKind.from_value(kind_name):
-        Some(value) => value
-        None => return Err("unknown nominal kind in corpus")
 
     if len(spelling) < prefix + 12:
         return Err("short nominal selector in corpus")

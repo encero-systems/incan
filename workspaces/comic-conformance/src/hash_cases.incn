@@ -6,7 +6,7 @@ from std.primitives.crumb.hashes import HashResult, value_hash, model_hash, desc
 from std.primitives.crumb.types import TypeNode
 from std.primitives.crumb.values import Projection
 from std.primitives.hex import hexlify
-from case_data import array, field, fields, node, text
+from case_data import HashExpectation, HashKind, array, field, fields, node, text
 from hash_data import logical, logical_items, metadata, record
 
 
@@ -14,7 +14,11 @@ pub def check_preimage(value: JsonValue, mut budget: Budget) -> Result[bool, str
     """A matching digest alone is insufficient: verify the actual emitted domain and contribution bytes."""
     input = field(value, "input")?
     expected = field(value, "expected")?
-    result = project(text(value, "projection")?, input, budget)?
+    kind = match HashKind.from_value(text(value, "projection")?):
+        Some(selected) => selected
+        None => return Err("unknown hash projection")
+
+    result = project(kind, input, budget)?
     match result.preimage:
         Some(bytes) =>
             bytes_match = hexlify(bytes) == text(expected, "preimage_hex")?
@@ -22,32 +26,39 @@ pub def check_preimage(value: JsonValue, mut budget: Budget) -> Result[bool, str
         None => return Err("hash request did not capture its derived preimage")
 
 
-def project(kind: str, value: JsonValue, mut budget: Budget) -> Result[HashResult, str]:
+def project(kind: HashKind, value: JsonValue, mut budget: Budget) -> Result[HashResult, str]:
     """Dispatch domains without feeding expected bytes or test derivation annotations to the implementation."""
-    if let Some(projection) = Projection.from_value(kind):
-        return value_hash(logical(value)?, projection, budget, true).map_err((e) => e.message())
     match kind:
-        "model" => return model_hash(node(field(value, "type")?)?, budget, true).map_err((e) => e.message())
-        "description" =>
+        HashKind.Object =>
+            return value_hash(logical(value)?, Projection.Object, budget, true).map_err((e) => e.message())
+        HashKind.Canonical =>
+            return value_hash(logical(value)?, Projection.Canonical, budget, true).map_err((e) => e.message())
+        HashKind.Model => return model_hash(node(field(value, "type")?)?, budget, true).map_err((e) => e.message())
+        HashKind.Description =>
             return description_hash(metadata(field(value, "description")?)?, budget, true).map_err((e) => e.message())
-        "seal" => return seal_hash(logical_items(array(value, "values")?)?, budget, true).map_err((e) => e.message())
-        _ => return Err("unknown hash projection")
+        HashKind.Seal =>
+            return seal_hash(logical_items(array(value, "values")?)?, budget, true).map_err((e) => e.message())
 
 
 pub def check_relation(value: JsonValue, mut budget: Budget) -> Result[bool, str]:
     """Equality relations compare independently derived logical object digests."""
     left = value_hash(logical(field(value, "left")?)?, Projection.Object, budget).map_err((e) => e.message())?
     right = value_hash(logical(field(value, "right")?)?, Projection.Object, budget).map_err((e) => e.message())?
-    return relation(left, right, text(value, "expected")?)
+    return relation(left, right, expectation(text(value, "expected")?)?)
 
 
-def relation(left: HashResult, right: HashResult, expected: str) -> Result[bool, str]:
+def expectation(value: str) -> Result[HashExpectation, str]:
+    """Parse one independently authored digest relation before comparing values."""
+    match HashExpectation.from_value(value):
+        Some(selected) => return Ok(selected)
+        None => return Err("unknown hash relation")
+
+
+def relation(left: HashResult, right: HashResult, expected: HashExpectation) -> Result[bool, str]:
     """Unknown expectation words fail instead of accidentally behaving like inequality."""
-    if expected == "same":
-        return Ok(left.digest == right.digest)
-    if expected == "changed" or expected == "distinct":
-        return Ok(left.digest != right.digest)
-    return Err("unknown hash relation")
+    match expected:
+        HashExpectation.Same => return Ok(left.digest == right.digest)
+        HashExpectation.Changed | HashExpectation.Distinct => return Ok(left.digest != right.digest)
 
 
 pub def check_projections(value: JsonValue, output: list[JsonValue], mut budget: Budget) -> Result[bool, str]:
@@ -64,9 +75,9 @@ pub def check_projections(value: JsonValue, output: list[JsonValue], mut budget:
     left_model = model_hash(TypeNode.Record("source", fields(written)?), budget).map_err((e) => e.message())?
     right_model = model_hash(TypeNode.Record("target", fields(requested)?), budget).map_err((e) => e.message())?
     return Ok(
-        relation(left_object, right_object, text(expected, "object")?)? and relation(
+        relation(left_object, right_object, expectation(text(expected, "object")?)?)? and relation(
             left_canonical,
             right_canonical,
-            text(expected, "canonical")?,
-        )? and relation(left_model, right_model, text(expected, "model")?)?,
+            expectation(text(expected, "canonical")?)?,
+        )? and relation(left_model, right_model, expectation(text(expected, "model")?)?)?,
     )

@@ -2,7 +2,7 @@
 
 from std.json import JsonValue
 from std.primitives.crumb.values import Value, ValueField, MapEntry
-from case_data import array, field, text, hex_bytes, absence, selector_text
+from case_data import FixtureValueKind, array, field, text, hex_bytes, absence, selector_text
 from hash_data import logical
 
 
@@ -70,14 +70,17 @@ def record_fields(
 
 def row_value(value: JsonValue, descriptions: list[JsonValue]) -> Result[Value, str]:
     """Translate nested logical input notation without decoding any expected physical bytes."""
-    kind = text(value, "kind")?
+    kind = match FixtureValueKind.from_value(text(value, "kind")?):
+        Some(selected) => selected
+        None => return Err("unsupported row value notation")
+
     match kind:
-        "record" | "enum" => return record_value(value, descriptions)
-        "some" => return Ok(Value.Some([row_value(field(value, "value")?, descriptions)?]))
-        "list" => return Ok(Value.List(row_items(array(value, "items")?, descriptions)?))
-        "tuple" => return Ok(Value.Tuple(row_items(array(value, "items")?, descriptions)?))
-        "set" => return Ok(Value.Set(row_items(array(value, "items")?, descriptions)?))
-        "map" =>
+        FixtureValueKind.Record | FixtureValueKind.Enum => return record_value(value, descriptions)
+        FixtureValueKind.Some => return Ok(Value.Some([row_value(field(value, "value")?, descriptions)?]))
+        FixtureValueKind.List => return Ok(Value.List(row_items(array(value, "items")?, descriptions)?))
+        FixtureValueKind.Tuple => return Ok(Value.Tuple(row_items(array(value, "items")?, descriptions)?))
+        FixtureValueKind.Set => return Ok(Value.Set(row_items(array(value, "items")?, descriptions)?))
+        FixtureValueKind.Map =>
             mut entries: list[MapEntry] = []
             for item in array(value, "entries")?:
                 pair = item.expect_array().map_err((e) => e.message())?
@@ -85,7 +88,7 @@ def row_value(value: JsonValue, descriptions: list[JsonValue]) -> Result[Value, 
                     return Err("writer map pair")
                 entries.append(MapEntry(key=row_value(pair[0], descriptions)?, value=row_value(pair[1], descriptions)?))
             return Ok(Value.Map(entries))
-        "union" =>
+        FixtureValueKind.Union =>
             return Ok(
                 Value.Union(
                     selector_text(text(value, "member_type")?)?,
