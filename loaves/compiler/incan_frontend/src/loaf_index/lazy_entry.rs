@@ -89,6 +89,32 @@ impl IndexedLoaf {
         indexed
     }
 
+    /// Construct an inventory-only entry for tests that prove a metadata projection preserves demand loading.
+    #[cfg(test)]
+    pub(super) fn summary_only(key: String, namespace: LoafNamespace, identity: LoafIdentity) -> Self {
+        Self {
+            key,
+            namespace,
+            dir: PathBuf::new(),
+            summary: Summary {
+                identity,
+                vocabulary: false,
+                provider_operations: false,
+                native_unions: false,
+                rust_paths: BTreeSet::new(),
+                rust_abi_cache_declared: false,
+                rust_abi_cache: false,
+            },
+            entry: Arc::default(),
+        }
+    }
+
+    /// Whether a focused test caused this inventory-only entry to demand its complete manifest.
+    #[cfg(test)]
+    pub(super) fn was_demanded(&self) -> bool {
+        self.entry.get().is_some()
+    }
+
     /// Admit a small inventory, or use full admission when its private proof is missing or stale.
     pub fn open(key: String, namespace: LoafNamespace, dir: PathBuf, name: &str) -> Result<Self, LoafIndexError> {
         let path = dir.join(format!("{}.incnlib", artifact_stem(name)));
