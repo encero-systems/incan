@@ -2009,3 +2009,62 @@ fn assert_declared_record_namespace() -> Result<(), Box<dyn std::error::Error>> 
     }
     Ok(())
 }
+
+/// A plain implementation inherits the explicit trait input contract before its body and callers are checked.
+#[test]
+fn trait_implementation_inherits_explicit_input_contract() -> Result<(), Box<dyn std::error::Error>> {
+    for (mode, access) in [
+        ("Borrowed", incan_semantics_core::IncanInputAccess::Shared),
+        ("BorrowedMut", incan_semantics_core::IncanInputAccess::Exclusive),
+        ("Owned", incan_semantics_core::IncanInputAccess::Owned),
+    ] {
+        let source = format!(
+            "trait Observe:\n    def observe[T](self, value: {mode}[T]) -> None:\n        pass\nclass Observer with Observe:\n    def observe[T](self, value: T) -> None:\n        pass\n"
+        );
+        let (program, facts, seed) = checked_seed(&source)?;
+        let crate::ast::Declaration::Class(owner) = &program.declarations[1].node else {
+            return Err("missing Observer class".into());
+        };
+        let span = owner.methods[0].span;
+        let body = seed
+            .bodies
+            .iter()
+            .find(|body| {
+                body.canonical
+                    .as_ref()
+                    .is_some_and(|identity| identity.declaration_span == span)
+            })
+            .ok_or("missing concrete observe body")?;
+        assert_eq!(body.params[1].input_access, access, "{mode}: {body:#?}");
+        assert!(
+            matches!(body.params[1].ty, incan_semantics_core::IncanType::TypeVar(_)),
+            "body type {:?}; binding {:?}; contracts {:?}",
+            body.params[1].ty,
+            facts.declarations.method_bindings_by_span.get(&span),
+            facts.declarations.ownership_contracts
+        );
+    }
+    Ok(())
+}
+
+/// An abstract trait declares the input ABI but does not acquire a fabricated executable body.
+#[test]
+fn abstract_trait_inputs_govern_the_concrete_body() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "trait Observe:\n    def observe[T](self, value: Borrowed[T]) -> None: ...\nclass Observer with Observe:\n    def observe[T](self, value: T) -> None:\n        pass\n";
+    let (_, _, seed) = checked_seed(source)?;
+    assert_eq!(
+        seed.bodies.len(),
+        1,
+        "{:?}",
+        seed.bodies.iter().map(|body| &body.name).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        seed.bodies[0].params[1].input_access,
+        incan_semantics_core::IncanInputAccess::Shared
+    );
+    assert!(matches!(
+        seed.bodies[0].params[1].ty,
+        incan_semantics_core::IncanType::TypeVar(_)
+    ));
+    Ok(())
+}

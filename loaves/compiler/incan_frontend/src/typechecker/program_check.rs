@@ -212,6 +212,14 @@ impl TypeChecker {
         self.const_eval_state.clear();
         self.const_eval_cache.clear();
         self.type_info = TypeCheckInfo::default();
+        if preserve_dependency_semantics {
+            self.type_info
+                .declarations
+                .ownership_contracts
+                .clone_from(&self.dependency_method_input_contracts);
+        } else {
+            self.dependency_method_input_contracts.clear();
+        }
         self.type_info.declarations.record_package_identity = self.record_package_identity.clone();
         self.warnings.clear();
         self.errors.clear();

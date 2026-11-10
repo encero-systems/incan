@@ -60,6 +60,7 @@ impl TypeChecker {
         self.resolve_pending_trait_supertraits();
         self.settle_method_scopes(&module_ast.declarations);
         self.infer_hash_key_type_params(&module_ast.declarations, false);
+        self.collect_imported_method_ownership_headers(module_ast);
         self.register_dependency_derivable_metadata(module_name, module_ast);
         self.cache_dependency_direct_member_symbols(module_name, module_ast, true);
         self.cache_dependency_registry_definitions(module_name, module_ast, true);
@@ -149,6 +150,7 @@ impl TypeChecker {
         self.resolve_pending_trait_supertraits();
         self.settle_method_scopes(&module_ast.declarations);
         self.infer_hash_key_type_params(&module_ast.declarations, false);
+        self.collect_imported_method_ownership_headers(module_ast);
         self.register_dependency_derivable_metadata(module_name, module_ast);
         self.cache_dependency_direct_member_symbols(module_name, module_ast, false);
         self.cache_dependency_registry_definitions(module_name, module_ast, false);
@@ -444,6 +446,7 @@ impl TypeChecker {
         )
         .entered();
         self.dependency_semantics_pending = false;
+        self.dependency_method_input_contracts.clear();
         self.hash_key_inference.type_params.clear();
         self.transitive_pub_types.clear();
         self.public_library_type_identities.clear();
@@ -552,6 +555,7 @@ impl TypeChecker {
         )
         .entered();
         self.dependency_semantics_pending = false;
+        self.dependency_method_input_contracts.clear();
         self.hash_key_inference.type_params.clear();
         self.transitive_pub_types.clear();
         self.public_library_type_identities.clear();
