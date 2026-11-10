@@ -10,10 +10,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::library_manifest::LibraryManifest;
+use crate::library_manifest::{
+    AliasExport, ClassExport, ConstExport, EnumExport, FunctionExport, LibraryContractMetadata, LibraryExports,
+    LibraryManifest, LibraryRustAbi, MadePrivateTypeExport, ModelExport, NewtypeExport, PartialExport,
+    SoftKeywordActivation, SoftKeywordExports, StaticExport, TraitExport, TypeAliasExport, VocabExports,
+};
 
 use super::lazy_entry::Summary;
 use super::{LoafIdentity, LoafIndexError};
@@ -21,8 +26,8 @@ use super::{LoafIdentity, LoafIndexError};
 const ROOT_ENV: &str = "INCAN_COMPILER_RECORD_ROOT";
 const DIGEST_ENV: &str = "INCAN_COMPILER_RECORD_DIGEST";
 const SET_FORMAT: &str = "incan.sealed-set/2";
-const RECORD_PROFILE: &str = "incan.compiler-records/1";
-const RECORD_CODEC: &str = "json/1";
+const RECORD_PROFILE: &str = "incan.compiler-records/2";
+const RECORD_CODEC: &str = "incan.compiler-record-value/1";
 const RECORD_ORIGIN: &str = "installed-toolchain";
 
 static INSTALLED: OnceLock<Result<Option<RecordSet>, String>> = OnceLock::new();
@@ -96,9 +101,10 @@ pub(super) fn summary(dir: &Path, name: &str) -> Result<Option<Summary>, LoafInd
             ),
         ));
     }
-    let metadata: Metadata =
-        serde_json::from_str(&read_value(&set.root, &entry.value).map_err(|reason| unreadable(dir, name, reason))?)
-            .map_err(|error| unreadable(dir, name, format!("invalid compiler-record metadata: {error}")))?;
+    let metadata: Metadata = LibraryManifest::decode_compiler_record_value(
+        &read_value(&set.root, &entry.value).map_err(|reason| unreadable(dir, name, reason))?,
+    )
+    .map_err(|error| unreadable(dir, name, format!("invalid compiler-record metadata: {error}")))?;
     if metadata.name != name {
         return Err(unreadable(
             dir,
@@ -155,35 +161,136 @@ pub(super) fn read(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest
         records = entries.len()
     )
     .entered();
-    let mut families: BTreeMap<&str, Vec<(usize, String)>> = BTreeMap::new();
-    for entry in entries {
-        let identity = entry
-            .key
-            .strip_prefix(&prefix)
-            .ok_or_else(|| unreadable(dir, name, "compiler-record key escaped its package prefix".to_owned()))?;
-        let fields = identity.split('/').collect::<Vec<_>>();
-        let [family, index, name_digest] = fields.as_slice() else {
-            return Err(unreadable(
-                dir,
-                name,
-                format!("malformed compiler-record key `{identity}`"),
-            ));
-        };
-        let index = index
-            .parse::<usize>()
-            .map_err(|error| unreadable(dir, name, format!("malformed compiler-record index: {error}")))?;
-        valid_digest(name_digest).map_err(|reason| unreadable(dir, name, reason))?;
-        if entry.revision != entry.value {
-            return Err(unreadable(
-                dir,
-                name,
-                format!(
-                    "compiler-record `{}` has distinct revision and value identities",
-                    entry.key
-                ),
-            ));
-        }
-        let value = read_value(&set.root, &entry.value).map_err(|reason| unreadable(dir, name, reason))?;
+    let selected = select_records(entries, &prefix, dir, name)?;
+    let records = selected.len();
+    let opened = {
+        let _open = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::open_compiler_record_group",
+            loaf = name,
+            records
+        )
+        .entered();
+        validate_payload_directory(&set.root).map_err(|reason| unreadable(dir, name, reason))?;
+        let opened = selected
+            .into_iter()
+            .map(|(family, index, entry)| {
+                open_value(&set.root, &entry.value)
+                    .map(|bytes| (family, index, entry, bytes))
+                    .map_err(|reason| unreadable(dir, name, reason))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let bytes = opened.iter().map(|(_, _, _, value)| value.len()).sum::<usize>();
+        tracing::trace!(target: "incan::invocation", phase = "open", loaf = name, records, bytes);
+        opened
+    };
+    let bytes = opened.iter().map(|(_, _, _, value)| value.len()).sum::<usize>();
+    let verified = {
+        let _verification = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::verify_compiler_record_group",
+            loaf = name,
+            records,
+            bytes
+        )
+        .entered();
+        let verified = opened
+            .into_iter()
+            .map(|(family, index, entry, bytes)| {
+                if entry.revision != entry.value {
+                    return Err(unreadable(
+                        dir,
+                        name,
+                        format!(
+                            "compiler-record `{}` has distinct revision and value identities",
+                            entry.key
+                        ),
+                    ));
+                }
+                Ok((family, index, bytes))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        tracing::trace!(target: "incan::invocation", phase = "verification", loaf = name, records, bytes);
+        verified
+    };
+    let families = {
+        let _materialization = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::materialize_compiler_record_group",
+            loaf = name,
+            records,
+            bytes
+        )
+        .entered();
+        let materialized = materialize(verified, dir, name)?;
+        tracing::trace!(target: "incan::invocation", phase = "materialization", loaf = name, records, bytes);
+        materialized
+    };
+    let (manifest, manifest_digest) = {
+        let _decode = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::decode_compiler_record_group",
+            loaf = name,
+            records,
+            bytes
+        )
+        .entered();
+        let manifest = decode_manifest(families, dir, name)?;
+        tracing::trace!(target: "incan::invocation", phase = "decode", loaf = name, records, bytes);
+        manifest
+    };
+    Ok(Some((Arc::new(manifest), manifest_digest)))
+}
+
+/// Validate and select one Loaf group's record identities without opening their independently addressed values.
+fn select_records<'a>(
+    entries: Vec<&'a RecordEntry>,
+    prefix: &str,
+    dir: &Path,
+    name: &str,
+) -> Result<Vec<(&'a str, usize, &'a RecordEntry)>, LoafIndexError> {
+    let _selection = tracing::trace_span!(
+        target: "incan::invocation",
+        "incan_frontend::classify_compiler_record_group",
+        loaf = name,
+        records = entries.len()
+    )
+    .entered();
+    entries
+        .into_iter()
+        .map(|entry| {
+            let identity = entry
+                .key
+                .strip_prefix(prefix)
+                .ok_or_else(|| unreadable(dir, name, "compiler-record key escaped its package prefix".to_owned()))?;
+            let fields = identity.split('/').collect::<Vec<_>>();
+            let [family, index, name_digest] = fields.as_slice() else {
+                return Err(unreadable(
+                    dir,
+                    name,
+                    format!("malformed compiler-record key `{identity}`"),
+                ));
+            };
+            let index = index
+                .parse::<usize>()
+                .map_err(|error| unreadable(dir, name, format!("malformed compiler-record index: {error}")))?;
+            valid_digest(name_digest).map_err(|reason| unreadable(dir, name, reason))?;
+            Ok((*family, index, entry))
+        })
+        .collect()
+}
+
+/// Independently addressed values grouped by the family and ordinal already validated from their record identities.
+type RecordFamilies<'a> = BTreeMap<&'a str, Vec<(usize, Vec<u8>)>>;
+
+/// Order one authenticated group by its selected family identities without decoding its values.
+fn materialize<'a>(
+    records: Vec<(&'a str, usize, Vec<u8>)>,
+    dir: &Path,
+    name: &str,
+) -> Result<RecordFamilies<'a>, LoafIndexError> {
+    let mut families: RecordFamilies<'a> = BTreeMap::new();
+    for (family, index, value) in records {
         families.entry(family).or_default().push((index, value));
     }
     for values in families.values_mut() {
@@ -196,8 +303,16 @@ pub(super) fn read(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest
             ));
         }
     }
-    let metadata: Metadata = serde_json::from_str(&single(&mut families, "metadata", name, dir)?)
-        .map_err(|error| unreadable(dir, name, format!("invalid compiler-record metadata: {error}")))?;
+    Ok(families)
+}
+
+/// Decode each selected record directly into its family type after installation admitted the complete manifest.
+fn decode_manifest(
+    mut families: RecordFamilies<'_>,
+    dir: &Path,
+    name: &str,
+) -> Result<(LibraryManifest, String), LoafIndexError> {
+    let metadata: Metadata = decode_single(&mut families, "metadata", name, dir)?;
     if metadata.name != name {
         return Err(unreadable(
             dir,
@@ -206,35 +321,36 @@ pub(super) fn read(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest
         ));
     }
     valid_digest(&metadata.manifest_digest).map_err(|reason| unreadable(dir, name, reason))?;
-    let encoded = format!(
-        concat!(
-            "{{\"name\":{},\"version\":{},\"incan_version\":{},\"manifest_format\":{},",
-            "\"exports\":{{\"aliases\":{},\"partials\":{},\"models\":{},\"classes\":{},",
-            "\"functions\":{},\"traits\":{},\"enums\":{},\"type_aliases\":{},\"newtypes\":{},",
-            "\"consts\":{},\"statics\":{}}},\"made_private_types\":{},\"vocab\":{},",
-            "\"soft_keywords\":{{\"activations\":{}}},\"contract_metadata\":{},\"rust_abi\":{}}}"
-        ),
-        serde_json::to_string(&metadata.name).map_err(|error| unreadable(dir, name, error.to_string()))?,
-        serde_json::to_string(&metadata.version).map_err(|error| unreadable(dir, name, error.to_string()))?,
-        serde_json::to_string(&metadata.incan_version).map_err(|error| unreadable(dir, name, error.to_string()))?,
-        metadata.manifest_format,
-        array_values(&mut families, "alias"),
-        array_values(&mut families, "partial"),
-        array_values(&mut families, "model"),
-        array_values(&mut families, "class"),
-        array_values(&mut families, "function"),
-        array_values(&mut families, "trait"),
-        array_values(&mut families, "enum"),
-        array_values(&mut families, "type-alias"),
-        array_values(&mut families, "newtype"),
-        array_values(&mut families, "const"),
-        array_values(&mut families, "static"),
-        array_values(&mut families, "made-private-type"),
-        optional(&mut families, "vocabulary", name, dir)?,
-        array_values(&mut families, "soft-keyword"),
-        single(&mut families, "contract-metadata", name, dir)?,
-        optional(&mut families, "rust-abi", name, dir)?,
-    );
+    let vocab = optional_value(&mut families, "vocabulary", name, dir)?
+        .map(|value| VocabExports::decode_compiler_record_value(&value))
+        .transpose()
+        .map_err(|error| unreadable(dir, name, format!("invalid compiler-record vocabulary: {error}")))?;
+    let manifest = LibraryManifest {
+        name: metadata.name,
+        version: metadata.version,
+        incan_version: metadata.incan_version,
+        manifest_format: metadata.manifest_format,
+        exports: LibraryExports {
+            aliases: decode_values::<AliasExport>(&mut families, "alias", name, dir)?,
+            partials: decode_values::<PartialExport>(&mut families, "partial", name, dir)?,
+            models: decode_values::<ModelExport>(&mut families, "model", name, dir)?,
+            classes: decode_values::<ClassExport>(&mut families, "class", name, dir)?,
+            functions: decode_values::<FunctionExport>(&mut families, "function", name, dir)?,
+            traits: decode_values::<TraitExport>(&mut families, "trait", name, dir)?,
+            enums: decode_values::<EnumExport>(&mut families, "enum", name, dir)?,
+            type_aliases: decode_values::<TypeAliasExport>(&mut families, "type-alias", name, dir)?,
+            newtypes: decode_values::<NewtypeExport>(&mut families, "newtype", name, dir)?,
+            consts: decode_values::<ConstExport>(&mut families, "const", name, dir)?,
+            statics: decode_values::<StaticExport>(&mut families, "static", name, dir)?,
+        },
+        made_private_types: decode_values::<MadePrivateTypeExport>(&mut families, "made-private-type", name, dir)?,
+        vocab,
+        soft_keywords: SoftKeywordExports {
+            activations: decode_values::<SoftKeywordActivation>(&mut families, "soft-keyword", name, dir)?,
+        },
+        contract_metadata: decode_single::<LibraryContractMetadata>(&mut families, "contract-metadata", name, dir)?,
+        rust_abi: decode_optional::<LibraryRustAbi>(&mut families, "rust-abi", name, dir)?,
+    };
     if let Some((family, _)) = families.first_key_value() {
         return Err(unreadable(
             dir,
@@ -242,9 +358,7 @@ pub(super) fn read(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest
             format!("unsupported compiler-record family `{family}`"),
         ));
     }
-    let manifest = LibraryManifest::from_compiler_record_json(&encoded)
-        .map_err(|error| unreadable(dir, name, format!("invalid installed compiler records: {error}")))?;
-    Ok(Some((Arc::new(manifest), metadata.manifest_digest)))
+    Ok((manifest, metadata.manifest_digest))
 }
 
 /// Return the process's one immutable installed set; the worker cannot select another root between requests.
@@ -321,36 +435,45 @@ fn digest_matches(bytes: &[u8], expected: &str) -> bool {
     })
 }
 
-/// Read and authenticate one immutable value file from the sealed transport.
-fn read_value(root: &Path, digest: &str) -> Result<String, String> {
+/// Read one immutable value after the installed set receipt authenticated its content identity and location.
+fn read_value(root: &Path, digest: &str) -> Result<Vec<u8>, String> {
+    validate_payload_directory(root)?;
+    open_value(root, digest)
+}
+
+/// Refuse replacement of the immutable payload directory once before opening a selected record group.
+fn validate_payload_directory(root: &Path) -> Result<(), String> {
+    let directory = root.join("payloads");
+    if fs::symlink_metadata(&directory)
+        .map_err(|error| error.to_string())?
+        .file_type()
+        .is_symlink()
+    {
+        return Err(format!(
+            "compiler-record payload directory is a symbolic link: {}",
+            directory.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Open one canonical value selected by the authenticated set receipt, refusing symbolic-link substitution.
+fn open_value(root: &Path, digest: &str) -> Result<Vec<u8>, String> {
     valid_digest(digest)?;
     let directory = root.join("payloads");
     let path = directory.join(digest);
-    let bytes = {
-        if fs::symlink_metadata(&directory)
-            .map_err(|error| error.to_string())?
-            .file_type()
-            .is_symlink()
-            || fs::symlink_metadata(&path)
-                .map_err(|error| error.to_string())?
-                .file_type()
-                .is_symlink()
-        {
-            return Err(format!("compiler-record object is a symbolic link: {}", path.display()));
-        }
-        fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?
-    };
-    if !digest_matches(&bytes, digest) {
-        return Err(format!(
-            "compiler-record object differs from its content name: {}",
-            path.display()
-        ));
+    if fs::symlink_metadata(&path)
+        .map_err(|error| error.to_string())?
+        .file_type()
+        .is_symlink()
+    {
+        return Err(format!("compiler-record object is a symbolic link: {}", path.display()));
     }
-    String::from_utf8(bytes).map_err(|error| format!("compiler-record object is not UTF-8 JSON: {error}"))
+    fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))
 }
 
 /// Remove all ordered values for one repeatable record family.
-fn values(families: &mut BTreeMap<&str, Vec<(usize, String)>>, family: &str) -> Vec<String> {
+fn values(families: &mut RecordFamilies<'_>, family: &str) -> Vec<Vec<u8>> {
     families
         .remove(family)
         .unwrap_or_default()
@@ -359,18 +482,29 @@ fn values(families: &mut BTreeMap<&str, Vec<(usize, String)>>, family: &str) -> 
         .collect()
 }
 
-/// Assemble authenticated JSON values as one array without decoding and re-encoding each member.
-fn array_values(families: &mut BTreeMap<&str, Vec<(usize, String)>>, family: &str) -> String {
-    format!("[{}]", values(families, family).join(","))
-}
-
-/// Remove exactly one required value for a singleton family.
-fn single(
-    families: &mut BTreeMap<&str, Vec<(usize, String)>>,
+/// Decode every ordered value of one repeatable family through the profile's exact compact codec.
+fn decode_values<T: DeserializeOwned>(
+    families: &mut RecordFamilies<'_>,
     family: &str,
     name: &str,
     dir: &Path,
-) -> Result<String, LoafIndexError> {
+) -> Result<Vec<T>, LoafIndexError> {
+    values(families, family)
+        .into_iter()
+        .map(|value| {
+            LibraryManifest::decode_compiler_record_value(&value)
+                .map_err(|error| unreadable(dir, name, format!("invalid compiler-record family `{family}`: {error}")))
+        })
+        .collect()
+}
+
+/// Remove exactly one required value for a singleton family.
+fn single_value(
+    families: &mut RecordFamilies<'_>,
+    family: &str,
+    name: &str,
+    dir: &Path,
+) -> Result<Vec<u8>, LoafIndexError> {
     let mut selected = values(families, family);
     if selected.len() != 1 {
         return Err(unreadable(
@@ -385,12 +519,12 @@ fn single(
 }
 
 /// Remove zero or one value for an optional singleton family.
-fn optional(
-    families: &mut BTreeMap<&str, Vec<(usize, String)>>,
+fn optional_value(
+    families: &mut RecordFamilies<'_>,
     family: &str,
     name: &str,
     dir: &Path,
-) -> Result<String, LoafIndexError> {
+) -> Result<Option<Vec<u8>>, LoafIndexError> {
     let mut selected = values(families, family);
     if selected.len() > 1 {
         return Err(unreadable(
@@ -399,7 +533,34 @@ fn optional(
             format!("compiler-record family `{family}` has multiple values"),
         ));
     }
-    Ok(selected.pop().unwrap_or_else(|| "null".to_owned()))
+    Ok(selected.pop())
+}
+
+/// Decode exactly one required family value after enforcing its singleton cardinality.
+fn decode_single<T: DeserializeOwned>(
+    families: &mut RecordFamilies<'_>,
+    family: &str,
+    name: &str,
+    dir: &Path,
+) -> Result<T, LoafIndexError> {
+    let value = single_value(families, family, name, dir)?;
+    LibraryManifest::decode_compiler_record_value(&value)
+        .map_err(|error| unreadable(dir, name, format!("invalid compiler-record family `{family}`: {error}")))
+}
+
+/// Decode an optional singleton family while preserving absence independently from a malformed value.
+fn decode_optional<T: DeserializeOwned>(
+    families: &mut RecordFamilies<'_>,
+    family: &str,
+    name: &str,
+    dir: &Path,
+) -> Result<Option<T>, LoafIndexError> {
+    optional_value(families, family, name, dir)?
+        .map(|value| {
+            LibraryManifest::decode_compiler_record_value(&value)
+                .map_err(|error| unreadable(dir, name, format!("invalid compiler-record family `{family}`: {error}")))
+        })
+        .transpose()
 }
 
 /// Require a JSON array of one exact arity.

@@ -232,6 +232,16 @@ impl VocabExports {
         serde_json::to_string(&RawVocabExports::from_semantic(self))
             .map_err(|error| LibraryManifestError::Serialize(error.to_string()))
     }
+
+    /// Encode one vocabulary record through the private wire shape shared with complete library manifests.
+    pub fn encode_compiler_record_value(&self) -> Result<Vec<u8>, LibraryManifestError> {
+        LibraryManifest::encode_compiler_record_value(&RawVocabExports::from_semantic(self))
+    }
+
+    /// Decode one authenticated vocabulary record without exposing the private manifest wire type.
+    pub(crate) fn decode_compiler_record_value(content: &[u8]) -> Result<Self, LibraryManifestError> {
+        LibraryManifest::decode_compiler_record_value::<RawVocabExports>(content).map(RawVocabExports::into_semantic)
+    }
 }
 
 /// Packaged compile-time desugarer artifact metadata.

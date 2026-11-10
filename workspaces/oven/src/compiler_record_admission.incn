@@ -13,8 +13,8 @@ from observation import file_digest
 from sealed_set import Profile, Record, SetSpec, admit, export_set
 from store_path_conversion import snapshot
 
-pub const COMPILER_RECORD_PROFILE: str = "incan.compiler-records/1"
-const EXPORT_SCHEMA: str = "incan.compiler-record-export/1"
+pub const COMPILER_RECORD_PROFILE: str = "incan.compiler-records/2"
+const EXPORT_SCHEMA: str = "incan.compiler-record-export/2"
 
 
 pub model CompilerRecordPin:
@@ -86,7 +86,7 @@ pub def convert(driver: str, installed: Path, installation: Path) -> Result[Comp
 
 pub def compiler_record_profile() -> Profile:
     """The exact identity, value schema and codec accepted for installed compiler records."""
-    return Profile(identity=COMPILER_RECORD_PROFILE, schema=COMPILER_RECORD_PROFILE, codec="json/1")
+    return Profile(identity=COMPILER_RECORD_PROFILE, schema=COMPILER_RECORD_PROFILE, codec="incan.compiler-record-value/1")
 
 
 def write_value(view: Snapshot, key: str, value: bytes) -> Result[Snapshot, str]:
