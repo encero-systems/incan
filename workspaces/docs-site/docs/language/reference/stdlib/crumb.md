@@ -187,15 +187,16 @@ All calls share the request budget. Construction and returned registration copie
 
 | Type | Fields |
 | --- | --- |
-| `.row_descriptions.Description` | `metadata: Metadata`, `mode: DescriptionMode` |
-| `.row_descriptions.DescriptionMode` | `Inline` or `Reference` |
-| `.row_writer.RowRecord` | `key: bytes`, `value: Value` |
+| `.descriptions.Description` | `metadata: Metadata`, `mode: DescriptionMode` |
+| `.descriptions.DescriptionMode` | `Inline` or `Reference` |
+| `.records.RowRecord` | `key: bytes`, `value: Value` |
 
 `key` is the complete closed nominal selector K, including its argument framing. A record's `Value.Record` fields retain their exact stored identities, canonical flags and absent policies. Enum roots use `Value.Enum` with their stored variant identity. A reference-mode description still supplies its complete metadata to the writer; the envelope carries K and the derived complete-description digest instead of inline metadata.
 
 ```incan
-from std.primitives.crumb.row_writer import RowRecord, write_rows
-from std.primitives.crumb.row_descriptions import Description, DescriptionMode
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.row_writer import write_rows
+from std.primitives.crumb.descriptions import Description, DescriptionMode
 ```
 
 | API | Return type | Contract |
@@ -216,20 +217,20 @@ Presence bits remove only the declared outer absence. Nested `Some(None)` remain
 
 ```incan
 from std.primitives.crumb.row_reader import RowSet, read_rows, read_prefix
-from std.primitives.crumb.row_errors import RowError, RowFailure
+from std.primitives.crumb.encoding_errors import BinaryError, BinaryFailure
 from std.primitives.views import MappedView
 ```
 
 | API | Return type | Contract |
 | --- | --- | --- |
-| `read_rows(view: MappedView, supplied: list[Description], registry: KindRegistry, require_sealed: bool, mut budget: Budget)` | `Result[RowSet, RowError]` | Admit exactly one complete envelope. Any bytes after its framed boundary are trailing data. Every argument is explicit. |
-| `read_prefix(view: MappedView, supplied: list[Description], registry: KindRegistry, require_sealed: bool, mut budget: Budget)` | `Result[tuple[RowSet, int], RowError]` | Admit one complete leading envelope and return its consumed byte length. Remaining bytes belong to the caller; this does not report transport completion. |
+| `read_rows(view: MappedView, supplied: list[Description], registry: KindRegistry, require_sealed: bool, mut budget: Budget)` | `Result[RowSet, BinaryError]` | Admit exactly one complete envelope. Any bytes after its framed boundary are trailing data. Every argument is explicit. |
+| `read_prefix(view: MappedView, supplied: list[Description], registry: KindRegistry, require_sealed: bool, mut budget: Budget)` | `Result[tuple[RowSet, int], BinaryError]` | Admit one complete leading envelope and return its consumed byte length. Remaining bytes belong to the caller; this does not report transport completion. |
 | `rows.len()` | `int` | Return the admitted record count. |
 | `rows.is_sealed()` | `bool` | Report whether the complete logical seal was verified, not merely whether a flag was present. |
-| `rows.descriptions(mut budget: Budget)` | `Result[list[Description], RowError]` | Copy complete written descriptions and original inline/reference modes, retaining unknown metadata and declaration order. |
-| `rows.read_record(index: int, mut budget: Budget)` | `Result[RowRecord, RowError]` | Explicitly materialize one complete format value with its original K. No application constructor, normalization or final model validation runs. |
-| `rows.field_view(index: int, identity: bytes, mut budget: Budget)` | `Result[Option[MappedView], RowError]` | Return an independently retained encoded cell range. `None` means declared stored absence. An unknown field is an error. |
-| `rows.read_field(index: int, identity: bytes, mut budget: Budget)` | `Result[Value, RowError]` | Materialize only the selected stored field after complete admission; declared absence becomes its typed `Value`. |
+| `rows.descriptions(mut budget: Budget)` | `Result[list[Description], BinaryError]` | Copy complete written descriptions and original inline/reference modes, retaining unknown metadata and declaration order. |
+| `rows.read_record(index: int, mut budget: Budget)` | `Result[RowRecord, BinaryError]` | Explicitly materialize one complete format value with its original K. No application constructor, normalization or final model validation runs. |
+| `rows.field_view(index: int, identity: bytes, mut budget: Budget)` | `Result[Option[MappedView], BinaryError]` | Return an independently retained encoded cell range. `None` means declared stored absence. An unknown field is an error. |
+| `rows.read_field(index: int, identity: bytes, mut budget: Budget)` | `Result[Value, BinaryError]` | Materialize only the selected stored field after complete admission; declared absence becomes its typed `Value`. |
 
 Record indexes are zero-based and nonnegative. A field identity is exactly six bytes. Enum records select fields from their admitted variant payload. Selection binary-searches identity order, counts preceding present eligible bits and reads two directly addressed offsets. The offset lookup does not scan preceding offsets; bitmap rank still scans preceding bitmap bytes. It is not a constant-time lookup claim for arbitrarily wide records.
 
@@ -241,9 +242,9 @@ An absent-policy optional cell omits its outer option tag. `field_view` returns 
 
 ### Row failures
 
-`RowError` contains `kind: RowFailure`, `offset: int`, `field: Option[bytes] = None`, `variant: Option[bytes] = None` and `cause: Option[CrumbError] = None`. Offsets are relative to the supplied view. Field and variant identities identify the deepest available context. `message() -> str` reports the category and position without including input payloads.
+`BinaryError` contains `kind: BinaryFailure`, `offset: int`, `field: Option[bytes] = None`, `variant: Option[bytes] = None` and `cause: Option[CrumbError] = None`. Offsets are relative to the supplied view. Field and variant identities identify the deepest available context. `message() -> str` reports the category and position without including input payloads.
 
-| `RowFailure` categories | Meaning |
+| `BinaryFailure` categories | Meaning |
 | --- | --- |
 | `BadMagic`, `UnsupportedProfile`, `ReservedFlags` | Invalid header or unsupported codec/value profile/dictionary mode. |
 | `NoncanonicalInteger`, `IntegerOverflow`, `Truncated`, `TrailingBytes` | Nonminimal number, length beyond u64, incomplete frame or bytes beyond an exact boundary. A valid u64 length beyond the host range is `LimitExceeded`. |

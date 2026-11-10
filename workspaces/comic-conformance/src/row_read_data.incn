@@ -1,7 +1,7 @@
 """Translate decoder facts to test notation and typed failures to independent corpus categories."""
 
 from std.json import JsonValue
-from std.primitives.crumb.row_errors import RowFailure
+from std.primitives.crumb.encoding_errors import BinaryFailure
 from std.primitives.crumb.values import Metadata
 from std.primitives.hex import hexlify
 
@@ -36,6 +36,6 @@ pub def metadata_notation(value: Metadata) -> JsonValue:
     return JsonValue.object(result)
 
 
-pub def category(kind: RowFailure) -> str:
+pub def category(kind: BinaryFailure) -> str:
     """Match typed refusal categories; diagnostic wording is never parsed as a test outcome."""
     return kind.value()

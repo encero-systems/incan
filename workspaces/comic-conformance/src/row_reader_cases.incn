@@ -4,12 +4,13 @@ from std.json import JsonValue
 from std.primitives.crumb import Budget
 from std.primitives.crumb.hashes import value_hash
 from std.primitives.crumb.registrations import KindRegistry
-from std.primitives.crumb.row_descriptions import Description, DescriptionMode
+from std.primitives.crumb.descriptions import Description, DescriptionMode
 from std.primitives.crumb.row_reader import RowSet, read_rows
-from std.primitives.crumb.row_writer import RowRecord, write_rows
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.row_writer import write_rows
 from std.primitives.crumb.values import Projection
 from std.primitives.hex import hexlify
-from row_test_support import backing
+from encoding_test_support import backing
 from case_data import array, field, hex_bytes, text
 from hash_data import metadata
 from row_case_values import record_value

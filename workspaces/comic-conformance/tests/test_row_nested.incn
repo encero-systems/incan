@@ -1,12 +1,12 @@
 """Finite recursive values and same-shaped nominal union members retain their written meaning."""
 
 from std.primitives.crumb import Budget
-from std.primitives.crumb.row_writer import RowRecord
-from std.primitives.crumb.row_descriptions import Description, DescriptionMode
-from std.primitives.crumb.row_errors import RowFailure
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.descriptions import Description, DescriptionMode
+from std.primitives.crumb.encoding_errors import BinaryFailure
 from std.primitives.crumb.types import AbsentPolicy, NominalKind, TypeNode
 from std.primitives.crumb.values import Value, ValueField, Metadata, MetadataEntry
-from row_test_support import description, member, encoded, admitted
+from encoding_test_support import description, member, encoded, admitted
 
 
 def stored(value: Value) -> Value:
@@ -37,7 +37,7 @@ def test_recursive_nominal_values_are_finite_and_share_depth() -> Result[None, s
     match rows.read_field(0, b"field1", shallow):
         Ok(_) => return Err("recursive selection escaped the depth budget")
         Err(error) =>
-            assert error.kind == RowFailure.LimitExceeded
+            assert error.kind == BinaryFailure.LimitExceeded
     assert shallow.leave().is_err()
     return Ok(None)
 
@@ -96,12 +96,12 @@ def test_enum_projection_retains_known_variant_context() -> Result[None, str]:
     match rows.field_view(0, b"absent", budget):
         Ok(_) => return Err("unknown enum field accepted")
         Err(error) =>
-            assert error.kind == RowFailure.MissingField
+            assert error.kind == BinaryFailure.MissingField
             assert error.variant == Some(b"tagone")
     mut tiny = Budget.create(bytes=0, elements=64, depth=64).map_err((e) => e.message())?
     match rows.read_field(0, b"field1", tiny):
         Ok(_) => return Err("enum projection escaped the byte budget")
         Err(error) =>
-            assert error.kind == RowFailure.LimitExceeded
+            assert error.kind == BinaryFailure.LimitExceeded
             assert error.variant == Some(b"tagone")
     return Ok(None)

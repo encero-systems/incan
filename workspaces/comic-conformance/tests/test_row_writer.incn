@@ -3,8 +3,9 @@
 from std.primitives.crumb import Budget
 from std.primitives.hex import hexlify
 from std.primitives.crumb.registrations import KindRegistry
-from std.primitives.crumb.row_descriptions import Description, DescriptionMode
-from std.primitives.crumb.row_writer import RowRecord, write_rows
+from std.primitives.crumb.descriptions import Description, DescriptionMode
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.row_writer import write_rows
 from std.primitives.crumb.types import AbsentPolicy
 from std.primitives.crumb.values import Metadata, MetadataEntry, Value, ValueField
 

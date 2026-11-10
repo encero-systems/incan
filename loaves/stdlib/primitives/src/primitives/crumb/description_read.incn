@@ -2,13 +2,13 @@
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.registrations import KindRegistry
-from crate.primitives.crumb.row_cursor import RowCursor, copied
-from crate.primitives.crumb.row_descriptions import Description, DescriptionMode, admit
-from crate.primitives.crumb.row_dictionary import Dictionary, admit_dictionary
-from crate.primitives.crumb.row_errors import RowError, RowFailure, failure, primitive
-from crate.primitives.crumb.row_metadata import get, binary, text, items, charge_copy
-from crate.primitives.crumb.row_metadata_read import read_metadata, bounded_count
-from crate.primitives.crumb.row_selectors import parse_key, parse_type
+from crate.primitives.crumb.encoding_cursor import EncodingCursor, copied
+from crate.primitives.crumb.descriptions import Description, DescriptionMode, admit
+from crate.primitives.crumb.description_dictionary import Dictionary, admit_dictionary
+from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive
+from crate.primitives.crumb.metadata_values import get, binary, text, items, charge_copy
+from crate.primitives.crumb.metadata_read import read_metadata, bounded_count
+from crate.primitives.crumb.selectors import parse_key, parse_type
 from crate.primitives.crumb.types import NominalKind
 from crate.primitives.crumb.values import Metadata, MetadataEntry
 from crate.primitives.hex import hexlify
@@ -16,11 +16,11 @@ from crate.primitives.views import MappedView
 
 
 pub def read_dictionary(
-    mut cursor: RowCursor,
+    mut cursor: EncodingCursor,
     supplied: list[Description],
     registry: KindRegistry,
     mut budget: Budget,
-) -> Result[Dictionary, RowError]:
+) -> Result[Dictionary, BinaryError]:
     """Validate wire order before ordinary admission; never sort malformed input into an accepted dictionary."""
     count = bounded_count(cursor, budget)?
     mut descriptions: list[Description] = []
@@ -38,30 +38,32 @@ pub def read_dictionary(
             view = cursor.frame(budget)?
             key = copied(view, offset, budget)?
             # K framing is independent of the unknown root kind; no shape is inferred here.
-            parse_key(key, NominalKind.Record, budget).map_err((e) => primitive(e, offset, RowFailure.InvalidSelector))?
+            parse_key(key, NominalKind.Record, budget).map_err(
+                (e) => primitive(e, offset, BinaryFailure.InvalidSelector),
+            )?
             digest_view = cursor.take(32, budget)?
             digest = copied(digest_view, offset, budget)?
             source = referenced(key, digest, supplied, registry, offset, budget)?
             selected = DescriptionMode.Reference
         else:
-            return Err(failure(RowFailure.UnsupportedProfile, offset))
+            return Err(failure(BinaryFailure.UnsupportedProfile, offset))
         validate_selectors(source, registry, offset, budget)?
         description = Description(metadata=source, mode=selected)
         checked = admit(description, registry, budget).map_err(
-            (e) => primitive(e, offset, RowFailure.InvalidDescription),
+            (e) => primitive(e, offset, BinaryFailure.InvalidDescription),
         )?
         for _ in range(2):
             budget.charge_bytes(len(checked.key)).map_err((e) => primitive(e, offset))?
         key_order = hexlify(checked.key)
         if key_order in seen:
-            return Err(failure(RowFailure.DuplicateSelector, offset))
+            return Err(failure(BinaryFailure.DuplicateSelector, offset))
         if index > 0 and key_order < previous:
-            return Err(failure(RowFailure.DescriptionOrder, offset))
+            return Err(failure(BinaryFailure.DescriptionOrder, offset))
         seen.add(key_order)
         previous = key_order
         descriptions.append(description)
     return admit_dictionary(descriptions, registry, budget).map_err(
-        (e) => primitive(e, cursor.absolute(), RowFailure.InvalidSelector),
+        (e) => primitive(e, cursor.absolute(), BinaryFailure.InvalidSelector),
     )
 
 
@@ -72,25 +74,27 @@ def referenced(
     registry: KindRegistry,
     offset: int,
     mut budget: Budget,
-) -> Result[Metadata, RowError]:
+) -> Result[Metadata, BinaryError]:
     """Resolve only the exact supplied K and complete D digest; there is no store/network fallback."""
     mut found_key = false
     for candidate in supplied:
         budget.charge_elements(1).map_err((e) => primitive(e, offset))?
         raw_key = binary(property(candidate.metadata, "nominal", offset, budget)?).map_err(
-            (e) => primitive(e, offset, RowFailure.InvalidDescription),
+            (e) => primitive(e, offset, BinaryFailure.InvalidDescription),
         )?
         if raw_key != key:
             continue
         found_key = true
         validate_selectors(candidate.metadata, registry, offset, budget)?
-        parsed = admit(candidate, registry, budget).map_err((e) => primitive(e, offset, RowFailure.InvalidDescription))?
+        parsed = admit(candidate, registry, budget).map_err(
+            (e) => primitive(e, offset, BinaryFailure.InvalidDescription),
+        )?
         if parsed.digest == digest:
             charge_copy(candidate.metadata, budget).map_err((e) => primitive(e, offset))?
             return Ok(candidate.metadata)
     if found_key:
-        return Err(failure(RowFailure.DescriptionMismatch, offset))
-    return Err(failure(RowFailure.MissingDescription, offset))
+        return Err(failure(BinaryFailure.DescriptionMismatch, offset))
+    return Err(failure(BinaryFailure.MissingDescription, offset))
 
 
 def inline_description(
@@ -98,15 +102,15 @@ def inline_description(
     origin: int,
     registry: KindRegistry,
     mut budget: Budget,
-) -> Result[Metadata, RowError]:
+) -> Result[Metadata, BinaryError]:
     """Recover only the member list; preserve every other header property exactly as decoded."""
-    mut cursor = RowCursor.create(view, origin)?
+    mut cursor = EncodingCursor.create(view, origin)?
     header_view = cursor.frame(budget)?
     header = read_metadata(header_view, cursor.absolute() - header_view.len(), budget)?
     name = text(property(header, "kind", origin, budget)?).map_err(
-        (e) => primitive(e, origin, RowFailure.InvalidDescription),
+        (e) => primitive(e, origin, BinaryFailure.InvalidDescription),
     )?
-    kind = registry.shape(name, budget).map_err((e) => primitive(e, origin, RowFailure.InvalidDescription))?
+    kind = registry.shape(name, budget).map_err((e) => primitive(e, origin, BinaryFailure.InvalidDescription))?
     members = read_members(cursor, kind == NominalKind.Enum, budget)?
     cursor.finished()?
     if kind == NominalKind.Record:
@@ -114,7 +118,7 @@ def inline_description(
     return with_members(header, "variants", members, origin, budget)
 
 
-def read_members(mut cursor: RowCursor, variants: bool, mut budget: Budget) -> Result[list[Metadata], RowError]:
+def read_members(mut cursor: EncodingCursor, variants: bool, mut budget: Budget) -> Result[list[Metadata], BinaryError]:
     """Check identity order and position permutation before reconstructing declaration order."""
     count = bounded_count(cursor, budget)?
     mut members: dict[int, Metadata] = {}
@@ -124,7 +128,7 @@ def read_members(mut cursor: RowCursor, variants: bool, mut budget: Budget) -> R
         offset = cursor.absolute()
         position = cursor.length(budget)?
         if position >= count or position in members:
-            return Err(failure(RowFailure.MemberPosition, offset))
+            return Err(failure(BinaryFailure.MemberPosition, offset))
         view = cursor.frame(budget)?
         origin = cursor.absolute() - view.len()
         mut member: Metadata = Metadata.Null
@@ -133,16 +137,16 @@ def read_members(mut cursor: RowCursor, variants: bool, mut budget: Budget) -> R
         else:
             member = read_metadata(view, origin, budget)?
         identity = binary(property(member, "id", offset, budget)?).map_err(
-            (e) => primitive(e, offset, RowFailure.InvalidDescription),
+            (e) => primitive(e, offset, BinaryFailure.InvalidDescription),
         )?
         if len(identity) != 6:
-            return Err(failure(RowFailure.InvalidDescription, offset))
+            return Err(failure(BinaryFailure.InvalidDescription, offset))
         budget.charge_bytes(12).map_err((e) => primitive(e, offset))?
         key = hexlify(identity)
         if key in seen:
-            return Err(failure(RowFailure.DuplicateMember, offset))
+            return Err(failure(BinaryFailure.DuplicateMember, offset))
         if index > 0 and key < previous:
-            return Err(failure(RowFailure.MemberOrder, offset))
+            return Err(failure(BinaryFailure.MemberOrder, offset))
         seen.add(key)
         previous = key
         members[position] = member
@@ -153,9 +157,9 @@ def read_members(mut cursor: RowCursor, variants: bool, mut budget: Budget) -> R
     return Ok(ordered)
 
 
-def read_variant(view: MappedView, origin: int, mut budget: Budget) -> Result[Metadata, RowError]:
+def read_variant(view: MappedView, origin: int, mut budget: Budget) -> Result[Metadata, BinaryError]:
     """An enum variant is a framed header plus its anonymous payload field table."""
-    mut cursor = RowCursor.create(view, origin)?
+    mut cursor = EncodingCursor.create(view, origin)?
     header_view = cursor.frame(budget)?
     header = read_metadata(header_view, cursor.absolute() - header_view.len(), budget)?
     fields = read_members(cursor, false, budget)?
@@ -169,21 +173,21 @@ def with_members(
     members: list[Metadata],
     offset: int,
     mut budget: Budget,
-) -> Result[Metadata, RowError]:
+) -> Result[Metadata, BinaryError]:
     """The wire header cannot already contain the removed list; unknown other properties remain intact."""
     match header:
         Metadata.Map(entries) =>
             mut complete: list[MetadataEntry] = []
             for entry in entries:
                 if entry.key == name:
-                    return Err(failure(RowFailure.InvalidDescription, offset))
+                    return Err(failure(BinaryFailure.InvalidDescription, offset))
                 for _ in range(4):
                     budget.charge_bytes(len(entry.key)).map_err((e) => primitive(e, offset))?
                 charge_copy(entry.value, budget).map_err((e) => primitive(e, offset))?
                 complete.append(entry)
             complete.append(MetadataEntry(key=name, value=Metadata.List(members)))
             return Ok(Metadata.Map(complete))
-        _ => return Err(failure(RowFailure.InvalidDescription, offset))
+        _ => return Err(failure(BinaryFailure.InvalidDescription, offset))
 
 
 def validate_selectors(
@@ -191,39 +195,39 @@ def validate_selectors(
     registry: KindRegistry,
     offset: int,
     mut budget: Budget,
-) -> Result[None, RowError]:
+) -> Result[None, BinaryError]:
     """Keep malformed K/N selectors distinguishable from unavailable descriptions and invalid metadata."""
     kind_name = text(property(source, "kind", offset, budget)?).map_err(
-        (e) => primitive(e, offset, RowFailure.InvalidDescription),
+        (e) => primitive(e, offset, BinaryFailure.InvalidDescription),
     )?
-    kind = registry.shape(kind_name, budget).map_err((e) => primitive(e, offset, RowFailure.InvalidDescription))?
+    kind = registry.shape(kind_name, budget).map_err((e) => primitive(e, offset, BinaryFailure.InvalidDescription))?
     key = binary(property(source, "nominal", offset, budget)?).map_err(
-        (e) => primitive(e, offset, RowFailure.InvalidDescription),
+        (e) => primitive(e, offset, BinaryFailure.InvalidDescription),
     )?
-    parse_key(key, kind, budget).map_err((e) => primitive(e, offset, RowFailure.InvalidSelector))?
+    parse_key(key, kind, budget).map_err((e) => primitive(e, offset, BinaryFailure.InvalidSelector))?
     if kind == NominalKind.Record:
         return field_selectors(source, offset, budget)
     variants = items(property(source, "variants", offset, budget)?).map_err(
-        (e) => primitive(e, offset, RowFailure.InvalidDescription),
+        (e) => primitive(e, offset, BinaryFailure.InvalidDescription),
     )?
     for variant in variants:
         field_selectors(variant, offset, budget)?
     return Ok(None)
 
 
-def field_selectors(source: Metadata, offset: int, mut budget: Budget) -> Result[None, RowError]:
+def field_selectors(source: Metadata, offset: int, mut budget: Budget) -> Result[None, BinaryError]:
     """Check field N under the same budget before shape admission; no source type spellings are guessed."""
     fields = items(property(source, "fields", offset, budget)?).map_err(
-        (e) => primitive(e, offset, RowFailure.InvalidDescription),
+        (e) => primitive(e, offset, BinaryFailure.InvalidDescription),
     )?
     for member in fields:
         name = text(property(member, "type", offset, budget)?).map_err(
-            (e) => primitive(e, offset, RowFailure.InvalidDescription),
+            (e) => primitive(e, offset, BinaryFailure.InvalidDescription),
         )?
-        parse_type(name, budget).map_err((e) => primitive(e, offset, RowFailure.InvalidSelector))?
+        parse_type(name, budget).map_err((e) => primitive(e, offset, BinaryFailure.InvalidSelector))?
     return Ok(None)
 
 
-def property(source: Metadata, name: str, offset: int, mut budget: Budget) -> Result[Metadata, RowError]:
+def property(source: Metadata, name: str, offset: int, mut budget: Budget) -> Result[Metadata, BinaryError]:
     """Retain the primitive cause while identifying a malformed complete-description property."""
-    return get(source, name, budget).map_err((e) => primitive(e, offset, RowFailure.InvalidDescription))
+    return get(source, name, budget).map_err((e) => primitive(e, offset, BinaryFailure.InvalidDescription))

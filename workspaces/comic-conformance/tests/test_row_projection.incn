@@ -3,12 +3,12 @@
 from std.primitives.crumb import Budget
 from std.primitives.crumb.registrations import KindRegistry
 from std.primitives.crumb.row_reader import read_rows, read_prefix
-from std.primitives.crumb.row_writer import RowRecord
-from std.primitives.crumb.row_errors import RowFailure
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.encoding_errors import BinaryFailure
 from std.primitives.crumb.types import AbsentPolicy
 from std.primitives.crumb.values import Value, ValueField
 from std.primitives.views import MappedView
-from row_test_support import description, member, backing, encoded, admitted, require_view
+from encoding_test_support import description, member, backing, encoded, admitted, require_view
 
 
 def retained_field() -> Result[MappedView, str]:
@@ -50,7 +50,7 @@ def test_selected_field_does_not_decode_large_neighbor() -> Result[None, str]:
     match rows.read_record(0, full):
         Ok(_) => return Err("full record bypassed the materialization budget")
         Err(error) =>
-            assert error.kind == RowFailure.LimitExceeded
+            assert error.kind == BinaryFailure.LimitExceeded
     return Ok(None)
 
 
@@ -68,12 +68,12 @@ def test_absence_unknown_field_and_invalid_record_are_distinct() -> Result[None,
     match rows.field_view(0, b"absent", budget):
         Ok(_) => return Err("unknown field accepted")
         Err(error) =>
-            assert error.kind == RowFailure.MissingField
+            assert error.kind == BinaryFailure.MissingField
     for index in [-1, 1]:
         match rows.read_record(index, budget):
             Ok(_) => return Err("invalid record accepted")
             Err(error) =>
-                assert error.kind == RowFailure.RecordIndex
+                assert error.kind == BinaryFailure.RecordIndex
     return Ok(None)
 
 
@@ -87,7 +87,7 @@ def test_stream_prefix_is_explicit_and_preserves_next_envelope() -> Result[None,
     match read_rows(view, [], registry, false, budget):
         Ok(_) => return Err("single envelope accepted trailing data")
         Err(error) =>
-            assert error.kind == RowFailure.TrailingBytes
+            assert error.kind == BinaryFailure.TrailingBytes
     rows, consumed = read_prefix(view, [], registry, false, budget).map_err((e) => e.message())?
     assert rows.len() == 0
     assert consumed == len(first)
@@ -112,7 +112,7 @@ def test_bad_unselected_cell_prevents_any_set() -> Result[None, str]:
     match read_rows(backing(corrupt)?, [], registry, false, budget):
         Ok(_) => return Err("invalid unselected field exposed a set")
         Err(error) =>
-            assert error.kind == RowFailure.InvalidCell
+            assert error.kind == BinaryFailure.InvalidCell
             assert error.field == Some(b"field2")
             assert error.offset == len(corrupt) - 1
     return Ok(None)

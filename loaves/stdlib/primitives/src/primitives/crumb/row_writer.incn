@@ -4,19 +4,12 @@ from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.hashes import start_seal, append_seal
 from crate.primitives.crumb.registrations import KindRegistry
-from crate.primitives.crumb.row_buffer import RowBuffer
-from crate.primitives.crumb.row_cells import root
-from crate.primitives.crumb.row_descriptions import Description, encode_entry
-from crate.primitives.crumb.row_dictionary import admit_dictionary, slot
+from crate.primitives.crumb.encoding_buffer import EncodingBuffer
+from crate.primitives.crumb.cells import root
+from crate.primitives.crumb.descriptions import Description, encode_entry
+from crate.primitives.crumb.description_dictionary import admit_dictionary, slot
+from crate.primitives.crumb.records import RowRecord
 from crate.primitives.crumb.value_admission import validate
-from crate.primitives.crumb.values import Value
-
-
-pub model RowRecord:
-    """A logical record or enum selected by complete closed K, never by display name or shape hash."""
-
-    pub key: bytes
-    pub value: Value
 
 
 pub def write_rows(
@@ -35,7 +28,7 @@ pub def write_rows(
     bounded by the caller's budget; it does not promise a spooled or streaming output sink.
     """
     dictionary = admit_dictionary(descriptions, registry, budget)?
-    mut body = RowBuffer.create()
+    mut body = EncodingBuffer.create()
     body.count(len(dictionary.entries), budget)?
     for description in dictionary.entries:
         body.append(encode_entry(description, budget)?, budget)?
@@ -54,7 +47,7 @@ pub def write_rows(
             append_seal(record.value, seal, budget)?
         body.count(len(records), budget)?
         body.append(seal.digest(budget)?, budget)?
-    mut envelope = RowBuffer.create()
+    mut envelope = EncodingBuffer.create()
     envelope.append(b"CRMB\x01\x01", budget)?
     if sealed:
         envelope.octet(1, budget)?

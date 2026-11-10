@@ -4,8 +4,8 @@ from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.identity import closed_selector
 from crate.primitives.crumb.registrations import KindRegistry
-from crate.primitives.crumb.row_descriptions import Description, StoredDescription, admit
-from crate.primitives.crumb.row_metadata import charge_copy
+from crate.primitives.crumb.descriptions import Description, StoredDescription, admit
+from crate.primitives.crumb.metadata_values import charge_copy
 from crate.primitives.crumb.types import TypeNode
 from crate.primitives.hex import hexlify
 

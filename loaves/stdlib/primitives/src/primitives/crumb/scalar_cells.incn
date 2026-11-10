@@ -3,7 +3,7 @@
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.framing import encode_signed, frame
-from crate.primitives.crumb.row_buffer import RowBuffer
+from crate.primitives.crumb.encoding_buffer import EncodingBuffer
 from crate.primitives.crumb.scalars import compare_integer, float64_bits, normalize_decimal
 from crate.primitives.crumb.types import ScalarKind
 from crate.primitives.crumb.values import Value
@@ -46,7 +46,7 @@ pub def scalar_cell(kind: ScalarKind, value: Value, mut budget: Budget) -> Resul
                 return Ok(b"\x00")
         Value.Reference(target, identity) =>
             if kind == ScalarKind.Reference:
-                mut output = RowBuffer.create()
+                mut output = EncodingBuffer.create()
                 output.frame(target, budget)?
                 output.frame(identity, budget)?
                 return output.finish(budget)
@@ -128,7 +128,7 @@ pub def float_cell(width: int, bits: bytes, target: int, mut budget: Budget) -> 
     if target != 32:
         return Err(CrumbError.invalid_input("float cell width"))
     raw = narrow_float(wide, budget)?
-    mut output = RowBuffer.create()
+    mut output = EncodingBuffer.create()
     output.offset(raw, 4, budget)?
     return output.finish(budget)
 
