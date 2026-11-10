@@ -46,6 +46,8 @@ pub def scalar(kind: ScalarKind, view: MappedView, origin: int, mut budget: Budg
         ScalarKind.Reference =>
             target = cursor.frame(budget)?
             identity = cursor.frame(budget)?
+            if target.len() != 6:
+                return Err(failure(BinaryFailure.InvalidCell, origin))
             result = Value.Reference(copied(target, origin, budget)?, copied(identity, origin, budget)?)
         _ => return Err(failure(BinaryFailure.InvalidCell, origin))
     if cursor.remaining() != 0:

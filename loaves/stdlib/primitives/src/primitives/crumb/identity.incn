@@ -65,7 +65,7 @@ pub def closed_selector(node: TypeNode, mut budget: Budget) -> Result[bytes, Cru
     # 1. No unresolved parameter, malformed identity or unknown scalar may cross this boundary.
     selector_spelling(node, budget)?
     match node:
-        TypeNode.Nominal(_, identity, arguments) =>
+        TypeNode.Nominal(_, _, Some(identity), arguments) =>
             # 2. Arguments are framed individually; parameter names never enter K.
             mut output: list[u8] = []
             append_bytes(output, identity, budget)?
@@ -84,7 +84,7 @@ pub def closed_selector(node: TypeNode, mut budget: Budget) -> Result[bytes, Cru
 pub def check_arity(node: TypeNode, expected: int) -> Result[None, CrumbError]:
     """Check the argument count against the binding's independently supplied declaration contract."""
     match node:
-        TypeNode.Nominal(_, _, arguments) =>
+        TypeNode.Nominal(_, _, _, arguments) =>
             if expected < 0 or len(arguments) != expected:
                 return Err(CrumbError.invalid_input("nominal parameter arity"))
             return Ok(None)
