@@ -211,6 +211,7 @@ def program_context(
             value_enums=Arc.new(list(module.value_enum_declarations)),
             decorated_bindings=Arc.new(list(module.decorated_bindings)),
             overflow_checks=overflow_checks,
+            observe_work=native_environment("INCAN_NATIVE_TIMING").is_some(),
         ),
     )
 
@@ -1192,7 +1193,9 @@ def trace_lowering_footprint(enabled: bool, boundary: str) -> None:
         Ok(footprint) =>
             match current_live_allocated():
                 Ok(live) => println(f"lowering footprint: {boundary}: {footprint} bytes; live allocated: {live} bytes")
-                Err(reason) => println(f"lowering footprint: {boundary}: {footprint} bytes; live allocated: unavailable: {reason}")
+                Err(reason) => println(
+                    f"lowering footprint: {boundary}: {footprint} bytes; live allocated: unavailable: {reason}",
+                )
         Err(reason) => println(f"lowering footprint: {boundary}: unavailable: {reason}")
 
 

@@ -16,6 +16,7 @@ use incan_driver::unit::UnitDescription;
 /// Whether either refuses the graph is the caller's decision, so one cache entry serves strict and tolerant callers
 /// alike; only an abnormal exit is a failure of this command.
 pub fn incan(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    crate::native_timing::observe_frontend(false);
     if arguments.len() < 3 || arguments.len() > 4 {
         return Err("usage: --codegraph UNIT SYSROOT OUTPUT [INTERFACE]".into());
     }

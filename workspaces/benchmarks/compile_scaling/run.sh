@@ -21,11 +21,20 @@ git -C "$repo" rev-parse HEAD > "$output/source.sha"
 git -C "$repo" diff HEAD -- loaves workspaces/oven scripts > "$output/source.patch"
 ln -s "$repo" "$output/source"
 ln -s "$repo" "$output/lane/incan"
-experiment_home=$output/toolchain-home-for-isolated-single-process-measurements
-cp -cR "$installed" "$experiment_home"
-# The clone's compiler view is regenerable and must refer to this clone's Loaves.
-if [[ -L $experiment_home/compiler-build/toolchains/0.6.0-dev.8/loaves ]]; then
-    rm "$experiment_home/compiler-build/toolchains/0.6.0-dev.8/loaves"
+if [[ ${SCALING_ONE_HOME:-0} == 1 ]]; then
+    experiment_home=$installed
+    cp "$installed/toolchains/0.6.0-dev.8/toolchain.json" "$output/installed-toolchain.original.json"
+    restore_manifest() {
+        cp "$output/installed-toolchain.original.json" "$installed/toolchains/0.6.0-dev.8/toolchain.json"
+    }
+    trap restore_manifest EXIT
+else
+    experiment_home=$output/toolchain-home-for-isolated-single-process-measurements
+    cp -cR "$installed" "$experiment_home"
+    # The clone's compiler view is regenerable and must refer to this clone's Loaves.
+    if [[ -L $experiment_home/compiler-build/toolchains/0.6.0-dev.8/loaves ]]; then
+        rm "$experiment_home/compiler-build/toolchains/0.6.0-dev.8/loaves"
+    fi
 fi
 cp "$here/observe.rb" "$output/observe"
 chmod +x "$output/observe"
@@ -82,7 +91,8 @@ for subject in ${SCALING_SUBJECTS:-lowering data oven}; do
     case $subject in
         lowering) file=loaves/compiler/incan_mir_lowering/src/lowering.incn
             stamp=loaves/toolchain/incan-rustc-driver/target/incan/loaves/incan_mir_lowering/release/.oven-inputs.sha256 ;;
-        data) file=loaves/stdlib/data/src/datetime/civil/naive.incn; stamp= ;;
+        data) file=loaves/stdlib/data/src/datetime/civil/naive.incn
+            stamp=$experiment_home/toolchains/0.6.0-dev.8/loaves/incan_stdlib_data/release/.oven-inputs.sha256 ;;
         oven) file=workspaces/oven/src/main.incn
             stamp=workspaces/oven/target/incan/release/bin/oven.oven-inputs ;;
         *) echo "Unknown subject: $subject" >&2; exit 2 ;;
