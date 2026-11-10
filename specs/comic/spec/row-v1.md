@@ -84,8 +84,8 @@ A cell's type is in its description; no scalar tag is repeated for every value. 
 | Type | Cell bytes |
 | --- | --- |
 | boolean | `00` or `01` |
-| i8/i16/i32/i64 | Exactly 1/2/4/8 little-endian two's-complement octets |
-| u8/u16/u32/u64 | Exactly 1/2/4/8 little-endian unsigned octets |
+| i8/i16/i32/i64/i128 | Exactly 1/2/4/8/16 little-endian two's-complement octets |
+| u8/u16/u32/u64/u128 | Exactly 1/2/4/8/16 little-endian unsigned octets |
 | fp32/fp64 | Exactly 4/8 little-endian IEEE octets; positive quiet NaN only, signed zero retained |
 | decimal<P,S> | Shortest Z(coefficient) at the declared scale S; check precision before returning a value |
 | string | B(valid UTF-8), with no normalization |

@@ -103,7 +103,7 @@ A reference's target-type identity is the binding's stable type identity, not it
 
 ### Canonical type spelling S
 
-S is ASCII with no whitespace. It represents shape, not a source-language display spelling. Scalar tokens are `boolean`, `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `fp32`, `fp64`, `string`, `binary`, `secret_string` and `secret_bytes`. `decimal<P,S>` uses canonical decimal integers, with positive precision and `0 <= S <= P` in this profile. No leading zeros or plus signs occur. A wider primitive profile must register unsupported scalar widths explicitly rather than silently substituting a machine type.
+S is ASCII with no whitespace. It represents shape, not a source-language display spelling. Scalar tokens are `boolean`, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64`, `u128`, `fp32`, `fp64`, `string`, `binary`, `secret_string` and `secret_bytes`. `decimal<P,S>` uses canonical decimal integers, with positive precision and `0 <= S <= P` in this profile. No leading zeros or plus signs occur. A wider primitive profile must register unsupported scalar widths explicitly rather than silently substituting a machine type.
 
 | Shape | S |
 | --- | --- |

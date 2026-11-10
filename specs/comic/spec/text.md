@@ -78,8 +78,8 @@ A declaration's kind decides its type names. Inside a profile's kind, the profil
 | Type | Text |
 | --- | --- |
 | Boolean | `boolean` |
-| Integers | `i8`, `i16`, `i32`, `i64` |
-| Unsigned integers | `u8`, `u16`, `u32`, `u64`, from Substrait's unsigned-integer extension |
+| Integers | `i8`, `i16`, `i32`, `i64`, and COMIC's `i128` |
+| Unsigned integers | `u8`, `u16`, `u32`, `u64`, from Substrait's unsigned-integer extension, and COMIC's `u128` |
 | Floats | `fp32`, `fp64` |
 | Decimal | `decimal<P, S>`, precision and scale |
 | String, binary | `string`, `binary`, and `varchar<L>`, `fixedchar<L>`, `fixedbinary<L>` |

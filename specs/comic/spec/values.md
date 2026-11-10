@@ -12,7 +12,7 @@ An optional distinguishes absence from a present inner optional that is absent. 
 
 ## Foundation type vocabulary
 
-The specification and corpus share core type names: `boolean`; signed `i8`, `i16`, `i32`, `i64`; unsigned `u8`, `u16`, `u32`, `u64`; IEEE `fp32`, `fp64`; `string`; `binary`; `secret_string`; and `secret_bytes`. Decimal types carry precision and scale. Collections, optional layers, unions and described types follow [COMIC text](text.md). An implementation must not substitute its host-sized integer for a declared width.
+The specification and corpus share core type names: `boolean`; signed `i8`, `i16`, `i32`, `i64`, `i128`; unsigned `u8`, `u16`, `u32`, `u64`, `u128`; IEEE `fp32`, `fp64`; `string`; `binary`; `secret_string`; and `secret_bytes`. Decimal types carry precision and scale. Collections, optional layers, unions and described types follow [COMIC text](text.md). An implementation must not substitute its host-sized integer for a declared width.
 
 The core kinds, `Record` and `Enum`, use the type spellings listed in the text specification. A language profile maps its own type vocabulary into this domain. Test notation's tagged kinds such as `int` and `float` classify values; their declared widths remain explicit. They are not additional type spellings.
 
