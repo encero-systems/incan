@@ -357,7 +357,11 @@ impl Formatter {
                 if wrote {
                     self.writer.write(", ");
                 }
-                self.writer.write("renamed_from=");
+                self.writer.write(if field.metadata.renamed_from_was_block {
+                    "renamed_from { name="
+                } else {
+                    "renamed_from="
+                });
                 if field.metadata.renamed_from_was_list {
                     self.writer.write("[");
                 }
@@ -366,11 +370,31 @@ impl Formatter {
                         self.writer.write(", ");
                     }
                     self.writer.write("\"");
-                    self.writer.write(&earlier.node);
+                    self.writer.write(&super::escape_value_enum_string(&earlier.node));
                     self.writer.write("\"");
                 }
                 if field.metadata.renamed_from_was_list {
                     self.writer.write("]");
+                }
+                if field.metadata.renamed_from_was_block {
+                    if let Some(lifecycle) = &field.metadata.renamed_from_lifecycle {
+                        for (key, value) in [
+                            ("since", &lifecycle.since),
+                            ("retire_in", &lifecycle.retire_in),
+                            ("message", &lifecycle.message),
+                            ("by", &lifecycle.by),
+                            ("issue", &lifecycle.issue),
+                        ] {
+                            if let Some(value) = value {
+                                self.writer.write(", ");
+                                self.writer.write(key);
+                                self.writer.write("=\"");
+                                self.writer.write(&super::escape_value_enum_string(&value.node));
+                                self.writer.write("\"");
+                            }
+                        }
+                    }
+                    self.writer.write(" }");
                 }
                 wrote = true;
             }

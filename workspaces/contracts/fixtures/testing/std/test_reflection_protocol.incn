@@ -9,6 +9,7 @@ from std.primitives.reflection import (
     DecimalValue,
     DecimalValueErrorKind,
     FieldInfo,
+    LifecycleInfo,
     ShapeInfo,
     VariantInfo,
     Walk,
@@ -22,6 +23,7 @@ from std.reflection import (
 )
 
 const NO_RENAMES: FrozenList[FrozenStr] = []
+const COUNT_RENAMES: FrozenList[FrozenStr] = ["old_count"]
 const NO_FIELDS: FrozenList[FieldInfo] = []
 const NO_VARIANTS: FrozenList[VariantInfo] = []
 const NO_EXTRA: FrozenDict[FrozenStr, FrozenStr] = {}
@@ -30,7 +32,7 @@ const NO_EXTRA: FrozenDict[FrozenStr, FrozenStr] = {}
 model ReflectedCount:
     """The generated metadata and explicit records share an Incan-owned layout."""
 
-    pub count: int
+    pub count [renamed_from { name="old_count", since="0.6", retire_in="0.9", message="Stored count", by="author", issue="migration" }]: int
 
 
 class StoredText with Walk:
@@ -76,11 +78,15 @@ def test_public_recursive_walker() -> Result[None, str]:
     shape: PublicShapeInfo = ShapeInfo.of[StoredText]()
     assert shape.spelling == "string"
     metadata: PublicFieldInfo = ReflectedCount.__fields__()[0]
+    lifecycle = LifecycleInfo(since="0.6", retire_in="0.9", message="Stored count", by="author", issue="migration")
     expected = FieldInfo(
         name="count",
         identity=metadata.identity,
         canonical=true,
-        renamed_from=NO_RENAMES,
+        renamed_from=COUNT_RENAMES,
+        renamed_from_lifecycle=Some(lifecycle),
+        position=0,
+        default_is_empty=false,
         alias=None,
         description=None,
         wire_name="count",
@@ -89,6 +95,27 @@ def test_public_recursive_walker() -> Result[None, str]:
         extra=NO_EXTRA,
     )
     assert metadata == expected
+    # Handwritten model and variant shapes accept the generated field's exact lifecycle carrier.
+    # This proves interchangeability; automatic shape generation belongs to the following checkpoint.
+    model_shape = ShapeInfo(
+        name="ReflectedCount",
+        identity=b"",
+        renamed_from=COUNT_RENAMES,
+        renamed_from_lifecycle=metadata.renamed_from_lifecycle,
+        spelling="test-only",
+        fields=NO_FIELDS,
+        variants=NO_VARIANTS,
+    )
+    variant = VariantInfo(
+        name="Count",
+        identity=b"",
+        description=None,
+        fields=NO_FIELDS,
+        extra=NO_EXTRA,
+        renamed_from=COUNT_RENAMES,
+        renamed_from_lifecycle=model_shape.renamed_from_lifecycle,
+    )
+    assert variant.renamed_from_lifecycle == Some(lifecycle)
     assert str(FieldInfo.__fields__()[0].name) == "name"
     return Ok(None)
 

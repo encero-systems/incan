@@ -292,6 +292,7 @@ fn test_parse_model_field_metadata() -> Result<(), Vec<CompileError>> {
 model Account:
   type_ [alias="type", description="Account tier", renamed_from="kind", canonical=false]: str
   balance [description="Balance in cents", renamed_from=["amount", "cents"], canonical=true] as "balanceCents": int
+  available [renamed_from { name=["available_amount", "available_cents"], since="0.6", retire_in="0.9", message="Stored cents", by="author", issue="migration" }]: int
 "#;
     let program = parse_str(source)?;
     let model = require_model_decl(&program.declarations[0])?;
@@ -318,6 +319,31 @@ model Account:
         vec!["amount", "cents"]
     );
     assert!(balance_field.metadata.renamed_from_was_list);
+    let renamed = &model.fields[2].node.metadata;
+    assert_eq!(renamed.renamed_from.len(), 2);
+    assert_eq!(renamed.renamed_from[0].node, "available_amount");
+    assert!(renamed.renamed_from_was_list);
+    assert!(renamed.renamed_from_was_block);
+    let lifecycle = renamed.renamed_from_lifecycle.as_ref().ok_or_else(|| {
+        vec![CompileError::syntax(
+            "Expected rename lifecycle metadata".to_owned(),
+            model.fields[2].span,
+        )]
+    })?;
+    assert_eq!(lifecycle.since.as_ref().map(|value| value.node.as_str()), Some("0.6"));
+    assert_eq!(
+        lifecycle.retire_in.as_ref().map(|value| value.node.as_str()),
+        Some("0.9")
+    );
+    assert_eq!(
+        lifecycle.message.as_ref().map(|value| value.node.as_str()),
+        Some("Stored cents")
+    );
+    assert_eq!(lifecycle.by.as_ref().map(|value| value.node.as_str()), Some("author"));
+    assert_eq!(
+        lifecycle.issue.as_ref().map(|value| value.node.as_str()),
+        Some("migration")
+    );
     assert_eq!(
         balance_field.metadata.canonical.as_ref().map(|value| value.node),
         Some(true)

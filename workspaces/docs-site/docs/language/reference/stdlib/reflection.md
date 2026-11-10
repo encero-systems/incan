@@ -38,6 +38,9 @@ An Incan model returned in the frozen list from `__fields__()`. `std.primitives.
 | `wire_name` | `FrozenStr` | Effective wire name (alias if present, else declared name) |
 | `type_name` | `FrozenStr` | Incan type display (e.g. `"str"`, `"int"`, `"Option[str]"`) |
 | `has_default` | `bool` | Whether the field has a default value |
+| `default_is_empty` | `bool` | Whether the source default is a literal empty list, dictionary, tuple or set; strings, bytes, missing defaults and unevaluated expressions are false |
+| `position` | `int` | Zero-based slot before the public view removes private fields; class slots follow the checked parent-first layout |
+| `renamed_from_lifecycle` | `Option[LifecycleInfo]` | The rename block's descriptive labels; absent when no lifecycle labels are declared |
 | `extra` | `FrozenDict[FrozenStr, FrozenStr]` | Additional metadata; empty |
 
 Notes:
@@ -123,7 +126,7 @@ A present optional field is `Some(None)` when `V=Option[T]`; a missing field is 
 
 `VariantInfo` fields are `name: FrozenStr`, `identity: FrozenBytes`, `description: Option[FrozenStr]`, `fields: FrozenList[FieldInfo]`, `extra: FrozenDict[FrozenStr, FrozenStr]`, `renamed_from: FrozenList[FrozenStr]` and `renamed_from_lifecycle: Option[LifecycleInfo]`. All are supplied explicitly.
 
-`LifecycleInfo` has `since`, `retire_in`, `message`, `by` and `issue`, each `Option[FrozenStr]`, defaulting to None. These are descriptive facts, not authorization. The complete shape's closed nominal identity and its structural spelling have different meanings; neither is recovered from its display name.
+`LifecycleInfo` has `since`, `retire_in`, `message`, `by` and `issue`, each `Option[FrozenStr]`, defaulting to None. Its derived equality compares all five fields. Field, shape and variant records use this same carrier; an explicitly empty label stays `Some("")`. These are descriptive facts, not authorization. The complete shape's closed nominal identity and its structural spelling have different meanings; neither is recovered from its display name.
 
 ### `DecimalValue`
 

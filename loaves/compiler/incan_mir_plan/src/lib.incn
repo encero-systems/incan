@@ -43,6 +43,7 @@ pub from _body import (
     Terminator,
     BasicBlock,
     FieldMetadata,
+    FieldLifecycle,
     place,
     integer,
     copy,

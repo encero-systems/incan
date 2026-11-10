@@ -408,6 +408,8 @@ impl TypeChecker {
                     record_identity: crate::symbols::field_record_identity(&field.node),
                     record_canonical: crate::symbols::field_record_canonical(&field.node),
                     renamed_from: crate::symbols::field_renamed_from(&field.node),
+                    renamed_from_lifecycle: crate::symbols::field_renamed_from_lifecycle(&field.node),
+                    default_is_empty: crate::symbols::field_default_is_empty(&field.node),
                     surface_type_name: Some(crate::symbols::field_surface_type_name(&field.node.ty.node, &ty)),
                     ty,
                     visibility: field.node.visibility,

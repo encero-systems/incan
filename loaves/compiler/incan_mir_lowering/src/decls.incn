@@ -7,11 +7,13 @@ from rust::incan_semantics_core::body_ir import (
     StaticDeclaration,
     GlobalPlace,
     EnumDeclaration as RustEnumDeclaration,
+    LifecycleMetadata as CheckedLifecycle,
 )
 from pub::incan_mir_plan import (
     EnumDeclaration,
     ModelDeclaration,
     FieldMetadata,
+    FieldLifecycle,
     Parameter,
     SourceSpan,
     PlanType,
@@ -235,6 +237,27 @@ def element_view_lifetimes(elements: &list[RustType]) -> int:
     return count
 
 
+def lifecycle_text(value: &Option[str]) -> Option[str]:
+    """Copy a checked optional label without treating empty text as absence."""
+    match value:
+        Some(text) => return Some(str(text))
+        None => return None
+
+
+def planned_lifecycle(value: &Option[CheckedLifecycle]) -> Option[FieldLifecycle]:
+    """Keep the five source-checked labels as ordinary Incan plan data."""
+    match value:
+        None => return None
+        Some(labels) =>
+            return Some(FieldLifecycle(
+                since=lifecycle_text(labels.since),
+                retire_in=lifecycle_text(labels.retire_in),
+                message=lifecycle_text(labels.message),
+                by=lifecycle_text(labels.by),
+                issue=lifecycle_text(labels.issue),
+            ))
+
+
 def planned_field_metadata(declaration: &NominalDeclaration) -> Option[list[FieldMetadata]]:
     """Copy checked metadata values without recovering missing visibility, type names, or defaults."""
     match declaration.reflection_metadata:
@@ -262,6 +285,9 @@ def planned_field_metadata(declaration: &NominalDeclaration) -> Option[list[Fiel
                         record_identity=record_identity,
                         record_canonical=field.record_canonical,
                         renamed_from=renamed_from,
+                        renamed_from_lifecycle=planned_lifecycle(field.renamed_from_lifecycle),
+                        position=int(field.position),
+                        default_is_empty=field.default_is_empty,
                         alias=alias,
                         description=description,
                         type_name=str(field.type_name),

@@ -561,6 +561,79 @@ impl<'a> Parser<'a> {
         Ok(metadata)
     }
 
+    /// Parse a rename block with required names and optional inert lifecycle labels.
+    ///
+    /// Names retain the existing scalar/list representation and diagnostic spans. Package/registry moves belong to
+    /// declaration metadata, so they are deliberately not accepted on a field.
+    fn renamed_from_metadata(
+        &mut self,
+        metadata: &mut FieldMetadata,
+        field: &str,
+        key_span: Span,
+    ) -> Result<(), CompileError> {
+        let mut lifecycle = LifecycleMetadata::default();
+        let mut has_lifecycle = false;
+        self.skip_newlines();
+        while !self.check_punct(PunctuationId::RBrace) {
+            let key = self.identifier_spanned()?;
+            self.expect_op(OperatorId::Eq, "Expected '=' after rename metadata key")?;
+            if key.node == "name" {
+                if metadata.renamed_from_key_span.is_some() {
+                    return Err(errors::duplicate_field_metadata_key("name", key.span));
+                }
+                let expected = FieldMetadataValueKind::StringOrStringList;
+                let value = self.field_metadata_value("name", expected, field)?;
+                Self::apply_field_metadata(
+                    metadata,
+                    FieldMetadataKey::RenamedFrom,
+                    "name",
+                    key_span,
+                    expected,
+                    field,
+                    value,
+                )?;
+            } else {
+                let slot = match key.node.as_str() {
+                    "since" => &mut lifecycle.since,
+                    "retire_in" => &mut lifecycle.retire_in,
+                    "message" => &mut lifecycle.message,
+                    "by" => &mut lifecycle.by,
+                    "issue" => &mut lifecycle.issue,
+                    _ => return Err(errors::unknown_field_metadata_key(&key.node, key.span)),
+                };
+                if slot.is_some() {
+                    return Err(errors::duplicate_field_metadata_key(&key.node, key.span));
+                }
+                let span = self.current_span();
+                let TokenKind::String(value) = self.peek().kind.clone() else {
+                    return Err(errors::invalid_field_metadata_value(
+                        &key.node,
+                        "a string literal",
+                        field,
+                        span,
+                    ));
+                };
+                self.advance();
+                *slot = Some(Spanned::new(value, span));
+                has_lifecycle = true;
+            }
+            self.match_punct(PunctuationId::Comma);
+            self.skip_newlines();
+        }
+        self.expect_punct(PunctuationId::RBrace, "Expected '}' after rename metadata")?;
+        if metadata.renamed_from_key_span.is_none() {
+            return Err(errors::invalid_field_metadata_value(
+                "renamed_from",
+                "a block containing name as a string literal or a list of string literals",
+                field,
+                key_span,
+            ));
+        }
+        metadata.renamed_from_was_block = true;
+        metadata.renamed_from_lifecycle = has_lifecycle.then_some(lifecycle);
+        Ok(())
+    }
+
     /// Parse a comma-separated metadata block using the shared key registry.
     fn field_metadata(&mut self, field: &str) -> Result<FieldMetadata, CompileError> {
         let mut metadata = FieldMetadata::default();
@@ -572,6 +645,16 @@ impl<'a> Parser<'a> {
             let Some(key) = field_metadata::from_str(&key_raw) else {
                 return Err(errors::unknown_field_metadata_key(&key_raw, key_span));
             };
+            if key == FieldMetadataKey::RenamedFrom && self.match_punct(PunctuationId::LBrace) {
+                if metadata.renamed_from_key_span.is_some() {
+                    return Err(errors::duplicate_field_metadata_key(&key_raw, key_span));
+                }
+                self.renamed_from_metadata(&mut metadata, field, key_span)?;
+                if !self.match_punct(PunctuationId::Comma) {
+                    break;
+                }
+                continue;
+            }
             if key == FieldMetadataKey::MadePrivate && self.match_punct(PunctuationId::LBrace) {
                 if metadata.made_private_key_span.is_some() {
                     return Err(errors::duplicate_field_metadata_key(&key_raw, key_span));

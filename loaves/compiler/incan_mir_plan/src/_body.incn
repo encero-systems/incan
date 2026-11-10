@@ -345,6 +345,17 @@ pub model BasicBlock:
 
 
 @derive(Clone, PartialEq)
+pub model FieldLifecycle:
+    """Inert checked rename labels, copied into the public Incan lifecycle carrier at emission."""
+
+    pub since: Option[str]
+    pub retire_in: Option[str]
+    pub message: Option[str]
+    pub by: Option[str]
+    pub issue: Option[str]
+
+
+@derive(Clone, PartialEq)
 pub model FieldMetadata:
     """Immutable source field presentation values selected by the checked reflection visibility policy."""
 
@@ -352,6 +363,9 @@ pub model FieldMetadata:
     pub record_identity: list[int]
     pub record_canonical: bool
     pub renamed_from: list[str]
+    pub renamed_from_lifecycle: Option[FieldLifecycle]
+    pub position: int
+    pub default_is_empty: bool
     pub alias: Option[str]
     pub description: Option[str]
     pub type_name: str

@@ -81,6 +81,18 @@ pub struct TraitFieldImplementation {
     pub implementation: CanonicalSymbolId,
 }
 
+/// Inert lifecycle labels checked at their source declaration and retained across publication.
+///
+/// No label is an identity, a callable reference or authorization to load code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LifecycleMetadata {
+    pub since: Option<String>,
+    pub retire_in: Option<String>,
+    pub message: Option<String>,
+    pub by: Option<String>,
+    pub issue: Option<String>,
+}
+
 /// Immutable presentation values of one checked reflection-visible field, in declaration order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FieldMetadata {
@@ -92,6 +104,12 @@ pub struct FieldMetadata {
     pub record_canonical: bool,
     /// Earlier declared names in chronological order, earliest first.
     pub renamed_from: Vec<String>,
+    /// Descriptive rename history, absent for scalar/list metadata without lifecycle labels.
+    pub renamed_from_lifecycle: Option<LifecycleMetadata>,
+    /// Original physical declaration slot, before public reflection removes private fields.
+    pub position: usize,
+    /// Whether the checked source default is a statically empty collection literal.
+    pub default_is_empty: bool,
     /// Explicit field alias, including an explicitly empty string.
     pub alias: Option<String>,
     /// Explicit source description, absent when none is declared.

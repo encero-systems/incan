@@ -310,6 +310,10 @@ pub struct FieldInfo {
     pub record_canonical: bool,
     /// Earlier declared names in chronological order, earliest first.
     pub renamed_from: Vec<String>,
+    /// Descriptive rename facts retained from the checked declaration.
+    pub renamed_from_lifecycle: Option<incan_semantics_core::body_ir::LifecycleMetadata>,
+    /// Whether the checked default is a statically empty collection literal.
+    pub default_is_empty: bool,
     pub ty: ResolvedType,
     /// Canonical Incan source spelling retained for reflection and documentation.
     ///
@@ -349,6 +353,30 @@ pub fn field_renamed_from(field: &crate::ast::FieldDecl) -> Vec<String> {
         .iter()
         .map(|earlier| earlier.node.clone())
         .collect()
+}
+
+/// Copy inert rename labels into checked facts; source spans remain in the syntax tree for diagnostics.
+pub fn field_renamed_from_lifecycle(
+    field: &crate::ast::FieldDecl,
+) -> Option<incan_semantics_core::body_ir::LifecycleMetadata> {
+    let lifecycle = field.metadata.renamed_from_lifecycle.as_ref()?;
+    Some(incan_semantics_core::body_ir::LifecycleMetadata {
+        since: lifecycle.since.as_ref().map(|value| value.node.clone()),
+        retire_in: lifecycle.retire_in.as_ref().map(|value| value.node.clone()),
+        message: lifecycle.message.as_ref().map(|value| value.node.clone()),
+        by: lifecycle.by.as_ref().map(|value| value.node.clone()),
+        issue: lifecycle.issue.as_ref().map(|value| value.node.clone()),
+    })
+}
+
+/// Recognize an empty collection default without evaluating user code or guessing a factory's result.
+pub fn field_default_is_empty(field: &crate::ast::FieldDecl) -> bool {
+    field.default.as_ref().is_some_and(|default| match &default.node {
+        crate::ast::Expr::List(values) => values.is_empty(),
+        crate::ast::Expr::Dict(values) => values.is_empty(),
+        crate::ast::Expr::Tuple(values) | crate::ast::Expr::Set(values) => values.is_empty(),
+        _ => false,
+    })
 }
 
 /// Whether the unmarked members of a type, its fields and methods alike, are private to it (#884, #2570).

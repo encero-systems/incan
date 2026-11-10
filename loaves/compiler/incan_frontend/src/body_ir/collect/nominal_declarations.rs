@@ -366,12 +366,16 @@ pub(super) fn retain_class_reflection(retained: &mut bir::NominalDeclaration, fa
         layout
             .fields
             .iter()
-            .filter(|field| field.visibility == ast::Visibility::Public)
-            .map(|field| bir::FieldMetadata {
+            .enumerate()
+            .filter(|(_, field)| field.visibility == ast::Visibility::Public)
+            .map(|(position, field)| bir::FieldMetadata {
+                position,
                 name: field.name.clone(),
                 record_identity: field.record_identity.clone(),
                 record_canonical: field.record_canonical,
                 renamed_from: field.renamed_from.clone(),
+                renamed_from_lifecycle: field.renamed_from_lifecycle.clone(),
+                default_is_empty: field.default_is_empty,
                 alias: field.alias.clone(),
                 description: field.description.clone(),
                 type_name: field.surface_type_name.clone().unwrap_or_else(|| field.ty.to_string()),
@@ -510,19 +514,23 @@ pub(super) fn collect_field_metadata(
 ) -> Option<Vec<bir::FieldMetadata>> {
     fields
         .iter()
-        .filter(|field| {
+        .enumerate()
+        .filter(|(_, field)| {
             !facts
                 .declarations
                 .model_type_private_fields
                 .contains(&(name.to_owned(), field.node.name.clone()))
         })
-        .map(|field| {
+        .map(|(position, field)| {
             let ty = facts.declarations.model_field_types.get(&field.span)?;
             Some(bir::FieldMetadata {
+                position,
                 name: field.node.name.clone(),
                 record_identity: crate::symbols::field_record_identity(&field.node),
                 record_canonical: crate::symbols::field_record_canonical(&field.node),
                 renamed_from: crate::symbols::field_renamed_from(&field.node),
+                renamed_from_lifecycle: crate::symbols::field_renamed_from_lifecycle(&field.node),
+                default_is_empty: crate::symbols::field_default_is_empty(&field.node),
                 alias: field.node.metadata.alias.clone(),
                 description: field.node.metadata.description.clone(),
                 type_name: crate::symbols::field_surface_type_name(&field.node.ty.node, ty),

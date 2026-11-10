@@ -3,7 +3,7 @@ from std.primitives.reflection import FieldInfo
 
 
 pub model Account:
-    pub type_ [alias="type", description="Account type", renamed_from="email"]: str
+    pub type_ [alias="type", description="Account type", renamed_from { name="email", since="0.6", message="", by="author", issue="migration" }]: str
     pub balance [description="Balance in cents", renamed_from=["mail", "cached_at"], canonical=false]: int = 0
     pub external_id as "externalId": str
     pub title: str = ""
