@@ -104,4 +104,3 @@ pub def static_metadata(mut builder: Builder, ty: PlanType, value: FrozenValue, 
     terminate_call(builder, CalleeKind.StaticValue(name, ty, value), [], output, span)
     builder.owned.append(output.local)
     return output
-

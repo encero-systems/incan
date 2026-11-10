@@ -60,7 +60,7 @@ def main() -> None:
     mut failures = ValidationError.from_located_original(
         "profile.name",
         "first failure",
-        typed_box(RetainedFailure(detail="retained detail")),
+        Box.new(RetainedFailure(detail="retained detail")),
     )
     assert failures.member_count() == 1
     assert failures.member_location(0) == Some("profile.name")
@@ -74,7 +74,7 @@ def main() -> None:
     failures.push_located_original(
         "profile.age",
         "second failure",
-        typed_box(OtherFailure(code=7)),
+        Box.new(OtherFailure(code=7)),
     )
     assert failures.member_count() == 2
     assert failures.member_location(1) == Some("profile.age")

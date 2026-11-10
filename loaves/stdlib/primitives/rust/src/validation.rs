@@ -71,7 +71,7 @@ impl ValidationError {
     }
 
     /// Capture one original concrete error without imposing `Clone`, `Debug` or serialization on its payload.
-    pub fn from_original(message: String, original: Box<dyn Any>) -> Self {
+    pub fn from_original<T: Any>(message: String, original: Box<T>) -> Self {
         Self {
             message: message.clone(),
             code: None,
@@ -84,10 +84,10 @@ impl ValidationError {
     }
 
     /// Capture one original concrete error at a structured field or model location.
-    pub fn from_located_original(
+    pub fn from_located_original<T: Any>(
         location: String,
         message: String,
-        original: Box<dyn Any>,
+        original: Box<T>,
     ) -> Self {
         Self {
             message: message.clone(),
@@ -101,7 +101,7 @@ impl ValidationError {
     }
 
     /// Retain another original failure after existing members, preserving aggregate order.
-    pub fn push_original(&mut self, message: String, original: Box<dyn Any>) {
+    pub fn push_original<T: Any>(&mut self, message: String, original: Box<T>) {
         self.members.push(ValidationMember {
             location: None,
             message,
@@ -110,11 +110,11 @@ impl ValidationError {
     }
 
     /// Retain another located original failure after existing members, preserving aggregate order.
-    pub fn push_located_original(
+    pub fn push_located_original<T: Any>(
         &mut self,
         location: String,
         message: String,
-        original: Box<dyn Any>,
+        original: Box<T>,
     ) {
         self.members.push(ValidationMember {
             location: Some(location),
