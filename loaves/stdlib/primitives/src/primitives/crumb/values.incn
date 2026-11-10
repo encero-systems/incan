@@ -1,4 +1,4 @@
-"""Explicit logical values and metadata, independent of row encoding and generated model hooks."""
+"""Explicit logical values and metadata, independent of physical encodings and generated model hooks."""
 
 from crate.primitives.crumb.types import AbsentPolicy, TypeNode
 
@@ -55,19 +55,20 @@ pub model MapEntry:
 
 
 pub enum Metadata:
-    """The complete D metadata tree; map entries are retained until uniqueness is checked."""
+    """The complete D metadata tree; map entries retain read order until digest encoding sorts their keys."""
 
     Null
     Boolean(bool)
     Integer(str)
     Text(str)
     Binary(bytes)
+    Symbol(str)
     List(list[Metadata])
     Map(list[MetadataEntry])
 
 
 pub model MetadataEntry:
-    """A metadata key and value, preserving every supplied property before canonical ordering."""
+    """A property-name key and value, preserving every supplied property before canonical ordering."""
 
     pub key: str
     pub value: Metadata

@@ -35,6 +35,9 @@ def emit_inner(value: Metadata, mut output: HashOutput, mut budget: Budget) -> R
         Metadata.Binary(data) =>
             output.write(b"\x04", budget)?
             return output.framed(data, budget)
+        Metadata.Symbol(path) =>
+            output.write(b"\x07", budget)?
+            return output.text(path, budget)
         Metadata.List(items) =>
             output.write(b"\x05", budget)?
             output.unsigned(len(items), budget)?
@@ -52,6 +55,8 @@ def emit_map(entries: list[MetadataEntry], mut output: HashOutput, mut budget: B
         budget.charge_elements(1)?
         budget.charge_bytes(16)?
         key = entries[index].key
+        if not property_name(key):
+            return Err(CrumbError.invalid_input("metadata map key is not a property name"))
         for _ in range(12):
             budget.charge_bytes(len(key))?
         if key in seen:
@@ -65,3 +70,52 @@ def emit_map(entries: list[MetadataEntry], mut output: HashOutput, mut budget: B
         output.text(entry.key, budget)?
         emit_metadata(entry.value, output, budget)?
     return Ok(None)
+
+
+def property_name(value: str) -> bool:
+    """Accept one core UAX-style segment while leaving profile extensions to profile admission."""
+    if value == "":
+        return false
+    characters = [character for character in value]
+    if characters[0] >= "0" and characters[0] <= "9":
+        return false
+    for character in characters:
+        if character in [
+            " ",
+            "\t",
+            "\r",
+            "\n",
+            ".",
+            "{",
+            "}",
+            "[",
+            "]",
+            "(",
+            ")",
+            ",",
+            ":",
+            "=",
+            "?",
+            "|",
+            "<",
+            ">",
+            "#",
+            "\"",
+            "+",
+            "-",
+            "*",
+            "/",
+            "\\",
+            "!",
+            "@",
+            "$",
+            "%",
+            "^",
+            "&",
+            ";",
+            "'",
+            "`",
+            "~",
+        ]:
+            return false
+    return true

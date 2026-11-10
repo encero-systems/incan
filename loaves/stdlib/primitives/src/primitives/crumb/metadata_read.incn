@@ -53,6 +53,7 @@ def read_inner(mut cursor: EncodingCursor, mut budget: Budget) -> Result[Metadat
                 items.append(read_node(cursor, budget)?)
             return Ok(Metadata.List(items))
         6 => return read_map(cursor, budget)
+        7 => return Ok(Metadata.Symbol(read_text(cursor, budget)?))
         _ => return Err(failure(BinaryFailure.InvalidDescription, offset))
 
 
