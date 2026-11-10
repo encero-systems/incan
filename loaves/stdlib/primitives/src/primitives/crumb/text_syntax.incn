@@ -1,96 +1,14 @@
 """Shared COMIC type parsing, spelling and description lookup."""
 
 from crate.primitives.crumb.budget import Budget
-from crate.primitives.crumb.text_tokens import TextTokenKind, TextTokens
+from crate.primitives.crumb.text_tokens import TextTokens
 from crate.primitives.crumb.text_types import TextDescription, TextError, TextFailure, TextPosition
-from crate.primitives.crumb.types import ContainerKind, NominalKind, ScalarKind, TypeConstructorKind, TypeNode
+from crate.primitives.crumb.types import ContainerKind, NominalKind, TypeNode
 
 
 pub def parse_type(mut tokens: TextTokens, mut budget: Budget) -> Result[TypeNode, TextError]:
-    """Parse a union from primary type constructors and one optional suffix layer."""
-    match budget.enter():
-        Err(_) => return Err(limit_error(tokens.peek().position))
-        Ok(_) => pass
-    mut members = [parse_primary(tokens, budget)?]
-    while tokens.accepts("|"):
-        members.append(parse_primary(tokens, budget)?)
-    match budget.leave():
-        Err(_) => return Err(limit_error(tokens.peek().position))
-        Ok(_) => pass
-    if len(members) == 1:
-        return Ok(members[0])
-    return Ok(TypeNode.Container(ContainerKind.Union, members))
-
-
-def parse_primary(mut tokens: TextTokens, mut budget: Budget) -> Result[TypeNode, TextError]:
-    """Parse one scalar, named type or parameterized core constructor."""
-    token = tokens.peek()
-    if token.kind != TextTokenKind.Word and token.kind != TextTokenKind.Number:
-        return Err(TextError(kind=TextFailure.InvalidType, position=token.position))
-    name = tokens.take().text
-    scalar_kind = ScalarKind.from_value(name)
-    logical_constructor = TypeConstructorKind.from_value(name)
-    container_kind = ContainerKind.from_value(name)
-    mut result = TypeNode.Nominal(NominalKind.Record, name, None, [])
-    match scalar_kind:
-        Some(ScalarKind.Reference) => pass
-        Some(scalar) => result = TypeNode.Scalar(scalar)
-        None => pass
-    match logical_constructor:
-        Some(TypeConstructorKind.Decimal) => result = parse_decimal(tokens)?
-        Some(TypeConstructorKind.Reference) => result = parse_reference(tokens, budget)?
-        None => pass
-    match container_kind:
-        Some(container) =>
-            match container:
-                ContainerKind.List | ContainerKind.Set | ContainerKind.Option | ContainerKind.Map =>
-                    result = parse_constructor(container, tokens, budget)?
-                _ => pass
-        None => pass
-    if tokens.accepts("?"):
-        result = TypeNode.Container(ContainerKind.Option, [result])
-    return Ok(result)
-
-
-def parse_decimal(mut tokens: TextTokens) -> Result[TypeNode, TextError]:
-    """Parse positive precision and a scale within that precision."""
-    tokens.require("<")?
-    precision_token = tokens.take()
-    tokens.require(",")?
-    scale_token = tokens.take()
-    tokens.require(">")?
-    if not plain_unsigned(precision_token.text) or not plain_unsigned(scale_token.text):
-        return Err(TextError(kind=TextFailure.InvalidType, position=precision_token.position))
-    precision = int(precision_token.text)
-    scale = int(scale_token.text)
-    if precision <= 0 or precision > 38 or scale < 0 or scale > precision:
-        return Err(TextError(kind=TextFailure.InvalidType, position=precision_token.position))
-    return Ok(TypeNode.Decimal(precision, scale))
-
-
-def parse_constructor(kind: ContainerKind, mut tokens: TextTokens, mut budget: Budget) -> Result[TypeNode, TextError]:
-    """Parse the fixed arity of one core type constructor."""
-    tokens.require("<")?
-    first = parse_type(tokens, budget)?
-    if kind == ContainerKind.Map:
-        tokens.require(",")?
-        second = parse_type(tokens, budget)?
-        tokens.require(">")?
-        return Ok(TypeNode.Container(ContainerKind.Map, [first, second]))
-    tokens.require(">")?
-    match kind:
-        ContainerKind.List => return Ok(TypeNode.Container(ContainerKind.List, [first]))
-        ContainerKind.Set => return Ok(TypeNode.Container(ContainerKind.Set, [first]))
-        ContainerKind.Option => return Ok(TypeNode.Container(ContainerKind.Option, [first]))
-        _ => return Err(TextError(kind=TextFailure.InvalidType, position=tokens.peek().position))
-
-
-def parse_reference(mut tokens: TextTokens, mut budget: Budget) -> Result[TypeNode, TextError]:
-    """Parse a reference whose target is retained by the shared logical type graph."""
-    tokens.require("<")?
-    target = parse_type(tokens, budget)?
-    tokens.require(">")?
-    return Ok(TypeNode.Reference([target]))
+    """Parse one type through the caller's single streaming token object."""
+    return tokens.parse_type(budget)
 
 
 pub def type_spelling(value: TypeNode) -> str:
@@ -164,18 +82,3 @@ pub def last_segment(path: str) -> str:
     """Return the final dotted path segment."""
     parts = path.split(".")
     return parts[len(parts) - 1]
-
-
-def plain_unsigned(value: str) -> bool:
-    """Return whether text is nonempty canonical decimal digits."""
-    if value == "" or (len(value) > 1 and value.startswith("0")):
-        return false
-    for character in value:
-        if character < "0" or character > "9":
-            return false
-    return true
-
-
-def limit_error(position: TextPosition) -> TextError:
-    """Preserve caller-limit refusal as a category separate from grammar errors."""
-    return TextError(kind=TextFailure.Limit, position=position)
