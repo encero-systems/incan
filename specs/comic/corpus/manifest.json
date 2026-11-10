@@ -54,7 +54,7 @@
       "path": "binary-row.json",
       "operation": "binary_decode",
       "cases": 81,
-      "sha256": "3dcf962f0d3db5643133fb9d6dd024c663c366cc0521b973ef23f608ddecb368"
+      "sha256": "3b2e858e1d4a0c7d15ca72688aa938008cd2733817734cf5ba81bd9725a3a502"
     },
     {
       "path": "type-selectors.json",

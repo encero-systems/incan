@@ -191,6 +191,29 @@ The printer produces exactly one text for a document:
 
 Readers accept any whitespace between tokens. The printer's output must not depend on terminal width, locale, host map iteration or a language formatter.
 
+## What a read produces
+
+Text is a syntax for the [value domain](values.md). Reading produces the same descriptions and values a crumb decodes to, and printing writes them back:
+
+- **Names and identities.** Each field and variant takes its identity from its earliest name, which is the first in its `renamed_from` when it has one and its own name otherwise, under [hashes](hashes.md). A value's fields and variant are matched to its type's description by name and held by identity. Printing finds the names again through the description.
+- **Resolved types.** A path resolves to a description in the document, a type the reader's caller admits, or a type of the description's profile, before the read returns. A path that none of them resolves is refused, so no unresolved name reaches the value domain.
+- **Nominal identities.** A described type's identity comes from its package's canonical identity. Its profile derives it where its paths name the package, as the Incan profile's `pub.` paths do, and the reader's caller supplies it otherwise. When neither does, the type has no identity: it still reads and prints as text, and encoding it as a crumb is refused, because a crumb stores identities.
+- **References.** `ref<T>` keeps its target type `T`, and a reference value keeps both the target type's identity and the target's own.
+- **Properties.** A property value is one [metadata value](hashes.md#complete-description-preimage-d):
+
+| Text | Metadata |
+| --- | --- |
+| An unquoted path, as `Public` | Symbol |
+| `"text"` | String |
+| `true`, `false` | Boolean |
+| `42` | Integer |
+| `None` | Null |
+| `b"…"` | Binary |
+| `[ … ]` | List |
+| `{ name = value, … }` | Map, keyed by property name |
+
+A symbol stays a symbol and a string stays a string, as in values. A map holds its entries in the order read, so a printer without the kind's declared order keeps that order.
+
 ## Reading safely
 
 Reading runs nothing from the document: a document holds no code, and a description grants none. The only code a read reaches is the final validation of the type the caller requested, which the caller's own implementation of that type supplies, as the [reconstruction boundary](values.md#reconstruction-boundary) states. A reader runs under caller-visible limits on bytes, nesting depth, the length of one string or number, and memory. It checks each table row and nested value against them as it reads, so a short document cannot make it allocate far more than its own size. A reference never expands into a copy of its target, so a document has no alias to multiply.
