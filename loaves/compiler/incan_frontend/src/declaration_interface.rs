@@ -32,6 +32,7 @@ pub use callable_module::{CallableLookupWitness, CheckedCallableModule};
 pub struct CheckedCallableInterface {
     schema: u32,
     identity: StableDeclarationId,
+    canonical: CanonicalSymbolId,
     is_public: bool,
     mutation: Vec<Option<bool>>,
     replay: CheckedExportReplay,
@@ -67,6 +68,27 @@ impl CheckedCallableInterface {
         span: Span,
         checker: &TypeChecker,
     ) -> Result<Self, LibraryManifestError> {
+        Self::from_checked_with_package(declaration, span, checker, None)
+    }
+
+    /// Capture a private product header using the unit package only as the replay envelope. Program declarations
+    /// retain their canonical module origin; the package never becomes their semantic identity.
+    pub(super) fn from_checked_for_product(
+        declaration: &FunctionDecl,
+        span: Span,
+        checker: &TypeChecker,
+        producer_package: &str,
+    ) -> Result<Self, LibraryManifestError> {
+        Self::from_checked_with_package(declaration, span, checker, Some(producer_package))
+    }
+
+    /// Capture one checked callable while keeping transport ownership separate from canonical symbol ownership.
+    fn from_checked_with_package(
+        declaration: &FunctionDecl,
+        span: Span,
+        checker: &TypeChecker,
+        producer_package: Option<&str>,
+    ) -> Result<Self, LibraryManifestError> {
         // ---- Admission: retain the accepting checker's declaration authority ----
         if !declaration.decorators.is_empty()
             || !declaration.surface_modifiers.is_empty()
@@ -90,19 +112,22 @@ impl CheckedCallableInterface {
             .and_then(|binding| binding.identity.clone())
             .ok_or_else(|| invalid("callable interface has no checked declaration identity"))?;
         let identity = checked_identity(&canonical, checker)?;
-        let SymbolOrigin::Package { library, .. } = &canonical.origin else {
-            return Err(invalid(
-                "callable interface requires its checked producer package identity",
-            ));
+        let package = match &canonical.origin {
+            SymbolOrigin::Package { library, .. } => library.clone(),
+            SymbolOrigin::Module(_) => producer_package
+                .map(str::to_owned)
+                .ok_or_else(|| invalid("callable interface requires its private producer package envelope"))?,
+            SymbolOrigin::RustCrate(_) | SymbolOrigin::Builtin => {
+                return Err(invalid("callable interface requires an authored source owner"));
+            }
         };
-        let package = library.clone();
 
         // ---- Projection: prove that the ordinary transport preserves the complete callable shape ----
         let mut source_path = checker.current_module_path.clone().unwrap_or_default();
         source_path.push(declaration.name.clone());
         let export = CheckedNamedExport {
             name: declaration.name.clone(),
-            identity: CheckedExportIdentity::direct(source_path).with_canonical(Some(canonical)),
+            identity: CheckedExportIdentity::direct(source_path).with_canonical(Some(canonical.clone())),
             kind: CheckedExportKind::Function(function.clone()),
         };
         let replay = CheckedExportReplay::from_checked(&package, "0.0.0", &export)?;
@@ -115,6 +140,7 @@ impl CheckedCallableInterface {
         let interface = Self {
             schema: 1,
             identity,
+            canonical,
             is_public: declaration.visibility == Visibility::Public,
             mutation: declaration
                 .params
@@ -135,6 +161,12 @@ impl CheckedCallableInterface {
     /// Borrow the stable declaration identity; source positions never participate in this key.
     pub fn identity(&self) -> &StableDeclarationId {
         &self.identity
+    }
+
+    /// Borrow the producer's canonical identity before a private program header enters the package-shaped replay
+    /// envelope. The envelope may normalize module ownership, but semantic consumers must not.
+    pub(super) fn canonical_identity(&self) -> &CanonicalSymbolId {
+        &self.canonical
     }
 
     /// Preserve visibility independently of the manifest transport used to encode the callable's shape.
@@ -227,9 +259,7 @@ impl CheckedCallableInterface {
         body: &mut incan_semantics_core::body_ir::Body,
         projection: &StableIdentityProjection,
     ) -> Result<CheckedDeclarationFingerprints, LibraryManifestError> {
-        let canonical = self.replay.to_checked()?.identity.canonical;
-        if canonical.is_none()
-            || body.canonical != canonical
+        if body.canonical.as_ref() != Some(&self.canonical)
             || !body.nominal_instantiation.is_empty()
             || body.trait_default_instantiation.is_some()
             || !body.native_attributes.is_empty()
@@ -257,19 +287,25 @@ impl CheckedCallableInterface {
         let CheckedExportKind::Function(function) = export.kind else {
             return Err(invalid("callable interface contains another declaration kind"));
         };
-        let canonical = export
+        let mut replayed_canonical = export
             .identity
             .canonical
-            .as_ref()
             .ok_or_else(|| invalid("callable interface lost its canonical identity"))?;
+        let compatible_origin = match (&self.canonical.origin, &replayed_canonical.origin) {
+            (SymbolOrigin::Module(module), SymbolOrigin::Package { module_path, .. }) => module == module_path,
+            (expected, actual) => expected == actual,
+        };
+        replayed_canonical.origin = self.canonical.origin.clone();
         if function.params.len() != self.mutation.len()
             || self.identity.signature.is_none()
             || self.identity.location != StableDeclarationLocation::ModuleLevel
-            || canonical.scope_discriminant.is_some()
-            || self.identity.namespace != canonical.namespace
-            || self.identity.origin != canonical.origin
-            || self.identity.declaration_name != canonical.declaration_name
-            || self.identity.kind != canonical.kind
+            || !compatible_origin
+            || replayed_canonical != self.canonical
+            || self.canonical.scope_discriminant.is_some()
+            || self.identity.namespace != self.canonical.namespace
+            || self.identity.origin != self.canonical.origin
+            || self.identity.declaration_name != self.canonical.declaration_name
+            || self.identity.kind != self.canonical.kind
         {
             return Err(invalid("callable interface identity or mutation inventory differs"));
         }
@@ -407,6 +443,7 @@ mod tests {
         nominal_signature_witnesses()?;
         declaration_fingerprint_edits(source)?;
         scalar_body_product_edits()?;
+        hello_body_product_edits()?;
         scalar_call_product_edits()?;
         scalar_local_product_edits()?;
         mixed_scalar_product_edits()?;
@@ -597,6 +634,16 @@ mod tests {
         warm.set_current_package_identity(Some("interface_test".to_owned()));
         warm.set_callable_body_reuse(selection);
         warm.check_program(&current).map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(
+            warm.check_work().declaration_local_checks,
+            0,
+            "a body-only edit must reuse every unchanged declaration record"
+        );
+        assert_eq!(
+            warm.check_work().body_local_checks,
+            1,
+            "a body-only edit must evaluate only the changed local record"
+        );
         assert_eq!(warm.type_info().reused_callable_bodies.len(), 2);
         assert_eq!(scalar_module(&current, &warm), scalar_module(&current, &cold));
         let retained_again =
@@ -684,6 +731,32 @@ mod tests {
                 .len(),
             2
         );
+        Ok(())
+    }
+
+    /// Keep the unchanged entry point after a string-returning sibling body changes, including its registry-owned
+    /// print operation and implicit unit return. The warm records must remain byte-for-byte equivalent to a cold run.
+    fn hello_body_product_edits() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def greeting() -> str:\n    return \"hello\"\n\ndef main() -> None:\n    println(greeting())\n";
+        let (program, checker) = checked(source, "hello")?;
+        let products =
+            CallableBodyProducts::from_checked(&program, source, &checker, &scalar_module(&program, &checker))?;
+        let edited = source.replace("hello", "hullo");
+        let (current, cold) = checked(&edited, "hello")?;
+        let selection = products.select(&current, &edited, "interface_test", &["hello".to_owned()])?;
+        assert_eq!(
+            selection.len(),
+            1,
+            "the unchanged main body must retain its checked reads"
+        );
+        let mut warm = TypeChecker::new();
+        warm.set_current_module_path(Some(vec!["hello".to_owned()]));
+        warm.set_current_package_identity(Some("interface_test".to_owned()));
+        warm.set_callable_body_reuse(selection);
+        warm.check_program(&current).map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(warm.check_work().declaration_local_checks, 0);
+        assert_eq!(warm.check_work().body_local_checks, 1);
+        assert_eq!(scalar_module(&current, &warm), scalar_module(&current, &cold));
         Ok(())
     }
 
@@ -863,7 +936,7 @@ mod tests {
         warm.set_current_package_identity(Some("interface_test".to_owned()));
         warm.set_callable_body_reuse(products.select(&current, &edited, "interface_test", &["lib".to_owned()])?);
         warm.check_program(&current).map_err(|errors| format!("{errors:?}"))?;
-        assert_eq!(warm.type_info().reused_callable_bodies.len(), 2);
+        assert_eq!(warm.type_info().reused_callable_bodies.len(), 3);
         assert_eq!(scalar_module(&current, &warm), scalar_module(&current, &cold));
         for changed in [
             source.replace("unused", "absent"),

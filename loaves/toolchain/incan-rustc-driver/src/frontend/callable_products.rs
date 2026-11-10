@@ -20,6 +20,7 @@ use sha2::{Digest, Sha256};
 /// One invocation's authenticated store placement and accepted declaration inputs, without retaining checkers.
 pub(super) struct CallableProducts {
     directory: Option<PathBuf>,
+    package: String,
     inputs: BTreeMap<PathBuf, CallableBodyInputs>,
 }
 
@@ -53,6 +54,7 @@ impl CallableProducts {
         session.set_callable_body_reuse(reuse);
         Self {
             directory,
+            package: unit.package.clone(),
             inputs: BTreeMap::new(),
         }
     }
@@ -63,7 +65,7 @@ impl CallableProducts {
         if self.directory.is_none() {
             return;
         }
-        match CallableBodyInputs::from_checked(&module.ast, &module.source, checker) {
+        match CallableBodyInputs::from_checked_for_unit(&module.ast, &module.source, checker, &self.package) {
             Ok(inputs) => {
                 self.inputs.insert(module.file_path.clone(), inputs);
             }

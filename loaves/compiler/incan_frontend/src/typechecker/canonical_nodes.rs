@@ -92,17 +92,10 @@ impl SemanticNodeBindings {
         if !function.decorators.is_empty()
             || !function.surface_modifiers.is_empty()
             || !function.type_params.is_empty()
-            || function.visibility != crate::ast::Visibility::Private
             || declaration.span.expansion.is_some()
             || !declaration.required_features.is_empty()
         {
-            return Err(NodeBindingError::Unsupported(
-                "modified, generic, public, or generated owner",
-            ));
-        }
-        if function.body.first().is_some_and(|statement| matches!(&statement.node,
-            crate::ast::Statement::Expr(expression) if matches!(&expression.node, crate::ast::Expr::Literal(crate::ast::Literal::String(_))))) {
-            return Err(NodeBindingError::Unsupported("function docstring projection"));
+            return Err(NodeBindingError::Unsupported("modified, generic, or generated owner"));
         }
         let canonical = checker
             .declaration_view()

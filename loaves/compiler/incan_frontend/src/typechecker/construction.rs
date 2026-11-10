@@ -21,6 +21,8 @@ impl TypeChecker {
             body_checks: Vec::new(),
             checked_bodies: Vec::new(),
             checked_declarations: Vec::new(),
+            produced_declaration_records: std::collections::BTreeMap::new(),
+            callable_declaration_reuse: std::collections::BTreeMap::new(),
             lazy_result_bodies: HashSet::new(),
             iteration_replacement_bodies: HashSet::new(),
             dictionary_lookup_bodies: HashSet::new(),

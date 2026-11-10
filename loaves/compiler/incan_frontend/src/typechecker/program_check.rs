@@ -195,6 +195,8 @@ impl TypeChecker {
         self.body_checks.clear();
         self.checked_bodies.clear();
         self.checked_declarations.clear();
+        self.produced_declaration_records.clear();
+        self.callable_declaration_reuse.clear();
         self.refused_ownership_authorities.clear();
         self.diagnostic_owner_ranges.clear();
         self.body_open_diagnostics.clear();
@@ -344,12 +346,17 @@ impl TypeChecker {
         }
         for decl in &program.declarations {
             if !matches!(decl.node, Declaration::Const(_)) {
-                if self.callable_body_matches_current_scope(decl.span) {
-                    self.symbols.enter_scope(crate::symbols::ScopeKind::Function);
-                    self.symbols.exit_scope();
-                    continue;
+                if self.has_declaration_record(decl.span) {
+                    let Declaration::Function(function) = &decl.node else {
+                        self.check_environment_declaration(decl);
+                        continue;
+                    };
+                    self.visibility_point = VisibilityPoint::BeforeDeclaration(decl.span);
+                    self.check_reused_function(program, function, decl.span);
+                    self.visibility_point = VisibilityPoint::AfterDeclaration(decl.span);
+                } else {
+                    self.check_environment_declaration(decl);
                 }
-                self.check_environment_declaration(decl);
             }
         }
         #[cfg(test)]
@@ -365,7 +372,7 @@ impl TypeChecker {
 
     /// Keep a retained scalar body only at its original physical lexical scope. Earlier unsupported bodies may
     /// introduce different scopes after an edit; that invalidates this product rather than renumbering identities.
-    fn callable_body_matches_current_scope(&mut self, span: Span) -> bool {
+    pub(in crate::typechecker) fn callable_body_matches_current_scope(&mut self, span: Span) -> bool {
         let Some(scope) = self.type_info.reused_callable_scopes.get(&span) else {
             return false;
         };
