@@ -1,11 +1,11 @@
 """Independent framing, exact numerics and metadata controls over retained immutable views."""
 
 from std.primitives.crumb import Budget
-from std.primitives.crumb.row_cursor import RowCursor
-from std.primitives.crumb.row_errors import RowFailure
-from std.primitives.crumb.row_metadata_read import read_metadata
-from std.primitives.crumb.row_metadata import encode
-from std.primitives.crumb.row_numbers import signed_decimal, fixed_integer
+from std.primitives.crumb.encoding_cursor import EncodingCursor
+from std.primitives.crumb.encoding_errors import BinaryFailure
+from std.primitives.crumb.metadata_read import read_metadata
+from std.primitives.crumb.metadata_values import encode
+from std.primitives.crumb.exact_numbers import signed_decimal, fixed_integer
 from std.primitives.views import MappedFile, MappedView
 from std.primitives.hex import hexlify
 
@@ -21,24 +21,26 @@ def retained(data: bytes) -> Result[MappedView, str]:
 def test_lengths_refuse_nonminimal_overflow_and_host_truncation() -> Result[None, str]:
     """Shortest framing, u64 overflow and a valid but unrepresentable host length are different failures."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
-    mut cursor = RowCursor.create(retained(b"\x80\x01")?).map_err((e) => e.message())?
+    mut cursor = EncodingCursor.create(retained(b"\x80\x01")?).map_err((e) => e.message())?
     assert cursor.length(budget).map_err((e) => e.message())? == 128
     cursor.finished().map_err((e) => e.message())?
-    mut overlong = RowCursor.create(retained(b"\x80\x00")?).map_err((e) => e.message())?
+    mut overlong = EncodingCursor.create(retained(b"\x80\x00")?).map_err((e) => e.message())?
     match overlong.length(budget):
         Ok(_) => return Err("accepted nonminimal length")
         Err(error) =>
-            assert error.kind == RowFailure.NoncanonicalInteger
-    mut overflow = RowCursor.create(retained(b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x02")?).map_err((e) => e.message())?
+            assert error.kind == BinaryFailure.NoncanonicalInteger
+    mut overflow = EncodingCursor
+        .create(retained(b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x02")?)
+        .map_err((e) => e.message())?
     match overflow.length(budget):
         Ok(_) => return Err("accepted overflowing length")
         Err(error) =>
-            assert error.kind == RowFailure.IntegerOverflow
-    mut host = RowCursor.create(retained(b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01")?).map_err((e) => e.message())?
+            assert error.kind == BinaryFailure.IntegerOverflow
+    mut host = EncodingCursor.create(retained(b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01")?).map_err((e) => e.message())?
     match host.length(budget):
         Ok(_) => return Err("truncated a valid u64 into the host range")
         Err(error) =>
-            assert error.kind == RowFailure.LimitExceeded
+            assert error.kind == BinaryFailure.LimitExceeded
     return Ok(None)
 
 

@@ -208,11 +208,7 @@ def selector_key(node: TypeNode, mut budget: Budget) -> Result[tuple[int, str, s
     match node:
         TypeNode.Underlying(items) => return selector_key(items[0], budget)
         TypeNode.Bound(items) => return selector_key(items[0], budget)
-        TypeNode.Nominal(kind, _, _) =>
-            mut kind_name = "record"
-            if kind == NominalKind.Enum:
-                kind_name = "enum"
-            return Ok((1, hexlify(closed_selector(node, budget)?), kind_name))
+        TypeNode.Nominal(kind, _, _, _) => return Ok((1, hexlify(closed_selector(node, budget)?), kind.value()))
         _ =>
             spelling = selector_spelling(node, budget)?
             budget.charge_bytes(len(spelling))?

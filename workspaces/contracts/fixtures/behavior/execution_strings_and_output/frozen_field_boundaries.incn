@@ -1,0 +1,65 @@
+# behavior: frozen text and bytes literals retain their checked carriers in model, Option and list fields; already frozen locals keep the same representation (#2864)
+# expect-stdout:
+#   frozen field boundaries
+
+model FrozenFields:
+    pub empty: FrozenBytes
+    pub data: FrozenBytes
+    pub text: FrozenStr
+    pub optional: Option[FrozenBytes]
+    pub optional_text: Option[FrozenStr]
+    pub words: list[FrozenStr]
+    pub buffers: list[FrozenBytes]
+
+
+def main() -> None:
+    """Read literal and frozen-local fields after construction, retaining their original values."""
+    fields = FrozenFields(
+        empty=b"",
+        data=b"\x00\xff",
+        text="literal",
+        optional=Some(b"value"),
+        optional_text=Some("value"),
+        words=["first", "second"],
+        buffers=[b"", b"AB"],
+    )
+    assert len(fields.empty) == 0
+    assert fields.data[0] == 0
+    assert fields.data[1] == 255
+    assert fields.text == "literal"
+    match fields.optional:
+        Some(value) =>
+            assert len(value) == 5
+        None =>
+            assert false
+    match fields.optional_text:
+        Some(value) =>
+            assert value == "value"
+        None =>
+            assert false
+    assert fields.words[1] == "second"
+    assert len(fields.buffers[0]) == 0
+    assert fields.buffers[1][1] == 66
+    local_bytes: FrozenBytes = b"local"
+    local_text: FrozenStr = "local"
+    local = FrozenFields(
+        empty=b"",
+        data=local_bytes,
+        text=local_text,
+        optional=Some(local_bytes),
+        optional_text=Some(local_text),
+        words=[local_text],
+        buffers=[local_bytes],
+    )
+    assert len(local.data) == 5
+    assert local.text == "local"
+    match local.optional_text:
+        Some(value) =>
+            assert value == local_text
+        None =>
+            assert false
+    assert len(local_bytes) == 5
+    assert local_text == "local"
+    assert local.words[0] == local_text
+    assert len(local.buffers[0]) == len(local_bytes)
+    println("frozen field boundaries")

@@ -39,6 +39,7 @@ from rust::incan_semantics_core::body_ir import (
     Body as RustBody,
     BodyIrModule as RustBodyIrModule,
     Callee as RustCallee,
+    IsInstanceRvalue as RustIsInstanceRvalue,
     LoafCallable as RustLoafCallable,
     LocalId,
     NominalDeclaration as RustNominalDeclaration,
@@ -101,8 +102,14 @@ pub def authored_rvalue(value: &RustRvalue, provenance: &BodyIrRecordProvenance)
         RustRvalue.UnaryOp(operation, operand) => return Ok(CompilerRvalue.UnaryOp(operation, operand.clone()))
         RustRvalue.BinaryOp(operation, left, right) =>
             return Ok(CompilerRvalue.BinaryOp(operation, left.clone(), right.clone()))
-        RustRvalue.IsInstance(value=value, value_ty=ty, target=target) =>
-            return Ok(CompilerRvalue.IsInstance(value.clone(), authored_type(ty, provenance)?, target.clone()))
+        RustRvalue.IsInstance(payload) =>
+            return Ok(
+                CompilerRvalue.IsInstance(
+                    payload.value.clone(),
+                    authored_type(payload.value_ty, provenance)?,
+                    payload.target.clone(),
+                ),
+            )
         RustRvalue.Aggregate(kind, elements) =>
             return Ok(CompilerRvalue.Aggregate(kind.clone(), [element.clone() for element in elements]))
         RustRvalue.Dict(entries) => return Ok(CompilerRvalue.Dict([entry.clone() for entry in entries]))
@@ -131,7 +138,12 @@ pub def native_rvalue(value: CompilerRvalue) -> Result[RustRvalue, str]:
         CompilerRvalue.UnaryOp(operation, operand) => return Ok(RustRvalue.UnaryOp(operation, operand))
         CompilerRvalue.BinaryOp(operation, left, right) => return Ok(RustRvalue.BinaryOp(operation, left, right))
         CompilerRvalue.IsInstance(value, ty, target) =>
-            return Ok(RustRvalue.IsInstance(value=value, value_ty=native_checked_type(ty)?, target=target))
+            payload = RustIsInstanceRvalue(
+                value=value,
+                value_ty=native_checked_type(ty)?,
+                target=target,
+            )
+            return Ok(RustRvalue.IsInstance(payload))
         CompilerRvalue.Aggregate(kind, elements) => return Ok(RustRvalue.Aggregate(kind, elements))
         CompilerRvalue.Dict(entries) => return Ok(RustRvalue.Dict(entries))
         CompilerRvalue.ValueEnumVariant(target) => return Ok(RustRvalue.ValueEnumVariant(target))
@@ -143,8 +155,6 @@ pub def native_rvalue(value: CompilerRvalue) -> Result[RustRvalue, str]:
         CompilerRvalue.Generator(source, captures, body) =>
             return Ok(RustRvalue.Generator(source=source, captured_operands=captures, body=body))
         CompilerRvalue.Match(scrutinee, arms) => return Ok(RustRvalue.Match(scrutinee=scrutinee, arms=arms))
-
-
 pub def authored_statement_kind(
     kind: &RustStatementKind,
     provenance: &BodyIrRecordProvenance,

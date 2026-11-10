@@ -165,6 +165,9 @@ impl BodyIrModule {
         slots.len() == metadata.len()
             && slots.iter().zip(metadata).all(|(slot, record)| {
                 declaration.fields.get(*slot) == Some(&record.name)
+                    && record.position == *slot
+                    && (!record.default_is_empty || record.has_default)
+                    && (record.renamed_from_lifecycle.is_none() || !record.renamed_from.is_empty())
                     && Self::reflection_record_identity_is_well_formed(record)
             })
     }

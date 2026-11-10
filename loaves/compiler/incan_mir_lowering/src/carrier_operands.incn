@@ -55,6 +55,7 @@ from list_values import sequence_read_storage
 from matches import bind_enum_payload, bind_structural_pattern, enum_payload_read
 from result_carriers import frozen_operand, typed_carrier_operand
 from compiler_record_adapters import semantic_key_matches_native
+from frozen_plan import frozen_bytes_literal
 
 
 pub def boundary_operand(
@@ -63,9 +64,13 @@ pub def boundary_operand(
     target: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Materialize union construction before passing or returning an owned value."""
+    """Preserve checked static literals and materialize carrier construction at a typed value boundary."""
     if target == PlanType.FrozenStr:
         return frozen_operand(builder, value, span)
+    if target == PlanType.FrozenBytes:
+        match value:
+            RustOperand.Constant(constant) => return frozen_bytes_literal(builder, constant, span)
+            _ => pass
     operand = typed_carrier_operand(builder, value, target, span)?
     match generator_shape(operand_type(builder, operand)?):
         Some(_shape) =>

@@ -64,6 +64,7 @@ mod control_contexts;
 mod declaration_validation;
 mod declaration_views;
 mod decorated_method_receivers;
+mod dependency_interface;
 mod dependency_members;
 mod dependency_registry;
 mod derive_contract;
@@ -176,6 +177,8 @@ use incan_lang::lang::types::numerics::{self, NumericTypeId};
 use incan_lang::lang::types::stringlike::StringLikeId;
 use incan_lang::numeric_values::numeric_type_losslessly_widens_to;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
+
+pub use dependency_interface::{ModuleDependencyInterface, ModuleDependencyInterfaceSnapshot};
 
 /// Immutable public-export projections for source dependencies, keyed by the same canonical module names as the
 /// dependency AST closure.
@@ -478,6 +481,7 @@ struct AnnotationOwner {
 
 /// A callable's original type templates, retained before imports, receiver arguments, or partial application specialize
 /// them. Type-parameter positions never grant a declaration-owned nominal identity to a caller's substitution.
+#[derive(Clone, Debug)]
 struct DeclarationCallableTypes {
     /// Parameter templates in declaration order, including their source binding labels.
     params: Vec<CallableParam>,
@@ -767,6 +771,11 @@ pub struct TypeChecker {
     visibility_point: VisibilityPoint,
     /// Public exports for imported dependency modules, keyed by module name.
     pub dependency_exports: DependencyExportInterfaces,
+    /// Exact immutable provider interfaces selected by driver dependency indexes for the next check.
+    ///
+    /// This staging slot is consumed after the legacy oracle has populated its comparison state. It never widens the
+    /// closure and is empty for direct API callers that still exercise legacy dependency collection.
+    selected_dependency_interfaces: Vec<Arc<ModuleDependencyInterface>>,
     /// Exact source-module member symbols collected from dependencies, keyed by canonical module name.
     ///
     /// Direct source imports use this map before falling back to ambient symbol lookup so `from module import name as

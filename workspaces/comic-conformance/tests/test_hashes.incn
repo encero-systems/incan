@@ -3,7 +3,7 @@
 from std.primitives.crumb import Budget
 from std.primitives.crumb.hashes import value_hash, model_hash, description_hash, seal_hash, verify_description_digest
 from std.primitives.crumb.values import Value, ValueField, MapEntry, Metadata, MetadataEntry, Projection
-from std.primitives.crumb.types import AbsentPolicy, TypeNode, NominalKind
+from std.primitives.crumb.types import AbsentPolicy, NominalKind, ScalarKind, TypeNode
 from std.primitives.crumb.ordering import order_values
 from std.primitives.hex import hexlify
 
@@ -80,6 +80,12 @@ def test_description_integrity_is_derived_from_complete_metadata() -> Result[Non
         ],
     )
     assert description_hash(duplicate, budget).is_err()
+    if description_hash(Metadata.Map([MetadataEntry(key="not.a.segment", value=Metadata.Null)]), budget).is_ok():
+        return Err("non-segment metadata key was accepted")
+    text = description_hash(Metadata.Text("Public"), budget).map_err((e) => e.message())?
+    symbol = description_hash(Metadata.Symbol("Public"), budget).map_err((e) => e.message())?
+    if text.digest == symbol.digest:
+        return Err("metadata text and symbol used the same digest contribution")
     assert budget.leave().is_err()
     return Ok(None)
 
@@ -127,8 +133,8 @@ def test_float_order_covers_signed_zero_infinities_and_nan() -> Result[None, str
 def test_nominal_union_identity_is_not_structural_equality() -> Result[None, str]:
     """Equal empty payloads in distinct nominal branches keep different logical contributions."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
-    a = Value.Union(TypeNode.Nominal(NominalKind.Record, b"aaaaaa", []), [Value.Record([])])
-    b = Value.Union(TypeNode.Nominal(NominalKind.Record, b"bbbbbb", []), [Value.Record([])])
+    a = Value.Union(TypeNode.Nominal(NominalKind.Record, "", Some(b"aaaaaa"), []), [Value.Record([])])
+    b = Value.Union(TypeNode.Nominal(NominalKind.Record, "", Some(b"bbbbbb"), []), [Value.Record([])])
     first = value_hash(a, Projection.Object, budget).map_err((e) => e.message())?
     second = value_hash(b, Projection.Object, budget).map_err((e) => e.message())?
     assert first.digest != second.digest
@@ -148,7 +154,7 @@ def test_invalid_shapes_refuse_without_partial_digest() -> Result[None, str]:
     malformed = [
         Value.Some([]),
         Value.Float(16, b"00"),
-        Value.Union(TypeNode.Scalar("i64"), []),
+        Value.Union(TypeNode.Scalar(ScalarKind.I64), []),
         Value.Enum(b"short", []),
         Value.Integer("-0"),
         Value.Decimal("1", "+2"),

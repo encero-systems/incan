@@ -1,24 +1,24 @@
 """Read complete D trees from bounded views, retaining all unknown properties as inert data."""
 
 from crate.primitives.crumb.budget import Budget
-from crate.primitives.crumb.row_cursor import RowCursor, copied
-from crate.primitives.crumb.row_errors import RowError, RowFailure, failure, primitive
-from crate.primitives.crumb.row_numbers import signed_decimal
+from crate.primitives.crumb.encoding_cursor import EncodingCursor, copied
+from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive
+from crate.primitives.crumb.exact_numbers import signed_decimal
 from crate.primitives.crumb.values import Metadata, MetadataEntry
 from crate.primitives.hex import hexlify
 from crate.primitives.text import decode_utf8, encode_utf8
 from crate.primitives.views import MappedView
 
 
-pub def read_metadata(view: MappedView, origin: int, mut budget: Budget) -> Result[Metadata, RowError]:
+pub def read_metadata(view: MappedView, origin: int, mut budget: Budget) -> Result[Metadata, BinaryError]:
     """Require one complete metadata frame with no trailing bytes or alternative numeric spelling."""
-    mut cursor = RowCursor.create(view, origin)?
+    mut cursor = EncodingCursor.create(view, origin)?
     value = read_node(cursor, budget)?
     cursor.finished()?
     return Ok(value)
 
 
-def read_node(mut cursor: RowCursor, mut budget: Budget) -> Result[Metadata, RowError]:
+def read_node(mut cursor: EncodingCursor, mut budget: Budget) -> Result[Metadata, BinaryError]:
     """Every recursive metadata node consumes the one request's shared work and depth allowance."""
     offset = cursor.absolute()
     budget.charge_elements(1).map_err((e) => primitive(e, offset))?
@@ -28,7 +28,7 @@ def read_node(mut cursor: RowCursor, mut budget: Budget) -> Result[Metadata, Row
     return result
 
 
-def read_inner(mut cursor: RowCursor, mut budget: Budget) -> Result[Metadata, RowError]:
+def read_inner(mut cursor: EncodingCursor, mut budget: Budget) -> Result[Metadata, BinaryError]:
     """The D tag is format data; it never selects executable profile behavior."""
     offset = cursor.absolute()
     tag = cursor.byte(budget)?
@@ -37,7 +37,7 @@ def read_inner(mut cursor: RowCursor, mut budget: Budget) -> Result[Metadata, Ro
         1 =>
             flag = cursor.byte(budget)?
             if flag > 1:
-                return Err(failure(RowFailure.InvalidDescription, offset))
+                return Err(failure(BinaryFailure.InvalidDescription, offset))
             return Ok(Metadata.Boolean(flag == 1))
         2 =>
             groups = cursor.groups(budget)?
@@ -53,10 +53,11 @@ def read_inner(mut cursor: RowCursor, mut budget: Budget) -> Result[Metadata, Ro
                 items.append(read_node(cursor, budget)?)
             return Ok(Metadata.List(items))
         6 => return read_map(cursor, budget)
-        _ => return Err(failure(RowFailure.InvalidDescription, offset))
+        7 => return Ok(Metadata.Symbol(read_text(cursor, budget)?))
+        _ => return Err(failure(BinaryFailure.InvalidDescription, offset))
 
 
-def read_map(mut cursor: RowCursor, mut budget: Budget) -> Result[Metadata, RowError]:
+def read_map(mut cursor: EncodingCursor, mut budget: Budget) -> Result[Metadata, BinaryError]:
     """Encoded map keys must already be unique and in exact UTF-8 order; do not sort malformed input."""
     count = bounded_count(cursor, budget)?
     mut entries: list[MetadataEntry] = []
@@ -68,13 +69,13 @@ def read_map(mut cursor: RowCursor, mut budget: Budget) -> Result[Metadata, RowE
             budget.charge_bytes(len(key)).map_err((e) => primitive(e, offset))?
         ordered = hexlify(encode_utf8(key))
         if index > 0 and ordered <= previous:
-            return Err(failure(RowFailure.InvalidDescription, offset))
+            return Err(failure(BinaryFailure.InvalidDescription, offset))
         previous = ordered
         entries.append(MetadataEntry(key=key, value=read_node(cursor, budget)?))
     return Ok(Metadata.Map(entries))
 
 
-pub def read_text(mut cursor: RowCursor, mut budget: Budget) -> Result[str, RowError]:
+pub def read_text(mut cursor: EncodingCursor, mut budget: Budget) -> Result[str, BinaryError]:
     """Read a framed exact UTF-8 string without replacement or Unicode normalization."""
     offset = cursor.absolute()
     view = cursor.frame(budget)?
@@ -82,15 +83,15 @@ pub def read_text(mut cursor: RowCursor, mut budget: Budget) -> Result[str, RowE
     budget.charge_bytes(len(raw)).map_err((e) => primitive(e, offset))?
     valid, text = decode_utf8(raw, false)
     if not valid:
-        return Err(failure(RowFailure.InvalidUtf8, offset))
+        return Err(failure(BinaryFailure.InvalidUtf8, offset))
     return Ok(text)
 
 
-pub def bounded_count(mut cursor: RowCursor, mut budget: Budget) -> Result[int, RowError]:
+pub def bounded_count(mut cursor: EncodingCursor, mut budget: Budget) -> Result[int, BinaryError]:
     """Each metadata child needs at least one byte; reject impossible counts before reserving a list."""
     offset = cursor.absolute()
     count = cursor.length(budget)?
     budget.charge_elements(count).map_err((e) => primitive(e, offset))?
     if count > cursor.remaining():
-        return Err(failure(RowFailure.Truncated, cursor.absolute() + cursor.remaining()))
+        return Err(failure(BinaryFailure.Truncated, cursor.absolute() + cursor.remaining()))
     return Ok(count)

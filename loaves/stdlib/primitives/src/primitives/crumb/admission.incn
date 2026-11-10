@@ -3,7 +3,7 @@
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError, CrumbFailure
 from crate.primitives.crumb.spelling import selector_spelling, shape_spelling
-from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, TypeNode, VariantShape
+from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, ScalarKind, TypeNode, VariantShape
 from crate.primitives.hex import hexlify
 
 
@@ -50,7 +50,7 @@ pub enum ValuePlan:
     """A reader's structural conversion steps; containers retain their own value-admission obligations."""
 
     Identity
-    Widen(str)
+    Widen(ScalarKind)
     Wrap(list[ValuePlan])
     Optional(list[ValuePlan])
     Container(ContainerKind, list[ValuePlan])
@@ -216,7 +216,12 @@ def check_nested_inner(node: TypeNode, ordered: bool, path: str, mut budget: Bud
         .charge_elements(1)
         .map_err((error) => AdmissionError(kind=AdmissionFailure.ResourceLimit, path=path, cause=Some(error)))?
     match node:
-        TypeNode.Nominal(_, _, _) => return Err(AdmissionError(kind=AdmissionFailure.MissingDescription, path=path))
+        TypeNode.Nominal(_, _, _, _) => return Err(AdmissionError(kind=AdmissionFailure.MissingDescription, path=path))
+        TypeNode.Reference(items) =>
+            if len(items) != 1:
+                return Err(AdmissionError(kind=AdmissionFailure.InvalidType, path=path))
+            selector_spelling(items[0], budget).map_err((error) => type_failure(path, error))?
+            return Ok(None)
         TypeNode.Bound(items) =>
             if len(items) != 2:
                 return Err(AdmissionError(kind=AdmissionFailure.InvalidType, path=path))
@@ -273,11 +278,11 @@ def compatible_inner(
     """Nominal equality precedes nested shape adaptation; local recursion keys are not identity."""
     match source:
         TypeNode.Underlying(items) => return compatible(items[0], target, path, active, budget)
-        TypeNode.Nominal(_, _, _) => return Err(AdmissionError(kind=AdmissionFailure.MissingDescription, path=path))
+        TypeNode.Nominal(_, _, _, _) => return Err(AdmissionError(kind=AdmissionFailure.MissingDescription, path=path))
         _ => pass
     match target:
         TypeNode.Underlying(items) => return compatible(source, items[0], path, active, budget)
-        TypeNode.Nominal(_, _, _) => return Err(AdmissionError(kind=AdmissionFailure.MissingDescription, path=path))
+        TypeNode.Nominal(_, _, _, _) => return Err(AdmissionError(kind=AdmissionFailure.MissingDescription, path=path))
         TypeNode.Container(ContainerKind.Option, items) =>
             match source:
                 TypeNode.Container(ContainerKind.Option, original) =>
@@ -333,6 +338,19 @@ def compatible_inner(
                             steps.append(compatible(original[index], items[index], path, active, budget)?)
                         return Ok(ValuePlan.Container(kind, steps))
                 _ => pass
+        TypeNode.Reference(original) =>
+            match target:
+                TypeNode.Reference(items) =>
+                    if len(original) == 1 and len(items) == 1:
+                        source_spelling = selector_spelling(original[0], budget).map_err(
+                            (error) => type_failure(path, error),
+                        )?
+                        target_spelling = selector_spelling(items[0], budget).map_err(
+                            (error) => type_failure(path, error),
+                        )?
+                        if source_spelling == target_spelling:
+                            return Ok(ValuePlan.Identity)
+                _ => pass
         TypeNode.Scalar(name) =>
             match target:
                 TypeNode.Scalar(target_name) =>
@@ -358,31 +376,21 @@ def type_failure(path: str, error: CrumbError) -> AdmissionError:
     return AdmissionError(kind=AdmissionFailure.InvalidType, path=path)
 
 
-def widening(source: str, target: str) -> bool:
+def widening(source: ScalarKind, target: ScalarKind) -> bool:
     """Integer range inclusion and exact binary32 widening are independent of a row's actual value."""
-    if source == "fp32" and target == "fp64":
+    if source == ScalarKind.Fp32 and target == ScalarKind.Fp64:
         return true
-    source_signed, source_bits = integer_width(source)
-    target_signed, target_bits = integer_width(target)
-    if source_bits == 0 or target_bits == 0:
-        return false
+    source_signed, source_bits = match source.integer_facts():
+        Some(facts) => facts
+        None => return false
+
+    target_signed, target_bits = match target.integer_facts():
+        Some(facts) => facts
+        None => return false
+
     if source_signed == target_signed:
         return source_bits <= target_bits
     return not source_signed and target_signed and source_bits < target_bits
-
-
-def integer_width(name: str) -> tuple[bool, int]:
-    """Return only the explicitly admitted integer widths; zero marks a noninteger scalar."""
-    match name:
-        "i8" => return (true, 8)
-        "i16" => return (true, 16)
-        "i32" => return (true, 32)
-        "i64" => return (true, 64)
-        "u8" => return (false, 8)
-        "u16" => return (false, 16)
-        "u32" => return (false, 32)
-        "u64" => return (false, 64)
-        _ => return (false, 0)
 
 
 def plan_variants(

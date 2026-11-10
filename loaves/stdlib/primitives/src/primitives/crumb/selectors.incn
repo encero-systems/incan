@@ -5,7 +5,7 @@ from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.framing import Reader
 from crate.primitives.crumb.identity import closed_selector
 from crate.primitives.crumb.spelling import selector_spelling
-from crate.primitives.crumb.types import ContainerKind, NominalKind, TypeNode
+from crate.primitives.crumb.types import ContainerKind, NominalKind, ScalarKind, TypeConstructorKind, TypeNode
 from crate.primitives.text import decode_utf8
 
 
@@ -13,7 +13,7 @@ pub def parse_type(text: str, mut budget: Budget) -> Result[TypeNode, CrumbError
     """Accept one complete canonical N spelling, including explicit closed nominal arguments."""
     for _ in range(4):
         budget.charge_bytes(len(text))?
-    mut parser = TypeParser(text=text, position=0)
+    mut parser = TypeParser.create(text)
     return parser.parse(budget)
 
 
@@ -36,7 +36,7 @@ pub def parse_key(key: bytes, kind: NominalKind, mut budget: Budget) -> Result[T
         arguments.append(parse_type(spelling, budget)?)
     if reader.remaining() != 0:
         return Err(CrumbError.invalid_input("closed selector trailing bytes"))
-    node = TypeNode.Nominal(kind, identity, arguments)
+    node = TypeNode.Nominal(kind, "", Some(identity), arguments)
     if closed_selector(node, budget)? != key:
         return Err(CrumbError.invalid_input("noncanonical closed selector"))
     return Ok(node)
@@ -47,6 +47,11 @@ class TypeParser:
 
     text: str
     position: int
+
+    @staticmethod
+    pub def create(text: str) -> Self:
+        """Start at the first byte of one canonical selector spelling."""
+        return TypeParser(text=text, position=0)
 
     pub def parse(mut self, mut budget: Budget) -> Result[TypeNode, CrumbError]:
         """Require complete canonical input without exposing mutable cursor state."""
@@ -78,7 +83,7 @@ class TypeParser:
     def node_inner(mut self, mut budget: Budget) -> Result[TypeNode, CrumbError]:
         """Parse structural constructors and nominal identities; final spelling checks scalar admission."""
         name = self.token(budget)?
-        if name == "decimal":
+        if TypeConstructorKind.from_value(name) == Some(TypeConstructorKind.Decimal):
             self.take("<")?
             precision = host_count(self.token(budget)?, budget)?
             self.take(",")?
@@ -89,12 +94,18 @@ class TypeParser:
         nominal = name.split("@")
         if len(nominal) == 2:
             if let Some(kind) = NominalKind.from_value(nominal[0]):
-                return Ok(TypeNode.Nominal(kind, identity_bytes(nominal[1], budget)?, arguments))
+                return Ok(TypeNode.Nominal(kind, "", Some(identity_bytes(nominal[1], budget)?), arguments))
+        if TypeConstructorKind.from_value(name) == Some(TypeConstructorKind.Reference):
+            if len(arguments) != 1:
+                return Err(CrumbError.invalid_input("reference type arity"))
+            return Ok(TypeNode.Reference(arguments))
         if let Some(kind) = ContainerKind.from_value(name):
             return Ok(TypeNode.Container(kind, arguments))
         if len(arguments) != 0:
             return Err(CrumbError.invalid_input("scalar type arguments"))
-        return Ok(TypeNode.Scalar(name))
+        match ScalarKind.from_value(name):
+            Some(kind) => return Ok(TypeNode.Scalar(kind))
+            None => return Err(CrumbError.invalid_input("unknown scalar selector"))
 
     def arguments(mut self, mut budget: Budget) -> Result[list[TypeNode], CrumbError]:
         """Read explicit comma-delimited arguments; final canonical comparison rejects stray empty brackets."""

@@ -11,12 +11,14 @@ use crate::diagnostics::{
     CliDiagnostic, CliDiagnosticFailure, CliDiagnosticSource, parser_warning_diagnostics, render_module_warnings,
     typecheck_diagnostic_phase, typecheck_warning_diagnostics,
 };
-use crate::modules::{imported_module_dep_indexes_for, module_key_index, register_module_path_segments};
+use crate::modules::{
+    import_cycle_peers, imported_module_dep_indexes_for, module_key_index, register_module_path_segments,
+};
 use crate::unit::UnitDescription;
 use incan_frontend::loaf_index::LoafIndex;
 use incan_frontend::module::{ExportedSymbol, exported_symbols};
 use incan_frontend::parsed_module::ParsedModule;
-use incan_frontend::typechecker::{CBindingDescriptor, TypeCheckInfo};
+use incan_frontend::typechecker::{CBindingDescriptor, ModuleDependencyInterface, TypeCheckInfo};
 use incan_frontend::{diagnostics, typechecker};
 use incan_lang::lang::standard_packages::StandardPackageNamespacePolicy;
 use incan_semantics_core::SymbolOrigin;
@@ -63,6 +65,8 @@ pub fn typecheck_modules(
     let mut diagnostics_out = Vec::new();
     let mut warnings_out = Vec::new();
     let mut type_infos = Vec::with_capacity(modules.len());
+    let mut dependency_interfaces = vec![None::<Arc<ModuleDependencyInterface>>; modules.len()];
+    let cycle_peers = import_cycle_peers(modules, own_standard_package);
     let related_sources = modules
         .iter()
         .map(|module| {
@@ -82,6 +86,30 @@ pub fn typecheck_modules(
         })
         .collect();
     let memory_trace = std::env::var_os("INCAN_TRACE_TYPECHECK_MEMORY").is_some();
+    let mut not_prepared = unit
+        .not_prepared_loaves
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
+    not_prepared.extend(
+        unit.loaves
+            .iter()
+            .filter(|loaf| unit.not_prepared_loaves.contains(&loaf.name))
+            .flat_map(|loaf| [loaf.key.clone(), loaf.name.clone()]),
+    );
+    let configured_checker = |module: &ParsedModule| {
+        let mut checker = typechecker::TypeChecker::new();
+        checker.set_declared_crate_names(declared.clone());
+        checker.set_current_module_path(Some(module.path_segments.clone()));
+        checker.set_current_package_identity(package.map(str::to_owned));
+        register_module_path_segments(&mut checker, modules);
+        checker.set_loaves(Arc::clone(loaves));
+        checker.set_not_prepared_loaves(not_prepared.clone());
+        if let Some(policy) = own_standard_package {
+            checker.set_own_standard_package(policy);
+        }
+        checker
+    };
 
     for (idx, module) in modules.iter().enumerate() {
         let dep_indexes = imported_module_dep_indexes_for(modules, idx, &module_idx_by_key, own_standard_package);
@@ -98,6 +126,11 @@ pub fn typecheck_modules(
                 )
             })
             .collect();
+        let interfaces_for_module = dep_indexes
+            .iter()
+            .map(|dep_idx| dependency_interfaces[*dep_idx].as_ref().map(Arc::clone))
+            .collect::<Option<Vec<_>>>()
+            .unwrap_or_default();
         let _module_trace = tracing::trace_span!(
             target: "incan::invocation",
             "incan_driver::typecheck_module",
@@ -112,27 +145,8 @@ pub fn typecheck_modules(
         warnings_out.extend(parser_warning_diagnostics(module));
 
         let check_result = {
-            let mut checker = typechecker::TypeChecker::new();
-            checker.set_declared_crate_names(declared.clone());
-            checker.set_current_module_path(Some(module.path_segments.clone()));
-            checker.set_current_package_identity(package.map(str::to_owned));
-            register_module_path_segments(&mut checker, modules);
-            checker.set_loaves(Arc::clone(loaves));
-            let mut not_prepared = unit
-                .not_prepared_loaves
-                .iter()
-                .cloned()
-                .collect::<std::collections::HashSet<_>>();
-            not_prepared.extend(
-                unit.loaves
-                    .iter()
-                    .filter(|loaf| unit.not_prepared_loaves.contains(&loaf.name))
-                    .flat_map(|loaf| [loaf.key.clone(), loaf.name.clone()]),
-            );
-            checker.set_not_prepared_loaves(not_prepared);
-            if let Some(policy) = own_standard_package {
-                checker.set_own_standard_package(policy);
-            }
+            let mut checker = configured_checker(module);
+            checker.select_dependency_interfaces(interfaces_for_module);
 
             // A standard package checks its complete source before publishing its public checked facade.
             let checked = if own_standard_package.is_some() {
@@ -160,7 +174,19 @@ pub fn typecheck_modules(
             warnings_out.extend(typecheck_warning_diagnostics(module, checker.warnings()));
 
             visit(module, &checker);
-            checked.map(|()| checker.into_type_info())
+            checked.map(|()| {
+                let interface = if dependency_interfaces[idx].is_none() && cycle_peers[idx].is_empty() {
+                    Some(checker.seal_current_module_dependency_interface(
+                        &module.name,
+                        &module.ast,
+                        Arc::clone(&dependency_exports[idx]),
+                        own_standard_package.is_none(),
+                    ))
+                } else {
+                    None
+                };
+                (checker.into_type_info(), interface)
+            })
         };
         trace_typecheck_memory(
             memory_trace,
@@ -169,7 +195,44 @@ pub fn typecheck_modules(
             deps_for_module.len(),
         );
         match check_result {
-            Ok(type_info) => type_infos.push(type_info),
+            Ok((type_info, interface)) => {
+                type_infos.push(type_info);
+                if let Some(interface) = interface {
+                    dependency_interfaces[idx] = Some(interface);
+                }
+                if dependency_interfaces[idx].is_none() {
+                    let mut component_indexes = Vec::with_capacity(cycle_peers[idx].len() + 1);
+                    component_indexes.push(idx);
+                    component_indexes.extend(cycle_peers[idx].iter().copied());
+                    component_indexes.sort_unstable();
+                    let external_interfaces = dep_indexes
+                        .iter()
+                        .filter(|dep_idx| !component_indexes.contains(dep_idx))
+                        .filter_map(|dep_idx| dependency_interfaces[*dep_idx].as_ref().map(Arc::clone))
+                        .collect::<Vec<_>>();
+                    let mut builder = configured_checker(&modules[component_indexes[0]]);
+                    builder.install_dependency_interfaces_directly(&external_interfaces);
+                    let component = component_indexes
+                        .iter()
+                        .map(|component_idx| {
+                            (
+                                modules[*component_idx].name.as_str(),
+                                &modules[*component_idx].ast,
+                                Arc::clone(&dependency_exports[*component_idx]),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let built = builder.build_dependency_interface_component(
+                        &component,
+                        &deps_for_module,
+                        own_standard_package.is_none(),
+                    );
+                    debug_assert_eq!(built.len(), component_indexes.len());
+                    for (component_idx, interface) in component_indexes.into_iter().zip(built) {
+                        dependency_interfaces[component_idx] = Some(interface);
+                    }
+                }
+            }
             Err(errs) => diagnostics_out.extend(errs.into_iter().map(|error| CliDiagnostic {
                 file_path: module.file_path.to_string_lossy().to_string(),
                 source: module.source.clone(),
@@ -180,6 +243,7 @@ pub fn typecheck_modules(
     }
 
     if diagnostics_out.is_empty() {
+        debug_assert!(dependency_interfaces.iter().all(Option::is_some));
         verify_checked_c_bindings(modules, unit, &mut type_infos, c_abi_plan, &mut diagnostics_out);
     }
 

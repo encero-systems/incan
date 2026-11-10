@@ -273,7 +273,7 @@ def stage_registry(toolchain: Toolchain, stage: Path) -> Result[set[str], str]:
         if required_text(records[index], "entry")? != completed.entry:
             return Err("registry closure changed while packing")
         if ships(completed, shipped):
-            units.append(portable_unit(source, baked_registry_unit(records[index], completed)?, stage)?)
+            units.append(portable_registry_unit(source, records[index], completed, stage)?)
     portable = replaced(document, "externs", JsonValue.object(externs))?
     write_json(stage.joinpath("registry/closure.json"), replaced(portable, "units", JsonValue.array(units))?)?
     # 3. The shipped entries also decide which search directories and lock selections travel with the closure.
@@ -292,15 +292,22 @@ def shipped_lock(lock: Path, shipped: set[str]) -> Result[JsonValue, str]:
 
 def baked_registry_unit(document: JsonValue, unit: RegistryUnit) -> Result[JsonValue, str]:
     """Ship the native facts already established by the producer, including exact legacy dependency completion."""
-    mut baked = document
+    mut baked = without_fields(document, ["source", "checksum"])?
     for name, value in [
         ("name", unit.name),
         ("crate_hash", unit.crate_hash),
         ("kind", unit.kind),
+        ("registry", unit.registry),
         ("artifact", unit.artifact),
         ("refusal", unit.refusal),
     ]:
         baked = replaced(baked, name, JsonValue.string(value))?
+    if unit.source_archive != "":
+        if unit.source_digest == "":
+            return Err(f"registry source archive for {unit.entry} has no checksum")
+        baked = replaced(baked, "source", JsonValue.string(unit.source_archive))?
+    if unit.source_digest != "":
+        baked = replaced(baked, "checksum", JsonValue.string(unit.source_digest))?
     if unit.artifact == "":
         baked = replaced(baked, "artifact", JsonValue.null())?
     if unit.recorded:
@@ -309,16 +316,27 @@ def baked_registry_unit(document: JsonValue, unit: RegistryUnit) -> Result[JsonV
     return Ok(baked)
 
 
+pub def portable_registry_unit(
+    source: Path,
+    document: JsonValue,
+    unit: RegistryUnit,
+    stage: Path,
+) -> Result[JsonValue, str]:
+    """Bake one producer record and rewrite its optional artifacts at the toolchain archive boundary."""
+    return portable_unit(source, baked_registry_unit(document, unit)?, stage)
+
+
 def portable_unit(source: Path, unit: JsonValue, stage: Path) -> Result[JsonValue, str]:
     """Name a unit's artifact and its dependencies' artifacts from the staged registry, never the packing machine."""
     staged = staged_artifact(source, unit, stage)?
-    match staged.get("dependencies"):
-        None => return Ok(staged)
+    portable = staged_source_archive(source, staged, stage)?
+    match portable.get("dependencies"):
+        None => return Ok(portable)
         Some(listed) =>
             mut dependencies: list[JsonValue] = []
             for dependency in array_value(listed)?:
                 dependencies.append(staged_artifact(source, dependency, stage)?)
-            return replaced(staged, "dependencies", JsonValue.array(dependencies))
+            return replaced(portable, "dependencies", JsonValue.array(dependencies))
 
 
 def staged_artifact(source: Path, record: JsonValue, stage: Path) -> Result[JsonValue, str]:
@@ -330,6 +348,33 @@ def staged_artifact(source: Path, record: JsonValue, stage: Path) -> Result[Json
                 return Ok(record)
             relative = stage_artifact(Path(located(source.parent(), string_value(value)?)), stage)?
             return replaced(record, "artifact", JsonValue.string(from_registry(relative)))
+
+
+def staged_source_archive(source: Path, record: JsonValue, stage: Path) -> Result[JsonValue, str]:
+    """Stage one admitted source archive under its digest and express it from the registry closure."""
+    mut archive = ""
+    match record.get("source"):
+        None => return Ok(record)
+        Some(value) =>
+            if value.is_null():
+                return Ok(record)
+            archive = string_value(value)?
+    digest = required_text(record, "checksum")?
+    archive_name = source_archive_name(digest)?
+    origin = Path(located(source.parent(), archive))
+    destination = stage.joinpath("registry/sources").joinpath(archive_name)
+    link_file(origin, destination)?
+    return replaced(record, "source", JsonValue.string(from_registry("registry/sources/" + destination.name())))
+
+
+pub def source_archive_name(digest: str) -> Result[str, str]:
+    """Derive a portable source-archive name only from one complete lowercase SHA-256 digest."""
+    if len(digest) != 71 or not digest.startswith("sha256:"):
+        return Err(f"registry source archive has invalid digest {digest}")
+    for character in digest[7:]:
+        if character not in "0123456789abcdef":
+            return Err(f"registry source archive has invalid digest {digest}")
+    return Ok("sha256-" + digest[7:] + ".loaf")
 
 
 def from_registry(relative: str) -> str:
@@ -566,6 +611,15 @@ def replaced(document: JsonValue, key: str, value: JsonValue) -> Result[JsonValu
     for name in document.keys():
         fields[name] = document.require(name).map_err((error) => error.message())?
     fields[key] = value
+    return Ok(JsonValue.object(fields))
+
+
+def without_fields(document: JsonValue, omitted: list[str]) -> Result[JsonValue, str]:
+    """Return one object without optional fields that the completed producer does not carry."""
+    mut fields: Dict[str, JsonValue] = {}
+    for name in document.keys():
+        if name not in omitted:
+            fields[name] = document.require(name).map_err((error) => error.message())?
     return Ok(JsonValue.object(fields))
 
 

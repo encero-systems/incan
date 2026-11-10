@@ -930,7 +930,7 @@ pub def associated_body_index(
             candidate_indices = builder.program.body_indices.candidates(selected_identity)
             mut selected = -1
             for index in candidate_indices:
-                body = body_at(builder.program.bodies.as_ref(), index)
+                body = body_at(module.bodies, index)
                 if body.canonical != Some(selected_identity):
                     continue
                 match body.trait_default_instantiation:
@@ -956,7 +956,7 @@ pub def associated_body_index(
                                 if candidate_owner != selected_owner:
                                     continue
                             None => continue
-                if selected >= 0 and body != body_at(builder.program.bodies.as_ref(), selected):
+                if selected >= 0 and body != body_at(module.bodies, selected):
                     return Err("unsupported Body IR conflicting associated default executable bodies")
                 selected = index
             if selected >= 0:

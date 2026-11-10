@@ -81,6 +81,18 @@ pub struct TraitFieldImplementation {
     pub implementation: CanonicalSymbolId,
 }
 
+/// Inert lifecycle labels checked at their source declaration and retained across publication.
+///
+/// No label is an identity, a callable reference or authorization to load code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LifecycleMetadata {
+    pub since: Option<String>,
+    pub retire_in: Option<String>,
+    pub message: Option<String>,
+    pub by: Option<String>,
+    pub issue: Option<String>,
+}
+
 /// Immutable presentation values of one checked reflection-visible field, in declaration order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FieldMetadata {
@@ -92,6 +104,12 @@ pub struct FieldMetadata {
     pub record_canonical: bool,
     /// Earlier declared names in chronological order, earliest first.
     pub renamed_from: Vec<String>,
+    /// Descriptive rename history, absent for scalar/list metadata without lifecycle labels.
+    pub renamed_from_lifecycle: Option<LifecycleMetadata>,
+    /// Original physical declaration slot, before public reflection removes private fields.
+    pub position: usize,
+    /// Whether the checked source default is a statically empty collection literal.
+    pub default_is_empty: bool,
     /// Explicit field alias, including an explicitly empty string.
     pub alias: Option<String>,
     /// Explicit source description, absent when none is declared.
@@ -250,14 +268,7 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
     if let Some(builtin) = crate::RuntimeBuiltinType::from_identity(identity) {
         return Some(builtin.carrier_path().to_owned());
     }
-    let crate::SymbolOrigin::Package { library, module_path } = &identity.origin else {
-        return None;
-    };
-    (library == "incan_stdlib_primitives"
-        && module_path == &["reflection".to_owned()]
-        && identity.declaration_name == "FieldInfo"
-        && identity.kind == crate::SemanticSourceTargetKind::Class)
-        .then(|| "incan_std_primitives::reflection::FieldInfo".to_owned())
+    None
 }
 
 /// Physical direct-route declaration scope of a retained runtime carrier, or the existing source/package scope.
@@ -506,9 +517,9 @@ pub const NOMINAL_CARRIER_KEY_PREFIX: &str = "__incan_carrier_";
 /// Encode one checked source nominal's complete owning module and declaration into an identifier-safe carrier key.
 ///
 /// Only Body IR producers publish these keys, beside the original canonical identity in their type maps. Ordinary
-/// standard and foreign storage keep their native names. A standard source declaration backed by a registry-owned
-/// native carrier uses the same identity key as other source declarations, so its source and native owners cannot
-/// collide with an equal-spelled local type. A key grants no lookup or layout without its retained identity.
+/// source declarations in standard packages retain the same keys as other packages. Foreign storage keeps its
+/// native name. Standard source and local declarations cannot collide merely because their short names match.
+/// A key grants no lookup or layout without its retained identity.
 pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
     if identity.namespace != SymbolNamespace::OrdinaryLexical || identity.scope_discriminant.is_some() {
         return None;
@@ -521,11 +532,6 @@ pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
         _ => return None,
     };
     match &identity.origin {
-        SymbolOrigin::Package { library, .. }
-            if library.starts_with("incan_stdlib_") && native_nominal_item(identity).is_none() =>
-        {
-            return None;
-        }
         SymbolOrigin::Module(path) if path.first().is_some_and(|root| root == "std" || root == "__incan_std") => {
             return None;
         }

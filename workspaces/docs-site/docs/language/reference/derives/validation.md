@@ -15,6 +15,7 @@ Rules:
 - `new` takes the model's fields that declare no default, by name or positionally in declaration order; each field that declares a default takes it. Passing a field that declares a default to `new` is refused (`INCAN-T0001`).
 - A model that defines its own `new` keeps it: `TypeName.new(...)` calls that method, and no `new` is derived.
 - Constructing the model directly, `TypeName(...)`, is refused (`INCAN-T0001`), inside the model's own methods too.
+- Importing a validated model, including through a standard package or a public facade, retains the same generated `new` signature and validation result. Raw construction remains refused; importing or reexporting the model never bypasses its validation.
 
 ```incan
 @derive(Validate)

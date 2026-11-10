@@ -1,0 +1,15 @@
+"""Authenticate primitive-owned metadata declarations before planning generated reflection."""
+
+from rust::incan_semantics_core import SemanticSourceTargetKind, SymbolOrigin
+from rust::incan_semantics_core::body_ir import NominalDeclaration
+
+
+pub def is_field_metadata_carrier(declaration: NominalDeclaration) -> bool:
+    """Only the checked primitive model supplies the generated metadata layout; an equal name grants nothing."""
+    identity = declaration.canonical
+    if identity.kind != SemanticSourceTargetKind.Model or identity.declaration_name != "FieldInfo":
+        return false
+    match identity.origin:
+        SymbolOrigin.Package(library=library, module_path=path) =>
+            return library == "incan_stdlib_primitives" and path == ["primitives", "reflection"]
+        _ => return false

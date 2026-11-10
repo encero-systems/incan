@@ -1,15 +1,15 @@
-"""Write typed cells and presence-indexed rows using one admitted local dictionary."""
+"""Write typed cells and presence-indexed records using one admitted local dictionary."""
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.identity import closed_selector
 from crate.primitives.crumb.ordering import order_values, order_entries, compare_selectors
-from crate.primitives.crumb.row_buffer import RowBuffer, indexed
-from crate.primitives.crumb.row_descriptions import StoredDescription, StoredField
-from crate.primitives.crumb.row_dictionary import Dictionary, slot
-from crate.primitives.crumb.row_scalars import scalar_cell, decimal_cell
+from crate.primitives.crumb.encoding_buffer import EncodingBuffer, indexed
+from crate.primitives.crumb.descriptions import StoredDescription, StoredField
+from crate.primitives.crumb.description_dictionary import Dictionary, slot
+from crate.primitives.crumb.scalar_cells import scalar_cell, decimal_cell
 from crate.primitives.crumb.spelling import selector_spelling
-from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, NominalKind, TypeNode
+from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, NominalKind, ScalarKind, TypeNode
 from crate.primitives.crumb.values import Value, ValueField, Projection
 from crate.primitives.hex import hexlify
 
@@ -44,7 +44,7 @@ def root_inner(
                 for index in range(len(description.variants)):
                     budget.charge_elements(1)?
                     if description.variants[index].identity == identity:
-                        mut output = RowBuffer.create()
+                        mut output = EncodingBuffer.create()
                         output.count(index, budget)?
                         output.append(
                             record_row(description.variants[index].fields, fields, dictionary, budget)?,
@@ -98,7 +98,7 @@ def record_row(
         if not absent:
             budget.charge_elements(1)?
             cells.append(field_cell(field, fields[source_index].value, dictionary, budget)?)
-    mut output = RowBuffer.create()
+    mut output = EncodingBuffer.create()
     output.append(bitmap, budget)?
     output.append(indexed(cells, budget)?, budget)?
     return output.finish(budget)
@@ -148,9 +148,13 @@ pub def cell(node: TypeNode, value: Value, dictionary: Dictionary, mut budget: B
 def cell_inner(node: TypeNode, value: Value, dictionary: Dictionary, mut budget: Budget) -> Result[bytes, CrumbError]:
     """Physical tags occur only for option/union/enum selection; scalar types come from the description."""
     match node:
-        TypeNode.Scalar(name) => return scalar_cell(name, value, budget)
+        TypeNode.Scalar(kind) => return scalar_cell(kind, value, budget)
         TypeNode.Decimal(precision, scale) => return decimal_cell(precision, scale, value, budget)
-        TypeNode.Nominal(_, _, _) =>
+        TypeNode.Reference(arguments) =>
+            if len(arguments) != 1:
+                return Err(CrumbError.invalid_input("reference type arity"))
+            return scalar_cell(ScalarKind.Reference, value, budget)
+        TypeNode.Nominal(_, _, _, _) =>
             index = slot(dictionary, closed_selector(node, budget)?, budget)?
             return root(dictionary.entries[index], value, dictionary, budget)
         TypeNode.Container(kind, arguments) => return container(kind, arguments, value, dictionary, budget)
@@ -165,7 +169,7 @@ def container(
     mut budget: Budget,
 ) -> Result[bytes, CrumbError]:
     """Keep sequence cardinality, map pairing and selector choice explicit in the physical cell."""
-    mut output = RowBuffer.create()
+    mut output = EncodingBuffer.create()
     if kind == ContainerKind.Option:
         match value:
             Value.NoneValue => output.octet(0, budget)?
@@ -229,7 +233,7 @@ def union_cell(
                     position += 1
             if not found:
                 return Err(CrumbError.invalid_input("union member not admitted"))
-            mut output = RowBuffer.create()
+            mut output = EncodingBuffer.create()
             output.count(position, budget)?
             output.append(cell(member, values[0], dictionary, budget)?, budget)?
             return output.finish(budget)

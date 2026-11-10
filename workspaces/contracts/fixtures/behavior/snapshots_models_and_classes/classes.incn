@@ -1,4 +1,4 @@
-# behavior: classes with public fields, methods, self-mutating methods, list-backed state and composition run and print their state, and every declared method answers and every field is read
+# behavior: classes with public fields, methods, self-mutating methods, list-backed state, composition and an inherited static constructor run and print their state, and every declared method answers and every field is read (#2885)
 # expect-stdout:
 #   Point: (10, 20)
 #   Rectangle: 5x10
@@ -13,6 +13,7 @@
 #   BasicCalc: 5 - 3 = 2, 5 * 3 = 15
 #   Alice is 30
 #   Hello, I'm Alice (ID: 12345)
+#   1
 
 """Test class definitions, initialization, and methods"""
 
@@ -112,6 +113,18 @@ class Employee:
         return f"{greeting} (ID: {self.employee_id})"
 
 
+class Parent:
+    pub value: int
+
+
+class Child extends Parent:
+    pub other: int
+
+    @staticmethod
+    pub def new(value: int, other: int) -> Child:
+        return Child(value=value, other=other)
+
+
 def main() -> None:
     # Test simple class
     mut p: Point = Point(x=0, y=0)
@@ -164,3 +177,5 @@ def main() -> None:
     emp: Employee = Employee(person=alice, employee_id=12345)
     info: str = emp.get_info()
     print(info)
+    child = Child.new(value=1, other=2)
+    println(child.value)

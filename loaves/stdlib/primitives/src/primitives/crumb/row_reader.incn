@@ -4,16 +4,16 @@ from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.hash_stream import HashOutput, OutputMode
 from crate.primitives.crumb.hashes import start_seal, append_seal
 from crate.primitives.crumb.registrations import KindRegistry
-from crate.primitives.crumb.row_cell_read import read_root
-from crate.primitives.crumb.row_cursor import RowCursor, copied
-from crate.primitives.crumb.row_description_read import read_dictionary
-from crate.primitives.crumb.row_descriptions import Description
-from crate.primitives.crumb.row_dictionary import Dictionary
-from crate.primitives.crumb.row_errors import RowError, RowFailure, failure, primitive, in_variant
-from crate.primitives.crumb.row_index import RecordIndex
-from crate.primitives.crumb.row_metadata import charge_copy
+from crate.primitives.crumb.cell_read import read_root
+from crate.primitives.crumb.encoding_cursor import EncodingCursor, copied
+from crate.primitives.crumb.description_read import read_dictionary
+from crate.primitives.crumb.descriptions import Description
+from crate.primitives.crumb.description_dictionary import Dictionary
+from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive, in_variant
+from crate.primitives.crumb.encoding_index import RecordIndex
+from crate.primitives.crumb.metadata_values import charge_copy
+from crate.primitives.crumb.records import RowRecord
 from crate.primitives.crumb.row_projection import project_view, project_value
-from crate.primitives.crumb.row_writer import RowRecord
 from crate.primitives.crumb.values import Value
 from crate.primitives.views import MappedView
 
@@ -36,6 +36,11 @@ pub class RowSet:
     backing: MappedView
     sealed: bool
 
+    @staticmethod
+    pub def create(dictionary: Dictionary, rows: list[StoredRow], backing: MappedView, sealed: bool) -> Self:
+        """Retain one fully admitted envelope and its independently owned backing view."""
+        return RowSet(dictionary=dictionary, rows=rows, backing=backing, sealed=sealed)
+
     pub def len(self) -> int:
         """Return the admitted record count, which also matched the trailer for a sealed set."""
         return len(self.rows)
@@ -44,7 +49,7 @@ pub class RowSet:
         """True means the complete logical seal was verified, not merely that its header bit was set."""
         return self.sealed
 
-    pub def descriptions(self, mut budget: Budget) -> Result[list[Description], RowError]:
+    pub def descriptions(self, mut budget: Budget) -> Result[list[Description], BinaryError]:
         """Copy complete written descriptions and original modes for explicit original-shape re-encoding."""
         mut result: list[Description] = []
         for description in self.dictionary.entries:
@@ -52,7 +57,7 @@ pub class RowSet:
             result.append(description.source)
         return Ok(result)
 
-    pub def read_record(self, index: int, mut budget: Budget) -> Result[RowRecord, RowError]:
+    pub def read_record(self, index: int, mut budget: Budget) -> Result[RowRecord, BinaryError]:
         """Explicitly materialize one format record; no application constructor or normalization runs."""
         self.check_index(index)?
         decoded = read_root(
@@ -67,7 +72,12 @@ pub class RowSet:
             .map_err((e) => primitive(e, self.rows[index].origin))?
         return Ok(RowRecord(key=self.dictionary.entries[self.rows[index].description].key, value=decoded.value))
 
-    pub def field_view(self, index: int, identity: bytes, mut budget: Budget) -> Result[Option[MappedView], RowError]:
+    pub def field_view(
+        self,
+        index: int,
+        identity: bytes,
+        mut budget: Budget,
+    ) -> Result[Option[MappedView], BinaryError]:
         """Retain only the encoded cell range; None means declared absence, while an unknown field is an error."""
         self.check_index(index)?
         description = self.rows[index].description
@@ -87,7 +97,7 @@ pub class RowSet:
                     budget,
                 ).map_err((e) => in_variant(e, self.dictionary.entries[description].variants[variant].identity))
 
-    pub def read_field(self, index: int, identity: bytes, mut budget: Budget) -> Result[Value, RowError]:
+    pub def read_field(self, index: int, identity: bytes, mut budget: Budget) -> Result[Value, BinaryError]:
         """Read one selected final stored value after full admission; other fields are not reconstructed here."""
         self.check_index(index)?
         description = self.rows[index].description
@@ -109,10 +119,10 @@ pub class RowSet:
                     budget,
                 ).map_err((e) => in_variant(e, self.dictionary.entries[description].variants[variant].identity))
 
-    def check_index(self, index: int) -> Result[None, RowError]:
+    def check_index(self, index: int) -> Result[None, BinaryError]:
         """A caller cannot index past the admitted set, including negative host indexes."""
         if index < 0 or index >= len(self.rows):
-            return Err(failure(RowFailure.RecordIndex, 0))
+            return Err(failure(BinaryFailure.RecordIndex, 0))
         return Ok(None)
 
 
@@ -122,7 +132,7 @@ pub def read_rows(
     registry: KindRegistry,
     require_sealed: bool,
     mut budget: Budget,
-) -> Result[RowSet, RowError]:
+) -> Result[RowSet, BinaryError]:
     """Admit exactly one envelope; bytes after its boundary are refused even if they form another valid envelope."""
     result, _ = read_envelope(view, supplied, registry, require_sealed, true, budget)?
     return Ok(result)
@@ -134,7 +144,7 @@ pub def read_prefix(
     registry: KindRegistry,
     require_sealed: bool,
     mut budget: Budget,
-) -> Result[tuple[RowSet, int], RowError]:
+) -> Result[tuple[RowSet, int], BinaryError]:
     """Admit one complete leading envelope and report its length; the caller owns transport completion."""
     return read_envelope(view, supplied, registry, require_sealed, false, budget)
 
@@ -146,49 +156,49 @@ def read_envelope(
     require_sealed: bool,
     exact: bool,
     mut budget: Budget,
-) -> Result[tuple[RowSet, int], RowError]:
+) -> Result[tuple[RowSet, int], BinaryError]:
     """Check header and frame before descriptions, then admit all values and any seal before returning a set."""
-    mut cursor = RowCursor.create(view)?
+    mut cursor = EncodingCursor.create(view)?
     magic = copied(cursor.take(4, budget)?, 0, budget)?
     if magic != b"CRMB":
-        return Err(failure(RowFailure.BadMagic, 0))
+        return Err(failure(BinaryFailure.BadMagic, 0))
     codec = cursor.length(budget)?
     profile = cursor.length(budget)?
     if codec != 1 or profile != 1:
-        return Err(failure(RowFailure.UnsupportedProfile, 4))
+        return Err(failure(BinaryFailure.UnsupportedProfile, 4))
     flags = cursor.byte(budget)?
     if flags & 254 != 0:
-        return Err(failure(RowFailure.ReservedFlags, cursor.absolute() - 1))
+        return Err(failure(BinaryFailure.ReservedFlags, cursor.absolute() - 1))
     payload = cursor.frame(budget)?
     payload_origin = cursor.absolute() - payload.len()
     if exact:
         cursor.finished()?
     sealed = flags == 1
     if require_sealed and not sealed:
-        return Err(failure(RowFailure.SealRequired, 6))
-    mut body = RowCursor.create(payload, payload_origin)?
+        return Err(failure(BinaryFailure.SealRequired, 6))
+    mut body = EncodingCursor.create(payload, payload_origin)?
     dictionary = read_dictionary(body, supplied, registry, budget)?
     rows = read_records(body, dictionary, sealed, budget)?
     body.finished()?
     consumed = cursor.consumed()
     retained = view.slice(0, consumed)
     match retained:
-        None => return Err(failure(RowFailure.Truncated, consumed))
-        Some(backing) => return Ok((RowSet(dictionary=dictionary, rows=rows, backing=backing, sealed=sealed), consumed))
+        None => return Err(failure(BinaryFailure.Truncated, consumed))
+        Some(backing) => return Ok((RowSet.create(dictionary, rows, backing, sealed), consumed))
 
 
 def read_records(
-    mut cursor: RowCursor,
+    mut cursor: EncodingCursor,
     dictionary: Dictionary,
     sealed: bool,
     mut budget: Budget,
-) -> Result[list[StoredRow], RowError]:
+) -> Result[list[StoredRow], BinaryError]:
     """Transient values feed the logical seal; the returned index retains no fully decoded record trees."""
     count_offset = cursor.absolute()
     count = cursor.length(budget)?
     budget.charge_elements(count).map_err((e) => primitive(e, count_offset))?
     if count > cursor.remaining():
-        return Err(failure(RowFailure.Truncated, cursor.absolute() + cursor.remaining()))
+        return Err(failure(BinaryFailure.Truncated, cursor.absolute() + cursor.remaining()))
     mut seal = HashOutput.create(OutputMode.Hash)
     if sealed:
         seal = start_seal(count, budget).map_err((e) => primitive(e, count_offset))?
@@ -197,7 +207,7 @@ def read_records(
         offset = cursor.absolute()
         description = cursor.length(budget)?
         if description >= len(dictionary.entries):
-            return Err(failure(RowFailure.DescriptionIndex, offset))
+            return Err(failure(BinaryFailure.DescriptionIndex, offset))
         raw = cursor.frame(budget)?
         origin = cursor.absolute() - raw.len()
         decoded = read_root(dictionary.entries[description], raw, origin, dictionary, budget)?
@@ -211,9 +221,9 @@ def read_records(
         offset = cursor.absolute()
         actual_count = cursor.length(budget)?
         if actual_count != count:
-            return Err(failure(RowFailure.SealCount, offset))
+            return Err(failure(BinaryFailure.SealCount, offset))
         expected = copied(cursor.take(32, budget)?, offset, budget)?
         actual = seal.digest(budget).map_err((e) => primitive(e, offset))?
         if actual != expected:
-            return Err(failure(RowFailure.SealMismatch, offset))
+            return Err(failure(BinaryFailure.SealMismatch, offset))
     return Ok(rows)

@@ -4,16 +4,16 @@ from std.json import JsonValue
 from std.primitives.crumb import Budget
 from std.primitives.crumb.hashes import value_hash
 from std.primitives.crumb.registrations import KindRegistry
-from std.primitives.crumb.row_descriptions import Description, DescriptionMode
+from std.primitives.crumb.descriptions import Description, DescriptionMode
 from std.primitives.crumb.row_reader import RowSet, read_rows
-from std.primitives.crumb.row_writer import RowRecord, write_rows
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.row_writer import write_rows
 from std.primitives.crumb.values import Projection
 from std.primitives.hex import hexlify
-from row_test_support import backing
-from case_data import array, field, hex_bytes, text
-from hash_data import metadata
-from row_case_values import record_value
-from row_read_data import category, metadata_notation
+from encoding_test_support import backing
+from case_data import CaseTransform, ExpectedStatus, array, expected_status, field, hex_bytes, text
+from fixture_adapter import metadata, metadata_notation, record_value
+from row_read_data import category
 
 
 pub def check_reader(example: JsonValue) -> Result[bool, str]:
@@ -23,8 +23,12 @@ pub def check_reader(example: JsonValue) -> Result[bool, str]:
     for item in array(example, "supplied_descriptions")?:
         supplied.append(Description(metadata=metadata(item)?, mode=DescriptionMode.Reference))
     if let Some(transform) = example.get("transform"):
-        if transform.expect_str().map_err((e) => e.message())? != "all_proper_prefixes":
-            return Err("unknown binary corpus transform")
+        selected = match CaseTransform.from_value(transform.expect_str().map_err((e) => e.message())?):
+            Some(value) => value
+            None => return Err("unknown binary corpus transform")
+
+        if selected != CaseTransform.AllProperPrefixes:
+            return Err("unsupported binary corpus transform")
         for length in range(len(data)):
             if not check_one(example, data[0:length], supplied)?:
                 return Err("proper prefix mismatch at length " + str(length))
@@ -56,7 +60,7 @@ def check_one(example: JsonValue, data: bytes, supplied: list[Description]) -> R
     decoded = read_rows(view, supplied, registry, require_sealed, budget)
     match decoded:
         Err(error) =>
-            if text(expected, "status")? != "refused":
+            if expected_status(expected)? != ExpectedStatus.Refused:
                 return Err(error.message())
             wanted = text(expected, "kind")?
             actual = category(error.kind)
@@ -64,7 +68,7 @@ def check_one(example: JsonValue, data: bytes, supplied: list[Description]) -> R
                 return Err("expected " + wanted + ", got " + actual + " at " + str(error.offset))
             return Ok(true)
         Ok(rows) =>
-            if text(expected, "status")? != "accepted":
+            if expected_status(expected)? != ExpectedStatus.Accepted:
                 return Err("decoder accepted an independently refused input")
             return check_accepted(rows, expected, data)
 

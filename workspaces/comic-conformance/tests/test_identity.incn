@@ -2,7 +2,8 @@
 
 from std.primitives.crumb import Budget
 from std.primitives.crumb.identity import member_identity, declaration_identity, closed_selector, check_arity
-from std.primitives.crumb.types import TypeNode, NominalKind
+from std.primitives.crumb.spelling import selector_spelling, shape_spelling
+from std.primitives.crumb.types import NominalKind, ScalarKind, TypeNode
 from std.primitives.hex import hexlify
 from std.primitives.text import decode_utf8
 
@@ -15,12 +16,16 @@ def test_identity_and_closed_arguments() -> Result[None, str]:
         (error) => error.message(),
     )?
     assert hexlify(identity) == "1ddb0b3ce6d3"
-    node = TypeNode.Nominal(NominalKind.Record, identity, [TypeNode.Scalar("i8")])
+    node = TypeNode.Nominal(NominalKind.Record, "", Some(identity), [TypeNode.Scalar(ScalarKind.I8)])
     key = closed_selector(node, budget).map_err((error) => error.message())?
     assert hexlify(key) == "1ddb0b3ce6d301026938"
     wrapped = TypeNode.Underlying([node])
     assert closed_selector(wrapped, budget).map_err((error) => error.message())? == key
     assert closed_selector(TypeNode.Underlying([]), budget).is_err()
+    reference = TypeNode.Reference([node])
+    assert shape_spelling(reference, budget).map_err((error) => error.message())? == "reference"
+    assert selector_spelling(reference, budget).map_err((error) => error.message())? == "ref<record@1ddb0b3ce6d3<i8>>"
+    assert selector_spelling(TypeNode.Reference([]), budget).is_err()
     return Ok(None)
 
 
@@ -28,10 +33,10 @@ def test_selector_refusals_and_binding_arity() -> Result[None, str]:
     """Closed syntax does not prove the declaration arity, and unresolved arguments never enter K."""
     mut budget = Budget.create(bytes=8192, elements=8192, depth=16).map_err((error) => error.message())?
     identity = b"\x01\x02\x03\x04\x05\x06"
-    empty = TypeNode.Nominal(NominalKind.Record, identity, [])
+    empty = TypeNode.Nominal(NominalKind.Record, "", Some(identity), [])
     assert check_arity(empty, 1).is_err()
-    assert closed_selector(TypeNode.Nominal(NominalKind.Record, b"bad", []), budget).is_err()
-    assert closed_selector(TypeNode.Nominal(NominalKind.Record, identity, [TypeNode.Parameter("T")]), budget).is_err()
+    assert closed_selector(TypeNode.Nominal(NominalKind.Record, "", Some(b"bad"), []), budget).is_err()
+    assert closed_selector(TypeNode.Nominal(NominalKind.Record, "", Some(identity), [TypeNode.Parameter("T")]), budget).is_err()
     return Ok(None)
 
 

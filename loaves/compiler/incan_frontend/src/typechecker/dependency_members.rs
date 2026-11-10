@@ -185,6 +185,7 @@ impl TypeChecker {
                 direct_projections.insert(name, projection.clone());
             }
         }
+        self.restore_dependency_import_function_views(module_ast, &mut direct_symbols);
         let scope = self.checked_nominal_type_identities();
         let remapping = scope
             .iter()
@@ -248,6 +249,59 @@ impl TypeChecker {
             .insert(module_name.to_string(), direct_identities);
         self.dependency_direct_member_partial_projections
             .insert(module_name.to_string(), direct_projections);
+    }
+
+    /// Restore the pre-body function view that dependency import collection publishes.
+    ///
+    /// A provider's successful local check has already replaced a decorated function symbol with its runtime value
+    /// binding. Dependency import collection intentionally stops after declaration collection, so consumers instead
+    /// receive the original generic declaration signature and apply the retained decorator rules at their own call
+    /// sites. Sealing from the provider checker must preserve that existing boundary rather than publishing the
+    /// post-decoration local symbol.
+    fn restore_dependency_import_function_views(
+        &self,
+        module_ast: &Program,
+        direct_symbols: &mut HashMap<String, SymbolKind>,
+    ) {
+        for declaration in &module_ast.declarations {
+            let Declaration::Function(function) = &declaration.node else {
+                continue;
+            };
+            let Some(binding) = self
+                .type_info
+                .declarations
+                .decorated_function_bindings_by_span
+                .get(&declaration.span)
+            else {
+                continue;
+            };
+            let ResolvedType::Function(params, result) = &binding.original_ty else {
+                continue;
+            };
+            let original = FunctionInfo {
+                params: params.clone(),
+                return_type: result.as_ref().clone(),
+                is_async: binding.is_async,
+                type_params: binding.type_params.clone(),
+                type_param_bounds: binding.type_param_bounds.clone(),
+                type_param_bound_details: binding.type_param_bound_details.clone(),
+                emitted_name: None,
+            };
+            let Some(symbol) = direct_symbols.get_mut(&function.name) else {
+                continue;
+            };
+            match symbol {
+                SymbolKind::Variable(_) | SymbolKind::Function(_) => {
+                    *symbol = SymbolKind::Function(original);
+                }
+                SymbolKind::FunctionOverloads(overloads) => {
+                    if let Some(overload) = overloads.iter_mut().find(|overload| overload.span == declaration.span) {
+                        overload.info = original;
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Share a module's immutable lexical scope across its declarations, fields and methods, returning whether this

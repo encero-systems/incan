@@ -665,6 +665,8 @@ fn fields(values: &[FieldExport]) -> Result<Vec<CheckedField>, LibraryManifestEr
                 record_identity: value.hydrated_record_identity(),
                 record_canonical: value.record_canonical,
                 renamed_from: value.renamed_from.clone(),
+                renamed_from_lifecycle: value.renamed_from_lifecycle.clone(),
+                default_is_empty: value.default_is_empty,
                 ty: resolved_type_from_manifest_type_ref(&value.ty),
                 surface_type_name: value.surface_type_name.clone(),
                 visibility: match value.visibility {

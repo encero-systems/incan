@@ -3,9 +3,10 @@
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.identity import closed_selector
+from crate.primitives.crumb.spelling import selector_spelling
 from crate.primitives.crumb.registrations import KindRegistry
-from crate.primitives.crumb.row_descriptions import Description, StoredDescription, admit
-from crate.primitives.crumb.row_metadata import charge_copy
+from crate.primitives.crumb.descriptions import Description, StoredDescription, admit
+from crate.primitives.crumb.metadata_values import charge_copy
 from crate.primitives.crumb.types import TypeNode
 from crate.primitives.hex import hexlify
 
@@ -86,7 +87,7 @@ def check_references(node: TypeNode, dictionary: Dictionary, mut budget: Budget)
 def check_inner(node: TypeNode, dictionary: Dictionary, mut budget: Budget) -> Result[None, CrumbError]:
     """Every named dependency must already exist with the same record/enum shape."""
     match node:
-        TypeNode.Nominal(kind, _, arguments) =>
+        TypeNode.Nominal(kind, _, _, arguments) =>
             index = slot(dictionary, closed_selector(node, budget)?, budget)?
             if dictionary.entries[index].kind != kind:
                 return Err(CrumbError.invalid_input("nominal dictionary kind"))
@@ -95,6 +96,10 @@ def check_inner(node: TypeNode, dictionary: Dictionary, mut budget: Budget) -> R
         TypeNode.Container(_, arguments) =>
             for argument in arguments:
                 check_references(argument, dictionary, budget)?
+        TypeNode.Reference(arguments) =>
+            if len(arguments) != 1:
+                return Err(CrumbError.invalid_input("reference type arity"))
+            selector_spelling(arguments[0], budget)?
         TypeNode.Scalar(_) | TypeNode.Decimal(_, _) => pass
         _ => return Err(CrumbError.invalid_input("noncanonical dictionary type"))
     return Ok(None)

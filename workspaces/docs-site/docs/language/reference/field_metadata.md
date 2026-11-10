@@ -14,7 +14,7 @@ The `as "WIRE_NAME"` form is equivalent to `alias="WIRE_NAME"`. It can follow br
 | --- | --- | --- | --- |
 | `alias` | String literal | None | Sets the wire name and an alternate constructor, access and pattern key when the string is code-spellable. |
 | `description` | String literal | None | Records field documentation. |
-| `renamed_from` | String literal or list of string literals | Empty | Records earlier declared field names in chronological order, earliest first. |
+| `renamed_from` | String literal, list of string literals, or rename block | Empty | Records earlier declared field names in chronological order, earliest first. |
 | `canonical` | Boolean literal | `true` | Records whether the field participates in the canonical stored hash. |
 | `made_private` | `true`, a message string, or a lifecycle block | None | Retains migration guidance after a field moves from public to private visibility. |
 
@@ -40,6 +40,17 @@ model LegacyGraph:
 
 Methods and nominal types use `@made_private(...)` with the same named lifecycle arguments. A `made_private` declaration is refused while it remains `pub`. It cannot also be `deprecated`: `deprecated` describes a callable declaration that still works, while `made_private` explains an access refusal. Compiled library metadata retains field, method and type migration facts for consumers.
 
+## Rename lifecycle block
+
+A field rename block requires `name`, a string or list of earlier names. Optional `since`, `retire_in`, `message`, `by` and `issue` keys each take a string literal and may occur once. The compiler retains these labels without executing code, interpreting a version, following a URL, or granting authority. A block containing only `name` has no lifecycle value. An explicitly empty label remains present.
+
+```incan
+model Customer:
+    email_address [renamed_from { name="email", since="0.6", message="Use email_address" }]: str
+```
+
+These facts appear as `FieldInfo.renamed_from_lifecycle: Option[LifecycleInfo]`, using the same `LifecycleInfo` as handwritten `ShapeInfo` and `VariantInfo`. The block does not change wire names or constructors. `package` and `registry` are not field keys. This field syntax does not add rename blocks to model or enum declarations or enum cases.
+
 ## Rename rules
 
 - Every earlier name is a non-empty Incan identifier.
@@ -63,6 +74,7 @@ model Customer:
 | `identity` | `FrozenBytes` | The first six bytes of SHA-256 over the UTF-8 bytes of the earliest name, or the declared name when no earlier name exists. |
 | `canonical` | `bool` | The authored `canonical` value, or `true` when the key is absent. |
 | `renamed_from` | `FrozenList[FrozenStr]` | Every earlier declared name in authored order, earliest first; empty when no history is declared. |
+| `renamed_from_lifecycle` | `Option[LifecycleInfo]` | Inert labels from a rename block, or `None` when no labels are declared. |
 
 `FieldInfo.name` remains the current declared field name. `alias` and `wire_name` remain controlled only by `alias` or `as`.
 

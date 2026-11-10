@@ -81,7 +81,9 @@ pub(in crate::body_ir) fn collect_local_enum_declarations(
 ///
 /// Constructor argument binding already comes from the typechecker; this adds only the source-local declaration
 /// identity and canonical raw field order the direct runtime otherwise could not establish without reopening AST or
-/// typechecker state. This deliberately does not retain a general nominal registry.
+/// typechecker state. An authenticated native-backed declaration retains the same physical owner while its provider
+/// builds as when a consumer imports it; equal-spelled ordinary declarations keep their authored layouts. This uses
+/// the existing exact-owner bridge, not a general nominal registry.
 pub(in crate::body_ir) fn collect_local_nominal_declarations(
     program: &ast::Program,
     module_identity: &str,
@@ -138,7 +140,7 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
             let validated_constructor = validated_constructor(&declaration.node, &canonical, type_info);
             let retained = bir::NominalDeclaration {
                 trait_adoptions: checked_trait_adoptions(name, &type_parameters, type_info),
-                native_item: String::new(),
+                native_item: bir::native_nominal_item(&canonical).unwrap_or_default(),
                 class_inheritance: None,
                 native_type_arguments: Vec::new(),
                 direct_declaration_id: CompilerNodeId::declaration_at(module_identity, declaration.span),
@@ -364,12 +366,16 @@ pub(super) fn retain_class_reflection(retained: &mut bir::NominalDeclaration, fa
         layout
             .fields
             .iter()
-            .filter(|field| field.visibility == ast::Visibility::Public)
-            .map(|field| bir::FieldMetadata {
+            .enumerate()
+            .filter(|(_, field)| field.visibility == ast::Visibility::Public)
+            .map(|(position, field)| bir::FieldMetadata {
+                position,
                 name: field.name.clone(),
                 record_identity: field.record_identity.clone(),
                 record_canonical: field.record_canonical,
                 renamed_from: field.renamed_from.clone(),
+                renamed_from_lifecycle: field.renamed_from_lifecycle.clone(),
+                default_is_empty: field.default_is_empty,
                 alias: field.alias.clone(),
                 description: field.description.clone(),
                 type_name: field.surface_type_name.clone().unwrap_or_else(|| field.ty.to_string()),
@@ -508,19 +514,23 @@ pub(super) fn collect_field_metadata(
 ) -> Option<Vec<bir::FieldMetadata>> {
     fields
         .iter()
-        .filter(|field| {
+        .enumerate()
+        .filter(|(_, field)| {
             !facts
                 .declarations
                 .model_type_private_fields
                 .contains(&(name.to_owned(), field.node.name.clone()))
         })
-        .map(|field| {
+        .map(|(position, field)| {
             let ty = facts.declarations.model_field_types.get(&field.span)?;
             Some(bir::FieldMetadata {
+                position,
                 name: field.node.name.clone(),
                 record_identity: crate::symbols::field_record_identity(&field.node),
                 record_canonical: crate::symbols::field_record_canonical(&field.node),
                 renamed_from: crate::symbols::field_renamed_from(&field.node),
+                renamed_from_lifecycle: crate::symbols::field_renamed_from_lifecycle(&field.node),
+                default_is_empty: crate::symbols::field_default_is_empty(&field.node),
                 alias: field.node.metadata.alias.clone(),
                 description: field.node.metadata.description.clone(),
                 type_name: crate::symbols::field_surface_type_name(&field.node.ty.node, ty),

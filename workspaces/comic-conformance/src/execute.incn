@@ -18,7 +18,7 @@ from corpus import Corpus, CorpusCase, receipt
 from adaptation_cases import check_adaptation
 from hash_cases import check_preimage, check_relation
 from row_reader_cases import check_reader
-from case_data import field, fields, hex_bytes, nodes, text
+from case_data import CaseOperation, CaseStatus, ExpectedStatus, expected_status, field, fields, hex_bytes, nodes, text
 
 
 pub enum Outcome:
@@ -45,18 +45,18 @@ pub def run(corpus: Corpus) -> RunReport:
     for item in corpus.cases:
         mut record: dict[str, JsonValue] = {}
         record["id"] = JsonValue.string(item.id)
-        record["operation"] = JsonValue.string(item.operation)
+        record["operation"] = JsonValue.string(item.operation.value())
         match evaluate(item):
             Outcome.Passed =>
                 passed += 1
-                record["status"] = JsonValue.string("passed")
+                record["status"] = JsonValue.string(CaseStatus.Passed.value())
             Outcome.Failed(message) =>
                 failed += 1
-                record["status"] = JsonValue.string("failed")
+                record["status"] = JsonValue.string(CaseStatus.Failed.value())
                 record["detail"] = JsonValue.string(message)
             Outcome.Unsupported(detail) =>
                 unsupported += 1
-                record["status"] = JsonValue.string("unsupported")
+                record["status"] = JsonValue.string(CaseStatus.Unsupported.value())
                 record["detail"] = JsonValue.string(detail)
         records.append(JsonValue.object(record))
     mut code: i32 = 0
@@ -69,17 +69,16 @@ pub def run(corpus: Corpus) -> RunReport:
 
 def evaluate(item: CorpusCase) -> Outcome:
     """Convert a checker error to one failed case; no unexpected operation receives a green result."""
-    if item.operation not in [
-        "member_identity",
-        "nominal_identity",
-        "type_selector",
-        "shape_admission",
-        "adaptation",
-        "hash_preimage",
-        "value_relation",
-        "binary_decode",
-    ]:
-        return Outcome.Unsupported("operation not implemented")
+    match item.operation:
+        (
+            CaseOperation.TextRead
+            | CaseOperation.TextPrint
+            | CaseOperation.ColumnCodec
+            | CaseOperation.ColumnBlock
+            | CaseOperation.ColumnData
+            | CaseOperation.ColumnDictionary
+        ) => return Outcome.Unsupported("operation not implemented")
+        _ => pass
     match check(item):
         Ok(true) => return Outcome.Passed
 
@@ -91,11 +90,11 @@ def check(item: CorpusCase) -> Result[bool, str]:
     """Each case owns one shared budget; hashing supplied expected bytes is never an implementation."""
     mut budget = Budget.create(bytes=1048576, elements=1048576, depth=128).map_err((error) => error.message())?
     match item.operation:
-        "member_identity" =>
+        CaseOperation.MemberIdentity =>
             value = member_identity(text(item.document, "earliest_name")?, budget).map_err((error) => error.message())?
             expected = field(item.document, "expected")?.expect_str().map_err((error) => error.message())?
             return Ok(hexlify(value) == expected)
-        "nominal_identity" =>
+        CaseOperation.NominalIdentity =>
             value = declaration_identity(
                 text(item.document, "registry")?,
                 text(item.document, "package")?,
@@ -114,12 +113,12 @@ def check(item: CorpusCase) -> Result[bool, str]:
             same_digest = hexlify(sha256.digest(preimage)) == text(expected, "sha256")?
             return Ok(same_identity and same_preimage and same_digest)
 
-        "type_selector" => return check_selector(item.document, budget)
-        "shape_admission" => return check_shape(item.document, budget)
-        "adaptation" => return check_adaptation(item.document, budget)
-        "hash_preimage" => return check_preimage(item.document, budget)
-        "value_relation" => return check_relation(item.document, budget)
-        "binary_decode" => return check_reader(item.document)
+        CaseOperation.TypeSelector => return check_selector(item.document, budget)
+        CaseOperation.ShapeAdmission => return check_shape(item.document, budget)
+        CaseOperation.Adaptation => return check_adaptation(item.document, budget)
+        CaseOperation.HashPreimage => return check_preimage(item.document, budget)
+        CaseOperation.ValueRelation => return check_relation(item.document, budget)
+        CaseOperation.BinaryDecode => return check_reader(item.document)
         _ => return Err("operation dispatcher mismatch")
 
 
@@ -133,7 +132,7 @@ def check_selector(value: JsonValue, mut budget: Budget) -> Result[bool, str]:
         Some(value) => value
         None => return Err("unknown nominal kind")
 
-    node = TypeNode.Nominal(kind, hex_bytes(text(input, "declaration_hex")?)?, arguments)
+    node = TypeNode.Nominal(kind, "", Some(hex_bytes(text(input, "declaration_hex")?)?), arguments)
     if let Some(parameters) = input.get("parameter_names"):
         count = len(parameters.expect_array().map_err((error) => error.message())?)
         check_arity(node, count).map_err((error) => error.message())?
@@ -147,8 +146,8 @@ def check_shape(value: JsonValue, mut budget: Budget) -> Result[bool, str]:
     """Compare exact refusal categories and paths, including the corpus's real identity collision."""
     expected = field(value, "expected")?
     match check_written(fields(field(value, "written")?)?, budget):
-        Ok(_) => return Ok(text(expected, "status")? == "accepted")
+        Ok(_) => return Ok(expected_status(expected)? == ExpectedStatus.Accepted)
         Err(error) =>
-            if text(expected, "status")? != "refused":
+            if expected_status(expected)? != ExpectedStatus.Refused:
                 return Ok(false)
             return Ok(error.kind.value() == text(expected, "kind")? and error.path == text(expected, "path")?)

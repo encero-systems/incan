@@ -2,29 +2,18 @@
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
-from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, NominalKind, TypeNode, VariantShape
+from crate.primitives.crumb.types import (
+    AbsentPolicy,
+    ContainerKind,
+    FieldShape,
+    NominalKind,
+    ScalarKind,
+    TypeNode,
+    VariantShape,
+)
 from crate.primitives.hash import sha256
 from crate.primitives.hex import hexlify
 from crate.primitives.text import encode_utf8
-
-const SCALARS: FrozenList[str] = [
-    "boolean",
-    "i8",
-    "i16",
-    "i32",
-    "i64",
-    "u8",
-    "u16",
-    "u32",
-    "u64",
-    "fp32",
-    "fp64",
-    "string",
-    "binary",
-    "secret_string",
-    "secret_bytes",
-    "reference",
-]
 
 
 pub def selector_spelling(node: TypeNode, mut budget: Budget) -> Result[str, CrumbError]:
@@ -51,24 +40,27 @@ def spell(node: TypeNode, nominal: bool, mut active: list[str], mut budget: Budg
 def spell_inner(node: TypeNode, nominal: bool, mut active: list[str], mut budget: Budget) -> Result[str, CrumbError]:
     """Dispatch a type's format meaning without executing its constructors, methods or validation."""
     match node:
-        TypeNode.Scalar(name) =>
-            if name not in SCALARS:
-                return Err(CrumbError.invalid_input("unsupported scalar"))
-            return compose("", [name], "", "", budget)
+        TypeNode.Scalar(kind) => return compose("", [scalar_spelling(kind)], "", "", budget)
         TypeNode.Decimal(precision, scale) =>
             if precision <= 0 or scale < 0 or scale > precision:
                 return Err(CrumbError.invalid_input("decimal bounds"))
             return compose("decimal<", [str(precision), str(scale)], ",", ">", budget)
         TypeNode.Container(kind, items) => return container(kind, items, nominal, active, budget)
-        TypeNode.Nominal(kind, identity, arguments) =>
+        TypeNode.Nominal(kind, _, identity, arguments) =>
             if not nominal:
                 return Err(CrumbError.invalid_input("structural definition required"))
             return nominal_type(kind, identity, arguments, budget)
+        TypeNode.Reference(items) =>
+            if len(items) != 1:
+                return Err(CrumbError.invalid_input("reference type arity"))
+            if nominal:
+                return compose("ref<", [spell(items[0], true, active, budget)?], "", ">", budget)
+            return compose("", [ScalarKind.Reference.value()], "", "", budget)
         TypeNode.Bound(items) =>
             if len(items) != 2:
                 return Err(CrumbError.invalid_input("bound definition arity"))
             match items[0]:
-                TypeNode.Nominal(kind, _, _) =>
+                TypeNode.Nominal(kind, _, _, _) =>
                     match items[1]:
                         TypeNode.Record(_, _) =>
                             if kind != NominalKind.Record:
@@ -93,17 +85,26 @@ def spell_inner(node: TypeNode, nominal: bool, mut active: list[str], mut budget
         TypeNode.Parameter(_) => return Err(CrumbError.invalid_input("unresolved type parameter"))
 
 
+def scalar_spelling(kind: ScalarKind) -> str:
+    """Return a scalar's canonical spelling after its sum-type payload crosses a typed boundary."""
+    return kind.value()
+
+
 def nominal_type(
     kind: NominalKind,
-    identity: bytes,
+    identity: Option[bytes],
     arguments: list[TypeNode],
     mut budget: Budget,
 ) -> Result[str, CrumbError]:
     """Keep the declaration's identity separate from its ordered closed type arguments."""
-    if len(identity) != 6:
+    bytes = match identity:
+        Some(value) => value
+        None => return Err(CrumbError.invalid_input("nominal identity unavailable"))
+
+    if len(bytes) != 6:
         return Err(CrumbError.invalid_input("nominal identity width"))
     prefix = kind.value() + "@"
-    stem = compose(prefix, [hexlify(identity)], "", "", budget)?
+    stem = compose(prefix, [hexlify(bytes)], "", "", budget)?
     if len(arguments) == 0:
         return Ok(stem)
     mut parts: list[str] = []
