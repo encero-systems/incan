@@ -683,6 +683,21 @@ model Greeter:
 
     hello = partial greet(greeting="hello")
 
+model Registration:
+    kind: str
+
+model RegistrationIndex:
+    entries: dict[str, Registration]
+
+    def shape(self, kind: str) -> int:
+        if kind not in self.entries:
+            return 0
+        return len(self.entries[kind].kind)
+
+    def registration(self, kind: str) -> int:
+        self.shape(kind)
+        return charge_registration(self.entries[kind])
+
 const PREFIX: str = "pre"
 static GREETING: str = "hello"
 
@@ -717,6 +732,12 @@ def optional_dictionary_key(values: dict[str, Option[bool | int]], key: str) -> 
         int(number) => return f"int {number}"
         bool(truth) => return f"bool {truth}"
         None => return "absent"
+def charge_registration(registration: Registration) -> int:
+    return len(registration.kind)
+def registration_lookup(entries: dict[str, Registration], kind: str) -> int:
+    if kind not in entries:
+        return 0
+    return charge_registration(entries[kind])
 def declaration_strings() -> int:
     return ignored(PREFIX) + ignored(GREETING)
 
@@ -826,7 +847,13 @@ def mutated(mut text: str) -> int:
         incan_semantics_core::IncanInputAccess::Inferred,
         "{set_contains:#?}"
     );
-    for (name, parameter) in [("dictionary_key", 1), ("optional_dictionary_key", 1), ("greet", 1)] {
+    for (name, parameter) in [
+        ("dictionary_key", 1),
+        ("optional_dictionary_key", 1),
+        ("registration_lookup", 1),
+        ("registration", 1),
+        ("greet", 1),
+    ] {
         let body = module
             .bodies
             .iter()
