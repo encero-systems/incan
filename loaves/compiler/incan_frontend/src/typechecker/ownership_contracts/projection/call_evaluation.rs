@@ -25,6 +25,7 @@ pub(super) fn validate_invocation_events(
             validate_evaluation(graph, source.span, evaluation, Some(&source.source), Some(loan), None)?;
             end = Some(evaluation.end_node);
             loans.push(loan);
+            loans.extend(&invocation.receiver_dependencies);
         }
         (None, Some(evaluation)) if invocation.receiver_owned => {
             let receiver_span = graph

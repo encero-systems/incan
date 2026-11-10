@@ -16,6 +16,7 @@ mod paths;
 struct SourceCoverage {
     operations: BTreeSet<HirSourceSpan>,
     invocations: BTreeSet<HirSourceSpan>,
+    carrier_calls: BTreeSet<HirSourceSpan>,
 }
 
 impl CheckedInputBody<'_> {
@@ -68,6 +69,9 @@ impl CheckedInputBody<'_> {
         }
         if seen.invocations.len() != self.graph.invocations.len() {
             return Err("invocation dependency has no matching source call");
+        }
+        if seen.carrier_calls.len() != self.graph.carrier_calls.len() {
+            return Err("temporary carrier dependency has no matching source call");
         }
         self.validate_source_access_coverage(function)?;
         Ok(())
@@ -368,6 +372,20 @@ impl CheckedInputBody<'_> {
                 _ => return Err("operation coverage needs checked fixed call arguments"),
             };
             self.visit_operation_expression(value, parameters, execution, seen)?;
+        }
+        if let Some(loans) = self.graph.carrier_calls.get(&expression.span) {
+            if loans.is_empty()
+                || loans.iter().any(|loan| {
+                    self.graph
+                        .loans
+                        .get(loan.0)
+                        .is_none_or(|loan| loan.kind != flow::LoanKind::Shared || loan.writable)
+                })
+                || !seen.carrier_calls.insert(expression.span)
+            {
+                return Err("temporary carrier call has invalid shared dependency coverage");
+            }
+            return Ok(());
         }
         if retained || list {
             return Ok(());

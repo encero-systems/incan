@@ -2,6 +2,96 @@
 
 use super::*;
 
+const BORROWED_GENERIC_CARRIER: &str = r#"
+trait Plan:
+    def width(self) -> int:
+        pass
+
+class StoredPlan with Plan:
+    pub value: int
+
+    def width(self) -> int:
+        return self.value
+
+class Walker[P with Plan]:
+    pub plan: P
+    pub total: int = 0
+
+    pub def write(mut self, value: int) -> None:
+        self.total += value + self.plan.width()
+
+    pub def finish(self) -> int:
+        return self.total
+
+model Selected[P with Plan]:
+    plan: P
+
+    pub def walker(self) -> Walker[P]:
+        return Walker(plan=self.plan)
+
+    pub def walker_from(self, total: int) -> Walker[P]:
+        return Walker(plan=self.plan, total=total)
+
+class Envelope:
+    pub plan: StoredPlan
+    pub total: int = 0
+
+    pub def select(self) -> Selected[Borrowed[StoredPlan]] from self.plan:
+        return Selected[Borrowed[StoredPlan]](plan=self.plan)
+
+    pub def append(mut self, value: int) -> None:
+        self.total += value
+"#;
+
+/// A dependency declared by the original selector survives a generic carrier method result until that result's last
+/// use. Mutation after consuming the walker is valid; mutation while the walker remains live is refused.
+#[test]
+fn generic_carrier_method_result_retains_receiver_dependency_issue2972() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(&format!(
+        "{BORROWED_GENERIC_CARRIER}\ndef main() -> None:\n    mut envelope = Envelope(plan=StoredPlan(value=2), total=0)\n    selected = envelope.select()\n    mut walker = selected.walker()\n    walker.write(3)\n    completed = walker.finish()\n    envelope.append(completed)\n    assert envelope.total == 5\n"
+    ))?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+
+    let chained = checked(&format!(
+        "{BORROWED_GENERIC_CARRIER}\ndef main() -> None:\n    mut envelope = Envelope(plan=StoredPlan(value=2), total=0)\n    completed = envelope.select().walker().finish()\n    envelope.append(completed)\n    assert envelope.total == 0\n"
+    ))?;
+    assert!(chained.errors.is_empty(), "{:?}", chained.errors);
+
+    let accepted_with_argument = checked(&format!(
+        "{BORROWED_GENERIC_CARRIER}\ndef main() -> None:\n    mut envelope = Envelope(plan=StoredPlan(value=2), total=0)\n    selected = envelope.select()\n    mut walker = selected.walker_from(1)\n    walker.write(3)\n    completed = walker.finish()\n    envelope.append(completed)\n    assert envelope.total == 6\n"
+    ))?;
+    assert!(
+        accepted_with_argument.errors.is_empty(),
+        "{:?}",
+        accepted_with_argument.errors
+    );
+
+    let refused = checked(&format!(
+        "{BORROWED_GENERIC_CARRIER}\ndef main() -> None:\n    mut envelope = Envelope(plan=StoredPlan(value=2), total=0)\n    selected = envelope.select()\n    mut walker = selected.walker()\n    envelope.append(1)\n    walker.write(3)\n"
+    ))?;
+    assert!(
+        refused
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0126")),
+        "{:?}",
+        refused.errors
+    );
+
+    let refused_with_argument = checked(&format!(
+        "{BORROWED_GENERIC_CARRIER}\ndef main() -> None:\n    mut envelope = Envelope(plan=StoredPlan(value=2), total=0)\n    selected = envelope.select()\n    mut walker = selected.walker_from(1)\n    envelope.append(1)\n    walker.write(3)\n"
+    ))?;
+    assert!(
+        refused_with_argument
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0126")),
+        "{:?}",
+        refused_with_argument.errors
+    );
+    Ok(())
+}
+
 /// Resource-observer fixtures must reach cleanup through represented call boundaries. An ordinary helper
 /// retains its selected header but still needs non-Copy argument or nominal returned-dependency facts.
 #[test]

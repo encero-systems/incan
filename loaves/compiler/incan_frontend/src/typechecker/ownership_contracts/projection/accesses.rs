@@ -420,6 +420,30 @@ impl SourceAccesses<'_, '_> {
         arguments: &[CallArg],
         consume: bool,
     ) -> Result<(), &'static str> {
+        if let Some(loans) = self.proof.graph.carrier_calls.get(&expression.span) {
+            self.expression(receiver, true)?;
+            for argument in arguments {
+                let value = match argument {
+                    CallArg::Positional(value)
+                    | CallArg::Named(_, value)
+                    | CallArg::PositionalUnpack(value)
+                    | CallArg::KeywordUnpack(value) => value,
+                };
+                self.expression(value, false)?;
+            }
+            for id in loans {
+                let loan = self
+                    .proof
+                    .graph
+                    .loans
+                    .get(id.0)
+                    .ok_or("temporary carrier call has an unknown source loan")?;
+                if loan.span != expression.span {
+                    self.access(expression.span, &loan.source, Some(*id), flow::Access::Read)?;
+                }
+            }
+            return Ok(());
+        }
         if let Some(iterator) = super::super::builtins::retained_iterator_method(self.proof.facts, expression.span) {
             return self.retained_iterator_call(receiver, arguments, iterator, expression.span, consume);
         }

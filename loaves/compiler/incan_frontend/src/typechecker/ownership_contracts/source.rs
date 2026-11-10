@@ -273,6 +273,7 @@ fn build_graph(
             owned_locals: BTreeMap::new(),
             invocations: BTreeMap::new(),
             operations: BTreeMap::new(),
+            carrier_calls: BTreeMap::new(),
             closures: BTreeMap::new(),
             mutation: super::flow::MutationBody::default(),
             nodes: vec![Node {
@@ -379,6 +380,9 @@ impl Builder<'_> {
     ) -> Result<Vec<usize>, Unavailable> {
         if let Some(result) = self.retained_result(expression, incoming.clone(), false)? {
             return Ok(result.incoming);
+        }
+        if let Some(incoming) = self.retained_receiver_terminal(expression, incoming.clone())? {
+            return Ok(incoming);
         }
         if self
             .checker

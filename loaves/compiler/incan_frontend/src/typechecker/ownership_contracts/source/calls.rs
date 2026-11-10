@@ -342,6 +342,24 @@ impl Builder<'_> {
             span,
             reason: "missing call result type".into(),
         })?;
+        let retained_receiver_dependencies = match receiver {
+            Some(receiver) => self.retained_receiver_dependencies(receiver)?,
+            None => Vec::new(),
+        };
+        let retained_receiver_result = !retained_receiver_dependencies.is_empty()
+            && self.checker.type_holds_borrow(result)
+            && arguments.iter().all(|argument| {
+                let argument = match argument {
+                    CallArg::Positional(argument)
+                    | CallArg::Named(_, argument)
+                    | CallArg::PositionalUnpack(argument)
+                    | CallArg::KeywordUnpack(argument) => argument,
+                };
+                self.checker
+                    .type_info
+                    .expr_type(argument.span)
+                    .is_some_and(|ty| !self.checker.type_holds_borrow(ty))
+            });
         let native_dependencies = if call.kind == super::super::InputCallKind::Native {
             self.checker
                 .native_result_dependencies(span)
@@ -385,6 +403,7 @@ impl Builder<'_> {
             && !native_independent_result
             && !owned_independent_result
             && !owned_dependent_result
+            && !retained_receiver_result
             && !clone_result
             && !plain_result(result)
             && result_requirement.is_none()
@@ -471,6 +490,8 @@ impl Builder<'_> {
                 incoming = self.event(incoming, Event::Nothing, receiver.span);
                 loans.push(loan);
                 invocation.receiver = Some(loan);
+                invocation.receiver_dependencies = retained_receiver_dependencies.clone();
+                loans.extend(retained_receiver_dependencies.iter().copied());
                 invocation.receiver_evaluation = Some(InputEvaluation {
                     start_node,
                     end_node,

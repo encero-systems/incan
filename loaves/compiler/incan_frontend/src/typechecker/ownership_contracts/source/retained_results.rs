@@ -16,6 +16,164 @@ pub(super) struct RetainedResult {
 }
 
 impl Builder<'_> {
+    /// Return every retained source loan held by an existing receiver place.
+    ///
+    /// A generic carrier remains ordinary owned storage, so its method receiver borrows that local place. These
+    /// additional loans describe the borrowed values stored inside it and must survive separately when the selected
+    /// method returns another borrow-holding carrier.
+    pub(super) fn retained_receiver_dependencies(
+        &mut self,
+        receiver: &Spanned<Expr>,
+    ) -> Result<Vec<LoanId>, Unavailable> {
+        let Some(path) = self.optional_place(receiver)? else {
+            return Ok(Vec::new());
+        };
+        let Root::Binding(root) = path.place.root else {
+            return Ok(Vec::new());
+        };
+        Ok(self.graph.dependent_locals.get(&root).cloned().unwrap_or_default())
+    }
+
+    /// Evaluate a method that carries its dependent generic receiver into another borrow-holding value.
+    ///
+    /// The instantiated result type proves that the result still contains borrowed storage, while the receiver local
+    /// supplies the already-checked source loans. Reborrowing those loans gives the result its own last-use lifetime;
+    /// consuming the old carrier therefore cannot release the original owner too early.
+    pub(super) fn retained_receiver_result(
+        &mut self,
+        expression: &Spanned<Expr>,
+        incoming: Vec<usize>,
+    ) -> Result<Option<RetainedResult>, Unavailable> {
+        let Expr::MethodCall(receiver, _, _, arguments) = &expression.node else {
+            return Ok(None);
+        };
+        if !self
+            .checker
+            .type_info
+            .expr_type(expression.span)
+            .is_some_and(|ty| self.checker.type_holds_borrow(ty))
+            || !arguments.iter().all(|argument| {
+                let argument = match argument {
+                    CallArg::Positional(argument)
+                    | CallArg::Named(_, argument)
+                    | CallArg::PositionalUnpack(argument)
+                    | CallArg::KeywordUnpack(argument) => argument,
+                };
+                self.checker
+                    .type_info
+                    .expr_type(argument.span)
+                    .is_some_and(|ty| !self.checker.type_holds_borrow(ty))
+            })
+        {
+            return Ok(None);
+        }
+        let dependencies = self.retained_receiver_dependencies(receiver)?;
+        if dependencies.is_empty() {
+            if !arguments.is_empty() {
+                return Ok(None);
+            }
+            let Some(result) = self.transient_receiver_result(receiver, incoming)? else {
+                return Ok(None);
+            };
+            if result.loans.is_empty() {
+                return Ok(None);
+            }
+            let result = self.carry_result(result.loans, expression.span, result.incoming)?;
+            if self
+                .graph
+                .carrier_calls
+                .insert(expression.span, result.loans.clone())
+                .is_some()
+            {
+                return Err(Unavailable {
+                    span: expression.span,
+                    reason: "temporary carrier call has more than one dependency binding".into(),
+                });
+            }
+            return Ok(Some(result));
+        }
+        let incoming = self.apply_call(Some(receiver), arguments, expression.span, incoming)?;
+        self.carry_result(dependencies, expression.span, incoming).map(Some)
+    }
+
+    /// Evaluate a temporary carrier receiver whose dependency has not been assigned to a local.
+    ///
+    /// A direct aggregate-view call establishes the first loans. A nested carrier method then reuses this routine
+    /// recursively, so a fluent chain preserves the same checked owner without inventing a stored place for any
+    /// temporary.
+    fn transient_receiver_result(
+        &mut self,
+        receiver: &Spanned<Expr>,
+        incoming: Vec<usize>,
+    ) -> Result<Option<RetainedResult>, Unavailable> {
+        if let Some(relation) = self
+            .call_relation(receiver)?
+            .filter(|relation| !relation.component.is_empty() && relation.carried.is_none())
+        {
+            let (incoming, loans) = self.evaluate_aggregate_view_call(receiver, relation, incoming)?;
+            return Ok(Some(RetainedResult { incoming, loans }));
+        }
+        self.retained_receiver_result(receiver, incoming)
+    }
+
+    /// Complete a no-argument call on a temporary shared carrier when its result retains no borrow.
+    ///
+    /// The fluent receiver is evaluated through its retained chain and every loan receives its final read at the
+    /// terminal call. Stored carriers continue through the ordinary selected-call path, and argument-bearing or
+    /// borrow-returning calls are deliberately excluded.
+    pub(super) fn retained_receiver_terminal(
+        &mut self,
+        expression: &Spanned<Expr>,
+        incoming: Vec<usize>,
+    ) -> Result<Option<Vec<usize>>, Unavailable> {
+        let Expr::MethodCall(receiver, _, _, arguments) = &expression.node else {
+            return Ok(None);
+        };
+        if !arguments.is_empty()
+            || self
+                .checker
+                .type_info
+                .expr_type(expression.span)
+                .is_none_or(|ty| self.checker.type_holds_borrow(ty))
+        {
+            return Ok(None);
+        }
+        let Some(result) = self.transient_receiver_result(receiver, incoming)? else {
+            return Ok(None);
+        };
+        if result.loans.is_empty()
+            || result.loans.iter().any(|loan| {
+                self.graph
+                    .loans
+                    .get(loan.0)
+                    .is_none_or(|loan| loan.kind != LoanKind::Shared)
+            })
+        {
+            return Ok(None);
+        }
+        let loans = result.loans;
+        let mut incoming = result.incoming;
+        for loan in &loans {
+            let source = self.graph.loans[loan.0].source.clone();
+            incoming = self.event(
+                incoming,
+                Event::Access {
+                    place: source,
+                    access: Access::Read,
+                    through: Some(*loan),
+                },
+                expression.span,
+            );
+        }
+        if self.graph.carrier_calls.insert(expression.span, loans).is_some() {
+            return Err(Unavailable {
+                span: expression.span,
+                reason: "temporary carrier terminal has more than one dependency binding".into(),
+            });
+        }
+        Ok(Some(incoming))
+    }
+
     /// Evaluate a compiler-identified lazy result. `escaping` allows a whole transferable list source to move into
     /// the returned cursor; every other stored source retains a checked shared dependency.
     pub(super) fn retained_result(

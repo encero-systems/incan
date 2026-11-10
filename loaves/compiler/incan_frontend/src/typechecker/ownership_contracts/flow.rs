@@ -151,7 +151,8 @@ pub(in crate::typechecker) struct Invocation {
     /// A native by-value receiver has an evaluation and optional source but no borrow loan.
     pub receiver_owned: bool,
     pub receiver_source: Option<Place>,
-    /// Loans held by a native by-value receiver and transferred through this invocation.
+    /// Loans stored inside the receiver value and retained through this invocation. Native by-value receivers and
+    /// borrowed generic carrier receivers both keep these separate from the receiver place itself.
     pub receiver_dependencies: Vec<LoanId>,
     pub arguments: Vec<InvocationArgument>,
     pub receiver_evaluation: Option<InputEvaluation>,
@@ -253,6 +254,9 @@ pub(in crate::typechecker) struct Graph {
     pub invocations: BTreeMap<HirSourceSpan, Invocation>,
     /// Observer and operator dependencies retain their evaluated operand and exact consumption event.
     pub operations: BTreeMap<HirSourceSpan, OperationInputs>,
+    /// Fluent calls on temporary shared carriers retain authenticated source loans without inventing a stored
+    /// receiver place or an ordinary selected invocation.
+    pub carrier_calls: BTreeMap<HirSourceSpan, Vec<LoanId>>,
     /// Closures bound to a local, by closure expression, with the captures they read or borrow when built.
     pub closures: BTreeMap<HirSourceSpan, ClosureCaptures>,
     /// Caller-visible parameter changes and forwarding calls from this callable. These are ordinary source-graph
@@ -284,6 +288,7 @@ impl Graph {
             owned_locals: BTreeMap::new(),
             invocations: BTreeMap::new(),
             operations: BTreeMap::new(),
+            carrier_calls: BTreeMap::new(),
             closures: BTreeMap::new(),
             mutation,
             nodes: vec![Node {
@@ -446,6 +451,7 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
         return Err(InvalidGraph("missing entry node"));
     }
     validate_invocations(graph)?;
+    validate_carrier_calls(graph)?;
     validate_owned_initializations(graph)?;
     operations::validate_operations(graph)?;
     validate_closures(graph)?;
@@ -556,6 +562,46 @@ fn validate(graph: &Graph) -> Result<Validated, InvalidGraph> {
     })
 }
 
+/// Validate the shared-loan evidence retained for each fluent temporary-carrier call.
+fn validate_carrier_calls(graph: &Graph) -> Result<(), InvalidGraph> {
+    for (span, loans) in &graph.carrier_calls {
+        if loans.is_empty() {
+            return Err(InvalidGraph("temporary carrier call has no retained loans"));
+        }
+        for id in loans {
+            let loan = graph
+                .loans
+                .get(id.0)
+                .ok_or(InvalidGraph("temporary carrier call has an unknown loan"))?;
+            if loan.kind != LoanKind::Shared || loan.writable {
+                return Err(InvalidGraph("temporary carrier call retains a non-shared loan"));
+            }
+            let represented = if loan.span == *span {
+                graph
+                    .nodes
+                    .iter()
+                    .any(|node| node.span == *span && matches!(node.event, Event::Borrow(actual) if actual == *id))
+            } else {
+                graph.nodes.iter().any(|node| {
+                    node.span == *span
+                        && matches!(
+                            &node.event,
+                            Event::Access {
+                                place,
+                                access: Access::Read,
+                                through: Some(actual),
+                            } if actual == id && place == &loan.source
+                        )
+                })
+            };
+            if !represented {
+                return Err(InvalidGraph("temporary carrier loan has no matching source event"));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Invocation bindings retain a complete slot map and actual source loans through the call boundary.
 fn validate_invocations(graph: &Graph) -> Result<(), InvalidGraph> {
     for (span, invocation) in &graph.invocations {
@@ -644,8 +690,17 @@ fn validate_invocations(graph: &Graph) -> Result<(), InvalidGraph> {
             {
                 return Err(InvalidGraph("owned receiver has an unknown dependency loan"));
             }
-        } else if invocation.receiver_source.is_some() || !invocation.receiver_dependencies.is_empty() {
-            return Err(InvalidGraph("borrowed receiver retains separate owned state"));
+        } else {
+            if invocation.receiver_source.is_some() {
+                return Err(InvalidGraph("borrowed receiver retains an owned source"));
+            }
+            if invocation
+                .receiver_dependencies
+                .iter()
+                .any(|dependency| graph.loans.get(dependency.0).is_none())
+            {
+                return Err(InvalidGraph("borrowed receiver has an unknown dependency loan"));
+            }
         }
         if let Some(receiver) = invocation.receiver {
             validate_invocation_loan(graph, *span, receiver)?;
