@@ -80,6 +80,12 @@ def test_description_integrity_is_derived_from_complete_metadata() -> Result[Non
         ],
     )
     assert description_hash(duplicate, budget).is_err()
+    if description_hash(Metadata.Map([MetadataEntry(key="not.a.segment", value=Metadata.Null)]), budget).is_ok():
+        return Err("non-segment metadata key was accepted")
+    text = description_hash(Metadata.Text("Public"), budget).map_err((e) => e.message())?
+    symbol = description_hash(Metadata.Symbol("Public"), budget).map_err((e) => e.message())?
+    if text.digest == symbol.digest:
+        return Err("metadata text and symbol used the same digest contribution")
     assert budget.leave().is_err()
     return Ok(None)
 
@@ -127,8 +133,8 @@ def test_float_order_covers_signed_zero_infinities_and_nan() -> Result[None, str
 def test_nominal_union_identity_is_not_structural_equality() -> Result[None, str]:
     """Equal empty payloads in distinct nominal branches keep different logical contributions."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
-    a = Value.Union(TypeNode.Nominal(NominalKind.Record, b"aaaaaa", []), [Value.Record([])])
-    b = Value.Union(TypeNode.Nominal(NominalKind.Record, b"bbbbbb", []), [Value.Record([])])
+    a = Value.Union(TypeNode.Nominal(NominalKind.Record, "", Some(b"aaaaaa"), []), [Value.Record([])])
+    b = Value.Union(TypeNode.Nominal(NominalKind.Record, "", Some(b"bbbbbb"), []), [Value.Record([])])
     first = value_hash(a, Projection.Object, budget).map_err((e) => e.message())?
     second = value_hash(b, Projection.Object, budget).map_err((e) => e.message())?
     assert first.digest != second.digest

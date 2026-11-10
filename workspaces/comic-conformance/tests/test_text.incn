@@ -1,6 +1,7 @@
 """Focused safety and boundary tests for COMIC text reading and canonical printing."""
 
 from std.primitives.crumb import Budget, TextContext, TextFailure, print_comic, read_comic
+from std.primitives.crumb.identity import member_identity
 from std.primitives.text import decode_utf8, encode_utf8
 
 
@@ -41,6 +42,15 @@ def test_comments_are_discarded_before_canonical_printing() -> Result[None, str]
     document = read_comic(encode_utf8(source), context, budget).map_err((error) => error.message())?
     expected = encode_utf8("example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n")
     assert print_comic(document, context, budget).map_err((error) => error.message())? == expected
+
+    renamed_source = "example.Renamed = Record { current [renamed_from = [original]]: i64 }\n"
+    renamed = read_comic(encode_utf8(renamed_source), context, budget).map_err((error) => error.message())?
+    assert renamed.descriptions[0].fields[0].name == "current"
+    assert renamed.descriptions[0].fields[0].renamed_from == ["original"]
+    assert renamed.descriptions[0].fields[0].identity == member_identity("original", budget).map_err(
+        (error) => error.message(),
+    )?
+    assert print_comic(renamed, context, budget).map_err((error) => error.message())? == encode_utf8(renamed_source)
     return Ok(None)
 
 

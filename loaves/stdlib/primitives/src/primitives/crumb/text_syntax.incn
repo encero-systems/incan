@@ -2,11 +2,11 @@
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.text_tokens import TextTokenKind, TextTokens
-from crate.primitives.crumb.text_types import TextDescription, TextError, TextFailure, TextPosition, TextType
-from crate.primitives.crumb.types import ContainerKind, NominalKind, ScalarKind, TypeConstructorKind
+from crate.primitives.crumb.text_types import TextDescription, TextError, TextFailure, TextPosition
+from crate.primitives.crumb.types import ContainerKind, NominalKind, ScalarKind, TypeConstructorKind, TypeNode
 
 
-pub def parse_type(mut tokens: TextTokens, mut budget: Budget) -> Result[TextType, TextError]:
+pub def parse_type(mut tokens: TextTokens, mut budget: Budget) -> Result[TypeNode, TextError]:
     """Parse a union from primary type constructors and one optional suffix layer."""
     match budget.enter():
         Err(_) => return Err(limit_error(tokens.peek().position))
@@ -19,10 +19,10 @@ pub def parse_type(mut tokens: TextTokens, mut budget: Budget) -> Result[TextTyp
         Ok(_) => pass
     if len(members) == 1:
         return Ok(members[0])
-    return Ok(TextType.Union(members))
+    return Ok(TypeNode.Container(ContainerKind.Union, members))
 
 
-def parse_primary(mut tokens: TextTokens, mut budget: Budget) -> Result[TextType, TextError]:
+def parse_primary(mut tokens: TextTokens, mut budget: Budget) -> Result[TypeNode, TextError]:
     """Parse one scalar, named type or parameterized core constructor."""
     token = tokens.peek()
     if token.kind not in [TextTokenKind.Word, TextTokenKind.Number]:
@@ -31,10 +31,10 @@ def parse_primary(mut tokens: TextTokens, mut budget: Budget) -> Result[TextType
     scalar_kind = ScalarKind.from_value(name)
     logical_constructor = TypeConstructorKind.from_value(name)
     container_kind = ContainerKind.from_value(name)
-    mut result = TextType.Named(name)
+    mut result = TypeNode.Nominal(NominalKind.Record, name, None, [])
     match scalar_kind:
         Some(ScalarKind.Reference) => pass
-        Some(scalar) => result = TextType.Scalar(scalar)
+        Some(scalar) => result = TypeNode.Scalar(scalar)
         None => pass
     match logical_constructor:
         Some(TypeConstructorKind.Decimal) => result = parse_decimal(tokens)?
@@ -48,11 +48,11 @@ def parse_primary(mut tokens: TextTokens, mut budget: Budget) -> Result[TextType
                 _ => pass
         None => pass
     if tokens.accepts("?"):
-        result = TextType.Option([result])
+        result = TypeNode.Container(ContainerKind.Option, [result])
     return Ok(result)
 
 
-def parse_decimal(mut tokens: TextTokens) -> Result[TextType, TextError]:
+def parse_decimal(mut tokens: TextTokens) -> Result[TypeNode, TextError]:
     """Parse positive precision and a scale within that precision."""
     tokens.require("<")?
     precision_token = tokens.take()
@@ -65,10 +65,10 @@ def parse_decimal(mut tokens: TextTokens) -> Result[TextType, TextError]:
     scale = int(scale_token.text)
     if precision <= 0 or scale < 0 or scale > precision:
         return Err(TextError(kind=TextFailure.InvalidType, position=precision_token.position))
-    return Ok(TextType.Decimal(precision, scale))
+    return Ok(TypeNode.Decimal(precision, scale))
 
 
-def parse_constructor(kind: ContainerKind, mut tokens: TextTokens, mut budget: Budget) -> Result[TextType, TextError]:
+def parse_constructor(kind: ContainerKind, mut tokens: TextTokens, mut budget: Budget) -> Result[TypeNode, TextError]:
     """Parse the fixed arity of one core type constructor."""
     tokens.require("<")?
     first = parse_type(tokens, budget)?
@@ -76,46 +76,48 @@ def parse_constructor(kind: ContainerKind, mut tokens: TextTokens, mut budget: B
         tokens.require(",")?
         second = parse_type(tokens, budget)?
         tokens.require(">")?
-        return Ok(TextType.Map([first, second]))
+        return Ok(TypeNode.Container(ContainerKind.Map, [first, second]))
     tokens.require(">")?
     match kind:
-        ContainerKind.List => return Ok(TextType.List([first]))
-        ContainerKind.Set => return Ok(TextType.Set([first]))
-        ContainerKind.Option => return Ok(TextType.Option([first]))
+        ContainerKind.List => return Ok(TypeNode.Container(ContainerKind.List, [first]))
+        ContainerKind.Set => return Ok(TypeNode.Container(ContainerKind.Set, [first]))
+        ContainerKind.Option => return Ok(TypeNode.Container(ContainerKind.Option, [first]))
         _ => return Err(TextError(kind=TextFailure.InvalidType, position=tokens.peek().position))
 
 
-def parse_reference(mut tokens: TextTokens, mut budget: Budget) -> Result[TextType, TextError]:
-    """Parse the text-only reference constructor without assigning it logical container semantics."""
+def parse_reference(mut tokens: TextTokens, mut budget: Budget) -> Result[TypeNode, TextError]:
+    """Parse a reference whose target is retained by the shared logical type graph."""
     tokens.require("<")?
     target = parse_type(tokens, budget)?
     tokens.require(">")?
-    return Ok(TextType.Reference([target]))
+    return Ok(TypeNode.Reference([target]))
 
 
-pub def type_spelling(value: TextType) -> str:
+pub def type_spelling(value: TypeNode) -> str:
     """Return the canonical core spelling of one admitted text type."""
     match value:
-        TextType.Scalar(kind) => return kind.value()
-        TextType.Named(name) => return name
-        TextType.Decimal(precision, scale) => return f"decimal<{precision}, {scale}>"
-        TextType.List(items) => return f"list<{type_spelling(items[0])}>"
-        TextType.Set(items) => return f"set<{type_spelling(items[0])}>"
-        TextType.Map(items) => return f"map<{type_spelling(items[0])}, {type_spelling(items[1])}>"
-        TextType.Option(items) =>
+        TypeNode.Scalar(kind) => return kind.value()
+        TypeNode.Nominal(_, path, _, _) => return path
+        TypeNode.Decimal(precision, scale) => return f"decimal<{precision}, {scale}>"
+        TypeNode.Container(ContainerKind.List, items) => return f"list<{type_spelling(items[0])}>"
+        TypeNode.Container(ContainerKind.Set, items) => return f"set<{type_spelling(items[0])}>"
+        TypeNode.Container(ContainerKind.Map, items) =>
+            return f"map<{type_spelling(items[0])}, {type_spelling(items[1])}>"
+        TypeNode.Container(ContainerKind.Option, items) =>
             inner = type_spelling(items[0])
             if option_suffix(items[0]):
                 return inner + "?"
             return f"option<{inner}>"
-        TextType.Union(items) => return " | ".join([type_spelling(item) for item in items])
-        TextType.Reference(items) => return f"ref<{type_spelling(items[0])}>"
+        TypeNode.Container(ContainerKind.Union, items) => return " | ".join([type_spelling(item) for item in items])
+        TypeNode.Reference(items) => return f"ref<{type_spelling(items[0])}>"
+        _ => pass
     return ""
 
 
-def option_suffix(value: TextType) -> bool:
+def option_suffix(value: TypeNode) -> bool:
     """Use the short suffix unless it would collapse a nested optional layer."""
     match value:
-        TextType.Option(_) => return false
+        TypeNode.Container(ContainerKind.Option, _) => return false
         _ => return true
 
 

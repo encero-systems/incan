@@ -46,6 +46,8 @@ pub def scalar_cell(kind: ScalarKind, value: Value, mut budget: Budget) -> Resul
                 return Ok(b"\x00")
         Value.Reference(target, identity) =>
             if kind == ScalarKind.Reference:
+                if len(target) != 6:
+                    return Err(CrumbError.invalid_input("reference target type identity width"))
                 mut output = EncodingBuffer.create()
                 output.frame(target, budget)?
                 output.frame(identity, budget)?

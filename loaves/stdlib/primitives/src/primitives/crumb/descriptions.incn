@@ -121,7 +121,14 @@ def admit_fields(values: list[Metadata], mut budget: Budget) -> Result[list[Stor
             StoredField(
                 position=index,
                 metadata=value,
-                shape=FieldShape(identity=identity, storage_type=node, canonical=canonical, absent=absent),
+                shape=FieldShape(
+                    identity=identity,
+                    storage_type=node,
+                    canonical=canonical,
+                    absent=absent,
+                    name=text(get(value, "name", budget)?)?,
+                    renamed_from=rename_history(get(value, "properties", budget)?)?,
+                ),
             ),
         )
         order.append((key, index))
@@ -181,6 +188,26 @@ def member_identity(value: Metadata, mut budget: Budget) -> Result[bytes, CrumbE
     text(get(value, "name", budget)?)?
     properties(get(value, "properties", budget)?)?
     return Ok(identity)
+
+
+def rename_history(value: Metadata) -> Result[list[str], CrumbError]:
+    """Project an optional earliest-first rename list while retaining its complete metadata separately."""
+    match value:
+        Metadata.Map(entries) =>
+            for entry in entries:
+                if entry.key == "renamed_from":
+                    match entry.value:
+                        Metadata.List(items) =>
+                            mut names: list[str] = []
+                            for item in items:
+                                match item:
+                                    Metadata.Symbol(name) | Metadata.Text(name) => names.append(name)
+                                    _ => return Err(CrumbError.invalid_input("rename history name"))
+                            return Ok(names)
+                        _ => return Err(CrumbError.invalid_input("rename history list"))
+            names: list[str] = []
+            return Ok(names)
+        _ => return Err(CrumbError.invalid_input("description properties map"))
 
 
 def absent_policy(name: str) -> Result[AbsentPolicy, CrumbError]:
