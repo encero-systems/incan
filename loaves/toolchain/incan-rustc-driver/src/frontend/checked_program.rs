@@ -344,17 +344,7 @@ pub(super) fn complete_dependency_context_in_place(
         native_enums,
     );
     retain_native_type_identities(&mut program.modules, &held);
-    let held_modules = held.len();
-    program.files.splice(
-        program.own..program.own,
-        held.iter().map(|module| module.module_id.path().to_owned()),
-    );
-    program
-        .sources
-        .splice(program.own..program.own, held.iter().map(|_| String::new()));
-    program.modules.splice(program.own..program.own, held);
-    program.entry += held_modules;
-    program.own += held_modules;
+    install_rust_value_modules(program, held);
     // A program whose checked types hold no union selects no union layout; its producers' manifests stay unread.
     let layouts = if incan_frontend::body_ir::reaches_union(&program.modules) {
         native_union_layouts(loaves)
@@ -479,7 +469,13 @@ fn install_dependency_modules(
     program.sources.clear();
     let mut modules = resolved.modules;
     let dependency_modules = modules.len();
-    modules.append(&mut prepared);
+    for module in prepared {
+        let owner = module.module_id.path().to_owned();
+        match modules.iter_mut().find(|candidate| candidate.module_id.path() == owner) {
+            Some(existing) => merge_prepared_layouts(existing, module),
+            None => modules.push(module),
+        }
+    }
     let own = modules.len();
     let mut files = modules
         .iter()
@@ -496,6 +492,71 @@ fn install_dependency_modules(
     program.own = own;
     program.dependency_modules = dependency_modules;
     program.reached_loaves = resolved.entries;
+}
+
+/// Merge retained declaration-only layout authority into a newly resolved executable module of the same owner.
+///
+/// Runtime layout preparation may discover a nominal or enum before dependency resolution selects an executable
+/// declaration from that module. The executable module becomes the single provenance authority while its prepared,
+/// layout-authoritative records replace the same canonical declarations and fill declarations absent from the
+/// executable selection.
+fn merge_prepared_layouts(existing: &mut BodyIrModule, prepared: BodyIrModule) {
+    for declaration in prepared.nominal_declarations {
+        let position = existing
+            .nominal_declarations
+            .iter()
+            .position(|candidate| candidate.canonical == declaration.canonical);
+        match position {
+            Some(position) => existing.nominal_declarations[position] = declaration,
+            None => existing.nominal_declarations.push(declaration),
+        }
+    }
+    for declaration in prepared.enum_declarations {
+        let position = existing
+            .enum_declarations
+            .iter()
+            .position(|candidate| candidate.canonical == declaration.canonical);
+        match position {
+            Some(position) => existing.enum_declarations[position] = declaration,
+            None => existing.enum_declarations.push(declaration),
+        }
+    }
+}
+
+/// Refresh physical native layout modules across dependency retries without creating a second source authority.
+///
+/// Completing a dependency context takes Rust declarations out of every active module and groups them under their
+/// physical native owner. On a retry, those owners already live in the retained prepared prefix: replace their
+/// emptied modules in place and splice only owners that this program has not held before. Module, file and source
+/// vectors remain aligned so lowering can require exactly one provenance entry per canonical module.
+fn install_rust_value_modules(program: &mut CheckedProgram, held: Vec<BodyIrModule>) {
+    let mut additions = Vec::new();
+    for module in held {
+        let owner = module.module_id.path().to_owned();
+        let existing = program.modules[program.dependency_modules..program.own]
+            .iter()
+            .position(|candidate| candidate.module_id.path() == owner)
+            .map(|position| program.dependency_modules + position);
+        match existing {
+            Some(position) => {
+                program.modules[position] = module;
+                program.files[position] = owner;
+                program.sources[position].clear();
+            }
+            None => additions.push(module),
+        }
+    }
+    let added = additions.len();
+    program.files.splice(
+        program.own..program.own,
+        additions.iter().map(|module| module.module_id.path().to_owned()),
+    );
+    program
+        .sources
+        .splice(program.own..program.own, additions.iter().map(|_| String::new()));
+    program.modules.splice(program.own..program.own, additions);
+    program.entry += added;
+    program.own += added;
 }
 
 /// Apply the existing context completion routine to a borrowed program without changing dependency ownership.
