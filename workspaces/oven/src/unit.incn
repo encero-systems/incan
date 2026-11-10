@@ -9,6 +9,7 @@ from features import ActiveGraph, FeatureRequest, resolve_features
 from home import StandardPackage, dependency_artifact_dir, standard_artifact_dir, standard_packages
 from intake import LocalIntake, LocalProject, ManifestReader, intake, source_root_of
 from loaf_local_graph import LocalFacet
+from rust_activation import ActivationPurpose, DependencyDomain
 from toolchain import NativeCrate, Toolchain
 from toolchain_access import ToolchainAccess
 from pub::incan_platform.trace import Operation
@@ -207,11 +208,12 @@ pub def describe(
     selected_toolchain: Option[Toolchain] = None,
     selected_facets: list[LocalFacet] = [],
     direct: bool = false,
+    purpose: ActivationPurpose = ActivationPurpose.Normal,
 ) -> Result[UnitDescription, str]:
-    """Describe `source` for `profile` and `request`, bypassing a Loaf only for explicit direct source execution."""
+    """Describe `source` for its owning purpose, bypassing a Loaf only for explicit direct source execution."""
     clock = begin()
-    result = described(source, profile, request, reader, selected_toolchain, selected_facets, direct)
-    key = f"{source.0}|{profile}|{",".join(sorted(request.features))}|{request.default_features}|{request.all_features}|direct={direct}"
+    result = described(source, profile, request, reader, selected_toolchain, selected_facets, direct, purpose)
+    key = (f"{source.0}|{profile}|{",".join(sorted(request.features))}|{request.default_features}|" + f"{request.all_features}|direct={direct}|purpose={purpose.value()}")
     record(Operation.UnitDescription, key, clock)
     return result
 
@@ -224,6 +226,7 @@ def described(
     selected_toolchain: Option[Toolchain],
     selected_facets: list[LocalFacet],
     direct: bool,
+    purpose: ActivationPurpose,
 ) -> Result[UnitDescription, str]:
     """Resolve the source's canonical project unless an explicit direct invocation requires a standalone unit."""
     entry = source.absolute().map_err((error) => f"{source.0}: {error.message()}")?
@@ -236,7 +239,7 @@ def described(
         Some(found) =>
             graph = intake(found, reader).map_err((error) => error.message())?
             root = found.resolve().map_err((error) => f"{found.0}: {error.message()}")?
-            active = resolve_features(graph, root.0, request, reader, selected_toolchain, selected_facets)?
+            active = resolve_features(graph, root.0, request, reader, selected_toolchain, selected_facets, purpose)?
             projects = projects_by_root(graph.projects)
             return project_unit(entry, projects[root.0], profile, root.0, active, projects, reader)
 
@@ -271,7 +274,7 @@ def project_unit(
             declared_features=sorted([name for name in own.intent.features.keys()]),
             active_features=active.active[own.root],
             loaves=project_loaves(own, profile, artifact_root, active, projects, reader)?,
-            rust_crates=rust_crates_of(own),
+            rust_crates=rust_crates_of(own, active.facets),
             contract_models=own.intent.contract_models,
             c_headers=own.intent.c_headers,
             vocab_entry=own.intent.vocab_entry,
@@ -369,14 +372,27 @@ def single_file_unit(entry: Path, profile: str, standard: list[UnitLoaf]) -> Uni
     )
 
 
-def rust_crates_of(project: LocalProject) -> list[str]:
+def rust_crates_of(project: LocalProject, facets: list[LocalFacet]) -> list[str]:
     """
-    The Rust crates a package's `rust::` imports may name: its Rust dependencies and the sibling Loaves' crates its
-    Rust facet links.
+    The Rust crates this unit may name: its production declarations and the root facet's selected environment edges.
+
+    Selection, rather than every environment declaration, grants test-only import authority. Dependency facets keep
+    their own aliases and cannot add roots to the requesting unit.
     """
     mut names = [request.alias.replace("-", "_") for request in project.intent.rust_inputs]
     for dependency in project.intent.dependencies:
         alias = dependency.alias.replace("-", "_")
         if dependency.rust_facet and alias not in names:
             names.append(alias)
+    for facet in facets:
+        if facet.project != project.root or facet.domain != DependencyDomain.Target:
+            continue
+        for edge in facet.local:
+            alias = edge.alias.replace("-", "_")
+            if alias not in names:
+                names.append(alias)
+        for selected in facet.registry_aliases:
+            alias = selected.replace("-", "_")
+            if alias not in names:
+                names.append(alias)
     return sorted(names)

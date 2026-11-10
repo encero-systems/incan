@@ -25,6 +25,7 @@ from observation import SETTLE_SECONDS, Ledger, load_ledger, now_seconds, trace_
 from pub::incan_platform.trace import Operation
 from jec import begin, record
 from owner_protocol import Reply, Request, prepares_executable
+from rust_activation import ActivationPurpose
 from rust_manifest import rust_facet
 from testing import tests_binary
 from toolchain import Toolchain, load_toolchain, toolchain_file
@@ -222,12 +223,16 @@ pub model Owner:
         if id in self.unsupported and unchanged(self.unsupported[id]):
             return Ok(None)
         # 2. The unit is prepared exactly as the command line prepares it, and the files it depends on are watched.
+        mut purpose = ActivationPurpose.Normal
+        if request.command == "test":
+            purpose = ActivationPurpose.Test
         described = describe(
             Path(request.path),
             request.profile,
             requested_features(request),
             ManifestReader(),
             Some(toolchain),
+            purpose=purpose,
         )?
         # 3. The owner's verdict that it does not serve this entry is itself retained, so it is not worked out again.
         if not supported(described)?:
