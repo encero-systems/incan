@@ -16,7 +16,7 @@ use incan_lang::interop::RustItemMetadata;
 use incan_lang::lang::standard_packages::{STANDARD_PACKAGE_NAMESPACE_POLICIES, StandardPackageNamespacePolicy};
 use incan_vocab::{KeywordActivation, KeywordRegistration, KeywordSpec};
 
-use crate::rust_abi_cache::RustAbiCache;
+use crate::rust_abi_cache::{RustAbiCache, RustTypeAliasLookup};
 
 mod decoded_manifest;
 mod lazy_entry;
@@ -608,17 +608,39 @@ impl LoafIndex {
         if let Some(resolved) = self.resolved_rust_items.lock().ok()?.get(canonical_path) {
             return Some(Arc::clone(resolved));
         }
-        let resolved = Arc::new(self.resolve_rust_abi_item(canonical_path)?);
+        let resolved = Arc::new(self.resolve_rust_fact(canonical_path, Clone::clone, RustAbiCache::get)?);
         if let Ok(mut items) = self.resolved_rust_items.lock() {
             items.insert(canonical_path.to_owned(), Arc::clone(&resolved));
         }
         Some(resolved)
     }
 
-    /// Resolve one item through the lookup order, without the shared store. A private indexed snapshot belongs to its
-    /// producer's closure, where visible paths and implementations can differ from the unit's. For a crate the unit
-    /// declares, only explicit dependency reexports precede the unit's own caches and extraction.
-    fn resolve_rust_abi_item(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    /// Alias-only Rust metadata for `canonical_path`, following the full-item lookup order without expanding a cache
+    /// record's methods, trait implementations, fields or variants.
+    ///
+    /// A full item already resolved for another purpose remains the authority. Otherwise, encoded caches project the
+    /// two alias fields directly and create no parallel memo or second metadata table.
+    pub(crate) fn rust_type_alias(&self, canonical_path: &str) -> Option<RustTypeAliasLookup> {
+        if let Some(resolved) = self.resolved_rust_items.lock().ok()?.get(canonical_path) {
+            return Some(RustTypeAliasLookup::from_item(resolved));
+        }
+        self.resolve_rust_fact(
+            canonical_path,
+            RustTypeAliasLookup::from_item,
+            RustAbiCache::get_type_alias,
+        )
+    }
+
+    /// Resolve one projection through the common Rust-fact lookup order, without adding a parallel memo or provider
+    /// traversal. A private indexed snapshot belongs to its producer's closure, where visible paths and
+    /// implementations can differ from the unit's. For a crate the unit declares, only explicit dependency reexports
+    /// precede the unit's own caches and extraction.
+    fn resolve_rust_fact<T>(
+        &self,
+        canonical_path: &str,
+        project_item: impl Fn(&RustItemMetadata) -> T,
+        read_cache: impl Fn(&RustAbiCache, &str) -> Result<Option<T>, String>,
+    ) -> Option<T> {
         let root = canonical_path.split("::").next().unwrap_or(canonical_path);
         let declared = self.declared_rust_crates.contains(root);
         let shipping = || {
@@ -638,7 +660,7 @@ impl LoafIndex {
                 .as_ref()
                 .and_then(|abi| abi.get(canonical_path))
             {
-                return Some(item.clone());
+                return Some(project_item(item));
             }
         }
         for entry in shipping().filter(|entry| !declared && entry.summary.rust_abi_cache) {
@@ -648,38 +670,34 @@ impl LoafIndex {
             let Some(cache) = entry.artifact.rust_abi_cache.as_ref() else {
                 continue;
             };
-            if let Some(item) = self.cache_item(cache, canonical_path, || entry.artifact.dir.clone()) {
+            if let Some(item) = self.cache_fact(read_cache(cache, canonical_path), || entry.artifact.dir.clone()) {
                 return Some(item);
             }
         }
         for cache in &self.rust_abi_caches {
-            if let Some(item) = self.cache_item(cache, canonical_path, || PathBuf::from("the toolchain Rust ABI cache"))
-            {
+            if let Some(item) = self.cache_fact(read_cache(cache, canonical_path), || {
+                PathBuf::from("the toolchain Rust ABI cache")
+            }) {
                 return Some(item);
             }
         }
         for cache in &self.rust_fact_caches {
-            if let Some(item) = self.cache_item(cache, canonical_path, || PathBuf::from("the bounded Rust facts cache"))
-            {
+            if let Some(item) = self.cache_fact(read_cache(cache, canonical_path), || {
+                PathBuf::from("the bounded Rust facts cache")
+            }) {
                 return Some(item);
             }
         }
         #[cfg(test)]
         if let Some(item) = self.rust_facts.get(canonical_path) {
-            return Some(item.clone());
+            return Some(project_item(item));
         }
         None
     }
 
-    /// Read one path from one ABI cache, retaining a read failure for `validate_demands` instead of treating it as a
-    /// missing item. `origin` names the cache in that failure.
-    fn cache_item(
-        &self,
-        cache: &RustAbiCache,
-        canonical_path: &str,
-        origin: impl FnOnce() -> PathBuf,
-    ) -> Option<RustItemMetadata> {
-        match cache.get(canonical_path) {
+    /// Admit one projected cache read while retaining a failure for [`Self::validate_demands`].
+    fn cache_fact<T>(&self, result: Result<Option<T>, String>, origin: impl FnOnce() -> PathBuf) -> Option<T> {
+        match result {
             Ok(item) => item,
             Err(reason) => {
                 let _ = self
