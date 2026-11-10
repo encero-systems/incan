@@ -45,6 +45,9 @@ import primitives.crumb.metadata_read
 import primitives.crumb.description_read
 import primitives.crumb.encoding_index
 import primitives.crumb.scalar_read
+import primitives.crumb.typed_cells
+import primitives.crumb.typed_rows
+import primitives.crumb.typed_columns
 import primitives.crumb.cell_read
 import primitives.crumb.row_projection
 import primitives.crumb.row_reader

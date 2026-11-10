@@ -49,3 +49,12 @@ pub class Budget:
             return Err(CrumbError.invalid_input("unmatched depth leave"))
         self.active_depth -= 1
         return Ok(None)
+
+    pub def snapshot(self) -> Self:
+        """Return an independent allowance for a codec object that must retain its own mutable state."""
+        return Budget(
+            bytes_left=self.bytes_left,
+            elements_left=self.elements_left,
+            depth_limit=self.depth_limit,
+            active_depth=self.active_depth,
+        )

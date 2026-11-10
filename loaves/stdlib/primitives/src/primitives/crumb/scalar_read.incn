@@ -9,6 +9,7 @@ from crate.primitives.crumb.types import ScalarKind
 from crate.primitives.crumb.values import IntegerValue, Value
 from crate.primitives.crumb.wide_integer import WideInteger
 from crate.primitives.views import MappedView
+from crate.primitives.reflection import DecimalValue
 
 
 pub def scalar(kind: ScalarKind, view: MappedView, origin: int, mut budget: Budget) -> Result[Value, BinaryError]:
@@ -114,6 +115,82 @@ def fixed_integer(data: bytes, signed: bool, origin: int) -> Result[IntegerValue
     match magnitude.try_resize[i128]():
         Some(value) => return Ok(IntegerValue.Signed(0i128 - value))
         None => return Err(failure(BinaryFailure.IntegerOverflow, origin))
+
+
+pub def typed_integer(
+    kind: ScalarKind,
+    view: MappedView,
+    origin: int,
+    mut budget: Budget,
+) -> Result[IntegerValue, BinaryError]:
+    """Decode one fixed-width integer into its native carrier without a Value allocation."""
+    match kind.integer_facts():
+        None => return Err(failure(BinaryFailure.InvalidCell, origin))
+        Some((signed, bits)) =>
+            if view.len() != bits // 8:
+                return Err(failure(BinaryFailure.InvalidCell, origin))
+            return fixed_integer(copied(view, origin, budget)?, signed, origin)
+
+
+pub def typed_boolean(view: MappedView, origin: int, mut budget: Budget) -> Result[bool, BinaryError]:
+    """Decode one canonical boolean cell without constructing a schema-less Value."""
+    if view.len() != 1:
+        return Err(failure(BinaryFailure.InvalidCell, origin))
+    mut cursor = EncodingCursor.create(view, origin)?
+    flag = cursor.byte(budget)?
+    if flag > 1:
+        return Err(failure(BinaryFailure.InvalidCell, origin))
+    return Ok(flag == 1)
+
+
+pub def typed_text(view: MappedView, origin: int, mut budget: Budget) -> Result[str, BinaryError]:
+    """Decode one canonical UTF-8 string cell directly into its typed value."""
+    mut cursor = EncodingCursor.create(view, origin)?
+    result = read_text(cursor, budget)?
+    if cursor.remaining() != 0:
+        return Err(failure(BinaryFailure.InvalidCell, cursor.absolute()))
+    return Ok(result)
+
+
+pub def typed_bytes(view: MappedView, origin: int, mut budget: Budget) -> Result[bytes, BinaryError]:
+    """Decode one framed byte string directly into its typed value."""
+    mut cursor = EncodingCursor.create(view, origin)?
+    data = cursor.frame(budget)?
+    if cursor.remaining() != 0:
+        return Err(failure(BinaryFailure.InvalidCell, cursor.absolute()))
+    return copied(data, origin, budget)
+
+
+pub def typed_decimal(
+    precision: int,
+    scale: int,
+    view: MappedView,
+    origin: int,
+    mut budget: Budget,
+) -> Result[DecimalValue, BinaryError]:
+    """Decode an exact decimal cell into RFC 173's native typed carrier."""
+    mut cursor = EncodingCursor.create(view, origin)?
+    groups = cursor.groups(budget)?
+    coefficient = WideInteger.from_base128(groups, budget).map_err((e) => primitive(e, origin))?.unzigzag(budget).map_err(
+        (e) => primitive(e, origin),
+    )?.to_signed()
+    number = match coefficient:
+        None => return Err(failure(BinaryFailure.IntegerOverflow, origin))
+        Some(value) => value
+    if (
+        precision <= 0
+        or precision > 38
+        or scale < 0
+        or scale > precision
+        or decimal_digits(number) > precision
+        or cursor.remaining() != 0
+    ):
+        return Err(failure(BinaryFailure.InvalidCell, origin))
+    return DecimalValue.new(
+        coefficient=number,
+        precision=precision.saturating_resize[u8](),
+        scale=scale.saturating_resize[u8](),
+    ).map_err((_) => failure(BinaryFailure.InvalidCell, origin))
 
 
 def decimal_digits(coefficient: i128) -> int:
