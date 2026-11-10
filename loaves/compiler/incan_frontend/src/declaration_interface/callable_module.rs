@@ -61,7 +61,7 @@ impl CheckedCallableModule {
     /// Capture local free functions from an accepted ordinary module. Every retained name must resolve to exactly
     /// those checked declarations; an imported candidate or ambiguous overlay refuses capture of this inventory.
     pub fn from_checked(program: &Program, checker: &TypeChecker) -> Result<Self, LibraryManifestError> {
-        Self::capture(program, checker, None)
+        Self::capture(program, checker, None, None)
     }
 
     /// Capture complete live candidate sets for explicitly requested local names only. Other names make no negative
@@ -70,8 +70,9 @@ impl CheckedCallableModule {
         program: &Program,
         checker: &TypeChecker,
         names: &BTreeSet<String>,
+        producer_package: Option<&str>,
     ) -> Result<Self, LibraryManifestError> {
-        let module = Self::capture(program, checker, Some(names))?;
+        let module = Self::capture(program, checker, Some(names), producer_package)?;
         for entry in &module.callables {
             if !super::body_products::resolved_scalar_header(&entry.header)? {
                 return Err(invalid(
@@ -88,6 +89,7 @@ impl CheckedCallableModule {
         program: &Program,
         checker: &TypeChecker,
         names: Option<&BTreeSet<String>>,
+        producer_package: Option<&str>,
     ) -> Result<Self, LibraryManifestError> {
         if !checker.errors.is_empty() {
             return Err(invalid("callable module requires an accepted source-only namespace"));
@@ -100,7 +102,12 @@ impl CheckedCallableModule {
             if names.is_some_and(|names| !names.contains(&function.name)) {
                 continue;
             }
-            let header = CheckedCallableInterface::from_checked(function, declaration.span, checker)?;
+            let header = match producer_package {
+                Some(package) => {
+                    CheckedCallableInterface::from_checked_for_product(function, declaration.span, checker, package)?
+                }
+                None => CheckedCallableInterface::from_checked(function, declaration.span, checker)?,
+            };
             let signature = header.signature_digest(
                 &checker.type_info().declarations.named_type_identities,
                 &StableIdentityProjection::default(),
@@ -159,13 +166,7 @@ impl CheckedCallableModule {
                 },
                 signatures: Vec::new(),
             });
-            let canonical = entry
-                .header
-                .replay
-                .to_checked()?
-                .identity
-                .canonical
-                .ok_or_else(|| invalid("callable read has no accepted canonical root"))?;
+            let canonical = entry.header.canonical_identity().clone();
             let signature = entry
                 .header
                 .identity

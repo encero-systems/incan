@@ -17,8 +17,8 @@ use super::super::diagnostic_values::DiagnosticPositions;
 use super::{BodyLocal, CheckedBodyView, LocalOwnerKind, TypeChecker};
 use crate::ast::{Program, Span};
 
-use incan_semantics_core::CanonicalSymbolId;
 use incan_semantics_core::stable_identity::StableDeclarationId;
+use incan_semantics_core::{CanonicalSymbolId, ScopeDiscriminant, SemanticSourceTargetKind, SymbolNamespace};
 use types::{next, parameter_fields, read_parameters, read_type, type_fields};
 
 mod fixtures;
@@ -29,6 +29,69 @@ pub(crate) use projections::*;
 
 /// The native boundary carries only field primitives. The Incan schema owns their versioned encoding.
 pub(crate) type Fields = Vec<Vec<String>>;
+
+impl TypeChecker {
+    /// Borrow the declaration record emitted by this activation's declaration producer.
+    pub(crate) fn produced_declaration_record(&self, owner: Span) -> Option<&Fields> {
+        self.produced_declaration_records.get(&owner)
+    }
+
+    /// Retain one producer-validated declaration record until its source-order owner consumes it.
+    pub(crate) fn retain_declaration_record(&mut self, owner: Span, fields: Fields) {
+        self.callable_declaration_reuse.insert(owner, fields);
+    }
+
+    /// Report whether the current activation selected a declaration value for this exact source owner.
+    pub(crate) fn has_declaration_record(&self, owner: Span) -> bool {
+        self.callable_declaration_reuse.contains_key(&owner)
+    }
+
+    /// Restore one selected declaration value through current coordinates, publish its own final facts and enqueue
+    /// it for ordinary settlement. This adapter performs no declaration validation or default checking.
+    pub(super) fn reuse_declaration_record(
+        &mut self,
+        program: &Program,
+        owner: Span,
+    ) -> Result<bool, NodeBindingError> {
+        let Some(fields) = self.callable_declaration_reuse.remove(&owner) else {
+            return Ok(false);
+        };
+        let positions = Positions::new(self, program, owner, true)?;
+        let NativeOwner::Settled(restored) = restore(&positions, program, owner, &fields)? else {
+            return Err(NodeBindingError::MissingNode);
+        };
+        let binding = restored.binding.ok_or(NodeBindingError::MissingOwner)?;
+        if self.declaration_view().function(owner) != Some(&binding)
+            || restored.defaults != default_writers(program, owner)?
+        {
+            return Err(NodeBindingError::BaselineDifference("declaration inputs".into()));
+        }
+        let identity = binding.identity.as_ref().ok_or(NodeBindingError::MissingOwner)?;
+        let mut diagnostic_positions = DiagnosticPositions::new(program, self.symbols.declaration_origin());
+        self.reuse_checked_declaration(Arc::new(restored.view), &mut diagnostic_positions)
+            .map_err(|_| NodeBindingError::ChangedBody)?;
+        match restored.ownership {
+            Some(contract) => {
+                self.type_info
+                    .declarations
+                    .ownership_contracts
+                    .insert(identity.clone(), contract);
+            }
+            None => {
+                self.type_info.declarations.ownership_contracts.remove(identity);
+            }
+        }
+        self.type_info
+            .expressions
+            .body_ir_expr_types
+            .extend(restored.final_types.expressions);
+        self.type_info
+            .expressions
+            .body_ir_binding_types
+            .extend(restored.final_types.bindings);
+        Ok(true)
+    }
+}
 
 /// Current coordinates and canonical activation handles, keyed by persisted semantic identity. No type, call or
 /// diagnostic payload is retained here. The test sink may build these from a separate fresh checker baseline.
@@ -75,7 +138,34 @@ impl Positions {
             .map(|input| input.local())
             .filter(|local| local.owner == owner && (!declaration || local.kind == LocalOwnerKind::Declaration))
             .flat_map(|local| local.nested.values());
-        for (canonical, stable) in nodes.binding_identities(nested.chain(raw))? {
+        // Declaration records are restored before the function scope is entered. Mint the current activation's
+        // parameter handles from the symbol table's next scope index so stored nested identities bind without
+        // running annotation/default checking or creating the scope early.
+        let declaration_bindings = if declaration {
+            program
+                .declarations
+                .iter()
+                .find(|declaration| declaration.span == owner)
+                .and_then(|declaration| match &declaration.node {
+                    crate::ast::Declaration::Function(function) => Some(function),
+                    _ => None,
+                })
+                .into_iter()
+                .flat_map(|function| &function.params)
+                .map(|parameter| CanonicalSymbolId {
+                    namespace: SymbolNamespace::OrdinaryLexical,
+                    origin: checker.symbols.declaration_origin(),
+                    declaration_name: parameter.node.name.clone(),
+                    kind: SemanticSourceTargetKind::Parameter,
+                    scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
+                    declaration_span: parameter.span.into(),
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        // Real checked locals, when present, replace the pre-scope parameter handles under the same stable key.
+        for (canonical, stable) in nodes.binding_identities(declaration_bindings.iter().chain(nested).chain(raw))? {
             identities.insert(stable.render_compact(), canonical);
         }
         Ok(Self { nodes, identities })

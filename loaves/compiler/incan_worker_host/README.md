@@ -1,12 +1,13 @@
 # Compiler worker host
 
-`incan_worker_host` is the host of one compiler worker process: the server side of the `incan.compiler-worker/1` protocol and the worker's lifecycle. The compiler driver's `--resident SOCKET GENERATION READY HOME` entry links it, asks it for one request at a time, runs the request through the entry point its short-lived command uses, and gives it the outcome. The host consumes the compiler through that entry; it is not part of the compiler's query interfaces.
+`incan_worker_host` is the host of one compiler worker process: the server side of the `incan.compiler-worker/1` compile-command protocol, the `incan.compiler-worker/2` record-activation protocol and the worker's lifecycle. The compiler driver's `--resident SOCKET GENERATION READY HOME` entry links it, asks it for one request at a time, runs the request through the entry point its short-lived command uses, and gives it the outcome. The host consumes the compiler through that entry; it is not part of the compiler's query interfaces.
 
 **Versioning:** Release-train cadence, with the driver that links it.
 
 | Module | Holds |
 | --- | --- |
-| `protocol` | The shared request, reply and readiness documents: request construction and admission, reply encoding and completion validation, and readiness encoding and validation. Oven imports this module as the client. |
+| `protocol` | The version-one compile request, reply and readiness documents: request construction and admission, reply encoding and completion validation, and readiness encoding and validation. Oven imports this module as the compile client. |
+| `record_protocol` | The version-two `Prepare`, `NeedPrerequisite`, `Evaluate` and `Produced` record-activation messages. The client engine protocol carries none of these bodies. |
 | `lifecycle` | The retirement policy, apart from any socket: idle period, footprint margin, outcomes. |
 | `endpoint` | The worker's socket file, its withdrawal, and what a departed caller ends. |
 | `host` | The listener, peer identity, one activation at a time, replies and retirement. |
