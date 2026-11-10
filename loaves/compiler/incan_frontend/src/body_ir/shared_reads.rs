@@ -945,6 +945,9 @@ fn shared_statement(statement: &bir::Statement, context: &ReadContext<'_>) -> bo
                     return true;
                 }
                 let Some(value) = argument.as_one() else { return false };
+                if projection_uses(value, context.local) {
+                    return false;
+                }
                 if collection_argument_requires_owned(callee, index) {
                     return false;
                 }
@@ -1099,8 +1102,12 @@ fn borrowed_temporary(
 /// Whether a call element reads this local. Named and spread elements stay distinct from a resolved fixed slot.
 fn argument_uses(argument: &bir::ArgumentElement, local: bir::LocalId) -> bool {
     match argument {
-        bir::ArgumentElement::One(operand) | bir::ArgumentElement::Named { operand, .. } => uses(operand, local),
-        bir::ArgumentElement::Spread(spread) => uses(&spread.source, local),
+        bir::ArgumentElement::One(operand) | bir::ArgumentElement::Named { operand, .. } => {
+            uses(operand, local) || projection_uses(operand, local)
+        }
+        bir::ArgumentElement::Spread(spread) => {
+            uses(&spread.source, local) || projection_uses(&spread.source, local)
+        }
     }
 }
 
