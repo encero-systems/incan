@@ -5,6 +5,7 @@ from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.framing import encode_signed, frame
 from crate.primitives.crumb.row_buffer import RowBuffer
 from crate.primitives.crumb.scalars import compare_integer, float64_bits, normalize_decimal
+from crate.primitives.crumb.types import ScalarKind
 from crate.primitives.crumb.values import Value
 from crate.primitives.text import encode_utf8
 
@@ -13,40 +14,38 @@ const SIGNED_MAX: FrozenList[str] = ["127", "32767", "2147483647", "922337203685
 const UNSIGNED_MAX: FrozenList[str] = ["255", "65535", "4294967295", "18446744073709551615"]
 
 
-pub def scalar_cell(name: str, value: Value, mut budget: Budget) -> Result[bytes, CrumbError]:
+pub def scalar_cell(kind: ScalarKind, value: Value, mut budget: Budget) -> Result[bytes, CrumbError]:
     """Match a declared scalar against the exact logical value; no coercion through host float/int."""
     match value:
         Value.Integer(decimal) =>
-            names = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"]
-            widths = [1, 2, 4, 8]
-            for index in range(8):
-                if names[index] == name:
-                    return integer_cell(decimal, widths[index % 4], index < 4, budget)
+            match kind.integer_facts():
+                Some((signed, bits)) => return integer_cell(decimal, bits // 8, signed, budget)
+                None => pass
         Value.Float(width, bits) =>
-            if name == "fp32":
-                return float_cell(width, bits, 32, budget)
-            if name == "fp64":
-                return float_cell(width, bits, 64, budget)
+            match kind:
+                ScalarKind.Fp32 => return float_cell(width, bits, 32, budget)
+                ScalarKind.Fp64 => return float_cell(width, bits, 64, budget)
+                _ => pass
         Value.Boolean(flag) =>
-            if name == "boolean":
+            if kind == ScalarKind.Boolean:
                 budget.charge_bytes(1)?
                 if flag:
                     return Ok(b"\x01")
                 return Ok(b"\x00")
         Value.Text(text) =>
-            if name == "string":
+            if kind == ScalarKind.String:
                 for _ in range(4):
                     budget.charge_bytes(len(text))?
                 return frame(encode_utf8(text), budget)
         Value.Binary(data) =>
-            if name == "binary":
+            if kind == ScalarKind.Binary:
                 return frame(data, budget)
         Value.Withheld =>
-            if name in ["secret_string", "secret_bytes"]:
+            if kind == ScalarKind.SecretString or kind == ScalarKind.SecretBytes:
                 budget.charge_bytes(1)?
                 return Ok(b"\x00")
         Value.Reference(target, identity) =>
-            if name == "reference":
+            if kind == ScalarKind.Reference:
                 mut output = RowBuffer.create()
                 output.frame(target, budget)?
                 output.frame(identity, budget)?

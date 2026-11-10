@@ -53,7 +53,7 @@ def convert(value: JsonValue, plan: ValuePlan) -> Result[JsonValue, str]:
         ValuePlan.Identity => return Ok(value.clone())
         ValuePlan.Widen(target) =>
             mut object = value.expect_object().map_err((error) => error.message())?
-            object["type"] = JsonValue.string(target)
+            object["type"] = JsonValue.string(target.value())
             return Ok(JsonValue.object(object))
         ValuePlan.Wrap(children) => return Ok(some(convert(value, children[0])?))
         ValuePlan.Optional(children) =>
