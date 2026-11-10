@@ -142,10 +142,10 @@ handler = writer.write                           # refused: `write` has two over
 ### Distinct overloads
 
 - For calls using only positional arguments, an overload accepts a range of counts: from the number of its parameters without default values to the number of all its parameters, or with no upper bound when it has `*args`. This range is used for declaration-conflict checks below; it is not a minimum positional-argument requirement on a call that also supplies named arguments.
-- Two overloads in one set conflict when there is a count that both accept and their parameter types are the same at every position up to that count. The later declaration is refused, and the diagnostic labels the earlier one.
+- Two overloads in one set conflict when there is a count that both accept and their parameter types are the same at every position up to that count. The later declaration is refused, and the diagnostic labels the earlier one. This check must preserve RFC 025's exception for methods implementing distinct instantiations of the same generic trait: those implementations may share parameter types and differ in their result types, as specified under "Methods and trait instantiations".
 - Types compare after aliases resolve. A newtype is its own type. Type parameters compare by their position in the type-parameter list.
 - Two overloads with different numbers of type parameters never conflict, because a call's explicit type arguments select by that number.
-- Parameter names and return types never make two overloads distinct. Overloads that differ only in them conflict.
+- Parameter names never make two overloads distinct. Return types do not distinguish ordinary overloads; only the same-generic-trait exception above permits that distinction.
 
 ### Selecting an overload
 
@@ -165,7 +165,7 @@ A call selects in three steps.
     - When none remains, the call is refused, and the diagnostic lists every overload with the reason it failed: the argument count, a named argument, the type at a position, or the number of type arguments.
     - When several remain, one is selected if it is narrower than each of the others. Overload A is narrower than B for a call when each of A's parameter types filled by the call is accepted by B's, and at least one of them is not the same. If those types are the same, an overload without type parameters is narrower than one with them, and an overload that takes an argument in a declared parameter is narrower than one that captures it in `*args`. Otherwise the call is refused as ambiguous, and the diagnostic lists the tied candidates.
 
-The type the call's result is expected to have plays no part in selection. Declaration order never breaks a tie.
+For ordinary overloads, the type the call's result is expected to have plays no part in selection. The same-generic-trait exception below retains RFC 025's result-based selection. Declaration order never breaks a tie.
 
 ### Defaults and named arguments
 
@@ -199,6 +199,8 @@ The checker binds arguments separately for each candidate before testing for mis
 - When only instantiations of one generic trait remain tied and their parameter types are the same, the expected result type chooses among them, as RFC 025 specifies. That is the only place a result type takes part in selection.
 - This replaces RFC 025's rule that same-name methods are permitted only when they satisfy different trait adoptions. Its dispatch rules otherwise stand.
 - Operator dunders keep RFC 028's rules, `__call__` stays single (RFC 128), and construction stays with RFC 122. This RFC overloads none of them.
+
+For example, implementations of `Convert[int]` and `Convert[str]` may both declare `convert(self)` with their respective result types. Both declarations are accepted. `number: int = value.convert()` selects `Convert[int]`, and `text: str = value.convert()` selects `Convert[str]`; without a selecting context, the call is ambiguous. Two ordinary `convert(value: Reading)` functions differing only in those result types are still refused at declaration.
 
 ### Local partials
 
@@ -265,6 +267,6 @@ The checker binds arguments separately for each candidate before testing for mis
 
 - **Selection is static and local.** A call is decided by what it writes, so reading the call and the set is enough to know which overload runs.
 - **Narrowest wins, otherwise refuse.** A narrower overload is the specific case its author wrote. When neither of two is narrower, guessing would hide a design question in the overload set.
-- **Names and result types never distinguish declarations.** Each would make some ordinary call ambiguous for every caller.
+- **Ordinary overloads are distinguished by inputs.** Parameter names and result types do not distinguish ordinary declarations. Methods implementing distinct instantiations of the same generic trait retain RFC 025's narrow exception at both declaration checking and call selection.
 - **One rule for functions and methods.** The split between them in 0.6 had no reason behind it.
 - **Visibility filters candidates, but conflicts span the whole set.** A library's private overloads never change what an outside call selects, and they can't hide a conflict from the library's author.
