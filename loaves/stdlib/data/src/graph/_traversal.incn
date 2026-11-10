@@ -10,6 +10,7 @@ from crate.graph._read import (
     GraphReadErrorKind,
     GraphScope,
     LimitReason,
+    NodePage,
 )
 
 
@@ -87,6 +88,7 @@ model _WalkState[K with (Clone, Eq, Hash), I with Clone]:
     visited: set[K]
     active: Option[_Frontier[K, I]]
     cursor: Option[GraphPageToken]
+    pending_edge: Option[EdgePage[K, I]]
     depth_first: bool
 
 
@@ -152,20 +154,65 @@ pub model Path[K, I]:
     pub edges: list[I]
 
 
-pub enum PathOutcome[K, I, F]:
+@derive(Clone)
+model _PathState[K with (Clone, Eq, Hash), I with Clone]:
+    """Retained breadth-first path state and its predecessor evidence."""
+
+    walk: _WalkState[K, I]
+    start: K
+    target: K
+    parents: dict[K, K]
+    reaching_edges: dict[K, I]
+
+
+pub class PathContinuation[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+]:
+    """Single-use retained state for a bounded shortest-path search."""
+
+    reader: Borrowed[R]
+    state: _PathState[K, I]
+    direction: Direction
+    used: bool
+
+    pub def resume(
+        mut self,
+        budget: TraversalBudget,
+    ) -> PathSearch[K, I, F, R] from self.reader:
+        """Consume this continuation logically and resume the same shortest-path search."""
+        if self.used:
+            return failed_path_search(self.reader, budget, GraphReadError.StaleCursor())
+        self.used = true
+        return run_path_search(self.reader, self.state, self.direction, budget)
+
+
+pub enum PathOutcome[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+]:
     """Shortest-path completion, bounded uncertainty, cancellation, or failure."""
 
     Found(Path[K, I])
     NoPath
-    Inconclusive(LimitReason)
+    Inconclusive(LimitReason, Option[PathContinuation[K, I, F, R]])
     Cancelled
     Failed(GraphReadError[F])
 
 
-pub model PathSearch[K, I, F]:
+pub model PathSearch[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+]:
     """One bounded shortest-path search and its work report."""
 
-    pub outcome: PathOutcome[K, I, F]
+    pub outcome: PathOutcome[K, I, F, R]
     pub report: TraversalReport
 
 
@@ -231,6 +278,7 @@ def initial_walk_state[
             visited=visited,
             active=None,
             cursor=None,
+            pending_edge=None,
             depth_first=depth_first,
         ),
     )
@@ -262,14 +310,23 @@ def run_walk[
     while true:
         match state.active:
             Some(active) =>
-                if report.edges_examined >= budget.max_edges:
-                    return limited_walk_page(reader, state, direction, visits, report, LimitReason.Edges)
-                match read_next_edge(reader, active.node, direction, state.cursor):
-                    Err(error) =>
+                match read_bounded_edge_page(
+                    reader,
+                    active.node,
+                    direction,
+                    state.cursor,
+                    state.pending_edge,
+                    budget,
+                    report,
+                ):
+                    _EdgeReadStep.Failed(error) =>
                         report.stopped = None
                         return TraversalPage(visits=visits, outcome=TraversalOutcome.Failed(error), report=report)
-                    Ok(page) =>
-                        record_page(report, page)
+                    _EdgeReadStep.Deferred(page, reason) =>
+                        state.pending_edge = Some(page)
+                        return limited_walk_page(reader, state, direction, visits, report, reason)
+                    _EdgeReadStep.Page(page) =>
+                        state.pending_edge = None
                         state.cursor = page.next
                         for edge in page.values:
                             neighbor = followed_node(edge, direction)
@@ -285,6 +342,16 @@ def run_walk[
                                 state.frontier.append(
                                     _Frontier(node=neighbor, depth=active.depth + 1, via=Some(edge.id)),
                                 )
+                        retained = retained_entries(state)
+                        if retained > budget.max_retained:
+                            report.stopped = Some(LimitReason.Retained)
+                            return TraversalPage(
+                                visits=visits,
+                                outcome=TraversalOutcome.Limited(LimitReason.Retained, None),
+                                report=report,
+                            )
+                        if retained > report.retained_high_water:
+                            report.retained_high_water = retained
                         if page.next.is_none():
                             state.active = None
                             state.cursor = None
@@ -344,15 +411,14 @@ def frontier_is_empty[K with (Clone, Eq, Hash), I with Clone](state: _WalkState[
 
 def retained_entries[K with (Clone, Eq, Hash), I with Clone](state: _WalkState[K, I]) -> int:
     """Count membership, pending frontier, active expansion, and cursor entries."""
-    mut count = len(state.visited)
-    if state.depth_first:
-        count += len(state.frontier)
-    else:
-        count += len(state.frontier) - state.next_frontier
+    mut count = len(state.visited) + len(state.frontier)
     if state.active.is_some():
         count += 1
     if state.cursor.is_some():
         count += 1
+    match state.pending_edge:
+        Some(page) => count += 1 + len(page.values)
+        None => pass
     return count
 
 
@@ -380,6 +446,13 @@ def limited_walk_page[
     reason: LimitReason,
 ) -> TraversalPage[K, I, F, R] from reader:
     """Return a limited page with a compatible continuation when its state fits."""
+    if retained_entries(state) > report.budget.max_retained:
+        report.stopped = Some(LimitReason.Retained)
+        return TraversalPage(
+            visits=visits,
+            outcome=TraversalOutcome.Limited(LimitReason.Retained, None),
+            report=report,
+        )
     report.stopped = Some(reason)
     continuation = WalkContinuation(reader=reader, state=state, direction=direction, used=false)
     return TraversalPage(
@@ -449,83 +522,1097 @@ pub def find_path[
     target: K,
     direction: Direction,
     budget: TraversalBudget,
-) -> PathSearch[K, I, F] from reader:
+) -> PathSearch[K, I, F, R] from reader:
     """Return the first shortest path, a proof of no path, or bounded uncertainty."""
-    if start == target:
-        match reader.contains_node(start):
-            Err(error) =>
-                return PathSearch(
-                    outcome=PathOutcome.Failed(error_for_argument(error, "start")),
-                    report=empty_report(reader.scope(), budget),
-                )
-            Ok(false) =>
-                return PathSearch(
-                    outcome=PathOutcome.Failed(GraphReadError.UnknownKey("start")),
-                    report=empty_report(reader.scope(), budget),
-                )
-            Ok(true) =>
-                return PathSearch(
-                    outcome=PathOutcome.Found(Path(nodes=[start], edges=[])),
-                    report=empty_report(reader.scope(), budget),
-                )
-    match reader.contains_node(target):
-        Err(error) =>
-            return PathSearch(
-                outcome=PathOutcome.Failed(error_for_argument(error, "target")),
-                report=empty_report(reader.scope(), budget),
-            )
-        Ok(false) =>
-            return PathSearch(
-                outcome=PathOutcome.Failed(GraphReadError.UnknownKey("target")),
-                report=empty_report(reader.scope(), budget),
-            )
+    match budget.invalid_argument():
+        Some(argument) => return failed_path_search(reader, budget, GraphReadError.InvalidBudget(argument))
+        None => pass
+    match reader.contains_node(start):
+        Err(error) => return failed_path_search(reader, budget, error_for_argument(error, "start"))
+        Ok(false) => return failed_path_search(reader, budget, GraphReadError.UnknownKey("start"))
         Ok(true) => pass
+    match reader.contains_node(target):
+        Err(error) => return failed_path_search(reader, budget, error_for_argument(error, "target"))
+        Ok(false) => return failed_path_search(reader, budget, GraphReadError.UnknownKey("target"))
+        Ok(true) => pass
+    walk: _WalkState[K, I] = _WalkState(
+        frontier=[_Frontier(node=start, depth=0, via=None)],
+        next_frontier=0,
+        visited={start},
+        active=None,
+        cursor=None,
+        pending_edge=None,
+        depth_first=false,
+    )
+    state: _PathState[K, I] = _PathState(
+        start=start,
+        target=target,
+        walk=walk,
+        parents={},
+        reaching_edges={},
+    )
+    return run_path_search(reader, state, direction, budget)
 
-    page = breadth_first(reader, [start], direction, budget)
-    match page.outcome:
-        TraversalOutcome.Failed(error) => return PathSearch(outcome=PathOutcome.Failed(error), report=page.report)
-        TraversalOutcome.Cancelled => return PathSearch(outcome=PathOutcome.Cancelled, report=page.report)
-        TraversalOutcome.Limited(reason, _) =>
-            return PathSearch(outcome=PathOutcome.Inconclusive(reason), report=page.report)
-        TraversalOutcome.Complete =>
-            match path_from_visits(reader, page.visits, start, target, direction):
-                Err(error) => return PathSearch(outcome=PathOutcome.Failed(error), report=page.report)
-                Ok(None) => return PathSearch(outcome=PathOutcome.NoPath, report=page.report)
-                Ok(Some(path)) => return PathSearch(outcome=PathOutcome.Found(path), report=page.report)
 
-
-def path_from_visits[
+def run_path_search[
     K with (Clone, Eq, Hash),
     I with Clone,
     F,
     R with GraphRead[K, I, F],
 ](
     reader: Borrowed[R],
-    visits: list[Visit[K, I]],
-    start: K,
-    target: K,
+    mut state: _PathState[K, I],
     direction: Direction,
-) -> Result[Option[Path[K, I]], GraphReadError[F]]:
-    """Reconstruct a completed breadth-first path from each visit's first reaching edge."""
-    mut by_node: dict[K, Visit[K, I]] = {}
-    for visit in visits:
-        by_node[visit.node] = visit
-    if target not in by_node:
-        return Ok(None)
-    mut reverse_nodes: list[K] = [target]
+    budget: TraversalBudget,
+) -> PathSearch[K, I, F, R] from reader:
+    """Advance a shortest-path search while retaining exact predecessor state."""
+    mut report = empty_report(reader.scope(), budget)
+    match budget.invalid_argument():
+        Some(argument) => return failed_path_search(reader, budget, GraphReadError.InvalidBudget(argument))
+        None => pass
+    report.retained_high_water = path_retained_entries(state)
+    if report.retained_high_water > budget.max_retained:
+        report.stopped = Some(LimitReason.Retained)
+        return PathSearch(outcome=PathOutcome.Inconclusive(LimitReason.Retained, None), report=report)
+
+    while true:
+        match state.walk.active:
+            Some(active) =>
+                match read_bounded_edge_page(
+                    reader,
+                    active.node,
+                    direction,
+                    state.walk.cursor,
+                    state.walk.pending_edge,
+                    budget,
+                    report,
+                ):
+                    _EdgeReadStep.Failed(error) =>
+                        return PathSearch(outcome=PathOutcome.Failed(error), report=report)
+                    _EdgeReadStep.Deferred(page, reason) =>
+                        state.walk.pending_edge = Some(page)
+                        return limited_path_search(reader, state, direction, report, reason)
+                    _EdgeReadStep.Page(page) =>
+                        state.walk.pending_edge = None
+                        state.walk.cursor = page.next
+                        for edge in page.values:
+                            neighbor = followed_node(edge, direction)
+                            if neighbor not in state.walk.visited:
+                                if path_retained_entries(state) + 4 > budget.max_retained:
+                                    report.stopped = Some(LimitReason.Retained)
+                                    return PathSearch(
+                                        outcome=PathOutcome.Inconclusive(LimitReason.Retained, None),
+                                        report=report,
+                                    )
+                                state.walk.visited.add(neighbor)
+                                state.parents[neighbor] = active.node
+                                state.reaching_edges[neighbor] = edge.id
+                                state.walk.frontier.append(
+                                    _Frontier(node=neighbor, depth=active.depth + 1, via=Some(edge.id)),
+                                )
+                        retained = path_retained_entries(state)
+                        if retained > budget.max_retained:
+                            report.stopped = Some(LimitReason.Retained)
+                            return PathSearch(
+                                outcome=PathOutcome.Inconclusive(LimitReason.Retained, None),
+                                report=report,
+                            )
+                        if retained > report.retained_high_water:
+                            report.retained_high_water = retained
+                        if page.next.is_none():
+                            state.walk.active = None
+                            state.walk.cursor = None
+            None =>
+                if frontier_is_empty(state.walk):
+                    return PathSearch(outcome=PathOutcome.NoPath, report=report)
+                if report.nodes_visited >= budget.max_nodes:
+                    return limited_path_search(reader, state, direction, report, LimitReason.Nodes)
+                next = take_frontier(state.walk)
+                report.nodes_visited += 1
+                if next.node == state.target:
+                    path = reconstruct_path(state)
+                    return PathSearch(outcome=PathOutcome.Found(path), report=report)
+                state.walk.active = Some(next)
+                retained = path_retained_entries(state)
+                if retained > report.retained_high_water:
+                    report.retained_high_water = retained
+
+
+def reconstruct_path[K with (Clone, Eq, Hash), I with Clone](state: _PathState[K, I]) -> Path[K, I]:
+    """Reconstruct the witnessed shortest path from retained predecessor maps."""
+    mut reverse_nodes: list[K] = [state.target]
     mut reverse_edges: list[I] = []
-    mut current = target
-    while current != start:
-        visit = by_node[current]
-        match visit.via:
-            None => return Ok(None)
-            Some(edge_id) =>
-                edge = reader.edge(edge_id)?
-                reverse_edges.append(edge_id)
-                match direction:
-                    Direction.Outgoing => current = edge.source
-                    Direction.Incoming => current = edge.target
-                reverse_nodes.append(current)
+    mut current = state.target
+    while current != state.start:
+        reverse_edges.append(state.reaching_edges[current])
+        current = state.parents[current]
+        reverse_nodes.append(current)
     reverse_nodes.reverse()
     reverse_edges.reverse()
-    return Ok(Some(Path(nodes=reverse_nodes, edges=reverse_edges)))
+    return Path(nodes=reverse_nodes, edges=reverse_edges)
+
+
+def path_retained_entries[K with (Clone, Eq, Hash), I with Clone](state: _PathState[K, I]) -> int:
+    """Count walk membership, frontier, cursor, and predecessor entries retained for a path."""
+    return retained_entries(state.walk) + len(state.parents) + len(state.reaching_edges)
+
+
+def limited_path_search[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    state: _PathState[K, I],
+    direction: Direction,
+    mut report: TraversalReport,
+    reason: LimitReason,
+) -> PathSearch[K, I, F, R] from reader:
+    """Return bounded uncertainty with a continuation over the same fixed reader."""
+    if path_retained_entries(state) > report.budget.max_retained:
+        report.stopped = Some(LimitReason.Retained)
+        return PathSearch(outcome=PathOutcome.Inconclusive(LimitReason.Retained, None), report=report)
+    report.stopped = Some(reason)
+    continuation = PathContinuation(reader=reader, state=state, direction=direction, used=false)
+    return PathSearch(outcome=PathOutcome.Inconclusive(reason, Some(continuation)), report=report)
+
+
+def failed_path_search[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    budget: TraversalBudget,
+    error: GraphReadError[F],
+) -> PathSearch[K, I, F, R] from reader:
+    """Return a path failure before structural work begins."""
+    return PathSearch(outcome=PathOutcome.Failed(error), report=empty_report(reader.scope(), budget))
+
+
+# Streaming global algorithms retain traversal state, never the reader's complete adjacency.
+
+
+enum _NodeReadStep[K, F]:
+    """One bounded node-page decision, including a page deferred for resumption."""
+
+    Page(NodePage[K])
+    Deferred(NodePage[K], LimitReason)
+    Failed(GraphReadError[F])
+
+
+enum _EdgeReadStep[K, I, F]:
+    """One bounded edge-page decision, including a page deferred for resumption."""
+
+    Page(EdgePage[K, I])
+    Deferred(EdgePage[K, I], LimitReason)
+    Failed(GraphReadError[F])
+
+
+def read_bounded_node_page[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    cursor: Option[GraphPageToken],
+    pending: Option[NodePage[K]],
+    budget: TraversalBudget,
+    mut report: TraversalReport,
+) -> _NodeReadStep[K, F]:
+    """Read or replay one node page without consuming work beyond this call's bounds."""
+    page = match pending:
+        Some(value) => value
+        None =>
+            match reader.nodes(GraphPageBudget.records(1), cursor):
+                Err(error) => return _NodeReadStep.Failed(error)
+                Ok(value) => value
+    if report.nodes_visited + len(page.values) > budget.max_nodes:
+        return _NodeReadStep.Deferred(page, LimitReason.Nodes)
+    if report.bytes_counted + page.counters.bytes_copied > budget.max_bytes:
+        return _NodeReadStep.Deferred(page, LimitReason.Bytes)
+    record_node_page(report, page)
+    return _NodeReadStep.Page(page)
+
+
+def read_bounded_edge_page[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    node: K,
+    direction: Direction,
+    cursor: Option[GraphPageToken],
+    pending: Option[EdgePage[K, I]],
+    budget: TraversalBudget,
+    mut report: TraversalReport,
+) -> _EdgeReadStep[K, I, F]:
+    """Read or replay one adjacency page without consuming work beyond this call's bounds."""
+    page = match pending:
+        Some(value) => value
+        None =>
+            match read_next_edge(reader, node, direction, cursor):
+                Err(error) => return _EdgeReadStep.Failed(error)
+                Ok(value) => value
+    examined = page.counters.live_entries + page.counters.rejected_candidates
+    if report.edges_examined + examined > budget.max_edges:
+        return _EdgeReadStep.Deferred(page, LimitReason.Edges)
+    if report.bytes_counted + page.counters.bytes_copied > budget.max_bytes:
+        return _EdgeReadStep.Deferred(page, LimitReason.Bytes)
+    record_page(report, page)
+    return _EdgeReadStep.Page(page)
+
+
+def record_node_page[K](mut report: TraversalReport, page: NodePage[K]) -> None:
+    """Add one node page's observable work to a traversal report."""
+    report.candidates_rejected += page.counters.rejected_candidates
+    report.payloads_read += page.counters.payloads_materialized
+    report.bytes_counted += page.counters.bytes_copied
+    report.index_seeks += page.counters.index_seeks
+    report.pages += 1
+
+
+@derive(Clone, Copy, Eq)
+enum _OrderPhase(str):
+    """Current streaming pass of one topological-order operation."""
+
+    Nodes = "nodes"
+    CountIncoming = "count_incoming"
+    Emit = "emit"
+    Cycle = "cycle"
+
+
+@derive(Clone)
+model _OrderFrame[K]:
+    """One iterative DFS frame used to construct a cycle witness."""
+
+    node: K
+    cursor: Option[GraphPageToken]
+    complete: bool
+
+
+@derive(Clone)
+model _OrderState[K with (Clone, Eq, Hash), I with Clone]:
+    """Streaming state for node inventory, Kahn passes, and cycle discovery."""
+
+    phase: _OrderPhase
+    nodes: list[K]
+    node_cursor: Option[GraphPageToken]
+    pending_node: Option[NodePage[K]]
+    active_index: int
+    edge_cursor: Option[GraphPageToken]
+    pending_edge: Option[EdgePage[K, I]]
+    incoming: dict[K, int]
+    ready: list[K]
+    ready_index: int
+    ordered: list[K]
+    active: Option[K]
+    colors: dict[K, int]
+    parents: dict[K, K]
+    parent_edges: dict[K, I]
+    frames: list[_OrderFrame[K]]
+
+
+pub class OrderContinuation[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+]:
+    """Single-use retained state for bounded topological ordering."""
+
+    reader: Borrowed[R]
+    state: _OrderState[K, I]
+    direction: Direction
+    used: bool
+
+    pub def resume(
+        mut self,
+        budget: TraversalBudget,
+    ) -> OrderResult[K, I, F, R] from self.reader:
+        """Consume this continuation logically and resume the same ordering operation."""
+        if self.used:
+            return failed_order_result(self.reader, budget, GraphReadError.StaleCursor())
+        self.used = true
+        return run_topological_order(self.reader, self.state, self.direction, budget)
+
+
+pub enum OrderOutcome[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+]:
+    """Complete topological order, witnessed cycle, or explicit early termination."""
+
+    Ordered(list[K])
+    Cyclic(Path[K, I])
+    Limited(LimitReason, Option[OrderContinuation[K, I, F, R]])
+    Cancelled
+    Failed(GraphReadError[F])
+
+
+pub model OrderResult[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+]:
+    """One bounded topological-order operation and its work report."""
+
+    pub outcome: OrderOutcome[K, I, F, R]
+    pub report: TraversalReport
+
+
+pub def topological_order[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    direction: Direction,
+    budget: TraversalBudget,
+) -> OrderResult[K, I, F, R] from reader:
+    """Return Kahn's stable order or the first deterministic DFS cycle witness."""
+    return run_topological_order(reader, initial_order_state[K, I](), direction, budget)
+
+
+def initial_order_state[K with (Clone, Eq, Hash), I with Clone]() -> _OrderState[K, I]:
+    """Construct the empty state for one streaming topological-order operation."""
+    return _OrderState(
+        phase=_OrderPhase.Nodes,
+        nodes=[],
+        node_cursor=None,
+        pending_node=None,
+        active_index=0,
+        edge_cursor=None,
+        pending_edge=None,
+        incoming={},
+        ready=[],
+        ready_index=0,
+        ordered=[],
+        active=None,
+        colors={},
+        parents={},
+        parent_edges={},
+        frames=[],
+    )
+
+
+enum _OrderStep[K, I, F]:
+    """One streaming ordering transition returned to the operation driver."""
+
+    Continue
+    Limited(LimitReason)
+    Ordered(list[K])
+    Cyclic(Path[K, I])
+    Failed(GraphReadError[F])
+
+
+def run_topological_order[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    mut state: _OrderState[K, I],
+    direction: Direction,
+    budget: TraversalBudget,
+) -> OrderResult[K, I, F, R] from reader:
+    """Advance streaming Kahn and DFS passes without retaining complete adjacency."""
+    mut report = empty_report(reader.scope(), budget)
+    match budget.invalid_argument():
+        Some(argument) => return failed_order_result(reader, budget, GraphReadError.InvalidBudget(argument))
+        None => pass
+    while true:
+        retained = order_retained_entries(state)
+        if retained > report.retained_high_water:
+            report.retained_high_water = retained
+        if retained > budget.max_retained:
+            report.stopped = Some(LimitReason.Retained)
+            return OrderResult(outcome=OrderOutcome.Limited(LimitReason.Retained, None), report=report)
+        step = match state.phase:
+            _OrderPhase.Nodes => advance_order_nodes(reader, state, budget, report)
+            _OrderPhase.CountIncoming => advance_incoming_count(reader, state, direction, budget, report)
+            _OrderPhase.Emit => advance_kahn_emit(reader, state, direction, budget, report)
+            _OrderPhase.Cycle => advance_cycle_search(reader, state, direction, budget, report)
+        match step:
+            _OrderStep.Continue => pass
+            _OrderStep.Limited(reason) => return limited_order_result(reader, state, direction, budget, report, reason)
+            _OrderStep.Ordered(nodes) => return OrderResult(outcome=OrderOutcome.Ordered(nodes), report=report)
+            _OrderStep.Cyclic(path) => return OrderResult(outcome=OrderOutcome.Cyclic(path), report=report)
+            _OrderStep.Failed(error) => return OrderResult(outcome=OrderOutcome.Failed(error), report=report)
+
+
+def advance_order_nodes[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    mut state: _OrderState[K, I],
+    budget: TraversalBudget,
+    mut report: TraversalReport,
+) -> _OrderStep[K, I, F]:
+    """Inventory one selected node while preserving its stable reader order."""
+    match read_bounded_node_page(reader, state.node_cursor, state.pending_node, budget, report):
+        _NodeReadStep.Failed(error) => return _OrderStep.Failed(error)
+        _NodeReadStep.Deferred(page, reason) =>
+            state.pending_node = Some(page)
+            return _OrderStep.Limited(reason)
+        _NodeReadStep.Page(page) =>
+            state.pending_node = None
+            state.node_cursor = page.next
+            for node in page.values:
+                state.nodes.append(node)
+                state.incoming[node] = 0
+                report.nodes_visited += 1
+            if page.next.is_none():
+                state.node_cursor = None
+                state.active_index = 0
+                state.phase = _OrderPhase.CountIncoming
+            return _OrderStep.Continue
+
+
+def advance_incoming_count[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    mut state: _OrderState[K, I],
+    direction: Direction,
+    budget: TraversalBudget,
+    mut report: TraversalReport,
+) -> _OrderStep[K, I, F]:
+    """Stream one adjacency item into Kahn's incoming-edge counts."""
+    if state.active_index >= len(state.nodes):
+        seed_ready_nodes(state)
+        state.phase = _OrderPhase.Emit
+        return _OrderStep.Continue
+    node = state.nodes[state.active_index]
+    match read_bounded_edge_page(reader, node, direction, state.edge_cursor, state.pending_edge, budget, report):
+        _EdgeReadStep.Failed(error) => return _OrderStep.Failed(error)
+        _EdgeReadStep.Deferred(page, reason) =>
+            state.pending_edge = Some(page)
+            return _OrderStep.Limited(reason)
+        _EdgeReadStep.Page(page) =>
+            state.pending_edge = None
+            state.edge_cursor = page.next
+            for edge in page.values:
+                target = followed_node(edge, direction)
+                state.incoming[target] = state.incoming[target] + 1
+            if page.next.is_none():
+                state.active_index += 1
+                state.edge_cursor = None
+            return _OrderStep.Continue
+
+
+def seed_ready_nodes[K with (Clone, Eq, Hash), I with Clone](mut state: _OrderState[K, I]) -> None:
+    """Seed stable FIFO Kahn processing from the completed incoming counts."""
+    for node in state.nodes:
+        if state.incoming[node] == 0:
+            state.ready.append(node)
+    state.ready_index = 0
+    state.active_index = 0
+
+
+def advance_kahn_emit[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    mut state: _OrderState[K, I],
+    direction: Direction,
+    budget: TraversalBudget,
+    mut report: TraversalReport,
+) -> _OrderStep[K, I, F]:
+    """Emit one stable Kahn node or stream one of its outgoing adjacency items."""
+    match state.active:
+        None =>
+            if state.ready_index >= len(state.ready):
+                if len(state.ordered) == len(state.nodes):
+                    return _OrderStep.Ordered(state.ordered)
+                initialize_cycle_search(state)
+                return _OrderStep.Continue
+            node = state.ready[state.ready_index]
+            state.ready_index += 1
+            state.ordered.append(node)
+            state.incoming[node] = -1
+            state.active = Some(node)
+            state.edge_cursor = None
+            return _OrderStep.Continue
+        Some(node) =>
+            match read_bounded_edge_page(reader, node, direction, state.edge_cursor, state.pending_edge, budget, report):
+                _EdgeReadStep.Failed(error) => return _OrderStep.Failed(error)
+                _EdgeReadStep.Deferred(page, reason) =>
+                    state.pending_edge = Some(page)
+                    return _OrderStep.Limited(reason)
+                _EdgeReadStep.Page(page) =>
+                    state.pending_edge = None
+                    state.edge_cursor = page.next
+                    update_kahn_targets(state, page, direction)
+                    if page.next.is_none():
+                        state.active = None
+                        state.edge_cursor = None
+                    return _OrderStep.Continue
+
+
+def update_kahn_targets[K with (Clone, Eq, Hash), I with Clone](
+    mut state: _OrderState[K, I],
+    page: EdgePage[K, I],
+    direction: Direction,
+) -> None:
+    """Apply one streamed adjacency page to Kahn's remaining incoming counts."""
+    for edge in page.values:
+        target = followed_node(edge, direction)
+        if state.incoming[target] >= 0:
+            state.incoming[target] = state.incoming[target] - 1
+            if state.incoming[target] == 0:
+                state.ready.append(target)
+
+
+def initialize_cycle_search[K with (Clone, Eq, Hash), I with Clone](mut state: _OrderState[K, I]) -> None:
+    """Prepare deterministic iterative DFS over nodes that Kahn could not place."""
+    for node in state.nodes:
+        state.colors[node] = 0
+    state.active_index = 0
+    state.edge_cursor = None
+    state.pending_edge = None
+    state.phase = _OrderPhase.Cycle
+
+
+def advance_cycle_search[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    mut state: _OrderState[K, I],
+    direction: Direction,
+    budget: TraversalBudget,
+    mut report: TraversalReport,
+) -> _OrderStep[K, I, F]:
+    """Advance deterministic iterative DFS until it witnesses one back edge."""
+    if len(state.frames) == 0:
+        match next_cycle_root(state):
+            Some(root) =>
+                state.colors[root] = 1
+                state.frames.append(_OrderFrame(node=root, cursor=None, complete=false))
+                return _OrderStep.Continue
+            None => return _OrderStep.Cyclic(Path(nodes=[], edges=[]))
+    frame_index = len(state.frames) - 1
+    frame = state.frames[frame_index]
+    if frame.complete:
+        state.frames.pop()
+        state.colors[frame.node] = 2
+        return _OrderStep.Continue
+    match read_bounded_edge_page(reader, frame.node, direction, frame.cursor, state.pending_edge, budget, report):
+        _EdgeReadStep.Failed(error) => return _OrderStep.Failed(error)
+        _EdgeReadStep.Deferred(page, reason) =>
+            state.pending_edge = Some(page)
+            return _OrderStep.Limited(reason)
+        _EdgeReadStep.Page(page) =>
+            state.pending_edge = None
+            frame.cursor = page.next
+            frame.complete = page.next.is_none()
+            state.frames[frame_index] = frame
+            return follow_cycle_page(state, page, direction)
+
+
+def next_cycle_root[K with (Clone, Eq, Hash), I with Clone](mut state: _OrderState[K, I]) -> Option[K]:
+    """Return the next stable unplaced DFS root, if one remains."""
+    while state.active_index < len(state.nodes):
+        node = state.nodes[state.active_index]
+        state.active_index += 1
+        if state.incoming[node] >= 0 and state.colors[node] == 0:
+            return Some(node)
+    return None
+
+
+def follow_cycle_page[K with (Clone, Eq, Hash), I with Clone, F](
+    mut state: _OrderState[K, I],
+    page: EdgePage[K, I],
+    direction: Direction,
+) -> _OrderStep[K, I, F]:
+    """Classify one DFS edge and construct a cycle when it closes to an ancestor."""
+    for edge in page.values:
+        target = followed_node(edge, direction)
+        if state.incoming[target] < 0 or state.colors[target] == 2:
+            continue
+        if state.colors[target] == 0:
+            current = state.frames[-1].node
+            state.parents[target] = current
+            state.parent_edges[target] = edge.id
+            state.colors[target] = 1
+            state.frames.append(_OrderFrame(node=target, cursor=None, complete=false))
+            return _OrderStep.Continue
+        current = state.frames[-1].node
+        return _OrderStep.Cyclic(
+            cycle_from_back_edge(state.parents, state.parent_edges, current, target, edge.id),
+        )
+    return _OrderStep.Continue
+
+
+def cycle_from_back_edge[K with (Clone, Eq, Hash), I with Clone](
+    parents: dict[K, K],
+    parent_edges: dict[K, I],
+    current: K,
+    target: K,
+    closing_edge: I,
+) -> Path[K, I]:
+    """Reconstruct one DFS cycle whose closing edge returns to its first node."""
+    mut nodes: list[K] = [current]
+    mut edges: list[I] = []
+    mut node = current
+    while node != target:
+        edges.append(parent_edges[node])
+        node = parents[node]
+        nodes.append(node)
+    nodes.reverse()
+    edges.reverse()
+    edges.append(closing_edge)
+    return Path(nodes=nodes, edges=edges)
+
+
+def order_retained_entries[K with (Clone, Eq, Hash), I with Clone](state: _OrderState[K, I]) -> int:
+    """Count the node inventory and algorithm state retained by one ordering operation."""
+    mut count = len(state.nodes) + len(state.incoming) + len(state.ready)
+    count += len(state.ordered) + len(state.colors) + len(state.parents) + len(state.parent_edges)
+    count += 2 * len(state.frames)
+    if state.node_cursor.is_some():
+        count += 1
+    match state.pending_node:
+        Some(page) => count += 1 + len(page.values)
+        None => pass
+    if state.edge_cursor.is_some() or state.active.is_some():
+        count += 1
+    match state.pending_edge:
+        Some(page) => count += 1 + len(page.values)
+        None => pass
+    return count
+
+
+def limited_order_result[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    state: _OrderState[K, I],
+    direction: Direction,
+    budget: TraversalBudget,
+    mut report: TraversalReport,
+    reason: LimitReason,
+) -> OrderResult[K, I, F, R] from reader:
+    """Return bounded ordering uncertainty with a continuation when state still fits."""
+    if order_retained_entries(state) > budget.max_retained:
+        report.stopped = Some(LimitReason.Retained)
+        return OrderResult(outcome=OrderOutcome.Limited(LimitReason.Retained, None), report=report)
+    report.stopped = Some(reason)
+    continuation = OrderContinuation(reader=reader, state=state, direction=direction, used=false)
+    return OrderResult(outcome=OrderOutcome.Limited(reason, Some(continuation)), report=report)
+
+
+@derive(Clone, Copy, Eq)
+enum _ComponentsPhase(str):
+    """Current streaming pass of strongly connected component discovery."""
+
+    Nodes = "nodes"
+    Search = "search"
+
+
+@derive(Clone)
+model _TarjanFrame[K]:
+    """One iterative Tarjan frame with a resumable adjacency cursor."""
+
+    node: K
+    cursor: Option[GraphPageToken]
+    complete: bool
+
+
+@derive(Clone)
+model _ComponentsState[K with (Clone, Eq, Hash), I with Clone]:
+    """Streaming node inventory and iterative Tarjan state."""
+
+    phase: _ComponentsPhase
+    nodes: list[K]
+    node_cursor: Option[GraphPageToken]
+    pending_node: Option[NodePage[K]]
+    root_index: int
+    next_index: int
+    indices: dict[K, int]
+    lowlinks: dict[K, int]
+    active: dict[K, bool]
+    stack: list[K]
+    frames: list[_TarjanFrame[K]]
+    components: list[Component[K]]
+    self_loops: set[K]
+    pending_edge: Option[EdgePage[K, I]]
+
+
+@derive(Clone)
+pub model Component[K]:
+    """One strongly connected component in Tarjan emission order."""
+
+    pub nodes: list[K]
+    pub cyclic: bool
+
+
+pub class ComponentsContinuation[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+]:
+    """Single-use retained state for bounded component discovery."""
+
+    reader: Borrowed[R]
+    state: _ComponentsState[K, I]
+    direction: Direction
+    used: bool
+
+    pub def resume(
+        mut self,
+        budget: TraversalBudget,
+    ) -> ComponentsResult[K, I, F, R] from self.reader:
+        """Consume this continuation logically and resume the same component operation."""
+        if self.used:
+            return failed_components_result(self.reader, budget, GraphReadError.StaleCursor())
+        self.used = true
+        return run_components(self.reader, self.state, self.direction, budget)
+
+
+pub enum ComponentsOutcome[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+]:
+    """Complete components or explicit bounded, cancelled, or failed work."""
+
+    Components(list[Component[K]])
+    Limited(LimitReason, Option[ComponentsContinuation[K, I, F, R]])
+    Cancelled
+    Failed(GraphReadError[F])
+
+
+pub model ComponentsResult[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+]:
+    """One bounded strongly-connected-components operation and its report."""
+
+    pub outcome: ComponentsOutcome[K, I, F, R]
+    pub report: TraversalReport
+
+
+pub def strongly_connected_components[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    direction: Direction,
+    budget: TraversalBudget,
+) -> ComponentsResult[K, I, F, R] from reader:
+    """Return every component in deterministic iterative Tarjan emission order."""
+    return run_components(reader, initial_components_state[K, I](), direction, budget)
+
+
+def initial_components_state[K with (Clone, Eq, Hash), I with Clone]() -> _ComponentsState[K, I]:
+    """Construct the empty state for one streaming component operation."""
+    return _ComponentsState(
+        phase=_ComponentsPhase.Nodes,
+        nodes=[],
+        node_cursor=None,
+        pending_node=None,
+        root_index=0,
+        next_index=0,
+        indices={},
+        lowlinks={},
+        active={},
+        stack=[],
+        frames=[],
+        components=[],
+        self_loops=set(),
+        pending_edge=None,
+    )
+
+
+enum _ComponentsStep[K, F]:
+    """One streaming component transition returned to the operation driver."""
+
+    Continue
+    Limited(LimitReason)
+    Complete(list[Component[K]])
+    Failed(GraphReadError[F])
+
+
+def run_components[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    mut state: _ComponentsState[K, I],
+    direction: Direction,
+    budget: TraversalBudget,
+) -> ComponentsResult[K, I, F, R] from reader:
+    """Advance node inventory and iterative Tarjan without retaining complete adjacency."""
+    mut report = empty_report(reader.scope(), budget)
+    match budget.invalid_argument():
+        Some(argument) => return failed_components_result(reader, budget, GraphReadError.InvalidBudget(argument))
+        None => pass
+    while true:
+        retained = components_retained_entries(state)
+        if retained > report.retained_high_water:
+            report.retained_high_water = retained
+        if retained > budget.max_retained:
+            report.stopped = Some(LimitReason.Retained)
+            return ComponentsResult(
+                outcome=ComponentsOutcome.Limited(LimitReason.Retained, None),
+                report=report,
+            )
+        step = match state.phase:
+            _ComponentsPhase.Nodes => advance_component_nodes(reader, state, budget, report)
+            _ComponentsPhase.Search => advance_tarjan_search(reader, state, direction, budget, report)
+        match step:
+            _ComponentsStep.Continue => pass
+            _ComponentsStep.Limited(reason) =>
+                return limited_components_result(reader, state, direction, budget, report, reason)
+            _ComponentsStep.Complete(values) =>
+                return ComponentsResult(outcome=ComponentsOutcome.Components(values), report=report)
+            _ComponentsStep.Failed(error) =>
+                return ComponentsResult(outcome=ComponentsOutcome.Failed(error), report=report)
+
+
+def advance_component_nodes[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    mut state: _ComponentsState[K, I],
+    budget: TraversalBudget,
+    mut report: TraversalReport,
+) -> _ComponentsStep[K, F]:
+    """Inventory one selected node before the iterative Tarjan pass."""
+    match read_bounded_node_page(reader, state.node_cursor, state.pending_node, budget, report):
+        _NodeReadStep.Failed(error) => return _ComponentsStep.Failed(error)
+        _NodeReadStep.Deferred(page, reason) =>
+            state.pending_node = Some(page)
+            return _ComponentsStep.Limited(reason)
+        _NodeReadStep.Page(page) =>
+            state.pending_node = None
+            state.node_cursor = page.next
+            for node in page.values:
+                state.nodes.append(node)
+                report.nodes_visited += 1
+            if page.next.is_none():
+                state.node_cursor = None
+                state.root_index = 0
+                state.phase = _ComponentsPhase.Search
+            return _ComponentsStep.Continue
+
+
+def advance_tarjan_search[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    mut state: _ComponentsState[K, I],
+    direction: Direction,
+    budget: TraversalBudget,
+    mut report: TraversalReport,
+) -> _ComponentsStep[K, F]:
+    """Advance one frame or one adjacency item of iterative Tarjan discovery."""
+    if len(state.frames) == 0:
+        match next_component_root(state):
+            Some(root) =>
+                assign_component_node(state, root)
+                return _ComponentsStep.Continue
+            None => return _ComponentsStep.Complete(state.components)
+    frame_index = len(state.frames) - 1
+    frame = state.frames[frame_index]
+    if frame.complete:
+        finish_tarjan_frame(state)
+        return _ComponentsStep.Continue
+    match read_bounded_edge_page(reader, frame.node, direction, frame.cursor, state.pending_edge, budget, report):
+        _EdgeReadStep.Failed(error) => return _ComponentsStep.Failed(error)
+        _EdgeReadStep.Deferred(page, reason) =>
+            state.pending_edge = Some(page)
+            return _ComponentsStep.Limited(reason)
+        _EdgeReadStep.Page(page) =>
+            state.pending_edge = None
+            frame.cursor = page.next
+            frame.complete = page.next.is_none()
+            state.frames[frame_index] = frame
+            follow_component_page(state, page, direction)
+            return _ComponentsStep.Continue
+
+
+def next_component_root[K with (Clone, Eq, Hash), I with Clone](
+    mut state: _ComponentsState[K, I],
+) -> Option[K]:
+    """Return the next stable node not yet assigned a Tarjan index."""
+    while state.root_index < len(state.nodes):
+        root = state.nodes[state.root_index]
+        state.root_index += 1
+        if root not in state.indices:
+            return Some(root)
+    return None
+
+
+def assign_component_node[K with (Clone, Eq, Hash), I with Clone](
+    mut state: _ComponentsState[K, I],
+    node: K,
+) -> None:
+    """Assign one Tarjan index and push its initial iterative frame."""
+    index = state.next_index
+    state.next_index += 1
+    state.indices[node] = index
+    state.lowlinks[node] = index
+    state.active[node] = true
+    state.stack.append(node)
+    state.frames.append(_TarjanFrame(node=node, cursor=None, complete=false))
+
+
+def follow_component_page[K with (Clone, Eq, Hash), I with Clone](
+    mut state: _ComponentsState[K, I],
+    page: EdgePage[K, I],
+    direction: Direction,
+) -> None:
+    """Apply one streamed adjacency item to iterative Tarjan state."""
+    for edge in page.values:
+        node = state.frames[-1].node
+        target = followed_node(edge, direction)
+        if target == node:
+            state.self_loops.add(node)
+        if target not in state.indices:
+            assign_component_node(state, target)
+        elif state.active[target] and state.indices[target] < state.lowlinks[node]:
+            state.lowlinks[node] = state.indices[target]
+
+
+def finish_tarjan_frame[K with (Clone, Eq, Hash), I with Clone](
+    mut state: _ComponentsState[K, I],
+) -> None:
+    """Finish one DFS frame, propagate its lowlink, and emit a completed component."""
+    frame = state.frames.pop()
+    node = frame.node
+    if len(state.frames) > 0:
+        parent = state.frames[-1].node
+        if state.lowlinks[node] < state.lowlinks[parent]:
+            state.lowlinks[parent] = state.lowlinks[node]
+    if state.lowlinks[node] == state.indices[node]:
+        state.components.append(pop_streamed_component(state, node))
+
+
+def pop_streamed_component[K with (Clone, Eq, Hash), I with Clone](
+    mut state: _ComponentsState[K, I],
+    root: K,
+) -> Component[K]:
+    """Pop one completed Tarjan component and classify singleton self-loops."""
+    mut nodes: list[K] = []
+    mut complete = false
+    while not complete:
+        node = state.stack.pop()
+        state.active[node] = false
+        nodes.append(node)
+        complete = node == root
+    cyclic = len(nodes) > 1 or root in state.self_loops
+    return Component(nodes=nodes, cyclic=cyclic)
+
+
+def components_retained_entries[K with (Clone, Eq, Hash), I with Clone](
+    state: _ComponentsState[K, I],
+) -> int:
+    """Count node inventory, Tarjan maps, stacks, output, and deferred page state."""
+    mut component_nodes = 0
+    for component in state.components:
+        component_nodes += len(component.nodes)
+    mut count = len(state.nodes) + len(state.indices) + len(state.lowlinks) + len(state.active)
+    count += len(state.stack) + 2 * len(state.frames) + len(state.components) + component_nodes
+    count += len(state.self_loops)
+    if state.node_cursor.is_some():
+        count += 1
+    match state.pending_node:
+        Some(page) => count += 1 + len(page.values)
+        None => pass
+    match state.pending_edge:
+        Some(page) => count += 1 + len(page.values)
+        None => pass
+    return count
+
+
+def limited_components_result[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    state: _ComponentsState[K, I],
+    direction: Direction,
+    budget: TraversalBudget,
+    mut report: TraversalReport,
+    reason: LimitReason,
+) -> ComponentsResult[K, I, F, R] from reader:
+    """Return bounded component uncertainty with a continuation when state still fits."""
+    if components_retained_entries(state) > budget.max_retained:
+        report.stopped = Some(LimitReason.Retained)
+        return ComponentsResult(
+            outcome=ComponentsOutcome.Limited(LimitReason.Retained, None),
+            report=report,
+        )
+    report.stopped = Some(reason)
+    continuation = ComponentsContinuation(reader=reader, state=state, direction=direction, used=false)
+    return ComponentsResult(outcome=ComponentsOutcome.Limited(reason, Some(continuation)), report=report)
+
+def failed_order_result[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    budget: TraversalBudget,
+    error: GraphReadError[F],
+) -> OrderResult[K, I, F, R] from reader:
+    """Return an ordering failure before further structural work."""
+    return OrderResult(outcome=OrderOutcome.Failed(error), report=empty_report(reader.scope(), budget))
+
+
+def failed_components_result[
+    K with (Clone, Eq, Hash),
+    I with Clone,
+    F,
+    R with GraphRead[K, I, F],
+](
+    reader: Borrowed[R],
+    budget: TraversalBudget,
+    error: GraphReadError[F],
+) -> ComponentsResult[K, I, F, R] from reader:
+    """Return a component failure before further structural work."""
+    return ComponentsResult(outcome=ComponentsOutcome.Failed(error), report=empty_report(reader.scope(), budget))

@@ -26,7 +26,12 @@ from std.graph import Dag, DiGraph, GraphPageBudget, GraphRead, MultiDiGraph, Re
 | `GraphRead[K, I, F]` | Storage-independent protocol for scoped, bounded structural graph reads. |
 | `GraphReadErrorKind` | Inspectable category of a graph read failure. |
 | `GraphReadError[F]` | Typed read failure preserving the backend failure type `F`. |
+| `MemoryGraphFailure` | Compatibility alias of `GraphError`, the in-memory reader's source-failure parameter. |
 | `MemoryReadError` | `GraphReadError[GraphError]` for in-memory readers, which never produce `Source`. |
+| `MemoryGraphReader[N, E]` | Borrowed whole or copied-key in-memory read scope. |
+| `FilteredMemoryGraphReader[N, E]` | Borrowed in-memory scope owning its node and edge predicates. |
+| `GraphNodeValue[N]` | Node filter item with `key` and `value`. |
+| `GraphEdgeValue[E]` | Edge filter item with `key`, `source`, `target`, and `value`. |
 | `GraphScope` | Provider, selection, revision, and ordering fixed for one read scope. |
 | `GraphProvider` | Backend family serving a read scope; the memory implementation reports `Memory`. |
 | `GraphSelection` | Finite selection fixed for a read scope: `Whole` or `Selected`. |
@@ -37,8 +42,13 @@ from std.graph import Dag, DiGraph, GraphPageBudget, GraphRead, MultiDiGraph, Re
 | `EdgePage[K, I]` | Structural edges, continuation, and counters from one bounded page. |
 | `GraphEdgeItem[K, I]` | One edge identity and its directed source and target keys. |
 | `PageCounters` | Physical work and materialization counters for one structural page. |
+| `Direction` | Required traversal direction: `Outgoing` or `Incoming`. |
+| `LimitReason` | Limit category: `Nodes`, `Edges`, `Bytes`, `Retained`, or `Deadline`. |
 | `TraversalBudget` | Required positive node, edge, byte, and retained-state limits for one traversal call. |
-| `TraversalPage` | Walk visits, explicit completion outcome, and a `TraversalReport`. |
+| `TraversalPage` | Walk visits, explicit `TraversalOutcome`, and a `TraversalReport`. |
+| `PathSearch` | Explicit `PathOutcome` and report from a shortest-path search. |
+| `OrderResult` | Explicit `OrderOutcome` and report from topological ordering. |
+| `ComponentsResult` | Explicit `ComponentsOutcome` and report from component discovery. |
 
 ## `NodeId` and `EdgeId`
 
@@ -74,6 +84,8 @@ Construct a typed directed multigraph with `RelationGraph[N, E]()`.
 | `g.read_selected(...)` | `Result[reader, MemoryReadError]` | Open a fixed selected reader; omitted selectors select all, `node_keys` are copied and filters are owned. |
 
 Node and edge identities are never reused within one graph instance. Equal payloads remain separate nodes or edges. Parallel edges retain distinct identities, and replacement addresses exactly one identity. A wrong-scope or unknown endpoint is rejected before an edge becomes visible.
+
+`read_selected` accepts these named selector combinations: no selectors; `node_keys`; `node_filter`; `edge_filter`; `node_keys` plus either filter; or both filters with optional `node_keys`. A node filter is `Callable[GraphNodeValue[N], bool]`; an edge filter is `Callable[GraphEdgeValue[E], bool]`. An empty `node_keys` list selects nothing, a removed key is ignored, and a key from another graph returns `ScopeMismatch("node_keys")`. An edge is visible only when both endpoints and the edge itself pass the fixed selection. A selected reader owns copied keys and callable captures while borrowing only its graph.
 
 ## `GraphRead[K, I, F]`
 
@@ -140,9 +152,30 @@ Node and edge identities are never reused within one graph instance. Equal paylo
 
 ## Bounded traversal
 
-`breadth_first(reader, starts, direction, budget)`, `depth_first(...)`, and `find_path(reader, start, target, direction, budget)` borrow one fixed reader. `Direction` is `Outgoing` or `Incoming`; there is no default. `TraversalBudget` requires positive `max_nodes`, `max_edges`, `max_bytes`, and `max_retained` values.
+All traversal functions borrow one fixed reader. `Direction` is `Outgoing` or `Incoming`; there is no default. `TraversalBudget` has required positive `max_nodes`, `max_edges`, `max_bytes`, and `max_retained` fields.
 
-A walk returns visits with `node`, `depth`, and the edge identity in `via`. Its outcome is `Complete`, `Limited(reason, continuation)`, `Cancelled`, or `Failed(error)`. A continuation resumes the same walk against the same reader and fixed selection. `find_path` returns `Found(path)`, `NoPath`, `Inconclusive(reason)`, `Cancelled`, or `Failed(error)`; `Found` is shortest by edge count and stable reader order.
+| Function | Returns |
+| --- | --- |
+| `breadth_first(reader, starts, direction, budget)` | `TraversalPage[K, I, F, R]` in stable breadth-first order. |
+| `depth_first(reader, starts, direction, budget)` | `TraversalPage[K, I, F, R]` in stable iterative depth-first preorder. |
+| `find_path(reader, start, target, direction, budget)` | `PathSearch[K, I, F, R]` for the first shortest path in reader order. |
+| `topological_order(reader, direction, budget)` | `OrderResult[K, I, F, R]` over the reader's whole selection. |
+| `strongly_connected_components(reader, direction, budget)` | `ComponentsResult[K, I, F, R]` over the reader's whole selection. |
+
+| Type | Public fields |
+| --- | --- |
+| `Visit[K, I]` | `node: K`, `depth: int`, `via: Option[I]` |
+| `Path[K, I]` | `nodes: list[K]`, `edges: list[I]` |
+| `Component[K]` | `nodes: list[K]`, `cyclic: bool` |
+| `TraversalPage` | `visits`, `outcome`, `report` |
+| `PathSearch`, `OrderResult`, `ComponentsResult` | `outcome`, `report` |
+| `TraversalReport` | `scope`, `budget`, `nodes_visited`, `edges_examined`, `candidates_rejected`, `payloads_read`, `bytes_counted`, `retained_high_water`, `index_seeks`, `pages`, `stopped` |
+
+A walk returns visits with `node`, `depth`, and the edge identity in `via`. Its outcome is `Complete`, `Limited(reason, continuation)`, `Cancelled`, or `Failed(error)`. A continuation resumes the same operation against the same reader and fixed selection. When the retained state itself exceeds `max_retained`, the limited outcome carries no continuation.
+
+`find_path` returns `Found(path)`, `NoPath`, `Inconclusive(reason, continuation)`, `Cancelled`, or `Failed(error)`; `Found` is shortest by edge count and stable reader order. `topological_order` applies stable FIFO Kahn ordering and returns `Ordered(nodes)`, `Cyclic(path)`, `Limited(reason, continuation)`, `Cancelled`, or `Failed(error)`. A cycle path's last edge returns to its first node. `strongly_connected_components` returns `Components(values)`, `Limited(reason, continuation)`, `Cancelled`, or `Failed(error)`. Components and their nodes use Tarjan emission order; `cyclic` is true for a multi-node component or a self-loop. Limited, cancelled, and failed global operations return no partial order or component list.
+
+The `stop` and `deadline` budget arguments remain unavailable until RFC 142's cancellation types exist. Relation-kind selection remains unavailable until RFC 107 provides typed `Variant[E]` tokens; these functions therefore operate on the reader's already fixed edge selection.
 
 ## `DiGraph[T]`
 
