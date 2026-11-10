@@ -28,6 +28,13 @@ struct ValidationMember {
     original: Arc<dyn Any>,
 }
 
+/// Move one concrete payload into shared type-erased storage without cloning or requiring a payload trait beyond
+/// concrete identity.
+fn shared_original<T: Any>(original: Box<T>) -> Arc<dyn Any> {
+    let original: Arc<T> = Arc::from(original);
+    original
+}
+
 impl fmt::Debug for ValidationMember {
     /// Describe retained diagnostics without requiring or exposing a concrete payload's `Debug` implementation.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -78,7 +85,7 @@ impl ValidationError {
             members: vec![ValidationMember {
                 location: None,
                 message,
-                original: Arc::from(original),
+                original: shared_original(original),
             }],
         }
     }
@@ -95,7 +102,7 @@ impl ValidationError {
             members: vec![ValidationMember {
                 location: Some(location),
                 message,
-                original: Arc::from(original),
+                original: shared_original(original),
             }],
         }
     }
@@ -105,7 +112,7 @@ impl ValidationError {
         self.members.push(ValidationMember {
             location: None,
             message,
-            original: Arc::from(original),
+            original: shared_original(original),
         });
     }
 
@@ -119,7 +126,7 @@ impl ValidationError {
         self.members.push(ValidationMember {
             location: Some(location),
             message,
-            original: Arc::from(original),
+            original: shared_original(original),
         });
     }
 
