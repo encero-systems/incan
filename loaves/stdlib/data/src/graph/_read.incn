@@ -1098,73 +1098,18 @@ pub model RelationGraph[N, E] with GraphRead[ScopedNodeId, ScopedEdgeId, MemoryG
         """Borrow this graph as one whole-selection reader fixed at its current revision."""
         return MemoryGraphReader.open(self)
 
-    pub def read_selected(self) -> Result[MemoryGraphReader[N, E], MemoryReadError] from self:
-        """Borrow this graph as an explicit selection with every selector omitted."""
-        return Ok(MemoryGraphReader.open_all_selected(self))
-
     pub def read_selected(
         self,
-        node_keys: list[ScopedNodeId],
-    ) -> Result[MemoryGraphReader[N, E], MemoryReadError] from self:
-        """Borrow this graph through a validated, copied node-key selection."""
-        return MemoryGraphReader.open_selected(self, node_keys)
-
-    pub def read_selected(
-        self,
-        node_keys: list[ScopedNodeId],
-        node_filter: Callable[GraphNodeValue[N], bool],
+        node_keys: Option[list[ScopedNodeId]] = None,
+        node_filter: Option[Callable[GraphNodeValue[N], bool]] = None,
+        edge_filter: Option[Callable[GraphEdgeValue[E], bool]] = None,
     ) -> Result[FilteredMemoryGraphReader[N, E], MemoryReadError] from self:
-        """Borrow selected keys through one owned node predicate."""
-        selected = selected_node_keys(self.store, self.scope_token, node_keys)?
-        return Ok(FilteredMemoryGraphReader.open(self, Some(selected), Some(node_filter), None))
-
-    pub def read_selected(
-        self,
-        node_keys: list[ScopedNodeId],
-        edge_filter: Callable[GraphEdgeValue[E], bool],
-    ) -> Result[FilteredMemoryGraphReader[N, E], MemoryReadError] from self:
-        """Borrow selected keys through one owned edge predicate."""
-        selected = selected_node_keys(self.store, self.scope_token, node_keys)?
-        return Ok(FilteredMemoryGraphReader.open(self, Some(selected), None, Some(edge_filter)))
-
-    pub def read_selected(
-        self,
-        node_keys: list[ScopedNodeId],
-        node_filter: Callable[GraphNodeValue[N], bool],
-        edge_filter: Callable[GraphEdgeValue[E], bool],
-    ) -> Result[FilteredMemoryGraphReader[N, E], MemoryReadError] from self:
-        """Borrow this graph through copied keys and owned node and edge predicates."""
-        selected = selected_node_keys(self.store, self.scope_token, node_keys)?
-        return Ok(
-            FilteredMemoryGraphReader.open(
-                self,
-                Some(selected),
-                Some(node_filter),
-                Some(edge_filter),
-            ),
-        )
-
-    pub def read_selected(
-        self,
-        node_filter: Callable[GraphNodeValue[N], bool],
-    ) -> Result[FilteredMemoryGraphReader[N, E], MemoryReadError] from self:
-        """Borrow the whole node inventory through one owned node predicate."""
-        return Ok(FilteredMemoryGraphReader.open(self, None, Some(node_filter), None))
-
-    pub def read_selected(
-        self,
-        edge_filter: Callable[GraphEdgeValue[E], bool],
-    ) -> Result[FilteredMemoryGraphReader[N, E], MemoryReadError] from self:
-        """Borrow the whole node inventory through one owned edge predicate."""
-        return Ok(FilteredMemoryGraphReader.open(self, None, None, Some(edge_filter)))
-
-    pub def read_selected(
-        self,
-        node_filter: Callable[GraphNodeValue[N], bool],
-        edge_filter: Callable[GraphEdgeValue[E], bool],
-    ) -> Result[FilteredMemoryGraphReader[N, E], MemoryReadError] from self:
-        """Borrow the whole node inventory through owned node and edge predicates."""
-        return Ok(FilteredMemoryGraphReader.open(self, None, Some(node_filter), Some(edge_filter)))
+        """Borrow one fixed selection whose omitted selector kinds admit every candidate."""
+        mut selected: Option[set[ScopedNodeId]] = None
+        match node_keys:
+            Some(keys) => selected = Some(selected_node_keys(self.store, self.scope_token, keys)?)
+            None => pass
+        return Ok(FilteredMemoryGraphReader.open(self, selected, node_filter, edge_filter))
 
     def scope(self) -> GraphScope:
         """Return this graph's whole-selection insertion-order read scope."""
