@@ -78,7 +78,7 @@ model StoredOperand:
 
 @derive(Serialize, Deserialize)
 enum StoredRvalue:
-    """Self-contained scalar operations; any operation with an external context refuses capture."""
+    """Self-contained scalar and formatting-frame operations; any operation with external context refuses capture."""
 
     Use(StoredOperand)
     Binary(int, StoredOperand, StoredOperand)
@@ -86,6 +86,9 @@ enum StoredRvalue:
     IntToFloat(StoredOperand)
     FloatToInt(StoredOperand)
     BoolToInt(StoredOperand)
+    Array(list[StoredOperand])
+    Borrow(StoredPlace)
+    UnsizeSlice(StoredOperand)
 
 
 @derive(Serialize, Deserialize)
@@ -130,10 +133,32 @@ enum StoredExit:
 
 @derive(Serialize, Deserialize)
 enum StoredTarget:
-    """Retain planned and explicitly recorded dependency call targets without resolving their names again."""
+    """Retain direct dependency targets and checked instantiations without resolving their names or types again."""
 
     Planned(str)
     External(str)
+    Instantiated(str, list[StoredType])
+
+
+@derive(Serialize, Deserialize)
+enum StoredType:
+    """The closed native carriers admitted by this product schema, including formatting array lengths."""
+
+    Int
+    Float
+    Bool
+    Unit
+    CheckedInt
+    Never
+    String
+    StrRef
+    StringRef
+    StringArray(int)
+    StrArray(int)
+    StringArrayRef(int)
+    StrArrayRef(int)
+    StringSlice
+    StrSlice
 
 
 @derive(Serialize, Deserialize)
@@ -149,9 +174,9 @@ model StoredBlock:
 
 @derive(Serialize, Deserialize)
 model StoredSlot:
-    """A native local's scalar carrier and diagnostic source position."""
+    """A native local's admitted carrier and diagnostic source position."""
 
-    ty: int
+    ty: StoredType
     span: StoredSpan
 
 
@@ -165,16 +190,17 @@ model StoredParameter:
 
 @derive(Serialize, Deserialize)
 model StoredFunction:
-    """A versioned complete ordinary scalar function; unsupported native attributes and instances refuse."""
+    """A versioned complete ordinary function; unsupported native attributes and instances refuse."""
 
     schema: int
     name: str
     parameters: list[StoredParameter]
-    result: int
+    result: StoredType
     locals: list[StoredSlot]
     blocks: list[StoredBlock]
     span: StoredSpan
     lifetimes: list[list[str]]
+    retained_result_source: int
 
 
 @derive(Serialize, Deserialize)
@@ -182,9 +208,9 @@ model StoredExternal:
     """Every field of one dependency signature used by a retained function."""
 
     path: str
-    arguments: list[int]
-    parameters: list[int]
-    result: int
+    arguments: list[StoredType]
+    parameters: list[StoredType]
+    result: StoredType
     span: StoredSpan
 
 
@@ -206,7 +232,7 @@ pub def encode_product(function: &Function, runtime: &list[ExternalFunction]) ->
     """
     # 1. Unsupported carriers still refuse capture rather than omit dependency facts.
     stored = StoredProduct(
-        schema=1,
+        schema=2,
         function=encode_scalar(function)?,
         runtime=[store_external(value)? for value in runtime],
     )
@@ -227,7 +253,7 @@ pub def decode_product(text: str) -> Result[tuple[Function, list[ExternalFunctio
     """
     # 1. An unknown schema remains an ordinary cache miss at the store boundary.
     stored = decode_product_record(text).map_err((error) => str(error))?
-    if stored.schema != 1:
+    if stored.schema != 2:
         return Err("unknown native product schema")
     # 2. Both parts cross the private product boundary explicitly.
     return Ok((decode_scalar(stored.function)?, [restore_external(value)? for value in stored.runtime]))
@@ -251,7 +277,7 @@ pub def encode_scalar(function: &Function) -> Result[str, str]:
     slots = [store_slot(value.ty, value.span)? for value in function.locals]
     blocks = [store_block(value)? for value in function.blocks]
     stored = StoredFunction(
-        schema=1,
+        schema=2,
         name=function.name,
         parameters=parameters,
         result=store_type(function.return_type)?,
@@ -259,6 +285,7 @@ pub def encode_scalar(function: &Function) -> Result[str, str]:
         blocks=blocks,
         span=store_span(function.span),
         lifetimes=function.signature_lifetimes,
+        retained_result_source=function.retained_result_source,
     )
     text = to_string(stored).map_err((error) => str(error))?
     # 3. A loss in any native field refuses capture instead of becoming an accepted cache hit.
@@ -277,21 +304,22 @@ pub def decode_scalar(text: str) -> Result[Function, str]:
     """
     # 1. Malformed or unfamiliar records are cache misses at the caller.
     stored = decode_record(text).map_err((error) => str(error))?
-    if stored.schema != 1:
+    if stored.schema != 2:
         return Err("unknown scalar function product schema")
     # 2. Native attributes, coroutine fields and generic loans were refused by the producer.
     parameters = [restore_parameter(value)? for value in stored.parameters]
-    slots = [Local(ty=restore_type(value.ty)?, span=restore_span(value.span)) for value in stored.locals]
+    slots = [Local(ty=restore_type(value.ty), span=restore_span(value.span)) for value in stored.locals]
     blocks = [restore_block(value)? for value in stored.blocks]
     return Ok(
         Function(
             name=stored.name,
             parameters=parameters,
-            return_type=restore_type(stored.result)?,
+            return_type=restore_type(stored.result),
             locals=slots,
             blocks=blocks,
             span=restore_span(stored.span),
             signature_lifetimes=stored.lifetimes,
+            retained_result_source=stored.retained_result_source,
         ),
     )
 
@@ -303,7 +331,7 @@ def store_parameter(value: Parameter) -> Result[StoredParameter, str]:
 
 def restore_parameter(value: StoredParameter) -> Result[Parameter, str]:
     """Restore one complete parameter in its original declaration order."""
-    return Ok(Parameter(name=value.name, ty=restore_type(value.slot.ty)?, span=restore_span(value.slot.span)))
+    return Ok(Parameter(name=value.name, ty=restore_type(value.slot.ty), span=restore_span(value.slot.span)))
 
 
 def same_function(left: &Function, right: &Function) -> bool:
@@ -354,9 +382,9 @@ def restore_external(value: StoredExternal) -> Result[ExternalFunction, str]:
     return Ok(
         ExternalFunction(
             path=value.path,
-            type_arguments=[restore_type(ty)? for ty in value.arguments],
-            parameters=[restore_type(ty)? for ty in value.parameters],
-            return_type=restore_type(value.result)?,
+            type_arguments=[restore_type(ty) for ty in value.arguments],
+            parameters=[restore_type(ty) for ty in value.parameters],
+            return_type=restore_type(value.result),
             span=restore_span(value.span),
         ),
     )
@@ -377,34 +405,45 @@ def store_slot(ty: PlanType, span: SourceSpan) -> Result[StoredSlot, str]:
     return Ok(StoredSlot(ty=store_type(ty)?, span=store_span(span)))
 
 
-def store_type(ty: PlanType) -> Result[int, str]:
-    """Assign private codec tags only to scalar carriers with no external layout dependencies."""
+def store_type(ty: PlanType) -> Result[StoredType, str]:
+    """Retain only closed carriers whose complete native layout is represented by this private schema."""
     match ty:
-        PlanType.Int => return Ok(0)
-        PlanType.Float => return Ok(1)
-        PlanType.Bool => return Ok(2)
-        PlanType.Unit => return Ok(3)
-        PlanType.CheckedInt => return Ok(4)
-        PlanType.Never => return Ok(5)
-        PlanType.String => return Ok(6)
-        PlanType.StrRef => return Ok(7)
-        PlanType.StringRef => return Ok(8)
+        PlanType.Int => return Ok(StoredType.Int)
+        PlanType.Float => return Ok(StoredType.Float)
+        PlanType.Bool => return Ok(StoredType.Bool)
+        PlanType.Unit => return Ok(StoredType.Unit)
+        PlanType.CheckedInt => return Ok(StoredType.CheckedInt)
+        PlanType.Never => return Ok(StoredType.Never)
+        PlanType.String => return Ok(StoredType.String)
+        PlanType.StrRef => return Ok(StoredType.StrRef)
+        PlanType.StringRef => return Ok(StoredType.StringRef)
+        PlanType.StringArray(length) => return Ok(StoredType.StringArray(length))
+        PlanType.StrArray(length) => return Ok(StoredType.StrArray(length))
+        PlanType.StringArrayRef(length) => return Ok(StoredType.StringArrayRef(length))
+        PlanType.StrArrayRef(length) => return Ok(StoredType.StrArrayRef(length))
+        PlanType.StringSlice => return Ok(StoredType.StringSlice)
+        PlanType.StrSlice => return Ok(StoredType.StrSlice)
         _ => return Err("scalar function products refuse this native carrier")
 
 
-def restore_type(tag: int) -> Result[PlanType, str]:
-    """Decode only the scalar carrier tags defined by this private schema."""
-    match tag:
-        0 => return Ok(PlanType.Int)
-        1 => return Ok(PlanType.Float)
-        2 => return Ok(PlanType.Bool)
-        3 => return Ok(PlanType.Unit)
-        4 => return Ok(PlanType.CheckedInt)
-        5 => return Ok(PlanType.Never)
-        6 => return Ok(PlanType.String)
-        7 => return Ok(PlanType.StrRef)
-        8 => return Ok(PlanType.StringRef)
-        _ => return Err("unknown scalar carrier tag")
+def restore_type(stored: StoredType) -> PlanType:
+    """Restore the exact closed carrier represented by this private schema."""
+    match stored:
+        StoredType.Int => return PlanType.Int
+        StoredType.Float => return PlanType.Float
+        StoredType.Bool => return PlanType.Bool
+        StoredType.Unit => return PlanType.Unit
+        StoredType.CheckedInt => return PlanType.CheckedInt
+        StoredType.Never => return PlanType.Never
+        StoredType.String => return PlanType.String
+        StoredType.StrRef => return PlanType.StrRef
+        StoredType.StringRef => return PlanType.StringRef
+        StoredType.StringArray(length) => return PlanType.StringArray(length)
+        StoredType.StrArray(length) => return PlanType.StrArray(length)
+        StoredType.StringArrayRef(length) => return PlanType.StringArrayRef(length)
+        StoredType.StrArrayRef(length) => return PlanType.StrArrayRef(length)
+        StoredType.StringSlice => return PlanType.StringSlice
+        StoredType.StrSlice => return PlanType.StrSlice
 
 
 def store_place(place: Place) -> Result[StoredPlace, str]:
@@ -529,7 +568,7 @@ def restore_unary(tag: int) -> Result[UnaryOp, str]:
 
 
 def store_rvalue(value: RvalueKind) -> Result[StoredRvalue, str]:
-    """Capture only self-contained scalar operations with complete explicit operand evidence."""
+    """Capture only self-contained operations whose operands and formatting storage are complete in this record."""
     match value:
         RvalueKind.Use(operand) => return Ok(StoredRvalue.Use(store_operand(operand)?))
         RvalueKind.Binary(op, left, right) =>
@@ -538,6 +577,9 @@ def store_rvalue(value: RvalueKind) -> Result[StoredRvalue, str]:
         RvalueKind.IntToFloat(operand) => return Ok(StoredRvalue.IntToFloat(store_operand(operand)?))
         RvalueKind.FloatToInt(operand) => return Ok(StoredRvalue.FloatToInt(store_operand(operand)?))
         RvalueKind.BoolToInt(operand) => return Ok(StoredRvalue.BoolToInt(store_operand(operand)?))
+        RvalueKind.Array(operands) => return Ok(StoredRvalue.Array([store_operand(value)? for value in operands]))
+        RvalueKind.Borrow(place) => return Ok(StoredRvalue.Borrow(store_place(place)?))
+        RvalueKind.UnsizeSlice(operand) => return Ok(StoredRvalue.UnsizeSlice(store_operand(operand)?))
         _ => return Err("scalar function products refuse this native operation")
 
 
@@ -551,6 +593,9 @@ def restore_rvalue(value: StoredRvalue) -> Result[RvalueKind, str]:
         StoredRvalue.IntToFloat(operand) => return Ok(RvalueKind.IntToFloat(restore_operand(operand)?))
         StoredRvalue.FloatToInt(operand) => return Ok(RvalueKind.FloatToInt(restore_operand(operand)?))
         StoredRvalue.BoolToInt(operand) => return Ok(RvalueKind.BoolToInt(restore_operand(operand)?))
+        StoredRvalue.Array(operands) => return Ok(RvalueKind.Array([restore_operand(value)? for value in operands]))
+        StoredRvalue.Borrow(place) => return Ok(RvalueKind.Borrow(restore_place(place)?))
+        StoredRvalue.UnsizeSlice(operand) => return Ok(RvalueKind.UnsizeSlice(restore_operand(operand)?))
 
 
 def store_statement(statement: Statement) -> Result[StoredStatement, str]:
@@ -686,10 +731,12 @@ def restore_call(
 
 
 def store_target(target: CalleeKind) -> Result[StoredTarget, str]:
-    """Retain only direct planned or recorded dependency references; dynamic and generic targets refuse."""
+    """Retain direct dependency references and their already checked explicit type instantiations."""
     match target:
         CalleeKind.Planned(name) => return Ok(StoredTarget.Planned(name))
         CalleeKind.External(path) => return Ok(StoredTarget.External(path))
+        CalleeKind.Instantiated(path, arguments) =>
+            return Ok(StoredTarget.Instantiated(path, [store_type(ty)? for ty in arguments]))
         _ => return Err("native products refuse dynamic or owner-dependent callees")
 
 
@@ -698,6 +745,8 @@ def restore_target(target: StoredTarget) -> CalleeKind:
     match target:
         StoredTarget.Planned(name) => return CalleeKind.Planned(name)
         StoredTarget.External(path) => return CalleeKind.External(path)
+        StoredTarget.Instantiated(path, arguments) =>
+            return CalleeKind.Instantiated(path, [restore_type(ty) for ty in arguments])
 
 
 def store_block(block: BasicBlock) -> Result[StoredBlock, str]:
