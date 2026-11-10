@@ -20,14 +20,7 @@ const EMAIL: bytes = b"\x82$D\x17\xf9V"
 
 def field(identity: bytes, node: TypeNode, policy: AbsentPolicy = AbsentPolicy.Required) -> FieldShape:
     """Keep independently chosen field facts visible in each test."""
-    return FieldShape(
-        identity=identity,
-        storage_type=node,
-        canonical=true,
-        absent=policy,
-        name="",
-        renamed_from=[],
-    )
+    return FieldShape(identity=identity, storage_type=node, canonical=true, absent=policy, name="", renamed_from=[])
 
 
 def test_shape_identity_order_and_recursive_enum_payload() -> Result[None, CrumbError]:
@@ -39,10 +32,7 @@ def test_shape_identity_order_and_recursive_enum_payload() -> Result[None, Crumb
     )
     assert shape_spelling(shape, budget)? == "record{013f54400c82:i32:1:r;82244417f956:string:1:r}"
     payload = [field(AGE, TypeNode.Recursive("Tree"))]
-    tree = TypeNode.Enum(
-        "Tree",
-        [VariantShape(identity=EMAIL, fields=payload, name="", renamed_from=[])],
-    )
+    tree = TypeNode.Enum("Tree", [VariantShape(identity=EMAIL, fields=payload, name="", renamed_from=[])])
     assert shape_spelling(tree, budget)? == "enum{82244417f956:record{013f54400c82:^0:1:r}}"
     assert shape_spelling(TypeNode.Recursive("missing"), budget).is_err()
     return Ok(None)
@@ -138,7 +128,7 @@ def test_written_corruption_and_limits_cannot_be_hidden_by_projection() -> Resul
 def test_nested_nominal_identity_and_record_conversion() -> Result[None, str]:
     """A nested shape evolves only within its own binding; optional children keep their field plans."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((error) => error.message())?
-    nominal = TypeNode.Nominal(NominalKind.Record, EMAIL, [])
+    nominal = TypeNode.Nominal(NominalKind.Record, "", Some(EMAIL), [])
     original = TypeNode.Bound([nominal, TypeNode.Record("Old", [field(AGE, TypeNode.Scalar(ScalarKind.I32))])])
     requested = TypeNode.Bound([nominal, TypeNode.Record("New", [field(AGE, TypeNode.Scalar(ScalarKind.I64))])])
     source = RecordShape(nominal=b"root", fields=[field(EMAIL, original)])
@@ -153,7 +143,7 @@ def test_nested_nominal_identity_and_record_conversion() -> Result[None, str]:
         _ => return Err("nested record plan lost")
     other = TypeNode.Bound(
         [
-            TypeNode.Nominal(NominalKind.Record, AGE, []),
+            TypeNode.Nominal(NominalKind.Record, "", Some(AGE), []),
             TypeNode.Record("New", [field(AGE, TypeNode.Scalar(ScalarKind.I64))]),
         ],
     )
@@ -219,25 +209,11 @@ def test_enum_payload_widening_and_unknown_variant_refusal() -> Result[None, str
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((error) => error.message())?
     left = TypeNode.Enum(
         "Old",
-        [
-            VariantShape(
-                identity=EMAIL,
-                fields=[field(AGE, TypeNode.Scalar(ScalarKind.I32))],
-                name="",
-                renamed_from=[],
-            ),
-        ],
+        [VariantShape(identity=EMAIL, fields=[field(AGE, TypeNode.Scalar(ScalarKind.I32))], name="", renamed_from=[])],
     )
     right = TypeNode.Enum(
         "New",
-        [
-            VariantShape(
-                identity=EMAIL,
-                fields=[field(AGE, TypeNode.Scalar(ScalarKind.I64))],
-                name="",
-                renamed_from=[],
-            ),
-        ],
+        [VariantShape(identity=EMAIL, fields=[field(AGE, TypeNode.Scalar(ScalarKind.I64))], name="", renamed_from=[])],
     )
     source = RecordShape(nominal=b"root", fields=[field(EMAIL, left)])
     target = RecordShape(nominal=b"root", fields=[field(EMAIL, right)])
@@ -258,8 +234,8 @@ def test_enum_payload_widening_and_unknown_variant_refusal() -> Result[None, str
 def test_union_reorder_uses_closed_identity() -> Result[None, str]:
     """Two same-shaped bound records cannot collapse when requested union alternatives are reordered."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((error) => error.message())?
-    first = TypeNode.Bound([TypeNode.Nominal(NominalKind.Record, AGE, []), TypeNode.Record("A", [])])
-    second = TypeNode.Bound([TypeNode.Nominal(NominalKind.Record, EMAIL, []), TypeNode.Record("B", [])])
+    first = TypeNode.Bound([TypeNode.Nominal(NominalKind.Record, "", Some(AGE), []), TypeNode.Record("A", [])])
+    second = TypeNode.Bound([TypeNode.Nominal(NominalKind.Record, "", Some(EMAIL), []), TypeNode.Record("B", [])])
     source = RecordShape(
         nominal=b"root",
         fields=[field(EMAIL, TypeNode.Container(ContainerKind.Union, [first, second]))],
@@ -282,7 +258,7 @@ def test_union_reorder_uses_closed_identity() -> Result[None, str]:
 def test_missing_definition_and_empty_binding_are_refused() -> Result[None, str]:
     """A selector alone cannot supply fields; even an empty projection cannot authenticate an absent binding."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((error) => error.message())?
-    unresolved = field(EMAIL, TypeNode.Nominal(NominalKind.Record, AGE, []))
+    unresolved = field(EMAIL, TypeNode.Nominal(NominalKind.Record, "", Some(AGE), []))
     match check_written([unresolved], budget):
         Err(error) =>
             assert error.kind == AdmissionFailure.MissingDescription
@@ -302,7 +278,7 @@ def test_malformed_bound_inside_nominal_definition_is_refused() -> Result[None, 
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((error) => error.message())?
     broken = TypeNode.Bound([])
     outer = TypeNode.Bound(
-        [TypeNode.Nominal(NominalKind.Record, EMAIL, []), TypeNode.Record("Outer", [field(AGE, broken)])],
+        [TypeNode.Nominal(NominalKind.Record, "", Some(EMAIL), []), TypeNode.Record("Outer", [field(AGE, broken)])],
     )
     match check_written([field(EMAIL, outer)], budget):
         Err(error) =>
@@ -317,7 +293,7 @@ def test_bound_definition_cannot_hide_ambiguous_union_selectors() -> Result[None
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((error) => error.message())?
     ambiguous = TypeNode.Container(ContainerKind.Union, [TypeNode.Scalar(ScalarKind.I8), TypeNode.Scalar(ScalarKind.I8)])
     outer = TypeNode.Bound(
-        [TypeNode.Nominal(NominalKind.Record, EMAIL, []), TypeNode.Record("Outer", [field(AGE, ambiguous)])],
+        [TypeNode.Nominal(NominalKind.Record, "", Some(EMAIL), []), TypeNode.Record("Outer", [field(AGE, ambiguous)])],
     )
     assert check_written([field(EMAIL, outer)], budget).is_err()
     return Ok(None)
@@ -329,12 +305,12 @@ def test_bound_definition_keeps_outer_recursion_context() -> Result[None, str]:
     back = TypeNode.Container(ContainerKind.Option, [TypeNode.Recursive("Outer")])
     inner = TypeNode.Bound(
         [
-            TypeNode.Nominal(NominalKind.Record, AGE, []),
+            TypeNode.Nominal(NominalKind.Record, "", Some(AGE), []),
             TypeNode.Record("Inner", [field(AGE, back, AbsentPolicy.NoneValue)]),
         ],
     )
     outer = TypeNode.Bound(
-        [TypeNode.Nominal(NominalKind.Record, EMAIL, []), TypeNode.Record("Outer", [field(EMAIL, inner)])],
+        [TypeNode.Nominal(NominalKind.Record, "", Some(EMAIL), []), TypeNode.Record("Outer", [field(EMAIL, inner)])],
     )
     check_written([field(EMAIL, outer)], budget).map_err((error) => error.message())?
     return Ok(None)
@@ -344,7 +320,10 @@ def test_generic_argument_cannot_capture_enclosing_shape_recursion() -> Result[N
     """A field's ancestor is not a substitution for an independently closed generic argument."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((error) => error.message())?
     inner = TypeNode.Bound(
-        [TypeNode.Nominal(NominalKind.Record, AGE, [TypeNode.Recursive("Outer")]), TypeNode.Record("Inner", [])],
+        [
+            TypeNode.Nominal(NominalKind.Record, "", Some(AGE), [TypeNode.Recursive("Outer")]),
+            TypeNode.Record("Inner", []),
+        ],
     )
     outer = TypeNode.Record("Outer", [field(EMAIL, inner)])
     assert selector_spelling(outer, budget).is_err()

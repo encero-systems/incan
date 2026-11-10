@@ -36,7 +36,7 @@ pub def parse_key(key: bytes, kind: NominalKind, mut budget: Budget) -> Result[T
         arguments.append(parse_type(spelling, budget)?)
     if reader.remaining() != 0:
         return Err(CrumbError.invalid_input("closed selector trailing bytes"))
-    node = TypeNode.Nominal(kind, identity, arguments)
+    node = TypeNode.Nominal(kind, "", Some(identity), arguments)
     if closed_selector(node, budget)? != key:
         return Err(CrumbError.invalid_input("noncanonical closed selector"))
     return Ok(node)
@@ -94,7 +94,11 @@ class TypeParser:
         nominal = name.split("@")
         if len(nominal) == 2:
             if let Some(kind) = NominalKind.from_value(nominal[0]):
-                return Ok(TypeNode.Nominal(kind, identity_bytes(nominal[1], budget)?, arguments))
+                return Ok(TypeNode.Nominal(kind, "", Some(identity_bytes(nominal[1], budget)?), arguments))
+        if TypeConstructorKind.from_value(name) == Some(TypeConstructorKind.Reference):
+            if len(arguments) != 1:
+                return Err(CrumbError.invalid_input("reference type arity"))
+            return Ok(TypeNode.Reference(arguments))
         if let Some(kind) = ContainerKind.from_value(name):
             return Ok(TypeNode.Container(kind, arguments))
         if len(arguments) != 0:

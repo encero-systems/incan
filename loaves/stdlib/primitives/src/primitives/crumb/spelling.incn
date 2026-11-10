@@ -46,15 +46,21 @@ def spell_inner(node: TypeNode, nominal: bool, mut active: list[str], mut budget
                 return Err(CrumbError.invalid_input("decimal bounds"))
             return compose("decimal<", [str(precision), str(scale)], ",", ">", budget)
         TypeNode.Container(kind, items) => return container(kind, items, nominal, active, budget)
-        TypeNode.Nominal(kind, identity, arguments) =>
+        TypeNode.Nominal(kind, _, identity, arguments) =>
             if not nominal:
                 return Err(CrumbError.invalid_input("structural definition required"))
             return nominal_type(kind, identity, arguments, budget)
+        TypeNode.Reference(items) =>
+            if len(items) != 1:
+                return Err(CrumbError.invalid_input("reference type arity"))
+            if nominal:
+                return compose("ref<", [spell(items[0], true, active, budget)?], "", ">", budget)
+            return compose("", [ScalarKind.Reference.value()], "", "", budget)
         TypeNode.Bound(items) =>
             if len(items) != 2:
                 return Err(CrumbError.invalid_input("bound definition arity"))
             match items[0]:
-                TypeNode.Nominal(kind, _, _) =>
+                TypeNode.Nominal(kind, _, _, _) =>
                     match items[1]:
                         TypeNode.Record(_, _) =>
                             if kind != NominalKind.Record:
@@ -86,15 +92,19 @@ def scalar_spelling(kind: ScalarKind) -> str:
 
 def nominal_type(
     kind: NominalKind,
-    identity: bytes,
+    identity: Option[bytes],
     arguments: list[TypeNode],
     mut budget: Budget,
 ) -> Result[str, CrumbError]:
     """Keep the declaration's identity separate from its ordered closed type arguments."""
-    if len(identity) != 6:
+    bytes = match identity:
+        Some(value) => value
+        None => return Err(CrumbError.invalid_input("nominal identity unavailable"))
+
+    if len(bytes) != 6:
         return Err(CrumbError.invalid_input("nominal identity width"))
     prefix = kind.value() + "@"
-    stem = compose(prefix, [hexlify(identity)], "", "", budget)?
+    stem = compose(prefix, [hexlify(bytes)], "", "", budget)?
     if len(arguments) == 0:
         return Ok(stem)
     mut parts: list[str] = []
