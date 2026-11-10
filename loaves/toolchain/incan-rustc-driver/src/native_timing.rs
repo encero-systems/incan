@@ -14,6 +14,47 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 /// The prefix rustc gives its JSON phase records.
 const RUSTC_RECORD: &[u8] = b"time: ";
 
+/// Mark complete frontend work observation for one semantic request. Frontend-only routes execute no native
+/// lowering; compile routes observe it only when the existing native diagnostic policy enables its Incan sink.
+pub(crate) fn observe_frontend(lowers: bool) {
+    tracing::trace!(target: "incan::invocation", schema = 1,
+        lowering_observed = !lowers || requested(), "compiler work observations");
+}
+
+/// Observe the pinned collector only when rustc requests it. Forcing this query early changes metadata construction
+/// order, so diagnostic collection wraps the existing provider instead.
+pub(crate) fn provide_codegen(providers: &mut rustc_middle::util::Providers) {
+    if requested() {
+        providers.queries.collect_and_partition_mono_items = observed_partitions;
+    }
+}
+
+/// Preserve the default collector's inputs, result, and execution order while counting its actual partitions.
+fn observed_partitions<'tcx>(
+    tcx: rustc_middle::ty::TyCtxt<'tcx>,
+    input: (),
+) -> rustc_middle::mono::MonoItemPartitions<'tcx> {
+    let partitions = (rustc_interface::DEFAULT_QUERY_PROVIDERS
+        .queries
+        .collect_and_partition_mono_items)(tcx, input);
+    let native = tcx.sess.opts.output_types.should_codegen() && !tcx.sess.opts.unstable_opts.no_codegen;
+    let execution = if !native {
+        "none"
+    } else if tcx.sess.opts.incremental.is_some() {
+        "unavailable_incremental"
+    } else {
+        "all_on_success"
+    };
+    write_trace(
+        format!(
+            "redo-codegen: {}\n",
+            serde_json::json!({"partitions": partitions.codegen_units.len(), "execution": execution})
+        )
+        .as_bytes(),
+    );
+    partitions
+}
+
 /// A disabled timer never reads a clock; enabled records go to the trace sink.
 pub(crate) struct Timing(Option<Clock>);
 
