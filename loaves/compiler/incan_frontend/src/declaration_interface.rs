@@ -571,8 +571,7 @@ fn checked_identity(
 /// Project one checked nominal binding with the source-signature authority available at this stack position.
 fn stable_type_name(name: &str, bindings: &BTreeMap<String, CanonicalSymbolId>) -> Option<String> {
     if let Some(identity) = bindings.get(name) {
-        return StableDeclarationId::from_canonical(identity, None, None)
-            .map(|identity| identity.render_compact());
+        return StableDeclarationId::from_canonical(identity, None, None).map(|identity| identity.render_compact());
     }
     (!name.starts_with(incan_semantics_core::body_ir::NOMINAL_CARRIER_KEY_PREFIX)).then(|| name.to_owned())
 }
