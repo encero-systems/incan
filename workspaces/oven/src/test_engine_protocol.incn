@@ -260,6 +260,7 @@ def check_worker_retirement() -> Result[None, str]:
     if not outcome.status.success() or outcome.stdout != b"hello\x0a" or outcome.stderr != b"":
         return Err(f"initial records run: status={outcome.status.code()} stdout_bytes={len(outcome.stdout)} stderr_bytes={len(outcome.stderr)}")
     initial_manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest")
+    initial_record_reads = invocation_count(observations, "incan_frontend::read_compiler_records")
     write(source, "def main() -> None:\n    println(\"hullo\")\n")?
     edited = Command
         .new(binary)
@@ -281,6 +282,9 @@ def check_worker_retirement() -> Result[None, str]:
     manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest") - initial_manifest_reads
     if manifest_reads != 0:
         return Err(f"one-body edit reopened {manifest_reads} whole Loaf manifests")
+    record_reads = invocation_count(observations, "incan_frontend::read_compiler_records") - initial_record_reads
+    if record_reads > 6:
+        return Err(f"one-body edit reconstructed {record_reads} compiler-record groups")
     # Stop this test's disposable engine before the temporary directory leaves scope.
     store = root.joinpath("store")
     mut identity = service_identity(store)?

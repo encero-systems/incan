@@ -131,6 +131,16 @@ fn export_manifest(
     records: &mut Vec<ExportedRecord>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let prefix = format!("loaf/{profile}/{}", manifest.name);
+    let rust_paths = manifest
+        .rust_abi
+        .as_ref()
+        .map(|abi| {
+            abi.items
+                .iter()
+                .map(|item| item.canonical_path.as_str())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     add_value(
         output,
         &prefix,
@@ -143,6 +153,15 @@ fn export_manifest(
             "incan_version": manifest.incan_version.as_str(),
             "manifest_format": manifest.manifest_format,
             "manifest_digest": manifest_digest,
+            "vocabulary": manifest.vocab.is_some(),
+            "provider_operations": !manifest.contract_metadata.provider.operation_descriptors.is_empty(),
+            "native_unions": !manifest.contract_metadata.native_unions.is_empty(),
+            "rust_paths": rust_paths,
+            "rust_abi_cache_declared": manifest
+                .rust_abi
+                .as_ref()
+                .and_then(|abi| abi.cache_digest.as_ref())
+                .is_some(),
         }),
         records,
     )?;
