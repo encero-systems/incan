@@ -5,6 +5,8 @@ use super::*;
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
+    /// The producing package's declared namespace for persistent record identity, absent for unscoped sources.
+    pub record_package_identity: Option<incan_semantics_core::record_identity::RecordPackageIdentity>,
     /// Explicit callable contracts keyed by the checked declaring identity, including refused executable declarations.
     pub ownership_contracts: BTreeMap<CanonicalSymbolId, crate::ownership_metadata::CheckedOwnershipContract>,
     /// Checked source-signature identities published before body checks or native representation selection.

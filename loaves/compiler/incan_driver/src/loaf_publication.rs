@@ -249,6 +249,7 @@ impl PublicationFacts {
                 CliError::failure(rendered.trim_end())
             })?;
         let mut manifest = LibraryManifest::from_checked_exports(&self.package, &unit.version, &selected);
+        manifest.contract_metadata.record_package = unit.record_package_identity();
         self.made_private_types.sort_by(|left, right| {
             left.module_path
                 .cmp(&right.module_path)

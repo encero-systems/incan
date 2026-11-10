@@ -62,6 +62,9 @@ pub struct UnitDescription {
     pub source_root: PathBuf,
     /// The package name, which is also the package identity of a library unit's declarations.
     pub package: String,
+    /// Registry declared by this package's own manifest. Absence does not synthesize a default root key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_id: Option<String>,
     /// The package version.
     pub version: String,
     /// The build profile whose Loaf artifacts the unit reads.
@@ -232,10 +235,31 @@ impl UnitDescription {
                 unit.schema
             )));
         }
+        if let Some(registry) = &unit.registry_id {
+            incan_semantics_core::record_identity::validate_record_registry_id(registry)
+                .map_err(|error| CliError::failure(format!("{}: {error}", origin.display())))?;
+        }
+        if let Some(identity) = unit.record_package_identity() {
+            identity
+                .validate()
+                .map_err(|error| CliError::failure(format!("{}: {error}", origin.display())))?;
+        }
         unit.merge_search_index()?;
         unit.rust_facts = rust_facts_directory(origin);
         crate::loaf_publication::vocab::prepared_registration(&unit)?;
         Ok(unit)
+    }
+
+    /// Retain a persistent record namespace only when the unit declares both a registry and a scoped name.
+    /// Scripts and packages without the released default registry key keep ordinary reflection without a selector.
+    pub fn record_package_identity(&self) -> Option<incan_semantics_core::record_identity::RecordPackageIdentity> {
+        if !self.package.contains('/') {
+            return None;
+        }
+        Some(incan_semantics_core::record_identity::RecordPackageIdentity {
+            registry_id: self.registry_id.as_ref()?.clone(),
+            scoped_name: self.package.clone(),
+        })
     }
 
     /// Keep the description's own directories in `own_search` and merge the search index it names into `search`.

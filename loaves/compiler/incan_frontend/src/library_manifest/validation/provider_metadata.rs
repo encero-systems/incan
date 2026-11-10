@@ -67,6 +67,16 @@ pub(super) fn validate_rust_abi(raw: &RawLibraryManifest) -> Result<(), LibraryM
 
 /// Validate RFC 048 metadata embedded in a manifest before consumers trust it.
 pub(super) fn validate_contract_metadata(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
+    if let Some(identity) = &raw.contract_metadata.record_package {
+        identity
+            .validate()
+            .map_err(|error| LibraryManifestError::Invalid(error.to_owned()))?;
+        if identity.scoped_name != raw.name {
+            return Err(LibraryManifestError::Invalid(
+                "record package identity does not name its producing manifest".to_owned(),
+            ));
+        }
+    }
     let metadata = &raw.contract_metadata.models;
     if metadata.schema_version != CONTRACT_METADATA_SCHEMA_VERSION {
         return Err(LibraryManifestError::Invalid(format!(

@@ -5,6 +5,9 @@ use super::*;
 /// RFC 048 metadata persisted into `.incnlib`.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct LibraryContractMetadata {
+    /// The producing manifest's declared persistent-record namespace, independent of consumer import aliases.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_package: Option<incan_semantics_core::record_identity::RecordPackageIdentity>,
     /// Canonical model bundles that this artifact publishes.
     #[serde(default)]
     pub models: ModelContractMetadataPackage,
