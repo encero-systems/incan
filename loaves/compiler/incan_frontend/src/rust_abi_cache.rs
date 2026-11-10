@@ -2,31 +2,42 @@
 //!
 //! A cache is a version, then three Snappy-compressed sections: an index naming each path's block and range, the string
 //! table the records share, and the directory of record blocks. The records follow as Snappy-compressed blocks of about
-//! [`BLOCK_TARGET`] bytes, each record postcard with its strings stored as table indexes. A reader decodes the sections
-//! once, and a record's block only when a compilation asks for one of its items. Crate facts repeat a few hundred
-//! thousand distinct strings and many identical signatures across items, so the table and the blocks keep a cache a
-//! small fraction of the size of the plain encoding.
+//! [`BLOCK_TARGET`] bytes. Each record prefixes its full item with the item's small type-alias projection; both
+//! postcard values store strings as table indexes. A reader decodes the sections once, and a record's block only when a
+//! compilation asks for one of its items. Crate facts repeat a few hundred thousand distinct strings and many identical
+//! signatures across items, so the table and the blocks keep a cache a small fraction of the plain encoding.
 
 mod strings;
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fmt;
 use std::fs::{File, Metadata};
 use std::io::{Read, Seek, SeekFrom};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
-use incan_lang::interop::RustItemMetadata;
+use incan_lang::interop::{RustItemKind, RustItemMetadata};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-/// The cache layout's version; a reader refuses any other. Version 9 retains native owners' lifetime-parameter
-/// presence so checking can refuse borrowed signatures without a lifetime contract. Version 10 stores each distinct
-/// string once and compresses the sections and record blocks with Snappy.
-pub const RUST_ABI_CACHE_VERSION: u32 = 10;
+/// The cache layout's version; a reader refuses any other. Version 10 stores each distinct string once and compresses
+/// the sections and record blocks with Snappy. Version 11 prefixes each item with its small type-alias projection so
+/// speculative alias checks do not restore and retain the complete item.
+pub const RUST_ABI_CACHE_VERSION: u32 = 11;
+
+/// A manifest-authenticated shipped cache, either current facts or the validated path inventory of version 10.
+pub(crate) enum ShippedRustAbiCache {
+    /// Current records can answer metadata queries directly.
+    Current(RustAbiCache),
+    /// Version-10 records are not decoded; their unchanged index keys are re-extracted by the candidate compiler.
+    Previous(BTreeSet<String>),
+}
 
 /// The raw size a record block grows to before the next record starts a new one; a larger record is its own block.
 const BLOCK_TARGET: usize = 64 << 10;
@@ -53,13 +64,63 @@ struct Block {
     raw_length: u64,
 }
 
+/// The alias-only facts a type display needs, without a type item's methods, implementations, fields or variants.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RustTypeAlias {
+    /// The alias's declared type parameters in substitution order.
+    pub(crate) type_params: Vec<String>,
+    /// The native target display before substituting a use site's arguments.
+    pub(crate) target: String,
+}
+
+/// Whether one addressed Rust item is a type alias, retaining its small projection only when it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RustTypeAliasLookup {
+    /// The path exists but does not name a type alias.
+    NotAlias,
+    /// The path names a type alias with the projected substitution facts.
+    Alias(RustTypeAlias),
+}
+
+impl RustTypeAliasLookup {
+    /// Project alias facts from metadata that is already owned for another reader.
+    pub(crate) fn from_item(item: &RustItemMetadata) -> Self {
+        let RustItemKind::Type(info) = &item.kind else {
+            return Self::NotAlias;
+        };
+        let Some(target) = &info.alias_target else {
+            return Self::NotAlias;
+        };
+        Self::Alias(RustTypeAlias {
+            type_params: info.type_params.clone(),
+            target: target.clone(),
+        })
+    }
+
+    /// Return the projected alias facts, or `None` for another item shape.
+    pub(crate) fn into_alias(self) -> Option<RustTypeAlias> {
+        match self {
+            Self::NotAlias => None,
+            Self::Alias(alias) => Some(alias),
+        }
+    }
+}
+
 /// Encode `items` as one ABI cache.
 pub fn encode_rust_abi_cache(items: &BTreeMap<String, RustItemMetadata>) -> Result<Vec<u8>, String> {
     let table = RefCell::new(strings::StringTable::default());
     let mut index = Vec::with_capacity(items.len());
     let mut raw_blocks: Vec<Vec<u8>> = Vec::new();
     for (path, item) in items {
-        let record = strings::encode(item, &table).map_err(|error| format!("cannot encode {path}: {error}"))?;
+        let alias = RustTypeAliasLookup::from_item(item).into_alias();
+        let alias = strings::encode(&alias, &table).map_err(|error| format!("cannot encode {path}: {error}"))?;
+        let item = strings::encode(item, &table).map_err(|error| format!("cannot encode {path}: {error}"))?;
+        let alias_length = u32::try_from(alias.len())
+            .map_err(|_| "a Rust ABI cache alias projection exceeds its 32-bit range".to_owned())?;
+        let mut record = Vec::with_capacity(4 + alias.len() + item.len());
+        record.extend_from_slice(&alias_length.to_le_bytes());
+        record.extend_from_slice(&alias);
+        record.extend_from_slice(&item);
         if raw_blocks
             .last()
             .is_none_or(|block| !block.is_empty() && block.len() + record.len() > BLOCK_TARGET)
@@ -113,6 +174,25 @@ fn narrow(value: usize) -> Result<u32, String> {
     u32::try_from(value).map_err(|_| "a Rust ABI cache section exceeds its 32-bit range".to_owned())
 }
 
+/// Split one version-11 record into its alias prefix and full item payload.
+fn split_record(record: &[u8]) -> Result<(&[u8], &[u8]), String> {
+    let alias_length = usize::try_from(u32::from_le_bytes(
+        record
+            .get(..4)
+            .ok_or_else(malformed_cache)?
+            .try_into()
+            .map_err(|_| malformed_cache())?,
+    ))
+    .map_err(|_| malformed_cache())?;
+    let alias_end = 4usize.checked_add(alias_length).ok_or_else(malformed_cache)?;
+    let alias = record.get(4..alias_end).ok_or_else(malformed_cache)?;
+    let item = record
+        .get(alias_end..)
+        .filter(|item| !item.is_empty())
+        .ok_or_else(malformed_cache)?;
+    Ok((alias, item))
+}
+
 /// A decoded ABI cache index, string table and block directory over retained bytes or an open file; items decode on
 /// demand.
 pub struct RustAbiCache {
@@ -121,6 +201,8 @@ pub struct RustAbiCache {
     directory: Vec<Block>,
     payload: Payload,
     blocks: Mutex<Vec<(u32, Arc<Vec<u8>>)>>,
+    #[cfg(test)]
+    full_item_restorations: AtomicUsize,
 }
 
 impl fmt::Debug for RustAbiCache {
@@ -147,6 +229,25 @@ impl RustAbiCache {
     /// Read borrowed cache bytes, retaining an owned copy for on-demand item decoding.
     pub fn decode(bytes: &[u8]) -> Result<Self, String> {
         Self::decode_owned(bytes.to_vec())
+    }
+
+    /// Decode a manifest-authenticated shipped cache, treating an older layout as an absent regenerable cache.
+    ///
+    /// A release seed necessarily reads native artifacts emitted before its candidate compiler exists. Falling back
+    /// from that older cache lets the candidate extract the artifact's Rust facts through its own driver and publish
+    /// the current layout. A cache from a newer compiler remains an error because this reader cannot establish that
+    /// its semantics are safely reproducible.
+    pub(crate) fn decode_shipped(bytes: Vec<u8>) -> Result<ShippedRustAbiCache, String> {
+        match cache_version(&bytes)? {
+            RUST_ABI_CACHE_VERSION => Self::decode_owned(bytes).map(ShippedRustAbiCache::Current),
+            10 => shipped_index_paths(&bytes).map(ShippedRustAbiCache::Previous),
+            version if version < RUST_ABI_CACHE_VERSION => Err(format!(
+                "Rust ABI cache version {version} predates the re-extractable version 10 index"
+            )),
+            version => Err(format!(
+                "Rust ABI cache version {version}; this compiler reads version {RUST_ABI_CACHE_VERSION}"
+            )),
+        }
     }
 
     /// Read a cache's version and sections while retaining the input allocation for on-demand item decoding.
@@ -222,6 +323,8 @@ impl RustAbiCache {
                 .collect(),
             payload,
             blocks: Mutex::new(Vec::with_capacity(RETAINED_BLOCKS)),
+            #[cfg(test)]
+            full_item_restorations: AtomicUsize::new(0),
         }
     }
 
@@ -238,6 +341,25 @@ impl RustAbiCache {
             .map_err(|error| format!("Rust ABI cache record for `{path}` does not decode: {error}"))
     }
 
+    /// Read whether one path is a type alias without restoring the item's complete owned metadata record.
+    ///
+    /// The record prefix contains only the alias target and its type parameters. It shares the record's string table,
+    /// while the full metadata payload remains untouched for readers that need it.
+    pub(crate) fn get_type_alias(&self, path: &str) -> Result<Option<RustTypeAliasLookup>, String> {
+        let Some(&location) = self.index.get(path) else {
+            return Ok(None);
+        };
+        self.alias_record(location)
+            .map(Some)
+            .map_err(|error| format!("Rust ABI cache record for `{path}` does not decode: {error}"))
+    }
+
+    /// Count complete item restorations in focused cache tests.
+    #[cfg(test)]
+    fn full_item_restorations(&self) -> usize {
+        self.full_item_restorations.load(Ordering::Relaxed)
+    }
+
     /// Decode every retained item of a bounded fallback result. Shipped complete-crate caches should keep using
     /// on-demand lookup; this consuming operation is for restoring a previously requested extraction exactly.
     pub fn into_items(self) -> Result<BTreeMap<String, RustItemMetadata>, String> {
@@ -250,13 +372,33 @@ impl RustAbiCache {
 
     /// Decode one record from its block.
     fn record<T: DeserializeOwned>(&self, location: Location) -> Result<T, String> {
+        #[cfg(test)]
+        self.full_item_restorations.fetch_add(1, Ordering::Relaxed);
+        let (block, range) = self.record_bytes(location)?;
+        let (_, item) = split_record(block.get(range).ok_or_else(malformed_cache)?)?;
+        strings::decode(item, &self.strings)
+    }
+
+    /// Decode one record's alias prefix without restoring its full metadata payload.
+    fn alias_record(&self, location: Location) -> Result<RustTypeAliasLookup, String> {
+        let (block, range) = self.record_bytes(location)?;
+        let (alias, _) = split_record(block.get(range).ok_or_else(malformed_cache)?)?;
+        let alias = strings::decode::<Option<RustTypeAlias>>(alias, &self.strings)?;
+        Ok(match alias {
+            Some(alias) => RustTypeAliasLookup::Alias(alias),
+            None => RustTypeAliasLookup::NotAlias,
+        })
+    }
+
+    /// Retain a record's block while returning the validated range of that record within it.
+    fn record_bytes(&self, location: Location) -> Result<(Arc<Vec<u8>>, std::ops::Range<usize>), String> {
         let block = self.block(location.block)?;
         let start = location.offset as usize;
-        let record = start
+        let end = start
             .checked_add(location.length as usize)
-            .and_then(|end| block.get(start..end))
+            .filter(|&end| end <= block.len())
             .ok_or_else(malformed_cache)?;
-        strings::decode(record, &self.strings)
+        Ok((block, start..end))
     }
 
     /// One decompressed block, from the retained ones when a recent lookup used it.
@@ -345,18 +487,17 @@ impl Sections {
 
 /// Validate the shared header and read the stored and raw length of each section without interpreting any record.
 fn section_lengths(header: &[u8]) -> Result<[(usize, usize); 3], String> {
-    let version = u32::from_le_bytes(
-        header
-            .get(0..4)
-            .ok_or_else(malformed_cache)?
-            .try_into()
-            .map_err(|_| malformed_cache())?,
-    );
+    let version = cache_version(header)?;
     if version != RUST_ABI_CACHE_VERSION {
         return Err(format!(
             "Rust ABI cache version {version}; this compiler reads version {RUST_ABI_CACHE_VERSION}"
         ));
     }
+    encoded_section_lengths(header)
+}
+
+/// Read the three section lengths shared by cache versions 10 and 11 after the caller validates the version.
+fn encoded_section_lengths(header: &[u8]) -> Result<[(usize, usize); 3], String> {
     let mut lengths = [(0, 0); 3];
     for (section, slot) in lengths.iter_mut().enumerate() {
         *slot = (
@@ -365,6 +506,31 @@ fn section_lengths(header: &[u8]) -> Result<[(usize, usize); 3], String> {
         );
     }
     Ok(lengths)
+}
+
+/// Validate a version-10 cache's unchanged index sections and retain only the paths that need candidate extraction.
+fn shipped_index_paths(bytes: &[u8]) -> Result<BTreeSet<String>, String> {
+    let lengths = encoded_section_lengths(bytes)?;
+    let mut decoded = Vec::with_capacity(lengths.len());
+    let mut at = HEADER_LENGTH;
+    for (stored, raw) in lengths {
+        let end = at.checked_add(stored).ok_or_else(malformed_cache)?;
+        decoded.push(unpack(bytes.get(at..end).ok_or_else(malformed_cache)?, raw)?);
+        at = end;
+    }
+    let sections = Sections::decode(&decoded, at, bytes.len())?;
+    Ok(sections.index.into_keys().collect())
+}
+
+/// Read the cache layout version without admitting any section or record from that layout.
+fn cache_version(header: &[u8]) -> Result<u32, String> {
+    Ok(u32::from_le_bytes(
+        header
+            .get(0..4)
+            .ok_or_else(malformed_cache)?
+            .try_into()
+            .map_err(|_| malformed_cache())?,
+    ))
 }
 
 /// One little-endian length of the header, starting at `at`.
@@ -471,10 +637,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use incan_lang::interop::{
-        RustItemKind, RustItemMetadata, RustModuleChild, RustModuleChildKind, RustModuleInfo, RustVisibility,
+        RustAssociatedTypeBinding, RustImplementedTrait, RustItemKind, RustItemMetadata, RustModuleChild,
+        RustModuleChildKind, RustModuleInfo, RustTypeInfo, RustVisibility,
     };
 
-    use super::{RUST_ABI_CACHE_VERSION, RustAbiCache, encode_rust_abi_cache};
+    use super::{RUST_ABI_CACHE_VERSION, RustAbiCache, ShippedRustAbiCache, encode_rust_abi_cache};
 
     /// A module item whose children repeat the same names, as crate facts do.
     fn module(path: &str, children: usize) -> RustItemMetadata {
@@ -493,6 +660,34 @@ mod tests {
         }
     }
 
+    /// A type item carrying deliberately large trait facts that an alias-only read must skip.
+    fn type_item(path: &str, alias_target: Option<&str>, implementations: usize) -> RustItemMetadata {
+        RustItemMetadata {
+            canonical_path: path.to_owned(),
+            definition_path: None,
+            visibility: RustVisibility::Public,
+            kind: RustItemKind::Type(RustTypeInfo {
+                type_params: vec!["T".to_owned()],
+                alias_target: alias_target.map(str::to_owned),
+                implemented_traits: (0..implementations)
+                    .map(|index| RustImplementedTrait {
+                        path: format!("demo::Trait{index}"),
+                        mutable_reference: false,
+                        self_type: format!("{path}<T>"),
+                        type_params: vec!["T".to_owned()],
+                        type_arguments: vec!["T".to_owned()],
+                        bounds: Vec::new(),
+                        associated_type_bindings: vec![RustAssociatedTypeBinding {
+                            name: "Output".to_owned(),
+                            value_path: "T".to_owned(),
+                        }],
+                    })
+                    .collect(),
+                ..RustTypeInfo::default()
+            }),
+        }
+    }
+
     /// Enough items to span several record blocks.
     fn items() -> BTreeMap<String, RustItemMetadata> {
         (0..3000)
@@ -504,17 +699,46 @@ mod tests {
     }
 
     #[test]
-    fn a_cache_round_trips_across_blocks_and_stays_small() {
+    fn an_alias_lookup_does_not_restore_the_whole_item() -> Result<(), String> {
+        let alias_path = "demo::Result";
+        let nominal_path = "demo::Container";
+        let items = BTreeMap::from([
+            (
+                alias_path.to_owned(),
+                type_item(alias_path, Some("core::result::Result<T, std::io::Error>"), 10_000),
+            ),
+            (nominal_path.to_owned(), type_item(nominal_path, None, 10_000)),
+        ]);
+        let bytes = encode_rust_abi_cache(&items)?;
+        let cache = RustAbiCache::decode(&bytes)?;
+
+        let alias = cache
+            .get_type_alias(alias_path)?
+            .ok_or_else(|| "the cache omitted its alias item".to_owned())?
+            .into_alias()
+            .ok_or_else(|| "the type alias was classified as another item".to_owned())?;
+
+        assert_eq!(alias.type_params, ["T"]);
+        assert_eq!(alias.target, "core::result::Result<T, std::io::Error>");
+        let nominal = cache
+            .get_type_alias(nominal_path)?
+            .ok_or_else(|| "the cache omitted its nominal item".to_owned())?;
+        assert_eq!(nominal, super::RustTypeAliasLookup::NotAlias);
+        assert_eq!(cache.full_item_restorations(), 0);
+        assert!(cache.get(nominal_path)?.is_some());
+        assert_eq!(cache.full_item_restorations(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn a_cache_round_trips_across_blocks_and_stays_small() -> Result<(), String> {
         let items = items();
-        let bytes = encode_rust_abi_cache(&items).expect("the cache encodes");
-        let cache = RustAbiCache::decode(&bytes).expect("the cache decodes");
+        let bytes = encode_rust_abi_cache(&items)?;
+        let cache = RustAbiCache::decode(&bytes)?;
         assert!(cache.directory.len() > 1, "the records span more than one block");
         assert_eq!(cache.len(), items.len());
-        assert_eq!(
-            cache.get("demo::module_1500").expect("a record reads"),
-            items.get("demo::module_1500").cloned()
-        );
-        assert_eq!(cache.get("demo::absent").expect("a lookup reads"), None);
+        assert_eq!(cache.get("demo::module_1500")?, items.get("demo::module_1500").cloned());
+        assert_eq!(cache.get("demo::absent")?, None);
         assert!(cache.covers_crate("demo"));
         let plain: usize = items
             .values()
@@ -525,28 +749,44 @@ mod tests {
             "{} encoded bytes against {plain} plain",
             bytes.len()
         );
-        assert_eq!(cache.into_items().expect("every record reads"), items);
+        assert_eq!(cache.into_items()?, items);
+        Ok(())
     }
 
     #[test]
-    fn a_file_backed_cache_reads_records_on_demand() {
+    fn a_file_backed_cache_reads_records_on_demand() -> Result<(), String> {
         let items = items();
         let directory = std::env::temp_dir().join(format!("incan-abi-cache-test-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).expect("the scratch directory exists");
+        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
         let path = directory.join("demo.rustabi");
-        std::fs::write(&path, encode_rust_abi_cache(&items).expect("the cache encodes")).expect("the cache is written");
-        let cache = RustAbiCache::open(&path).expect("the cache opens");
+        std::fs::write(&path, encode_rust_abi_cache(&items)?).map_err(|error| error.to_string())?;
+        let cache = RustAbiCache::open(&path)?;
         for probe in ["demo::module_0000", "demo::module_2999", "demo::module_0001"] {
-            assert_eq!(cache.get(probe).expect("a record reads"), items.get(probe).cloned());
+            assert_eq!(cache.get(probe)?, items.get(probe).cloned());
         }
-        std::fs::remove_dir_all(&directory).expect("the scratch directory is removed");
+        std::fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
+        Ok(())
     }
 
     #[test]
-    fn another_version_is_refused() {
-        let mut bytes = encode_rust_abi_cache(&items()).expect("the cache encodes");
-        bytes[0..4].copy_from_slice(&(RUST_ABI_CACHE_VERSION - 1).to_le_bytes());
-        let error = RustAbiCache::decode(&bytes).expect_err("an older layout is refused");
+    fn an_older_shipped_cache_is_a_miss_and_a_newer_one_is_refused() -> Result<(), String> {
+        let items = items();
+        let current = encode_rust_abi_cache(&items)?;
+        let mut older = current.clone();
+        older[0..4].copy_from_slice(&(RUST_ABI_CACHE_VERSION - 1).to_le_bytes());
+        let stale_paths = match RustAbiCache::decode_shipped(older)? {
+            ShippedRustAbiCache::Previous(paths) => paths,
+            ShippedRustAbiCache::Current(_) => return Err("an older layout was decoded as current records".to_owned()),
+        };
+        assert_eq!(stale_paths, items.keys().cloned().collect());
+
+        let mut newer = current;
+        newer[0..4].copy_from_slice(&(RUST_ABI_CACHE_VERSION + 1).to_le_bytes());
+        let error = match RustAbiCache::decode_shipped(newer) {
+            Ok(_) => return Err("a newer layout was accepted".to_owned()),
+            Err(error) => error,
+        };
         assert!(error.contains("version"), "{error}");
+        Ok(())
     }
 }
