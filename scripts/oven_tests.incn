@@ -7,7 +7,6 @@ be excluded on its own:
 
 1. `OVEN test` for every `workspaces/oven/src/test_*.incn`, from `workspaces/oven`.
 2. `OVEN test --profile release` for every `loaves/*/*/tests/test_*.incn`, from its Loaf.
-3. The record-scope contract, in an isolated project under `EVIDENCE/checker-records`.
 
 Each invocation writes its own log under `EVIDENCE/oven-tests/`. `oven-tests.log` joins them in the order above, so
 it does not depend on scheduling. The passing ids must equal `workspaces/contracts/oven-tests.txt`.
@@ -33,8 +32,8 @@ from check_support import read, repository_root, write_stderr
 
 const GIB: int = 1073741824
 # What one invocation reserves. Peaks measured one invocation at a time, as the summed RSS of its processes and the
-# resident owner: Oven units 3.0 to 3.8 GiB, compiler Loaf tests up to 4.2 GiB, and the record-scope project 5.7 GiB,
-# in which the frontend's native-facts driver alone took 5.5 to 6.2 GiB. Compiler-Loaf work reserves lowering scale.
+# resident owner: Oven units 3.0 to 3.8 GiB and compiler Loaf tests up to 5.7 GiB. Compiler-Loaf work reserves lowering
+# scale.
 pub const PROJECT_RESERVATION_BYTES: int = 4 * GIB
 pub const LOWERING_RESERVATION_BYTES: int = 6 * GIB
 # Physical memory no reservation takes: the operating system's share and this program's own.
@@ -44,8 +43,6 @@ const FAILED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ (FAILED|XPAS
 # These read the installed toolchain and require it unchanged, which another invocation's first use of a native crate can
 # break, so they run after the others have finished.
 const NEEDS_SETTLED_INSTALLATION: FrozenList[str] = ["test_engine_protocol.incn"]
-const RECORD_SOURCES: FrozenList[str] = ["checker_records", "record_scope", "records", "record_service"]
-const RECORD_TESTS: FrozenList[str] = ["canonical_record_controls", "test_record_scope"]
 const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--memory GIB]"
 # The step reports failures under the installed-verification program's name.
 const REPORTER: str = "verify-installation"
@@ -190,7 +187,7 @@ def run(options: Options) -> Result[str, str]:
     return report(options.evidence, summary, succeeded)
 
 
-pub def invocations(root: Path, evidence: Path, logs: Path) -> Result[list[Invocation], str]:
+pub def invocations(root: Path, _evidence: Path, logs: Path) -> Result[list[Invocation], str]:
     """The step's invocations in their fixed order, each with its memory reservation and its own numbered log."""
     mut planned: list[Invocation] = []
     oven = root.joinpath("workspaces/oven")
@@ -204,18 +201,11 @@ pub def invocations(root: Path, evidence: Path, logs: Path) -> Result[list[Invoc
         alone = source.name() in NEEDS_SETTLED_INSTALLATION
         planned.append(invocation(unit, oven.0, PROJECT_RESERVATION_BYTES, logs, len(planned), source, not alone, alone))
     compiler = root.joinpath("loaves/compiler").0 + "/"
-    excluded = root.joinpath("loaves/compiler/internal_models/tests").0 + "/"
     for source in loaf_tests(root.joinpath("loaves"))?:
-        # The record contracts' canonical controls need the frontend's native adapter, which their manifest omits.
-        if source.0.startswith(excluded):
-            continue
         # Compiler Loaves link native support, which an installed bundle ships for the release profile only.
         loaf = source.parent().parent()
         arguments = ["test", source.0, "--profile", "release"]
         planned.append(invocation(arguments, loaf.0, reservation_of(source, compiler), logs, len(planned), source))
-    contract = checker_records(root, evidence.joinpath("checker-records"))?
-    contract_test = ["test", contract.0, "--profile", "release"]
-    planned.append(invocation(contract_test, "", LOWERING_RESERVATION_BYTES, logs, len(planned), contract))
     return Ok(planned)
 
 
@@ -291,38 +281,6 @@ def visible_directories(directory: Path) -> Result[list[Path], str]:
 def sorted_paths(paths: list[Path]) -> list[Path]:
     """Paths in byte order of their spelling."""
     return [Path(spelling) for spelling in sorted([path.0 for path in paths])]
-
-
-def checker_records(root: Path, evidence: Path) -> Result[Path, str]:
-    """
-    Prepare the record-scope contract with the canonical codec and its test-only native adapter dependency, and return
-    its test source. The project must be new, so a reused evidence directory never mixes two runs.
-    """
-    evidence.mkdir(true, true).map_err((error) => error.message())?
-    project = evidence.joinpath("project")
-    project.mkdir(false, false).map_err((error) => f"{project.0}: {error.message()}")?
-    source = project.joinpath("src")
-    source.mkdir(false, false).map_err((error) => error.message())?
-    # These are generated build inputs copied from their sole authored home, not a second contract implementation.
-    models = root.joinpath("loaves/compiler/internal_models")
-    for name in RECORD_SOURCES:
-        copy(models.joinpath(f"src/{name}.incn"), source.joinpath(f"{name}.incn"))?
-    for name in RECORD_TESTS:
-        copy(models.joinpath(f"tests/{name}.incn"), source.joinpath(f"{name}.incn"))?
-    frontend = root.joinpath("loaves/compiler/incan_frontend").0
-    mut manifest = "[project]\nname = \"checker_record_contract_test\"\nversion = \"0.1.0\"\nprivate = true\n"
-    manifest += "[project.scripts]\ncontract = \"src/test_record_scope.incn\"\n"
-    manifest += f"[dependencies]\nincan_frontend = {{ loaf = \"incan_frontend\", path = \"{frontend}\" }}\n"
-    project.joinpath("loaf.toml").write_text(manifest, "utf-8", "strict", None).map_err((error) => error.message())?
-    # File-based Incan tests currently omit envs.test; this isolated manifest keeps the native adapter out of
-    # production.
-    return Ok(source.joinpath("test_record_scope.incn"))
-
-
-def copy(source: Path, destination: Path) -> Result[None, str]:
-    """Copy one authored source without its metadata."""
-    _ = source.copy(destination, true, false).map_err((error) => f"{source.0}: {error.message()}")?
-    return Ok(None)
 
 
 pub def run_all(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[bool, str]:
