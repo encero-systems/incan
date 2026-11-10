@@ -141,7 +141,7 @@ handler = writer.write                           # refused: `write` has two over
 
 ### Distinct overloads
 
-- An overload accepts a range of positional argument counts: from the number of its parameters without default values to the number of all its parameters, or with no upper bound when it has `*args`.
+- For calls using only positional arguments, an overload accepts a range of counts: from the number of its parameters without default values to the number of all its parameters, or with no upper bound when it has `*args`. This range is used for declaration-conflict checks below; it is not a minimum positional-argument requirement on a call that also supplies named arguments.
 - Two overloads in one set conflict when there is a count that both accept and their parameter types are the same at every position up to that count. The later declaration is refused, and the diagnostic labels the earlier one.
 - Types compare after aliases resolve. A newtype is its own type. Type parameters compare by their position in the type-parameter list.
 - Two overloads with different numbers of type parameters never conflict, because a call's explicit type arguments select by that number.
@@ -153,9 +153,10 @@ A call selects in three steps.
 
 1. **Candidates.** An overload is a candidate when all of these hold:
     - it is visible where the call is;
-    - the call's positional arguments are a count it accepts;
-    - each named argument names one of its parameters that no positional argument filled, or its `**kwargs` captures it;
-    - every parameter without a default value receives an argument;
+    - positional arguments bind to parameters in declaration order, with any excess accepted only by `*args`;
+    - each named argument binds to its matching parameter or, if no parameter has that name, to `**kwargs`; an unsupported name is refused;
+    - no parameter receives an argument twice, and no name is supplied twice to `**kwargs`; a named argument cannot be diverted into `**kwargs` when a positional argument already filled its matching parameter;
+    - after both positional and named arguments bind, every required parameter receives an argument; omitted parameters must have defaults or be variadic captures, which may be empty;
     - when the call writes explicit type arguments, their number equals its number of type parameters, with `_` placeholders inferred;
     - when the call writes none, the arguments determine all of its type parameters.
 2. **Types.** A candidate remains when each argument's type is accepted by the type of the parameter it fills, inferring the candidate's type parameters as for any call.
@@ -169,7 +170,27 @@ The type the call's result is expected to have plays no part in selection. Decla
 ### Defaults and named arguments
 
 - A default value belongs to its overload, and it is evaluated only when that overload is selected and the call omits the argument.
-- A named argument removes every candidate without that parameter, so `writer.write("x", encoding="latin-1")` has one candidate. Names never make two declarations distinct.
+- A named argument removes every candidate that neither declares that parameter nor captures the name in `**kwargs`, so `writer.write("x", encoding="latin-1")` has one candidate. Names never make two declarations distinct.
+
+Positional and named arguments satisfy the same required parameters:
+
+```incan
+def describe(value: int) -> str:
+    return f"Number: {value}"
+
+def describe(value: str) -> str:
+    return f"Text: {value}"
+
+
+describe(42)                 # int overload
+describe(value=42)           # the same int overload, with no positional arguments
+describe(value="hello")      # str overload
+describe()                  # refused: required value is missing
+describe(42, value=43)       # refused: value is supplied twice
+describe(unknown=42)         # refused: neither overload accepts unknown
+```
+
+The checker binds arguments separately for each candidate before testing for missing required parameters. It must not discard `describe(value=42)` for supplying zero positional arguments.
 
 ### Methods and trait instantiations
 
