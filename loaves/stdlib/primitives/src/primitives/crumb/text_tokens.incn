@@ -78,7 +78,7 @@ pub class TextTokens:
 class Tokenizer:
     """Scalar-indexed scanner state; line and column always name the next character."""
 
-    pub characters: list[str]
+    pub data: bytes
     pub index: int = 0
     pub line: int = 1
     pub column: int = 1
@@ -90,29 +90,36 @@ class Tokenizer:
 
     pub def at_end(self) -> bool:
         """Return whether every source scalar has been consumed."""
-        return self.index >= len(self.characters)
+        return self.index >= len(self.data)
 
-    pub def current(self) -> str:
+    pub def current(self) -> Result[str, TextError]:
         """Return the current scalar; callers first prove the scanner is not at end."""
-        return self.characters[self.index]
+        character, _ = scalar_at(self.data, self.index, self.position())?
+        return Ok(character)
 
-    pub def following(self, distance: int) -> str:
+    pub def following(self, distance: int) -> Result[str, TextError]:
         """Return a lookahead scalar or empty text beyond the input boundary."""
-        selected = self.index + distance
-        if selected >= len(self.characters):
-            return ""
-        return self.characters[selected]
+        mut selected = self.index
+        for _ in range(distance):
+            if selected >= len(self.data):
+                return Ok("")
+            _, width = scalar_at(self.data, selected, self.position())?
+            selected += width
+        if selected >= len(self.data):
+            return Ok("")
+        character, _ = scalar_at(self.data, selected, self.position())?
+        return Ok(character)
 
-    pub def advance(mut self) -> str:
+    pub def advance(mut self) -> Result[str, TextError]:
         """Consume one scalar and update the following source position."""
-        character = self.characters[self.index]
-        self.index += 1
+        character, width = scalar_at(self.data, self.index, self.position())?
+        self.index += width
         if character == "\n":
             self.line += 1
             self.column = 1
         else:
             self.column += 1
-        return character
+        return Ok(character)
 
     pub def append(mut self, kind: TextTokenKind, value: str, data: bytes, position: TextPosition) -> None:
         """Retain one already-charged token."""
@@ -121,11 +128,12 @@ class Tokenizer:
 
 pub def tokenize(source: str, mut budget: Budget) -> Result[TextTokens, TextError]:
     """Charge the input and every retained token before returning an owned token snapshot."""
-    budget.charge_bytes(len(encode_utf8(source))).map_err((_) => limit_error())?
-    mut scanner = Tokenizer(characters=[character for character in source])
-    check_bidirectional_controls(scanner.characters)?
+    data = encode_utf8(source)
+    budget.charge_bytes(len(data)).map_err((_) => limit_error())?
+    mut scanner = Tokenizer(data=data)
+    check_bidirectional_controls(source)?
     while not scanner.at_end():
-        skip_layout(scanner)
+        skip_layout(scanner)?
         if scanner.at_end():
             break
         token(scanner, budget)?
@@ -134,39 +142,40 @@ pub def tokenize(source: str, mut budget: Budget) -> Result[TextTokens, TextErro
     return Ok(TextTokens.create(scanner.items))
 
 
-def skip_layout(mut scanner: Tokenizer) -> None:
+def skip_layout(mut scanner: Tokenizer) -> Result[None, TextError]:
     """Discard whitespace and comments while retaining exact positions for later tokens."""
     mut again = true
     while again and not scanner.at_end():
         again = false
-        while not scanner.at_end() and scanner.current() in [" ", "\t", "\r", "\n"]:
-            scanner.advance()
+        while not scanner.at_end() and scanner.current()? in [" ", "\t", "\r", "\n"]:
+            scanner.advance()?
             again = true
-        if not scanner.at_end() and scanner.current() == "#":
-            while not scanner.at_end() and scanner.current() != "\n":
-                scanner.advance()
+        if not scanner.at_end() and scanner.current()? == "#":
+            while not scanner.at_end() and scanner.current()? != "\n":
+                scanner.advance()?
             again = true
+    return Ok(None)
 
 
 def token(mut scanner: Tokenizer, mut budget: Budget) -> Result[None, TextError]:
     """Scan one token according to its unambiguous leading scalar."""
     position = scanner.position()
-    character = scanner.current()
+    character = scanner.current()?
     if character == "\"":
         return string_token(scanner, budget, position)
-    if character == "b" and scanner.following(1) == "\"":
+    if character == "b" and scanner.following(1)? == "\"":
         return binary_token(scanner, budget, position)
     if character == "<":
-        if scanner.following(1) == "<":
-            scanner.advance()
-            scanner.advance()
+        if scanner.following(1)? == "<":
+            scanner.advance()?
+            scanner.advance()?
             return retain(scanner, TextTokenKind.Punctuation, "<<", b"", position, budget)
         if begins_type_arguments(scanner.items):
-            scanner.advance()
+            scanner.advance()?
             return retain(scanner, TextTokenKind.Punctuation, "<", b"", position, budget)
         return marker_token(scanner, budget, position)
     if character in ["{", "}", "[", "]", "(", ")", ",", ":", "=", "?", "|", ">"]:
-        scanner.advance()
+        scanner.advance()?
         return retain(scanner, TextTokenKind.Punctuation, character, b"", position, budget)
     return word_token(scanner, budget, position)
 
@@ -185,12 +194,12 @@ def begins_type_arguments(items: list[TextToken]) -> bool:
 
 def string_token(mut scanner: Tokenizer, mut budget: Budget, position: TextPosition) -> Result[None, TextError]:
     """Decode a quoted or triple-quoted string without normalizing its scalar sequence."""
-    if scanner.following(1) == "\"" and scanner.following(2) == "\"":
+    if scanner.following(1)? == "\"" and scanner.following(2)? == "\"":
         return multiline_token(scanner, budget, position)
-    scanner.advance()
+    scanner.advance()?
     mut value = ""
     while not scanner.at_end():
-        character = scanner.advance()
+        character = scanner.advance()?
         if character == "\"":
             return retain(scanner, TextTokenKind.String, value, b"", position, budget)
         if character == "\\":
@@ -204,14 +213,14 @@ def string_token(mut scanner: Tokenizer, mut budget: Budget, position: TextPosit
 def multiline_token(mut scanner: Tokenizer, mut budget: Budget, position: TextPosition) -> Result[None, TextError]:
     """Keep every scalar between triple quotes exactly, including indentation and line breaks."""
     for _ in range(3):
-        scanner.advance()
+        scanner.advance()?
     mut value = ""
     while not scanner.at_end():
-        if scanner.current() == "\"" and scanner.following(1) == "\"" and scanner.following(2) == "\"":
+        if scanner.current()? == "\"" and scanner.following(1)? == "\"" and scanner.following(2)? == "\"":
             for _ in range(3):
-                scanner.advance()
+                scanner.advance()?
             return retain(scanner, TextTokenKind.String, value, b"", position, budget)
-        value += scanner.advance()
+        value += scanner.advance()?
     return Err(TextError(kind=TextFailure.UnexpectedEnd, position=scanner.position()))
 
 
@@ -219,7 +228,7 @@ def escaped_scalar(mut scanner: Tokenizer, position: TextPosition) -> Result[str
     """Decode the closed COMIC escape set and lowercase variable-width Unicode escapes."""
     if scanner.at_end():
         return Err(TextError(kind=TextFailure.UnexpectedEnd, position=scanner.position()))
-    escape = scanner.advance()
+    escape = scanner.advance()?
     match escape:
         "\\" => return Ok("\\")
         "\"" => return Ok("\"")
@@ -232,17 +241,17 @@ def escaped_scalar(mut scanner: Tokenizer, position: TextPosition) -> Result[str
 
 def unicode_escape(mut scanner: Tokenizer, position: TextPosition) -> Result[str, TextError]:
     """Decode one lowercase hexadecimal Unicode scalar without leading zeros."""
-    if scanner.at_end() or scanner.advance() != "{":
+    if scanner.at_end() or scanner.advance()? != "{":
         return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
     mut digits = ""
-    while not scanner.at_end() and scanner.current() != "}":
-        digit = scanner.advance()
+    while not scanner.at_end() and scanner.current()? != "}":
+        digit = scanner.advance()?
         if hex_value(digit) < 0 or digit in ["A", "B", "C", "D", "E", "F"]:
             return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
         digits += digit
     if scanner.at_end() or digits == "" or (len(digits) > 1 and digits.startswith("0")):
         return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
-    scanner.advance()
+    scanner.advance()?
     mut scalar = 0
     for digit in digits:
         scalar = scalar * 16 + hex_value(digit)
@@ -251,17 +260,17 @@ def unicode_escape(mut scanner: Tokenizer, position: TextPosition) -> Result[str
 
 def binary_token(mut scanner: Tokenizer, mut budget: Budget, position: TextPosition) -> Result[None, TextError]:
     """Decode printable ASCII and exact two-digit lowercase hexadecimal byte escapes."""
-    scanner.advance()
-    scanner.advance()
+    scanner.advance()?
+    scanner.advance()?
     mut data: list[u8] = []
     while not scanner.at_end():
-        character = scanner.advance()
+        character = scanner.advance()?
         if character == "\"":
             return retain(scanner, TextTokenKind.Binary, "", data, position, budget)
         if character == "\\":
             if scanner.at_end():
                 return Err(TextError(kind=TextFailure.UnexpectedEnd, position=scanner.position()))
-            escape = scanner.advance()
+            escape = scanner.advance()?
             if escape == "\\" or escape == "\"":
                 data.append(ascii_byte(escape, position)?)
             elif escape == "x":
@@ -277,10 +286,10 @@ def binary_hex(mut scanner: Tokenizer, position: TextPosition) -> Result[u8, Tex
     """Read exactly two lowercase hexadecimal digits into one byte."""
     if scanner.at_end():
         return Err(TextError(kind=TextFailure.UnexpectedEnd, position=scanner.position()))
-    high_text = scanner.advance()
+    high_text = scanner.advance()?
     if scanner.at_end():
         return Err(TextError(kind=TextFailure.UnexpectedEnd, position=scanner.position()))
-    low_text = scanner.advance()
+    low_text = scanner.advance()?
     high = hex_value(high_text)
     low = hex_value(low_text)
     if high < 0 or low < 0 or high_text in ["A", "B", "C", "D", "E", "F"] or low_text in ["A", "B", "C", "D", "E", "F"]:
@@ -293,22 +302,22 @@ def binary_hex(mut scanner: Tokenizer, position: TextPosition) -> Result[u8, Tex
 
 def marker_token(mut scanner: Tokenizer, mut budget: Budget, position: TextPosition) -> Result[None, TextError]:
     """Retain one marker spelling so semantic admission can accept only `<secret>`."""
-    mut value = scanner.advance()
-    while not scanner.at_end() and scanner.current() != ">":
-        value += scanner.advance()
+    mut value = scanner.advance()?
+    while not scanner.at_end() and scanner.current()? != ">":
+        value += scanner.advance()?
     if scanner.at_end():
         return Err(TextError(kind=TextFailure.UnexpectedEnd, position=scanner.position()))
-    value += scanner.advance()
+    value += scanner.advance()?
     return retain(scanner, TextTokenKind.Marker, value, b"", position, budget)
 
 
 def word_token(mut scanner: Tokenizer, mut budget: Budget, position: TextPosition) -> Result[None, TextError]:
     """Retain a path, symbol or numeric spelling until a grammar delimiter."""
     mut value = ""
-    while not scanner.at_end() and not delimiter(scanner.current()):
-        value += scanner.advance()
+    while not scanner.at_end() and not delimiter(scanner.current()?):
+        value += scanner.advance()?
     if value == "":
-        value = scanner.advance()
+        value = scanner.advance()?
     mut kind = TextTokenKind.Word
     if numeric_lead(value):
         kind = TextTokenKind.Number
@@ -371,6 +380,38 @@ def ascii_byte(character: str, position: TextPosition) -> Result[u8, TextError]:
     return Ok(data[0])
 
 
+def scalar_at(data: &bytes, index: int, position: TextPosition) -> Result[tuple[str, int], TextError]:
+    """Decode one proven UTF-8 scalar and return its byte width without retaining a per-scalar string list."""
+    if index < 0 or index >= len(data):
+        return Err(TextError(kind=TextFailure.InvalidUtf8, position=position))
+    lead = int(data[index])
+    mut width = 1
+    mut value = lead
+    if lead >= 194 and lead <= 223:
+        width = 2
+        value = lead & 31
+    elif lead >= 224 and lead <= 239:
+        width = 3
+        value = lead & 15
+    elif lead >= 240 and lead <= 244:
+        width = 4
+        value = lead & 7
+    elif lead >= 128:
+        return Err(TextError(kind=TextFailure.InvalidUtf8, position=position))
+    if index + width > len(data):
+        return Err(TextError(kind=TextFailure.InvalidUtf8, position=position))
+    for offset in range(1, width):
+        continuation = int(data[index + offset])
+        if continuation < 128 or continuation > 191:
+            return Err(TextError(kind=TextFailure.InvalidUtf8, position=position))
+        value = value * 64 + continuation - 128
+    if (width == 2 and value < 128) or (width == 3 and value < 2048) or (width == 4 and value < 65536):
+        return Err(TextError(kind=TextFailure.InvalidUtf8, position=position))
+    if value > 1114111 or (value >= 55296 and value <= 57343):
+        return Err(TextError(kind=TextFailure.InvalidUtf8, position=position))
+    return Ok((scalar_text(value, position)?, width))
+
+
 def scalar_text(value: int, position: TextPosition) -> Result[str, TextError]:
     """Encode one valid non-surrogate Unicode scalar as owned UTF-8 text."""
     if value < 0 or value > 1114111 or (value >= 55296 and value <= 57343):
@@ -408,11 +449,11 @@ def hex_value(character: str) -> int:
     return -1
 
 
-def check_bidirectional_controls(characters: list[str]) -> Result[None, TextError]:
+def check_bidirectional_controls(source: str) -> Result[None, TextError]:
     """Refuse every raw Unicode bidi control before comments or strings can hide it."""
     mut line = 1
     mut column = 1
-    for character in characters:
+    for character in source:
         encoded = hexlify(encode_utf8(character))
         if encoded in ["e280aa", "e280ab", "e280ac", "e280ad", "e280ae", "e281a6", "e281a7", "e281a8", "e281a9"]:
             return Err(TextError(kind=TextFailure.BidirectionalControl, position=TextPosition(line=line, column=column)))
