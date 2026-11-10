@@ -717,10 +717,10 @@ fn retain_pattern(pattern: &mut bir::Pattern, identities: &Identities) {
         _ => {}
     }
 }
-/// One declaring frame's checked result and the frame's shared canonical bindings that give its nominal leaves meaning.
+/// One declaring frame's checked result and only the canonical bindings needed to interpret that result.
 struct ReturnCarrier {
     ty: IncanType,
-    identities: bir::SharedIdentities,
+    identities: Identities,
 }
 
 type ReturnCarriers = BTreeMap<CanonicalSymbolId, ReturnCarrier>;
@@ -771,6 +771,10 @@ fn retain_body_return_owners(body: &mut bir::Body, returns: &ReturnCarriers) {
 }
 
 /// Snapshot only declaration-owned return facts before mutating this module's execution frames.
+///
+/// A callable's complete canonical map can contain thousands of unrelated bindings. Keeping its `Arc` here makes the
+/// later per-body `Arc::make_mut` copy that whole map. The return type needs only its own nominal leaves, so the index
+/// owns that bounded projection and leaves the frame's canonical map uniquely owned.
 fn return_carriers(module: &bir::BodyIrModule, context: &[bir::BodyIrModule]) -> ReturnCarriers {
     context
         .iter()
@@ -782,12 +786,72 @@ fn return_carriers(module: &bir::BodyIrModule, context: &[bir::BodyIrModule]) ->
                     identity.clone(),
                     ReturnCarrier {
                         ty: body.return_type.clone(),
-                        identities: body.named_type_identities.clone(),
+                        identities: return_type_identities(&body.return_type, &body.named_type_identities),
                     },
                 )
             })
         })
         .collect()
+}
+
+/// Project only the canonical bindings reachable from one declared return type.
+fn return_type_identities(ty: &IncanType, source: &Identities) -> Identities {
+    let mut selected = Identities::new();
+    retain_return_type_identities(ty, source, &mut selected);
+    selected
+}
+
+/// Retain each return leaf under its checked spelling and canonical carrier key.
+fn retain_return_type_identities(ty: &IncanType, source: &Identities, selected: &mut Identities) {
+    match ty {
+        IncanType::Named(name) => {
+            let Some(identity) = source.get(name) else { return };
+            selected.insert(name.clone(), identity.clone());
+            if let Some(key) = nominal_carrier_key(identity) {
+                selected.insert(key, identity.clone());
+            }
+        }
+        IncanType::Generic { base, args } => {
+            retain_return_type_identities(&IncanType::Named(base.clone()), source, selected);
+            for argument in args {
+                retain_return_type_identities(argument, source, selected);
+            }
+        }
+        IncanType::Tuple(items) => {
+            for item in items {
+                retain_return_type_identities(item, source, selected);
+            }
+        }
+        IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::TypeToken(inner) => {
+            retain_return_type_identities(inner, source, selected);
+        }
+        IncanType::NativeArray { element, .. } => retain_return_type_identities(element, source, selected),
+        IncanType::Function { params, return_type } => {
+            for parameter in params {
+                retain_return_type_identities(&parameter.ty, source, selected);
+            }
+            retain_return_type_identities(return_type, source, selected);
+        }
+        _ => {}
+    }
+}
+
+/// Report whether the return index leaves every local frame's canonical map with its original owners.
+#[cfg(test)]
+pub(super) fn return_index_keeps_identity_maps_borrowed(module: &bir::BodyIrModule) -> bool {
+    let original = module
+        .bodies
+        .iter()
+        .map(|body| std::sync::Arc::strong_count(&body.named_type_identities))
+        .collect::<Vec<_>>();
+    let returns = return_carriers(module, &[]);
+    let borrowed = module
+        .bodies
+        .iter()
+        .zip(original)
+        .all(|(body, count)| std::sync::Arc::strong_count(&body.named_type_identities) == count);
+    std::hint::black_box(&returns);
+    borrowed
 }
 
 /// A call's selected canonical declaration supplies a nominal result's declaring context, not the caller's namespace.
