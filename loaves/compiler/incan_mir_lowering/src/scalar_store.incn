@@ -22,7 +22,7 @@ model ScalarRecord:
 pub def scalar_inputs(body: str, name: str, span: SourceSpan, overflow_checks: bool, reads: str) -> list[str]:
     """Bind a native product to its checked body, consumed signatures, physical frame and diagnostic provenance."""
     return [
-        "incan.scalar-function/3",
+        "incan.scalar-function/4",
         body,
         name,
         str(span.file),
@@ -69,7 +69,7 @@ def encoded_record(inputs: list[str], function: &Function, runtime: &list[Extern
     """Authenticate the entire native payload after the codec proves an exact structural round trip."""
     payload = encode_product(function, runtime)?
     digest = fingerprint([payload])?
-    record = ScalarRecord(schema=2, inputs=inputs, function=payload, digest=digest)
+    record = ScalarRecord(schema=3, inputs=inputs, function=payload, digest=digest)
     return to_string(record).map_err((error) => str(error))
 
 
@@ -78,7 +78,7 @@ def restore_record(text: str, inputs: list[str]) -> Option[tuple[Function, list[
     match decode_record(text):
         Err(_) => return None
         Ok(record) =>
-            if record.schema != 2 or record.inputs != inputs:
+            if record.schema != 3 or record.inputs != inputs:
                 return None
             match fingerprint([record.function]):
                 Err(_) => return None
