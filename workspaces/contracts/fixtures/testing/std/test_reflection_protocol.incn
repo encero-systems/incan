@@ -26,6 +26,7 @@ const NO_RENAMES: FrozenList[FrozenStr] = []
 const COUNT_RENAMES: FrozenList[FrozenStr] = ["old_count"]
 const NO_FIELDS: FrozenList[FieldInfo] = []
 const NO_VARIANTS: FrozenList[VariantInfo] = []
+const NO_DECLARATIONS: FrozenList[ShapeInfo] = []
 const NO_EXTRA: FrozenDict[FrozenStr, FrozenStr] = {}
 
 
@@ -49,12 +50,14 @@ class StoredText with Walk:
         """Describe this handwritten scalar representation."""
         return ShapeInfo(
             name="str",
-            identity=b"",
+            identity=None,
+            selector=None,
             renamed_from=NO_RENAMES,
             renamed_from_lifecycle=None,
-            spelling="string",
+            spelling=Some("string"),
             fields=NO_FIELDS,
             variants=NO_VARIANTS,
+            declarations=NO_DECLARATIONS,
         )
 
 
@@ -65,7 +68,7 @@ class SeenText with Walker[str]:
 
     def str(mut self, value: str) -> Result[None, str]:
         """Retain observations in call order."""
-        self.values.append(value)
+        self.values.append(value.clone())  # The observer keeps an owned copy beyond the visit.
         return Ok(None)
 
 
@@ -76,7 +79,10 @@ def test_public_recursive_walker() -> Result[None, str]:
     walker.element(StoredText(value="second"))?
     assert walker.values == ["first", "second"]
     shape: PublicShapeInfo = ShapeInfo.of[StoredText]()
-    assert shape.spelling == "string"
+    assert shape.spelling == Some("string")
+    assert shape.identity == None
+    assert shape.selector == None
+    assert len(shape.declarations) == 0
     metadata: PublicFieldInfo = ReflectedCount.__fields__()[0]
     lifecycle = LifecycleInfo(since="0.6", retire_in="0.9", message="Stored count", by="author", issue="migration")
     expected = FieldInfo(
@@ -100,12 +106,14 @@ def test_public_recursive_walker() -> Result[None, str]:
     # This proves interchangeability; automatic shape generation belongs to the following checkpoint.
     model_shape = ShapeInfo(
         name="ReflectedCount",
-        identity=b"",
+        identity=None,
+        selector=None,
         renamed_from=COUNT_RENAMES,
         renamed_from_lifecycle=metadata.renamed_from_lifecycle,
-        spelling="test-only",
+        spelling=Some("test-only"),
         fields=NO_FIELDS,
         variants=NO_VARIANTS,
+        declarations=NO_DECLARATIONS,
     )
     variant = VariantInfo(
         name="Count",

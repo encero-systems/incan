@@ -1,10 +1,14 @@
-# behavior: an explicit body can pass a closure local, including one borrowing a non-Copy place, to a parameter its callee only calls; the callee borrows the closure and its captures for the call (#2500).
+# behavior: an explicit body can pass a closure local, including one borrowing a non-Copy place, or a declared function with shared, owned, or exclusive input access to a parameter its callee only calls; the callee borrows the callable and its captures for the call (#2500, #2947).
 # expect-stdout:
 #   7
 #   12
 #   9
 #   3
 #   10
+#   4
+#   3
+#   3
+#   3
 
 """Closures passed on to parameters that only call them."""
 
@@ -53,6 +57,31 @@ def indirect(read: (int) -> int, value: Borrowed[int]) -> int:
     return read(value)
 
 
+def apply_borrowed(read: Callable[Borrowed[str], int], value: Borrowed[str]) -> int:
+    return read(value)
+
+
+def length(value: Borrowed[str]) -> int:
+    return len(value)
+
+
+def apply_owned(read: Callable[Owned[list[int]], int], value: Owned[list[int]]) -> int:
+    return read(value)
+
+
+def count(value: Owned[list[int]]) -> int:
+    return len(value)
+
+
+def apply_exclusive(read: (mut BorrowedMut[list[int]]) -> int, mut value: BorrowedMut[list[int]]) -> int:
+    return read(value)
+
+
+def append_one(mut value: BorrowedMut[list[int]]) -> int:
+    value.append(3)
+    return len(value)
+
+
 def main() -> None:
     amount = 3
     println(total(amount, 4))
@@ -62,3 +91,8 @@ def main() -> None:
     println(passed_reference(counter))
     double: (int) -> int = (value) => value * 2
     println(indirect(double, 5))
+    println(apply_borrowed(length, "kept"))
+    println(apply_owned(count, [1, 2, 3]))
+    mut values = [1, 2]
+    println(apply_exclusive(append_one, values))
+    println(len(values))

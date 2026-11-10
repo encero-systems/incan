@@ -262,12 +262,17 @@ def planned_lifecycle(value: &Option[CheckedLifecycle]) -> Option[FieldLifecycle
 def planned_field_metadata(
     module: &BodyIrModule, constructors: &ConstructorIndex, declaration: &NominalDeclaration,
 ) -> Option[list[FieldMetadata]]:
-    """Retain checked visibility and defaults; derive stored selectors from each original typed field slot."""
+    """Project public inspection from stored metadata; private records remain retained for typed-value generation."""
     match declaration.reflection_metadata:
         None => return None
         Some(fields) =>
             mut result: list[FieldMetadata] = []
             for field in fields:
+                match declaration.reflection_fields:
+                    None => return None
+                    Some(slots) =>
+                        if field.position not in slots:
+                            continue
                 mut stored: Option[str] = None
                 if int(field.position) < len(declaration.field_types):
                     stored = stored_type(module, constructors, declaration.field_types[int(field.position)])

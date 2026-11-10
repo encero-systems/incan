@@ -1,10 +1,10 @@
 //! Exact exclusive scalar parameter carriers preserve their checked referent and shape.
 
-use super::{Scalar, source_parameter_type, source_return_type};
+use super::{Leaf, Scalar, source_parameter_type, source_return_type};
 
-/// Exclusive scalar parameters and returned reborrows preserve one supported scalar or reference value.
+/// Source parameters preserve exact exclusive scalar referents and shared string callable inputs.
 #[test]
-fn exclusive_scalar_inputs_keep_exact_referents() {
+fn source_parameters_keep_exact_borrowed_referents() {
     for referent in [
         Scalar::Int,
         Scalar::Float,
@@ -19,6 +19,16 @@ fn exclusive_scalar_inputs_keep_exact_referents() {
         assert!(source_parameter_type(&borrowed));
         assert!(source_return_type(&borrowed));
     }
+    for input in [Scalar::StringRef, Scalar::StrRef] {
+        assert!(source_parameter_type(&Scalar::BorrowingClosure(vec![
+            input,
+            Scalar::Int
+        ])));
+    }
+    assert!(source_parameter_type(&Scalar::BorrowingClosure(vec![
+        Scalar::List(Leaf::Int, 1),
+        Scalar::Int,
+    ])));
 }
 
 /// Malformed arity and owned text cannot acquire scalar-input admission.

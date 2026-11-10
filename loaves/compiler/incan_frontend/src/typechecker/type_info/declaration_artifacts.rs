@@ -146,6 +146,10 @@ pub struct DeclarationArtifacts {
     /// and enum methods use the same boundary. Body IR consumes these checked facts rather than re-resolving raw
     /// annotations; the record adapter supplies persistent identity separately from this source-revision handle.
     pub method_bindings_by_span: HashMap<crate::ast::Span, FunctionBindingInfo>,
+    /// Imported method headers authenticated in their declaring module. Canonical identity, rather than a local
+    /// source span, distinguishes dependencies whose declarations occupy the same offsets. These headers retain
+    /// ordinary receiver access without inventing an explicit ownership annotation or importing a method body.
+    pub imported_method_headers: BTreeMap<CanonicalSymbolId, crate::symbols::MethodInfo>,
     /// Body IR-only getter signatures and receiver provenance, keyed by the exact property declaration span.
     /// Legacy property metadata and callable binding tables remain unchanged.
     pub body_ir_property_bindings: HashMap<crate::ast::Span, BodyIrPropertyBindingInfo>,

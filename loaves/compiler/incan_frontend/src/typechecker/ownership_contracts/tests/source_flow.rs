@@ -174,6 +174,14 @@ fn primitive_observers_keep_checked_reads() -> Result<(), Box<dyn std::error::Er
         let checker = checked(source)?;
         assert!(checker.errors.is_empty(), "{source}\n{:?}", checker.errors);
     }
+    for numeric in [
+        "i8", "i16", "i32", "i128", "u8", "u16", "u32", "u64", "u128", "isize", "usize", "f32", "f64",
+    ] {
+        let source =
+            format!("def inspect(value: Owned[{numeric}]) -> str:\n    print(value)\n    return f\"{{value}}\"\n");
+        let checker = checked(&source)?;
+        assert!(checker.errors.is_empty(), "{source}\n{:?}", checker.errors);
+    }
     let source = "def inspect(value: Borrowed[str]) -> None:\n    print(value)\n    assert len(value) > 0, \"empty\"\n";
     let graph = source_graph(source)?.map_err(|error| format!("{error:?}"))?;
     assert!(
@@ -522,6 +530,202 @@ def main() -> Result[None, str]:
             .ok_or("missing copied invocation")?
             .result_requirement = replacement;
         assert!(corrupted.checked_input_body(owner).is_err());
+    }
+    Ok(())
+}
+
+/// Declaration defaults do not acquire caller storage, but their checked slots must complete the supplied fields
+/// exactly. Corrupted bindings must fail before a constructor becomes a fresh owned value in the source graph.
+#[test]
+fn constructor_defaults_require_exact_field_partition() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"class Counter:
+    pub count: int = 0
+    pub limit: int = 10
+    pub tag: int
+
+def inspect(value: Borrowed[Counter]) -> None:
+    pass
+
+def main() -> None:
+    value = Counter(tag=7)
+    inspect(value)
+    assert value.tag == 7
+"#;
+    let mut checker = checked(source)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let declaration = program.declarations.last().ok_or("missing main")?;
+    let crate::ast::Declaration::Function(function) = &declaration.node else {
+        return Err("expected main function".into());
+    };
+    let identity = checker
+        .type_info
+        .declarations
+        .function_bindings_by_span
+        .get(&declaration.span)
+        .and_then(|binding| binding.identity.clone())
+        .ok_or("missing main identity")?;
+    let (span, original) = checker
+        .type_info
+        .calls
+        .constructor_field_bindings
+        .iter()
+        .find(|(_, binding)| binding.field_count == 3)
+        .map(|(span, binding)| (*span, binding.clone()))
+        .ok_or("missing constructor binding")?;
+    assert_eq!(original.argument_slots, vec![2]);
+    assert_eq!(original.defaulted_slots, vec![0, 1]);
+    let graph = super::super::source::build(
+        &checker,
+        CallableSource::Function(function),
+        declaration.span,
+        &identity,
+    )
+    .map_err(|error| format!("{error:?}"))?;
+    assert!(
+        flow::analyze(&graph)
+            .map_err(|error| format!("{error:?}"))?
+            .conflicts
+            .is_empty()
+    );
+    for (supplied, defaults) in [
+        (vec![2], vec![]),
+        (vec![2], vec![0]),
+        (vec![2], vec![0, 0]),
+        (vec![2], vec![0, 2]),
+        (vec![2], vec![0, 3]),
+        (vec![2], vec![1, 0]),
+        (vec![], vec![0, 1, 2]),
+    ] {
+        let mut corrupted = original.clone();
+        corrupted.argument_slots = supplied;
+        corrupted.defaulted_slots = defaults;
+        checker
+            .type_info
+            .calls
+            .constructor_field_bindings
+            .insert(span, corrupted);
+        let result = super::super::source::build(
+            &checker,
+            CallableSource::Function(function),
+            declaration.span,
+            &identity,
+        );
+        let Err(error) = result else {
+            return Err("corrupted constructor field partition was admitted".into());
+        };
+        assert_eq!(
+            error.reason,
+            "construction needs a complete distinct supplied/defaulted field partition"
+        );
+    }
+
+    let call_result = r#"def keep(value: Owned[str]) -> Owned[str]:
+    return value
+
+class Holder:
+    value: str
+
+    @staticmethod
+    pub def capture(value: Owned[str]) -> Owned[Holder]:
+        return Holder(value=keep(value))
+
+def main() -> None:
+    held = Holder.capture("kept")
+"#;
+    let checker = checked(call_result)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    Ok(())
+}
+
+/// A checked enum constructor owns fresh payload storage, including nested model fields and empty cases. Its
+/// variant identity is required; neither a same-spelled method nor an unproved non-Copy transfer acquires that rule.
+#[test]
+fn source_enum_construction_keeps_payload_ownership_checks() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"enum Event:
+    Empty
+    Item(int, str)
+
+model Envelope:
+    event: Event
+
+def observe(value: Borrowed[Envelope]) -> None:
+    pass
+
+def observe_event(value: Borrowed[Event]) -> None:
+    pass
+
+def main() -> None:
+    envelope = Envelope(event=Event.Item(7, "kept"))
+    observe(envelope)
+    observe_event(Event.Empty)
+"#;
+    let mut checker = checked(source)?;
+    assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let declaration = program.declarations.last().ok_or("missing main")?;
+    let crate::ast::Declaration::Function(function) = &declaration.node else {
+        return Err("expected main function".into());
+    };
+    let identity = checker
+        .type_info
+        .declarations
+        .function_bindings_by_span
+        .get(&declaration.span)
+        .and_then(|binding| binding.identity.clone())
+        .ok_or("missing main identity")?;
+    let span = checker
+        .type_info
+        .references
+        .resolved_identities
+        .iter()
+        .find(|(span, identity)| {
+            identity.kind == incan_semantics_core::SemanticSourceTargetKind::Variant
+                && source.get(span.start..span.end) == Some("Event.Item(7, \"kept\")")
+        })
+        .map(|(span, _)| *span)
+        .ok_or("missing checked variant construction")?;
+    let graph = super::super::source::build(
+        &checker,
+        CallableSource::Function(function),
+        declaration.span,
+        &identity,
+    )
+    .map_err(|error| format!("{error:?}"))?;
+    assert!(
+        flow::analyze(&graph)
+            .map_err(|error| format!("{error:?}"))?
+            .conflicts
+            .is_empty()
+    );
+    checker.type_info.references.resolved_identities.remove(&span);
+    assert!(
+        super::super::source::build(
+            &checker,
+            CallableSource::Function(function),
+            declaration.span,
+            &identity
+        )
+        .is_err()
+    );
+    for source in [
+        "enum Event:\n    Item(str)\ndef observe(value: Borrowed[Event]) -> None:\n    pass\ndef main(value: Borrowed[str]) -> None:\n    event = Event.Item(value)\n    observe(event)\n",
+        "enum Event:\n    Item(str)\ndef observe(value: Borrowed[Event]) -> None:\n    pass\ndef main() -> None:\n    value = \"kept\"\n    event = Event.Item(value)\n    observe(event)\n",
+    ] {
+        let checker = checked(source)?;
+        assert!(
+            checker
+                .errors
+                .iter()
+                .any(|error| error.stable_code() == Some("INCAN-T0123")),
+            "{source}: {:?}",
+            checker.errors
+        );
+        assert!(checker.type_info.protocols.explicit_input_flow.values().any(|flow| matches!(flow,
+            InputFlow::Unavailable(reason) if reason.reason == "non-Copy enum payload needs checked ownership transfer materialization")),
+            "{:?}", flow_summary(&checker));
     }
     Ok(())
 }

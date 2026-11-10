@@ -266,7 +266,7 @@ impl Builder<'_> {
                 span,
                 reason: "call has no selected explicit input access facts".into(),
             })?;
-        let contract = self
+        let selected = self
             .checker
             .type_info
             .selected_input_contract(call)
@@ -274,15 +274,16 @@ impl Builder<'_> {
                 span,
                 reason: reason.into(),
             })?;
+        let contract = selected.as_deref();
         if call.owner.as_ref() != Some(&self.owner) {
             return Err(Unavailable {
                 span,
                 reason: "call facts belong to a different callable".into(),
             });
         }
-        // A native associated function written on its type, as in `HashMap.new()`, names the type, not a receiver
-        // value.
-        let receiver = if self.checker.type_info.native_associated_call(span) {
+        // An associated function written on its type, as in `HashMap.new()` or a source `@staticmethod`, names the
+        // type, not a receiver value. The selected method's absent receiver is authoritative for source calls.
+        let receiver = if self.checker.type_info.associated_input_call(span) {
             None
         } else {
             receiver
@@ -474,15 +475,25 @@ impl Builder<'_> {
                 invocation.arguments.push(argument);
                 continue;
             }
-            let source = self.optional_place(expression)?.map(|path| path.place);
+            // A declared function item is a callable value, but it is not storage owned by this caller. Retain no
+            // source place for it; closures and callable locals keep their separate storage-aware routes.
+            let function_item = self.direct_function_item(expression);
+            let source = if function_item {
+                None
+            } else {
+                self.optional_place(expression)?.map(|path| path.place)
+            };
             let start_node = self.graph.nodes.len();
             incoming = self.event(incoming, Event::Nothing, expression.span);
             let explicit = matches!(
                 call.kind,
                 super::super::InputCallKind::Explicit | super::super::InputCallKind::Native
             );
-            let (outgoing, loan) =
-                self.call_argument(expression, &call.parameters[slot], mode, explicit, span, incoming)?;
+            let (outgoing, loan) = if function_item {
+                (incoming, None)
+            } else {
+                self.call_argument(expression, &call.parameters[slot], mode, explicit, span, incoming)?
+            };
             incoming = outgoing;
             let source_node = if source.is_some() || loan.is_some() {
                 Some(*incoming.first().filter(|_| incoming.len() == 1).ok_or(Unavailable {
@@ -545,6 +556,13 @@ impl Builder<'_> {
             });
         }
         Ok(incoming)
+    }
+
+    /// Whether an argument is a declared function item rather than a callable stored in caller-owned memory. Its
+    /// canonical function identity and checked function type jointly distinguish it from shadowing locals and
+    /// capturing closures, so evaluating it adds no ownership access event.
+    fn direct_function_item(&self, expression: &Spanned<Expr>) -> bool {
+        matches!(expression.node, Expr::Ident(_)) && self.checker.type_info.is_declared_function_item(expression.span)
     }
 
     /// Return whether semantic method resolution selected the standard `Clone.clone` slot for this call. A source
@@ -669,12 +687,14 @@ impl Builder<'_> {
             reason: "temporary argument has no checked type".into(),
         })?;
         // A list literal's own evaluation admits only Copy scalar elements, so it retains no dependency either. A
-        // complete model or class constructor likewise produces fresh storage after its checked fields evaluate.
+        // complete model, class or source enum constructor likewise produces fresh storage after its checked
+        // fields evaluate. The expression path still proves each payload before this temporary gains a loan.
         let fresh_constructor = self
             .checker
             .type_info
             .constructor_field_binding(expression.span)
-            .is_some();
+            .is_some()
+            || self.source_enum_payload_count(expression).is_some();
         let independent_native_result = self.checker.native_result_is_independent(expression.span);
         if !plain_result(ty)
             && !matches!(expression.node, Expr::List(_))
@@ -816,7 +836,8 @@ impl Builder<'_> {
             span,
             reason: reason.into(),
         };
-        let contract = self.checker.type_info.selected_input_contract(call).map_err(refusal)?;
+        let selected = self.checker.type_info.selected_input_contract(call).map_err(refusal)?;
+        let contract = selected.as_deref();
         Ok(crate::ownership_metadata::returned_view(contract)
             .map_err(refusal)?
             .map(|view| ViewRelation {
@@ -844,7 +865,8 @@ impl Builder<'_> {
             span,
             reason: reason.into(),
         };
-        let contract = self.checker.type_info.selected_input_contract(call).map_err(refusal)?;
+        let selected = self.checker.type_info.selected_input_contract(call).map_err(refusal)?;
+        let contract = selected.as_deref();
         let Some((_, source)) = crate::ownership_metadata::owned_result_source(contract).map_err(refusal)? else {
             return Ok(None);
         };
@@ -958,14 +980,18 @@ impl Builder<'_> {
                         reason: format!("native call `{}` returns a borrow of temporary storage", relation.call),
                     });
                 }
-                let exclusive = base.kind == super::LoanKind::Exclusive;
+                let exclusive = relation
+                    .view_access
+                    .map_or(base.kind == super::LoanKind::Exclusive, |access| {
+                        access == incan_semantics_core::IncanInputAccess::Exclusive
+                    });
                 let loan = self.call_loan(
                     Path {
                         place: base.source,
                         through: base.parent,
                     },
                     exclusive,
-                    base.writable,
+                    base.writable && exclusive,
                     span,
                 );
                 incoming = self.event(incoming, Event::Borrow(loan), span);
@@ -1202,6 +1228,7 @@ fn primitive_display(ty: &ResolvedType) -> bool {
         | ResolvedType::FrozenStr
         | ResolvedType::Int
         | ResolvedType::Float
+        | ResolvedType::Numeric(_)
         | ResolvedType::Bool
         | ResolvedType::Unit => true,
         ResolvedType::Generic(name, arguments) => {

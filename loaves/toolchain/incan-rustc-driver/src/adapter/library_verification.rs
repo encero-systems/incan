@@ -54,6 +54,7 @@ pub(super) fn native_bridge_items(plan: &Plan, span: rustc_span::Span) -> Result
     let mut items = crate::shared_callables::items(plan, span);
     items.extend(crate::panic_hooks::items(plan, span)?);
     items.extend(crate::field_metadata::items(plan, span)?);
+    items.extend(crate::static_values::items(plan, span)?);
     items.extend(crate::comparison_bridges::items(plan, span)?);
     items.extend(crate::fallible_bridges::items(plan, span)?);
     items.extend(crate::fallible_bridges::ordinary_items(plan, span)?);

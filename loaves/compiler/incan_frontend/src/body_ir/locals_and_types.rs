@@ -23,6 +23,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             returned_view: None,
             retained_result_source: None,
             carried_view_places: HashMap::new(),
+            retained_pattern_storage: false,
             awaited_view_places: HashMap::new(),
             carried_view_locals: HashMap::new(),
             aggregate_view_locals: HashSet::new(),

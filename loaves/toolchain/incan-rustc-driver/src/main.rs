@@ -67,6 +67,7 @@ mod rust_imports;
 mod shared_callables;
 mod signature_lifetimes;
 mod spans;
+mod static_values;
 mod statics;
 mod terminators;
 mod test_unit;

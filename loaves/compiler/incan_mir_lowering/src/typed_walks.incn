@@ -1,0 +1,247 @@
+"""Generated typed-value walks using retained source callbacks and borrowed stored places."""
+
+from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import BodyIrModule, Body, MethodTarget, ArgumentElement, Place as RustPlace
+from pub::incan_mir_plan import (
+    CalleeKind, PlanType, Place, Operand, SourceSpan, Function, Parameter, TerminatorKind,
+    RvalueKind, Constant, FieldProjection, FrozenValue, Carrier, assign as plan_assign, place as plan_place,
+)
+from frame import Builder, temporary, place_type, read_place, terminate_call, literal, appended_field, dereferenced_place, drop_all_owned
+from checked_values import scalar_place
+from sequence_builtins import argument_type
+from call_arguments import call_argument_operand
+from callable_calls import lower_callable_result, checked_type_arguments
+from layout_types import shared_receiver_type
+from type_parameters import substitute
+from closure_lifting import lifted_frame, adopt_lifted, synthesize
+from typed_value_callbacks import protocol_method, referent, callback_body, parameter_types, call_callback
+from typed_value_constants import value_type, static_metadata
+from typed_shapes import shape, field_info, variant_info, payload_info
+from typed_shape_spelling import field_order, ordered_names
+from table_views import borrowed_at
+from options import propagate_result, result_layout, variant_condition
+from traits import receiver_method_identity
+from pub::internal_models.checked_types import CheckedType
+from compiler_record_adapters import native_checked_type
+
+
+pub def lower_generated_walk(
+    module: &BodyIrModule, mut builder: Builder, target: MethodTarget,
+    arguments: &list[ArgumentElement], destination: Option[RustPlace], span: SourceSpan,
+) -> Result[bool, str]:
+    """Generate only the authentic automatic Walk slot; custom implementations use ordinary dispatch."""
+    match target.canonical:
+        None => return Ok(false)
+        Some(identity) =>
+            if not protocol_method(module, identity, "Walk", "__walk__"):
+                return Ok(false)
+    if len(arguments) != 2 or len(target.type_args) != 2:
+        return Err("generated walk requires checked error and walker arguments")
+    owner = referent(argument_type(builder, arguments, 0, span)?)
+    match owner:
+        PlanType.Model(_index, _name) | PlanType.Enum(_index, _name) =>
+            if receiver_method_identity(module, target, builder, arguments[0], span)? != target.canonical:
+                return Ok(false)
+        _ => pass
+    closed_arguments = checked_type_arguments(builder, target.type_args)?
+    error = closed_arguments[0]
+    walker_type = closed_arguments[1]
+    walker_owner = value_type(builder, walker_type)?
+    mut walker_reference = PlanType.Unit
+    match walker_owner:
+        PlanType.Model(index, name) => walker_reference = PlanType.ModelMutRef(index, name)
+        _ => return Err("generated walk requires a checked mutable walker")
+    source_reference = shared_receiver_type(owner)?
+    mut output = plan_place(0, span)
+    match destination:
+        Some(place) => output = scalar_place(builder, place, span)?
+        None => return Err("generated walk requires a retained Result destination")
+    output_type = place_type(builder.locals, output)
+    name = f"__incan_walk_{builder.name}_{len(builder.blocks)}_{len(builder.locals)}"
+    mut generated = lifted_frame(builder, name, [source_reference, walker_reference], output_type, span)
+    generated.locals = generated.locals[:3]
+    generated.local_offset = 0
+    generated.scoped_locals = []
+    generated.scope_parents = []
+    generated.owned = []
+    value = dereferenced_place(plan_place(1, span), owner, span)?
+    walk_value(module, generated, value, plan_place(2, span), walker_owner, error, span)?
+    result_owner, _result = result_layout(generated, output_type)?
+    generated.emit(plan_assign(plan_place(0, span), RvalueKind.Enum(result_owner, 0, [literal(Constant.Unit, span)]), span))
+    drop_all_owned(generated, span)
+    generated.finish(TerminatorKind.Return, span)
+    # Generated callbacks append carriers to the inherited table; keep their exact slots in the enclosing frame.
+    builder.intrinsics = generated.intrinsics
+    adopt_lifted(builder, generated)
+    for nested in generated.synthesized:
+        synthesize(builder, nested)
+    synthesize(builder, Function(
+        name=name,
+        parameters=[Parameter(name="value", ty=source_reference, span=span), Parameter(name="walker", ty=walker_reference, span=span)],
+        return_type=output_type, locals=generated.locals, blocks=generated.blocks, span=span,
+    ))
+    mut inputs: list[Operand] = []
+    expected_types = [source_reference, walker_reference]
+    for index in range(2):
+        match arguments[index].as_one():
+            None => return Err("generated walk does not admit a spread")
+            Some(value) =>
+                inputs.append(call_argument_operand(builder, value, expected_types[index], span)?)
+    lower_callable_result(builder, CalleeKind.Planned(name), inputs, output, output_type, span)?
+    return Ok(true)
+
+
+def walk_value(
+    module: &BodyIrModule, mut builder: Builder, value: Place, walker: Place,
+    walker_owner: PlanType, error: RustType, span: SourceSpan,
+) -> Result[None, str]:
+    """Emit begin/field/end for models; scalar leaves invoke their protocol callback without allocation."""
+    ty = place_type(builder.locals, value)
+    match ty:
+        PlanType.Model(index, _name) =>
+            declaration = borrowed_at(module.nominal_declarations, index)
+            if declaration.canonical.kind == SemanticSourceTargetKind.Newtype and len(declaration.field_types) == 1:
+                inner = value_type(builder, declaration.field_types[0])?
+                place = appended_field(value, FieldProjection(slot=0, ty=inner), span)?
+                return walk_value(module, builder, place, walker, walker_owner, error, span)
+            if declaration.canonical.kind != SemanticSourceTargetKind.Model:
+                return Err("generated walk requires a model's checked stored contract")
+            begin = callback_body(module, builder, walker_owner, "Walker", error, "begin_model", [])?
+            begin_types = parameter_types(builder, begin)?
+            if len(begin_types) != 2:
+                return Err("Walker.begin_model has an incompatible checked signature")
+            metadata_type = referent(begin_types[1])
+            source_type = RustType.Named(declaration.carrier_name())
+            metadata = shape(module, builder, source_type, metadata_type, true)?
+            info = static_metadata(builder, metadata_type, metadata, span)
+            propagate_callback(module, builder, begin, [walker, info], span, [1])?
+            match declaration.reflection_metadata:
+                None => return Err("generated walk lacks complete stored-field metadata")
+                Some(fields) =>
+                    for slot in field_order(builder, index)?:
+                        field = callback_body(module, builder, walker_owner, "Walker", error, "field", [declaration.field_types[slot]])?
+                        types = parameter_types(builder, field)?
+                        if len(types) != 3:
+                            return Err("Walker.field has an incompatible checked signature")
+                        info_type = referent(types[1])
+                        description = field_info(module, builder, fields[slot], declaration.field_types[slot], info_type)?
+                        field_metadata = static_metadata(builder, info_type, description, span)
+                        field_place = appended_field(value, FieldProjection(slot=slot, ty=value_type(builder, declaration.field_types[slot])?), span)?
+                        propagate_callback(module, builder, field, [walker, field_metadata, field_place], span, [1])?
+            end = callback_body(module, builder, walker_owner, "Walker", error, "end_model", [])?
+            return propagate_callback(module, builder, end, [walker], span)
+        PlanType.Enum(index, _name) =>
+            if index < len(builder.enums):
+                return walk_enum(module, builder, value, index, walker, walker_owner, error, span)
+            carrier = borrowed_at(builder.intrinsics, index - len(builder.enums))
+            if carrier.carrier == Carrier.Option:
+                match carrier.semantic_key:
+                    Some(CheckedType.Generic(_base, arguments)) =>
+                        if len(arguments) == 1:
+                            # Keep the selected type fact while the frame receives new blocks and calls.
+                            element = native_checked_type(arguments[0].clone())?
+                            return walk_option(module, builder, value, element, walker, walker_owner, error, span)
+                    _ => pass
+                return Err("generated optional walk lacks its retained element type")
+        _ => pass
+    mut callback = ""
+    match ty:
+        PlanType.Bool => callback = "bool"
+        PlanType.Unit => callback = "none"
+        PlanType.String | PlanType.FrozenStr => callback = "str"
+        PlanType.U128 => callback = "unsigned"
+        PlanType.Float | PlanType.F32 | PlanType.F64 => callback = "float"
+        (
+            PlanType.Int | PlanType.I8 | PlanType.I16 | PlanType.I32 | PlanType.I128 | PlanType.ISize
+            | PlanType.U8 | PlanType.U16 | PlanType.U32 | PlanType.U64 | PlanType.USize
+        ) => callback = "integer"
+        _ => return Err(f"generated walk has no retained traversal for {ty:?}")
+    body = callback_body(module, builder, walker_owner, "Walker", error, callback, [])?
+    if ty == PlanType.Unit:
+        return propagate_callback(module, builder, body, [walker], span)
+    return propagate_callback(module, builder, body, [walker, value], span)
+
+
+
+def propagate_callback(
+    module: &BodyIrModule, mut builder: Builder, body: Body,
+    arguments: list[Place], span: SourceSpan, owned_slots: list[int] = [],
+) -> Result[None, str]:
+    """Keep callback failure local to the generated walk, preserving its original typed error."""
+    result = call_callback(module, builder, body, arguments, span, owned_slots)?
+    unit = temporary(builder, PlanType.Unit, span)
+    return propagate_result(builder, result, unit, span)
+
+
+def walk_enum(
+    module: &BodyIrModule, mut builder: Builder, value: Place, owner: int,
+    walker: Place, walker_owner: PlanType, error: RustType, span: SourceSpan,
+) -> Result[None, str]:
+    """Select the active native variant, then borrow its complete payload in stored-identity order."""
+    declaration = borrowed_at(module.enum_declarations, owner)
+    joined = builder.new_block(span)
+    owners = builder.owned
+    for variant_index in range(len(declaration.variants)):
+        selected = builder.new_block(span)
+        following = builder.new_block(span)
+        condition = variant_condition(builder, value, variant_index, span)
+        builder.finish(TerminatorKind.SwitchBool(condition, following, selected), span)
+        builder.current = selected
+        builder.owned = owners
+        variant = borrowed_at(declaration.variants, variant_index)
+        begin = callback_body(module, builder, walker_owner, "Walker", error, "begin_variant", [])?
+        begin_types = parameter_types(builder, begin)?
+        if len(begin_types) != 2:
+            return Err("Walker.begin_variant has an incompatible checked signature")
+        info_type = referent(begin_types[1])
+        metadata = variant_info(module, builder, str(variant.name), variant.fields, info_type)?
+        info = static_metadata(builder, info_type, metadata, span)
+        propagate_callback(module, builder, begin, [walker, info], span, [1])?
+        for slot in ordered_names([str(index) for index in range(len(variant.fields))])?:
+            source_type = borrowed_at(variant.fields, slot)
+            field = callback_body(module, builder, walker_owner, "Walker", error, "field", [source_type.clone()])?
+            parameters = parameter_types(builder, field)?
+            if len(parameters) != 3:
+                return Err("Walker.field has an incompatible checked signature")
+            field_type = referent(parameters[1])
+            description = payload_info(module, builder, slot, source_type, field_type)?
+            field_info = static_metadata(builder, field_type, description, span)
+            payload = appended_field(value, FieldProjection(
+                slot=slot, ty=value_type(builder, source_type)?, variant=variant_index,
+            ), span)?
+            propagate_callback(module, builder, field, [walker, field_info, payload], span, [1])?
+        end = callback_body(module, builder, walker_owner, "Walker", error, "end_variant", [])?
+        propagate_callback(module, builder, end, [walker], span)?
+        builder.finish(TerminatorKind.Goto(joined), span)
+        builder.current = following
+        builder.owned = owners
+    builder.finish(TerminatorKind.Unreachable, span)
+    builder.current = joined
+    builder.owned = owners
+    return Ok(None)
+
+
+def walk_option(
+    module: &BodyIrModule, mut builder: Builder, value: Place, element: RustType,
+    walker: Place, walker_owner: PlanType, error: RustType, span: SourceSpan,
+) -> Result[None, str]:
+    """Observe exactly one optional layer; nested optional values remain distinct borrowed payloads."""
+    absent = builder.new_block(span)
+    present = builder.new_block(span)
+    joined = builder.new_block(span)
+    owners = builder.owned
+    condition = variant_condition(builder, value, 0, span)
+    builder.finish(TerminatorKind.SwitchBool(condition, present, absent), span)
+    builder.current = absent
+    none = callback_body(module, builder, walker_owner, "Walker", error, "none", [])?
+    propagate_callback(module, builder, none, [walker], span)?
+    builder.finish(TerminatorKind.Goto(joined), span)
+    builder.current = present
+    builder.owned = owners
+    some = callback_body(module, builder, walker_owner, "Walker", error, "some", [element])?
+    payload = appended_field(value, FieldProjection(slot=0, ty=value_type(builder, element)?, variant=1), span)?
+    propagate_callback(module, builder, some, [walker, payload], span)?
+    builder.finish(TerminatorKind.Goto(joined), span)
+    builder.current = joined
+    builder.owned = owners
+    return Ok(None)
