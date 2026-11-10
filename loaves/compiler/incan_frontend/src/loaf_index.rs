@@ -1,11 +1,14 @@
 //! The compiled Loaves a compilation reaches, and the one index every consumer reads them through (DD-0007).
 //!
 //! A compiled Loaf is one artifact directory per profile: its library manifest (`<name>.incnlib`), its governed bodies
-//! (`<name>.incnbody`), its library unit (`lib<name>.rlib`), the unit's native closure (`<name>.native.json`), and an
+//! (`<name>.incnbody`), its library unit (`lib<crate>.rlib`), the unit's native closure (`<name>.native.json`), and an
 //! optional manifest-authenticated native ABI cache (`<name>.rustabi`). An
 //! ordinary dependency owns `pub::<key>`; a standard package owns the `std.*` roots the compiler-pinned
 //! [`STANDARD_PACKAGE_NAMESPACE_POLICIES`] assign to it. A module path resolves to exactly one entry.
 
+//! Here `<name>` is the shared artifact stem: unchanged for bare packages and reversibly encoded for scoped ones.
+
+use incan_loaf_names::artifact_stem;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -108,7 +111,7 @@ impl LoafArtifact {
         let _invocation =
             tracing::trace_span!(target: "incan::invocation", "incan_frontend::read_loaf_manifest", loaf = name)
                 .entered();
-        let path = dir.join(format!("{name}.{LIBRARY_MANIFEST_EXTENSION}"));
+        let path = dir.join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", artifact_stem(name)));
         let unreadable = |reason: String| LoafIndexError::Unreadable {
             path: path.clone(),
             reason,
@@ -145,7 +148,7 @@ impl LoafArtifact {
         let Some(expected) = manifest.rust_abi.as_ref().and_then(|abi| abi.cache_digest.as_ref()) else {
             return Ok((None, BTreeSet::new()));
         };
-        let path = dir.join(format!("{name}.rustabi"));
+        let path = dir.join(format!("{}.rustabi", artifact_stem(name)));
         let unreadable = |reason: String| LoafIndexError::Unreadable {
             path: path.clone(),
             reason,
@@ -165,18 +168,21 @@ impl LoafArtifact {
 
     /// The library manifest file.
     pub fn manifest_path(&self) -> PathBuf {
-        self.dir.join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", self.name))
+        self.dir
+            .join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", artifact_stem(&self.name)))
     }
 
     /// The governed bodies file: the executable representation callers instantiate.
     pub fn bodies_path(&self) -> PathBuf {
-        self.dir
-            .join(format!("{}.{EXECUTABLE_REPRESENTATION_EXTENSION}", self.name))
+        self.dir.join(format!(
+            "{}.{EXECUTABLE_REPRESENTATION_EXTENSION}",
+            artifact_stem(&self.name)
+        ))
     }
 
     /// The library unit's native closure: the rlibs and search paths it links.
     pub fn native_closure_path(&self) -> PathBuf {
-        self.dir.join(format!("{}.native.json", self.name))
+        self.dir.join(format!("{}.native.json", artifact_stem(&self.name)))
     }
 
     /// Read the library unit's native closure. A relative path in it (a packed toolchain's Loaf) names its target from
@@ -190,7 +196,7 @@ impl LoafNativeClosure {
     /// Read the native closure of the Loaf `name` in `dir` without reading its manifest: linking needs only the
     /// closure file, and a Loaf the program never imports must not be decoded to link it.
     pub fn read(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
-        let path = dir.join(format!("{name}.native.json"));
+        let path = dir.join(format!("{}.native.json", artifact_stem(name)));
         let bytes = std::fs::read(&path).map_err(|error| LoafIndexError::Unreadable {
             path: path.clone(),
             reason: error.to_string(),
@@ -808,4 +814,38 @@ fn normalize_keyword_registration(key: &str, registration: &KeywordRegistration)
         keywords,
         valid_decorators: registration.valid_decorators.clone(),
     })
+}
+
+#[cfg(test)]
+mod scoped_name_tests {
+    use super::LoafArtifact;
+    use crate::library_manifest::LibraryManifest;
+    use incan_loaf_names::artifact_stem;
+
+    /// The ordinary retained reader opens encoded filenames while retaining the exact scoped semantic owner.
+    #[test]
+    fn scoped_artifacts_retain_their_producer_name() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        for name in ["alpha/catalog", "beta/catalog", "scope-a/catalog", "scope/a-catalog"] {
+            let manifest = LibraryManifest::new(name, "1.0.0");
+            let stem = artifact_stem(name);
+            let path = directory.path().join(format!("{stem}.incnlib"));
+            std::fs::write(&path, manifest.to_json_string()?)?;
+            for _ in 0..2 {
+                let artifact = LoafArtifact::read(directory.path(), name)?;
+                assert_eq!(artifact.manifest.name, name);
+                assert_eq!(artifact.identity.name, name);
+                assert_eq!(artifact.manifest_path(), path);
+                assert_eq!(
+                    artifact.bodies_path(),
+                    directory.path().join(format!("{stem}.incnbody"))
+                );
+                assert_eq!(
+                    artifact.native_closure_path(),
+                    directory.path().join(format!("{stem}.native.json"))
+                );
+            }
+        }
+        Ok(())
+    }
 }

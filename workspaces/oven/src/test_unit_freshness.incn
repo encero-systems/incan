@@ -22,7 +22,7 @@ from toolchain import NativeCrate, Toolchain
 from toolchain_access import ToolchainAccess
 from unit import UnitDescription, UnitLoaf
 from unit_reading import read_unit
-from unit_compiler import described_by, write_unit
+from unit_compiler import crate_name, described_by, write_unit
 from unit_publication import admit_payload, published_identity, record_path, record_payload
 from unit_freshness import Key, artifact_files, reusable, record, description_digest, staleness
 from freshness_fixtures import Fixture, fixture, make_executable, reconcile, unit_key, write
@@ -802,4 +802,11 @@ def verify_record_identity() -> Result[None, str]:
     assert read_unit(unit.to_json())?.registry_id == unit.registry_id
     unit.registry_id = Some("sha256:0000000000000000000000000000000000000000000000000000000000000000")
     assert description_digest(unit)? != declared
+    unit.package = "scope-a/catalog"
+    left = crate_name(unit)
+    unit.package = "scope/a-catalog"
+    assert crate_name(unit) != left
+    files = artifact_files(Path("/not-present"), unit.package)?
+    assert files[0].name() == f"lib{crate_name(unit)}.rlib"
+    assert files[1].name() == f"{crate_name(unit)}.incnlib"
     return Ok(None)

@@ -17,6 +17,7 @@ use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_lang::lang::derives::{self, DeriveId};
+use incan_loaf_names::native_crate_name;
 use incan_mir_lowering::{
     RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning, layout_runtime_requirements, program_refusals,
     resume_unit_plan, unit_plan,
@@ -287,13 +288,13 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
         return Err("a source interface requires a library unit".into());
     }
     let directory = Path::new(directory);
-    let library = directory.join(format!("lib{}.rlib", unit.package.replace('-', "_")));
+    let library = directory.join(format!("lib{}.rlib", native_crate_name(&unit.package)));
     if library.exists() {
         return Err("a source interface cannot replace a compiled library's publication".into());
     }
     let dependencies = dependencies(&unit, &[])?;
     let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
-    let loaf_links = unit.loaves.iter().map(|loaf| loaf.name.replace('-', "_")).collect();
+    let loaf_links = unit.loaves.iter().map(|loaf| native_crate_name(&loaf.name)).collect();
     let mut closure = LoafNativeClosure {
         externs: dependencies.externs,
         search: unit.own_search.clone(),
@@ -361,7 +362,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     // A library's closure publishes only the directories beyond the toolchain generation's search index.
     let published_search = unit.own_search.clone();
     let loaf_links: std::collections::BTreeSet<String> =
-        unit.loaves.iter().map(|loaf| loaf.name.replace('-', "_")).collect();
+        unit.loaves.iter().map(|loaf| native_crate_name(&loaf.name)).collect();
     // The grant comes only from the description, read after the identity check and the bootstrap refusal.
     let access = unit.toolchain_access.clone();
     let rust = dependencies.rust_facts(&unit, Path::new(&arguments[3]));

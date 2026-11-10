@@ -4,6 +4,7 @@
 //! A session is opened once from the unit description Oven supplies (DD-0008) and reused by every stage, so the
 //! Loaves, the vocabulary they bring and the active features are decided once per unit.
 
+use incan_loaf_names::artifact_stem;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -141,7 +142,9 @@ impl CompilationSession {
         let mut deferred = Vec::new();
         for loaf in &unit.loaves {
             let key = if loaf.standard { &loaf.name } else { &loaf.key };
-            let manifest = loaf.dir.join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", loaf.name));
+            let manifest = loaf
+                .dir
+                .join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", artifact_stem(&loaf.name)));
             if (formatting || unit.not_prepared_loaves.contains(&loaf.name))
                 && !manifest
                     .try_exists()

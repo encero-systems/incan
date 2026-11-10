@@ -1,5 +1,6 @@
 """Bind the shared local graph's exact artifacts to a compiler unit description (DD-0008)."""
 
+from rust::incan_loaf_names import artifact_stem, native_crate_name
 from std.fs import Path
 from std.json import JsonValue
 from std.toml import TomlValue
@@ -303,13 +304,13 @@ def standard_available(loaf: UnitLoaf) -> bool:
     """Keep source dependencies and published standard providers; an unbuilt standard package grants no interface."""
     if not loaf.standard:
         return true
-    interface = Path(loaf.dir).joinpath(f"{loaf.name}.incnlib")
+    interface = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib")
     return loaf_library(loaf).is_file() and interface.is_file()
 
 
 def loaf_library(loaf: UnitLoaf) -> Path:
-    """A Loaf's compiled library: `lib<crate>.rlib` in its directory, the crate being its name with `_` for `-`."""
-    linked = loaf.name.replace("-", "_")
+    """A Loaf's compiled library, using the shared native-name projection in its artifact directory."""
+    linked = native_crate_name(loaf.name)
     return Path(loaf.dir).joinpath(f"lib{linked}.rlib")
 
 
@@ -356,12 +357,12 @@ def link_loaf(
 
     During bootstrap only already compiled standard packages may be linked.
     """
-    linked = loaf.name.replace("-", "_")
+    linked = native_crate_name(loaf.name)
     library = loaf_library(loaf)
     if loaf.standard and not library.is_file():
         return Ok((described, []))
     unit = add_extern(described, NativeCrate(name=linked, path=library.0))?
-    closure = Path(loaf.dir).joinpath(f"{loaf.name}.native.json")
+    closure = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.native.json")
     if not closure.is_file():
         return Ok((unit, [loaf.dir]))
     document = readings.read(closure)?
@@ -441,7 +442,7 @@ def with_prepared_loaves(unit: UnitDescription, missing: list[MissingTrust]) -> 
     for loaf in ready.loaves:
         if not loaf.is_dependency():
             continue
-        interface = Path(loaf.dir).joinpath(f"{loaf.name}.incnlib")
+        interface = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib")
         if (not loaf_library(loaf).is_file() or not interface.is_file()) and loaf.name not in not_prepared:
             not_prepared.append(loaf.name)
     ready.not_prepared_loaves = sorted(not_prepared)

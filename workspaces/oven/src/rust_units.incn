@@ -9,6 +9,7 @@ Each Rust library also records its graph-selected externs and search directories
 uses those bindings instead of inferring a dependency's identity from an artifact directory.
 """
 
+from rust::incan_loaf_names import artifact_stem, native_crate_name
 from rust::std::process import id
 from std.fs import Path
 from std.json import JsonValue
@@ -201,12 +202,12 @@ def require_coherent_installed_generation(facets: list[LocalFacet], request: Rus
 def installed_incan_provider(declared: RustFacet, request: RustBuild) -> Result[Option[BuiltUnit], str]:
     """The installed standard facade an activated source provider will select, if it is complete."""
     directory = standard_artifact_dir(declared.package, request.profile)?
-    name = declared.package.replace("-", "_")
+    name = native_crate_name(declared.package)
     artifact = directory.joinpath(f"lib{name}.rlib")
     if not artifact.is_file():
         return Ok(None)
     toolchain = selected_toolchain(request)?
-    search = native_search(directory.joinpath(f"{declared.package}.native.json"), toolchain.native_closures)?
+    search = native_search(directory.joinpath(f"{artifact_stem(declared.package)}.native.json"), toolchain.native_closures)?
     return Ok(
         Some(
             BuiltUnit(crate_name=name, artifact=artifact.0, directory=directory.0, search=search, loaf=declared.package),
@@ -837,7 +838,7 @@ def compile_incan_library(
     # 1. The graph's profile and features identify the provider; its dependencies must expose Incan facades.
     root = Path(request.project).resolve().map_err((error) => error.message())?
     directory = dependency_artifact_dir(root.0, declared.package, request.profile)
-    compiled_name = declared.package.replace("-", "_")
+    compiled_name = native_crate_name(declared.package)
     artifact = directory.joinpath(f"lib{compiled_name}.rlib")
     providers = provider_dependencies(facet, request, built)?
     mut bindings = facet_bindings(facet, providers, request.registry)?
@@ -879,7 +880,7 @@ def compile_incan_library(
             crate_name=compiled_name,
             artifact=stored.joinpath(artifact.name()).0,
             directory=stored.0,
-            search=native_search(stored.joinpath(f"{declared.package}.native.json"), readings)? + dependency_search,
+            search=native_search(stored.joinpath(f"{artifact_stem(declared.package)}.native.json"), readings)? + dependency_search,
             loaf=declared.package,
         ),
     )

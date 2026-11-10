@@ -1,5 +1,6 @@
 """Check Incan inspection units and cache their interfaces without building native libraries."""
 
+from rust::incan_loaf_names import artifact_stem
 from rust::std::process import id
 from std.fs import Path
 from features import FeatureRequest
@@ -85,7 +86,7 @@ pub def inspect_incan(
         return Ok(entry)
     pending_entry = pending_export(entry, Path(ready.source))?
     directory = interface_directory(pending_entry)
-    interface = directory.joinpath(f"{unit.package}.incnlib")
+    interface = directory.joinpath(f"{artifact_stem(unit.package)}.incnlib")
     # 3. The compiler writes its output beside the entry's name, so a failed export leaves nothing at the entry itself.
     description = write_unit(ready, crate_name(ready), Some(cache_root))?
     output = Path(f"{pending_entry.0}.{id()}.analysis")
