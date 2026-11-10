@@ -429,6 +429,8 @@ pub(super) fn collect_fields(
                     record_identity: crate::symbols::field_record_identity(&f.node),
                     record_canonical: crate::symbols::field_record_canonical(&f.node),
                     renamed_from: crate::symbols::field_renamed_from(&f.node),
+                    renamed_from_lifecycle: crate::symbols::field_renamed_from_lifecycle(&f.node),
+                    default_is_empty: crate::symbols::field_default_is_empty(&f.node),
                     surface_type_name: Some(crate::symbols::field_surface_type_name(&f.node.ty.node, &ty)),
                     ty,
                     visibility: f.node.visibility,

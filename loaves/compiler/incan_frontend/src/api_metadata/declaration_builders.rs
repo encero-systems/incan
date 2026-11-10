@@ -245,6 +245,8 @@ pub(super) fn api_trait(
                 record_identity: String::new(),
                 record_canonical: true,
                 renamed_from: Vec::new(),
+                renamed_from_lifecycle: None,
+                default_is_empty: false,
                 ty: type_ref_from_resolved(ty),
                 surface_type_name: Some(ty.to_string()),
                 visibility: crate::library_manifest::MemberVisibilityExport::Public,

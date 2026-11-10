@@ -156,6 +156,10 @@ pub struct ClassFieldLayoutInfo {
     pub record_canonical: bool,
     /// Earlier declared names in chronological order, earliest first.
     pub renamed_from: Vec<String>,
+    /// Descriptive rename facts retained from the checked declaration.
+    pub renamed_from_lifecycle: Option<incan_semantics_core::body_ir::LifecycleMetadata>,
+    /// Whether the checked default is a statically empty collection literal.
+    pub default_is_empty: bool,
     /// Fully resolved field type selected by the typechecker.
     pub ty: ResolvedType,
     /// Source-level Incan spelling retained solely for reflection and documentation.

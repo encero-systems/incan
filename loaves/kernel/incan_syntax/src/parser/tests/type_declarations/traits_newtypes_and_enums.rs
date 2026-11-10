@@ -315,6 +315,9 @@ fn duplicate_rename_and_canonical_metadata_keys_are_refused() {
     for (metadata, key) in [
         ("renamed_from=\"email\", renamed_from=[\"address\"]", "renamed_from"),
         ("canonical=true, canonical=false", "canonical"),
+        ("renamed_from { name=\"old\" }, renamed_from=\"older\"", "renamed_from"),
+        ("renamed_from { name=\"old\", name=\"older\" }", "name"),
+        ("renamed_from { name=\"old\", since=\"0.5\", since=\"0.6\" }", "since"),
     ] {
         let source = format!("model Account:\n  value [{metadata}]: str\n");
         let errors = parse_str_err(&source, "expected a duplicate field metadata key");
@@ -352,6 +355,9 @@ fn test_parse_non_string_metadata_value_error() {
         ("renamed_from=[1]", "renamed_from", "list of string literals"),
         ("canonical=\"false\"", "canonical", "boolean literal"),
         ("canonical=0", "canonical", "boolean literal"),
+        ("renamed_from { since=\"0.6\" }", "renamed_from", "containing name"),
+        ("renamed_from { name=true }", "name", "list of string literals"),
+        ("renamed_from { name=\"old\", since=true }", "since", "string literal"),
     ];
     for (metadata, key, expected) in cases {
         let source = format!("model Account:\n  type_ [{metadata}]: str\n");

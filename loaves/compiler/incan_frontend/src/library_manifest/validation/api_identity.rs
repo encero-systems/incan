@@ -365,6 +365,14 @@ pub(super) fn validate_nominal_member_identities(
 
 /// Validate additive stored-record metadata without refusing an older manifest that omitted every new field.
 fn validate_record_field_metadata(owner: &str, field: &super::FieldExport) -> Result<(), LibraryManifestError> {
+    if field.default_is_empty && !field.has_default
+        || field.renamed_from_lifecycle.is_some() && field.renamed_from.is_empty()
+    {
+        return Err(LibraryManifestError::Invalid(format!(
+            "{owner} field `{}` carries default or lifecycle facts without their owning declaration metadata",
+            field.name
+        )));
+    }
     if field.record_identity.is_empty() {
         if !field.renamed_from.is_empty() || !field.record_canonical {
             return Err(LibraryManifestError::Invalid(format!(

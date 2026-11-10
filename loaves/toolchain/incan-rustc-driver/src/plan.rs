@@ -2,7 +2,7 @@
 
 pub use incan_mir_lowering::{
     AttributeArgument, AttributeValue, BinaryOp, Callee, CalleeKind, Carrier, Constant, EnumDeclaration,
-    ExternalFunction, FallibleIteratorMethods, FieldMetadata, ForeignFunction, FrozenValue, Function,
+    ExternalFunction, FallibleIteratorMethods, FieldLifecycle, FieldMetadata, ForeignFunction, FrozenValue, Function,
     GenericEnumDeclaration, GenericEnumVariant, GenericLayoutType, GenericLoan, GenericModelDeclaration,
     IteratorMethods, ListLeaf, ModelDeclaration, NativeAttribute, NativeTraitMethod, Operand, OperandKind, Parameter,
     Place, Plan, PlanType, Projection, RvalueKind, SizedNumeric, SourceSpan, Statement, StatementKind, StaticCell,
