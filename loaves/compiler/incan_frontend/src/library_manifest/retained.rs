@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use serde::de::DeserializeOwned;
 use serde::de::{DeserializeSeed, EnumAccess, IntoDeserializer, MapAccess, SeqAccess, VariantAccess, Visitor, value};
 use serde::{Deserialize, Serialize};
 
@@ -73,22 +74,42 @@ impl<'de> VariantAccess<'de> for &mut FactsReader<'de> {
 
 /// Encode admitted facts without applying a positional encoding to JSON structs with omitted fields.
 pub(super) fn encode(manifest: &LibraryManifest) -> Result<Vec<u8>, String> {
-    let value = serde_json::to_value(RawLibraryManifest::from_semantic(manifest)).map_err(|error| error.to_string())?;
-    let value = RetainedValue::from_json(value)?;
-    postcard::to_allocvec(&value).map_err(|error| error.to_string())
+    encode_value(&RawLibraryManifest::from_semantic(manifest))
 }
 
 /// Reconstitute already admitted facts. The caller must authenticate the source generation and compiler identity.
 pub(super) fn decode(bytes: &[u8]) -> Result<LibraryManifest, String> {
-    let mut reader = FactsReader { remaining: bytes };
-    let raw = RawLibraryManifest::deserialize(&mut reader).map_err(|error| error.to_string())?;
-    if !reader.remaining.is_empty() {
-        return Err("trailing decoded manifest facts".into());
-    }
+    let raw: RawLibraryManifest = decode_value(bytes)?;
     raw.into_semantic().map_err(|error| error.to_string())
 }
 
+/// Encode one named serde value through the same self-describing compact transport as retained manifest facts.
+pub(super) fn encode_value<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
+    let value = serde_json::to_value(value).map_err(|error| error.to_string())?;
+    let value = RetainedValue::from_json(value)?;
+    postcard::to_allocvec(&value).map_err(|error| error.to_string())
+}
+
+/// Decode one complete compact value into its selected compiler-record family type.
+pub(super) fn decode_value<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
+    let mut reader = FactsReader { remaining: bytes };
+    let value = T::deserialize(&mut reader).map_err(|error| error.to_string())?;
+    if !reader.remaining.is_empty() {
+        return Err("trailing retained value facts".into());
+    }
+    Ok(value)
+}
+
 impl<'de> FactsReader<'de> {
+    /// Consume one retained-value tag directly; every declared tag fits postcard's one-byte unsigned encoding.
+    fn take_tag(&mut self) -> Result<u8, value::Error> {
+        let Some((&tag, remaining)) = self.remaining.split_first() else {
+            return Err(<value::Error as serde::de::Error>::custom("missing retained value tag"));
+        };
+        self.remaining = remaining;
+        Ok(tag)
+    }
+
     /// Delegate primitive and length decoding to the same postcard implementation that writes this private format.
     fn take<T: Deserialize<'de>>(&mut self) -> Result<T, value::Error> {
         let (value, remaining) =
@@ -191,7 +212,7 @@ impl<'de> serde::Deserializer<'de> for &mut FactsReader<'de> {
 
     /// Dispatch the retained primitive or named container without guessing a destination type.
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self.take::<u32>()? {
+        match self.take_tag()? {
             0 => visitor.visit_unit(),
             1 => visitor.visit_bool(self.take()?),
             2 => visitor.visit_i64(self.take()?),
@@ -219,7 +240,7 @@ impl<'de> serde::Deserializer<'de> for &mut FactsReader<'de> {
     /// JSON's null denotes an absent optional field; other values retain the destination's optional boundary.
     fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         if self.remaining.first() == Some(&0) {
-            self.take::<u32>()?;
+            self.take_tag()?;
             visitor.visit_none()
         } else {
             visitor.visit_some(self)
@@ -242,7 +263,7 @@ impl<'de> serde::Deserializer<'de> for &mut FactsReader<'de> {
         _variants: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Self::Error> {
-        match self.take::<u32>()? {
+        match self.take_tag()? {
             5 => {
                 let name: &str = self.take()?;
                 visitor.visit_enum(name.into_deserializer())

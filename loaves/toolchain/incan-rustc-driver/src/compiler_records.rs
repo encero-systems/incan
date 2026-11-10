@@ -10,10 +10,10 @@ use std::path::{Path, PathBuf};
 
 use incan_frontend::library_manifest::LibraryManifest;
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 
-const EXPORT_SCHEMA: &str = "incan.compiler-record-export/1";
+const EXPORT_SCHEMA: &str = "incan.compiler-record-export/2";
 
 /// Closed families produced from one admitted Loaf manifest.
 #[derive(Clone, Copy)]
@@ -265,14 +265,13 @@ fn export_manifest(
         )?;
     }
     if let Some(vocab) = &manifest.vocab {
-        let value: Value = serde_json::from_str(&vocab.to_json_string()?)?;
-        add_value(
+        add_encoded_value(
             output,
             &prefix,
             ManifestRecordFamily::Vocabulary,
             0,
             &vocab.package_name,
-            &value,
+            vocab.encode_compiler_record_value()?,
             records,
         )?;
     }
@@ -335,7 +334,27 @@ fn add_value<T: Serialize>(
     value: &T,
     records: &mut Vec<ExportedRecord>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = serde_json::to_vec(value)?;
+    add_encoded_value(
+        output,
+        prefix,
+        family,
+        index,
+        name,
+        LibraryManifest::encode_compiler_record_value(value)?,
+        records,
+    )
+}
+
+/// Address and write one already encoded family value without combining it with sibling records.
+fn add_encoded_value(
+    output: &Path,
+    prefix: &str,
+    family: ManifestRecordFamily,
+    index: usize,
+    name: &str,
+    bytes: Vec<u8>,
+    records: &mut Vec<ExportedRecord>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let revision = format!("{:x}", Sha256::digest(&bytes));
     let object = format!("objects/{revision}");
     let path = output.join(&object);
