@@ -3,7 +3,7 @@
 from std.primitives.crumb import Budget
 from std.primitives.crumb.registrations import KindRegistry
 from std.primitives.crumb.row_reader import read_rows
-from std.primitives.crumb.row_errors import RowFailure
+from std.primitives.crumb.encoding_errors import BinaryFailure
 from std.primitives.views import MappedFile
 
 
@@ -22,5 +22,5 @@ def test_empty_envelope_and_exact_boundary() -> Result[None, str]:
             match result:
                 Ok(_) => return Err("required seal was ignored")
                 Err(error) =>
-                    assert error.kind == RowFailure.SealRequired
+                    assert error.kind == BinaryFailure.SealRequired
     return Ok(None)

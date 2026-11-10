@@ -1,10 +1,11 @@
-"""Explicit test declarations for projection, recursion and retained-view lifetime controls."""
+"""Explicit binary-encoding declarations for projection, recursion and retained-view lifetime controls."""
 
 from std.primitives.crumb import Budget
 from std.primitives.crumb.registrations import KindRegistry
-from std.primitives.crumb.row_descriptions import Description, DescriptionMode
+from std.primitives.crumb.descriptions import Description, DescriptionMode
 from std.primitives.crumb.row_reader import RowSet, read_rows
-from std.primitives.crumb.row_writer import RowRecord, write_rows
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.row_writer import write_rows
 from std.primitives.crumb.values import Metadata, MetadataEntry
 from std.primitives.views import MappedFile, MappedView
 
