@@ -8,6 +8,9 @@ from crate.primitives.crumb.values import Metadata, MetadataEntry
 from crate.primitives.hex import hexlify
 from crate.primitives.text import encode_utf8
 
+# Characters a core property name never contains; profile extensions are admitted by their own profile.
+const PROPERTY_NAME_FORBIDDEN: FrozenSet[str] = {" ", "\t", "\r", "\n", ".", "{", "}", "[", "]", "(", ")", ",", ":", "=", "?", "|", "<", ">", "#", "\"", "+", "-", "*", "/", "\\", "!", "@", "$", "%", "^", "&", ";", "'", "`", "~"}
+
 
 pub def emit_metadata(value: Metadata, mut output: HashOutput, mut budget: Budget) -> Result[None, CrumbError]:
     """D preserves list order and exact strings, while map keys have unique UTF-8 byte ordering."""
@@ -80,42 +83,6 @@ def property_name(value: str) -> bool:
     if characters[0] >= "0" and characters[0] <= "9":
         return false
     for character in characters:
-        if character in [
-            " ",
-            "\t",
-            "\r",
-            "\n",
-            ".",
-            "{",
-            "}",
-            "[",
-            "]",
-            "(",
-            ")",
-            ",",
-            ":",
-            "=",
-            "?",
-            "|",
-            "<",
-            ">",
-            "#",
-            "\"",
-            "+",
-            "-",
-            "*",
-            "/",
-            "\\",
-            "!",
-            "@",
-            "$",
-            "%",
-            "^",
-            "&",
-            ";",
-            "'",
-            "`",
-            "~",
-        ]:
+        if character in PROPERTY_NAME_FORBIDDEN:
             return false
     return true
