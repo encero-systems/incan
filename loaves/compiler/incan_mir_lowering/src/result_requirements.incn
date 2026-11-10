@@ -1,0 +1,37 @@
+"""Discharge retained generic source-result obligations before lowering a concrete native frame."""
+
+from rust::incan_semantics_core import IncanType
+from rust::incan_semantics_core::body_ir import Body
+from rust::incan_lang::lang::types::collections import CollectionTypeId
+
+
+pub def validate_result_requirements(body: &Body) -> Result[None, str]:
+    """Unresolved or dependent substitutions retain a refusal, never implicit independent storage."""
+    match body.checked_input_profile:
+        None => return Ok(None)
+        Some(profile) =>
+            if profile.version in [3, 4] and len(profile.result_requirements) == 0:
+                return Err("generic result profile lost its dependency requirements")
+            for requirement in profile.result_requirements:
+                anchor, ty = requirement
+                if not independent_result(ty):
+                    return Err(f"generic result needs retained dependency facts in {body.name} at {anchor.start}")
+    return Ok(None)
+
+
+pub def independent_result(ty: &IncanType) -> bool:
+    """Only closed scalar carriers discharge this initial conditional contract; nominal/native views stay refused."""
+    match ty:
+        IncanType.Primitive(_kind) => return true
+        _ => pass
+    match ty.collection():
+        Some((kind, arguments)) =>
+            if kind != CollectionTypeId.Result and kind != CollectionTypeId.Option:
+                return false
+            if (kind == CollectionTypeId.Result and len(arguments) != 2) or (kind == CollectionTypeId.Option and len(arguments) != 1):
+                return false
+            for argument in arguments:
+                if not independent_result(argument):
+                    return false
+            return true
+        None => return false

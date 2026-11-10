@@ -15,6 +15,7 @@ fn input_profile_publication_retains_canonical_owner() -> Result<(), Box<dyn std
     ));
     let owner = source.canonical.clone().ok_or("missing source owner")?;
     source.checked_input_profile = Some(crate::body_ir::CheckedInputProfile {
+        result_requirements: Vec::new(),
         version: 1,
         owner: owner.clone(),
         parameters: Vec::new(),
@@ -63,6 +64,48 @@ fn input_profile_publication_retains_canonical_owner() -> Result<(), Box<dyn std
     for obsolete in [36_u32, 37, 38, 39, 40, 41, 42, 43, 44] {
         assert!(require_supported_version(&postcard::to_allocvec(&obsolete)?).is_err());
     }
+    Ok(())
+}
+
+/// Generic straight-line publication keeps symbolic result requirements; conditional ownership remains refused.
+#[test]
+fn generic_input_requirements_survive_publication() -> Result<(), Box<dyn std::error::Error>> {
+    let mut source = body("input", 1);
+    source.type_parameters = vec!["E".into()];
+    source.canonical = Some(CanonicalSymbolId::module_declaration(
+        vec!["lib".into()],
+        "input",
+        SemanticSourceTargetKind::Function,
+        source.span,
+    ));
+    let owner = source.canonical.clone().ok_or("missing source owner")?;
+    let required = crate::IncanType::Generic {
+        base: "Result".into(),
+        args: vec![
+            crate::IncanType::Primitive(crate::IncanPrimitiveType::Unit),
+            crate::IncanType::TypeVar("E".into()),
+        ],
+    };
+    source.checked_input_profile = Some(crate::body_ir::CheckedInputProfile {
+        result_requirements: vec![(source.span, required.clone())],
+        version: 3,
+        owner,
+        parameters: Vec::new(),
+        owned_initializers: Vec::new(),
+    });
+    let context = module(vec![source.clone()]);
+    let eligible = BTreeSet::from([identity("input", 1)]);
+    let projected =
+        publication::project_body(&source, &context, "probe", &eligible).map_err(|error| format!("{error:?}"))?;
+    let profile = projected
+        .body
+        .checked_input_profile
+        .as_ref()
+        .ok_or("missing published requirements")?;
+    assert_eq!(profile.version, 3);
+    assert_eq!(profile.result_requirements, vec![(source.span, required)]);
+    source.checked_input_profile.as_mut().ok_or("missing profile")?.version = 4;
+    assert!(publication::project_body(&source, &context, "probe", &eligible).is_err());
     Ok(())
 }
 

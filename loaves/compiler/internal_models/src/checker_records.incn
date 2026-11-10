@@ -407,6 +407,15 @@ def type_end(values: list[str], offset: int, depth: int) -> Result[int, CodecFau
     tag = values[offset]
     if tag in ["int", "float", "bool", "str", "bytes", "unit", "unknown"]:
         return Ok(offset + 1)
+    if tag in ["named", "type-var"]:
+        if offset + 1 >= len(values) or values[offset + 1] == "":
+            return Err(CodecFault.Malformed)
+        return Ok(offset + 2)
+    if tag == "result":
+        after = type_end(values, offset + 1, depth + 1)?
+        return type_end(values, after, depth + 1)
+    if tag == "option":
+        return type_end(values, offset + 1, depth + 1)
     if tag == "list":
         return type_end(values, offset + 1, depth + 1)
     if tag == "ownership":
@@ -646,7 +655,7 @@ class InputFields:
                 closure_nodes.append(self.number()?)
         return Ok(closure_nodes)
 
-    def invocations(mut self, loans: int, receiver_dependencies: bool) -> Result[list[int], CodecFault]:
+    def invocations(mut self, loans: int, receiver_dependencies: bool, result_requirements: bool) -> Result[list[int], CodecFault]:
         """Retain invocation inputs and collect the graph nodes that their evaluations reference."""
         mut invocation_nodes: list[int] = []
         invocations = self.count()?
@@ -656,6 +665,8 @@ class InputFields:
             self.handle()?
             previous = self.ordered(previous, start)?
             self.handle()?
+            if result_requirements and self.tag(["none", "some"])? == "some":
+                self.value_type()?
             self.optional_index(loans)?
             self.tag(["true", "false"])?
             if self.tag(["none", "some"])? == "some":
@@ -682,7 +693,7 @@ class InputFields:
                 invocation_nodes.append(self.number()?)
         return Ok(invocation_nodes)
 
-    pub def graph(mut self, strict_indices: bool, receiver_dependencies: bool) -> Result[None, CodecFault]:
+    pub def graph(mut self, strict_indices: bool, receiver_dependencies: bool, result_requirements: bool) -> Result[None, CodecFault]:
         """Retain every permission, dependency, invocation and edge under the selected input-flow schema."""
         self.strict_indices = strict_indices
         self.handle()?
@@ -761,7 +772,7 @@ class InputFields:
                 operation_nodes.append(self.number()?)
         # Invocations: each one's callee, receiver loan and arguments (span, slot, written position, access, loan and
         # source place).
-        invocation_nodes = self.invocations(loans, receiver_dependencies)?
+        invocation_nodes = self.invocations(loans, receiver_dependencies, result_requirements)?
         # Closures bound to locals; the nodes that read their captures are checked with the others below.
         closure_nodes = self.closures(loans)?
         # Nodes: each one's event, successors and span. Every node index recorded above must name one of them.
@@ -801,9 +812,9 @@ def input_field_end(field: CanonicalField) -> Result[int, CodecFault]:
         return Err(CodecFault.Malformed)
     mut reader = InputFields.read(field.values)
     # Every explicit ownership field starts with its grammar version.
-    version = reader.tag(["1", "2"])?
+    version = reader.tag(["1", "2", "3"])?
     input_flow = field.family == "input-flow" and field.selector == "graph"
-    if version == "2" and not input_flow:
+    if version != "1" and not input_flow:
         return Err(CodecFault.Malformed)
     # Copy decisions: the owner, then each value type in canonical order with whether it is Copy.
     if field.family == "input-copy" and field.selector == "types":
@@ -840,7 +851,7 @@ def input_field_end(field: CanonicalField) -> Result[int, CodecFault]:
             reader.handle()?
             reader.handle()?
         else:
-            reader.graph(state == "checked", version == "2")?
+            reader.graph(state == "checked", version != "1", version == "3")?
             if state == "invalid":
                 reader.handle()?
     else:
