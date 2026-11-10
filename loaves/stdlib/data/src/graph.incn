@@ -32,8 +32,16 @@ pub from crate.graph._read import (
     ScopedNodeId,
 )
 pub from crate.graph._traversal import (
+    Component,
+    ComponentsContinuation,
+    ComponentsOutcome,
+    ComponentsResult,
     Direction,
+    OrderContinuation,
+    OrderOutcome,
+    OrderResult,
     Path,
+    PathContinuation,
     PathOutcome,
     PathSearch,
     TraversalBudget,
@@ -45,6 +53,8 @@ pub from crate.graph._traversal import (
     breadth_first,
     depth_first,
     find_path,
+    strongly_connected_components,
+    topological_order,
 )
 
 

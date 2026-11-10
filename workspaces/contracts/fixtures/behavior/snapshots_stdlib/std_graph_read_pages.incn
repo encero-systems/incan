@@ -14,6 +14,14 @@
 #   dfs 0 1 2 complete
 #   limited nodes 0 resume 1 2 complete
 #   path 0 1 2
+#   path limited nodes resume 0 1 2
+#   topological 0 1 2
+#   incoming topological 2 1 0
+#   topological limited nodes resume 0 1 2
+#   cycle 0 1 2 edges 3
+#   cycle component 2 1 0 cyclic true
+#   components 2;1;0 cyclic false false false
+#   components limited nodes resume 2;1;0
 
 from std.graph import (
     GraphPageBudget,
@@ -25,6 +33,8 @@ from std.graph import (
     Direction,
     MemoryGraphFailure,
     MemoryGraphReader,
+    ComponentsOutcome,
+    OrderOutcome,
     PathOutcome,
     RelationGraph,
     ScopedEdgeId,
@@ -35,6 +45,8 @@ from std.graph import (
     breadth_first,
     depth_first,
     find_path,
+    strongly_connected_components,
+    topological_order,
 )
 
 
@@ -92,14 +104,7 @@ def node_ids(visits: list[Visit[ScopedNodeId, ScopedEdgeId]]) -> str:
     return " ".join([str(visit.node.to_int()) for visit in visits])
 
 
-def outcome_text(
-    outcome: TraversalOutcome[
-        ScopedNodeId,
-        ScopedEdgeId,
-        MemoryGraphFailure,
-        MemoryGraphReader[str, str],
-    ],
-) -> str:
+def outcome_text(outcome: TraversalOutcome[ScopedNodeId, ScopedEdgeId, MemoryGraphFailure, MemoryGraphReader[str, str]]) -> str:
     """Render the completion state used by this traversal fixture."""
     match outcome:
         TraversalOutcome.Complete => return "complete"
@@ -119,7 +124,7 @@ def exercise_traversal() -> Result[None, GraphReadError[MemoryGraphFailure]]:
     if graph.add_edge(second, third, "two").is_err():
         return Ok(None)
     reader = graph.read_view()
-    full = TraversalBudget(max_nodes=8, max_edges=8, max_bytes=64, max_retained=16)
+    full = TraversalBudget(max_nodes=8, max_edges=8, max_bytes=256, max_retained=48)
 
     bfs = breadth_first(reader, [first], Direction.Outgoing, full)
     println(f"bfs {node_ids(bfs.visits)} {outcome_text(bfs.outcome)}")
@@ -145,6 +150,115 @@ def exercise_traversal() -> Result[None, GraphReadError[MemoryGraphFailure]]:
         PathOutcome.Found(found) =>
             println(f"path {' '.join([str(node.to_int()) for node in found.nodes])}")
         _ => println("path missing")
+
+    limited_path = find_path(
+        reader,
+        first,
+        third,
+        Direction.Outgoing,
+        TraversalBudget(max_nodes=1, max_edges=8, max_bytes=64, max_retained=16),
+    )
+    match limited_path.outcome:
+        PathOutcome.Inconclusive(reason, Some(continuation)) =>
+            resumed = continuation.resume(full)
+            match resumed.outcome:
+                PathOutcome.Found(found) =>
+                    println(
+                        f"path limited {reason.value()} resume {' '.join([str(node.to_int()) for node in found.nodes])}",
+                    )
+                _ => println("path resume missing")
+        _ => println("path limit missing")
+
+    return Ok(None)
+
+
+def exercise_global_traversal() -> Result[None, GraphReadError[MemoryGraphFailure]]:
+    """Exercise resumable ordering, deterministic cycle witnesses, and Tarjan components."""
+    mut graph = RelationGraph[str, str]()
+    first = graph.add_node("first")
+    second = graph.add_node("second")
+    third = graph.add_node("third")
+    if graph.add_edge(first, second, "one").is_err():
+        return Ok(None)
+    if graph.add_edge(second, third, "two").is_err():
+        return Ok(None)
+    reader = graph.read_view()
+    full = TraversalBudget(max_nodes=8, max_edges=8, max_bytes=256, max_retained=48)
+
+    ordered = topological_order(reader, Direction.Outgoing, full)
+    match ordered.outcome:
+        OrderOutcome.Ordered(nodes) =>
+            println(f"topological {' '.join([str(node.to_int()) for node in nodes])}")
+        _ => println("topological missing")
+    incoming_order = topological_order(reader, Direction.Incoming, full)
+    match incoming_order.outcome:
+        OrderOutcome.Ordered(nodes) =>
+            println(f"incoming topological {' '.join([str(node.to_int()) for node in nodes])}")
+        _ => println("incoming topological missing")
+    limited_order = topological_order(
+        reader,
+        Direction.Outgoing,
+        TraversalBudget(max_nodes=1, max_edges=8, max_bytes=64, max_retained=16),
+    )
+    match limited_order.outcome:
+        OrderOutcome.Limited(reason, Some(continuation)) =>
+            resumed = continuation.resume(full)
+            match resumed.outcome:
+                OrderOutcome.Ordered(nodes) =>
+                    println(
+                        f"topological limited {reason.value()} resume {' '.join([str(node.to_int()) for node in nodes])}",
+                    )
+                _ => println("topological resume missing")
+        _ => println("topological limit missing")
+
+    components = strongly_connected_components(reader, Direction.Outgoing, full)
+    match components.outcome:
+        ComponentsOutcome.Components(values) =>
+            labels = [str(component.nodes[0].to_int()) for component in values]
+            flags = [str(component.cyclic) for component in values]
+            println(f"components {';'.join(labels)} cyclic {' '.join(flags)}")
+        _ => println("components missing")
+    limited_components = strongly_connected_components(
+        reader,
+        Direction.Outgoing,
+        TraversalBudget(max_nodes=1, max_edges=8, max_bytes=64, max_retained=16),
+    )
+    match limited_components.outcome:
+        ComponentsOutcome.Limited(reason, Some(continuation)) =>
+            resumed = continuation.resume(full)
+            match resumed.outcome:
+                ComponentsOutcome.Components(values) =>
+                    labels = [str(component.nodes[0].to_int()) for component in values]
+                    println(f"components limited {reason.value()} resume {';'.join(labels)}")
+                _ => println("components resume missing")
+        _ => println("components limit missing")
+
+    mut cyclic = RelationGraph[str, str]()
+    cycle_first = cyclic.add_node("first")
+    cycle_second = cyclic.add_node("second")
+    cycle_third = cyclic.add_node("third")
+    if cyclic.add_edge(cycle_first, cycle_second, "one").is_err():
+        return Ok(None)
+    if cyclic.add_edge(cycle_second, cycle_third, "two").is_err():
+        return Ok(None)
+    if cyclic.add_edge(cycle_third, cycle_first, "three").is_err():
+        return Ok(None)
+    cycle_reader = cyclic.read_view()
+    cycle = topological_order(cycle_reader, Direction.Outgoing, full)
+    match cycle.outcome:
+        OrderOutcome.Cyclic(path) =>
+            println(
+                f"cycle {' '.join([str(node.to_int()) for node in path.nodes])} edges {len(path.edges)}",
+            )
+        _ => println("cycle missing")
+    cycle_components = strongly_connected_components(cycle_reader, Direction.Outgoing, full)
+    match cycle_components.outcome:
+        ComponentsOutcome.Components(values) =>
+            component = values[0]
+            println(
+                f"cycle component {' '.join([str(node.to_int()) for node in component.nodes])} cyclic {component.cyclic}",
+            )
+        _ => println("cycle component missing")
     return Ok(None)
 
 
@@ -279,3 +393,6 @@ def main() -> None:
     match exercise_traversal():
         Ok(_) => pass
         Err(_) => println("traversal error")
+    match exercise_global_traversal():
+        Ok(_) => pass
+        Err(_) => println("global traversal error")
