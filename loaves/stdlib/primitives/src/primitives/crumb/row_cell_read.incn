@@ -150,7 +150,7 @@ def cell_inner(
 ) -> Result[Value, RowError]:
     """Only the admitted written selector chooses interpretation; no application constructor is invoked."""
     match node:
-        TypeNode.Scalar(name) => return scalar(name, view, origin, budget)
+        TypeNode.Scalar(kind) => return scalar(kind, view, origin, budget)
         TypeNode.Decimal(precision, scale) => return decimal(precision, scale, view, origin, budget)
         TypeNode.Nominal(_, _, _) =>
             key = closed_selector(node, budget).map_err((e) => primitive(e, origin, RowFailure.InvalidSelector))?

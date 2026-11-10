@@ -3,7 +3,7 @@
 from std.primitives.crumb import Budget
 from std.primitives.crumb.hashes import value_hash, model_hash, description_hash, seal_hash, verify_description_digest
 from std.primitives.crumb.values import Value, ValueField, MapEntry, Metadata, MetadataEntry, Projection
-from std.primitives.crumb.types import AbsentPolicy, TypeNode, NominalKind
+from std.primitives.crumb.types import AbsentPolicy, NominalKind, ScalarKind, TypeNode
 from std.primitives.crumb.ordering import order_values
 from std.primitives.hex import hexlify
 
@@ -148,7 +148,7 @@ def test_invalid_shapes_refuse_without_partial_digest() -> Result[None, str]:
     malformed = [
         Value.Some([]),
         Value.Float(16, b"00"),
-        Value.Union(TypeNode.Scalar("i64"), []),
+        Value.Union(TypeNode.Scalar(ScalarKind.I64), []),
         Value.Enum(b"short", []),
         Value.Integer("-0"),
         Value.Decimal("1", "+2"),
