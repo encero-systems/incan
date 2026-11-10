@@ -132,7 +132,7 @@ def check_selector(value: JsonValue, mut budget: Budget) -> Result[bool, str]:
         Some(value) => value
         None => return Err("unknown nominal kind")
 
-    node = TypeNode.Nominal(kind, hex_bytes(text(input, "declaration_hex")?)?, arguments)
+    node = TypeNode.Nominal(kind, "", Some(hex_bytes(text(input, "declaration_hex")?)?), arguments)
     if let Some(parameters) = input.get("parameter_names"):
         count = len(parameters.expect_array().map_err((error) => error.message())?)
         check_arity(node, count).map_err((error) => error.message())?

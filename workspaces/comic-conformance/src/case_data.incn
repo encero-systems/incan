@@ -248,7 +248,7 @@ pub def selector_text(spelling: str) -> Result[TypeNode, str]:
             return Err("malformed corpus selector arguments")
         for part in split_arguments(tail[1:len(tail) - 1])?:
             arguments.append(selector_text(part)?)
-    return Ok(TypeNode.Nominal(kind, identity, arguments))
+    return Ok(TypeNode.Nominal(kind, "", Some(identity), arguments))
 
 
 def split_arguments(contents: str) -> Result[list[str], str]:

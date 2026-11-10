@@ -216,7 +216,12 @@ def check_nested_inner(node: TypeNode, ordered: bool, path: str, mut budget: Bud
         .charge_elements(1)
         .map_err((error) => AdmissionError(kind=AdmissionFailure.ResourceLimit, path=path, cause=Some(error)))?
     match node:
-        TypeNode.Nominal(_, _, _) => return Err(AdmissionError(kind=AdmissionFailure.MissingDescription, path=path))
+        TypeNode.Nominal(_, _, _, _) => return Err(AdmissionError(kind=AdmissionFailure.MissingDescription, path=path))
+        TypeNode.Reference(items) =>
+            if len(items) != 1:
+                return Err(AdmissionError(kind=AdmissionFailure.InvalidType, path=path))
+            selector_spelling(items[0], budget).map_err((error) => type_failure(path, error))?
+            return Ok(None)
         TypeNode.Bound(items) =>
             if len(items) != 2:
                 return Err(AdmissionError(kind=AdmissionFailure.InvalidType, path=path))
@@ -273,11 +278,11 @@ def compatible_inner(
     """Nominal equality precedes nested shape adaptation; local recursion keys are not identity."""
     match source:
         TypeNode.Underlying(items) => return compatible(items[0], target, path, active, budget)
-        TypeNode.Nominal(_, _, _) => return Err(AdmissionError(kind=AdmissionFailure.MissingDescription, path=path))
+        TypeNode.Nominal(_, _, _, _) => return Err(AdmissionError(kind=AdmissionFailure.MissingDescription, path=path))
         _ => pass
     match target:
         TypeNode.Underlying(items) => return compatible(source, items[0], path, active, budget)
-        TypeNode.Nominal(_, _, _) => return Err(AdmissionError(kind=AdmissionFailure.MissingDescription, path=path))
+        TypeNode.Nominal(_, _, _, _) => return Err(AdmissionError(kind=AdmissionFailure.MissingDescription, path=path))
         TypeNode.Container(ContainerKind.Option, items) =>
             match source:
                 TypeNode.Container(ContainerKind.Option, original) =>
@@ -332,6 +337,19 @@ def compatible_inner(
                         for index in range(len(items)):
                             steps.append(compatible(original[index], items[index], path, active, budget)?)
                         return Ok(ValuePlan.Container(kind, steps))
+                _ => pass
+        TypeNode.Reference(original) =>
+            match target:
+                TypeNode.Reference(items) =>
+                    if len(original) == 1 and len(items) == 1:
+                        source_spelling = selector_spelling(original[0], budget).map_err(
+                            (error) => type_failure(path, error),
+                        )?
+                        target_spelling = selector_spelling(items[0], budget).map_err(
+                            (error) => type_failure(path, error),
+                        )?
+                        if source_spelling == target_spelling:
+                            return Ok(ValuePlan.Identity)
                 _ => pass
         TypeNode.Scalar(name) =>
             match target:

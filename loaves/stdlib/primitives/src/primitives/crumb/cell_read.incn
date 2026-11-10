@@ -9,7 +9,7 @@ from crate.primitives.crumb.description_dictionary import Dictionary, slot
 from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive, in_field, in_variant
 from crate.primitives.crumb.encoding_index import CellIndex, RecordIndex, read_record_index, read_index, selected, bit
 from crate.primitives.crumb.scalar_read import scalar, decimal
-from crate.primitives.crumb.types import TypeNode, NominalKind, ContainerKind, AbsentPolicy
+from crate.primitives.crumb.types import TypeNode, NominalKind, ContainerKind, AbsentPolicy, ScalarKind
 from crate.primitives.crumb.values import Value, ValueField, MapEntry, Projection
 from crate.primitives.views import MappedView
 
@@ -152,7 +152,11 @@ def cell_inner(
     match node:
         TypeNode.Scalar(kind) => return scalar(kind, view, origin, budget)
         TypeNode.Decimal(precision, scale) => return decimal(precision, scale, view, origin, budget)
-        TypeNode.Nominal(_, _, _) =>
+        TypeNode.Reference(arguments) =>
+            if len(arguments) != 1:
+                return Err(failure(BinaryFailure.InvalidSelector, origin))
+            return scalar(ScalarKind.Reference, view, origin, budget)
+        TypeNode.Nominal(_, _, _, _) =>
             key = closed_selector(node, budget).map_err((e) => primitive(e, origin, BinaryFailure.InvalidSelector))?
             position = slot(dictionary, key, budget).map_err((e) => primitive(e, origin, BinaryFailure.InvalidSelector))?
             decoded = read_root(dictionary.entries[position], view, origin, dictionary, budget)?

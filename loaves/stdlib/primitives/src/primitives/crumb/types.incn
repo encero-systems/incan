@@ -72,7 +72,7 @@ pub enum TypeNode:
     """
     A finite description graph; Recursive names an active definition, never executable code.
 
-    Nominal carries an externally admitted declaration identity and its concrete arguments.
+    Nominal carries a display path, an optional externally admitted declaration identity and its concrete arguments.
     It describes a selector, not the nominal declaration's structural fields. Record and Enum
     carry those fields explicitly for structural folding. Underlying folds an alias or newtype;
     its list contains exactly one target, following the standard recursive TypeRef carrier.
@@ -83,7 +83,8 @@ pub enum TypeNode:
     Scalar(ScalarKind)
     Decimal(int, int)
     Container(ContainerKind, list[TypeNode])
-    Nominal(NominalKind, bytes, list[TypeNode])
+    Nominal(NominalKind, str, Option[bytes], list[TypeNode])
+    Reference(list[TypeNode])
     Bound(list[TypeNode])
     Record(str, list[FieldShape])
     Enum(str, list[VariantShape])
