@@ -297,6 +297,8 @@ pub model ModelDeclaration:
     pub checked_deserialize: str = ""
     # None grants no generated hook; an empty list is an authorized empty metadata surface.
     pub reflection_metadata: Option[list[FieldMetadata]] = None
+    # The checked primitive declaration owns generated field records. Equal-spelled user records do not gain this role.
+    pub field_metadata_carrier: bool = false
     # Exact source comparison symbols: equality alone, or equality followed by lt/le/gt/ge. Empty grants no bridge.
     pub comparison_methods: list[str] = []
     # A source adoption grants native authority only after every standard slot and the poll ABI are checked.

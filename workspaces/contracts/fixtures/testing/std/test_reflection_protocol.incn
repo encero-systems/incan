@@ -15,6 +15,7 @@ from std.primitives.reflection import (
     Walker,
 )
 from std.reflection import (
+    FieldInfo as PublicFieldInfo,
     DecimalValue as PublicDecimalValue,
     DecimalValueError as PublicDecimalValueError,
     ShapeInfo as PublicShapeInfo,
@@ -23,6 +24,13 @@ from std.reflection import (
 const NO_RENAMES: FrozenList[FrozenStr] = []
 const NO_FIELDS: FrozenList[FieldInfo] = []
 const NO_VARIANTS: FrozenList[VariantInfo] = []
+const NO_EXTRA: FrozenDict[FrozenStr, FrozenStr] = {}
+
+
+model ReflectedCount:
+    """The generated metadata and explicit records share an Incan-owned layout."""
+
+    pub count: int
 
 
 class StoredText with Walk:
@@ -67,6 +75,21 @@ def test_public_recursive_walker() -> Result[None, str]:
     assert walker.values == ["first", "second"]
     shape: PublicShapeInfo = ShapeInfo.of[StoredText]()
     assert shape.spelling == "string"
+    metadata: PublicFieldInfo = ReflectedCount.__fields__()[0]
+    expected = FieldInfo(
+        name="count",
+        identity=metadata.identity,
+        canonical=true,
+        renamed_from=NO_RENAMES,
+        alias=None,
+        description=None,
+        wire_name="count",
+        type_name="int",
+        has_default=false,
+        extra=NO_EXTRA,
+    )
+    assert metadata == expected
+    assert str(FieldInfo.__fields__()[0].name) == "name"
     return Ok(None)
 
 

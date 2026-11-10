@@ -2,7 +2,7 @@
 
 use crate::ast_build::{
     RUST_OPTION_NONE_SYMBOL, RUST_OPTION_SOME_SYMBOL, block, expression, expression_statement, global_path, ident,
-    local, path_ty,
+    local,
 };
 use crate::error::PlanError;
 use crate::plan::{CalleeKind, FieldMetadata, ModelDeclaration, Plan, PlanType, TerminatorKind};
@@ -17,11 +17,11 @@ pub fn name(owner: i64) -> String {
     format!("__incan_field_metadata_{owner}")
 }
 
-/// Validate the selected source declaration and the native SDK FieldInfo output before generating any accessor.
+/// Validate the source declaration and the checked Incan metadata role before generating any accessor.
 pub fn result(plan: &Plan, owner: i64, info: i64) -> Result<PlanType, PlanError> {
     let refused = || PlanError::Invalid {
         function: name(owner),
-        reason: "unsupported field metadata declaration or SDK result identity".into(),
+        reason: "unsupported field metadata declaration or checked result identity".into(),
     };
     let model = usize::try_from(owner)
         .ok()
@@ -33,7 +33,7 @@ pub fn result(plan: &Plan, owner: i64, info: i64) -> Result<PlanType, PlanError>
         .and_then(|index| plan.models.get(index))
         .ok_or_else(refused)?;
     if (model.library_item.is_empty() && !model.derives.iter().any(|derive| derive == "FieldInfo"))
-        || metadata.library_item != "incan_std_primitives::reflection::FieldInfo"
+        || !metadata.field_metadata_carrier
         || fields
             .iter()
             .any(|field| !model.fields.iter().any(|slot| slot.name == field.name))
@@ -62,7 +62,14 @@ pub fn items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> 
             continue;
         }
         let index = usize::try_from(*owner).map_err(|_| PlanError::UnknownCallee(name(*owner)))?;
-        items.push(storage(*owner, &plan.models[index], span));
+        let info_index = usize::try_from(*info).map_err(|_| PlanError::UnknownCallee(name(*owner)))?;
+        items.push(storage(
+            *owner,
+            &plan.models[index],
+            *info,
+            &plan.models[info_index],
+            span,
+        ));
         items.push(accessor(*owner, &output, span));
     }
     Ok(items)
@@ -89,23 +96,20 @@ fn storage_name(owner: i64) -> String {
 }
 
 /// Construct the records in an explicit static initializer; const-function calls do not promote runtime temporaries.
-fn storage(owner: i64, model: &ModelDeclaration, span: Span) -> Box<ast::Item> {
+fn storage(owner: i64, model: &ModelDeclaration, info: i64, metadata: &ModelDeclaration, span: Span) -> Box<ast::Item> {
     let entries = model
         .reflection_metadata
         .as_ref()
         .into_iter()
         .flatten()
-        .map(|field| entry(field, span))
+        .map(|field| entry(field, &metadata.name, span))
         .collect();
     let array = expression(ast::ExprKind::Array(entries), span);
     let slice = expression(
         ast::ExprKind::AddrOf(ast::BorrowKind::Ref, ast::Mutability::Not, array),
         span,
     );
-    let element = path_ty(
-        global_path(&["incan_std_primitives", "reflection", "FieldInfo"], span),
-        span,
-    );
+    let element = crate::declarations::ty(&PlanType::Model(info, metadata.name.clone()), span);
     let ty = Box::new(ast::Ty {
         id: ast::DUMMY_NODE_ID,
         kind: ast::TyKind::Ref(
@@ -161,8 +165,12 @@ fn accessor_item(owner: i64, output: &PlanType, value: Box<ast::Expr>, span: Spa
     )
 }
 
-/// Reproduce the frozen legacy record exactly; extra metadata is currently an empty frozen dictionary there too.
-fn entry(field: &FieldMetadata, span: Span) -> Box<ast::Expr> {
+/// Initialize the Incan-declared record; native type checking verifies these facts against its actual field layout.
+fn entry(field: &FieldMetadata, carrier: &str, span: Span) -> Box<ast::Expr> {
+    let mut carrier_path = ast::Path::from_ident(ident("crate", span));
+    carrier_path
+        .segments
+        .push(ast::PathSegment::from_ident(ident(carrier, span)));
     let values = [
         ("name", frozen_text(&field.name, span)),
         ("identity", frozen_bytes(&field.record_identity, span)),
@@ -200,7 +208,7 @@ fn entry(field: &FieldMetadata, span: Span) -> Box<ast::Expr> {
     expression(
         ast::ExprKind::Struct(Box::new(ast::StructExpr {
             qself: None,
-            path: global_path(&["incan_std_primitives", "reflection", "FieldInfo"], span),
+            path: carrier_path,
             fields: values
                 .into_iter()
                 .map(|(name, value)| ast::ExprField {

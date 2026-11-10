@@ -244,7 +244,7 @@ pub enum CalleeKind:
     ClosureBody(str, int)
     # A validated bridge transfers a boxed callable into the SDK's cloneable immutable environment carrier.
     SharedCallableBody(list[PlanType])
-    # The exact declaration owner and native FieldInfo carrier of a checked generated metadata hook.
+    # The exact declaration owner and Incan-owned carrier of a checked generated metadata hook.
     FieldMetadata(int, int)
     # A constructor and lifted body for a consuming environment, forwarded by value exactly once.
     ClosureBodyOnce(str, int)
