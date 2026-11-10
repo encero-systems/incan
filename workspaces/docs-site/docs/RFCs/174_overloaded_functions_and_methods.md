@@ -143,10 +143,34 @@ handler = writer.write                           # refused: `write` has two over
 ### Distinct overloads
 
 - For calls using only positional arguments, an overload accepts a range of counts: from the number of its parameters without default values to the number of all its parameters, or with no upper bound when it has `*args`. This range is used for declaration-conflict checks below; it is not a minimum positional-argument requirement on a call that also supplies named arguments.
-- Two overloads in one set conflict when there is a count that both accept and their parameter types are the same at every position up to that count. The later declaration is refused, and the diagnostic labels the earlier one. This check must preserve RFC 025's exception for methods implementing distinct instantiations of the same generic trait: those implementations may share parameter types and differ in their result types, as specified under "Methods and trait instantiations".
+- Two overloads in one set conflict when there is a count that both accept and their parameter types are the same at every position up to that count. The later declaration is refused, and the diagnostic labels the earlier one. There is one fixed-versus-variadic exception: when exactly one declaration has `*args`, a shared count does not cause a conflict if at least one supplied position binds to an ordinary parameter in the fixed declaration and to `*args` in the variadic declaration. The fixed-parameter preference below resolves that overlap. A shared count with no such position still conflicts; merely adding an unused rest parameter does not distinguish two declarations. This check must preserve RFC 025's exception for methods implementing distinct instantiations of the same generic trait: those implementations may share parameter types and differ in their result types, as specified under "Methods and trait instantiations".
 - Types compare after aliases resolve. A newtype is its own type. Type parameters compare by their position in the type-parameter list.
 - Two overloads with different numbers of type parameters never conflict, because a call's explicit type arguments select by that number.
 - Parameter names never make two overloads distinct. Return types do not distinguish ordinary overloads; only the same-generic-trait exception above permits that distinction.
+
+### Variadic capture and fixed parameters
+
+The concise spelling `*values: int` stays unchanged: `int` describes each supplied argument. It is syntax sugar for a rest parameter whose collected value is a homogeneous tuple of integers, including an empty tuple when no values are supplied. The tuple's length may be determined at runtime; this does not require a separate overload for each length. The checked signature retains both the element type and the rest-parameter kind, rather than treating the declaration as one fixed `int` parameter or one fixed tuple parameter.
+
+```incan
+def total(value: int) -> int:
+    return value
+
+def total(*values: int) -> int:
+    mut result: int = 0
+    for value in values:
+        result += value
+    return result
+
+
+total(5)          # fixed parameter wins; both declarations are valid
+total(5, 7, 9)    # variadic overload; values is (5, 7, 9)
+total()           # variadic overload; values is ()
+```
+
+The tuple describes the collected value inside the function, not an extra tuple argument at the call site. When the element type is itself a tuple, each argument is a tuple and the capture is a tuple of those tuples; the annotation still describes one element. This clarification introduces no alternative container-annotation spelling. `**kwargs` retains RFC 038's dictionary capture.
+
+This section amends [RFC 038](closed/implemented/038_variadic_positional_args_and_keyword_capture.md), which remains closed as Implemented and records the original list-based capture. Tuple capture is proposed here, not claimed as already shipped. Existing iteration and indexing retain their meaning; mutation of the captured container and APIs requiring that container to be a list need an explicit list construction. The tuple does not make each contained value deeply immutable. Existing call-site unpacking and shape checks remain governed by RFC 038.
 
 ### Selecting an overload
 
@@ -227,7 +251,7 @@ For example, implementations of `Convert[int]` and `Convert[str]` may both decla
 
 ### Compatibility
 
-- Every program 0.5.1 accepted with same-name functions or methods stays valid, except one where two overloads conflict under "Distinct overloads". Such a pair could never be called unambiguously at the count they share, and the refusal names both declarations.
+- Apart from the variadic capture amendment above, every program 0.5.1 accepted with same-name functions or methods stays valid, except one where two overloads conflict under "Distinct overloads". Such a pair could never be called unambiguously at the count they share, and the refusal names both declarations.
 - The 0.6 refusal of ordinary same-name methods (#2890) is withdrawn.
 - RFC 054's `read_csv` and `read_csv[T]` pair works as that RFC writes it.
 
@@ -250,8 +274,8 @@ For example, implementations of `Convert[int]` and `Convert[str]` may both decla
 ## Layers affected
 
 - **Parser:** none. Same-name declarations already parse.
-- **Typechecker:** overload sets, conflict checks, selection at calls, partials and references, and the method-set merge with trait adoptions.
-- **Lowering / IR emission:** each overload lowers to its own function, and each call reaches the overload it selected.
+- **Typechecker:** overload sets, conflict checks, selection at calls, partials and references, the method-set merge with trait adoptions, and tuple typing for positional rest captures.
+- **Lowering / IR emission:** each overload lowers to its own function, and each call reaches the overload it selected. Positional rest captures construct the homogeneous tuple described above, including when unpacked inputs have runtime lengths.
 - **Stdlib:** none.
 - **CLI / tooling:** checked API documentation and library metadata list each overload.
 - **LSP / formatter:** hover, go-to-definition and signature help follow the selected overload, and completion lists every overload. The formatter is unchanged.
