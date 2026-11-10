@@ -1,0 +1,146 @@
+"""Decide whether unattended preparation may run compile-time code from the selected local Loaves."""
+
+from std.fs import Path
+from intake import ManifestReader, read_project
+from loaf_identity import is_adopted_scope
+from loaf_local_graph import LocalFacet
+from rust_manifest import rust_facet
+from trust_policy import coverage, load
+from toolchain import installation, toolchain_directory
+from registry_units import RegistryUnits
+
+
+pub const MISSING_TRUST_CODE: str = "INCAN-T0134"
+
+
+pub model MissingTrust:
+    """One selected Loaf whose compile-time code has no covering trust entry."""
+
+    pub loaf: str
+    pub project: str
+
+
+pub model TrustDecision:
+    """Coverage evidence and every selected compile-time Loaf still missing trust."""
+
+    pub covered_by: Dict[str, str] = {}
+    pub missing: list[MissingTrust] = []
+
+    pub def stop(self) -> str:
+        """Render one stable stop naming every uncovered Loaf and the entry that can cover it."""
+        if len(self.missing) == 0:
+            return ""
+        mut lines = [f"error[{MISSING_TRUST_CODE}]: unattended preparation stopped before untrusted compile-time code"]
+        for missing in self.missing:
+            publisher = publisher_of(missing.loaf)
+            if publisher != "":
+                lines.append(f"  publisher `{publisher}`, Loaf `{missing.loaf}`")
+                lines.append(f"  trust with `oven trust add publisher {publisher}`")
+            elif is_adopted_loaf(missing.loaf):
+                lines.append(f"  Loaf `{missing.loaf}`")
+                lines.append(f"  trust with `oven trust add loaf {missing.loaf}`")
+            else:
+                lines.append(f"  Loaf `{missing.loaf}` at `{missing.project}`")
+                lines.append(f"  trust with `oven trust add project {missing.project}`")
+        return "\n".join(lines)
+
+
+pub def decide(
+    facets: list[LocalFacet],
+    project_root: str,
+    unattended: bool,
+    reader: ManifestReader,
+) -> Result[TrustDecision, str]:
+    """
+    Decide every selected local facet that can run a procedural macro or vocabulary registration.
+
+    Explicit requests retain their existing execution and record that authority. Unattended preparation consults
+    only Oven-controlled policy, with the consuming root supplied so project-owned configuration is refused.
+    """
+    mut result = TrustDecision()
+    mut seen: list[str] = []
+    mut selected: list[MissingTrust] = []
+    for facet in facets:
+        declared = rust_facet(facet.project, false, reader)?
+        project = read_project(Path(facet.project), reader).map_err((error) => error.message())?
+        if declared.kind != "proc-macro" and project.intent.vocab_entry == None:
+            continue
+        loaf = project.intent.name
+        if loaf in seen:
+            continue
+        seen.append(loaf)
+        selected.append(MissingTrust(loaf=loaf, project=facet.project))
+    if not unattended:
+        for item in selected:
+            result.covered_by[item.loaf] = "explicit-request"
+        return Ok(result)
+    if len(selected) == 0:
+        return Ok(result)
+    policy = load(Some(Path(project_root)))?
+    for item in selected:
+        match coverage(policy, item.loaf, Some(item.project), None, None)?:
+            Some(label) => result.covered_by[item.loaf] = label
+            None => result.missing.append(item)
+    return Ok(result)
+
+
+pub def cover_loaf(
+    loaf: str,
+    source_root: Option[str],
+    artifact: Option[Path],
+    project_root: str,
+    unattended: bool,
+) -> Result[Option[str], str]:
+    """Name the authority covering one selected worker artifact without consulting policy for explicit requests."""
+    if not unattended:
+        return Ok(Some("explicit-request"))
+    policy = load(Some(Path(project_root)))?
+    installed = installation(toolchain_directory()?)?
+    return coverage(policy, loaf, source_root, artifact, Some(installed))
+
+
+pub def missing_stop(loaf: str, project: str) -> str:
+    """Render the stable stop for a provider discovered only after its published manifest was read."""
+    return TrustDecision(missing=[MissingTrust(loaf=loaf, project=project)]).stop()
+
+
+pub def decide_registry(
+    registry: RegistryUnits,
+    project_root: str,
+    unattended: bool,
+) -> Result[TrustDecision, str]:
+    """Decide selected registry procedural-macro artifacts before a compiler process could load them."""
+    mut result = TrustDecision()
+    mut seen: list[str] = []
+    for unit in registry.units:
+        if unit.kind != "proc-macro" or unit.loaf in seen:
+            continue
+        seen.append(unit.loaf)
+        covered = cover_loaf(unit.loaf, None, Some(Path(unit.artifact)), project_root, unattended)?
+        match covered:
+            Some(label) => result.covered_by[unit.loaf] = label
+            None => result.missing.append(MissingTrust(loaf=unit.loaf, project=project_root))
+    return Ok(result)
+
+
+pub def combine(left: TrustDecision, right: TrustDecision) -> TrustDecision:
+    """Combine local and registry decisions without changing either authority label."""
+    mut result = left
+    for loaf in right.covered_by.keys():
+        result.covered_by[loaf] = right.covered_by[loaf]
+    result.missing = result.missing + right.missing
+    return result
+
+
+def publisher_of(loaf: str) -> str:
+    """Return a publisher scope only when RFC 117 permits one entry to cover this Loaf."""
+    parts = loaf.split("/")
+    if len(parts) != 2 or is_adopted_scope(parts[0]):
+        return ""
+    return parts[0]
+
+
+def is_adopted_loaf(loaf: str) -> bool:
+    """Whether one selected Loaf belongs to an adoption scope that requires exact-Loaf trust."""
+    parts = loaf.split("/")
+    return len(parts) == 2 and is_adopted_scope(parts[0])

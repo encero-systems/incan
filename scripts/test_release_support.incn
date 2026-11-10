@@ -6,12 +6,17 @@ from std.tempfile import TemporaryDirectory
 from release_support import (
     BaselineReport,
     Counts,
+    append_bytes,
     check_baseline,
     parse_release_options,
     parse_verification_options,
     release_receipt,
     require_candidate_census,
     same_bytes,
+    shared_relocated_sysroot,
+    tree_bytes,
+    tree_digest,
+    verification_program,
 )
 
 const SHA: str = "0123456789abcdef0123456789abcdef01234567"
@@ -28,20 +33,25 @@ total: 8 passed, 0 failed, 0 pending
 
 
 def test_release_arguments_keep_fixed_point_and_process_budgets_explicit() -> Result[None, str]:
-    """The two operands and optional fixed-point, jobs, and timeout choices parse in any option position."""
-    options = parse_release_options(["--jobs", "6", SHA, "out", "--prove-fixed-point", "--timeout", "900"])?
+    """The two operands and optional retention, proof, jobs, and timeout choices parse in any option position."""
+    options = parse_release_options(
+        ["--jobs", "6", SHA, "out", "--keep-trees", "--prove-fixed-point", "--timeout", "900"],
+    )?
     assert options.source_sha == SHA
     assert options.output.0 == "out"
+    assert options.keep_trees
     assert options.prove_fixed_point
     assert options.jobs == 6
     assert options.timeout_seconds == 900
-    assert parse_release_options([SHA, "out"])?.jobs == 4
+    defaults = parse_release_options([SHA, "out"])?
+    assert not defaults.keep_trees
+    assert defaults.jobs == 4
     return Ok(None)
 
 
 def test_release_arguments_refuse_ambiguous_or_unbounded_invocations() -> Result[None, str]:
     """Missing operands, abbreviated SHAs, unknown options, and nonpositive budgets fail closed."""
-    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--prove-fixed-point] [--jobs N] [--timeout SECONDS]"
+    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--jobs N] [--timeout SECONDS]"
     assert refused_release(["deadbeef", "out"]) == "SHA must be a full lowercase source commit"
     assert refused_release([SHA, "out", "--fast"]) == "unknown option `--fast`"
     assert refused_release([SHA, "out", "--jobs", "0"]) == "--jobs needs a positive integer"
@@ -99,6 +109,7 @@ def test_receipt_keeps_refusal_evidence_distinct_from_success() -> Result[None, 
         "complete",
         0,
         42,
+        JsonValue.object({"total": JsonValue.int(99)}),
         {"incan": JsonValue.string("abc")},
         "native-fixed-point",
         JsonValue.object({"pass": JsonValue.int(8)}),
@@ -113,6 +124,10 @@ def test_receipt_keeps_refusal_evidence_distinct_from_success() -> Result[None, 
         .and_then((value) => value.expect_str())
         .map_err((error) => error.message())?
     assert compiler_build == "native-fixed-point"
+    measured = receipt.require("tree_bytes").map_err((error) => error.message())?
+    total = measured.require("total").map_err((error) => error.message())?
+    total_bytes = total.expect_int().map_err((error) => error.message())?
+    assert total_bytes == 99
     assert receipt.require("baseline_parity").and_then((value) => value.expect_bool()).map_err(
         (error) => error.message(),
     )?
@@ -129,6 +144,86 @@ def test_byte_comparison_reads_complete_content() -> Result[None, str]:
     assert same_bytes(left, right)?
     right.write_bytes(b"alpHa").map_err((error) => error.message())?
     assert not same_bytes(left, right)?
+    return Ok(None)
+
+
+def test_tree_measurement_walks_regular_files_once_and_records_bytes() -> Result[None, str]:
+    """Tree evidence measures bytes, hashes content, and reuses only a verified read-only relocated copy."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    rustup = temporary.path().joinpath("rustup")
+    tree = rustup.joinpath("toolchains/tree")
+    tree.joinpath("nested").mkdir(true, true).map_err((error) => error.message())?
+    rustup.joinpath("update-hashes").mkdir(true, true).map_err((error) => error.message())?
+    rustup
+        .joinpath("update-hashes/tree")
+        .write_text("pinned\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    tree.joinpath("one").write_bytes(b"one").map_err((error) => error.message())?
+    tree.joinpath("nested/two").write_bytes(b"two!!").map_err((error) => error.message())?
+    tree.joinpath("alias").symlink_to(tree.joinpath("nested/two")).map_err((error) => error.message())?
+    assert tree_bytes(tree)? == 8
+
+    timings = temporary.path().joinpath("timings.tsv")
+    append_bytes(timings, "build-home", 8)?
+    assert timings.read_text("utf-8", "strict").map_err((error) => error.message())? == "bytes/build-home\t8\n"
+
+    identity = tree_digest(tree)?
+    cache = temporary.path().joinpath("cache")
+    home = shared_relocated_sysroot(tree, cache)?
+    cached = home.joinpath("toolchains/tree/nested/two")
+    assert home.name() == identity
+    settings = home.joinpath("settings.toml").read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert settings == "version = \"12\"\n\n[overrides]\n"
+    assert home.joinpath("update-hashes/tree").read_text("utf-8", "strict").map_err((error) => error.message())? == "pinned\n"
+    assert cached.read_bytes().map_err((error) => error.message())? == b"two!!"
+    match cached.write_bytes(b"changed"):
+        Ok(_) => return Err("the shared relocated tree remained writable")
+        Err(_) => pass
+    assert shared_relocated_sysroot(tree, cache)?.0 == home.0
+    rustup
+        .joinpath("update-hashes/tree")
+        .write_text("changed\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    match shared_relocated_sysroot(tree, cache):
+        Ok(_) => return Err("a stale Rust update hash was reused")
+        Err(message) =>
+            assert message.contains("update hash disagrees"), message
+    rustup
+        .joinpath("update-hashes/tree")
+        .write_text("pinned\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+
+    make_tree_writable(cache)?
+    cached.write_bytes(b"changed").map_err((error) => error.message())?
+    match shared_relocated_sysroot(tree, cache):
+        Ok(_) => return Err("a damaged shared relocated tree was reused")
+        Err(message) =>
+            assert message.contains("cached relocated tree digest disagrees"), message
+    make_tree_writable(cache)?
+    return Ok(None)
+
+
+def test_installed_verification_uses_only_the_clean_checkout() -> Result[None, str]:
+    """An ignored launching-checkout fixture cannot enter verification through the selected program source."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    launching = temporary.path().joinpath("launching")
+    verification = temporary.path().joinpath("verification-source")
+    for source in [launching, verification]:
+        source.joinpath("scripts").mkdir(true, true).map_err((error) => error.message())?
+        source
+            .joinpath("scripts/verify_installation.incn")
+            .write_text("# verifier\n", "utf-8", "strict", None)
+            .map_err((error) => error.message())?
+        source.joinpath("workspaces/contracts/fixtures").mkdir(true, true).map_err((error) => error.message())?
+    ignored = launching.joinpath("workspaces/contracts/fixtures/project/example/target/ignored")
+    ignored.parent().mkdir(true, true).map_err((error) => error.message())?
+    ignored.write_text("stale\n", "utf-8", "strict", None).map_err((error) => error.message())?
+
+    program = verification_program(verification)?
+    selected_source = program.parent().parent()
+    assert program.0 == verification.joinpath("scripts/verify_installation.incn").0
+    assert ignored.is_file()
+    assert not selected_source.joinpath("workspaces/contracts/fixtures/project/example/target/ignored").exists()
     return Ok(None)
 
 
@@ -151,3 +246,11 @@ def candidate_refusal(reference: &BaselineReport, candidate: &BaselineReport) ->
     match require_candidate_census(reference, candidate):
         Ok(_) => return "accepted"
         Err(message) => return message
+
+
+def make_tree_writable(root: Path) -> Result[None, str]:
+    """Restore temporary cache permissions so the test can mutate and remove its fixture."""
+    for entry in root.rglob("*").map_err((error) => error.message())?:
+        entry.chmod(false).map_err((error) => error.message())?
+    root.chmod(false).map_err((error) => error.message())?
+    return Ok(None)

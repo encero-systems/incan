@@ -1,6 +1,6 @@
 # CLI reference
 
-An Incan installation provides two commands, `oven` and `incan`, as one program. `oven` is the project command: it runs, checks, tests, builds and describes units, inspects their operational facts, and manages the bakery and resident owners. `incan` is the language command: compiler diagnostics, formatting, semantic inspection, the context server and the toolchain. `incan run`, `incan check`, `incan test` and `incan build` perform the same operation as the `oven` command of the same name: the same unit, profile, features, artifacts and exit status.
+An Incan installation provides two commands, `oven` and `incan`, as one program. `oven` is the project command: it runs, checks, tests, builds and describes units, inspects their operational facts, and manages the bakery and resident owners. `incan` is the language command: compiler diagnostics, formatting, semantic inspection, the context server and the toolchain. Except for explicit direct-source execution, `incan run`, `incan check`, `incan test` and `incan build` perform the same operation as the `oven` command of the same name: the same unit, profile, features, artifacts and exit status.
 
 ## Usage
 
@@ -8,10 +8,11 @@ An Incan installation provides two commands, `oven` and `incan`, as one program.
 oven --help | -h | help
 oven --version
 oven lock [--versions lowest|lowest-direct|newest] [PATH]
+oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE
 oven run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 oven check PATH [--format text|json] [UNIT OPTIONS]
 oven test PATH [UNIT OPTIONS]
-oven describe-unit PATH [UNIT OPTIONS]
+oven describe-unit PATH [--unattended] [UNIT OPTIONS]
 oven build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 oven owner stop
 oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
@@ -20,7 +21,7 @@ oven inspect run ID --proofs
 
 incan --help | -h | help
 incan --version
-incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
+incan run [--direct] PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 incan check PATH [--format text|json] [UNIT OPTIONS]
 incan explain CODE
 incan test PATH [UNIT OPTIONS]
@@ -49,8 +50,11 @@ There is no implicit command or implicit source path. Each name runs only its ow
 | `--no-default-features` | Boolean, false | Disables selection of the root package's `default` feature. |
 | `--all-features` | Boolean, false | Selects every declared root-package feature. |
 | `--locked` | Boolean, false | On `oven run`, `oven build` and `oven test`, refuses a missing lock or any resolution that would change it. |
+| `--direct` | Boolean, false | On `incan run`, runs `PATH` as one source file without Oven planning, even when a Loaf is discovered. |
 
 Unknown features, invalid feature edges and unknown options fail the command. Feature-selection options require an owning project. Unsupported command-option combinations exit `2` before dependency preparation. Unit commands accept one path. Package features are specified in [Project configuration](project_configuration.md#projectfeatures).
+
+`incan run --direct` accepts `--profile`, `--argv0` and program arguments after `--`. It refuses feature selection, substitutions, additional program entries, `--locked` and `--engine-report`.
 
 ## `oven lock`
 
@@ -59,6 +63,14 @@ Resolves the root project at `PATH` and atomically writes its generated [`oven.l
 `--versions` accepts `lowest`, `lowest-direct` or `newest`. Without the option, an existing same-toolchain lock keeps its recorded mode; otherwise the mode is `lowest`. The current compiled-unit resolver applies the mode before its exact-producer and profile tie-breaks.
 
 This command is available only as `oven lock`. `incan lock` is an unknown command.
+
+## `oven trust`
+
+`oven trust list` lists the effective compile-time trust entries and each entry's source. `oven trust add KIND VALUE` and `oven trust remove KIND VALUE` update the user's `config.toml` atomically, where `KIND` is `publisher`, `loaf` or `project`. A publisher value is one package scope; `crates-io` is an adopted scope and accepts only individual Loaf entries. A project value is stored as an absolute project root. A project manifest, workspace or lock file cannot add trust.
+
+The installed toolchain may carry default publisher entries. They are listed as `toolchain VERSION` entries and are removable like other entries. A publisher entry in 0.6 matches the scope name; binding it to the registry-recorded publisher identity requires signed scope-claim records.
+
+Trust controls only whether unattended preparation and the language server may run compile-time code. It does not select or widen that code's execution mode. Explicit `run`, `build` and `test` requests execute as documented for those commands.
 
 ## `oven run`
 
@@ -92,7 +104,7 @@ With `INCAN_ENGINE=records`, only explicit program source files are accepted, wi
 
 ## `oven describe-unit`
 
-Writes the selected source's unit description as a JSON object. Execution-only options are refused.
+Writes the selected source's unit description as a JSON object. Execution-only options are refused. `--unattended` prevents preparation from running compile-time code unless user or organization trust covers its Loaf; the command writes `INCAN-T0134` to standard error when trust is missing and retains the code-free description on standard output.
 
 | Fields | JSON type | Contract |
 | --- | --- | --- |
@@ -109,6 +121,9 @@ Writes the selected source's unit description as a JSON object. Execution-only o
 | `vocab`, `vocab_entry` | String or null | Prepared vocabulary registration path and declared vocabulary entry path. |
 | `vocabulary`, `vocab_desugarer` | Booleans | Whether vocabulary is active and whether this unit supplies its desugarer. |
 | `vocab_admissions` | Array of strings | Admitted vocabulary dependency keys. |
+| `covered_by` | Object of strings | Compile-time Loaf package identities mapped to the trust entry, installed-toolchain digest or `explicit-request` that authorized execution. |
+| `not_prepared_loaves` | Array of strings | Selected Loaf identities not prepared under the unattended trust policy. |
+| `trust_stop` | String | Empty when preparation is complete; otherwise the stable `INCAN-T0134` stop also written to standard error. |
 | `vocab_policy` | String | Vocabulary policy identity. |
 | `externs` | Array of objects | Exact native bindings, each with string `name` and `path`. |
 | `search`, `rust_abi` | Arrays of strings | Additional native search directories and Rust ABI cache paths. |
@@ -193,7 +208,15 @@ A bake whose producer released its claim without sealing has ended. Its staging 
 
 ## Storage policy
 
-`config.toml` in the Incan home may hold a `[storage]` table. Omitting the file, the table or a key selects the default.
+`config.toml` in the Incan home may hold `[trust]` and `[storage]` tables. The read-only organization file is `/Library/Application Support/Incan/config.toml` on macOS and `/etc/incan/config.toml` on Linux. Trust entries from a configuration file inside the consuming project are refused.
+
+| Trust key | Type | Meaning |
+| --- | --- | --- |
+| `publishers` | Array of scope strings | Every Loaf published under each non-adopted scope |
+| `loaves` | Array of Loaf identity strings | The named Loaves only |
+| `projects` | Array of path strings | Compile-time code authored below each project root; relative paths resolve beside the configuration file and `~` resolves through `HOME` |
+
+Omitting `[storage]` or one of its keys selects the storage default.
 
 | Key | Type | Meaning | Default |
 | --- | --- | --- | --- |

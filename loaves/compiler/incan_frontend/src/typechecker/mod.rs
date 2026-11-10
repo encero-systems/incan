@@ -865,6 +865,8 @@ pub struct TypeChecker {
     hash_key_inference: HashKeyInferenceState,
     /// The compiled Loaves this program imports from: its dependencies and the standard packages (DD-0007).
     pub loaves: Arc<LoafIndex>,
+    /// Dependency keys and package names whose artifacts unattended preparation could not safely prepare.
+    not_prepared_loaves: HashSet<String>,
     /// Builtin traits' standard declarations by trait name, read once from the standard package owning each.
     pub(in crate::typechecker) standard_traits: HashMap<String, TraitInfo>,
     /// Internal semantic type cache for dependency exports referenced transitively by imported signatures.

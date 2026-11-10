@@ -77,3 +77,8 @@ pub def select_bakery(requested: str, directory: Result[Path, str]) -> Result[Ba
 pub def installation_catalog() -> Result[Path, str]:
     """The home's installed facts, shared across work bakeries just like its admitted compiler identity."""
     return Ok(home()?.joinpath("bakery"))
+
+
+pub def toolchain_directory() -> Result[Path, str]:
+    """The installed directory of the toolchain this Oven version selects."""
+    return Ok(home()?.joinpath("toolchains").joinpath(TOOLCHAIN))

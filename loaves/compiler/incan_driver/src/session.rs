@@ -131,14 +131,18 @@ impl CompilationSession {
         Self::open(unit, true)
     }
 
-    /// Initialize the shared parser context from Loaf artifacts; only formatting may omit absent manifests.
+    /// Initialize the shared parser context from available Loaf manifests.
+    ///
+    /// Formatting may omit absent manifests, and unattended preparation may retain an untrusted Loaf description
+    /// without its compiled artifacts. A retained checked manifest may still describe inert vocabulary syntax; worker
+    /// admission and semantic imports remain separately gated.
     fn open(unit: &UnitDescription, formatting: bool) -> CliResult<Self> {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::open_session", input = %unit.source.display()).entered();
         let mut deferred = Vec::new();
         for loaf in &unit.loaves {
             let key = if loaf.standard { &loaf.name } else { &loaf.key };
             let manifest = loaf.dir.join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", loaf.name));
-            if formatting
+            if (formatting || unit.not_prepared_loaves.contains(&loaf.name))
                 && !manifest
                     .try_exists()
                     .map_err(|error| CliError::failure(format!("{}: {error}", manifest.display())))?
@@ -431,6 +435,7 @@ impl CompilationSession {
                 self.unit.vocab_admissions.clone(),
                 self.unit.project_root.clone(),
                 self.unit.vocab_policy.clone(),
+                self.unit.covered_by.clone(),
             );
             let expansion = vocab_desugar_pass::desugar_program_vocab_blocks_with_runtime(
                 &mut ast,

@@ -19,6 +19,7 @@ from bakery import bakery, claim, find, seal, staging, view
 from bakery_roots import register_root
 from unit_publication import record_payload, record_verified_payload
 from vocabulary_policy import admit_vocabulary
+from compile_time_trust import cover_loaf, missing_stop
 
 
 pub def prepare_vocabulary(described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
@@ -58,6 +59,15 @@ pub def prepare_vocabulary(described: UnitDescription, toolchain: Toolchain) -> 
         if view_registration(store, identity, directory)?:
             unit.vocab = Some(metadata.0)
             return Ok(unit)
+    if unit.package not in unit.covered_by:
+        match cover_loaf(unit.package, Some(unit.project_root), None, unit.project_root, unit.unattended)?:
+            Some(label) => unit.covered_by[unit.package] = label
+            None =>
+                if unit.package not in unit.not_prepared_loaves:
+                    unit.not_prepared_loaves.append(unit.package)
+                if unit.trust_stop == "":
+                    unit.trust_stop = missing_stop(unit.package, unit.project_root)
+                return Ok(unit)
     code = compile_prepared_unit(registration, toolchain, output, Some(key))?
     if code != 0:
         return Err(f"vocabulary entry for {unit.package} was refused (exit {code})")
@@ -221,8 +231,9 @@ def registration_main(entry: str) -> str:
 
 
 def run_registration(output: Path) -> Result[JsonValue, str]:
-    """Capture one producer registration and require a valid JSON descriptor payload."""
+    """Capture one producer registration without ambient environment access and require a valid JSON payload."""
     mut command = Command.new(output.0)
+    _ = command.env_clear()
     captured = command.output().map_err((error) => f"cannot run vocabulary registration: {error}")?
     if not captured.status.success():
         return Err(f"vocabulary registration failed: {captured.status}")
