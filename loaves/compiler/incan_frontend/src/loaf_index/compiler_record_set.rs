@@ -4,18 +4,19 @@
 //! resulting root and digest in its environment, verifies the sealed-set receipt, and reads only content-addressed
 //! record values. Packages outside the installed set retain their ordinary Loaf artifact contract.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::library_manifest::LibraryManifest;
 
-use super::LoafIndexError;
+use super::lazy_entry::Summary;
+use super::{LoafIdentity, LoafIndexError};
 
 const ROOT_ENV: &str = "INCAN_COMPILER_RECORD_ROOT";
 const DIGEST_ENV: &str = "INCAN_COMPILER_RECORD_DIGEST";
@@ -52,6 +53,74 @@ struct Metadata {
     incan_version: String,
     manifest_format: u32,
     manifest_digest: String,
+    vocabulary: bool,
+    provider_operations: bool,
+    native_unions: bool,
+    rust_paths: BTreeSet<String>,
+    rust_abi_cache_declared: bool,
+}
+
+/// Read only the small, authenticated inventory record used to index an installed Loaf lazily.
+pub(super) fn summary(dir: &Path, name: &str) -> Result<Option<Summary>, LoafIndexError> {
+    let Some(set) = installed().map_err(|reason| unreadable(dir, name, reason))? else {
+        return Ok(None);
+    };
+    let profile = dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
+    let prefix = format!("loaf/{profile}/{name}/metadata/");
+    let entries = set
+        .entries
+        .iter()
+        .filter(|entry| entry.key.starts_with(&prefix))
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    if entries.len() != 1 {
+        return Err(unreadable(
+            dir,
+            name,
+            "compiler-record metadata requires exactly one value".to_owned(),
+        ));
+    }
+    let entry = entries[0];
+    if entry.revision != entry.value {
+        return Err(unreadable(
+            dir,
+            name,
+            format!(
+                "compiler-record `{}` has distinct revision and value identities",
+                entry.key
+            ),
+        ));
+    }
+    let metadata: Metadata =
+        serde_json::from_str(&read_value(&set.root, &entry.value).map_err(|reason| unreadable(dir, name, reason))?)
+            .map_err(|error| unreadable(dir, name, format!("invalid compiler-record metadata: {error}")))?;
+    if metadata.name != name {
+        return Err(unreadable(
+            dir,
+            name,
+            format!("compiler records name the Loaf `{}`", metadata.name),
+        ));
+    }
+    valid_digest(&metadata.manifest_digest).map_err(|reason| unreadable(dir, name, reason))?;
+    Ok(Some(Summary {
+        identity: LoafIdentity {
+            name: metadata.name,
+            version: metadata.version,
+            digest: metadata.manifest_digest,
+            feature_projection: BTreeSet::new(),
+        },
+        vocabulary: metadata.vocabulary,
+        provider_operations: metadata.provider_operations,
+        native_unions: metadata.native_unions,
+        rust_paths: metadata.rust_paths,
+        rust_abi_cache_declared: metadata.rust_abi_cache_declared,
+        rust_abi_cache: metadata.rust_abi_cache_declared,
+    }))
 }
 
 /// Read one installed standard/runtime Loaf through its independently addressed records.
@@ -64,11 +133,18 @@ pub(super) fn read(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest
         .and_then(|value| value.to_str())
         .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
     let prefix = format!("loaf/{profile}/{name}/");
-    let entries = set
-        .entries
-        .iter()
-        .filter(|entry| entry.key.starts_with(&prefix))
-        .collect::<Vec<_>>();
+    let entries = {
+        let _selection = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::select_compiler_record_group",
+            loaf = name
+        )
+        .entered();
+        set.entries
+            .iter()
+            .filter(|entry| entry.key.starts_with(&prefix))
+            .collect::<Vec<_>>()
+    };
     if entries.is_empty() {
         return Ok(None);
     }
@@ -79,7 +155,7 @@ pub(super) fn read(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest
         records = entries.len()
     )
     .entered();
-    let mut families: BTreeMap<&str, Vec<(usize, Value)>> = BTreeMap::new();
+    let mut families: BTreeMap<&str, Vec<(usize, String)>> = BTreeMap::new();
     for entry in entries {
         let identity = entry
             .key
@@ -120,7 +196,7 @@ pub(super) fn read(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest
             ));
         }
     }
-    let metadata: Metadata = serde_json::from_value(single(&mut families, "metadata", name, dir)?)
+    let metadata: Metadata = serde_json::from_str(&single(&mut families, "metadata", name, dir)?)
         .map_err(|error| unreadable(dir, name, format!("invalid compiler-record metadata: {error}")))?;
     if metadata.name != name {
         return Err(unreadable(
@@ -130,30 +206,35 @@ pub(super) fn read(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest
         ));
     }
     valid_digest(&metadata.manifest_digest).map_err(|reason| unreadable(dir, name, reason))?;
-    let document = json!({
-        "name": metadata.name,
-        "version": metadata.version,
-        "incan_version": metadata.incan_version,
-        "manifest_format": metadata.manifest_format,
-        "exports": {
-            "aliases": values(&mut families, "alias"),
-            "partials": values(&mut families, "partial"),
-            "models": values(&mut families, "model"),
-            "classes": values(&mut families, "class"),
-            "functions": values(&mut families, "function"),
-            "traits": values(&mut families, "trait"),
-            "enums": values(&mut families, "enum"),
-            "type_aliases": values(&mut families, "type-alias"),
-            "newtypes": values(&mut families, "newtype"),
-            "consts": values(&mut families, "const"),
-            "statics": values(&mut families, "static"),
-        },
-        "made_private_types": values(&mut families, "made-private-type"),
-        "vocab": optional(&mut families, "vocabulary", name, dir)?,
-        "soft_keywords": {"activations": values(&mut families, "soft-keyword")},
-        "contract_metadata": single(&mut families, "contract-metadata", name, dir)?,
-        "rust_abi": optional(&mut families, "rust-abi", name, dir)?,
-    });
+    let encoded = format!(
+        concat!(
+            "{{\"name\":{},\"version\":{},\"incan_version\":{},\"manifest_format\":{},",
+            "\"exports\":{{\"aliases\":{},\"partials\":{},\"models\":{},\"classes\":{},",
+            "\"functions\":{},\"traits\":{},\"enums\":{},\"type_aliases\":{},\"newtypes\":{},",
+            "\"consts\":{},\"statics\":{}}},\"made_private_types\":{},\"vocab\":{},",
+            "\"soft_keywords\":{{\"activations\":{}}},\"contract_metadata\":{},\"rust_abi\":{}}}"
+        ),
+        serde_json::to_string(&metadata.name).map_err(|error| unreadable(dir, name, error.to_string()))?,
+        serde_json::to_string(&metadata.version).map_err(|error| unreadable(dir, name, error.to_string()))?,
+        serde_json::to_string(&metadata.incan_version).map_err(|error| unreadable(dir, name, error.to_string()))?,
+        metadata.manifest_format,
+        array_values(&mut families, "alias"),
+        array_values(&mut families, "partial"),
+        array_values(&mut families, "model"),
+        array_values(&mut families, "class"),
+        array_values(&mut families, "function"),
+        array_values(&mut families, "trait"),
+        array_values(&mut families, "enum"),
+        array_values(&mut families, "type-alias"),
+        array_values(&mut families, "newtype"),
+        array_values(&mut families, "const"),
+        array_values(&mut families, "static"),
+        array_values(&mut families, "made-private-type"),
+        optional(&mut families, "vocabulary", name, dir)?,
+        array_values(&mut families, "soft-keyword"),
+        single(&mut families, "contract-metadata", name, dir)?,
+        optional(&mut families, "rust-abi", name, dir)?,
+    );
     if let Some((family, _)) = families.first_key_value() {
         return Err(unreadable(
             dir,
@@ -161,9 +242,7 @@ pub(super) fn read(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest
             format!("unsupported compiler-record family `{family}`"),
         ));
     }
-    let encoded = serde_json::to_string(&document)
-        .map_err(|error| unreadable(dir, name, format!("cannot assemble compiler records: {error}")))?;
-    let manifest = LibraryManifest::from_json_str(&encoded)
+    let manifest = LibraryManifest::from_compiler_record_json(&encoded)
         .map_err(|error| unreadable(dir, name, format!("invalid installed compiler records: {error}")))?;
     Ok(Some((Arc::new(manifest), metadata.manifest_digest)))
 }
@@ -179,6 +258,11 @@ fn installed() -> Result<Option<&'static RecordSet>, String> {
 
 /// Load and authenticate the set receipt supplied by Oven, refusing a partial environment or digest mismatch.
 fn load_installed() -> Result<Option<RecordSet>, String> {
+    let _invocation = tracing::trace_span!(
+        target: "incan::invocation",
+        "incan_frontend::authenticate_compiler_record_set"
+    )
+    .entered();
     let (root, digest) = match (std::env::var_os(ROOT_ENV), std::env::var_os(DIGEST_ENV)) {
         (None, None) => return Ok(None),
         (Some(root), Some(digest)) => (root, digest),
@@ -191,7 +275,7 @@ fn load_installed() -> Result<Option<RecordSet>, String> {
     valid_digest(&digest)?;
     let path = root.join("manifest.json");
     let bytes = fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    if format!("{:x}", Sha256::digest(&bytes)) != digest {
+    if !digest_matches(&bytes, &digest) {
         return Err("compiler-record manifest differs from the installed toolchain pin".to_owned());
     }
     let document: Value =
@@ -224,34 +308,49 @@ fn load_installed() -> Result<Option<RecordSet>, String> {
     Ok(Some(RecordSet { root, entries }))
 }
 
+/// Compare a payload with its canonical SHA-256 spelling without allocating another hexadecimal string.
+fn digest_matches(bytes: &[u8], expected: &str) -> bool {
+    let actual = Sha256::digest(bytes);
+    expected.as_bytes().chunks_exact(2).zip(actual).all(|(encoded, byte)| {
+        let decode = |digit: u8| match digit {
+            b'0'..=b'9' => digit - b'0',
+            b'a'..=b'f' => digit - b'a' + 10,
+            _ => u8::MAX,
+        };
+        decode(encoded[0]) << 4 | decode(encoded[1]) == byte
+    })
+}
+
 /// Read and authenticate one immutable value file from the sealed transport.
-fn read_value(root: &Path, digest: &str) -> Result<Value, String> {
+fn read_value(root: &Path, digest: &str) -> Result<String, String> {
     valid_digest(digest)?;
     let directory = root.join("payloads");
     let path = directory.join(digest);
-    if fs::symlink_metadata(&directory)
-        .map_err(|error| error.to_string())?
-        .file_type()
-        .is_symlink()
-        || fs::symlink_metadata(&path)
+    let bytes = {
+        if fs::symlink_metadata(&directory)
             .map_err(|error| error.to_string())?
             .file_type()
             .is_symlink()
-    {
-        return Err(format!("compiler-record object is a symbolic link: {}", path.display()));
-    }
-    let bytes = fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    if format!("{:x}", Sha256::digest(&bytes)) != digest {
+            || fs::symlink_metadata(&path)
+                .map_err(|error| error.to_string())?
+                .file_type()
+                .is_symlink()
+        {
+            return Err(format!("compiler-record object is a symbolic link: {}", path.display()));
+        }
+        fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?
+    };
+    if !digest_matches(&bytes, digest) {
         return Err(format!(
             "compiler-record object differs from its content name: {}",
             path.display()
         ));
     }
-    serde_json::from_slice(&bytes).map_err(|error| format!("invalid compiler-record object: {error}"))
+    String::from_utf8(bytes).map_err(|error| format!("compiler-record object is not UTF-8 JSON: {error}"))
 }
 
 /// Remove all ordered values for one repeatable record family.
-fn values(families: &mut BTreeMap<&str, Vec<(usize, Value)>>, family: &str) -> Vec<Value> {
+fn values(families: &mut BTreeMap<&str, Vec<(usize, String)>>, family: &str) -> Vec<String> {
     families
         .remove(family)
         .unwrap_or_default()
@@ -260,13 +359,18 @@ fn values(families: &mut BTreeMap<&str, Vec<(usize, Value)>>, family: &str) -> V
         .collect()
 }
 
+/// Assemble authenticated JSON values as one array without decoding and re-encoding each member.
+fn array_values(families: &mut BTreeMap<&str, Vec<(usize, String)>>, family: &str) -> String {
+    format!("[{}]", values(families, family).join(","))
+}
+
 /// Remove exactly one required value for a singleton family.
 fn single(
-    families: &mut BTreeMap<&str, Vec<(usize, Value)>>,
+    families: &mut BTreeMap<&str, Vec<(usize, String)>>,
     family: &str,
     name: &str,
     dir: &Path,
-) -> Result<Value, LoafIndexError> {
+) -> Result<String, LoafIndexError> {
     let mut selected = values(families, family);
     if selected.len() != 1 {
         return Err(unreadable(
@@ -282,11 +386,11 @@ fn single(
 
 /// Remove zero or one value for an optional singleton family.
 fn optional(
-    families: &mut BTreeMap<&str, Vec<(usize, Value)>>,
+    families: &mut BTreeMap<&str, Vec<(usize, String)>>,
     family: &str,
     name: &str,
     dir: &Path,
-) -> Result<Value, LoafIndexError> {
+) -> Result<String, LoafIndexError> {
     let mut selected = values(families, family);
     if selected.len() > 1 {
         return Err(unreadable(
@@ -295,7 +399,7 @@ fn optional(
             format!("compiler-record family `{family}` has multiple values"),
         ));
     }
-    Ok(selected.pop().unwrap_or(Value::Null))
+    Ok(selected.pop().unwrap_or_else(|| "null".to_owned()))
 }
 
 /// Require a JSON array of one exact arity.
