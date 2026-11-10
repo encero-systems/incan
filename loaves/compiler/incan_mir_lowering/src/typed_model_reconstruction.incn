@@ -1,0 +1,65 @@
+"""Restore complete model storage, keeping absent fields separate from failed reads."""
+
+from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import BodyIrModule
+from pub::incan_mir_plan import (
+    PlanType, Place, SourceSpan, RvalueKind, assign as plan_assign,
+)
+from frame import Builder, temporary, read_place, drop_owned, track_rvalue_moves
+from options import propagate_result
+from typed_value_callbacks import callback_body, call_callback, parameter_types, referent
+from typed_value_constants import value_type, static_metadata
+from typed_shapes import shape, field_info
+from typed_shape_spelling import field_order
+from table_views import borrowed_at
+from typed_field_reconstruction import empty_slot, restore_field, finish_fields, take_fields
+
+
+pub def restore_model(
+    module: &BodyIrModule, mut builder: Builder, requested: RustType, stored: PlanType,
+    owner: int, source: Place, source_owner: PlanType, error: RustType, span: SourceSpan,
+) -> Result[Place, str]:
+    """Read every stored field in identity order, retaining initialized optional slots until completion."""
+    declaration = borrowed_at(module.nominal_declarations, owner)
+    if declaration.canonical.kind != SemanticSourceTargetKind.Model:
+        return Err("generated model reconstruction requires a checked model declaration")
+    # A handwritten new suppresses legacy constructor metadata, not the validation obligation.
+    if declaration.validated_constructor != None or "Validate" in declaration.derives:
+        return Err("generated model reconstruction requires retained final-validation dispatch")
+    begin = callback_body(module, builder, source_owner, "Source", error, "begin_model", [])?
+    parameters = parameter_types(builder, begin)?
+    info_type = referent(parameters[1])
+    description = shape(module, builder, requested, info_type, true)?
+    info = static_metadata(builder, info_type, description, span)
+    entered = call_callback(module, builder, begin, [source, info], span, [1])?
+    unit = temporary(builder, PlanType.Unit, span)
+    propagate_result(builder, entered, unit, span)?
+    builder.owned.append(unit.local)
+    drop_owned(builder, info.local, span)
+    policy = callback_body(module, builder, source_owner, "Source", error, "collects", [])?
+    collects = call_callback(module, builder, policy, [source], span)?
+    first_error = empty_slot(module, builder, error, span)?
+    mut slots: list[Place] = []
+    for field_type in declaration.field_types:
+        slots.append(empty_slot(module, builder, field_type.clone(), span)?)
+    for slot in field_order(builder, owner)?:
+        reader = callback_body(module, builder, source_owner, "Source", error, "field", [declaration.field_types[slot].clone()])?
+        field_parameters = parameter_types(builder, reader)?
+        field_info_type = referent(field_parameters[1])
+        match declaration.reflection_metadata:
+            None => return Err("generated reconstruction lacks complete stored-field metadata")
+            Some(fields) =>
+                field_description = field_info(module, builder, fields[slot], declaration.field_types[slot], field_info_type)?
+                mut default_field: Option[tuple[int, int]] = None
+                if fields[slot].has_default:
+                    default_field = Some((owner, slot))
+                restore_field(module, builder, declaration.field_types[slot], reader, field_info_type, field_description, default_field,
+                    slots[slot], source, source_owner, error, collects, first_error, span)?
+    finish_fields(module, builder, source, source_owner, error, collects, first_error, "end_model", span)?
+    values = take_fields(builder, slots, span)?
+    result = temporary(builder, stored, span)
+    construction = RvalueKind.Model(owner, values)
+    track_rvalue_moves(builder, construction)
+    builder.emit(plan_assign(result, construction, span))
+    builder.owned.append(result.local)
+    return Ok(result)

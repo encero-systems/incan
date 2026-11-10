@@ -70,6 +70,7 @@ pub def retain_frame_nominals(
     for local in body.locals:
         collect_nominal_type(constructors, templates, local.ty, instances, [])?
     collect_nominal_type(constructors, templates, body.return_type, instances, [])?
+    collect_member_owners(constructors, templates, body, instances, [])?
     # 2. Append missing native layouts while preserving existing owner indices.
     mut added: list[NominalDeclaration] = []
     mut cursor = 0
@@ -141,12 +142,16 @@ pub def specialize_nominals_with_instances(
                 collect_nominal_type(constructors, module, field, instances, [])?
     for declaration in module.static_declarations:
         collect_nominal_type(constructors, module, declaration.ty, instances, [])?
-    for body in nominal_frames(module)?:
+    frames, call_types = nominal_frames(module)?
+    for ty in call_types:
+        collect_nominal_type(constructors, module, ty, instances, [])?
+    for body in frames:
         if owner_template(constructors, module, body)? == None and closed_arguments([body.return_type.clone()]):
             retain_selected_members(body, selected)
         for local in body.locals:
             _ = collect_nominal_type(constructors, module, local.ty, instances, [])?
         _ = collect_nominal_type(constructors, module, body.return_type, instances, [])?
+        collect_member_owners(constructors, module, body, instances, [])?
     mut declarations: list[NominalDeclaration] = []
     mut implementations: list[TraitImplementation] = nongeneric_implementations(module)
     for nominal_position in range(len(module.nominal_declarations)):
@@ -341,7 +346,18 @@ def collect_owner_body_types(
         for local in closed.locals:
             collect_nominal_type(constructors, module, local.ty, instances, ancestors)?
         collect_nominal_type(constructors, module, closed.return_type, instances, ancestors)?
+        collect_member_owners(constructors, module, closed, instances, ancestors)?
     return Ok(waiting)
+
+
+def collect_member_owners(
+    constructors: &ConstructorIndex, module: &BodyIrModule, body: &Body,
+    mut instances: list[NominalInstance], ancestors: list[str],
+) -> Result[None, str]:
+    """A reached type-only member needs its closed layout just as a reached value parameter does."""
+    for selected in called_members(body):
+        collect_nominal_type(constructors, module, selected.receiver, instances, ancestors)?
+    return Ok(None)
 
 
 def selected_owner_body(

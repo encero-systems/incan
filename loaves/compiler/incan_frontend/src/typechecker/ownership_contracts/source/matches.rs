@@ -267,6 +267,13 @@ impl Builder<'_> {
             return Ok(());
         }
         if let Some(relation) = self
+            .native_result_relation(value)?
+            .filter(|relation| relation.carried == Some(carried))
+        {
+            self.native_view_return(value, &relation, exclusive, source, incoming)?;
+            return Ok(());
+        }
+        if let Some(relation) = self
             .call_relation(value)?
             .filter(|relation| relation.carried == Some(carried))
         {
@@ -288,8 +295,8 @@ impl Builder<'_> {
                 "A returned tuple carrying a view must hold its declared source place in the view's element, or be a \
                  carried view of the same source"
             } else if carried == 0 {
-                "A returned carried view must return Ok of its declared source place, an error, or a carried view of \
-                 the same source"
+                "A returned carried view must return its declared source in the carrying variant (Some or Ok), a \
+                 non-carrying variant, or a carried view of the same source"
             } else {
                 "A returned carried view must return Err of its declared source place, a success value, or a carried \
                  view of the same source"

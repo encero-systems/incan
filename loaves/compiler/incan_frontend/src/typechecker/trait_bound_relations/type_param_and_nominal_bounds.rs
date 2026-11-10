@@ -149,7 +149,7 @@ impl TypeChecker {
     }
 
     /// Return the canonical source identity for a checked trait bound when it can be resolved.
-    pub(super) fn type_bound_identity(&self, bound: &TypeBoundInfo) -> Option<(Vec<String>, String)> {
+    pub(in crate::typechecker) fn type_bound_identity(&self, bound: &TypeBoundInfo) -> Option<(Vec<String>, String)> {
         if let Some(module_path) = &bound.module_path {
             return Some((module_path.clone(), Self::type_bound_source_name(bound).to_string()));
         }
@@ -157,10 +157,19 @@ impl TypeChecker {
         Some((module_path, bound.source_name.clone().unwrap_or(resolved_name)))
     }
 
-    /// Return whether two bound records identify the same trait, accounting for import aliases.
+    /// Compare bound declarations, resolving public-package and standard facade paths through their admitted
+    /// identity graphs. Equal short names never grant a different provider's trait; local bounds retain their
+    /// existing module identity when neither side names a published package declaration.
     pub(in crate::typechecker) fn type_bound_names_match(&self, left: &TypeBoundInfo, right: &TypeBoundInfo) -> bool {
         match (self.type_bound_identity(left), self.type_bound_identity(right)) {
-            (Some(left), Some(right)) => left == right,
+            (Some(left), Some(right)) => match (
+                self.package_trait_declaration(&left.0, &left.1),
+                self.package_trait_declaration(&right.0, &right.1),
+            ) {
+                (Some(left), Some(right)) => left == right,
+                (Some(_), None) | (None, Some(_)) => false,
+                (None, None) => left == right,
+            },
             (Some(_), None) | (None, Some(_)) => false,
             (None, None) => {
                 left.name == right.name && Self::type_bound_source_name(left) == Self::type_bound_source_name(right)
@@ -344,7 +353,7 @@ impl TypeChecker {
     }
 
     /// Check a concrete model/class adoption list for a matching generic trait instantiation.
-    pub(super) fn type_implements_trait_with_args(
+    pub(in crate::typechecker) fn type_implements_trait_with_args(
         &self,
         type_name: &str,
         concrete_type_args: &[ResolvedType],

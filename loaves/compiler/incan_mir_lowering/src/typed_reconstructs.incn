@@ -1,0 +1,169 @@
+"""Stored-value reconstruction through the selected Source contract, with original typed failures."""
+
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
+from rust::incan_semantics_core::body_ir import BodyIrModule, NamedCallableTarget, ArgumentElement, Place as RustPlace
+from pub::incan_mir_plan import (
+    BinaryOp, CalleeKind, Constant, Function, Parameter, Place, PlanType, RvalueKind, SourceSpan, TerminatorKind,
+    Carrier, assign as plan_assign, place as plan_place,
+)
+from frame import Builder, temporary, place_type, read_place, literal, drop_all_owned, forget_owned
+from checked_values import scalar_place
+from callable_calls import checked_type_arguments, lower_callable_result
+from call_arguments import call_argument_operand
+from closure_lifting import lifted_frame, adopt_lifted, synthesize
+from typed_value_callbacks import protocol_method, callback_body, call_callback
+from typed_value_constants import value_type
+from options import result_layout, propagate_result, carrier_layout
+from numerics import integer_carrier, numeric_name
+from typed_model_reconstruction import restore_model
+from typed_enum_reconstruction import restore_enum
+
+
+pub def lower_generated_reconstruction(
+    module: &BodyIrModule, mut builder: Builder, target: NamedCallableTarget,
+    arguments: &list[ArgumentElement], destination: Option[RustPlace], span: SourceSpan,
+) -> Result[bool, str]:
+    """Fill only the authentic automatic Reconstruct slot; handwritten members remain ordinary source calls."""
+    match target.canonical:
+        None => return Ok(false)
+        Some(identity) =>
+            if not protocol_method(module, identity, "Reconstruct", "__reconstruct__"):
+                return Ok(false)
+    if len(arguments) != 1 or len(target.type_args) != 2:
+        return Err("generated reconstruction requires checked error and source arguments")
+    closed = checked_type_arguments(builder, target.type_args)?
+    error = closed[0]
+    source_owner = value_type(builder, closed[1])?
+    mut source_reference = PlanType.Unit
+    match source_owner:
+        PlanType.Model(owner, name) => source_reference = PlanType.ModelMutRef(owner, name)
+        _ => return Err("generated reconstruction requires a concrete checked source")
+    mut requested = RustType.Primitive(Primitive.Unit)
+    match target.receiver_type:
+        None => return Err("generated reconstruction has no checked receiver type")
+        Some(receiver) =>
+            receivers = checked_type_arguments(builder, [receiver])?
+            requested = receivers[0]
+    stored = value_type(builder, requested)?
+    mut output = plan_place(0, span)
+    match destination:
+        None => return Err("generated reconstruction requires a Result destination")
+        Some(place) => output = scalar_place(builder, place, span)?
+    result_type = place_type(builder.locals, output)
+    result_owner, declaration = result_layout(builder, result_type)?
+    if declaration.variants[0].fields != [stored]:
+        return Err("generated reconstruction result differs from its checked receiver")
+    name = f"__incan_reconstruct_{builder.name}_{len(builder.blocks)}_{len(builder.locals)}"
+    mut generated = lifted_frame(builder, name, [source_reference], result_type, span)
+    generated.locals = generated.locals[:2]
+    generated.local_offset = 0
+    generated.scoped_locals = []
+    generated.scope_parents = []
+    generated.owned = []
+    mut value = plan_place(0, span)
+    match stored:
+        PlanType.Model(owner, _name) =>
+            value = restore_model(module, generated, requested, stored, owner, plan_place(1, span), source_owner, error, span)?
+        PlanType.Enum(owner, _name) =>
+            if owner < len(generated.enums):
+                value = restore_enum(module, generated, requested, stored, owner, plan_place(1, span), source_owner, error, span)?
+            else:
+                value = restore_scalar(module, generated, requested, stored, plan_place(1, span), source_owner, error, span)?
+        _ => value = restore_scalar(module, generated, requested, stored, plan_place(1, span), source_owner, error, span)?
+    generated.emit(plan_assign(plan_place(0, span), RvalueKind.Enum(result_owner, 0, [read_place(value, true, span)]), span))
+    forget_owned(generated, value.local)
+    drop_all_owned(generated, span)
+    generated.finish(TerminatorKind.Return, span)
+    # Generated callbacks append carriers to the inherited table; keep their exact slots in the enclosing frame.
+    builder.intrinsics = generated.intrinsics
+    adopt_lifted(builder, generated)
+    for nested in generated.synthesized:
+        synthesize(builder, nested)
+    synthesize(builder, Function(
+        name=name, parameters=[Parameter(name="source", ty=source_reference, span=span)],
+        return_type=result_type, locals=generated.locals, blocks=generated.blocks, span=span,
+    ))
+    match arguments[0].as_one():
+        None => return Err("generated reconstruction does not admit a spread")
+        Some(argument) =>
+            input = call_argument_operand(builder, argument, source_reference, span)?
+            lower_callable_result(builder, CalleeKind.Planned(name), [input], output, result_type, span)?
+    return Ok(true)
+
+
+def restore_scalar(
+    module: &BodyIrModule, mut builder: Builder, requested: RustType, stored: PlanType,
+    source: Place, source_owner: PlanType, error: RustType, span: SourceSpan,
+) -> Result[Place, str]:
+    """Read the source's exact scalar carrier, then range-check integer narrowing before exposing stored data."""
+    match carrier_layout(builder, stored):
+        Ok((_owner, layout)) =>
+            if layout.carrier == Carrier.Option:
+                match requested:
+                    RustType.Generic(base=_base, args=arguments) =>
+                        if len(arguments) != 1:
+                            return Err("generated optional reconstruction requires one checked element")
+                        body = callback_body(module, builder, source_owner, "Source", error, "some", [arguments[0].clone()])?
+                        result = call_callback(module, builder, body, [source], span)?
+                        output = temporary(builder, stored, span)
+                        propagate_result(builder, result, output, span)?
+                        return Ok(output)
+                    _ => return Err("generated optional reconstruction lacks its checked element")
+        Err(_not_carrier) => pass
+    mut callback = ""
+    match requested:
+        RustType.Primitive(Primitive.Bytes) => callback = "bytes"
+        _ => pass
+    if callback == "":
+        match stored:
+            PlanType.Bool => callback = "bool"
+            PlanType.String => callback = "str"
+            PlanType.Unit => callback = "none"
+            PlanType.U128 => callback = "unsigned"
+            PlanType.Float | PlanType.F64 => callback = "float"
+            _ =>
+                if integer_carrier(stored):
+                    callback = "integer"
+                else:
+                    return Err(f"generated reconstruction has no retained reader for {stored:?}")
+    body = callback_body(module, builder, source_owner, "Source", error, callback, [])?
+    read = call_callback(module, builder, body, [source], span)?
+    _owner, result = result_layout(builder, place_type(builder.locals, read))?
+    decoded_type = result.variants[0].fields[0]
+    decoded = temporary(builder, decoded_type, span)
+    propagate_result(builder, read, decoded, span)?
+    if decoded_type == stored:
+        return Ok(decoded)
+    if integer_carrier(decoded_type) and integer_carrier(stored):
+        converted = temporary(builder, stored, span)
+        builder.emit(plan_assign(converted, RvalueKind.NumericCast(read_place(decoded, false, span), decoded_type, stored), span))
+        roundtrip = temporary(builder, decoded_type, span)
+        builder.emit(plan_assign(roundtrip, RvalueKind.NumericCast(read_place(converted, false, span), stored, decoded_type), span))
+        equal = temporary(builder, PlanType.Bool, span)
+        builder.emit(plan_assign(equal, RvalueKind.Binary(BinaryOp.Equal, read_place(decoded, false, span), read_place(roundtrip, false, span)), span))
+        failed = builder.new_block(span)
+        accepted = builder.new_block(span)
+        builder.finish(TerminatorKind.SwitchBool(read_place(equal, false, span), failed, accepted), span)
+        owners = builder.owned
+        builder.current = failed
+        label = temporary(builder, PlanType.FrozenStr, span)
+        mut requested_name = numeric_name(stored)
+        if stored == PlanType.Int:
+            requested_name = "int"
+        builder.emit(plan_assign(label, RvalueKind.FrozenText(literal(Constant.Text(requested_name), span)), span))
+        range_error = callback_body(module, builder, source_owner, "Source", error, "numeric_range", [])?
+        failure = call_callback(module, builder, range_error, [source, label], span)?
+        enclosing_result = place_type(builder.locals, plan_place(0, span))
+        result_owner, _layout = result_layout(builder, enclosing_result)?
+        builder.emit(plan_assign(plan_place(0, span), RvalueKind.Enum(result_owner, 1, [read_place(failure, true, span)]), span))
+        forget_owned(builder, failure.local)
+        drop_all_owned(builder, span)
+        builder.finish(TerminatorKind.Return, span)
+        builder.current = accepted
+        builder.owned = owners
+        return Ok(converted)
+    if decoded_type == PlanType.F64 and stored == PlanType.Float:
+        converted = temporary(builder, stored, span)
+        builder.emit(plan_assign(converted, RvalueKind.NumericCast(read_place(decoded, false, span), decoded_type, stored), span))
+        return Ok(converted)
+    return Err("source scalar result differs from its requested stored carrier")

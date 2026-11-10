@@ -69,18 +69,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let arm_span = hir_span(arm.span);
             let arm_scope = self.new_scope(Some(scope), arm_span);
 
-            // ---- Lower the pattern, declaring one fresh arm-scoped local per distinct bound name ----
-            // The arm of the variant holding a carried view names the call's substituted place, as `?` does; the
-            // carrier's own reference is never read, so that pattern binds no payload.
-            let arm_view = carried_view
-                .as_ref()
-                .and_then(|view| self.bind_carried_arm_view(&arm.node.pattern, view));
-            let unbound_pattern = arm_view.as_ref().map(|_| without_payload_binding(&arm.node.pattern));
+            // ---- Lower the pattern, retaining the actual reference held by a carried result ----
+            // Its loan protects the original owner, but the result can point to a different referent after a native
+            // projection or downcast. Binding the carrier's reference preserves that distinction.
+            if let Some((_, access, payload)) = &carried_view {
+                self.retain_carried_arm_binding(&arm.node.pattern, *access, *payload);
+            }
+            let previous_storage = std::mem::replace(&mut self.retained_pattern_storage, carried_view.is_some());
             let mut seen: HashMap<String, bir::LocalId> = HashMap::new();
             let mut saved_bindings: Vec<(String, Option<bir::LocalId>)> = Vec::new();
             let enclosing_in_place = std::mem::replace(&mut self.in_place_pattern, in_place);
             let mut pattern = self.lower_match_pattern(
-                unbound_pattern.as_ref().unwrap_or(&arm.node.pattern),
+                &arm.node.pattern,
                 &scrutinee_ty,
                 &scrutinee_place,
                 arm_scope,
@@ -89,6 +89,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 &mut saved_bindings,
             );
             self.in_place_pattern = enclosing_in_place;
+            self.retained_pattern_storage = previous_storage;
             if arm.node.guard.is_none() {
                 self.retain_owned_carrier_payload_move(&scrutinee_place, &mut pattern);
             }
@@ -134,9 +135,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
             // ---- Restore the enclosing scope's bindings before moving on to the next (mutually exclusive) arm ----
             self.restore_local_bindings(saved_bindings);
-            if let Some(identity) = arm_view {
-                self.input_aliases.remove(&identity);
-            }
             range_layouts_after_arms.push(self.materialized_range_locals.clone());
 
             lowered_arms.push(bir::MatchArm {
