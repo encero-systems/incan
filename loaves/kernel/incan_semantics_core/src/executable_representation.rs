@@ -84,12 +84,14 @@ use crate::body_ir::{
 /// Version 53 retains each reflection-visible field's rename history, stored-record identity and canonical-hash flag.
 /// Version 54 carries declared persistent package namespaces beside model and enum layouts, and the complete
 /// field lifecycle, original-position and literal-empty-default facts. The positional schema requires fresh producers.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 54;
+/// Version 55 retains unresolved source-result independence obligations in checked input profiles. Generic
+/// templates carry their exact result types until the consuming instantiation proves independent storage.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 55;
 
 /// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
 /// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations, returned
 /// views, conditional profiles or the component carrying a view.
-const OLDEST_SUPPORTED_VERSION: u32 = 54;
+const OLDEST_SUPPORTED_VERSION: u32 = 55;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]

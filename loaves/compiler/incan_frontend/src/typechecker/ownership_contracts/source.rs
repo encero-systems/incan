@@ -19,7 +19,7 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 mod builder_places;
 mod builder_statements;
-mod calls;
+pub(super) mod calls;
 mod closures;
 mod comprehensions;
 mod dictionaries;

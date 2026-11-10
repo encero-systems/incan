@@ -156,6 +156,9 @@ pub enum NativeAttributeValue {
 /// a borrowed native ABI: only the source ownership checker and its complete Body IR projection can publish it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CheckedInputProfile {
+    /// Source-call result types whose independence must be established for this closed instance. Each retains
+    /// its original call anchor. Empty only when the source proof has no unresolved result dependency obligation.
+    pub result_requirements: Vec<(HirSourceSpan, IncanType)>,
     /// Semantic profile version, distinct from the surrounding positional executable representation version.
     pub version: u32,
     /// Exact declaration that owns the checked source flow and the resulting native frame.
@@ -381,9 +384,13 @@ impl Body {
                 .then_some("explicit local binding lacks a checked body profile");
         };
         // Profile 1 is a straight-line body; profile 2 a body with statement-ifs, whose owned initializers record the
-        // whole-owner transfers its branches may perform.
-        if !matches!(profile.version, 1 | 2) || self.canonical.as_ref() != Some(&profile.owner) {
+        // whole-owner transfers its branches may perform. Profiles 3 and 4 retain these respective shapes with
+        // unresolved result obligations that closed native instantiation must discharge.
+        if !matches!(profile.version, 1 | 2 | 3 | 4) || self.canonical.as_ref() != Some(&profile.owner) {
             return Some("explicit input profile has an unsupported version or different canonical owner");
+        }
+        if matches!(profile.version, 3 | 4) != !profile.result_requirements.is_empty() {
+            return Some("generic result profile has missing or unexpected dependency requirements");
         }
         if let Some(view) = &self.returned_view {
             let source = self.params.get(view.slot);
@@ -421,7 +428,7 @@ impl Body {
                 return Some("carried returned view disagrees with its structural result component");
             }
         }
-        if profile.version == 1 && !profile.owned_initializers.is_empty() {
+        if matches!(profile.version, 1 | 3) && !profile.owned_initializers.is_empty() {
             return Some("straight-line input profile cannot authorize conditional initializer cleanup");
         }
         if !matches!(

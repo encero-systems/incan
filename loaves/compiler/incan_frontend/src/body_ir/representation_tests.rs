@@ -714,6 +714,7 @@ fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
         .find(|body| body.name == "leaf")
         .ok_or("missing profiled loan body")?;
     leaf.checked_input_profile = Some(bir::CheckedInputProfile {
+        result_requirements: Vec::new(),
         version: 1,
         owner: leaf.canonical.clone().ok_or("missing profiled loan identity")?,
         parameters: leaf
@@ -2066,5 +2067,71 @@ fn abstract_trait_inputs_govern_the_concrete_body() -> Result<(), Box<dyn std::e
         seed.bodies[0].params[1].ty,
         incan_semantics_core::IncanType::TypeVar(_)
     ));
+    Ok(())
+}
+
+/// The source checker's conditional result survives executable serialization with declaration-scoped binders;
+/// stripping the requirements cannot turn its generic profile into an unconditional source proof.
+#[test]
+fn generic_result_profile_retains_symbolic_requirement() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"trait Visit:
+    def visit[E, W with Sink[E]](self, mut sink: BorrowedMut[W]) -> Result[None, E]:
+        pass
+
+trait Sink[E]:
+    def feed[V with Visit](mut self, value: Borrowed[V]) -> Result[None, E]:
+        return value.visit(self)
+
+class Value with Visit:
+    pub count: int
+    def visit[E, W with Sink[E]](self, mut sink: W) -> Result[None, E]:
+        return Ok(None)
+
+class Reader with Sink[str]:
+    pub count: int
+
+def main() -> Result[None, str]:
+    value = Value(count=7)
+    mut reader = Reader(count=0)
+    reader.feed(value)?
+    assert value.count == 7
+    return Ok(None)
+"#;
+    let (_, _, seed) = checked_seed(source)?;
+    let body = seed
+        .bodies
+        .iter()
+        .find(|body| {
+            body.canonical
+                .as_ref()
+                .is_some_and(|owner| owner.declaration_name == "feed")
+        })
+        .ok_or("missing generic feed body")?;
+    let profile = body
+        .checked_input_profile
+        .as_ref()
+        .ok_or("missing generic input profile")?;
+    assert_eq!(profile.version, 3);
+    assert_eq!(profile.result_requirements.len(), 1);
+    assert_eq!(
+        profile.result_requirements[0].1,
+        super::IncanType::Generic {
+            base: "Result".into(),
+            args: vec![
+                super::IncanType::Primitive(super::IncanPrimitiveType::Unit),
+                super::IncanType::TypeVar("E".into())
+            ],
+        }
+    );
+    let decoded: bir::Body = postcard::from_bytes(&postcard::to_allocvec(body)?)?;
+    assert_eq!(decoded.checked_input_profile, body.checked_input_profile);
+    let mut stripped = decoded;
+    stripped
+        .checked_input_profile
+        .as_mut()
+        .ok_or("lost profile")?
+        .result_requirements
+        .clear();
+    assert!(stripped.input_profile_gap().is_some());
     Ok(())
 }

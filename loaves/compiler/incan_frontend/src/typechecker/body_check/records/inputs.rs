@@ -87,7 +87,7 @@ pub(super) fn project(positions: &Positions, local: &BodyLocal, fields: &mut Fie
             "input-flow".into(),
             positions.nodes.anchor(span_of(owner))?.path,
             "graph".into(),
-            "2".into(),
+            "3".into(),
         ];
         match flow {
             InputFlow::Checked { graph, analysis } => {
@@ -127,6 +127,7 @@ pub(super) fn restore(positions: &Positions, local: &mut BodyLocal, row: &[Strin
     let schema = match row.get(3).map(String::as_str) {
         Some("1") => 1,
         Some("2") => 2,
+        Some("3") => 3,
         _ => return Err(NodeBindingError::Unsupported("input record schema")),
     };
     let mut reader = Reader {

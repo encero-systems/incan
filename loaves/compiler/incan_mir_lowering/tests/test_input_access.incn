@@ -7,10 +7,12 @@ from rust::incan_semantics_core import (
     IncanType as RustType,
     IncanPrimitiveType as Primitive,
     function_type,
+    generic,
 )
 from rust::incan_semantics_core::body_ir import NominalDeclaration
 from native_type_identity import constructor_index, representation_arguments
 from symbols import type_component
+from result_requirements import independent_result
 
 
 def callable_with_access(access: IncanInputAccess) -> RustType:
@@ -57,3 +59,17 @@ pub def test_native_callable_normalization_preserves_input_access() -> None:
                 assert not parameters[0].native_owned
             _ =>
                 assert false
+
+
+pub def test_generic_result_requires_independent_closed_storage() -> None:
+    """A scalar failure closes the obligation; symbolic, nominal and borrowed failures cannot discharge it."""
+    unit = RustType.Primitive(Primitive.Unit)
+    text = RustType.Primitive(Primitive.Str)
+    assert not independent_result(generic("Result", [text]))
+    assert not independent_result(generic("Option", [text, unit]))
+    assert independent_result(generic("Result", [unit, text]))
+    assert independent_result(generic("Result", [unit, generic("Option", [text])]))
+    assert not independent_result(generic("Result", [unit, RustType.TypeVar("E")]))
+    assert not independent_result(generic("Result", [unit, RustType.Named("E")]))
+    assert not independent_result(generic("Result", [unit, generic("Borrowed", [text])]))
+    assert not independent_result(generic("Result", [unit, generic("Reference", [text])]))
