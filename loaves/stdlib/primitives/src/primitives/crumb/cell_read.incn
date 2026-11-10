@@ -26,7 +26,7 @@ pub def read_root(
     written: StoredDescription,
     view: MappedView,
     origin: int,
-    dictionary: Dictionary,
+    dictionary: &Dictionary,
     mut budget: Budget,
 ) -> Result[DecodedRoot, BinaryError]:
     """Resolve enum variants in identity order; decode every reachable cell before returning its row index."""
@@ -52,7 +52,7 @@ pub def read_root(
 def read_fields(
     shape: list[StoredField],
     index: RecordIndex,
-    dictionary: Dictionary,
+    dictionary: &Dictionary,
     mut budget: Budget,
 ) -> Result[list[ValueField], BinaryError]:
     """Build only a transient logical record; the admitted set retains offsets, not every decoded record."""
@@ -103,7 +103,7 @@ pub def read_field_cell(
     field: StoredField,
     view: MappedView,
     origin: int,
-    dictionary: Dictionary,
+    dictionary: &Dictionary,
     mut budget: Budget,
 ) -> Result[Value, BinaryError]:
     """The presence bit substitutes only one outer Option tag; redundant empty presence is invalid."""
@@ -130,7 +130,7 @@ pub def cell(
     node: TypeNode,
     view: MappedView,
     origin: int,
-    dictionary: Dictionary,
+    dictionary: &Dictionary,
     mut budget: Budget,
 ) -> Result[Value, BinaryError]:
     """Every entered typed cell consumes shared depth; failure unwinds the balanced entry before returning."""
@@ -145,7 +145,7 @@ def cell_inner(
     node: TypeNode,
     view: MappedView,
     origin: int,
-    dictionary: Dictionary,
+    dictionary: &Dictionary,
     mut budget: Budget,
 ) -> Result[Value, BinaryError]:
     """Only the admitted written selector chooses interpretation; no application constructor is invoked."""
@@ -170,7 +170,7 @@ def container(
     arguments: list[TypeNode],
     view: MappedView,
     origin: int,
-    dictionary: Dictionary,
+    dictionary: &Dictionary,
     mut budget: Budget,
 ) -> Result[Value, BinaryError]:
     """Check tags/counts before indexing, and consume the complete frame selected by the enclosing offsets."""
@@ -221,7 +221,7 @@ def container(
 def map_cell(
     arguments: list[TypeNode],
     index: CellIndex,
-    dictionary: Dictionary,
+    dictionary: &Dictionary,
     mut budget: Budget,
 ) -> Result[Value, BinaryError]:
     """Keys are strictly ordered under object comparison; no user equality or last-write-wins operation runs."""
@@ -250,7 +250,7 @@ def checked_order(previous: Value, current: Value, origin: int, mut budget: Budg
 def union_cell(
     arguments: list[TypeNode],
     mut cursor: EncodingCursor,
-    dictionary: Dictionary,
+    dictionary: &Dictionary,
     mut budget: Budget,
 ) -> Result[Value, BinaryError]:
     """The physical index selects the written descriptor's N/K ordering, never source declaration order."""
