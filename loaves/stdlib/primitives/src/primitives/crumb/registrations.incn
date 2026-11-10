@@ -46,7 +46,7 @@ pub class KindRegistry:
         mut entries: dict[str, KindRegistration] = {}
         for registration in registrations:
             charge_registration(registration, budget)?
-            if registration.kind == "Record" or registration.kind == "Enum":
+            if core_shape(registration.kind).is_some():
                 return Err(CrumbError.invalid_input("core kind redefinition"))
             if registration.kind in entries:
                 return Err(CrumbError.invalid_input("duplicate profile kind"))
@@ -65,10 +65,8 @@ pub class KindRegistry:
     pub def shape(self, kind: str, mut budget: Budget) -> Result[NominalKind, CrumbError]:
         """Resolve only a core kind or an explicitly registered profile kind."""
         charge_name(kind, budget)?
-        if kind == "Record":
-            return Ok(NominalKind.Record)
-        if kind == "Enum":
-            return Ok(NominalKind.Enum)
+        if let Some(shape) = core_shape(kind):
+            return Ok(shape)
         if kind not in self.entries:
             return Err(CrumbError.invalid_input("unregistered profile kind"))
         return Ok(self.entries[kind].shape)
@@ -82,10 +80,19 @@ pub class KindRegistry:
         The codec owns the core kinds' declared printing order.
         """
         self.shape(kind, budget)?
-        if kind == "Record" or kind == "Enum":
+        if core_shape(kind).is_some():
             return Ok(None)
         charge_registration(self.entries[kind], budget)?
         return Ok(Some(self.entries[kind]))
+
+
+def core_shape(kind: str) -> Option[NominalKind]:
+    """Recognize the two title-cased core names through their shared nominal-kind vocabulary."""
+    for shape in [NominalKind.Record, NominalKind.Enum]:
+        spelling = shape.value()
+        if kind == spelling[0].upper() + spelling[1:]:
+            return Some(shape)
+    return None
 
 
 def charge_name(name: str, mut budget: Budget) -> Result[None, CrumbError]:
