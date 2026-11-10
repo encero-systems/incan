@@ -3,7 +3,15 @@
 from std.primitives.crumb import Budget, CrumbError
 from std.primitives.hex import hexlify
 from std.primitives.crumb.spelling import selector_spelling, shape_spelling
-from std.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, NominalKind, TypeNode, VariantShape
+from std.primitives.crumb.types import (
+    AbsentPolicy,
+    ContainerKind,
+    FieldShape,
+    NominalKind,
+    ScalarKind,
+    TypeNode,
+    VariantShape,
+)
 from std.primitives.crumb.admission import AdmissionFailure, RecordShape, ValuePlan, check_written, plan_adaptation
 
 const AGE: bytes = b"\x01?T@\x0c\x82"
@@ -18,7 +26,10 @@ def field(identity: bytes, node: TypeNode, policy: AbsentPolicy = AbsentPolicy.R
 def test_shape_identity_order_and_recursive_enum_payload() -> Result[None, CrumbError]:
     """Declaration order does not enter S, and an anonymous enum payload adds no ancestor."""
     mut budget = Budget.create(bytes=16384, elements=16384, depth=32)?
-    shape = TypeNode.Record("Customer", [field(EMAIL, TypeNode.Scalar("string")), field(AGE, TypeNode.Scalar("i32"))])
+    shape = TypeNode.Record(
+        "Customer",
+        [field(EMAIL, TypeNode.Scalar(ScalarKind.String)), field(AGE, TypeNode.Scalar(ScalarKind.I32))],
+    )
     assert shape_spelling(shape, budget)? == "record{013f54400c82:i32:1:r;82244417f956:string:1:r}"
     payload = [field(AGE, TypeNode.Recursive("Tree"))]
     tree = TypeNode.Enum("Tree", [VariantShape(identity=EMAIL, fields=payload)])
@@ -32,16 +43,16 @@ def test_model_shape_multiplicity_is_not_union_selector_ambiguity() -> Result[No
     mut budget = Budget.create(bytes=16384, elements=16384, depth=32)?
     structural = TypeNode.Container(ContainerKind.Union, [TypeNode.Record("A", []), TypeNode.Record("B", [])])
     assert shape_spelling(structural, budget)? == "union<record{},record{}>"
-    duplicate = TypeNode.Container(ContainerKind.Union, [TypeNode.Scalar("i8"), TypeNode.Scalar("i8")])
+    duplicate = TypeNode.Container(ContainerKind.Union, [TypeNode.Scalar(ScalarKind.I8), TypeNode.Scalar(ScalarKind.I8)])
     assert selector_spelling(duplicate, budget).is_err()
-    assert selector_spelling(TypeNode.Scalar("unknown"), budget).is_err()
+    assert ScalarKind.from_value("unknown").is_none()
     return Ok(None)
 
 
 def test_failed_spelling_balances_depth_without_refunding_work() -> Result[None, CrumbError]:
     """A child that exhausts work does not leave the caller's active depth artificially elevated."""
     mut budget = Budget.create(bytes=128, elements=1, depth=1)?
-    nested = TypeNode.Container(ContainerKind.Option, [TypeNode.Scalar("string")])
+    nested = TypeNode.Container(ContainerKind.Option, [TypeNode.Scalar(ScalarKind.String)])
     assert selector_spelling(nested, budget).is_err()
     budget.enter()?
     budget.leave()?
@@ -54,20 +65,20 @@ def test_adaptation_uses_identities_and_declared_ranges() -> Result[None, str]:
     mut budget = Budget.create(bytes=16384, elements=16384, depth=32).map_err((error) => error.message())?
     original = RecordShape(
         nominal=b"customer",
-        fields=[field(AGE, TypeNode.Scalar("i32")), field(EMAIL, TypeNode.Scalar("string"))],
+        fields=[field(AGE, TypeNode.Scalar(ScalarKind.I32)), field(EMAIL, TypeNode.Scalar(ScalarKind.String))],
     )
     requested = RecordShape(
         nominal=b"customer",
-        fields=[field(EMAIL, TypeNode.Scalar("string")), field(AGE, TypeNode.Scalar("i64"))],
+        fields=[field(EMAIL, TypeNode.Scalar(ScalarKind.String)), field(AGE, TypeNode.Scalar(ScalarKind.I64))],
     )
     plan = plan_adaptation(original, requested, budget).map_err((error) => error.message())?
     assert plan[0].source == Some(1)
     assert plan[1].source == Some(0)
     match plan[1].conversion:
         ValuePlan.Widen(name) =>
-            assert name == "i64"
+            assert name == ScalarKind.I64
         _ => return Err("integer widening plan missing")
-    narrowed = RecordShape(nominal=b"customer", fields=[field(AGE, TypeNode.Scalar("i8"))])
+    narrowed = RecordShape(nominal=b"customer", fields=[field(AGE, TypeNode.Scalar(ScalarKind.I8))])
     match plan_adaptation(original, narrowed, budget):
         Err(error) =>
             assert error.kind == AdmissionFailure.IncompatibleType
@@ -79,7 +90,7 @@ def test_adaptation_uses_identities_and_declared_ranges() -> Result[None, str]:
 def test_nested_optional_plan_keeps_the_inner_conversion() -> Result[None, str]:
     """Adding an Option inside an existing Option cannot be flattened to an outer wrapping count."""
     mut budget = Budget.create(bytes=16384, elements=16384, depth=32).map_err((error) => error.message())?
-    optional = TypeNode.Container(ContainerKind.Option, [TypeNode.Scalar("string")])
+    optional = TypeNode.Container(ContainerKind.Option, [TypeNode.Scalar(ScalarKind.String)])
     nested = TypeNode.Container(ContainerKind.Option, [optional])
     original = RecordShape(nominal=b"customer", fields=[field(EMAIL, optional)])
     requested = RecordShape(nominal=b"customer", fields=[field(EMAIL, nested)])
@@ -97,7 +108,7 @@ def test_nested_optional_plan_keeps_the_inner_conversion() -> Result[None, str]:
 def test_written_corruption_and_limits_cannot_be_hidden_by_projection() -> Result[None, str]:
     """Even an empty request validates the original table, and a caller limit stays a limit."""
     mut budget = Budget.create(bytes=16384, elements=16384, depth=32).map_err((error) => error.message())?
-    item = field(EMAIL, TypeNode.Scalar("string"))
+    item = field(EMAIL, TypeNode.Scalar(ScalarKind.String))
     original = RecordShape(nominal=b"customer", fields=[item, item])
     requested = RecordShape(nominal=b"customer", fields=[])
     match plan_adaptation(original, requested, budget):
@@ -118,8 +129,8 @@ def test_nested_nominal_identity_and_record_conversion() -> Result[None, str]:
     """A nested shape evolves only within its own binding; optional children keep their field plans."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((error) => error.message())?
     nominal = TypeNode.Nominal(NominalKind.Record, EMAIL, [])
-    original = TypeNode.Bound([nominal, TypeNode.Record("Old", [field(AGE, TypeNode.Scalar("i32"))])])
-    requested = TypeNode.Bound([nominal, TypeNode.Record("New", [field(AGE, TypeNode.Scalar("i64"))])])
+    original = TypeNode.Bound([nominal, TypeNode.Record("Old", [field(AGE, TypeNode.Scalar(ScalarKind.I32))])])
+    requested = TypeNode.Bound([nominal, TypeNode.Record("New", [field(AGE, TypeNode.Scalar(ScalarKind.I64))])])
     source = RecordShape(nominal=b"root", fields=[field(EMAIL, original)])
     target = RecordShape(nominal=b"root", fields=[field(EMAIL, requested)])
     plan = plan_adaptation(source, target, budget).map_err((error) => error.message())?
@@ -127,11 +138,14 @@ def test_nested_nominal_identity_and_record_conversion() -> Result[None, str]:
         ValuePlan.Record(fields) =>
             match fields[0].conversion:
                 ValuePlan.Widen(name) =>
-                    assert name == "i64"
+                    assert name == ScalarKind.I64
                 _ => return Err("nested widening lost")
         _ => return Err("nested record plan lost")
     other = TypeNode.Bound(
-        [TypeNode.Nominal(NominalKind.Record, AGE, []), TypeNode.Record("New", [field(AGE, TypeNode.Scalar("i64"))])],
+        [
+            TypeNode.Nominal(NominalKind.Record, AGE, []),
+            TypeNode.Record("New", [field(AGE, TypeNode.Scalar(ScalarKind.I64))]),
+        ],
     )
     wrong = RecordShape(nominal=b"root", fields=[field(EMAIL, other)])
     match plan_adaptation(source, wrong, budget):
@@ -145,7 +159,10 @@ def test_nested_nominal_identity_and_record_conversion() -> Result[None, str]:
 def test_nested_written_order_is_not_repaired_by_shape_sorting() -> Result[None, str]:
     """S sorts for hashing; admission must still reject an unsorted original nested field table."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((error) => error.message())?
-    bad = TypeNode.Record("Nested", [field(EMAIL, TypeNode.Scalar("string")), field(AGE, TypeNode.Scalar("i32"))])
+    bad = TypeNode.Record(
+        "Nested",
+        [field(EMAIL, TypeNode.Scalar(ScalarKind.String)), field(AGE, TypeNode.Scalar(ScalarKind.I32))],
+    )
     match check_written([field(EMAIL, bad)], budget):
         Err(error) =>
             assert error.kind == AdmissionFailure.IdentityOrder
@@ -160,14 +177,14 @@ def test_recursive_adaptation_plan_is_finite() -> Result[None, str]:
     left = TypeNode.Record(
         "Old",
         [
-            field(AGE, TypeNode.Scalar("i32")),
+            field(AGE, TypeNode.Scalar(ScalarKind.I32)),
             field(EMAIL, TypeNode.Container(ContainerKind.Option, [TypeNode.Recursive("Old")]), AbsentPolicy.NoneValue),
         ],
     )
     right = TypeNode.Record(
         "New",
         [
-            field(AGE, TypeNode.Scalar("i64")),
+            field(AGE, TypeNode.Scalar(ScalarKind.I64)),
             field(EMAIL, TypeNode.Container(ContainerKind.Option, [TypeNode.Recursive("New")]), AbsentPolicy.NoneValue),
         ],
     )
@@ -190,8 +207,8 @@ def test_recursive_adaptation_plan_is_finite() -> Result[None, str]:
 def test_enum_payload_widening_and_unknown_variant_refusal() -> Result[None, str]:
     """Variants retain their identity while their payload uses ordinary nested field adaptation."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((error) => error.message())?
-    left = TypeNode.Enum("Old", [VariantShape(identity=EMAIL, fields=[field(AGE, TypeNode.Scalar("i32"))])])
-    right = TypeNode.Enum("New", [VariantShape(identity=EMAIL, fields=[field(AGE, TypeNode.Scalar("i64"))])])
+    left = TypeNode.Enum("Old", [VariantShape(identity=EMAIL, fields=[field(AGE, TypeNode.Scalar(ScalarKind.I32))])])
+    right = TypeNode.Enum("New", [VariantShape(identity=EMAIL, fields=[field(AGE, TypeNode.Scalar(ScalarKind.I64))])])
     source = RecordShape(nominal=b"root", fields=[field(EMAIL, left)])
     target = RecordShape(nominal=b"root", fields=[field(EMAIL, right)])
     plan = plan_adaptation(source, target, budget).map_err((error) => error.message())?
@@ -200,7 +217,7 @@ def test_enum_payload_widening_and_unknown_variant_refusal() -> Result[None, str
             assert hexlify(variants[0].identity) == "82244417f956"
             match variants[0].fields[0].conversion:
                 ValuePlan.Widen(name) =>
-                    assert name == "i64"
+                    assert name == ScalarKind.I64
                 _ => return Err("enum payload conversion missing")
         _ => return Err("enum conversion missing")
     empty = RecordShape(nominal=b"root", fields=[field(EMAIL, TypeNode.Enum("Empty", []))])
@@ -268,7 +285,7 @@ def test_malformed_bound_inside_nominal_definition_is_refused() -> Result[None, 
 def test_bound_definition_cannot_hide_ambiguous_union_selectors() -> Result[None, str]:
     """Equal structural shape is legal, but duplicate N inside a nominal definition is still ambiguous."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((error) => error.message())?
-    ambiguous = TypeNode.Container(ContainerKind.Union, [TypeNode.Scalar("i8"), TypeNode.Scalar("i8")])
+    ambiguous = TypeNode.Container(ContainerKind.Union, [TypeNode.Scalar(ScalarKind.I8), TypeNode.Scalar(ScalarKind.I8)])
     outer = TypeNode.Bound(
         [TypeNode.Nominal(NominalKind.Record, EMAIL, []), TypeNode.Record("Outer", [field(AGE, ambiguous)])],
     )

@@ -6,45 +6,44 @@ from crate.primitives.crumb.row_errors import RowError, RowFailure, failure, pri
 from crate.primitives.crumb.row_metadata_read import read_text
 from crate.primitives.crumb.row_numbers import fixed_integer, signed_decimal
 from crate.primitives.crumb.row_scalars import float_cell
+from crate.primitives.crumb.types import ScalarKind
 from crate.primitives.crumb.values import Value
 from crate.primitives.views import MappedView
 
 
-pub def scalar(name: str, view: MappedView, origin: int, mut budget: Budget) -> Result[Value, RowError]:
+pub def scalar(kind: ScalarKind, view: MappedView, origin: int, mut budget: Budget) -> Result[Value, RowError]:
     """The admitted description supplies scalar width/type; no tag or unconsumed bytes may change it."""
-    names = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"]
-    widths = [1, 2, 4, 8]
-    for index in range(8):
-        if name == names[index]:
-            width = widths[index % 4]
+    match kind.integer_facts():
+        Some((signed, bits)) =>
+            width = bits // 8
             if view.len() != width:
                 return Err(failure(RowFailure.InvalidCell, origin))
             data = copied(view, origin, budget)?
-            return Ok(Value.Integer(fixed_integer(data, index < 4, origin, budget)?))
-    if name == "fp32" or name == "fp64":
-        mut width = 32
-        if name == "fp64":
-            width = 64
-        return floating(view, width, origin, budget)
+            return Ok(Value.Integer(fixed_integer(data, signed, origin, budget)?))
+        None => pass
+    match kind:
+        ScalarKind.Fp32 => return floating(view, 32, origin, budget)
+        ScalarKind.Fp64 => return floating(view, 64, origin, budget)
+        _ => pass
     mut cursor = RowCursor.create(view, origin)?
     mut result = Value.NoneValue
-    match name:
-        "boolean" =>
+    match kind:
+        ScalarKind.Boolean =>
             if view.len() != 1:
                 return Err(failure(RowFailure.InvalidCell, origin))
             flag = cursor.byte(budget)?
             if flag > 1:
                 return Err(failure(RowFailure.InvalidCell, origin))
             result = Value.Boolean(flag == 1)
-        "string" => result = Value.Text(read_text(cursor, budget)?)
-        "binary" =>
+        ScalarKind.String => result = Value.Text(read_text(cursor, budget)?)
+        ScalarKind.Binary =>
             data = cursor.frame(budget)?
             result = Value.Binary(copied(data, origin, budget)?)
-        "secret_string" | "secret_bytes" =>
+        ScalarKind.SecretString | ScalarKind.SecretBytes =>
             if view.len() != 1 or cursor.byte(budget)? != 0:
                 return Err(failure(RowFailure.InvalidCell, origin))
             result = Value.Withheld
-        "reference" =>
+        ScalarKind.Reference =>
             target = cursor.frame(budget)?
             identity = cursor.frame(budget)?
             result = Value.Reference(copied(target, origin, budget)?, copied(identity, origin, budget)?)

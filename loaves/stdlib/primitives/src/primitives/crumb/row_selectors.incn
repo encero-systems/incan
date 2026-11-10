@@ -5,7 +5,7 @@ from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.framing import Reader
 from crate.primitives.crumb.identity import closed_selector
 from crate.primitives.crumb.spelling import selector_spelling
-from crate.primitives.crumb.types import ContainerKind, NominalKind, TypeNode
+from crate.primitives.crumb.types import ContainerKind, NominalKind, ScalarKind, TypeConstructorKind, TypeNode
 from crate.primitives.text import decode_utf8
 
 
@@ -83,7 +83,7 @@ class TypeParser:
     def node_inner(mut self, mut budget: Budget) -> Result[TypeNode, CrumbError]:
         """Parse structural constructors and nominal identities; final spelling checks scalar admission."""
         name = self.token(budget)?
-        if name == "decimal":
+        if TypeConstructorKind.from_value(name) == Some(TypeConstructorKind.Decimal):
             self.take("<")?
             precision = host_count(self.token(budget)?, budget)?
             self.take(",")?
@@ -99,7 +99,9 @@ class TypeParser:
             return Ok(TypeNode.Container(kind, arguments))
         if len(arguments) != 0:
             return Err(CrumbError.invalid_input("scalar type arguments"))
-        return Ok(TypeNode.Scalar(name))
+        match ScalarKind.from_value(name):
+            Some(kind) => return Ok(TypeNode.Scalar(kind))
+            None => return Err(CrumbError.invalid_input("unknown scalar selector"))
 
     def arguments(mut self, mut budget: Budget) -> Result[list[TypeNode], CrumbError]:
         """Read explicit comma-delimited arguments; final canonical comparison rejects stray empty brackets."""

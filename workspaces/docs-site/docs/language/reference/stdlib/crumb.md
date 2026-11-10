@@ -63,7 +63,7 @@ The child modules `std.primitives.crumb.types`, `.spelling`, `.identity` and `.a
 
 | Variant | Meaning |
 | --- | --- |
-| `Scalar(str)` | One admitted scalar token: `boolean`, signed/unsigned 8/16/32/64-bit integers, `fp32`, `fp64`, `string`, `binary`, `secret_string`, `secret_bytes` or `reference`. |
+| `Scalar(ScalarKind)` | One admitted scalar kind: `boolean`, signed/unsigned 8/16/32/64-bit integers, `fp32`, `fp64`, `string`, `binary`, `secret_string`, `secret_bytes` or `reference`. |
 | `Decimal(int, int)` | Precision and scale, with positive precision and `0 <= scale <= precision`. |
 | `Container(ContainerKind, list[TypeNode])` | `List`, `Set` and `Option` take one argument, `Map` two, `Tuple` any number and `Union` at least one. |
 | `Nominal(NominalKind, bytes, list[TypeNode])` | `Record` or `Enum`, a six-byte declaration identity, and ordered closed arguments. This is a selector without structural fields. |
@@ -74,7 +74,7 @@ The child modules `std.primitives.crumb.types`, `.spelling`, `.identity` and `.a
 | `Underlying(list[TypeNode])` | Exactly one underlying node for an alias or constrained newtype. Admission of additional constraints remains with the binding. |
 | `Parameter(str)` | An unresolved parameter, representable for diagnostics but refused by spelling and selector operations. |
 
-`FieldShape(identity: bytes, storage_type: TypeNode, canonical: bool, absent: AbsentPolicy)` retains storage facts. `ContainerKind`, `NominalKind` and `AbsentPolicy` are string-valued enums. Their values are respectively the lowercase constructor names, `record` or `enum`, and `required`, `none` or `empty`; `from_value` parses those spellings. `VariantShape(identity: bytes, fields: list[FieldShape])` describes one anonymous enum payload. Member identities are exactly six bytes. Display names, properties and declaration metadata remain in the owning complete description. Nominal models require `Bound` nodes; anonymous structural nodes carry no nominal authority.
+`FieldShape(identity: bytes, storage_type: TypeNode, canonical: bool, absent: AbsentPolicy)` retains storage facts. `ScalarKind`, `ContainerKind`, `NominalKind` and `AbsentPolicy` are string-valued enums. Their values are respectively the scalar tokens above, the lowercase constructor names, `record` or `enum`, and `required`, `none` or `empty`; `from_value` parses those spellings. `ScalarKind.integer_facts()` returns signedness and bit width for integer members. `VariantShape(identity: bytes, fields: list[FieldShape])` describes one anonymous enum payload. Member identities are exactly six bytes. Display names, properties and declaration metadata remain in the owning complete description. Nominal models require `Bound` nodes; anonymous structural nodes carry no nominal authority.
 
 | API | Return type | Contract |
 | --- | --- | --- |

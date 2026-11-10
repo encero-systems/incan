@@ -2,7 +2,15 @@
 
 from std.json import JsonValue
 from std.encoding.hex import unhexlify
-from std.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, NominalKind, TypeNode, VariantShape
+from std.primitives.crumb.types import (
+    AbsentPolicy,
+    ContainerKind,
+    FieldShape,
+    NominalKind,
+    ScalarKind,
+    TypeNode,
+    VariantShape,
+)
 
 
 pub def text(value: JsonValue, key: str) -> Result[str, str]:
@@ -97,7 +105,9 @@ pub def selector_text(spelling: str) -> Result[TypeNode, str]:
         prefix = 5
         kind_name = "enum"
     else:
-        return Ok(TypeNode.Scalar(spelling))
+        match ScalarKind.from_value(spelling):
+            Some(kind) => return Ok(TypeNode.Scalar(kind))
+            None => return Err("unknown scalar in corpus")
     kind = match NominalKind.from_value(kind_name):
         Some(value) => value
         None => return Err("unknown nominal kind in corpus")

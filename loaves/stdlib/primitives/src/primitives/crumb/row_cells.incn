@@ -148,7 +148,7 @@ pub def cell(node: TypeNode, value: Value, dictionary: Dictionary, mut budget: B
 def cell_inner(node: TypeNode, value: Value, dictionary: Dictionary, mut budget: Budget) -> Result[bytes, CrumbError]:
     """Physical tags occur only for option/union/enum selection; scalar types come from the description."""
     match node:
-        TypeNode.Scalar(name) => return scalar_cell(name, value, budget)
+        TypeNode.Scalar(kind) => return scalar_cell(kind, value, budget)
         TypeNode.Decimal(precision, scale) => return decimal_cell(precision, scale, value, budget)
         TypeNode.Nominal(_, _, _) =>
             index = slot(dictionary, closed_selector(node, budget)?, budget)?

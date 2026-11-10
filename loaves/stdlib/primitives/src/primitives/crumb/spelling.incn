@@ -2,29 +2,18 @@
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
-from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, NominalKind, TypeNode, VariantShape
+from crate.primitives.crumb.types import (
+    AbsentPolicy,
+    ContainerKind,
+    FieldShape,
+    NominalKind,
+    ScalarKind,
+    TypeNode,
+    VariantShape,
+)
 from crate.primitives.hash import sha256
 from crate.primitives.hex import hexlify
 from crate.primitives.text import encode_utf8
-
-const SCALARS: FrozenList[str] = [
-    "boolean",
-    "i8",
-    "i16",
-    "i32",
-    "i64",
-    "u8",
-    "u16",
-    "u32",
-    "u64",
-    "fp32",
-    "fp64",
-    "string",
-    "binary",
-    "secret_string",
-    "secret_bytes",
-    "reference",
-]
 
 
 pub def selector_spelling(node: TypeNode, mut budget: Budget) -> Result[str, CrumbError]:
@@ -51,10 +40,7 @@ def spell(node: TypeNode, nominal: bool, mut active: list[str], mut budget: Budg
 def spell_inner(node: TypeNode, nominal: bool, mut active: list[str], mut budget: Budget) -> Result[str, CrumbError]:
     """Dispatch a type's format meaning without executing its constructors, methods or validation."""
     match node:
-        TypeNode.Scalar(name) =>
-            if name not in SCALARS:
-                return Err(CrumbError.invalid_input("unsupported scalar"))
-            return compose("", [name], "", "", budget)
+        TypeNode.Scalar(kind) => return compose("", [scalar_spelling(kind)], "", "", budget)
         TypeNode.Decimal(precision, scale) =>
             if precision <= 0 or scale < 0 or scale > precision:
                 return Err(CrumbError.invalid_input("decimal bounds"))
@@ -91,6 +77,11 @@ def spell_inner(node: TypeNode, nominal: bool, mut active: list[str], mut budget
                 return Err(CrumbError.invalid_input("underlying type arity"))
             return spell(items[0], nominal, active, budget)
         TypeNode.Parameter(_) => return Err(CrumbError.invalid_input("unresolved type parameter"))
+
+
+def scalar_spelling(kind: ScalarKind) -> str:
+    """Return a scalar's canonical spelling after its sum-type payload crosses a typed boundary."""
+    return kind.value()
 
 
 def nominal_type(
