@@ -7,6 +7,7 @@ from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.encoding_buffer import EncodingBuffer, indexed
 from crate.primitives.crumb.descriptions import StoredDescription
 from crate.primitives.crumb.description_dictionary import Dictionary
+from crate.primitives.crumb.records import RowRecord
 from crate.primitives.crumb.types import AbsentPolicy, NominalKind
 from crate.primitives.crumb.values import Value, ValueField
 from crate.primitives.hex import hexlify
@@ -15,14 +16,17 @@ from crate.primitives.hex import hexlify
 pub def write_group(
     index: int,
     description: StoredDescription,
-    values: list[Value],
+    records: &list[RowRecord],
+    start: int,
+    end: int,
     choice: Option[GroupChoice],
     dictionary: Dictionary,
     mut budget: Budget,
 ) -> Result[bytes, CrumbError]:
-    """A record has identity-ordered field columns; a root enum has one complete typed-cell column."""
-    if len(values) == 0:
+    """Borrow one consecutive record run while materializing only the physical columns it encodes."""
+    if start < 0 or end > len(records) or start >= end:
         return Err(CrumbError.invalid_input("empty column group"))
+    value_count = end - start
     mut count = len(description.fields)
     if description.kind == NominalKind.Enum:
         count = 1
@@ -31,16 +35,20 @@ pub def write_group(
             return Err(CrumbError.invalid_input("column group choice count"))
     mut columns: list[bytes] = []
     if description.kind == NominalKind.Enum:
-        mut selected = indexed_choice(len(values), budget)?
+        mut selected = indexed_choice(value_count, budget)?
         if let Some(plan) = choice:
             selected = plan.columns[0]
+        mut values: list[Value] = []
+        for position in range(start, end):
+            budget.charge_elements(1)?
+            values.append(records[position].value)
         columns.append(write_column(description.selector, AbsentPolicy.Required, values, selected, dictionary, budget)?)
     else:
         for field_index in range(count):
-            mut selected = indexed_choice(len(values), budget)?
+            mut selected = indexed_choice(value_count, budget)?
             if let Some(plan) = choice:
                 selected = plan.columns[field_index]
-            column = transpose_column(description, values, field_index, budget)?
+            column = transpose_column(description, records, start, end, field_index, budget)?
             #2801: observe fields through the descriptor place, not a returned borrowed list.
             columns.append(
                 write_column(
@@ -60,25 +68,39 @@ pub def write_group(
 
 def transpose_column(
     description: StoredDescription,
-    values: list[Value],
+    records: &list[RowRecord],
+    start: int,
+    end: int,
     field_index: int,
     mut budget: Budget,
 ) -> Result[list[Value], CrumbError]:
     """Project one complete field column so later columns never coexist as logical value intermediates."""
     mut column: list[Value] = []
-    for value in values:
+    for position in range(start, end):
         budget.charge_elements(1)?
-        match value:
+        match records[position].value:
             Value.Record(fields) =>
-                positions = field_positions(fields, budget)?
                 if len(fields) != len(description.fields):
                     return Err(CrumbError.invalid_input("column record field count"))
+                mut identity_ordered = true
+                for index in range(len(fields)):
+                    budget.charge_elements(1)?
+                    budget.charge_bytes(12)?
+                    if len(fields[index].identity) != 6:
+                        return Err(CrumbError.invalid_input("column field identity width"))
+                    if fields[index].identity != description.fields[index].shape.identity:
+                        identity_ordered = false
+                mut positions: dict[str, int] = {}
+                if not identity_ordered:
+                    positions = field_positions(fields, budget)?
                 budget.charge_elements(1)?
                 budget.charge_bytes(12)?
-                key = hexlify(description.fields[field_index].shape.identity)
-                if key not in positions:
-                    return Err(CrumbError.invalid_input("column record field identity"))
-                source = positions[key]
+                mut source = field_index
+                if not identity_ordered:
+                    key = hexlify(description.fields[field_index].shape.identity)
+                    if key not in positions:
+                        return Err(CrumbError.invalid_input("column record field identity"))
+                    source = positions[key]
                 if fields[source].canonical != description.fields[field_index].shape.canonical:
                     return Err(CrumbError.invalid_input("column record canonical contract"))
                 if fields[source].absent != description.fields[field_index].shape.absent:

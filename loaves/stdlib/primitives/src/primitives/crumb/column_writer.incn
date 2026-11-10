@@ -10,7 +10,6 @@ from crate.primitives.crumb.encoding_buffer import EncodingBuffer, indexed, offs
 from crate.primitives.crumb.descriptions import Description, encode_entry
 from crate.primitives.crumb.description_dictionary import admit_dictionary, slot
 from crate.primitives.crumb.records import RowRecord
-from crate.primitives.crumb.values import Value
 
 
 pub def write_columns(
@@ -43,17 +42,12 @@ pub def write_columns(
         while end < len(records) and records[end].key == records[start].key:
             budget.charge_elements(1)?
             end += 1
-        # Typed column encoding admits every projected value; a separate tree walk would repeat the same admission.
-        mut values: list[Value] = []
-        for position in range(start, end):
-            budget.charge_elements(1)?
-            values.append(records[position].value)
         mut choice: Option[GroupChoice] = None
         if len(choices) != 0:
             if len(groups) >= len(choices):
                 return Err(CrumbError.invalid_input("missing column group choices"))
             choice = Some(choices[len(groups)])
-        groups.append(write_group(index, dictionary.entries[index], values, choice, dictionary, budget)?)
+        groups.append(write_group(index, dictionary.entries[index], records, start, end, choice, dictionary, budget)?)
         prefixes.append(end)
         start = end
     if len(choices) != 0 and len(choices) != len(groups):
