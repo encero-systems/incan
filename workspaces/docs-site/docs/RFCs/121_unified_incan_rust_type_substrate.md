@@ -111,7 +111,14 @@ pub def charge_for(amount: int, window: Duration) -> Result[Receipt, str]:
 
 Both signatures name the same Rust type, declared once by the standard-library Loaf that owns `Duration`, so a Rust caller can pass one library's value to the other. User-declared types need no such sharing, because each library owns its own `ProviderRequest`.
 
-**Borrowing has one spelling.** `str` is `String`, and `Borrowed[str]` is what Rust calls `&str`. An Incan author writes RFC 164's contracts, or lets RFC 129 infer them, and never needs a Rust spelling.
+**Borrowing has one spelling.** `str` is `String`, and `Borrowed[str]` is what Rust calls `&str`. Likewise, `Borrowed[list[T]]` is a read-only view of existing elements, represented as Rust's `&[T]`. The elements may come from a list, an array or a slice; an author needs no different callback for each source:
+
+```incan
+def total(values: Borrowed[list[int]]) -> int:
+    return sum(values)
+```
+
+A Rust caller lending the middle two elements of `[10, 20, 30, 40]` to `total` gets `50`, without allocating a list or copying the elements. The view preserves the source's lifetime and permits reading, indexing and iteration, not resizing or replacing the owning collection. An Incan author writes RFC 164's contracts, or lets RFC 129 infer them, and never needs a Rust spelling.
 
 **A trait is a real Rust trait.** Adopting a trait in Incan produces a real implementation that Rust code can call and bound on, with named exceptions where Rust has no matching concept.
 
@@ -133,7 +140,7 @@ shop.readings.Reading.note is Option<String>
 
 ## Reference-level explanation
 
-1. Every Incan type must compile to one real Rust type. Passing a value between Incan-authored and Rust-authored code must pass that value, with no generated wrapper, adapter or check at the crossing, except as rules 9 and 13 allow.
+1. Every Incan type must compile to one real Rust type. Passing a value between Incan-authored and Rust-authored code must pass that value, with no generated wrapper, adapter or check at the crossing, except as rules 8, 9 and 13 allow.
 
 2. Built-in types must have these Rust types:
 
@@ -165,7 +172,7 @@ shop.readings.Reading.note is Option<String>
 
 7. Identity must not remove a declared rule. Rust code must not be able to build a `newtype`, or a `model` with a constrained field, in a way that breaks a declared rule, except by going through its checked constructor.
 
-8. `Borrowed[T]` must be a Rust shared reference to `T`, and `BorrowedMut[T]` an exclusive one. `Borrowed[str]` must be `&str`, and `Borrowed[bytes]` must be `&[u8]`. A plain parameter follows RFC 129 and RFC 164. Incan source must not need a Rust spelling for any of these.
+8. `Borrowed[T]` must be a Rust shared reference to `T`, except for the borrowed-view mappings specified here, and `BorrowedMut[T]` an exclusive reference to `T`. `Borrowed[str]` must be `&str`, `Borrowed[bytes]` must be `&[u8]`, and `Borrowed[list[T]]` must be `&[T]`. A borrowed list is a read-only view of existing elements, whether their source is a list, an array or a slice. Reading, indexing and iteration must work without copying elements or allocating a replacement list, including when Rust invokes an Incan callback. The view must retain its source's lifetime and must not imply ownership of, or access to, a growable list object. An operation requiring that owning object must not fabricate one from the view. This shared-view mapping does not grant exclusive access or resizing permission; exclusive contracts remain governed by RFC 164 and the inspected native signature. A plain parameter follows RFC 129 and RFC 164. Incan source must not need a Rust spelling for any of these.
 
 9. Where a Rust API asks for a different type than the value has, the adaptations RFC 041 admits, such as `float` to `f32` or `FrozenList[T]` to `Vec<T>`, must remain available. They must stay bounded by that table and visible in the target signature.
 
@@ -206,9 +213,9 @@ stream.on_error(on_error)                                # an Incan function whe
 
 19. Ownership must follow the signature, under RFC 164: an owned parameter takes the value and may bind it mutably, a shared borrow passes `Borrowed[T]`, and an exclusive borrow requires a `mut` binding and passes `BorrowedMut[T]`. A trait-object parameter takes a borrowed value whose type implements the trait. A receiver that is a guard dereferencing to its target must not be confused with an owned receiver. No name, configuration key or manifest section may decide ownership instead of the signature.
 
-20. An Incan function or closure must be accepted where Rust expects a callable, through a callable bound or a Rust callable type alias, when its parameters and result match the bound under RFC 128. A callable bound whose parameters borrow a slice takes an Incan callable whose parameters borrow a list. A callable that does not match, such as one that takes by value what Rust lends, must be refused when checking.
+20. An Incan function or closure must be accepted where Rust expects a callable, through a callable bound or a Rust callable type alias, when its parameters and result match the bound under RFC 128. A callable bound whose parameters take shared slices must accept an Incan callable with the corresponding `Borrowed[list[T]]` parameters, using rule 8's shared-view representation in both directions and retaining the source lifetime. A callable that does not match, such as one that takes by value what Rust lends, must be refused when checking.
 
-21. Arguments and results adapt only as rule 9 allows: a `list[T]` reaches a borrowed slice parameter without a copy, a `str` reaches a borrowed string parameter, and a Rust `String` result is an Incan `str`. A Rust `Result<T, E>` is `Result[T, E]`, and `usize` and `isize` are themselves, as rule 2 requires. A Rust function whose result type is the diverging `!` returns a value that fits any expected type, because the call does not return.
+21. Arguments and results use the borrowed views of rule 8 and adapt only as rule 9 allows: a `list[T]` reaches a borrowed slice parameter without a copy, a `str` reaches a borrowed string parameter, and a Rust `String` result is an Incan `str`. A Rust `Result<T, E>` is `Result[T, E]`, and `usize` and `isize` are themselves, as rule 2 requires. A Rust function whose result type is the diverging `!` returns a value that fits any expected type, because the call does not return.
 
 22. A Rust name that is an Incan keyword must remain reachable: an item through `as` in its import, and a field through its keyword spelling in field access and keyword arguments.
 
