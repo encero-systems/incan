@@ -178,7 +178,7 @@ A package page lists its versions, the facets each version carries, the scope an
 
 ### Where the standard library fits
 
-The standard library ships with the toolchain, as ordinary Loaves the toolchain places in the local store. It is ambient: no manifest declares it, and it is not resolved from the index.
+The standard library ships with the toolchain, as ordinary Loaves the toolchain places in the local store. It is ambient: no manifest declares it, and it is not resolved from the index. Its Loaves are named under the reserved `std` scope after the package each provides, so `std.primitives` is `std/primitives`, and that name gives their models and enums canonical identities (RFC 165).
 
 ## Reference-level explanation
 
@@ -196,7 +196,7 @@ Naming policy belongs to `loaves.pub`. A registered compatible registry sets its
 
 ### Source Loaves
 
-A source Loaf is the archive `oven publish` produces from a project root. It must contain the project's `loaf.toml` and the sources the manifest's facets select. When the Loaf publishes an RFC 123 executable representation for an Incan facet, the source Loaf carries it; a Loaf may publish none, and the routes that need one refuse it as RFC 123 specifies rather than the registry rejecting the publication. It must not contain generated Rust as its compatibility contract; generated Rust may be present only as an inspection artifact with provenance, as RFC 034 already required. The source Loaf's identity is the SHA-256 digest of the archive.
+A source Loaf is the archive `oven publish` produces from a project root. It must contain the project's `loaf.toml`, the sources the manifest's facets select, and the lock of its own resolved closure: the `oven.lock` entries that pin the Loaves it was built with, which for a workspace member is the part of the workspace's lock that its closure reaches. No consumer resolves or builds from that lock, because each project resolves its own graph; it records what the publisher built with, and RFC 117's compile-time trust extends to the Loaves it pins. An adopted Loaf carries no lock, because adoption resolves nothing. When the Loaf publishes an RFC 123 executable representation for an Incan facet, the source Loaf carries it; a Loaf may publish none, and the routes that need one refuse it as RFC 123 specifies rather than the registry rejecting the publication. It must not contain generated Rust as its compatibility contract; generated Rust may be present only as an inspection artifact with provenance, as RFC 034 already required. The source Loaf's identity is the SHA-256 digest of the archive.
 
 Every source Loaf, published or adopted, must carry a license file and a README at its root. A license file is a file at the Loaf root whose name starts with `license`, `licence`, `copying` or `unlicense`, or the exact path the manifest names as its license file; a README is a file at the Loaf root whose name starts with `readme`, or the exact path the manifest names as its readme. Name matching is case-insensitive and by prefix, and applies to root files only: a nested file such as `licenses/MIT` counts only when the manifest names it. A boolean `readme` (`true` or `false`) names no file. The registry must refuse a publication that carries neither form of either; adoption supplies what the upstream package lacks (see "Adoption from crates.io"). Neither file is read by resolution, compilation, or any unit identity.
 

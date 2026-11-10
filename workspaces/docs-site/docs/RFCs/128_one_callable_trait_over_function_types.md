@@ -12,7 +12,9 @@
     - RFC 068 (protocol hooks for core language syntax; `__call__` and the fixed-arity callable traits)
     - RFC 082 (checked API documentation; docstring parsing)
     - RFC 115 (fallible iteration and combinators; stored generic callbacks)
+    - RFC 120 (canonical source symbol identity; the member namespace)
     - RFC 141 (type matching; `std.reflection` `TypeInfo` and `ParameterListInfo`)
+    - RFC 176 (visibility)
     - #1790 (a `mut` parameter marker in function types)
 - **Issue:** [#1752](https://github.com/encero-systems/incan/issues/1752)
 - **RFC PR:** —
@@ -302,8 +304,7 @@ model Validator[Check with Callable[(str) -> bool]]:
     check: Check
 
     def run(mut self, value: str) -> str:
-        mut check = self.check
-        if check(value):
+        if self.check(value):
             return f"{self.name}: ok"
         return f"{self.name}: rejected"
 
@@ -389,6 +390,14 @@ Any other type must be refused at the call, construction, or assignment that sup
 A value whose type is a `Callable`-bounded type parameter must be callable with call syntax. Argument binding and result typing must use the shared signature rules. Every call allowed by the required signature must be accepted by the supplied callable: keyword names and kinds must be compatible, promised optional parameters must be omittable, and an implementation must not introduce additional required arguments. A callable may provide additional defaults or accept more calls without requiring callers to use them. The same compatibility relation must apply to the checked signature model and `Callable` arguments; the wrapper does not introduce another argument-binding system.
 
 Receiver access and invocation multiplicity must also be checked. `mut` is required to invoke a mutating receiver. A read-only generic parameter must have a proven read-only call capability; a signature-only bound must not be treated as such proof. If a consuming callable is supplied, ownership analysis must prove each invocation legal; repeated invocation cannot be assumed merely from the parameter and result types. These requirements must survive generic forwarding and library metadata. A function body requiring repeatable or read-only invocation must have that requirement checked against supplied callables before lowering, including across package boundaries.
+
+### Calling a callable member
+
+`obj.name(args)`, where `name` is a field or computed property whose type is callable, reads the member and calls it, exactly as `(obj.name)(args)` does.
+
+- RFC 120 checks every spelling once on each member surface, so a type cannot declare a field, a computed property and an instance method with one name. This call therefore never competes with a method call, and a declaration that gives a field and a method one name is refused.
+- The member must be visible where the call is written (RFC 176), and the call needs the access its callable requires: a callable that changes its own state needs a mutable receiver, such as `mut self` or a `mut` binding.
+- Calling a member that is not callable is refused, as calling any other non-callable value is.
 
 ### Adoption
 
@@ -502,6 +511,8 @@ Published library artifacts whose metadata names the old traits must be rebuilt 
 - **A return type on the marker, `Fn[int] -> str`.** New syntax for one construct, and it makes the Rust interop vocabulary the way to write an ordinary Incan bound. The markers stay shorthand for functions and methods.
 - **A hidden return-type parameter on nominal owners.** It would let `model Holder[F with Fn[int]]` compile by adding a parameter the author never wrote, which changes the type's arity everywhere it is named.
 - **Keep the fixed-arity traits for the standard library and add `Callable` beside them.** Two spellings for one capability, and the fixed-arity ones would still carry the limit.
+- **Method first, then a callable field of the same name.** RFC 120 already refuses a field and a method with one name, so a precedence rule would only decide programs that are refused. Allowing them would also let a later method silently take over calls that ran the field.
+- **Only `(obj.name)(args)` calls a callable field.** `obj.name(args)` would then be an error on a member whose meaning is unambiguous, which pushes authors to copy the field into a local before every call.
 
 ## Drawbacks
 
