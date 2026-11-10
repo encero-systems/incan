@@ -93,16 +93,20 @@ pub enum TypeNode:
 
 
 pub model FieldShape:
-    """Storage facts that participate in S; display names and properties belong to descriptions."""
+    """Storage facts plus the names needed to cross between text and identity-bearing values."""
 
     pub identity: bytes
     pub storage_type: TypeNode
     pub canonical: bool
     pub absent: AbsentPolicy
+    pub name: str
+    pub renamed_from: list[str]
 
 
 pub model VariantShape:
-    """An enum member and its anonymous payload, which adds no nominal recursion ancestor."""
+    """An enum member, its name history and anonymous payload fields."""
 
     pub identity: bytes
     pub fields: list[FieldShape]
+    pub name: str
+    pub renamed_from: list[str]

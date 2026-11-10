@@ -20,7 +20,14 @@ const EMAIL: bytes = b"\x82$D\x17\xf9V"
 
 def field(identity: bytes, node: TypeNode, policy: AbsentPolicy = AbsentPolicy.Required) -> FieldShape:
     """Keep independently chosen field facts visible in each test."""
-    return FieldShape(identity=identity, storage_type=node, canonical=true, absent=policy)
+    return FieldShape(
+        identity=identity,
+        storage_type=node,
+        canonical=true,
+        absent=policy,
+        name="",
+        renamed_from=[],
+    )
 
 
 def test_shape_identity_order_and_recursive_enum_payload() -> Result[None, CrumbError]:
@@ -32,7 +39,10 @@ def test_shape_identity_order_and_recursive_enum_payload() -> Result[None, Crumb
     )
     assert shape_spelling(shape, budget)? == "record{013f54400c82:i32:1:r;82244417f956:string:1:r}"
     payload = [field(AGE, TypeNode.Recursive("Tree"))]
-    tree = TypeNode.Enum("Tree", [VariantShape(identity=EMAIL, fields=payload)])
+    tree = TypeNode.Enum(
+        "Tree",
+        [VariantShape(identity=EMAIL, fields=payload, name="", renamed_from=[])],
+    )
     assert shape_spelling(tree, budget)? == "enum{82244417f956:record{013f54400c82:^0:1:r}}"
     assert shape_spelling(TypeNode.Recursive("missing"), budget).is_err()
     return Ok(None)
@@ -207,8 +217,28 @@ def test_recursive_adaptation_plan_is_finite() -> Result[None, str]:
 def test_enum_payload_widening_and_unknown_variant_refusal() -> Result[None, str]:
     """Variants retain their identity while their payload uses ordinary nested field adaptation."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((error) => error.message())?
-    left = TypeNode.Enum("Old", [VariantShape(identity=EMAIL, fields=[field(AGE, TypeNode.Scalar(ScalarKind.I32))])])
-    right = TypeNode.Enum("New", [VariantShape(identity=EMAIL, fields=[field(AGE, TypeNode.Scalar(ScalarKind.I64))])])
+    left = TypeNode.Enum(
+        "Old",
+        [
+            VariantShape(
+                identity=EMAIL,
+                fields=[field(AGE, TypeNode.Scalar(ScalarKind.I32))],
+                name="",
+                renamed_from=[],
+            ),
+        ],
+    )
+    right = TypeNode.Enum(
+        "New",
+        [
+            VariantShape(
+                identity=EMAIL,
+                fields=[field(AGE, TypeNode.Scalar(ScalarKind.I64))],
+                name="",
+                renamed_from=[],
+            ),
+        ],
+    )
     source = RecordShape(nominal=b"root", fields=[field(EMAIL, left)])
     target = RecordShape(nominal=b"root", fields=[field(EMAIL, right)])
     plan = plan_adaptation(source, target, budget).map_err((error) => error.message())?
