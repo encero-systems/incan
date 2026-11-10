@@ -105,6 +105,7 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_independently_retained_newtype_return()?;
     assert_generic_newtype_provider_methods()?;
     assert_nested_generic_static_call_bound_mismatch()?;
+    assert_nominal_carrier_maps_stay_shared()?;
     let mut changed = seed.clone();
     changed.bodies[0].native_attributes.push(bir::NativeAttribute {
         path: "selected::attribute".to_owned(),
@@ -238,6 +239,43 @@ fn assert_independently_retained_newtype_return() -> Result<(), Box<dyn std::err
     ] {
         let returns = super::collect::collect_published_newtype_returns(&context);
         assert!(returns.get(&method).is_some_and(Option::is_none));
+    }
+    Ok(())
+}
+
+/// Prove nominal-carrier retention refines each callable's canonical map without replacing that allocation.
+fn assert_nominal_carrier_maps_stay_shared() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Value:\n    number: int\ndef make() -> Value:\n    return Value(number=1)\ndef forward() -> Value:\n    return make()\n";
+    let (program, facts, mut module) = checked_seed(source)?;
+    let opaque_carriers = super::opaque_returns::collect(&module, &facts);
+    super::trait_values::retain_inputs(&mut module, &program, &facts, &[]);
+    super::trait_returns::retain_returns(&mut module, &program, &facts, &[]);
+    super::opaque_returns::retain(&mut module, &opaque_carriers);
+    assert!(
+        super::nominal_carriers::return_index_keeps_identity_maps_borrowed(&module),
+        "the return index retained a whole canonical map per callable"
+    );
+    let identities = module
+        .bodies
+        .iter()
+        .map(|body| {
+            Ok((
+                body.canonical.clone().ok_or("missing callable identity")?,
+                std::sync::Arc::as_ptr(&body.named_type_identities),
+            ))
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>, &'static str>>()?;
+
+    super::nominal_carriers::retain(&mut module, &facts, &[]);
+
+    for body in &module.bodies {
+        let canonical = body.canonical.as_ref().ok_or("missing retained callable identity")?;
+        let original = identities.get(canonical).ok_or("missing original canonical map")?;
+        assert!(
+            std::ptr::eq(*original, std::sync::Arc::as_ptr(&body.named_type_identities)),
+            "nominal retention replaced the shared canonical map for {}",
+            body.name
+        );
     }
     Ok(())
 }
