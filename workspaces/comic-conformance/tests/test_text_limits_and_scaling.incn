@@ -16,18 +16,18 @@ def test_depth_failures_keep_the_current_token_position() -> Result[None, str]:
     return Ok(None)
 
 
-def test_element_exhaustion_reports_the_last_value() -> Result[None, str]:
-    """The final scalar charge refuses at its token while an exact allowance succeeds."""
+def test_element_exhaustion_reports_the_last_span() -> Result[None, str]:
+    """The final streaming-token charge refuses at its position while an exact allowance succeeds."""
     source = "Point = Record { x: i64 }\nPoint << [(1), (2)]\n"
     used = charged_elements(source, 2)?
     mut short = Budget.create(bytes=65536, elements=used - 1, depth=64).map_err((error) => error.message())?
     context = TextContext.core(short).map_err((error) => error.message())?
     match read_comic(encode_utf8(source), context, short):
-        Ok(_) => return Err("last scalar exceeded the element allowance")
+        Ok(_) => return Err("last span exceeded the element allowance")
         Err(error) =>
             assert error.kind == TextFailure.Limit
-            assert error.position.line == 2
-            assert error.position.column == 17
+            assert error.position.line == 3
+            assert error.position.column == 1
     mut exact = Budget.create(bytes=65536, elements=used, depth=64).map_err((error) => error.message())?
     exact_context = TextContext.core(exact).map_err((error) => error.message())?
     document = read_comic(encode_utf8(source), exact_context, exact).map_err((error) => error.message())?

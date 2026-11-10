@@ -24,22 +24,23 @@ pub def parse_root_values(
     mut budget: Budget,
 ) -> Result[list[TextRootValue], TextError]:
     """Read one root value or table after requiring its prior unique description."""
-    type_token = tokens.take()
-    description = description_at(descriptions, type_token.text, type_token.position)?
+    type_token = tokens.take()?
+    type_name = tokens.text(type_token)?
+    description = description_at(descriptions, type_name, type_token.position)?
     tokens.require("<<")?
     mut values: list[TextRootValue] = []
     root_type = description_type(description)
-    if tokens.accepts("["):
-        while not tokens.accepts("]"):
-            if tokens.peek().kind == TextTokenKind.End:
-                return Err(TextError(kind=TextFailure.UnexpectedEnd, position=tokens.peek().position))
+    if tokens.accepts("[")?:
+        while not tokens.accepts("]")?:
+            if tokens.peek()?.kind == TextTokenKind.End:
+                return Err(TextError(kind=TextFailure.UnexpectedEnd, position=tokens.peek()?.position))
             values.append(
                 TextRootValue(
                     storage_type=root_type,
                     value=parse_described(description, descriptions, tokens, true, budget)?,
                 ),
             )
-            if tokens.accepts("]"):
+            if tokens.accepts("]")?:
                 break
             tokens.require(",")?
     else:
@@ -61,13 +62,14 @@ def parse_described(
 ) -> Result[Value, TextError]:
     """Read one record or enum through its admitted declaration."""
     if description.shape == NominalKind.Record:
-        if tokens.peek().text != "(":
-            return Err(TextError(kind=TextFailure.TypeMismatch, position=tokens.peek().position))
+        token = tokens.peek()?
+        if tokens.text(token)? != "(":
+            return Err(TextError(kind=TextFailure.TypeMismatch, position=token.position))
         fields = parse_cells(description.fields, descriptions, tokens, budget)?
         return Ok(Value.Record(fields))
     if description.shape == NominalKind.Enum:
         return parse_enum(description, descriptions, tokens, budget)
-    return Err(TextError(kind=TextFailure.UnknownKind, position=tokens.peek().position))
+    return Err(TextError(kind=TextFailure.UnknownKind, position=tokens.peek()?.position))
 
 
 def parse_cells(
@@ -78,7 +80,7 @@ def parse_cells(
 ) -> Result[list[ValueField], TextError]:
     """Apply positions first, then names or indexes, and materialize every declared absence."""
     match budget.enter():
-        Err(_) => return Err(limit_error(tokens.peek().position))
+        Err(_) => return Err(limit_error(tokens.peek()?.position))
         Ok(_) => pass
     tokens.require("(")?
     # Explicit appends preserve the recursive Option payload through native lowering.
@@ -88,22 +90,24 @@ def parse_cells(
         values.append(None)
     mut positional = 0
     mut saw_key = false
-    while not tokens.accepts(")"):
-        if tokens.peek().kind == TextTokenKind.End:
-            return Err(TextError(kind=TextFailure.UnexpectedEnd, position=tokens.peek().position))
-        key_token = tokens.peek()
+    while not tokens.accepts(")")?:
+        if tokens.peek()?.kind == TextTokenKind.End:
+            return Err(TextError(kind=TextFailure.UnexpectedEnd, position=tokens.peek()?.position))
+        key_token = tokens.peek()?
+        key_text = tokens.text(key_token)?
         mut selected = positional
-        if tokens.peek_at(1).text == "=":
+        next = tokens.peek_at(1)?
+        if tokens.text(next)? == "=":
             saw_key = true
-            key = tokens.take().text
-            tokens.take()
+            key = tokens.text(tokens.take()?)?
+            tokens.take()?
             selected = field_index(fields, key, key_token)?
         elif saw_key:
             return Err(TextError(kind=TextFailure.PositionalAfterKey, position=key_token.position))
         else:
             positional += 1
             if selected >= len(fields):
-                if key_token.text.startswith("___"):
+                if key_text.startswith("___"):
                     return Err(TextError(kind=TextFailure.UnknownStoreKey, position=key_token.position))
                 return Err(TextError(kind=TextFailure.FieldIndexOutOfRange, position=key_token.position))
         if selected >= len(fields):
@@ -111,12 +115,12 @@ def parse_cells(
         match values[selected]:
             Some(_) => return Err(TextError(kind=TextFailure.DuplicateField, position=key_token.position))
             None => values[selected] = Some(parse_value(fields[selected].storage_type, descriptions, tokens, budget)?)
-        if tokens.accepts(")"):
+        if tokens.accepts(")")?:
             break
         tokens.require(",")?
-        if tokens.accepts(")"):
+        if tokens.accepts(")")?:
             break
-    closing = tokens.peek_at(-1).position
+    closing = tokens.peek_at(-1)?.position
     result = fill_fields(fields, values, closing)?
     budget.leave().map_err((_) => limit_error(closing))?
     return Ok(result)
@@ -183,7 +187,7 @@ def parse_value(
     """Read through the declared slot; inspect refusal position without capturing the owned token snapshot."""
     # #2831: capturing this mutable cursor in map_err copies every token on each value.
     match budget.charge_elements(1):
-        Err(_) => return Err(limit_error(tokens.peek().position))
+        Err(_) => return Err(limit_error(tokens.peek()?.position))
         Ok(_) => pass
     match storage_type:
         TypeNode.Scalar(kind) => return parse_scalar(kind, tokens, budget)
@@ -196,51 +200,51 @@ def parse_value(
         TypeNode.Container(ContainerKind.Union, items) => return parse_union(items, descriptions, tokens, budget)
         TypeNode.Reference(items) => return parse_reference(items[0], descriptions, tokens)
         TypeNode.Nominal(_, path, _, _) =>
-            description = resolve_named(descriptions, path, tokens.peek().position)?
+            description = resolve_named(descriptions, path, tokens.peek()?.position)?
             return parse_described(description, descriptions, tokens, false, budget)
         _ => pass
-    return Err(TextError(kind=TextFailure.TypeMismatch, position=tokens.peek().position))
+    return Err(TextError(kind=TextFailure.TypeMismatch, position=tokens.peek()?.position))
 
 
 def parse_scalar(kind: ScalarKind, mut tokens: TextTokens, mut budget: Budget) -> Result[Value, TextError]:
     """Read one core scalar with exact integer widths, float bits and secret withholding."""
-    token = tokens.peek()
+    token = tokens.peek()?
+    spelling = tokens.text(token)?
     if kind == ScalarKind.Boolean:
-        if token.text not in BOOLEAN_SPELLINGS:
+        if spelling not in BOOLEAN_SPELLINGS:
             return Err(TextError(kind=TextFailure.TypeMismatch, position=token.position))
-        tokens.take()
-        return Ok(Value.Boolean(token.text == "true"))
+        tokens.take()?
+        return Ok(Value.Boolean(spelling == "true"))
     if kind.integer_facts().is_some():
-        tokens.take()
-        if token.text in NONFINITE_SPELLINGS:
+        tokens.take()?
+        if spelling in NONFINITE_SPELLINGS:
             return Err(TextError(kind=TextFailure.TypeMismatch, position=token.position))
-        return parse_integer(kind, token)
+        return parse_integer(kind, spelling, token.position)
     if kind == ScalarKind.Fp32 or kind == ScalarKind.Fp64:
-        tokens.take()
-        return parse_float(kind, token)
+        tokens.take()?
+        return parse_float(kind, spelling, token.position)
     if kind == ScalarKind.String:
         if token.kind != TextTokenKind.String:
             if token.kind == TextTokenKind.Marker:
                 return Err(TextError(kind=TextFailure.UnsupportedMarker, position=token.position))
             return Err(TextError(kind=TextFailure.TypeMismatch, position=token.position))
-        return Ok(Value.Text(tokens.take().text))
+        return Ok(Value.Text(tokens.text(tokens.take()?)?))
     if kind == ScalarKind.Binary:
         if token.kind != TextTokenKind.Binary:
             return Err(TextError(kind=TextFailure.TypeMismatch, position=token.position))
-        return Ok(Value.Binary(tokens.take().data))
+        return Ok(Value.Binary(tokens.data(tokens.take()?)?))
     if kind == ScalarKind.SecretString or kind == ScalarKind.SecretBytes:
-        if token.text != "<secret>":
+        if spelling != "<secret>":
             return Err(TextError(kind=TextFailure.UnsupportedMarker, position=token.position))
-        tokens.take()
+        tokens.take()?
         return Ok(Value.Withheld)
     return Err(TextError(kind=TextFailure.TypeMismatch, position=token.position))
 
 
-def parse_integer(kind: ScalarKind, token: TextToken) -> Result[Value, TextError]:
+def parse_integer(kind: ScalarKind, value: str, position: TextPosition) -> Result[Value, TextError]:
     """Validate canonical decimal spelling and the declared exact storage range."""
-    value = token.text
     if not canonical_integer(value):
-        return Err(TextError(kind=TextFailure.InvalidInteger, position=token.position))
+        return Err(TextError(kind=TextFailure.InvalidInteger, position=position))
     match kind.integer_facts():
         Some((true, bits)) =>
             match RustI128.from_str(value):
@@ -255,27 +259,26 @@ def parse_integer(kind: ScalarKind, token: TextToken) -> Result[Value, TextError
                         return Ok(Value.Integer(IntegerValue.Unsigned(number)))
                 Err(_) => pass
         None => pass
-    return Err(TextError(kind=TextFailure.IntegerOutOfRange, position=token.position))
+    return Err(TextError(kind=TextFailure.IntegerOutOfRange, position=position))
 
 
-def parse_float(kind: ScalarKind, token: TextToken) -> Result[Value, TextError]:
+def parse_float(kind: ScalarKind, spelling: str, position: TextPosition) -> Result[Value, TextError]:
     """Parse through Rust's exact-width scalar and retain canonical IEEE bits."""
-    spelling = token.text
     if spelling not in NONFINITE_SPELLINGS and not valid_finite_float(spelling):
-        return Err(TextError(kind=TextFailure.InvalidFloat, position=token.position))
+        return Err(TextError(kind=TextFailure.InvalidFloat, position=position))
     if kind == ScalarKind.Fp32:
         match RustF32.from_str(spelling):
             Ok(value) => return Ok(Value.Float(32, u32_bytes(value.to_bits())))
-            Err(_) => return Err(TextError(kind=TextFailure.TypeMismatch, position=token.position))
+            Err(_) => return Err(TextError(kind=TextFailure.TypeMismatch, position=position))
     match RustF64.from_str(spelling):
         Ok(value) => return Ok(Value.Float(64, u64_bytes(value.to_bits())))
-        Err(_) => return Err(TextError(kind=TextFailure.TypeMismatch, position=token.position))
+        Err(_) => return Err(TextError(kind=TextFailure.TypeMismatch, position=position))
 
 
 def parse_decimal(precision: int, scale: int, mut tokens: TextTokens) -> Result[Value, TextError]:
     """Require exactly the declared fractional scale and retain an exact coefficient string."""
-    token = tokens.take()
-    spelling = token.text
+    token = tokens.take()?
+    spelling = tokens.text(token)?
     if not spelling.endswith("d"):
         return Err(TextError(kind=TextFailure.TypeMismatch, position=token.position))
     number = spelling[0:len(spelling) - 1]
@@ -304,9 +307,9 @@ def parse_optional(
     mut budget: Budget,
 ) -> Result[Value, TextError]:
     """Keep every absent layer distinct from a present nested optional."""
-    if tokens.accepts("None"):
+    if tokens.accepts("None")?:
         return Ok(Value.NoneValue)
-    if tokens.accepts("Some"):
+    if tokens.accepts("Some")?:
         tokens.require("(")?
         value = parse_value(inner, descriptions, tokens, budget)?
         tokens.require(")")?
@@ -323,9 +326,9 @@ def parse_list(
     """Read an ordered list, including row-shaped records and variants."""
     tokens.require("[")?
     mut items: list[Value] = []
-    while not tokens.accepts("]"):
+    while not tokens.accepts("]")?:
         items.append(parse_value(item_type, descriptions, tokens, budget)?)
-        if tokens.accepts("]"):
+        if tokens.accepts("]")?:
             break
         tokens.require(",")?
     return Ok(Value.List(items))
@@ -340,12 +343,12 @@ def parse_set(
     """Read a set and place its admitted values in stored scalar order."""
     tokens.require("{")?
     mut items: list[Value] = []
-    while not tokens.accepts("}"):
+    while not tokens.accepts("}")?:
         item = parse_value(item_type, descriptions, tokens, budget)?
         if value_index(items, item) >= 0:
-            return Err(TextError(kind=TextFailure.DuplicateKey, position=tokens.peek_at(-1).position))
+            return Err(TextError(kind=TextFailure.DuplicateKey, position=tokens.peek_at(-1)?.position))
         insert_ordered(items, item)
-        if tokens.accepts("}"):
+        if tokens.accepts("}")?:
             break
         tokens.require(",")?
     return Ok(Value.Set(items))
@@ -361,15 +364,15 @@ def parse_map(
     """Refuse duplicate keys before sorting admitted pairs by the stored key order."""
     tokens.require("{")?
     mut entries: list[MapEntry] = []
-    while not tokens.accepts("}"):
-        key_position = tokens.peek().position
+    while not tokens.accepts("}")?:
+        key_position = tokens.peek()?.position
         key = parse_value(key_type, descriptions, tokens, budget)?
         tokens.require(":")?
         value = parse_value(value_type, descriptions, tokens, budget)?
         if entry_index(entries, key) >= 0:
             return Err(TextError(kind=TextFailure.DuplicateKey, position=key_position))
         insert_entry(entries, MapEntry(key=key, value=value))
-        if tokens.accepts("}"):
+        if tokens.accepts("}")?:
             break
         tokens.require(",")?
     return Ok(Value.Map(entries))
@@ -382,14 +385,17 @@ def parse_union(
     mut budget: Budget,
 ) -> Result[Value, TextError]:
     """Select a union only from an explicit wrapper or an unambiguous qualified enum variant."""
-    token = tokens.peek()
-    if tokens.peek_at(1).text == "<<":
-        selector = tokens.take().text
-        tokens.take()
+    token = tokens.peek()?
+    spelling = tokens.text(token)?
+    next = tokens.peek_at(1)?
+    if tokens.text(next)? == "<<":
+        selector_token = tokens.take()?
+        selector = tokens.text(selector_token)?
+        tokens.take()?
         member = union_member(members, selector, descriptions, token.position)?
         value = parse_value(member, descriptions, tokens, budget)?
         return Ok(Value.Union(resolved_type(member, descriptions, token.position)?, [value]))
-    selected = qualified_variant_member(members, token.text, descriptions)
+    selected = qualified_variant_member(members, spelling, descriptions)
     match selected:
         Some(member) =>
             value = parse_value(member, descriptions, tokens, budget)?
@@ -444,8 +450,8 @@ def parse_enum(
     mut budget: Budget,
 ) -> Result[Value, TextError]:
     """Read one enum name, accepting an optional owning-enum qualifier."""
-    token = tokens.take()
-    mut name = token.text
+    token = tokens.take()?
+    mut name = tokens.text(token)?
     parts = name.split(".")
     if len(parts) > 1:
         if parts[len(parts) - 2] != last_segment(description.path):
@@ -456,8 +462,10 @@ def parse_enum(
             mut fields: list[ValueField] = []
             if len(variant.fields) > 0:
                 fields = parse_cells(variant.fields, descriptions, tokens, budget)?
-            elif tokens.peek().text == "(":
-                fields = parse_cells([], descriptions, tokens, budget)?
+            else:
+                next = tokens.peek()?
+                if tokens.text(next)? == "(":
+                    fields = parse_cells([], descriptions, tokens, budget)?
             return Ok(Value.Enum(variant.identity, fields))
     return Err(TextError(kind=TextFailure.UnknownVariant, position=token.position))
 
@@ -468,7 +476,7 @@ def parse_reference(
     mut tokens: TextTokens,
 ) -> Result[Value, TextError]:
     """Read an inert typed identity without following it."""
-    token = tokens.take()
+    token = tokens.take()?
     if token.kind != TextTokenKind.Word:
         return Err(TextError(kind=TextFailure.TypeMismatch, position=token.position))
     resolved = resolved_type(target, descriptions, token.position)?
@@ -477,7 +485,7 @@ def parse_reference(
         TypeNode.Nominal(_, _, None, _) => b""
         _ => return Err(TextError(kind=TextFailure.InvalidType, position=token.position))
 
-    return Ok(Value.Reference(target_identity, encode_utf8(token.text)))
+    return Ok(Value.Reference(target_identity, encode_utf8(tokens.text(token)?)))
 
 
 def description_type(description: TextDescription) -> TypeNode:

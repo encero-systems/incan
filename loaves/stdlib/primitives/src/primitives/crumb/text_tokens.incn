@@ -4,8 +4,8 @@ from rust::std::string import String as RustString
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.text_types import TextError, TextFailure, TextPosition
 from crate.primitives.crumb.text_controls import BIDIRECTIONAL_CONTROLS
-from crate.primitives.crumb.types import ContainerKind, TypeConstructorKind
-from crate.primitives.text import encode_utf8
+from crate.primitives.crumb.types import ContainerKind, NominalKind, ScalarKind, TypeConstructorKind, TypeNode
+from crate.primitives.text import decode_utf8, encode_utf8
 
 
 const LAYOUT_CHARACTERS: FrozenSet[str] = {" ", "\t", "\r", "\n"}
@@ -49,68 +49,229 @@ pub enum TextTokenKind:
 
 
 pub model TextToken:
-    """One decoded token and its original starting position."""
+    """One source span, its class and original starting position."""
 
     pub kind: TextTokenKind
-    pub text: str
-    pub data: bytes
+    pub start: int
+    pub end: int
     pub position: TextPosition
+    decoded_text: str = ""
+    decoded_data: bytes = b""
+
+    @staticmethod
+    pub def span(kind: TextTokenKind, start: int, end: int, position: TextPosition) -> Self:
+        """Construct one undecoded source span inside the token's privacy boundary."""
+        return TextToken(kind=kind, start=start, end=end, position=position)
+
+    @staticmethod
+    pub def text_span(kind: TextTokenKind, start: int, end: int, position: TextPosition, value: str) -> Self:
+        """Construct a string span with its validated escape result."""
+        return TextToken(kind=kind, start=start, end=end, position=position, decoded_text=value)
+
+    @staticmethod
+    pub def data_span(start: int, end: int, position: TextPosition, value: bytes) -> Self:
+        """Construct a binary span with its validated escape result."""
+        return TextToken(kind=TextTokenKind.Binary, start=start, end=end, position=position, decoded_data=value)
+
+    pub def text_value(self) -> str:
+        """Return a string span's already validated decoded payload."""
+        return self.decoded_text
+
+    pub def data_value(self) -> bytes:
+        """Return a binary span's already validated decoded payload."""
+        return self.decoded_data
 
 
 pub class TextTokens:
-    """A mutable cursor over a complete bounded token snapshot."""
+    """A bounded-lookahead cursor that pulls source spans from its tokenizer on demand."""
 
+    source: bytes
+    tokenizer: Tokenizer
     items: list[TextToken]
     index: int = 0
+    terminal: bool = false
 
     @staticmethod
-    pub def create(items: list[TextToken]) -> Self:
-        """Start a cursor at the first token in one complete bounded snapshot."""
-        return TextTokens(items=items)
+    pub def create(source: bytes, budget: Budget) -> Self:
+        """Start a streaming cursor over one charged source buffer."""
+        return TextTokens(source=source, tokenizer=Tokenizer.create(source, budget), items=[])
 
-    pub def peek(self) -> TextToken:
-        """Return the next token, including the stable terminal token."""
-        return self.items[self.index]
+    pub def peek(mut self) -> Result[TextToken, TextError]:
+        """Return the next lazily scanned span, including the stable terminal token."""
+        self.ensure(0)?
+        return Ok(self.items[self.index])
 
-    pub def peek_at(self, distance: int) -> TextToken:
-        """Return bounded lookahead, falling back to the terminal token."""
-        selected = self.index + distance
+    pub def peek_at(mut self, distance: int) -> Result[TextToken, TextError]:
+        """Return bounded lookahead, falling back to the terminal span."""
+        self.ensure(distance)?
+        mut selected = self.index + distance
+        if selected < 0:
+            selected = 0
         if selected >= len(self.items):
-            return self.items[len(self.items) - 1]
-        return self.items[selected]
+            return Ok(self.items[len(self.items) - 1])
+        return Ok(self.items[selected])
 
-    pub def take(mut self) -> TextToken:
-        """Consume and return the next token without passing the terminal token."""
+    pub def take(mut self) -> Result[TextToken, TextError]:
+        """Consume and return the next span without passing the terminal span."""
+        self.ensure(0)?
         token = self.items[self.index]
-        if self.index + 1 < len(self.items):
+        if token.kind != TextTokenKind.End:
             self.index += 1
-        return token
+        self.compact()
+        return Ok(token)
 
-    pub def accepts(mut self, spelling: str) -> bool:
+    pub def accepts(mut self, spelling: str) -> Result[bool, TextError]:
         """Consume one exact punctuation or word spelling when present."""
-        if self.peek().text != spelling:
-            return false
-        self.take()
-        return true
+        token = self.peek()?
+        if self.text(token)? != spelling:
+            return Ok(false)
+        self.take()?
+        return Ok(true)
 
     pub def require(mut self, spelling: str) -> Result[TextToken, TextError]:
         """Consume an exact spelling or report the next token as invalid."""
-        token = self.peek()
-        if token.text != spelling:
+        token = self.peek()?
+        if self.text(token)? != spelling:
             if token.kind == TextTokenKind.End:
                 return Err(TextError(kind=TextFailure.UnexpectedEnd, position=token.position))
             return Err(TextError(kind=TextFailure.InvalidToken, position=token.position))
-        return Ok(self.take())
+        return self.take()
+
+    pub def text(self, token: TextToken) -> Result[str, TextError]:
+        """Materialize one token's text only when grammar or semantic admission requests it."""
+        if token.kind == TextTokenKind.String:
+            return Ok(token.text_value())
+        if token.kind == TextTokenKind.Binary:
+            return Ok("")
+        valid, value = decode_utf8(self.source[token.start:token.end], false)
+        if not valid:
+            return Err(TextError(kind=TextFailure.InvalidUtf8, position=token.position))
+        return Ok(value)
+
+    pub def data(self, token: TextToken) -> Result[bytes, TextError]:
+        """Return the decoded payload of one binary span."""
+        if token.kind != TextTokenKind.Binary:
+            return Err(TextError(kind=TextFailure.InvalidBinary, position=token.position))
+        return Ok(token.data_value())
+
+    pub def parse_type(mut self, mut budget: Budget) -> Result[TypeNode, TextError]:
+        """Parse one complete COMIC type while retaining this cursor as the single grammar state."""
+        match budget.enter():
+            Err(_) => return Err(type_limit(self.peek()?.position))
+            Ok(_) => pass
+        mut members = [self.type_primary(budget)?]
+        while self.accepts("|")?:
+            members.append(self.type_primary(budget)?)
+        match budget.leave():
+            Err(_) => return Err(type_limit(self.peek()?.position))
+            Ok(_) => pass
+        if len(members) == 1:
+            return Ok(members[0])
+        return Ok(TypeNode.Container(ContainerKind.Union, members))
+
+    def type_primary(mut self, mut budget: Budget) -> Result[TypeNode, TextError]:
+        """Parse one scalar, named type or parameterized core constructor from this cursor."""
+        token = self.peek()?
+        if token.kind != TextTokenKind.Word and token.kind != TextTokenKind.Number:
+            return Err(TextError(kind=TextFailure.InvalidType, position=token.position))
+        name_token = self.take()?
+        name = self.text(name_token)?
+        scalar_kind = ScalarKind.from_value(name)
+        logical_constructor = TypeConstructorKind.from_value(name)
+        container_kind = ContainerKind.from_value(name)
+        mut result = TypeNode.Nominal(NominalKind.Record, name, None, [])
+        match scalar_kind:
+            Some(ScalarKind.Reference) => pass
+            Some(scalar) => result = TypeNode.Scalar(scalar)
+            None => pass
+        match logical_constructor:
+            Some(TypeConstructorKind.Decimal) => result = self.decimal_type()?
+            Some(TypeConstructorKind.Reference) => result = self.reference_type(budget)?
+            None => pass
+        match container_kind:
+            Some(container) =>
+                match container:
+                    ContainerKind.List | ContainerKind.Set | ContainerKind.Option | ContainerKind.Map =>
+                        result = self.container_type(container, budget)?
+                    _ => pass
+            None => pass
+        if self.accepts("?")?:
+            result = TypeNode.Container(ContainerKind.Option, [result])
+        return Ok(result)
+
+    def decimal_type(mut self) -> Result[TypeNode, TextError]:
+        """Parse positive precision and a scale within that precision from this cursor."""
+        self.require("<")?
+        precision_token = self.take()?
+        self.require(",")?
+        scale_token = self.take()?
+        self.require(">")?
+        precision_text = self.text(precision_token)?
+        scale_text = self.text(scale_token)?
+        if not plain_unsigned(precision_text) or not plain_unsigned(scale_text):
+            return Err(TextError(kind=TextFailure.InvalidType, position=precision_token.position))
+        precision = int(precision_text)
+        scale = int(scale_text)
+        if precision <= 0 or precision > 38 or scale < 0 or scale > precision:
+            return Err(TextError(kind=TextFailure.InvalidType, position=precision_token.position))
+        return Ok(TypeNode.Decimal(precision, scale))
+
+    def container_type(mut self, kind: ContainerKind, mut budget: Budget) -> Result[TypeNode, TextError]:
+        """Parse the fixed arity of one core type constructor from this cursor."""
+        self.require("<")?
+        first = self.parse_type(budget)?
+        if kind == ContainerKind.Map:
+            self.require(",")?
+            second = self.parse_type(budget)?
+            self.require(">")?
+            return Ok(TypeNode.Container(ContainerKind.Map, [first, second]))
+        self.require(">")?
+        match kind:
+            ContainerKind.List => return Ok(TypeNode.Container(ContainerKind.List, [first]))
+            ContainerKind.Set => return Ok(TypeNode.Container(ContainerKind.Set, [first]))
+            ContainerKind.Option => return Ok(TypeNode.Container(ContainerKind.Option, [first]))
+            _ => return Err(TextError(kind=TextFailure.InvalidType, position=self.peek()?.position))
+
+    def reference_type(mut self, mut budget: Budget) -> Result[TypeNode, TextError]:
+        """Parse a reference target through this cursor's recursive type grammar."""
+        self.require("<")?
+        target = self.parse_type(budget)?
+        self.require(">")?
+        return Ok(TypeNode.Reference([target]))
+
+    def ensure(mut self, distance: int) -> Result[None, TextError]:
+        """Scan only enough spans to satisfy nonnegative parser lookahead."""
+        mut requested = distance
+        if requested < 0:
+            requested = 0
+        while self.index + requested >= len(self.items) and not self.terminal:
+            token = self.tokenizer.next()?
+            if token.kind == TextTokenKind.End:
+                self.terminal = true
+            self.items.append(token)
+        return Ok(None)
+
+    def compact(mut self) -> None:
+        """Discard consumed spans in bounded batches so source size does not determine cursor memory."""
+        if self.index >= 64:
+            self.items = self.items[self.index:]
+            self.index = 0
 
 
 class Tokenizer:
-    """Scalar-indexed scanner state; line and column always name the next character."""
+    """Scalar-indexed scanner and budget; line and column always name the next character."""
 
-    pub data: bytes
-    pub index: int = 0
-    pub line: int = 1
-    pub column: int = 1
-    pub items: list[TextToken] = []
+    data: bytes
+    budget: Budget
+    index: int = 0
+    line: int = 1
+    column: int = 1
+    previous: Option[TextToken] = None
+
+    @staticmethod
+    pub def create(data: bytes, budget: Budget) -> Self:
+        """Own one source scanner and the allowance charged by its emitted spans."""
+        return Tokenizer(data=data, budget=budget)
 
     pub def position(self) -> TextPosition:
         """Return the next character's one-based source position."""
@@ -149,222 +310,226 @@ class Tokenizer:
             self.column += 1
         return Ok(character)
 
-    pub def append(mut self, kind: TextTokenKind, value: str, data: bytes, position: TextPosition) -> None:
-        """Retain one already-charged token."""
-        self.items.append(TextToken(kind=kind, text=value, data=data, position=position))
+    pub def next(mut self) -> Result[TextToken, TextError]:
+        """Scan the next non-layout span, validating escapes before it reaches the parser."""
+        self.skip_layout()?
+        if self.at_end():
+            position = self.position()
+            self.budget.charge_elements(1).map_err((_) => limit_error(position))?
+            return Ok(TextToken.span(TextTokenKind.End, self.index, self.index, self.position()))
+        token = self.token()?
+        self.previous = Some(token)
+        return Ok(token)
+
+    def skip_layout(mut self) -> Result[None, TextError]:
+        """Discard whitespace and comments while retaining exact positions for later spans."""
+        mut again = true
+        while again and not self.at_end():
+            again = false
+            while not self.at_end() and self.current()? in LAYOUT_CHARACTERS:
+                self.advance()?
+                again = true
+            if not self.at_end() and self.current()? == "#":
+                while not self.at_end() and self.current()? != "\n":
+                    self.advance()?
+                again = true
+        return Ok(None)
+
+    def token(mut self) -> Result[TextToken, TextError]:
+        """Scan one span according to its unambiguous leading scalar."""
+        position = self.position()
+        start = self.index
+        character = self.current()?
+        if character == "\"":
+            return self.string_token(position, start)
+        if character == "b" and self.following(1)? == "\"":
+            return self.binary_token(position, start)
+        if character == "<":
+            if self.following(1)? == "<":
+                self.advance()?
+                self.advance()?
+                return self.retain(TextTokenKind.Punctuation, start, position)
+            if self.begins_type_arguments()?:
+                self.advance()?
+                return self.retain(TextTokenKind.Punctuation, start, position)
+            return self.marker_token(position, start)
+        if character in PUNCTUATION_CHARACTERS:
+            self.advance()?
+            return self.retain(TextTokenKind.Punctuation, start, position)
+        return self.word_token(position, start)
+
+    def begins_type_arguments(self) -> Result[bool, TextError]:
+        """Recognize `<` after a closed type constructor without retaining prior token text."""
+        previous = match self.previous:
+            Some(value) => value
+            None => return Ok(false)
+        valid, name = decode_utf8(self.data[previous.start:previous.end], false)
+        if not valid:
+            return Err(TextError(kind=TextFailure.InvalidUtf8, position=previous.position))
+        if TypeConstructorKind.from_value(name).is_some():
+            return Ok(true)
+        match ContainerKind.from_value(name):
+            Some(ContainerKind.List | ContainerKind.Set | ContainerKind.Option | ContainerKind.Map) => return Ok(true)
+            _ => return Ok(false)
+
+    def string_token(mut self, position: TextPosition, start: int) -> Result[TextToken, TextError]:
+        """Decode a quoted or triple-quoted string while the retained token remains a source span."""
+        if self.following(1)? == "\"" and self.following(2)? == "\"":
+            return self.multiline_token(position, start)
+        self.advance()?
+        mut value = ""
+        while not self.at_end():
+            character = self.advance()?
+            if character == "\"":
+                return self.retain_text(TextTokenKind.String, start, position, value)
+            if character == "\\":
+                escape_position = TextPosition(line=self.line, column=self.column - 1)
+                value += self.escaped_scalar(escape_position)?
+            else:
+                value += character
+        return Err(TextError(kind=TextFailure.UnexpectedEnd, position=self.position()))
+
+    def multiline_token(mut self, position: TextPosition, start: int) -> Result[TextToken, TextError]:
+        """Decode every scalar between triple quotes without normalizing it."""
+        for _ in range(3):
+            self.advance()?
+        mut value = ""
+        while not self.at_end():
+            if self.current()? == "\"" and self.following(1)? == "\"" and self.following(2)? == "\"":
+                for _ in range(3):
+                    self.advance()?
+                return self.retain_text(TextTokenKind.String, start, position, value)
+            value += self.advance()?
+        return Err(TextError(kind=TextFailure.UnexpectedEnd, position=self.position()))
+
+    def escaped_scalar(mut self, position: TextPosition) -> Result[str, TextError]:
+        """Decode the closed COMIC escape set and lowercase variable-width Unicode escapes."""
+        if self.at_end():
+            return Err(TextError(kind=TextFailure.UnexpectedEnd, position=self.position()))
+        escape = self.advance()?
+        match escape:
+            "\\" => return Ok("\\")
+            "\"" => return Ok("\"")
+            "n" => return Ok("\n")
+            "t" => return Ok("\t")
+            "r" => return Ok("\r")
+            "u" => return self.unicode_escape(position)
+            _ => return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
+
+    def unicode_escape(mut self, position: TextPosition) -> Result[str, TextError]:
+        """Decode one lowercase hexadecimal Unicode scalar without leading zeros."""
+        if self.at_end() or self.advance()? != "{":
+            return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
+        mut digits = ""
+        while not self.at_end() and self.current()? != "}":
+            digit = self.advance()?
+            if hex_value(digit) < 0 or digit in UPPERCASE_HEX:
+                return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
+            digits += digit
+        if self.at_end() or digits == "" or (len(digits) > 1 and digits.startswith("0")):
+            return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
+        self.advance()?
+        mut scalar = 0
+        for digit in digits:
+            scalar = scalar * 16 + hex_value(digit)
+        return scalar_text(scalar, position)
+
+    def binary_token(mut self, position: TextPosition, start: int) -> Result[TextToken, TextError]:
+        """Decode printable ASCII and exact two-digit lowercase hexadecimal byte escapes."""
+        self.advance()?
+        self.advance()?
+        mut data: list[u8] = []
+        while not self.at_end():
+            character = self.advance()?
+            if character == "\"":
+                return self.retain_data(start, position, data)
+            if character == "\\":
+                if self.at_end():
+                    return Err(TextError(kind=TextFailure.UnexpectedEnd, position=self.position()))
+                escape = self.advance()?
+                if escape == "\\" or escape == "\"":
+                    data.append(ascii_byte(escape, position)?)
+                elif escape == "x":
+                    data.append(self.binary_hex(position)?)
+                else:
+                    return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
+            else:
+                data.append(ascii_byte(character, position)?)
+        return Err(TextError(kind=TextFailure.UnexpectedEnd, position=self.position()))
+
+    def binary_hex(mut self, position: TextPosition) -> Result[u8, TextError]:
+        """Read exactly two lowercase hexadecimal digits into one byte."""
+        if self.at_end():
+            return Err(TextError(kind=TextFailure.UnexpectedEnd, position=self.position()))
+        high_text = self.advance()?
+        if self.at_end():
+            return Err(TextError(kind=TextFailure.UnexpectedEnd, position=self.position()))
+        low_text = self.advance()?
+        high = hex_value(high_text)
+        low = hex_value(low_text)
+        if high < 0 or low < 0 or high_text in UPPERCASE_HEX or low_text in UPPERCASE_HEX:
+            return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
+        value: Option[u8] = (high * 16 + low).try_resize()
+        match value:
+            Some(result) => return Ok(result)
+            None => return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
+
+    def marker_token(mut self, position: TextPosition, start: int) -> Result[TextToken, TextError]:
+        """Retain one marker span so semantic admission can accept only `<secret>`."""
+        self.advance()?
+        while not self.at_end() and self.current()? != ">":
+            self.advance()?
+        if self.at_end():
+            return Err(TextError(kind=TextFailure.UnexpectedEnd, position=self.position()))
+        self.advance()?
+        return self.retain(TextTokenKind.Marker, start, position)
+
+    def word_token(mut self, position: TextPosition, start: int) -> Result[TextToken, TextError]:
+        """Retain a path, symbol or numeric source span until a grammar delimiter."""
+        while not self.at_end() and not delimiter(self.current()?):
+            self.advance()?
+        if self.index == start:
+            self.advance()?
+        valid, value = decode_utf8(self.data[start:self.index], false)
+        if not valid:
+            return Err(TextError(kind=TextFailure.InvalidUtf8, position=position))
+        mut kind = TextTokenKind.Word
+        if numeric_lead(value):
+            kind = TextTokenKind.Number
+        return self.retain(kind, start, position)
+
+    def retain(mut self, kind: TextTokenKind, start: int, position: TextPosition) -> Result[TextToken, TextError]:
+        """Charge and return one token whose payload remains in the source buffer."""
+        self.budget.charge_elements(1).map_err((_) => limit_error(position))?
+        return Ok(TextToken.span(kind, start, self.index, position))
+
+    def retain_text(
+        mut self,
+        kind: TextTokenKind,
+        start: int,
+        position: TextPosition,
+        value: str,
+    ) -> Result[TextToken, TextError]:
+        """Charge one decoded string payload while retaining its original source span."""
+        self.budget.charge_elements(1).map_err((_) => limit_error(position))?
+        self.budget.charge_bytes(len(encode_utf8(value))).map_err((_) => limit_error(position))?
+        return Ok(TextToken.text_span(kind, start, self.index, position, value))
+
+    def retain_data(mut self, start: int, position: TextPosition, data: bytes) -> Result[TextToken, TextError]:
+        """Charge one decoded binary payload while retaining its original source span."""
+        self.budget.charge_elements(1).map_err((_) => limit_error(position))?
+        self.budget.charge_bytes(len(data)).map_err((_) => limit_error(position))?
+        return Ok(TextToken.data_span(start, self.index, position, data))
 
 
 pub def tokenize(source: str, mut budget: Budget) -> Result[TextTokens, TextError]:
-    """Charge the input and every retained token before returning an owned token snapshot."""
+    """Charge one source buffer, reject raw bidi controls and return its streaming token cursor."""
     data = encode_utf8(source)
-    budget.charge_bytes(len(data)).map_err((_) => limit_error())?
-    mut scanner = Tokenizer(data=data)
+    budget
+        .charge_bytes(len(data))
+        .map_err((_) => limit_error(TextPosition(line=1, column=1)))?
     check_bidirectional_controls(source)?
-    while not scanner.at_end():
-        skip_layout(scanner)?
-        if scanner.at_end():
-            break
-        token(scanner, budget)?
-    budget.charge_elements(1).map_err((_) => limit_error())?
-    scanner.items.append(TextToken(kind=TextTokenKind.End, text="", data=b"", position=scanner.position()))
-    return Ok(TextTokens.create(scanner.items))
-
-
-def skip_layout(mut scanner: Tokenizer) -> Result[None, TextError]:
-    """Discard whitespace and comments while retaining exact positions for later tokens."""
-    mut again = true
-    while again and not scanner.at_end():
-        again = false
-        while not scanner.at_end() and scanner.current()? in LAYOUT_CHARACTERS:
-            scanner.advance()?
-            again = true
-        if not scanner.at_end() and scanner.current()? == "#":
-            while not scanner.at_end() and scanner.current()? != "\n":
-                scanner.advance()?
-            again = true
-    return Ok(None)
-
-
-def token(mut scanner: Tokenizer, mut budget: Budget) -> Result[None, TextError]:
-    """Scan one token according to its unambiguous leading scalar."""
-    position = scanner.position()
-    character = scanner.current()?
-    if character == "\"":
-        return string_token(scanner, budget, position)
-    if character == "b" and scanner.following(1)? == "\"":
-        return binary_token(scanner, budget, position)
-    if character == "<":
-        if scanner.following(1)? == "<":
-            scanner.advance()?
-            scanner.advance()?
-            return retain(scanner, TextTokenKind.Punctuation, "<<", b"", position, budget)
-        if begins_type_arguments(scanner.items):
-            scanner.advance()?
-            return retain(scanner, TextTokenKind.Punctuation, "<", b"", position, budget)
-        return marker_token(scanner, budget, position)
-    if character in PUNCTUATION_CHARACTERS:
-        scanner.advance()?
-        return retain(scanner, TextTokenKind.Punctuation, character, b"", position, budget)
-    return word_token(scanner, budget, position)
-
-
-def begins_type_arguments(items: list[TextToken]) -> bool:
-    """Recognize `<` after a closed type constructor without weakening value-marker scanning."""
-    if len(items) == 0:
-        return false
-    name = items[len(items) - 1].text
-    if TypeConstructorKind.from_value(name).is_some():
-        return true
-    match ContainerKind.from_value(name):
-        Some(ContainerKind.List | ContainerKind.Set | ContainerKind.Option | ContainerKind.Map) => return true
-        _ => return false
-
-
-def string_token(mut scanner: Tokenizer, mut budget: Budget, position: TextPosition) -> Result[None, TextError]:
-    """Decode a quoted or triple-quoted string without normalizing its scalar sequence."""
-    if scanner.following(1)? == "\"" and scanner.following(2)? == "\"":
-        return multiline_token(scanner, budget, position)
-    scanner.advance()?
-    mut value = ""
-    while not scanner.at_end():
-        character = scanner.advance()?
-        if character == "\"":
-            return retain(scanner, TextTokenKind.String, value, b"", position, budget)
-        if character == "\\":
-            escape_position = TextPosition(line=scanner.line, column=scanner.column - 1)
-            value += escaped_scalar(scanner, escape_position)?
-        else:
-            value += character
-    return Err(TextError(kind=TextFailure.UnexpectedEnd, position=scanner.position()))
-
-
-def multiline_token(mut scanner: Tokenizer, mut budget: Budget, position: TextPosition) -> Result[None, TextError]:
-    """Keep every scalar between triple quotes exactly, including indentation and line breaks."""
-    for _ in range(3):
-        scanner.advance()?
-    mut value = ""
-    while not scanner.at_end():
-        if scanner.current()? == "\"" and scanner.following(1)? == "\"" and scanner.following(2)? == "\"":
-            for _ in range(3):
-                scanner.advance()?
-            return retain(scanner, TextTokenKind.String, value, b"", position, budget)
-        value += scanner.advance()?
-    return Err(TextError(kind=TextFailure.UnexpectedEnd, position=scanner.position()))
-
-
-def escaped_scalar(mut scanner: Tokenizer, position: TextPosition) -> Result[str, TextError]:
-    """Decode the closed COMIC escape set and lowercase variable-width Unicode escapes."""
-    if scanner.at_end():
-        return Err(TextError(kind=TextFailure.UnexpectedEnd, position=scanner.position()))
-    escape = scanner.advance()?
-    match escape:
-        "\\" => return Ok("\\")
-        "\"" => return Ok("\"")
-        "n" => return Ok("\n")
-        "t" => return Ok("\t")
-        "r" => return Ok("\r")
-        "u" => return unicode_escape(scanner, position)
-        _ => return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
-
-
-def unicode_escape(mut scanner: Tokenizer, position: TextPosition) -> Result[str, TextError]:
-    """Decode one lowercase hexadecimal Unicode scalar without leading zeros."""
-    if scanner.at_end() or scanner.advance()? != "{":
-        return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
-    mut digits = ""
-    while not scanner.at_end() and scanner.current()? != "}":
-        digit = scanner.advance()?
-        if hex_value(digit) < 0 or digit in UPPERCASE_HEX:
-            return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
-        digits += digit
-    if scanner.at_end() or digits == "" or (len(digits) > 1 and digits.startswith("0")):
-        return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
-    scanner.advance()?
-    mut scalar = 0
-    for digit in digits:
-        scalar = scalar * 16 + hex_value(digit)
-    return scalar_text(scalar, position)
-
-
-def binary_token(mut scanner: Tokenizer, mut budget: Budget, position: TextPosition) -> Result[None, TextError]:
-    """Decode printable ASCII and exact two-digit lowercase hexadecimal byte escapes."""
-    scanner.advance()?
-    scanner.advance()?
-    mut data: list[u8] = []
-    while not scanner.at_end():
-        character = scanner.advance()?
-        if character == "\"":
-            return retain(scanner, TextTokenKind.Binary, "", data, position, budget)
-        if character == "\\":
-            if scanner.at_end():
-                return Err(TextError(kind=TextFailure.UnexpectedEnd, position=scanner.position()))
-            escape = scanner.advance()?
-            if escape == "\\" or escape == "\"":
-                data.append(ascii_byte(escape, position)?)
-            elif escape == "x":
-                data.append(binary_hex(scanner, position)?)
-            else:
-                return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
-        else:
-            data.append(ascii_byte(character, position)?)
-    return Err(TextError(kind=TextFailure.UnexpectedEnd, position=scanner.position()))
-
-
-def binary_hex(mut scanner: Tokenizer, position: TextPosition) -> Result[u8, TextError]:
-    """Read exactly two lowercase hexadecimal digits into one byte."""
-    if scanner.at_end():
-        return Err(TextError(kind=TextFailure.UnexpectedEnd, position=scanner.position()))
-    high_text = scanner.advance()?
-    if scanner.at_end():
-        return Err(TextError(kind=TextFailure.UnexpectedEnd, position=scanner.position()))
-    low_text = scanner.advance()?
-    high = hex_value(high_text)
-    low = hex_value(low_text)
-    if high < 0 or low < 0 or high_text in UPPERCASE_HEX or low_text in UPPERCASE_HEX:
-        return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
-    value: Option[u8] = (high * 16 + low).try_resize()
-    match value:
-        Some(byte) => return Ok(byte)
-        None => return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
-
-
-def marker_token(mut scanner: Tokenizer, mut budget: Budget, position: TextPosition) -> Result[None, TextError]:
-    """Retain one marker spelling so semantic admission can accept only `<secret>`."""
-    mut value = scanner.advance()?
-    while not scanner.at_end() and scanner.current()? != ">":
-        value += scanner.advance()?
-    if scanner.at_end():
-        return Err(TextError(kind=TextFailure.UnexpectedEnd, position=scanner.position()))
-    value += scanner.advance()?
-    return retain(scanner, TextTokenKind.Marker, value, b"", position, budget)
-
-
-def word_token(mut scanner: Tokenizer, mut budget: Budget, position: TextPosition) -> Result[None, TextError]:
-    """Retain a path, symbol or numeric spelling until a grammar delimiter."""
-    mut value = ""
-    while not scanner.at_end() and not delimiter(scanner.current()?):
-        value += scanner.advance()?
-    if value == "":
-        value = scanner.advance()?
-    mut kind = TextTokenKind.Word
-    if numeric_lead(value):
-        kind = TextTokenKind.Number
-    return retain(scanner, kind, value, b"", position, budget)
-
-
-def retain(
-    mut scanner: Tokenizer,
-    kind: TextTokenKind,
-    value: str,
-    data: bytes,
-    position: TextPosition,
-    mut budget: Budget,
-) -> Result[None, TextError]:
-    """Charge retained token storage and work before appending it."""
-    budget.charge_elements(1).map_err((_) => limit_error())?
-    budget.charge_bytes(len(encode_utf8(value)) + len(data)).map_err((_) => limit_error())?
-    scanner.append(kind, value, data, position)
-    return Ok(None)
+    return Ok(TextTokens.create(data, budget))
 
 
 def delimiter(character: str) -> bool:
@@ -472,6 +637,21 @@ def check_bidirectional_controls(source: str) -> Result[None, TextError]:
     return Ok(None)
 
 
-def limit_error() -> TextError:
-    """Return a caller-limit refusal without pretending it is malformed text."""
-    return TextError(kind=TextFailure.Limit, position=TextPosition(line=1, column=1))
+def plain_unsigned(value: str) -> bool:
+    """Return whether text is nonempty canonical decimal digits."""
+    if value == "" or (len(value) > 1 and value.startswith("0")):
+        return false
+    for character in value:
+        if character < "0" or character > "9":
+            return false
+    return true
+
+
+def type_limit(position: TextPosition) -> TextError:
+    """Preserve a type grammar depth refusal at the cursor's current position."""
+    return TextError(kind=TextFailure.Limit, position=position)
+
+
+def limit_error(position: TextPosition) -> TextError:
+    """Return a caller-limit refusal at the source operation that exhausted it."""
+    return TextError(kind=TextFailure.Limit, position=position)

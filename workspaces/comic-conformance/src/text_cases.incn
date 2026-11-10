@@ -197,7 +197,7 @@ def corpus_type(spelling: str, mut budget: Budget) -> Result[TypeNode, str]:
     """Use the production type grammar for independent corpus type spellings."""
     mut tokens = tokenize(spelling, budget).map_err((error) => error.message())?
     value = parse_type(tokens, budget).map_err((error) => error.message())?
-    if tokens.peek().kind != TextTokenKind.End:
+    if tokens.peek().map_err((error) => error.message())?.kind != TextTokenKind.End:
         return Err("trailing corpus type tokens")
     return Ok(value)
 
