@@ -84,6 +84,60 @@
       }
     },
     {
+      "id": "hash-int-i128-min",
+      "projection": "object",
+      "input": {
+        "kind": "int",
+        "type": "i128",
+        "value": "-170141183460469231731687303715884105728"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "integer tag, then Z(-2^127) = U(2^128-1): eighteen continued groups of seven one bits and a final 03",
+          "hex": "02ffffffffffffffffffffffffffffffffffff03"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d6231000102ffffffffffffffffffffffffffffffffffff03",
+        "sha256": "b30fdbbdfb5a831413a5fac25b784cee3191fe14738087d234f3cf95de0ea14b"
+      }
+    },
+    {
+      "id": "hash-int-u128-max",
+      "projection": "object",
+      "input": {
+        "kind": "int",
+        "type": "u128",
+        "value": "340282366920938463463374607431768211455"
+      },
+      "derivation": [
+        {
+          "meaning": "profile prefix and NUL",
+          "hex": "6372756d623100"
+        },
+        {
+          "meaning": "object domain",
+          "hex": "01"
+        },
+        {
+          "meaning": "integer tag, then Z(2^128-1) = U(2^129-2): a first group fe, seventeen continued groups of seven one bits and a final 07",
+          "hex": "02feffffffffffffffffffffffffffffffffff07"
+        }
+      ],
+      "expected": {
+        "preimage_hex": "6372756d6231000102feffffffffffffffffffffffffffffffffff07",
+        "sha256": "d0cdd56333b27863278fe7a0ed53b092e722a6386410794cac964cda0be3dd06"
+      }
+    },
+    {
       "id": "hash-int-128",
       "projection": "object",
       "input": {
