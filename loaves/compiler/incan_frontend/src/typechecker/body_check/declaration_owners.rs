@@ -101,6 +101,7 @@ impl TypeChecker {
             );
         }
         self.check_work.body_local_checks += 1;
+        self.record_check_work("body", "callable", span);
         #[cfg(test)]
         if self.legacy_body_checking {
             self.retain_callable_input_bindings(ownership_source);
@@ -131,6 +132,7 @@ impl TypeChecker {
         }
         self.check_work.body_local_checks += 1;
         self.check_work.property_bodies += 1;
+        self.record_check_work("body", "property", span);
         #[cfg(test)]
         if self.legacy_body_checking {
             self.check_property_body_in_frame(body);
