@@ -1,7 +1,7 @@
 """Inert COMIC document reading over caller-admitted descriptions and limits."""
 
 from crate.primitives.crumb.budget import Budget
-from crate.primitives.crumb.text_syntax import parse_type
+from crate.primitives.crumb.text_syntax import last_segment, parse_type
 from crate.primitives.crumb.text_tokens import TextTokenKind, TextTokens, tokenize
 from crate.primitives.crumb.text_types import (
     TextContext,
@@ -9,15 +9,13 @@ from crate.primitives.crumb.text_types import (
     TextDocument,
     TextError,
     TextFailure,
-    TextField,
     TextPosition,
-    TextProperty,
-    TextPropertyValue,
-    TextVariant,
-    TextValue,
+    TextRootValue,
 )
 from crate.primitives.crumb.text_values import parse_root_values
-from crate.primitives.crumb.types import AbsentPolicy, NominalKind
+from crate.primitives.crumb.identity import member_identity
+from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, NominalKind, TypeNode, VariantShape
+from crate.primitives.crumb.values import Metadata, MetadataEntry
 from crate.primitives.text import decode_utf8
 
 
@@ -34,7 +32,7 @@ pub def read_comic_text(source: str, context: TextContext, mut budget: Budget) -
     """Read one owned text snapshot under the same bounded token and value budget."""
     mut tokens = tokenize(source, budget)?
     mut descriptions: list[TextDescription] = []
-    mut values: list[TextValue] = []
+    mut values: list[TextRootValue] = []
     while tokens.peek().kind != TextTokenKind.End:
         if tokens.peek_at(1).text == "=":
             declaration_position = tokens.peek().position
@@ -42,11 +40,13 @@ pub def read_comic_text(source: str, context: TextContext, mut budget: Budget) -
             refuse_duplicate_declaration(descriptions, description, declaration_position)?
             descriptions.append(description)
         elif tokens.peek_at(1).text == "<<":
-            for value in parse_root_values(tokens, descriptions, budget)?:
+            admitted = resolve_descriptions(descriptions, context)?
+            for value in parse_root_values(tokens, admitted, budget)?:
                 values.append(value)
         else:
             return Err(TextError(kind=TextFailure.InvalidEntry, position=tokens.peek().position))
-    return Ok(TextDocument(descriptions=descriptions, values=values))
+    resolved = resolve_descriptions(descriptions, context)?
+    return Ok(TextDocument(descriptions=resolved, values=values))
 
 
 def parse_description(
@@ -64,14 +64,17 @@ def parse_description(
     kind = require_word(tokens, TextFailure.UnknownKind)?
     shape = registered_shape(kind, context, kind_token.position, budget)?
     tokens.require("{")?
-    mut properties: list[TextProperty] = []
-    mut fields: list[TextField] = []
-    mut variants: list[TextVariant] = []
+    mut properties: list[MetadataEntry] = []
+    mut fields: list[FieldShape] = []
+    mut variants: list[VariantShape] = []
     while not tokens.accepts("}"):
         if tokens.peek().kind == TextTokenKind.End:
             return Err(TextError(kind=TextFailure.UnexpectedEnd, position=tokens.peek().position))
         if tokens.peek_at(1).text == "=":
-            properties.append(parse_property(tokens, budget)?)
+            position = tokens.peek().position
+            property = parse_property(tokens, budget)?
+            refuse_duplicate_property(properties, property, position)?
+            properties.append(property)
         elif shape == NominalKind.Enum:
             variants.append(parse_variant(tokens, budget)?)
         else:
@@ -81,7 +84,15 @@ def parse_description(
         Err(_) => return Err(limit_error(tokens.peek().position))
         Ok(_) => pass
     return Ok(
-        TextDescription(path=path, kind=kind, shape=shape, properties=properties, fields=fields, variants=variants),
+        TextDescription(
+            path=path,
+            kind=kind,
+            shape=shape,
+            identity=None,
+            properties=Metadata.Map(properties),
+            fields=fields,
+            variants=variants,
+        ),
     )
 
 
@@ -97,16 +108,19 @@ def registered_shape(
         Err(_) => return Err(TextError(kind=TextFailure.UnknownKind, position=position))
 
 
-def parse_field(mut tokens: TextTokens, mut budget: Budget) -> Result[TextField, TextError]:
+def parse_field(mut tokens: TextTokens, mut budget: Budget) -> Result[FieldShape, TextError]:
     """Read a field, retaining metadata while projecting canonical and absent policies."""
     name_token = tokens.peek()
     name = require_word(tokens, TextFailure.InvalidFields)?
     if name.startswith("___"):
         return Err(TextError(kind=TextFailure.ReservedField, position=name_token.position))
-    mut properties: list[TextProperty] = []
+    mut properties: list[MetadataEntry] = []
     if tokens.accepts("["):
         while not tokens.accepts("]"):
-            properties.append(parse_property(tokens, budget)?)
+            position = tokens.peek().position
+            property = parse_property(tokens, budget)?
+            refuse_duplicate_property(properties, property, position)?
+            properties.append(property)
             tokens.accepts(",")
     tokens.require(":")?
     storage = parse_type(tokens, budget)?
@@ -124,66 +138,278 @@ def parse_field(mut tokens: TextTokens, mut budget: Budget) -> Result[TextField,
             return Err(TextError(kind=TextFailure.InvalidAbsentValue, position=tokens.peek().position))
     mut canonical = true
     for property in properties:
-        if property.name == "canonical":
+        if property.key == "canonical":
             match property.value:
-                TextPropertyValue.Boolean(value) => canonical = value
+                Metadata.Boolean(value) => canonical = value
                 _ => return Err(TextError(kind=TextFailure.InvalidMetadata, position=name_token.position))
-    return Ok(TextField(name=name, storage_type=storage, absent=absent, canonical=canonical, properties=properties))
+    renamed_from = rename_history(properties, name_token.position)?
+    mut identity_name = name
+    if len(renamed_from) > 0:
+        identity_name = renamed_from[0]
+    identity = member_identity(identity_name, budget).map_err(
+        (_) => TextError(kind=TextFailure.Limit, position=name_token.position),
+    )?
+    return Ok(
+        FieldShape(
+            identity=identity,
+            storage_type=storage,
+            absent=absent,
+            canonical=canonical,
+            name=name,
+            renamed_from=renamed_from,
+        ),
+    )
 
 
-def parse_variant(mut tokens: TextTokens, mut budget: Budget) -> Result[TextVariant, TextError]:
-    """Read one enum variant and its optional named payload description."""
+def parse_variant(mut tokens: TextTokens, mut budget: Budget) -> Result[VariantShape, TextError]:
+    """Read one enum variant, its identity history and its optional named payload description."""
+    name_token = tokens.peek()
     name = require_word(tokens, TextFailure.UnknownVariant)?
-    mut fields: list[TextField] = []
+    mut properties: list[MetadataEntry] = []
+    if tokens.accepts("["):
+        while not tokens.accepts("]"):
+            position = tokens.peek().position
+            property = parse_property(tokens, budget)?
+            refuse_duplicate_property(properties, property, position)?
+            properties.append(property)
+            tokens.accepts(",")
+    mut fields: list[FieldShape] = []
     if tokens.accepts("("):
         while not tokens.accepts(")"):
             fields.append(parse_field(tokens, budget)?)
             if tokens.accepts(")"):
                 break
             tokens.require(",")?
-    return Ok(TextVariant(name=name, fields=fields))
+    renamed_from = rename_history(properties, name_token.position)?
+    mut identity_name = name
+    if len(renamed_from) > 0:
+        identity_name = renamed_from[0]
+    identity = member_identity(identity_name, budget).map_err((_) => limit_error(name_token.position))?
+    return Ok(
+        VariantShape(
+            identity=identity,
+            fields=fields,
+            name=name,
+            renamed_from=renamed_from,
+        ),
+    )
 
 
-def parse_property(mut tokens: TextTokens, mut budget: Budget) -> Result[TextProperty, TextError]:
+def parse_property(mut tokens: TextTokens, mut budget: Budget) -> Result[MetadataEntry, TextError]:
     """Read inert description metadata in its authored order."""
+    position = tokens.peek().position
     name = require_word(tokens, TextFailure.InvalidProperty)?
+    if "." in name:
+        return Err(TextError(kind=TextFailure.InvalidProperty, position=position))
     tokens.require("=")?
-    return Ok(TextProperty(name=name, value=parse_property_value(tokens, budget)?))
+    return Ok(MetadataEntry(key=name, value=parse_property_value(tokens, budget)?))
 
 
-def parse_property_value(mut tokens: TextTokens, mut budget: Budget) -> Result[TextPropertyValue, TextError]:
+def parse_property_value(mut tokens: TextTokens, mut budget: Budget) -> Result[Metadata, TextError]:
     """Read symbols, scalars, lists and nested property groups without evaluation."""
     match budget.enter():
         Err(_) => return Err(limit_error(tokens.peek().position))
         Ok(_) => pass
     token = tokens.peek()
-    mut result = TextPropertyValue.Symbol("")
+    mut result = Metadata.Symbol("")
     if token.kind == TextTokenKind.String:
-        result = TextPropertyValue.Text(tokens.take().text)
+        result = Metadata.Text(tokens.take().text)
+    elif token.kind == TextTokenKind.Binary:
+        result = Metadata.Binary(tokens.take().data)
     elif token.text in ["true", "false"]:
-        result = TextPropertyValue.Boolean(tokens.take().text == "true")
+        result = Metadata.Boolean(tokens.take().text == "true")
+    elif token.text == "None":
+        tokens.take()
+        result = Metadata.Null
     elif token.kind == TextTokenKind.Number:
-        result = TextPropertyValue.Integer(tokens.take().text)
+        result = Metadata.Integer(tokens.take().text)
     elif tokens.accepts("["):
-        mut items: list[TextPropertyValue] = []
+        mut items: list[Metadata] = []
         while not tokens.accepts("]"):
             items.append(parse_property_value(tokens, budget)?)
             if tokens.accepts("]"):
                 break
             tokens.require(",")?
-        result = TextPropertyValue.List(items)
+        result = Metadata.List(items)
     elif tokens.accepts("{"):
-        mut properties: list[TextProperty] = []
+        mut properties: list[MetadataEntry] = []
         while not tokens.accepts("}"):
-            properties.append(parse_property(tokens, budget)?)
+            position = tokens.peek().position
+            property = parse_property(tokens, budget)?
+            refuse_duplicate_property(properties, property, position)?
+            properties.append(property)
             tokens.accepts(",")
-        result = TextPropertyValue.Group(properties)
+        result = Metadata.Map(properties)
     elif token.kind == TextTokenKind.Word:
-        result = TextPropertyValue.Symbol(tokens.take().text)
+        result = Metadata.Symbol(tokens.take().text)
     else:
         return Err(TextError(kind=TextFailure.InvalidProperty, position=token.position))
     budget.leave().map_err((_) => limit_error(token.position))?
     return Ok(result)
+
+
+def refuse_duplicate_property(
+    properties: list[MetadataEntry],
+    candidate: MetadataEntry,
+    position: TextPosition,
+) -> Result[None, TextError]:
+    """Refuse duplicate property-name keys before a host map could apply last-write-wins semantics."""
+    for property in properties:
+        if property.key == candidate.key:
+            return Err(TextError(kind=TextFailure.InvalidMetadata, position=position))
+    return Ok(None)
+
+
+def rename_history(properties: list[MetadataEntry], position: TextPosition) -> Result[list[str], TextError]:
+    """Read an optional earliest-first rename list without treating arbitrary strings as identities."""
+    for property in properties:
+        if property.key == "renamed_from":
+            match property.value:
+                Metadata.List(items) =>
+                    mut names: list[str] = []
+                    for item in items:
+                        match item:
+                            Metadata.Symbol(name) | Metadata.Text(name) => names.append(name)
+                            _ => return Err(TextError(kind=TextFailure.InvalidMetadata, position=position))
+                    return Ok(names)
+                _ => return Err(TextError(kind=TextFailure.InvalidMetadata, position=position))
+    names: list[str] = []
+    return Ok(names)
+
+
+def resolve_description(
+    description: TextDescription,
+    descriptions: list[TextDescription],
+    context: TextContext,
+) -> Result[TextDescription, TextError]:
+    """Resolve every field type after all declarations are known, preserving authored description order."""
+    position = TextPosition(line=1, column=1)
+    mut fields: list[FieldShape] = []
+    for field in description.fields:
+        fields.append(
+            FieldShape(
+                identity=field.identity,
+                storage_type=resolve_node(field.storage_type, descriptions, context, position)?,
+                canonical=field.canonical,
+                absent=field.absent,
+                name=field.name,
+                renamed_from=field.renamed_from,
+            ),
+        )
+    mut variants: list[VariantShape] = []
+    for variant in description.variants:
+        mut payload: list[FieldShape] = []
+        for field in variant.fields:
+            payload.append(
+                FieldShape(
+                    identity=field.identity,
+                    storage_type=resolve_node(field.storage_type, descriptions, context, position)?,
+                    canonical=field.canonical,
+                    absent=field.absent,
+                    name=field.name,
+                    renamed_from=field.renamed_from,
+                ),
+            )
+        variants.append(
+            VariantShape(
+                identity=variant.identity,
+                fields=payload,
+                name=variant.name,
+                renamed_from=variant.renamed_from,
+            ),
+        )
+    identity = admitted_identity(description, context, position)?
+    return Ok(
+        TextDescription(
+            path=description.path,
+            kind=description.kind,
+            shape=description.shape,
+            identity=identity,
+            properties=description.properties,
+            fields=fields,
+            variants=variants,
+        ),
+    )
+
+
+def resolve_descriptions(
+    descriptions: list[TextDescription],
+    context: TextContext,
+) -> Result[list[TextDescription], TextError]:
+    """Resolve one complete visible declaration set before it supplies a value or leaves the reader."""
+    mut resolved: list[TextDescription] = []
+    for description in descriptions:
+        resolved.append(resolve_description(description, descriptions, context)?)
+    return Ok(resolved)
+
+
+def admitted_identity(
+    description: TextDescription,
+    context: TextContext,
+    position: TextPosition,
+) -> Result[Option[bytes], TextError]:
+    """Take a described declaration identity only from an exact logical type admitted by the caller or profile."""
+    mut matches = 0
+    mut selected: Option[bytes] = None
+    for admitted_name in context.admitted_type_names:
+        if admitted_name == description.path and context.admitted_type_shapes[admitted_name] == description.shape:
+            matches += 1
+            identity = context.admitted_type_identities[admitted_name]
+            if len(identity) == 6:
+                selected = Some(identity)
+    if matches > 1:
+        return Err(TextError(kind=TextFailure.AmbiguousOrUnknownType, position=position))
+    if matches == 1:
+        return Ok(selected)
+    return Ok(description.identity)
+
+
+def resolve_node(
+    node: TypeNode,
+    descriptions: list[TextDescription],
+    context: TextContext,
+    position: TextPosition,
+) -> Result[TypeNode, TextError]:
+    """Resolve a parsed path through one document declaration or one caller/profile logical type."""
+    match node:
+        TypeNode.Nominal(_, path, _, _) =>
+            mut exact: list[TypeNode] = []
+            mut short: list[TypeNode] = []
+            for description in descriptions:
+                identity = admitted_identity(description, context, position)?
+                candidate = TypeNode.Nominal(description.shape, description.path, identity, [])
+                if description.path == path:
+                    exact.append(candidate)
+                elif last_segment(description.path) == path:
+                    short.append(candidate)
+            if len(exact) == 1:
+                return Ok(exact[0])
+            if len(exact) > 1:
+                return Err(TextError(kind=TextFailure.AmbiguousOrUnknownType, position=position))
+            for admitted_path in context.admitted_type_names:
+                mut identity: Option[bytes] = None
+                if len(context.admitted_type_identities[admitted_path]) == 6:
+                    identity = Some(context.admitted_type_identities[admitted_path])
+                admitted = TypeNode.Nominal(context.admitted_type_shapes[admitted_path], admitted_path, identity, [])
+                if admitted_path == path:
+                    exact.append(admitted)
+                elif last_segment(admitted_path) == path:
+                    short.append(admitted)
+            if len(exact) == 1:
+                return Ok(exact[0])
+            if len(exact) > 1 or len(short) != 1:
+                return Err(TextError(kind=TextFailure.AmbiguousOrUnknownType, position=position))
+            return Ok(short[0])
+        TypeNode.Container(kind, items) =>
+            mut resolved: list[TypeNode] = []
+            for item in items:
+                resolved.append(resolve_node(item, descriptions, context, position)?)
+            return Ok(TypeNode.Container(kind, resolved))
+        TypeNode.Reference(items) =>
+            if len(items) != 1:
+                return Err(TextError(kind=TextFailure.InvalidType, position=position))
+            return Ok(TypeNode.Reference([resolve_node(items[0], descriptions, context, position)?]))
+        _ => return Ok(node)
 
 
 def require_word(mut tokens: TextTokens, kind: TextFailure) -> Result[str, TextError]:

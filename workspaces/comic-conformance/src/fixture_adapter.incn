@@ -2,15 +2,8 @@
 
 from std.json import JsonValue
 from std.primitives.crumb.values import Value, ValueField, MapEntry, Metadata, MetadataEntry
-from std.primitives.crumb.text_types import (
-    TextDescription,
-    TextMapEntry,
-    TextNamedValue,
-    TextProperty,
-    TextPropertyValue,
-    TextValue,
-)
-from std.primitives.crumb.types import NominalKind, TypeNode
+from std.primitives.crumb.text_types import TextDescription
+from std.primitives.crumb.types import FieldShape, NominalKind, TypeNode
 from std.primitives.hex import hexlify
 from std.primitives.text import encode_utf8
 from case_data import (
@@ -109,7 +102,7 @@ def member(value: JsonValue) -> Result[TypeNode, str]:
     mut arguments: list[TypeNode] = []
     if let Some(items) = value.get("arguments"):
         arguments = nodes(items.expect_array().map_err((error) => error.message())?)?
-    return Ok(TypeNode.Nominal(kind, hex_bytes(text(value, "nominal_hex")?)?, arguments))
+    return Ok(TypeNode.Nominal(kind, "", Some(hex_bytes(text(value, "nominal_hex")?)?), arguments))
 
 
 pub def metadata(value: JsonValue) -> Result[Metadata, str]:
@@ -123,6 +116,7 @@ pub def metadata(value: JsonValue) -> Result[Metadata, str]:
         FixtureMetadataKind.Integer => return Ok(Metadata.Integer(text(value, "value")?))
         FixtureMetadataKind.String => return Ok(Metadata.Text(text(value, "value")?))
         FixtureMetadataKind.Binary => return Ok(Metadata.Binary(hex_bytes(text(value, "hex")?)?))
+        FixtureMetadataKind.Symbol => return Ok(Metadata.Symbol(text(value, "name")?))
         FixtureMetadataKind.List =>
             mut items: list[Metadata] = []
             for item in array(value, "items")?:
@@ -169,6 +163,9 @@ pub def metadata_notation(value: Metadata) -> JsonValue:
         Metadata.Binary(item) =>
             result["kind"] = JsonValue.string(FixtureMetadataKind.Binary.value())
             result["hex"] = JsonValue.string(hexlify(item))
+        Metadata.Symbol(item) =>
+            result["kind"] = JsonValue.string(FixtureMetadataKind.Symbol.value())
+            result["name"] = JsonValue.string(item)
         Metadata.List(items) =>
             result["kind"] = JsonValue.string(FixtureMetadataKind.List.value())
             result["items"] = JsonValue.array([metadata_notation(item) for item in items])
@@ -299,118 +296,138 @@ def fixture_values(items: list[JsonValue], descriptions: list[JsonValue]) -> Res
     return Ok(values)
 
 
-pub def text_property_value(value: JsonValue) -> Result[TextPropertyValue, str]:
-    """Translate one text property fixture while the logical metadata decision remains pending."""
+pub def text_property_value(value: JsonValue) -> Result[Metadata, str]:
+    """Translate one text property fixture into the shared metadata domain."""
     kind = match FixturePropertyKind.from_value(text(value, "kind")?):
         Some(selected) => selected
         None => return Err("unknown corpus property value")
 
     match kind:
-        FixturePropertyKind.Symbol => return Ok(TextPropertyValue.Symbol(text(value, "name")?))
-        FixturePropertyKind.String => return Ok(TextPropertyValue.Text(text(value, "value")?))
+        FixturePropertyKind.Symbol => return Ok(Metadata.Symbol(text(value, "name")?))
+        FixturePropertyKind.String => return Ok(Metadata.Text(text(value, "value")?))
         FixturePropertyKind.Boolean =>
             flag = field(value, "value")?.expect_bool().map_err((error) => error.message())?
-            return Ok(TextPropertyValue.Boolean(flag))
-        FixturePropertyKind.Integer => return Ok(TextPropertyValue.Integer(text(value, "value")?))
+            return Ok(Metadata.Boolean(flag))
+        FixturePropertyKind.Integer => return Ok(Metadata.Integer(text(value, "value")?))
+        FixturePropertyKind.Null => return Ok(Metadata.Null)
+        FixturePropertyKind.Binary => return Ok(Metadata.Binary(hex_bytes(text(value, "hex")?)?))
         FixturePropertyKind.List =>
-            mut items: list[TextPropertyValue] = []
+            mut items: list[Metadata] = []
             for item in array(value, "items")?:
                 items.append(text_property_value(item)?)
-            return Ok(TextPropertyValue.List(items))
+            return Ok(Metadata.List(items))
         FixturePropertyKind.PropertyGroup =>
-            mut properties: list[TextProperty] = []
+            mut properties: list[MetadataEntry] = []
             for item in array(value, "properties")?:
                 properties.append(
-                    TextProperty(name=text(item, "name")?, value=text_property_value(field(item, "value")?)?),
+                    MetadataEntry(key=text(item, "name")?, value=text_property_value(field(item, "value")?)?),
                 )
-            return Ok(TextPropertyValue.Group(properties))
+            return Ok(Metadata.Map(properties))
 
 
-pub def text_value(value: JsonValue, descriptions: list[TextDescription]) -> Result[TextValue, str]:
-    """Translate one fully tagged text fixture without changing the pending text carrier."""
+pub def text_value(value: JsonValue, descriptions: list[TextDescription]) -> Result[Value, str]:
+    """Translate one fully tagged text fixture into the shared logical value domain."""
     kind = match FixtureValueKind.from_value(text(value, "kind")?):
         Some(selected) => selected
         None => return Err("unknown corpus text value")
 
     match kind:
-        FixtureValueKind.NoneValue => return Ok(TextValue.NoneValue)
-        FixtureValueKind.Some => return Ok(TextValue.Some([text_value(field(value, "value")?, descriptions)?]))
+        FixtureValueKind.NoneValue => return Ok(Value.NoneValue)
+        FixtureValueKind.Some => return Ok(Value.Some([text_value(field(value, "value")?, descriptions)?]))
         FixtureValueKind.Boolean =>
             flag = field(value, "value")?.expect_bool().map_err((error) => error.message())?
-            return Ok(TextValue.Boolean(flag))
-        FixtureValueKind.Integer => return Ok(TextValue.Integer(text(value, "type")?, text(value, "value")?))
+            return Ok(Value.Boolean(flag))
+        FixtureValueKind.Integer => return Ok(Value.Integer(text(value, "value")?))
         FixtureValueKind.Float => return text_float(value)
         FixtureValueKind.Decimal =>
-            precision = field(value, "precision")?.expect_int().map_err((error) => error.message())?
             scale = field(value, "scale")?.expect_int().map_err((error) => error.message())?
-            return Ok(TextValue.Decimal(text(value, "coefficient")?, precision, scale))
-        FixtureValueKind.String => return Ok(TextValue.Text(text(value, "value")?))
-        FixtureValueKind.Binary => return Ok(TextValue.Binary(hex_bytes(text(value, "hex")?)?))
-        FixtureValueKind.Withheld => return Ok(TextValue.Withheld(text(value, "type")?))
-        FixtureValueKind.List => return Ok(TextValue.List(text_values(array(value, "items")?, descriptions)?))
-        FixtureValueKind.Set => return Ok(TextValue.Set(text_values(array(value, "items")?, descriptions)?))
+            return Ok(Value.Decimal(text(value, "coefficient")?, str(scale)))
+        FixtureValueKind.String => return Ok(Value.Text(text(value, "value")?))
+        FixtureValueKind.Binary => return Ok(Value.Binary(hex_bytes(text(value, "hex")?)?))
+        FixtureValueKind.Withheld => return Ok(Value.Withheld)
+        FixtureValueKind.List => return Ok(Value.List(text_values(array(value, "items")?, descriptions)?))
+        FixtureValueKind.Set => return Ok(Value.Set(text_values(array(value, "items")?, descriptions)?))
         FixtureValueKind.Map => return text_map(value, descriptions)
         FixtureValueKind.Record => return text_record(value, descriptions)
         FixtureValueKind.Enum => return text_enum(value, descriptions)
         FixtureValueKind.Union =>
-            member = text(value, "member")?
+            member = text_description_at(descriptions, text(value, "member")?)?
             item = text_value(field(value, "value")?, descriptions)?
-            return Ok(TextValue.Union(member, [item]))
+            return Ok(Value.Union(description_type(member), [item]))
         FixtureValueKind.Reference =>
-            return Ok(TextValue.Reference(text(value, "target_type")?, text(value, "identity")?))
+            target = text_description_at(descriptions, text(value, "target_type")?)?
+            target_identity = match target.identity:
+                Some(identity) => identity
+                None => b""
+            return Ok(Value.Reference(target_identity, encode_utf8(text(value, "identity")?)))
         FixtureValueKind.Tuple => return Err("tuple is not a COMIC text value")
 
 
-pub def text_values(values: list[JsonValue], descriptions: list[TextDescription]) -> Result[list[TextValue], str]:
+pub def text_values(values: list[JsonValue], descriptions: list[TextDescription]) -> Result[list[Value], str]:
     """Translate an ordered text-value sequence without host collection coercion."""
-    mut result: list[TextValue] = []
+    mut result: list[Value] = []
     for value in values:
         result.append(text_value(value, descriptions)?)
     return Ok(result)
 
 
-def text_float(value: JsonValue) -> Result[TextValue, str]:
+def text_float(value: JsonValue) -> Result[Value, str]:
     """Retain exact IEEE bytes without deriving expected spelling in the adapter."""
     width = field(value, "width")?.expect_int().map_err((error) => error.message())?
-    return Ok(TextValue.Float(width, hex_bytes(text(value, "bits")?)?))
+    return Ok(Value.Float(width, hex_bytes(text(value, "bits")?)?))
 
 
-def text_map(value: JsonValue, descriptions: list[TextDescription]) -> Result[TextValue, str]:
+def text_map(value: JsonValue, descriptions: list[TextDescription]) -> Result[Value, str]:
     """Translate explicit text map pairs without JSON object key semantics."""
-    mut entries: list[TextMapEntry] = []
+    mut entries: list[MapEntry] = []
     for item in array(value, "entries")?:
         pair = item.expect_array().map_err((error) => error.message())?
         if len(pair) != 2:
             return Err("corpus map entry arity")
-        entries.append(TextMapEntry(key=text_value(pair[0], descriptions)?, value=text_value(pair[1], descriptions)?))
-    return Ok(TextValue.Map(entries))
+        entries.append(MapEntry(key=text_value(pair[0], descriptions)?, value=text_value(pair[1], descriptions)?))
+    return Ok(Value.Map(entries))
 
 
-def text_record(value: JsonValue, descriptions: list[TextDescription]) -> Result[TextValue, str]:
+def text_record(value: JsonValue, descriptions: list[TextDescription]) -> Result[Value, str]:
     """Order a text record fixture's object fields by its independent description."""
     storage_type = text(value, "type")?
     description = text_description_at(descriptions, storage_type)?
     source = field(value, "fields")?
-    mut values: list[TextNamedValue] = []
+    mut values: list[ValueField] = []
     for declared in description.fields:
-        values.append(TextNamedValue(name=declared.name, value=text_value(field(source, declared.name)?, descriptions)?))
-    return Ok(TextValue.Record(storage_type, values))
+        values.append(text_field(declared, text_value(field(source, declared.name)?, descriptions)?))
+    return Ok(Value.Record(values))
 
 
-def text_enum(value: JsonValue, descriptions: list[TextDescription]) -> Result[TextValue, str]:
+def text_enum(value: JsonValue, descriptions: list[TextDescription]) -> Result[Value, str]:
     """Order a text enum fixture's payload fields by its declared variant."""
     storage_type = text(value, "type")?
     variant_name = text(value, "variant")?
     description = text_description_at(descriptions, storage_type)?
     source = field(value, "fields")?
-    mut values: list[TextNamedValue] = []
+    mut values: list[ValueField] = []
     for variant in description.variants:
         if variant.name == variant_name:
             for declared in variant.fields:
                 item = text_value(field(source, declared.name)?, descriptions)?
-                values.append(TextNamedValue(name=declared.name, value=item))
-            return Ok(TextValue.Enum(storage_type, variant_name, values))
+                values.append(text_field(declared, item))
+            return Ok(Value.Enum(variant.identity, values))
     return Err("unknown corpus enum variant")
+
+
+def text_field(field_shape: FieldShape, value: Value) -> ValueField:
+    """Attach independent fixture data to the description's identity-bearing field facts."""
+    return ValueField(
+        identity=field_shape.identity,
+        canonical=field_shape.canonical,
+        absent=field_shape.absent,
+        value=value,
+    )
+
+
+def description_type(description: TextDescription) -> TypeNode:
+    """Project a fixture description to the same nominal node used by production text APIs."""
+    return TypeNode.Nominal(description.shape, description.path, description.identity, [])
 
 
 def text_description_at(descriptions: list[TextDescription], path: str) -> Result[TextDescription, str]:
