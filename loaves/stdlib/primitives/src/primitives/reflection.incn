@@ -53,18 +53,23 @@ pub model ShapeInfo:
     """
     A complete stored shape, independently of a value or its public-field inspection view.
 
-    Identity is the closed nominal selector K; spelling is structural S. Neither grants authority
-    to a foreign type. Fields and variants use their checked six-byte identities in ascending order.
-    Recursive shapes keep finite checked selectors rather than recursively allocating metadata.
+    Identity names the closed nominal type; selector is its canonical stored-type spelling. Both
+    are absent when the declaration has no persistent namespace. Spelling describes its full structure
+    when it has a portable representation; it is None when isize or usize occurs at any depth. Such
+    values still walk and reconstruct. Declarations contain the finite reachable closure with each
+    nested closure empty, including declarations whose spelling is absent.
+    Fields and variants use their checked six-byte identities in ascending order.
     """
 
     pub name: FrozenStr
-    pub identity: FrozenBytes
+    pub identity: Option[FrozenBytes]
     pub renamed_from: FrozenList[FrozenStr]
     pub renamed_from_lifecycle: Option[LifecycleInfo]
-    pub spelling: FrozenStr
+    pub selector: Option[FrozenStr]
+    pub spelling: Option[FrozenStr]
     pub fields: FrozenList[FieldInfo]
     pub variants: FrozenList[VariantInfo]
+    pub declarations: FrozenList[ShapeInfo]
 
     @staticmethod
     pub def of[T with Walk]() -> ShapeInfo:
@@ -152,7 +157,7 @@ pub model DecimalValue:
 pub trait Walk:
     """Expose typed stored values to a caller-owned walker without imposing a codec or copying fields."""
 
-    def __walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]:
+    def __walk__[E, W with Walker[E]](self, mut walker: BorrowedMut[W]) -> Result[None, E]:
         """Visit this value's declared stored representation, propagating the walker's failure."""
         pass
 
@@ -177,17 +182,18 @@ pub trait Walker[E]:
 
     Override only the observations needed. The same mutable walker enters nested values, retaining
     its state, limits and error type. Begin/end calls describe structure; they do not own values.
+    Borrowed payload contracts also govern plain-type overrides, so traversal never clones stored values.
     """
 
     def bool(mut self, value: bool) -> Result[None, E]:
         """Observe a bool value; the default retains no data."""
         return Ok(None)
 
-    def str(mut self, value: str) -> Result[None, E]:
+    def str(mut self, value: Borrowed[str]) -> Result[None, E]:
         """Observe a str value; the default retains no data."""
         return Ok(None)
 
-    def bytes(mut self, value: bytes) -> Result[None, E]:
+    def bytes(mut self, value: Borrowed[bytes]) -> Result[None, E]:
         """Observe a bytes value; the default retains no data."""
         return Ok(None)
 
@@ -203,7 +209,7 @@ pub trait Walker[E]:
         """Observe a f64 value; the default retains no data."""
         return Ok(None)
 
-    def decimal(mut self, value: DecimalValue) -> Result[None, E]:
+    def decimal(mut self, value: Borrowed[DecimalValue]) -> Result[None, E]:
         """Observe a DecimalValue value; the default retains no data."""
         return Ok(None)
 
@@ -211,7 +217,7 @@ pub trait Walker[E]:
         """Observe None, including one explicitly absent optional layer."""
         return Ok(None)
 
-    def some[V with Walk](mut self, value: V) -> Result[None, E]:
+    def some[V with Walk](mut self, value: Borrowed[V]) -> Result[None, E]:
         """Descend through one present optional layer with this walker's existing state."""
         return value.__walk__(self)
 
@@ -219,7 +225,7 @@ pub trait Walker[E]:
         """Enter a list, set or tuple; the producer supplies its complete element count."""
         return Ok(None)
 
-    def element[V with Walk](mut self, value: V) -> Result[None, E]:
+    def element[V with Walk](mut self, value: Borrowed[V]) -> Result[None, E]:
         """Walk one sequence element without materializing an intermediate untyped tree."""
         return value.__walk__(self)
 
@@ -231,7 +237,7 @@ pub trait Walker[E]:
         """Enter a dictionary with its complete entry count."""
         return Ok(None)
 
-    def entry[K with Walk, V with Walk](mut self, key: K, value: V) -> Result[None, E]:
+    def entry[K with Walk, V with Walk](mut self, key: Borrowed[K], value: Borrowed[V]) -> Result[None, E]:
         """Visit a key followed by its value, propagating the first failure unchanged."""
         key.__walk__(self)?
         return value.__walk__(self)
@@ -244,7 +250,7 @@ pub trait Walker[E]:
         """Enter a model's complete stored shape, including its private stored fields."""
         return Ok(None)
 
-    def field[V with Walk](mut self, info: FieldInfo, value: V) -> Result[None, E]:
+    def field[V with Walk](mut self, info: FieldInfo, value: Borrowed[V]) -> Result[None, E]:
         """Walk a stored field by its checked metadata; privacy is not redaction."""
         return value.__walk__(self)
 

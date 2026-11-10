@@ -6,6 +6,10 @@ use super::*;
 pub(super) fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), PlanError> {
     span(&callee.span)?;
     match &callee.kind {
+        CalleeKind::StaticValue(name, ty, value) => {
+            crate::static_values::validate(plan, name, ty, value)?;
+            Ok((Vec::new(), scalar(ty)))
+        }
         CalleeKind::InstallPanicHook(signature) => {
             if signature.len() != 2 || signature.last() != Some(&PlanType::Unit) {
                 return Err(invalid(

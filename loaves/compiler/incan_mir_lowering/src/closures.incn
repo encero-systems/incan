@@ -330,7 +330,7 @@ pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], s
     mut elements: list[PlanType] = []
     for index in range(len(signature) - 1):
         input = signature[index]
-        if not closure_value_type(input) and not owned_nominal_input(input):
+        if not closure_value_type(input) and not is_owned_collection(input) and not owned_nominal_input(input):
             match input:
                 PlanType.ListRef(_leaf, _depth) => pass
                 PlanType.SetRef(_leaf) => pass
@@ -338,7 +338,7 @@ pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], s
                 PlanType.ListMutRef(_leaf, _depth) => pass
                 PlanType.SetMutRef(_leaf) => pass
                 PlanType.DictMutRef(_key, _value) => pass
-                PlanType.StringMutRef => pass
+                (PlanType.StringRef | PlanType.StrRef | PlanType.StringMutRef) => pass
                 PlanType.Model(_index, _name) => pass
                 PlanType.ModelMutRef(_index, _name) => pass
                 PlanType.ModelRef(_index, _name) => pass
@@ -506,9 +506,9 @@ pub def pointer_forwarder(name: str, signature: list[PlanType], span: SourceSpan
         parameters.append(Parameter(name=f"__incan_argument_{index}", ty=ty, span=span))
         place = plan_place(index + 2, span)
         mut kind = OperandKind.Copy(place)
-        # Owned text, an owned model or enum, and the exclusive borrow a `mut` input receives move on; every other
-        # input is copied.
-        if ty == PlanType.String or is_exclusive_borrow(ty) or owned_nominal_input(ty):
+        # Owned text, collections, models and enums, and the exclusive borrow a `mut` input receives move on; every
+        # other input is copied.
+        if ty == PlanType.String or is_owned_collection(ty) or is_exclusive_borrow(ty) or owned_nominal_input(ty):
             kind = OperandKind.Move(place)
         operands.append(Operand(kind=kind, span=span))
     pointer_value = Operand(kind=OperandKind.Copy(plan_place(1, span)), span=span)
@@ -550,7 +550,7 @@ pub def borrowed_callable_forwarder(
         parameters.append(Parameter(name=f"__incan_argument_{index}", ty=ty, span=span))
         place = plan_place(index + 2, span)
         mut kind = OperandKind.Copy(place)
-        if ty == PlanType.String or is_exclusive_borrow(ty) or owned_nominal_input(ty):
+        if ty == PlanType.String or is_owned_collection(ty) or is_exclusive_borrow(ty) or owned_nominal_input(ty):
             kind = OperandKind.Move(place)
         operands.append(Operand(kind=kind, span=span))
     inputs = closure_arguments(signature)?

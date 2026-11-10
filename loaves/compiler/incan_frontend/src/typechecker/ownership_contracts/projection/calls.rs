@@ -3,6 +3,7 @@
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, IncanInputAccess};
 
 use super::{CheckedInputBody, TypeCheckInfo, flow};
+use crate::ast::{CallArg, Expr, Spanned};
 use crate::symbols::CallableParam;
 
 /// A checked input source names existing storage, a retained view-carrying local or a real invocation-bounded
@@ -29,6 +30,8 @@ pub(crate) struct CheckedInputArgument {
     pub written_position: usize,
     pub access: IncanInputAccess,
     pub source: Option<CheckedInputSource>,
+    /// A native result reference is evaluated and reborrowed; its retained owner loan is not its physical place.
+    pub reference_result: bool,
 }
 
 /// A method receiver borrowed for one invocation: shared for `self`, exclusive for `mut self`.
@@ -48,12 +51,60 @@ pub(crate) struct CheckedInputInvocation<'a> {
 }
 
 impl<'a> CheckedInputBody<'a> {
+    /// Separate a checked native reference result from the owner whose lifetime protects it. A result loan and
+    /// its invocation must agree exactly; an ordinary owner or a reference-shaped annotation grants no shortcut.
+    fn native_reference_argument(
+        &self,
+        argument: &flow::InvocationArgument,
+        mut expression: &Spanned<Expr>,
+    ) -> Result<bool, &'static str> {
+        if expression.span != argument.span {
+            return Err("native input expression differs from its checked argument");
+        }
+        while let Expr::Paren(inner) = &expression.node {
+            expression = inner;
+        }
+        let Some(call) = self.facts.rust.checked_calls.get(&expression.span) else {
+            return Ok(false);
+        };
+        let mutable = match call.return_type {
+            crate::symbols::ResolvedType::Ref(_) => false,
+            crate::symbols::ResolvedType::RefMut(_) => true,
+            _ => return Ok(false),
+        };
+        let Some(loan) = argument.loan.and_then(|id| self.graph.loans.get(id.0)) else {
+            return Ok(false);
+        };
+        let Some(parent) = loan.parent.and_then(|id| self.graph.loans.get(id.0)) else {
+            return Ok(false);
+        };
+        if parent.span != expression.span {
+            return Ok(false);
+        }
+        if argument.source.as_ref() != Some(&loan.source)
+            || parent.source != loan.source
+            || !self.graph.invocations.contains_key(&expression.span)
+            || !self
+                .facts
+                .protocols
+                .explicit_input_calls
+                .get(&expression.span)
+                .is_some_and(|call| call.kind == super::super::InputCallKind::Native)
+            || (argument.access == IncanInputAccess::Exclusive && !mutable)
+            || !matches!(argument.access, IncanInputAccess::Shared | IncanInputAccess::Exclusive)
+        {
+            return Err("native reference argument differs from its checked result loan");
+        }
+        Ok(true)
+    }
+
     /// Select exactly the call already authenticated in this body's flow. Missing or unsupported source facts
     /// refuse rather than recovering access from the native signature or the spelling of the function.
     pub(crate) fn invocation(
         &self,
         span: HirSourceSpan,
         callee: &CanonicalSymbolId,
+        written_arguments: &[CallArg],
     ) -> Result<CheckedInputInvocation<'a>, &'static str> {
         let invocation = self
             .graph
@@ -71,12 +122,17 @@ impl<'a> CheckedInputBody<'a> {
             .ok_or("explicit invocation has no checked parameters")?;
         let mut arguments = Vec::with_capacity(invocation.arguments.len());
         for argument in &invocation.arguments {
+            let expression = match written_arguments.get(argument.written_position) {
+                Some(CallArg::Positional(value) | CallArg::Named(_, value)) => value,
+                _ => return Err("explicit invocation has no matching written argument"),
+            };
             let source = argument.source.as_ref().map(project_source).transpose()?;
             arguments.push(CheckedInputArgument {
                 span: argument.span,
                 slot: argument.slot,
                 written_position: argument.written_position,
                 access: argument.access,
+                reference_result: self.native_reference_argument(argument, expression)?,
                 source,
             });
         }
@@ -175,7 +231,12 @@ impl TypeCheckInfo {
     fn selected_returned_view(&self, span: HirSourceSpan) -> Option<crate::ownership_metadata::ReturnedView<'_>> {
         let call = self.protocols.explicit_input_calls.get(&span)?;
         let contract = self.selected_input_contract(call).ok()?;
-        crate::ownership_metadata::returned_view(contract).ok()?
+        match contract {
+            Some(std::borrow::Cow::Borrowed(contract)) => {
+                crate::ownership_metadata::returned_view(Some(contract)).ok()?
+            }
+            Some(std::borrow::Cow::Owned(_)) | None => None,
+        }
     }
 
     /// Select the explicit route even when its owning body proof is absent, so defaults and indirect evaluations

@@ -243,14 +243,15 @@ pub(super) fn scalar_referent(ty: &Scalar) -> bool {
         )
 }
 
-/// Callable objects accept scalars of any numeric carrier, text, owned models and enums, shared model and collection
-/// views and the exclusive borrows a `mut` parameter receives as inputs; their result is a scalar, owned text, an owned
-/// list, set or dictionary, an owned model, newtype or enum, or an owned generator, which a generator expression's
-/// capturing step returns. Tuple inputs use the same recursively validated by-value layout as source function
-/// parameters, including captured generator steps over enumerate and zip items. Collection results retain their full
-/// layout and transfer ownership to the caller; borrowed collection results remain outside this signature contract.
-/// Owned model inputs use the same recursively validated layout as ordinary by-value parameters; external metadata
-/// still checks the exact native carrier and trait bounds.
+/// Callable objects accept scalars of any numeric carrier, owned text, shared string views, owned collections,
+/// models and enums, shared model and collection views and the exclusive borrows a `mut` parameter receives as
+/// inputs; their result is a scalar, owned text, an owned list, set or dictionary, an owned model, newtype or enum,
+/// or an owned generator, which a generator expression's capturing step returns. Tuple inputs use the same
+/// recursively validated by-value layout as source function parameters, including captured generator steps over
+/// enumerate and zip items. Collection results retain their full layout and transfer ownership to the caller;
+/// borrowed collection results remain outside this signature contract. Owned model inputs use the same recursively
+/// validated layout as ordinary by-value parameters; external metadata still checks the exact native carrier and
+/// trait bounds.
 pub(super) fn callable_object_signature(signature: &[Scalar]) -> bool {
     let Some((result, inputs)) = signature.split_last() else {
         return false;
@@ -270,7 +271,10 @@ pub(super) fn callable_object_signature(signature: &[Scalar]) -> bool {
                 || (matches!(ty, Scalar::Tuple(_)) && source_signature_type(ty))
                 || matches!(
                     ty,
-                    Scalar::ListRef(_, _)
+                    Scalar::List(_, _)
+                        | Scalar::Set(_)
+                        | Scalar::Dict(_, _)
+                        | Scalar::ListRef(_, _)
                         | Scalar::Model(_)
                         | Scalar::ModelRef(_)
                         | Scalar::SetRef(_)
@@ -278,6 +282,8 @@ pub(super) fn callable_object_signature(signature: &[Scalar]) -> bool {
                         | Scalar::ListMutRef(_, _)
                         | Scalar::SetMutRef(_)
                         | Scalar::DictMutRef(_, _)
+                        | Scalar::StringRef
+                        | Scalar::StrRef
                         | Scalar::StringMutRef
                         | Scalar::ModelMutRef(_)
                         | Scalar::EnumMutRef(_)

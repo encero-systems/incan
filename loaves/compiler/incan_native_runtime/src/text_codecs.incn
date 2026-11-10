@@ -36,7 +36,7 @@ pub def decode_replacement_policy(encoding: &RustString, errors: &RustString) ->
     return (true, false)
 
 
-pub def invalid_decoder_options(encoding: &RustString, errors: &RustString) -> RuntimeError:
+pub def invalid_decoder_options(encoding: &RustString, errors: &RustString) -> Owned[RuntimeError]:
     """Adapt one rejected decoder option pair to its established ordered surface error."""
     label = normalize_encoding_label(encoding.as_str())
     if not is_utf8_encoding_label(label):
@@ -50,6 +50,6 @@ pub def invalid_decoder_options(encoding: &RustString, errors: &RustString) -> R
     )
 
 
-pub def invalid_utf8_error(detail: &RustString) -> RuntimeError:
+pub def invalid_utf8_error(detail: &RustString) -> Owned[RuntimeError]:
     """Adapt primitive UTF-8 validation detail to the established coded decoder error."""
     return make_coded_validation_error(f"'utf-8' codec can't decode bytes: {detail}", "invalid-utf8")

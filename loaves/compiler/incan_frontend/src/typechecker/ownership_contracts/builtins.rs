@@ -72,6 +72,26 @@ pub(super) fn carrier_construction<'a>(
     carrier_constructor(facts, callee).map(|id| (id, arguments.as_slice()))
 }
 
+/// A retained source variant construction has a canonical enum receiver and a variant from that same declaration.
+/// Source-flow additionally checks its concrete owner's payload layout; both admission walkers use this selection
+/// to evaluate payloads rather than invent a method invocation or a read of the type namespace.
+pub(super) fn source_enum_construction<'a>(facts: &TypeCheckInfo, value: &'a Spanned<Expr>) -> Option<&'a [CallArg]> {
+    let (receiver, arguments) = match &value.node {
+        Expr::MethodCall(receiver, _, _, arguments) => (receiver, arguments.as_slice()),
+        Expr::Field(receiver, _) => (receiver, &[][..]),
+        _ => return None,
+    };
+    let variant = facts.resolved_identity(value.span)?;
+    let owner = facts.resolved_identity(receiver.span)?;
+    (variant.kind == incan_semantics_core::SemanticSourceTargetKind::Variant
+        && owner.kind == incan_semantics_core::SemanticSourceTargetKind::Enum
+        && matches!(owner.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
+        && owner.origin == variant.origin
+        && owner.declaration_span.start <= variant.declaration_span.start
+        && variant.declaration_span.end <= owner.declaration_span.end)
+        .then_some(arguments)
+}
+
 /// The call whose returned view an expression produces: the expression itself, or the call `await` or `?` takes a
 /// view out of, through parentheses.
 pub(super) fn view_call(expression: &Spanned<Expr>) -> &Spanned<Expr> {

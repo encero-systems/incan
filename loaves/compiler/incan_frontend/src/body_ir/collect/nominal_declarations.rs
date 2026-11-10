@@ -177,7 +177,7 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
                 field_aliases: fields.iter().map(|field| field.node.metadata.alias.clone()).collect(),
                 comparison_equality: None,
                 reflection_metadata: if class_layout.is_none() {
-                    collect_field_metadata(name, fields, type_info)
+                    collect_field_metadata(fields, type_info)
                 } else {
                     None
                 },
@@ -354,7 +354,7 @@ pub(super) fn retain_inherited_layout(
     Some(retained)
 }
 
-/// Retain a class's public field policy and presentation metadata from its checked parent-first layout.
+/// Retain a class's public field policy and complete stored metadata from its checked parent-first layout.
 /// These slots also govern typed overlays, so inherited and local fields share the same visibility decision.
 pub(super) fn retain_class_reflection(retained: &mut bir::NominalDeclaration, facts: &TypeCheckInfo) {
     let Some(layout) = facts.declarations.class_layouts.get(&retained.name) else {
@@ -373,7 +373,6 @@ pub(super) fn retain_class_reflection(retained: &mut bir::NominalDeclaration, fa
             .fields
             .iter()
             .enumerate()
-            .filter(|(_, field)| field.visibility == ast::Visibility::Public)
             .map(|(position, field)| bir::FieldMetadata {
                 position,
                 name: field.name.clone(),
@@ -512,22 +511,15 @@ pub(super) fn collect_plain_newtype(
     })
 }
 
-/// Retain the complete visible field records once, with the same checked visibility and presentation contract as
-/// legacy. Missing checked types make the entire metadata surface unavailable instead of silently omitting a field.
+/// Retain every stored field, including private state required by typed-value generation. Public reflection uses
+/// the separate checked `reflection_fields` projection. Missing types refuse the whole metadata surface.
 pub(super) fn collect_field_metadata(
-    name: &str,
     fields: &[ast::Spanned<ast::FieldDecl>],
     facts: &TypeCheckInfo,
 ) -> Option<Vec<bir::FieldMetadata>> {
     fields
         .iter()
         .enumerate()
-        .filter(|(_, field)| {
-            !facts
-                .declarations
-                .model_type_private_fields
-                .contains(&(name.to_owned(), field.node.name.clone()))
-        })
         .map(|(position, field)| {
             let ty = facts.declarations.model_field_types.get(&field.span)?;
             Some(bir::FieldMetadata {

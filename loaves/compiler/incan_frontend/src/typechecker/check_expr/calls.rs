@@ -60,12 +60,12 @@ pub(super) struct PublicModuleConstructorContext<'a> {
 }
 
 /// Borrow the written call and its destination while the checker selects a declaration and checks arguments.
-struct DirectCallSite<'a> {
-    callee: &'a Spanned<Expr>,
-    type_args: &'a [Spanned<Type>],
-    args: &'a [CallArg],
-    span: Span,
-    expected_return_ty: Option<&'a ResolvedType>,
+pub(in crate::typechecker::check_expr) struct DirectCallSite<'a> {
+    pub(in crate::typechecker::check_expr) callee: &'a Spanned<Expr>,
+    pub(in crate::typechecker::check_expr) type_args: &'a [Spanned<Type>],
+    pub(in crate::typechecker::check_expr) args: &'a [CallArg],
+    pub(in crate::typechecker::check_expr) span: Span,
+    pub(in crate::typechecker::check_expr) expected_return_ty: Option<&'a ResolvedType>,
 }
 
 /// Return whether the last Rust path segment looks like a type name.

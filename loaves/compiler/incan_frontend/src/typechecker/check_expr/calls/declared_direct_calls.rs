@@ -417,19 +417,26 @@ impl TypeChecker {
 
     /// Infer callable values and operator receivers only after declaration-specific call policies decline.
     pub(super) fn check_direct_value_call(&mut self, call: &DirectCallSite<'_>) -> ResolvedType {
-        let (callee, type_args, args, span, expected_return_ty) = (
-            call.callee,
-            call.type_args,
-            call.args,
-            call.span,
-            call.expected_return_ty,
-        );
-        if !type_args.is_empty() {
+        if !call.type_args.is_empty() {
             self.errors
-                .push(errors::explicit_call_site_type_args_not_supported(span));
+                .push(errors::explicit_call_site_type_args_not_supported(call.span));
         }
-        let callee_ty = self.check_expr(callee);
+        let callee_ty = self.check_expr(call.callee);
+        self.check_value_call_with_type(call, callee_ty, false)
+    }
 
+    /// Check one already resolved callable value while retaining whether Body IR needs its complete parameter shape.
+    ///
+    /// Ordinary direct calls can recover fixed parameters from their callee expression. A member read encoded by the
+    /// parser as `receiver.member(args)` cannot, so that path records even an otherwise ordinary parameter list under
+    /// the complete call span before both spellings share argument and result checking here.
+    pub(in crate::typechecker::check_expr) fn check_value_call_with_type(
+        &mut self,
+        call: &DirectCallSite<'_>,
+        callee_ty: ResolvedType,
+        retain_exact_parameters: bool,
+    ) -> ResolvedType {
+        let (callee, args, span, expected_return_ty) = (call.callee, call.args, call.span, call.expected_return_ty);
         match callee_ty {
             ResolvedType::Function(params, ret) => {
                 let first_error = self.errors.len();
@@ -437,7 +444,15 @@ impl TypeChecker {
                 if let Some(expected) = expected_return_ty {
                     self.infer_type_param_bindings(&ret, expected, &mut type_bindings);
                 }
-                let resolved_params = Self::substitute_callable_params(&params, &type_bindings);
+                let declared_params = Self::substitute_callable_params(&params, &type_bindings);
+                let resolved_params = match self.type_info.callable_value_parameters(&declared_params) {
+                    Ok((values, _)) => values,
+                    Err(reason) => {
+                        self.errors
+                            .push(CompileError::type_error(reason.into(), span).with_stable_code("INCAN-T0123"));
+                        return ResolvedType::Unknown;
+                    }
+                };
                 let arg_types = self.check_call_arg_types_for_params(args, &resolved_params);
                 self.validate_callable_arg_bindings(
                     "<callable>",
@@ -448,10 +463,15 @@ impl TypeChecker {
                     span,
                 );
                 let final_params = Self::substitute_callable_params(&resolved_params, &type_bindings);
-                self.type_info.record_call_site_callable_params(span, &final_params);
+                if retain_exact_parameters {
+                    self.type_info
+                        .record_call_site_callable_params_exact(span, &final_params);
+                } else {
+                    self.type_info.record_call_site_callable_params(span, &final_params);
+                }
                 self.check_capturing_value_call_arguments(callee, &params, args);
                 if self.errors.len() == first_error {
-                    self.record_indirect_input_call(callee.span, &final_params, span);
+                    self.record_indirect_input_call(callee.span, &params, &ret, &final_params, span);
                 }
                 substitute_resolved_type(&ret, &type_bindings)
             }
