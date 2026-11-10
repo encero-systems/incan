@@ -478,16 +478,13 @@ pub(super) fn codegraph_semantic_context(
         project_root: path_string(project_root),
         loaves: session
             .loaves()
-            .entries()
-            .map(|entry| CodegraphLoafProjection {
-                key: entry.key.clone(),
-                name: entry.artifact.identity.name.clone(),
-                version: entry.artifact.identity.version.clone(),
-                digest: entry.artifact.identity.digest.clone(),
-                standard: matches!(
-                    entry.namespace,
-                    incan_frontend::loaf_index::LoafNamespace::Standard { .. }
-                ),
+            .admitted_identities()
+            .map(|(key, identity, namespace)| CodegraphLoafProjection {
+                key: key.to_owned(),
+                name: identity.name.clone(),
+                version: identity.version.clone(),
+                digest: identity.digest.clone(),
+                standard: matches!(namespace, incan_frontend::loaf_index::LoafNamespace::Standard { .. }),
             })
             .collect(),
     }
