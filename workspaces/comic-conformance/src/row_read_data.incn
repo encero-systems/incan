@@ -1,40 +1,6 @@
 """Translate decoder facts to test notation and typed failures to independent corpus categories."""
 
-from std.json import JsonValue
 from std.primitives.crumb.encoding_errors import BinaryFailure
-from std.primitives.crumb.values import Metadata
-from std.primitives.hex import hexlify
-from case_data import FixtureMetadataKind
-
-
-pub def metadata_notation(value: Metadata) -> JsonValue:
-    """Retain every decoded description property; only expected field flags consume these facts."""
-    mut result: dict[str, JsonValue] = {}
-    match value:
-        Metadata.Null => result["kind"] = JsonValue.string(FixtureMetadataKind.Null.value())
-        Metadata.Boolean(item) =>
-            result["kind"] = JsonValue.string(FixtureMetadataKind.Boolean.value())
-            result["value"] = JsonValue.bool(item)
-        Metadata.Integer(item) =>
-            result["kind"] = JsonValue.string(FixtureMetadataKind.Integer.value())
-            result["value"] = JsonValue.string(item)
-        Metadata.Text(item) =>
-            result["kind"] = JsonValue.string(FixtureMetadataKind.String.value())
-            result["value"] = JsonValue.string(item)
-        Metadata.Binary(item) =>
-            result["kind"] = JsonValue.string(FixtureMetadataKind.Binary.value())
-            result["hex"] = JsonValue.string(hexlify(item))
-        Metadata.List(items) =>
-            result["kind"] = JsonValue.string(FixtureMetadataKind.List.value())
-            result["items"] = JsonValue.array([metadata_notation(item) for item in items])
-        Metadata.Map(entries) =>
-            mut items: list[JsonValue] = []
-            for entry in entries:
-                key = metadata_notation(Metadata.Text(entry.key))
-                items.append(JsonValue.array([key, metadata_notation(entry.value)]))
-            result["kind"] = JsonValue.string(FixtureMetadataKind.Map.value())
-            result["entries"] = JsonValue.array(items)
-    return JsonValue.object(result)
 
 
 pub def category(kind: BinaryFailure) -> str:
