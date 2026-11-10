@@ -427,7 +427,7 @@ impl TypeChecker {
                     .node
                     .fields
                     .iter()
-                    .map(|field| self.resolve_type_checked(field))
+                    .map(|field| self.resolve_stored_type_checked(field))
                     .collect();
                 (variant.node.name.clone(), fields)
             })

@@ -6,7 +6,7 @@ use crate::{error::PlanError, plan::Function};
 use rustc_ast as ast;
 use rustc_span::{Ident, Span, Symbol};
 
-/// Insert one elided AST lifetime argument for every retained loan in a source-owned model path. The flat signature
+/// Insert one elided AST lifetime argument for every retained loan in a source-owned nominal path. The flat signature
 /// contract can then name those slots exactly as it names explicit reference nodes.
 pub(crate) fn prepare_model_lifetimes(
     plan: &crate::plan::Plan,
@@ -55,11 +55,16 @@ pub(crate) fn insert_model_lifetimes(
             let Some(segment) = path.segments.last_mut() else {
                 return Ok(());
             };
-            let count = plan
+            let model_count = plan
                 .models
                 .iter()
                 .find(|model| model.name == segment.ident.name.as_str())
                 .map_or(0, |model| model.view_lifetime_count);
+            let count = plan
+                .enums
+                .iter()
+                .find(|declaration| declaration.name == segment.ident.name.as_str())
+                .map_or(model_count, |declaration| declaration.view_lifetime_count);
             if count < 0 {
                 return Err("model lifetime count is negative");
             }
@@ -96,8 +101,8 @@ pub(crate) fn insert_model_lifetimes(
     Ok(())
 }
 
-/// Name every explicit reference and nested borrowed-model lifetime in a source-owned model's field order, returning
-/// the matching declaration generics. The plan count and structural field layout must agree exactly.
+/// Name every explicit reference and nested borrowed-nominal lifetime in a source-owned declaration's field order,
+/// returning the matching declaration generics. The plan count and structural field layout must agree exactly.
 pub(crate) fn apply_model_field_lifetimes(
     plan: &crate::plan::Plan,
     fields: &mut [Box<ast::Ty>],

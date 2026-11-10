@@ -220,7 +220,7 @@ impl TypeChecker {
     pub(super) fn check_model_fields(&mut self, model: &ModelDecl, fields: Vec<&Spanned<FieldDecl>>) {
         let mut json_members = Vec::new();
         for field in fields {
-            let ty = self.resolve_type_checked(&field.node.ty);
+            let ty = self.resolve_stored_type_checked(&field.node.ty);
             self.refuse_stored_trait_field("model", &model.name, &field.node, &ty);
             self.validate_direct_recursive_model_field(&model.name, &ty, field.span);
             self.refuse_member_without_automatic_derives(
@@ -266,7 +266,7 @@ impl TypeChecker {
                 scope: 0,
             });
             if let Some(default) = &field.node.default {
-                let field_ty = self.resolve_type_checked(&field.node.ty);
+                let field_ty = self.resolve_stored_type_checked(&field.node.ty);
                 self.check_work.field_defaults += 1;
                 let default_ty = self.check_expr_with_expected(default, Some(&field_ty));
                 if !self.types_compatible(&default_ty, &field_ty)

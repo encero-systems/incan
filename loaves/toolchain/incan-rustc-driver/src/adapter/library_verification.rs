@@ -22,7 +22,7 @@ pub(super) fn add_source_backed_declarations(
     }
     for value in &plan.enums {
         let span = sources.span(&value.span)?;
-        krate.items.extend(enum_items(value, generator, span));
+        krate.items.extend(enum_items(plan, value, generator, span)?);
     }
     for value in &plan.generic_enums {
         let span = sources.span(&value.span)?;
@@ -255,12 +255,13 @@ pub(super) fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDecl
 /// A union prints the member it holds through its own `Debug`; a value enum's serde form is its raw values, so its
 /// serde derives become impls beside it instead of attributes, while any other enum derives serde as legacy does.
 pub(super) fn enum_items(
+    plan: &Plan,
     value: &crate::plan::EnumDeclaration,
     generator: &ast::attr::AttrIdGenerator,
     span: rustc_span::Span,
-) -> Vec<Box<ast::Item>> {
+) -> Result<Vec<Box<ast::Item>>, PlanError> {
     let value_enum = !value.raw_kind.is_empty();
-    let mut item = declarations::enum_declaration(value, span);
+    let mut item = declarations::enum_declaration(plan, value, span)?;
     if value.carrier == Carrier::Declared && value.library_item.is_empty() {
         for derive in value
             .derives
@@ -280,7 +281,7 @@ pub(super) fn enum_items(
     if value_enum && value.derives.iter().any(|derive| derive == "serde::Deserialize") {
         items.push(value_enum_serde::deserialize_impl(value, span));
     }
-    items
+    Ok(items)
 }
 
 /// Give each generic external declared without type arguments its inferred ones, and its calls the matching

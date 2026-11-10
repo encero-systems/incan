@@ -8,6 +8,13 @@ impl TypeChecker {
         self.resolve_type_checked_for_input(ty, false)
     }
 
+    /// Resolve one stored field, enum payload or newtype underlying type while admitting its ownership wrappers.
+    /// The enclosing nominal declaration becomes a view type; the callable that produces a value still has to prove
+    /// the single source dependency through its `from` clause.
+    pub(super) fn resolve_stored_type_checked(&mut self, ty: &Spanned<Type>) -> ResolvedType {
+        self.resolve_type_checked_deferring(ty, |_| true, true)
+    }
+
     /// A supported source-function parameter or local declaration may defer its outer ownership diagnostic until its
     /// body is checked. Every other annotation role, nested mode, malformed wrapper and returned dependency stays
     /// refused.

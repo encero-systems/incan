@@ -65,7 +65,7 @@ impl TypeChecker {
                 self.explicit_ownership_value_type(&resolved).unwrap_or(resolved)
             }
             TypeInfo::Enum(enum_info) => {
-                let resolved = Self::resolve_nominal_enum_field_type(type_name, type_args, field, enum_info)?;
+                let resolved = self.resolve_nominal_enum_field_type(type_name, type_args, field, enum_info)?;
                 let identity = enum_info.variant_identities.get(field).cloned();
                 if let Some(identity) = identity {
                     self.type_info.record_resolved_identity(span, identity);
@@ -97,7 +97,7 @@ impl TypeChecker {
                 if let Some(owner) = owner {
                     self.type_info.record_resolved_identity(span, owner);
                 }
-                return Some(underlying);
+                return Some(self.explicit_ownership_value_type(&underlying).unwrap_or(underlying));
             }
             _ => return None,
         };
@@ -110,6 +110,7 @@ impl TypeChecker {
     /// The caller records a variant's identity after this borrow ends, retaining only the selected facts rather than
     /// cloning the enum's complete declaration metadata.
     pub(super) fn resolve_nominal_enum_field_type(
+        &self,
         type_name: &str,
         type_args: Option<&[ResolvedType]>,
         field: &str,
@@ -133,6 +134,10 @@ impl TypeChecker {
             if fields.is_empty() {
                 return Some(enum_ty);
             }
+            fields = fields
+                .into_iter()
+                .map(|field| self.explicit_ownership_value_type(&field).unwrap_or(field))
+                .collect();
             return Some(ResolvedType::Function(
                 fields.into_iter().map(CallableParam::positional).collect(),
                 Box::new(enum_ty),

@@ -20,7 +20,7 @@ from pub::incan_mir_plan import source_span as plan_span
 from models import model_type as plain_model_type
 from compiler_record_adapters import semantic_key_matches_native
 from layout_types import native_source_type as retained_source_type
-from decls import library_enum_item, serde_propagation, with_serde_derives
+from decls import ViewLifetimeLayout, library_enum_item, serde_propagation, with_serde_derives
 from nominal_instances import nominal_symbol
 from symbols import model_symbol
 
@@ -219,6 +219,7 @@ pub def lower_enum_declarations(
     nominals: &list[RustNominalDeclaration] = borrowed_table(module.nominal_declarations)
     layouts: &list[RustEnumDeclaration] = borrowed_table(module.enum_declarations)
     mut declarations: list[EnumDeclaration] = []
+    mut view_lifetimes = ViewLifetimeLayout.start(module.nominal_declarations, module.enum_declarations)
     for enum_position in range(len(module.enum_declarations)):
         declaration = borrowed_at(module.enum_declarations, enum_position)
         mut variants: list[EnumVariant] = []
@@ -244,6 +245,13 @@ pub def lower_enum_declarations(
         elif "Copy" in declaration.derives:
             derives.append("Copy")
         raw_kind, raw_values = value_enum_raw_values(module, declaration)?
+        mut view_lifetime_count = 0
+        if item == "":
+            view_lifetime_count = view_lifetimes.enum_declaration(
+                declaration,
+                module.nominal_declarations,
+                module.enum_declarations,
+            )
         declarations.append(
             EnumDeclaration(
                 name=model_symbol(declaration.carrier_name()),
@@ -251,6 +259,7 @@ pub def lower_enum_declarations(
                 variants=variants,
                 derives=derives,
                 span=plan_span(file=file, line=1, column=1),
+                view_lifetime_count=view_lifetime_count,
                 library_item=item,
                 library_type_arguments=native_arguments,
                 raw_kind=raw_kind,

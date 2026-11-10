@@ -6,9 +6,94 @@ use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
 
 use super::{Builder, ResolvedType, Unavailable};
 use crate::ast::{CallArg, Expr, FStringFormat, FStringPart, ListEntry, Span, Spanned};
+use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::TypeInfo;
 
 impl Builder<'_> {
+    /// Mark constructor arguments whose selected stored field is itself a view type. This is the direct-field form of
+    /// the older generic-carrier projection below; both use the checked argument-slot binding and declaration order.
+    pub(super) fn constructor_view_fields(&self, span: Span) -> Option<Vec<bool>> {
+        let ty = self.checker.type_info.expr_type(span)?;
+        let (owner, arguments) = match ty {
+            ResolvedType::Named(owner) => (owner, &[][..]),
+            ResolvedType::Generic(owner, arguments) => (owner, arguments.as_slice()),
+            _ => return None,
+        };
+        let (parameters, fields, order) = match self.checker.lookup_type_info(owner)? {
+            TypeInfo::Model(info) => (&info.type_params, &info.fields, &info.field_order),
+            TypeInfo::Class(info) => (&info.type_params, &info.fields, &info.field_order),
+            TypeInfo::Newtype(info) => {
+                let underlying =
+                    substitute_resolved_type(&info.underlying, &type_param_subst_map(&info.type_params, arguments));
+                return Some(vec![self.checker.type_holds_borrow(&underlying)]);
+            }
+            _ => return None,
+        };
+        let substitution = type_param_subst_map(parameters, arguments);
+        let binding = self.checker.type_info.constructor_field_binding(span)?;
+        Some(
+            binding
+                .argument_slots
+                .iter()
+                .map(|slot| {
+                    order.get(*slot).and_then(|name| fields.get(name)).is_some_and(|field| {
+                        let ty = substitute_resolved_type(&field.ty, &substitution);
+                        self.checker.type_holds_borrow(&ty)
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    /// Mark the payloads of one selected source enum variant that store a direct or transitive borrow.
+    pub(super) fn enum_view_constructor_fields(&self, callee: &Spanned<Expr>, span: Span) -> Option<Vec<bool>> {
+        let Expr::Field(base, variant) = &callee.node else {
+            return None;
+        };
+        self.enum_view_method_constructor_fields(base, variant, span)
+    }
+
+    /// Mark view payloads for the method-shaped `Enum.Variant(...)` AST used by ordinary source syntax.
+    pub(super) fn enum_view_method_constructor_fields(
+        &self,
+        base: &Spanned<Expr>,
+        written_variant: &str,
+        span: Span,
+    ) -> Option<Vec<bool>> {
+        let checked_ty = self
+            .checker
+            .type_info
+            .expr_type(span)
+            .or_else(|| self.checker.type_info.expr_type(base.span));
+        let (owner, arguments) = match checked_ty {
+            Some(ResolvedType::Named(owner)) => (owner.as_str(), &[][..]),
+            Some(ResolvedType::Generic(owner, arguments)) => (owner.as_str(), arguments.as_slice()),
+            _ => match &base.node {
+                Expr::Ident(owner) => (owner.as_str(), &[][..]),
+                _ => return None,
+            },
+        };
+        let TypeInfo::Enum(info) = self.checker.lookup_type_info(owner)? else {
+            return None;
+        };
+        let variant = info
+            .variant_aliases
+            .get(written_variant)
+            .map(String::as_str)
+            .unwrap_or(written_variant);
+        let substitution = type_param_subst_map(&info.type_params, arguments);
+        Some(
+            info.variant_fields
+                .get(variant)?
+                .iter()
+                .map(|field| {
+                    let field = substitute_resolved_type(field, &substitution);
+                    self.checker.type_holds_borrow(&field)
+                })
+                .collect(),
+        )
+    }
+
     /// Mark constructor arguments whose declared field is exactly the type parameter selected by a carried view.
     /// The checked argument-slot binding and nominal declaration own both orders; source field spellings are not
     /// re-resolved here.
@@ -179,7 +264,9 @@ impl Builder<'_> {
             || owner.is_none_or(|owner| {
                 !matches!(
                     owner.kind,
-                    SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+                    SemanticSourceTargetKind::Model
+                        | SemanticSourceTargetKind::Class
+                        | SemanticSourceTargetKind::Newtype
                 ) || !matches!(owner.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
             })
         {
@@ -210,19 +297,7 @@ impl Builder<'_> {
                 reason: "construction needs complete distinct fields without deferred defaults".into(),
             });
         }
-        let view_arguments = self
-            .checker
-            .type_info
-            .expr_type(span)
-            .and_then(|ty| match ty {
-                ResolvedType::Generic(_, arguments) => arguments.iter().position(|argument| {
-                    matches!(argument,
-                        ResolvedType::Generic(name, payload)
-                            if payload.len() == 1 && self.checker.explicit_ownership_mode(name).is_some())
-                }),
-                _ => None,
-            })
-            .and_then(|slot| self.constructor_view_arguments(span, &[slot]));
+        let view_arguments = self.constructor_view_fields(span);
         for (index, argument) in arguments.iter().enumerate() {
             let value = match argument {
                 CallArg::Positional(value) | CallArg::Named(_, value) => value,
@@ -238,6 +313,9 @@ impl Builder<'_> {
                 .and_then(|arguments| arguments.get(index))
                 .copied()
                 .unwrap_or(false);
+            if stores_view {
+                self.validate_view_field_source(value)?;
+            }
             if !stores_view && !self.fresh_or_copy_field(value) {
                 let borrowed = self
                     .optional_place(value)?
@@ -254,6 +332,111 @@ impl Builder<'_> {
             incoming = self.expression(value, incoming, false)?;
         }
         Ok(incoming)
+    }
+
+    /// Evaluate one enum construction whose checked payload layout holds a view, enforcing the callable's one source.
+    pub(super) fn enum_view_construction(
+        &mut self,
+        arguments: &[CallArg],
+        view_fields: &[bool],
+        span: Span,
+        mut incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        if arguments.len() != view_fields.len() {
+            return Err(Unavailable {
+                span,
+                reason: "enum construction needs its checked payload layout".into(),
+            });
+        }
+        for (argument, stores_view) in arguments.iter().zip(view_fields) {
+            let CallArg::Positional(value) = argument else {
+                return Err(Unavailable {
+                    span,
+                    reason: "enum construction expansion lacks one checked payload".into(),
+                });
+            };
+            if *stores_view {
+                self.validate_view_field_source(value)?;
+            }
+            incoming = self.expression(value, incoming, false)?;
+        }
+        Ok(incoming)
+    }
+
+    /// Identify source-bearing enum arguments from checked input and dependent-local facts when no field binding is
+    /// published for the variant constructor. Ordinary owned payloads stay independent even beside a view payload.
+    pub(super) fn enum_argument_view_sources(&mut self, arguments: &[CallArg]) -> Result<Vec<bool>, Unavailable> {
+        let mut sources = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            let value = match argument {
+                CallArg::Positional(value) | CallArg::Named(_, value) => value,
+                _ => {
+                    sources.push(false);
+                    continue;
+                }
+            };
+            let typed_view = self
+                .checker
+                .type_info
+                .expr_type(value.span)
+                .is_some_and(|ty| self.checker.type_holds_borrow(ty));
+            let borrowed_place = self.optional_place(value)?.is_some_and(|path| match &path.place.root {
+                super::Root::Binding(root) => {
+                    self.borrowed_inputs.contains(&path.place.root) || self.graph.dependent_locals.contains_key(root)
+                }
+                super::Root::Temporary { .. } => false,
+            });
+            sources.push(typed_view || borrowed_place);
+        }
+        Ok(sources)
+    }
+
+    /// Require each stored borrow in a constructed view to resolve to the producing callable's one declared source.
+    /// Direct places and previously retained view locals are compared by canonical graph place, so diagnostics can
+    /// name the two independent source bindings without inferring per-field lifetimes.
+    fn validate_view_field_source(&mut self, value: &Spanned<Expr>) -> Result<(), Unavailable> {
+        let Some(expected) = self.owned_source.clone() else {
+            return Ok(());
+        };
+        let Some(path) = self.optional_place(value)? else {
+            return Ok(());
+        };
+        let sources = match &path.place.root {
+            super::Root::Binding(root) => self
+                .graph
+                .dependent_locals
+                .get(root)
+                .map(|loans| {
+                    loans
+                        .iter()
+                        .filter_map(|loan| self.graph.loans.get(loan.0).map(|loan| loan.source.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .filter(|sources| !sources.is_empty())
+                .unwrap_or_else(|| vec![path.place]),
+            super::Root::Temporary { .. } => vec![path.place],
+        };
+        for actual in sources {
+            if actual != expected {
+                self.view_errors.push(super::view_error(
+                    &format!(
+                        "A view value must hold borrows from one source; '{}' differs from declared source '{}'",
+                        Self::view_source_name(&actual),
+                        Self::view_source_name(&expected)
+                    ),
+                    value.span,
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Render the root binding of one checked source place for a stable, source-oriented diagnostic.
+    fn view_source_name(place: &super::Place) -> &str {
+        match &place.root {
+            super::Root::Binding(identity) => identity.declaration_name.as_str(),
+            super::Root::Temporary { .. } => "temporary value",
+        }
     }
 
     /// Copy values need no transfer; literal, formatted, list-literal, explicitly cloned and nested constructed

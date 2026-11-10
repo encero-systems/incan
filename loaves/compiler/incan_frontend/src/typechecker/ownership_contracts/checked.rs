@@ -10,7 +10,7 @@ use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map}
 use crate::symbols::{CallableParam, MethodInfo, ResolvedType, TypeInfo};
 use incan_lang::lang::types::ownership;
 use incan_semantics_core::{CanonicalSymbolId, IncanInputAccess, SemanticSourceTargetKind, SymbolOrigin};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 struct Signature<'a> {
     parameters: &'a [Spanned<Param>],
@@ -674,6 +674,25 @@ impl TypeChecker {
             &aliases,
             &mut contract,
         );
+        if self.direct_nominal_view_type(signature.result_type)
+            && !contract.modes.iter().any(|mode| mode.component.parameter.is_none())
+        {
+            contract.modes.push(AccessMode {
+                mode: incan_lang::lang::types::ownership::OwnershipMode::Owned,
+                component: TypeComponent {
+                    parameter: None,
+                    children: Vec::new(),
+                },
+                underlying: signature.result_type.clone(),
+            });
+        }
+        let result_is_view_type = self.type_holds_borrow(signature.result_type);
+        if result_is_view_type && signature.source.is_none() {
+            return Err(Self::ownership_source_error(
+                "A view type result requires one declared source dependency",
+                signature.result.span,
+            ));
+        }
         if let Some(source) = signature.source {
             let root = source.node.binding.node.as_str();
             let selected = signature
@@ -804,6 +823,228 @@ impl TypeChecker {
             nested.children.push(slot);
             self.collect_ownership_modes(child, nested, aliases, contract);
         }
+    }
+
+    /// Return whether a value of `ty` stores an explicit or transitive borrow. Nominal declarations are the single
+    /// source of their storage shape: generic arguments are substituted into fields, variant payloads or a newtype's
+    /// underlying type before recursion, and declaration cycles do not manufacture a view.
+    pub(in crate::typechecker) fn type_holds_borrow(&self, ty: &ResolvedType) -> bool {
+        self.borrow_layout_query(ty, false)
+    }
+
+    /// Return whether the complete result is one user-defined nominal whose stored layout carries a borrow. Builtin
+    /// carriers keep their recursive ownership modes; class, model, enum and newtype values own their aggregate
+    /// storage even when one of its fields retains the declared source.
+    fn direct_nominal_view_type(&self, ty: &ResolvedType) -> bool {
+        let name = match ty {
+            ResolvedType::Named(name) => name.as_str(),
+            ResolvedType::Generic(name, _) if self.explicit_ownership_mode(name).is_none() => name.as_str(),
+            _ => return false,
+        };
+        if !matches!(
+            self.lookup_type_info(name),
+            Some(TypeInfo::Class(_) | TypeInfo::Model(_) | TypeInfo::Enum(_) | TypeInfo::Newtype(_))
+        ) {
+            return false;
+        }
+        self.borrow_layout_query(ty, true)
+    }
+
+    /// Classify one concrete type against the current program's immutable nominal storage graph.
+    ///
+    /// `nominal_only` excludes otherwise-unused generic arguments when the caller is asking specifically about the
+    /// fields stored by a user-defined nominal. A false result reached through a declaration cycle is cached only when
+    /// the complete top-level traversal found no borrow anywhere in the reachable graph.
+    fn borrow_layout_query(&self, ty: &ResolvedType, nominal_only: bool) -> bool {
+        let key = (ty.clone(), nominal_only);
+        if let Some(holds) = self.view_type_cache.borrow().get(&key).copied() {
+            return holds;
+        }
+        let mut visiting = HashSet::new();
+        let mut completed = HashMap::new();
+        let mut seen = HashSet::new();
+        let (holds, _) = if nominal_only {
+            match ty {
+                ResolvedType::Named(name) => {
+                    self.nominal_type_holds_borrow(ty, name, &[], &mut visiting, &mut completed, &mut seen)
+                }
+                ResolvedType::Generic(name, arguments) => {
+                    self.nominal_type_holds_borrow(ty, name, arguments, &mut visiting, &mut completed, &mut seen)
+                }
+                _ => (false, true),
+            }
+        } else {
+            self.type_holds_borrow_inner(ty, &mut visiting, &mut completed, &mut seen)
+        };
+        if !holds {
+            completed.extend(seen.into_iter().map(|seen_key| (seen_key, false)));
+        }
+        self.view_type_cache.borrow_mut().extend(completed);
+        holds
+    }
+
+    /// Traverse one checked storage shape while memoizing every complete concrete result.
+    ///
+    /// The boolean pair is `(holds_borrow, traversal_complete)`. Meeting an active nominal cycle returns an
+    /// incomplete false result; any positive path is conclusive and therefore complete.
+    fn type_holds_borrow_inner(
+        &self,
+        ty: &ResolvedType,
+        visiting: &mut HashSet<ResolvedType>,
+        completed: &mut HashMap<(ResolvedType, bool), bool>,
+        seen: &mut HashSet<(ResolvedType, bool)>,
+    ) -> (bool, bool) {
+        let key = (ty.clone(), false);
+        if let Some(holds) = completed
+            .get(&key)
+            .copied()
+            .or_else(|| self.view_type_cache.borrow().get(&key).copied())
+        {
+            return (holds, true);
+        }
+        seen.insert(key.clone());
+        let result = match ty {
+            ResolvedType::Generic(name, arguments) if self.explicit_ownership_mode(name).is_some() => {
+                let direct = matches!(
+                    self.explicit_ownership_mode(name),
+                    Some(
+                        incan_lang::lang::types::ownership::OwnershipMode::Borrowed
+                            | incan_lang::lang::types::ownership::OwnershipMode::BorrowedMut
+                            | incan_lang::lang::types::ownership::OwnershipMode::Reference
+                    )
+                );
+                if direct {
+                    (true, true)
+                } else {
+                    self.any_type_holds_borrow(arguments, visiting, completed, seen)
+                }
+            }
+            ResolvedType::Named(name) => self.nominal_type_holds_borrow(ty, name, &[], visiting, completed, seen),
+            ResolvedType::Generic(name, arguments) => {
+                let nominal = self.nominal_type_holds_borrow(ty, name, arguments, visiting, completed, seen);
+                if nominal.0 {
+                    nominal
+                } else {
+                    let nested = self.any_type_holds_borrow(arguments, visiting, completed, seen);
+                    if nested.0 {
+                        nested
+                    } else {
+                        (false, nominal.1 && nested.1)
+                    }
+                }
+            }
+            ResolvedType::Tuple(elements) => self.any_type_holds_borrow(elements, visiting, completed, seen),
+            ResolvedType::Ref(_) | ResolvedType::RefMut(_) => (false, true),
+            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) | ResolvedType::TypeToken(inner) => {
+                self.type_holds_borrow_inner(inner, visiting, completed, seen)
+            }
+            ResolvedType::FrozenDict(key, value) => {
+                let children = [key.as_ref().clone(), value.as_ref().clone()];
+                self.any_type_holds_borrow(&children, visiting, completed, seen)
+            }
+            ResolvedType::Function(_, _)
+            | ResolvedType::Never
+            | ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Numeric(_)
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Bytes
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes
+            | ResolvedType::Unit
+            | ResolvedType::TypeVar(_)
+            | ResolvedType::SelfType
+            | ResolvedType::Trait(_)
+            | ResolvedType::RustPath(_)
+            | ResolvedType::CallSiteInfer
+            | ResolvedType::Unknown => (false, true),
+        };
+        if result.0 || result.1 {
+            completed.insert(key, result.0);
+        }
+        result
+    }
+
+    /// Traverse concrete child types, preserving whether a false result encountered an active declaration cycle.
+    fn any_type_holds_borrow(
+        &self,
+        types: &[ResolvedType],
+        visiting: &mut HashSet<ResolvedType>,
+        completed: &mut HashMap<(ResolvedType, bool), bool>,
+        seen: &mut HashSet<(ResolvedType, bool)>,
+    ) -> (bool, bool) {
+        let mut complete = true;
+        for ty in types {
+            let result = self.type_holds_borrow_inner(ty, visiting, completed, seen);
+            if result.0 {
+                return (true, true);
+            }
+            complete &= result.1;
+        }
+        (false, complete)
+    }
+
+    /// Traverse the stored members of one concrete nominal instantiation with its declaration parameters substituted.
+    fn nominal_type_holds_borrow(
+        &self,
+        concrete: &ResolvedType,
+        name: &str,
+        arguments: &[ResolvedType],
+        visiting: &mut HashSet<ResolvedType>,
+        completed: &mut HashMap<(ResolvedType, bool), bool>,
+        seen: &mut HashSet<(ResolvedType, bool)>,
+    ) -> (bool, bool) {
+        let key = (concrete.clone(), true);
+        if let Some(holds) = completed
+            .get(&key)
+            .copied()
+            .or_else(|| self.view_type_cache.borrow().get(&key).copied())
+        {
+            return (holds, true);
+        }
+        seen.insert(key.clone());
+        if !visiting.insert(concrete.clone()) {
+            return (false, false);
+        }
+        let stored = match self.lookup_type_info(name) {
+            Some(TypeInfo::Model(info)) => {
+                let substitution = type_param_subst_map(&info.type_params, arguments);
+                info.field_order
+                    .iter()
+                    .filter_map(|field_name| info.fields.get(field_name))
+                    .map(|field| substitute_resolved_type(&field.ty, &substitution))
+                    .collect()
+            }
+            Some(TypeInfo::Class(info)) => {
+                let substitution = type_param_subst_map(&info.type_params, arguments);
+                info.field_order
+                    .iter()
+                    .filter_map(|field_name| info.fields.get(field_name))
+                    .map(|field| substitute_resolved_type(&field.ty, &substitution))
+                    .collect()
+            }
+            Some(TypeInfo::Enum(info)) => {
+                let substitution = type_param_subst_map(&info.type_params, arguments);
+                info.variants
+                    .iter()
+                    .filter_map(|variant| info.variant_fields.get(variant))
+                    .flatten()
+                    .map(|field| substitute_resolved_type(field, &substitution))
+                    .collect()
+            }
+            Some(TypeInfo::Newtype(info)) => {
+                let substitution = type_param_subst_map(&info.type_params, arguments);
+                vec![substitute_resolved_type(&info.underlying, &substitution)]
+            }
+            _ => Vec::new(),
+        };
+        let result = self.any_type_holds_borrow(&stored, visiting, completed, seen);
+        visiting.remove(concrete);
+        if result.0 || result.1 {
+            completed.insert(key, result.0);
+        }
+        result
     }
 
     /// Resolve only stored fields through the checked nominal table, substituting the owner's generic arguments.

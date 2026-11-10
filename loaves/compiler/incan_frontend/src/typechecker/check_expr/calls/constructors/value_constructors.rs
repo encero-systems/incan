@@ -248,10 +248,13 @@ impl TypeChecker {
                         return self.constructor_result_type(name);
                     };
                     let errors_before_payload = self.errors.len();
-                    let value_ty = self.check_expr_with_expected(value, Some(&newtype.underlying));
-                    if !self.types_compatible(&value_ty, &newtype.underlying) {
+                    let expected = self
+                        .explicit_ownership_value_type(&newtype.underlying)
+                        .unwrap_or_else(|| newtype.underlying.clone());
+                    let value_ty = self.check_expr_with_expected(value, Some(&expected));
+                    if !self.types_compatible(&value_ty, &expected) {
                         self.errors.push(errors::type_mismatch(
-                            &newtype.underlying.to_string(),
+                            &expected.to_string(),
                             &value_ty.to_string(),
                             value.span,
                         ));

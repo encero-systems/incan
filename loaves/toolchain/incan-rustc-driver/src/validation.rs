@@ -374,9 +374,10 @@ fn invalid(function: &Function, reason: impl Into<String>) -> PlanError {
 /// This pass checks references, signatures, scalar expression types, and cleanup edges. It is not an ownership
 /// checker: stage 3c must only submit checked bodies, and rustc's borrow checker remains a backstop.
 pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
-    validate_declarations(plan, library)?;
+    let borrowed_aliases = BorrowedAliasInventory::collect(plan);
+    validate_declarations(plan, library, &borrowed_aliases)?;
     for function in &plan.functions {
-        validate_callable(plan, function)?;
+        validate_callable(plan, function, &borrowed_aliases)?;
     }
     Ok(())
 }
@@ -384,12 +385,13 @@ pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
 /// Collect each function's first adapter refusal after the shared declaration context has passed validation.
 /// A declaration failure is returned alone because individual function checks require that context.
 pub(crate) fn refusals(plan: &Plan, library: bool) -> Vec<PlanError> {
-    if let Err(error) = validate_declarations(plan, library) {
+    let borrowed_aliases = BorrowedAliasInventory::collect(plan);
+    if let Err(error) = validate_declarations(plan, library, &borrowed_aliases) {
         return vec![error];
     }
     plan.functions
         .iter()
-        .filter_map(|function| match validate_callable(plan, function) {
+        .filter_map(|function| match validate_callable(plan, function, &borrowed_aliases) {
             Ok(()) => None,
             Err(error @ PlanError::Invalid { .. }) => Some(error),
             Err(error) => Some(invalid(function, error.to_string())),
@@ -398,7 +400,11 @@ pub(crate) fn refusals(plan: &Plan, library: bool) -> Vec<PlanError> {
 }
 
 /// Validate names, declarations, extern signatures and the entrypoint before any callable body is inspected.
-fn validate_declarations(plan: &Plan, library: bool) -> Result<(), PlanError> {
+fn validate_declarations(
+    plan: &Plan,
+    library: bool,
+    borrowed_aliases: &BorrowedAliasInventory,
+) -> Result<(), PlanError> {
     span(&plan.span)?;
     let mut names = BTreeSet::new();
     for function in &plan.functions {
@@ -406,8 +412,8 @@ fn validate_declarations(plan: &Plan, library: bool) -> Result<(), PlanError> {
             return Err(invalid(function, "function name is invalid or duplicated"));
         }
     }
-    validate_models(plan)?;
-    validate_enums(plan)?;
+    validate_models(plan, borrowed_aliases)?;
+    validate_enums(plan, borrowed_aliases)?;
     validate_generic_models(plan)?;
     validate_generic_enums(plan)?;
     library_model_order(plan)?;
@@ -492,10 +498,14 @@ fn validate_declarations(plan: &Plan, library: bool) -> Result<(), PlanError> {
 }
 
 /// Apply the same closure, callable-storage and body checks in ordinary compilation and diagnostic enumeration.
-fn validate_callable(plan: &Plan, function: &Function) -> Result<(), PlanError> {
+fn validate_callable(
+    plan: &Plan,
+    function: &Function,
+    borrowed_aliases: &BorrowedAliasInventory,
+) -> Result<(), PlanError> {
     validate_closure_constructor(function)?;
     crate::shared_callables::validate(function)?;
-    validate_function(plan, function)
+    validate_function(plan, function, borrowed_aliases)
 }
 
 /// Whether a binary main's result is a standard `Result` with a unit success and a text or SDK-owned error.

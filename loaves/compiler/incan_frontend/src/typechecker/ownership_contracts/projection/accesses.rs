@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use incan_lang::lang::surface::iterator_methods::{self, IteratorMethodId};
 use incan_lang::lang::types::ownership::OwnershipMode;
-use incan_semantics_core::{HirSourceSpan, IncanInputAccess};
+use incan_semantics_core::{HirSourceSpan, IncanInputAccess, SemanticSourceTargetKind};
 
 use super::{CheckedInputBody, flow};
 use crate::ast::{
@@ -439,6 +439,20 @@ impl SourceAccesses<'_, '_> {
                 flow::Access::Read
             };
             return self.access(expression.span, &place, through, access);
+        }
+        if self
+            .proof
+            .facts
+            .resolved_identity(expression.span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+        {
+            for argument in arguments {
+                let CallArg::Positional(value) = argument else {
+                    return Err("source access needs positional enum payloads");
+                };
+                self.expression(value, false)?;
+            }
+            return Ok(());
         }
         let invocation = self
             .proof

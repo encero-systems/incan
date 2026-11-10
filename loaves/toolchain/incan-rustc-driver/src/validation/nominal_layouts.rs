@@ -1,6 +1,7 @@
 //! Generic and concrete model, enum and static layouts, and library argument models.
 
 use super::*;
+use std::collections::BTreeMap;
 
 /// Admit generic ADT binders and field types before AST injection, rejecting collisions with concrete layouts and
 /// functions. Native layout verification separately validates every concrete alias against its instantiated ADT.
@@ -125,7 +126,7 @@ pub(super) fn generic_field_type(ty: &GenericLayoutType, parameters: &BTreeSet<&
 /// Validate model and newtype metadata before declaration injection; size cycles are checked separately.
 /// Function-pointer fields keep Copy storage, while reusable captured callables own their environments. Borrowed
 /// and consuming callable fields require separate lifetime and invocation contracts and remain refused.
-pub(super) fn validate_models(plan: &Plan) -> Result<(), PlanError> {
+pub(super) fn validate_models(plan: &Plan, borrowed_aliases: &BorrowedAliasInventory) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan.functions.iter().map(|function| function.name.clone()).collect();
     for declaration in &plan.models {
         span(&declaration.span)?;
@@ -184,7 +185,7 @@ pub(super) fn validate_models(plan: &Plan) -> Result<(), PlanError> {
         for field in &declaration.fields {
             if declaration.library_item.is_empty()
                 && declaration.view_lifetime_count == 0
-                && borrowed_alias_in_source_type(plan, &field.ty, &mut BTreeSet::new())
+                && borrowed_aliases.type_holds_borrow(plan, &field.ty)
             {
                 return Err(PlanError::Unsupported {
                     function: declaration.name.clone(),
@@ -322,7 +323,7 @@ pub(super) fn enum_declaration(plan: &Plan, index: i64) -> Option<&crate::plan::
 /// Native Option/Result carriers and library enums retain their checked borrowed payloads; source-owned enum fields
 /// remain limited to source signature types. Library Copy and Clone markers are capabilities verified against rustc,
 /// not requests to synthesize derive implementations on the native alias.
-pub(super) fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
+pub(super) fn validate_enums(plan: &Plan, borrowed_aliases: &BorrowedAliasInventory) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan
         .functions
         .iter()
@@ -406,7 +407,24 @@ pub(super) fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
                 validate_model_type(plan, field)?;
                 let native = declaration.carrier != Carrier::Declared || !declaration.library_item.is_empty();
                 let field_type = scalar(field);
-                if !(source_signature_type(&field_type) || (native && native_payload_type(&field_type))) {
+                if declaration.carrier == Carrier::Declared
+                    && declaration.library_item.is_empty()
+                    && declaration.view_lifetime_count == 0
+                    && borrowed_aliases.type_holds_borrow(plan, field)
+                {
+                    return Err(PlanError::Unsupported {
+                        function: declaration.name.clone(),
+                        reason: "native borrowed carrier in a source enum requires a retained lifetime contract".into(),
+                    });
+                }
+                let retained_view_field = declaration.carrier == Carrier::Declared
+                    && declaration.library_item.is_empty()
+                    && declaration.view_lifetime_count > 0
+                    && external_signature_type(&field_type);
+                if !(source_signature_type(&field_type)
+                    || retained_view_field
+                    || (native && native_payload_type(&field_type)))
+                {
                     return Err(PlanError::Invalid {
                         function: declaration.name.clone(),
                         reason: format!("unsupported enum payload carrier {field_type:?}"),
@@ -647,33 +665,40 @@ pub(crate) fn carried_output<'plan>(
         .then_some(carrier)
 }
 
-/// Find erased loans inside native aliases before a source signature or field could expose them without lifetime
-/// binders. Local adapters remain subject to native signature and MIR borrow checking; this gate proves no loan scope.
-pub(super) fn borrowed_alias_in_source_type(plan: &Plan, ty: &PlanType, seen: &mut BTreeSet<(bool, i64)>) -> bool {
-    match ty {
-        PlanType::Model(index, _) | PlanType::ModelRef(index, _) | PlanType::ModelMutRef(index, _) => {
-            if !seen.insert((false, *index)) {
-                return false;
-            }
-            let Some(model) = usize::try_from(*index).ok().and_then(|index| plan.models.get(index)) else {
-                return true;
-            };
-            model.library_type_arguments.iter().any(|argument| {
-                library_argument_is_borrowed(argument) || borrowed_alias_in_source_type(plan, argument, seen)
-            }) || model
+/// The nominal layouts that transitively hold an erased native loan. One reverse dependency walk computes the fixed
+/// point for a plan, so validation of every field and callable signature does not rescan the complete nominal graph.
+pub(super) struct BorrowedAliasInventory {
+    borrowed: BTreeSet<(bool, i64)>,
+}
+
+impl BorrowedAliasInventory {
+    /// Build the transitive borrowed-layout set from direct native loans and nominal storage edges.
+    pub(super) fn collect(plan: &Plan) -> Self {
+        let mut borrowed = BTreeSet::new();
+        let mut reverse: BTreeMap<(bool, i64), BTreeSet<(bool, i64)>> = BTreeMap::new();
+        for (index, declaration) in plan.models.iter().enumerate() {
+            let Ok(index) = i64::try_from(index) else { continue };
+            let owner = (false, index);
+            let mut dependencies = BTreeSet::new();
+            let direct = declaration.library_type_arguments.iter().any(|argument| {
+                library_argument_is_borrowed(argument) || borrowed_alias_dependencies(plan, argument, &mut dependencies)
+            }) || declaration
                 .fields
                 .iter()
-                .any(|field| borrowed_alias_in_source_type(plan, &field.ty, seen))
-        }
-        PlanType::Enum(index, _) | PlanType::EnumRef(index, _) | PlanType::EnumMutRef(index, _) => {
-            if !seen.insert((true, *index)) {
-                return false;
+                .any(|field| borrowed_alias_dependencies(plan, &field.ty, &mut dependencies));
+            for dependency in dependencies {
+                reverse.entry(dependency).or_default().insert(owner);
             }
-            let Some(declaration) = enum_declaration(plan, *index) else {
-                return true;
-            };
-            declaration.library_type_arguments.iter().any(|argument| {
-                library_argument_is_borrowed(argument) || borrowed_alias_in_source_type(plan, argument, seen)
+            if direct {
+                borrowed.insert(owner);
+            }
+        }
+        for (index, declaration) in plan.enums.iter().enumerate() {
+            let Ok(index) = i64::try_from(index) else { continue };
+            let owner = (true, index);
+            let mut dependencies = BTreeSet::new();
+            let direct = declaration.library_type_arguments.iter().any(|argument| {
+                library_argument_is_borrowed(argument) || borrowed_alias_dependencies(plan, argument, &mut dependencies)
             }) || declaration
                 .variants
                 .iter()
@@ -681,8 +706,61 @@ pub(super) fn borrowed_alias_in_source_type(plan: &Plan, ty: &PlanType, seen: &m
                 .any(|field| {
                     ((declaration.carrier != Carrier::Declared || !declaration.library_item.is_empty())
                         && library_argument_is_borrowed(field))
-                        || borrowed_alias_in_source_type(plan, field, seen)
-                })
+                        || borrowed_alias_dependencies(plan, field, &mut dependencies)
+                });
+            for dependency in dependencies {
+                reverse.entry(dependency).or_default().insert(owner);
+            }
+            if direct {
+                borrowed.insert(owner);
+            }
+        }
+
+        let mut pending = borrowed.iter().copied().collect::<Vec<_>>();
+        let mut position = 0;
+        while position < pending.len() {
+            let dependency = pending[position];
+            position += 1;
+            let Some(owners) = reverse.get(&dependency) else {
+                continue;
+            };
+            for owner in owners {
+                if borrowed.insert(*owner) {
+                    pending.push(*owner);
+                }
+            }
+        }
+        Self { borrowed }
+    }
+
+    /// Return whether one structural type reaches a borrowed nominal layout or an invalid nominal reference.
+    pub(super) fn type_holds_borrow(&self, plan: &Plan, ty: &PlanType) -> bool {
+        let mut dependencies = BTreeSet::new();
+        borrowed_alias_dependencies(plan, ty, &mut dependencies)
+            || dependencies.iter().any(|dependency| self.borrowed.contains(dependency))
+    }
+}
+
+/// Collect nominal storage edges and report a direct or invalid borrowed carrier without traversing the graph.
+fn borrowed_alias_dependencies(plan: &Plan, ty: &PlanType, dependencies: &mut BTreeSet<(bool, i64)>) -> bool {
+    match ty {
+        PlanType::Model(index, _) | PlanType::ModelRef(index, _) | PlanType::ModelMutRef(index, _) => {
+            if usize::try_from(*index)
+                .ok()
+                .and_then(|index| plan.models.get(index))
+                .is_none()
+            {
+                return true;
+            }
+            dependencies.insert((false, *index));
+            false
+        }
+        PlanType::Enum(index, _) | PlanType::EnumRef(index, _) | PlanType::EnumMutRef(index, _) => {
+            if enum_declaration(plan, *index).is_none() {
+                return true;
+            }
+            dependencies.insert((true, *index));
+            false
         }
         PlanType::List(leaf, _)
         | PlanType::ListRef(leaf, _)
@@ -691,17 +769,19 @@ pub(super) fn borrowed_alias_in_source_type(plan: &Plan, ty: &PlanType, seen: &m
         | PlanType::SetRef(leaf)
         | PlanType::SetMutRef(leaf)
         | PlanType::Generator(leaf, _)
-        | PlanType::GeneratorYield(leaf, _) => {
-            checked_list_leaf_type(leaf).map_or(true, |element| borrowed_alias_in_source_type(plan, &element, seen))
-        }
+        | PlanType::GeneratorYield(leaf, _) => checked_list_leaf_type(leaf).map_or(true, |element| {
+            borrowed_alias_dependencies(plan, &element, dependencies)
+        }),
         PlanType::Dict(left, right) | PlanType::DictRef(left, right) | PlanType::DictMutRef(left, right) => {
             [left, right].into_iter().any(|leaf| {
-                checked_list_leaf_type(leaf).map_or(true, |element| borrowed_alias_in_source_type(plan, &element, seen))
+                checked_list_leaf_type(leaf).map_or(true, |element| {
+                    borrowed_alias_dependencies(plan, &element, dependencies)
+                })
             })
         }
         PlanType::Tuple(elements) | PlanType::TupleRef(elements) | PlanType::TupleMutRef(elements) => elements
             .iter()
-            .any(|element| borrowed_alias_in_source_type(plan, &tuple_element_type(element.clone()), seen)),
+            .any(|element| borrowed_alias_dependencies(plan, &tuple_element_type(element.clone()), dependencies)),
         PlanType::NativeSlice(elements)
         | PlanType::NativeArray(elements, _)
         | PlanType::NativeArrayRef(elements, _)
@@ -725,7 +805,7 @@ pub(super) fn borrowed_alias_in_source_type(plan: &Plan, ty: &PlanType, seen: &m
         | PlanType::FrozenCollectionRef(_, elements)
         | PlanType::TypeToken(elements) => elements
             .iter()
-            .any(|element| borrowed_alias_in_source_type(plan, element, seen)),
+            .any(|element| borrowed_alias_dependencies(plan, element, dependencies)),
         _ => false,
     }
 }
