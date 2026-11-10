@@ -5,7 +5,9 @@ use crate::ast_build::{
     local,
 };
 use crate::error::PlanError;
-use crate::plan::{CalleeKind, FieldMetadata, ModelDeclaration, Plan, PlanType, TerminatorKind};
+use crate::plan::{
+    CalleeKind, Carrier, FieldLifecycle, FieldMetadata, ModelDeclaration, Plan, PlanType, TerminatorKind,
+};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use rustc_ast as ast;
 use rustc_span::{Span, Symbol};
@@ -63,11 +65,13 @@ pub fn items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> 
         }
         let index = usize::try_from(*owner).map_err(|_| PlanError::UnknownCallee(name(*owner)))?;
         let info_index = usize::try_from(*info).map_err(|_| PlanError::UnknownCallee(name(*owner)))?;
+        let lifecycle = lifecycle_carrier(plan, &plan.models[info_index])?;
         items.push(storage(
             *owner,
             &plan.models[index],
             *info,
             &plan.models[info_index],
+            lifecycle,
             span,
         ));
         items.push(accessor(*owner, &output, span));
@@ -96,13 +100,20 @@ fn storage_name(owner: i64) -> String {
 }
 
 /// Construct the records in an explicit static initializer; const-function calls do not promote runtime temporaries.
-fn storage(owner: i64, model: &ModelDeclaration, info: i64, metadata: &ModelDeclaration, span: Span) -> Box<ast::Item> {
+fn storage(
+    owner: i64,
+    model: &ModelDeclaration,
+    info: i64,
+    metadata: &ModelDeclaration,
+    lifecycle: &str,
+    span: Span,
+) -> Box<ast::Item> {
     let entries = model
         .reflection_metadata
         .as_ref()
         .into_iter()
         .flatten()
-        .map(|field| entry(field, &metadata.name, span))
+        .map(|field| entry(field, &metadata.name, lifecycle, span))
         .collect();
     let array = expression(ast::ExprKind::Array(entries), span);
     let slice = expression(
@@ -166,16 +177,18 @@ fn accessor_item(owner: i64, output: &PlanType, value: Box<ast::Expr>, span: Spa
 }
 
 /// Initialize the Incan-declared record; native type checking verifies these facts against its actual field layout.
-fn entry(field: &FieldMetadata, carrier: &str, span: Span) -> Box<ast::Expr> {
-    let mut carrier_path = ast::Path::from_ident(ident("crate", span));
-    carrier_path
-        .segments
-        .push(ast::PathSegment::from_ident(ident(carrier, span)));
+fn entry(field: &FieldMetadata, carrier: &str, lifecycle: &str, span: Span) -> Box<ast::Expr> {
     let values = [
         ("name", frozen_text(&field.name, span)),
         ("identity", frozen_bytes(&field.record_identity, span)),
         ("canonical", boolean(field.record_canonical, span)),
         ("renamed_from", frozen_text_list(&field.renamed_from, span)),
+        (
+            "renamed_from_lifecycle",
+            optional_lifecycle(&field.renamed_from_lifecycle, lifecycle, span),
+        ),
+        ("position", integer(field.position, span)),
+        ("default_is_empty", boolean(field.default_is_empty, span)),
         ("alias", optional_text(&field.alias, span)),
         ("description", optional_text(&field.description, span)),
         (
@@ -205,6 +218,15 @@ fn entry(field: &FieldMetadata, carrier: &str, span: Span) -> Box<ast::Expr> {
             ),
         ),
     ];
+    record(carrier, values, span)
+}
+
+/// Initialize a checked Incan model layout by its actual native carrier, with no parallel runtime declaration.
+fn record<const N: usize>(carrier: &str, values: [(&str, Box<ast::Expr>); N], span: Span) -> Box<ast::Expr> {
+    let mut carrier_path = ast::Path::from_ident(ident("crate", span));
+    carrier_path
+        .segments
+        .push(ast::PathSegment::from_ident(ident(carrier, span)));
     expression(
         ast::ExprKind::Struct(Box::new(ast::StructExpr {
             qself: None,
@@ -223,6 +245,77 @@ fn entry(field: &FieldMetadata, carrier: &str, span: Span) -> Box<ast::Expr> {
                 .collect(),
             rest: ast::StructRest::None,
         })),
+        span,
+    )
+}
+
+/// Obtain the lifecycle model from the checked FieldInfo field's Option payload, never from a short type name.
+fn lifecycle_carrier<'a>(plan: &'a Plan, metadata: &ModelDeclaration) -> Result<&'a str, PlanError> {
+    let refused = || PlanError::Invalid {
+        function: metadata.name.clone(),
+        reason: "field metadata lifecycle must retain its checked Option model layout".into(),
+    };
+    let field = metadata
+        .fields
+        .iter()
+        .find(|field| field.name == "renamed_from_lifecycle")
+        .ok_or_else(refused)?;
+    let PlanType::Enum(index, _) = &field.ty else {
+        return Err(refused());
+    };
+    let option = usize::try_from(*index)
+        .ok()
+        .and_then(|index| plan.enums.get(index))
+        .ok_or_else(refused)?;
+    if option.carrier != Carrier::Option {
+        return Err(refused());
+    }
+    let payload = option
+        .variants
+        .get(1)
+        .and_then(|variant| variant.fields.first())
+        .ok_or_else(refused)?;
+    let PlanType::Model(index, _) = payload else {
+        return Err(refused());
+    };
+    let model = usize::try_from(*index)
+        .ok()
+        .and_then(|index| plan.models.get(index))
+        .ok_or_else(refused)?;
+    Ok(&model.name)
+}
+
+/// Construct the same optional lifecycle model used by all public reflection carriers.
+fn optional_lifecycle(value: &Option<FieldLifecycle>, carrier: &str, span: Span) -> Box<ast::Expr> {
+    let Some(value) = value else {
+        return optional_text(&None, span);
+    };
+    let labels = record(
+        carrier,
+        [
+            ("since", optional_text(&value.since, span)),
+            ("retire_in", optional_text(&value.retire_in, span)),
+            ("message", optional_text(&value.message, span)),
+            ("by", optional_text(&value.by, span)),
+            ("issue", optional_text(&value.issue, span)),
+        ],
+        span,
+    );
+    call(
+        &["core", "option", "Option", RUST_OPTION_SOME_SYMBOL],
+        thin_vec![labels],
+        span,
+    )
+}
+
+/// Emit a nonnegative source slot as an exact native integer literal.
+fn integer(value: i64, span: Span) -> Box<ast::Expr> {
+    expression(
+        ast::ExprKind::Lit(ast::token::Lit::new(
+            ast::token::LitKind::Integer,
+            Symbol::intern(&value.to_string()),
+            None,
+        )),
         span,
     )
 }

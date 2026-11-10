@@ -133,6 +133,8 @@ fn field_metadata_keeps_registry_order_and_canonical_value_forms() -> Result<(),
   hidden [made_private { replacement=Customer.display_name,message="Use display_name",since="0.6" }]: str
   archived [made_private="Use display_name"]: str
   internal [made_private=true]: str
+  current [renamed_from { issue="migration",name=["old"],since="0.6",message="Line\n\"quoted\"" }]: str
+  label [renamed_from { name="caption" }]: str
 "#;
     let formatted = format_source(source)?;
     let expected = r#"model Customer:
@@ -141,6 +143,8 @@ fn field_metadata_keeps_registry_order_and_canonical_value_forms() -> Result<(),
     hidden [made_private { since="0.6", message="Use display_name", replacement=Customer.display_name }]: str
     archived [made_private="Use display_name"]: str
     internal [made_private=true]: str
+    current [renamed_from { name=["old"], since="0.6", message="Line\n\"quoted\"", issue="migration" }]: str
+    label [renamed_from { name="caption" }]: str
 "#;
     assert_eq!(formatted, expected);
     assert_eq!(format_source(&formatted)?, formatted);

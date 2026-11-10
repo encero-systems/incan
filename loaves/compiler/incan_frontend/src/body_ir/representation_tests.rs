@@ -305,6 +305,10 @@ pub model FieldInfo:
     pub extra: FrozenDict[FrozenStr, FrozenStr]
 pub model Holder:
     pub fields: FrozenList[FieldInfo]
+pub model MetadataFacts:
+    hidden: int = 1
+    pub values [renamed_from { name="items", since="0.6", message="" }]: list[int] = []
+    pub text: str = ""
 "#;
     for kind in ["model", "class"] {
         let source = source.replace("pub model FieldInfo:", &format!("pub {kind} FieldInfo:"));
@@ -334,6 +338,25 @@ pub model Holder:
                 include_inline_tests: false,
             };
             let seed = super::build_module_seed(&program, &module_path, &facts, &context);
+            let metadata = seed
+                .nominal_declarations
+                .iter()
+                .find(|value| value.canonical.declaration_name == "MetadataFacts")
+                .and_then(|value| value.reflection_metadata.as_ref())
+                .ok_or("missing checked reflection facts")?;
+            assert_eq!(metadata.len(), 2);
+            assert_eq!(metadata[0].position, 1);
+            assert!(metadata[0].default_is_empty);
+            assert_eq!(metadata[0].renamed_from, ["items"]);
+            let labels = metadata[0]
+                .renamed_from_lifecycle
+                .as_ref()
+                .ok_or("missing lifecycle labels")?;
+            assert_eq!(labels.since.as_deref(), Some("0.6"));
+            assert_eq!(labels.message.as_deref(), Some(""));
+            assert_eq!(labels.issue, None);
+            assert_eq!(metadata[1].position, 2);
+            assert!(!metadata[1].default_is_empty);
             let declaration = seed
                 .nominal_declarations
                 .iter()

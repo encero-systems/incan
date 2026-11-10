@@ -298,6 +298,8 @@ mod tests {
             record_identity: String::new(),
             record_canonical: true,
             renamed_from: Vec::new(),
+            renamed_from_lifecycle: None,
+            default_is_empty: false,
             visibility,
             ty: TypeRef::Named {
                 name: "int".into(),

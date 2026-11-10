@@ -181,10 +181,19 @@ fn field_record_metadata_round_trips_and_is_revalidated() -> Result<(), Box<dyn 
     let mut declaration = generic_holder_declaration(owner, field);
     declaration.reflection_fields = Some(vec![0]);
     declaration.reflection_metadata = Some(vec![crate::body_ir::FieldMetadata {
+        position: 0,
         name: "value".into(),
         record_identity: crate::record_identity::record_member_identity("old_value").to_vec(),
         record_canonical: false,
         renamed_from: vec!["old_value".into()],
+        renamed_from_lifecycle: Some(crate::body_ir::LifecycleMetadata {
+            since: Some("0.6".into()),
+            retire_in: None,
+            message: Some("".into()),
+            by: None,
+            issue: Some("migration".into()),
+        }),
+        default_is_empty: false,
         alias: Some("wireValue".into()),
         description: Some("Retained value".into()),
         type_name: "T".into(),
@@ -195,6 +204,24 @@ fn field_record_metadata_round_trips_and_is_revalidated() -> Result<(), Box<dyn 
     assert!(module.is_well_formed_nominal_declaration(&declaration));
     let decoded = decode_module(&encode_module(&module)?)?;
     assert_eq!(decoded, module);
+
+    for invalid_kind in 0..3 {
+        let mut invalid = declaration.clone();
+        let record = invalid
+            .reflection_metadata
+            .as_mut()
+            .and_then(|records| records.first_mut())
+            .ok_or("missing reflection record")?;
+        match invalid_kind {
+            0 => record.position = 1,
+            1 => record.default_is_empty = true,
+            _ => {
+                record.renamed_from.clear();
+                record.record_identity = crate::record_identity::record_member_identity("value").to_vec();
+            }
+        }
+        assert!(!module.is_well_formed_nominal_declaration(&invalid));
+    }
 
     let record = module
         .nominal_declarations

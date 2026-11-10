@@ -13,6 +13,9 @@ pub model FieldInfo:
     pub identity: FrozenBytes
     pub canonical: bool
     pub renamed_from: FrozenList[FrozenStr]
+    pub renamed_from_lifecycle: Option[LifecycleInfo]
+    pub position: int
+    pub default_is_empty: bool
     pub alias: Option[FrozenStr]
     pub description: Option[FrozenStr]
     pub wire_name: FrozenStr
@@ -21,6 +24,7 @@ pub model FieldInfo:
     pub extra: FrozenDict[FrozenStr, FrozenStr]
 
 
+@derive(Eq)
 pub model LifecycleInfo:
     """Descriptive rename/deprecation history; these unverified labels grant no authority."""
 

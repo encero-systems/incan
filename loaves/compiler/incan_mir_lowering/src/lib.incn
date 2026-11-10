@@ -91,6 +91,7 @@ pub from pub::incan_mir_plan import (
     ForeignFunction,
     FieldProjection,
     FieldMetadata,
+    FieldLifecycle,
     FallibleIteratorMethods,
     IteratorMethods,
     Constant,
