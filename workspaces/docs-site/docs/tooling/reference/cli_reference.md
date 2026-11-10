@@ -131,7 +131,7 @@ Writes the selected source's unit description as a JSON object. Execution-only o
 
 ## `incan fmt`
 
-Formats one or more files or directory trees. `--check` leaves files unchanged and exits `1` when formatting would change a file. `--` ends option parsing. Only `.incn` files are selected; hidden directories, `target`, `node_modules` and nested symbolic links are skipped. Explicitly named files retain their single-file selection. Directory-read errors and no discovered source files are errors. Files that cannot be formatted are reported; other selected files are still processed. The [code style](../../language/reference/code_style.md) specifies formatting rules.
+Formats one or more files or directory trees. `--check` leaves files unchanged and exits `1` when formatting would change a file. `--` ends option parsing. Only `.incn` files are selected; hidden directories, `target`, `node_modules` and nested symbolic links are skipped. Explicitly named files retain their single-file selection. Directory-read errors and no discovered source files are errors. Files that cannot be formatted are reported; other selected files are still processed. Formatting changes layout only: a formatted file reads as the same program, with its comments and docstrings kept. The [code style](../../language/reference/code_style.md) specifies formatting rules.
 
 ## `oven owner stop`
 
