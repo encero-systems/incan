@@ -15,6 +15,9 @@
 
 Add Python-style rest parameters and unpacking to Incan as one static, type-directed binding model: functions may capture extra positional and keyword arguments with `*args` and `**kwargs`, calls may unpack positional and keyword values with `f(*xs)` and `f(**kw)`, and collection literals may spread existing lists and dictionaries with `[*xs]` and `{**kw}` while lowering to explicit typed containers rather than runtime reflection.
 
+!!! note "Follow-on clarification in RFC 174"
+    [RFC 174: Overloaded functions and methods](../../174_overloaded_functions_and_methods.md#variadic-capture-and-fixed-parameters) proposes keeping `*name: T` while collecting the arguments as a homogeneous tuple, and specifies how fixed and variadic overloads coexist. This implemented RFC retains its original list-based capture contract below; the proposed tuple capture is not recorded here as shipped behavior.
+
 ## Core model
 
 - `*name: T` captures extra positional arguments and binds `name` as a `List[T]`

@@ -186,6 +186,18 @@ When the expected type is `Type[T]`, a type name must resolve using ordinary typ
 
 When no `Type[T]` expected context exists, the diagnostic should say that the name is a type and can be used as a value only through an API that expects `Type[...]`.
 
+### Variant tokens
+
+`Variant[E]` names a compiler-backed token for one variant of the enum `E`. Like a `Type[T]` value, it is introduced only by expected-type checking. Where the expected type is `Variant[E]`, `E.Name` denotes the token for the variant `Name` of `E`. It is neither a value of `E` nor the variant's constructor. A payload variant is named without its payload.
+
+```incan
+calls: Variant[CompilerEdge] = CompilerEdge.Calls                    # the token, not a constructor
+kinds: list[Variant[CompilerEdge]] = [CompilerEdge.Calls, CompilerEdge.Inlines]
+title: Variant[CompilerEdge] = StateField.Title                      # refused: not a variant of CompilerEdge
+```
+
+`Variant[E]` is refused for an `E` that is not an enum, and a name that is not a variant of `E` is a type mismatch. A token carries the identity of `E` and the variant's `VariantInfo` (RFC 085, RFC 173), which it exposes as `token.info`. Tokens of one `Variant[E]` support equality and hashing by variant identity, so a library can hold a set of them. They support no other operation. A library uses them to select variants without constructing or decoding a value; RFC 166 selects relationship kinds this way.
+
 ### Overload resolution
 
 Overload resolution must consider `Type[T]` parameters like ordinary typed parameters. A call such as `cast(expr, float)` may select an overload whose second parameter is `Type[float]`. The selected overload's return type must be the resulting call type.
@@ -338,7 +350,7 @@ Backends should treat type tokens as zero-sized compile-time evidence unless a r
 - **Typechecker / Symbol resolution**: must resolve type names in value position only under `Type[T]` expected context, dispatch overloads using type-token parameters, derive type-directed return mappings, and preserve alias/decorator callable surfaces.
 - **IR Lowering**: must lower type-token expressions and overloaded aliases without splitting same-module and import-boundary behavior.
 - **Emission**: must emit backend representations for type tokens and preserve source callable names in generated metadata.
-- **Stdlib / Runtime (`loaves/stdlib/`)**: must provide the minimal token carrier and primitive reflection hooks needed by compiler-emitted code.
+- **Stdlib / Runtime (`incan_stdlib`)**: must provide the minimal token carrier and primitive reflection hooks needed by compiler-emitted code.
 - **Library manifests / checked API metadata**: must serialize `Type[T]`, overload sets, selected return mappings, aliases, decorators, defaults, package reexports, boundary-invariant relationships, and degraded-state markers without erasing identity.
 - **Formatter**: should preserve ordinary call syntax and type annotations; no special formatting beyond existing type syntax is expected.
 - **LSP / Tooling**: should show type-token overloads, selected overloads, mapping explanations, alias targets, facade/reexport invariants, and degraded-state warnings in completion, hover, signature help, generated API docs, semantic inspection, and diagnostics.
@@ -346,6 +358,7 @@ Backends should treat type tokens as zero-sized compile-time evidence unless a r
 ## Design Decisions
 
 - **Token kinds are admitted together:** enum tokens, trait tokens, type-alias tokens, constrained-scalar tokens, and associated-type projection tokens are admitted alongside the required primitive (`int`, `float`, `str`, `bool`) and visible-model tokens.
+- **Variants have their own token:** `Variant[E]` names one variant of an enum through the same expected-type rule, carrying the enum's identity so a variant of another enum cannot stand in for it. A `VariantInfo` alone identifies a variant only within its declaration, and selecting by name would move a typo from compile time to a silent empty selection.
 - **Return-mapping mechanism is type-parameter-constrained overloads:** `cast[T](expr)`-style return specialization is resolved through ordinary overload resolution keyed on the compile-time type argument `T` itself, reusing the multi-instantiation trait dispatch model from RFC 025 (implemented). A library declares one overload body per admitted `T`; the compiler selects among them the same way it already selects trait implementations by type argument. This does not require a parallel value-position `cast(expr, target: Type[T])` overload to exist -- the two spellings may coexist, but neither is required by the other -- and it introduces no new type-level construct. Associated output types (an RFC 098-style `type Output` binding on a generic trait implementation, mirroring Rust's `Add<Rhs>::Output`) are not this RFC's mechanism and are not a dependency of it. A dedicated type-function construct was considered and rejected as unnecessary net-new machinery for a problem Rust and Python both already solve without one.
 - **Type-alias tokens normalize fully; newtype tokens stay distinct:** a plain type alias (`type UserId = str`, structural, not a `newtype`) normalizes to its target type -- through the full alias chain, not one hop -- for both assignability and `Type[T]` overload dispatch. The alias spelling is retained only as display provenance in diagnostics, hovers, and generated docs, mirroring RFC 083's existing alias-identity rule. Two overloads keyed on different aliases of the same underlying type (for example `Type[UserId]` and `Type[ProductId]`, both aliasing `int`) are a duplicate-overload compile error, not independently selectable; `newtype` remains the correct tool when distinct dispatchable identity is wanted. When `T` is a newtype, construction through a `Type[T]` token goes through the newtype's `from_underlying` validated-conversion hook (RFC 017, implemented), consistent with the existing precedent in `std.environ.get_as[T]` (RFC 089, implemented) -- a `Type[T]` token must never bypass newtype validation.
 - **No alias-local metadata overrides:** aliases always preserve canonical decorated implementation identity -- decorator side effects, registry metadata, and `func.__name__` default to the aliased implementation, never to alias-local overrides. Alias spelling is display-only at the call site in diagnostics, hovers, and generated docs. This matches RFC 083's "aliases are not wrappers" rule without introducing a `Type[T]`-specific exception.

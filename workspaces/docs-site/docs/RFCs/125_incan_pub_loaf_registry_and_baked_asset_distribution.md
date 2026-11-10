@@ -178,7 +178,7 @@ A package page lists its versions, the facets each version carries, the scope an
 
 ### Where the standard library fits
 
-The standard library ships with the toolchain, as ordinary Loaves the toolchain places in the local store. It is ambient: no manifest declares it, and it is not resolved from the index.
+The standard library ships with the toolchain, as ordinary Loaves the toolchain places in the local store. It is ambient: no manifest declares it, and it is not resolved from the index. Its Loaves are named under the reserved `std` scope after the package each provides, so `std.primitives` is `std/primitives`, and that name gives their models and enums canonical identities (RFC 165).
 
 ## Reference-level explanation
 
