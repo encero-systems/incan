@@ -1,15 +1,14 @@
 //! Immutable dependency-interface snapshots and the deterministic legacy comparison oracle.
 //!
-//! The snapshot is deliberately diagnostic data in this stage: normal checking still collects every dependency
-//! declaration through the legacy importer. Later stages can build and install immutable interfaces only after this
-//! oracle proves that table contents, canonical identities, ordering and visibility projections remain identical.
+//! Each source module is collected once into a sealed interface. Downstream checkers install those immutable
+//! interfaces directly; the deterministic snapshot remains the comparison oracle for the retained legacy fallback.
 
 use std::fmt::Debug;
 
 use super::*;
 
 /// Schema version for the complete dependency-interface snapshot compared by the shadow oracle.
-pub const MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION: u32 = 1;
+pub const MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION: u32 = 3;
 
 /// One provider's sealed dependency interface, built once from its successful local checker.
 ///
@@ -62,6 +61,16 @@ pub struct ModuleDependencyInterface {
     module_traits: Arc<HashMap<String, TraitInfo>>,
     /// Provider-qualified native derive paths.
     trait_rust_derive_paths: Arc<HashMap<String, Vec<String>>>,
+    /// Provider-owned nominal layouts retained for transitive signature lookup.
+    transitive_public_types: Arc<HashMap<String, Vec<TypeInfo>>>,
+    /// Provider-owned trait layouts retained for transitive signature lookup.
+    transitive_public_traits: Arc<HashMap<String, Vec<TraitInfo>>>,
+    /// Compiled libraries whose semantic interfaces provider signatures reference.
+    compiled_libraries: Arc<[String]>,
+    /// Checked identities for compiled-library types referenced by provider signatures.
+    public_library_type_identities: Arc<HashMap<String, PublicLibraryTypeIdentity>>,
+    /// Historical provider symbols retained in declaration order for checker-wide semantic scans.
+    symbol_rows: Arc<[(Symbol, Option<CanonicalSymbolId>)]>,
     /// Deterministic semantic receipt for all provider-owned tables.
     pub snapshot: ModuleDependencyInterfaceSnapshot,
 }
@@ -103,10 +112,31 @@ pub struct DependencyInterfaceTableSnapshot {
     pub entries: Vec<String>,
 }
 
+/// Exact state contributed while one provider was collected inside its component builder.
+struct ProviderCollectionReceipt {
+    symbol_range: std::ops::Range<usize>,
+    compiled_libraries: Vec<String>,
+    public_library_type_identities: HashMap<String, PublicLibraryTypeIdentity>,
+}
+
 impl TypeChecker {
     /// Select the immutable provider handles that form the next module's exact dependency closure.
     pub fn select_dependency_interfaces(&mut self, interfaces: Vec<Arc<ModuleDependencyInterface>>) {
         self.selected_dependency_interfaces = interfaces;
+    }
+
+    /// Consume selected handles only when they match the complete dependency list in stable closure order.
+    pub(super) fn take_exact_dependency_interfaces(
+        &mut self,
+        dependencies: &[(&str, &Program)],
+    ) -> Option<Vec<Arc<ModuleDependencyInterface>>> {
+        let exact = self.selected_dependency_interfaces.len() == dependencies.len()
+            && self
+                .selected_dependency_interfaces
+                .iter()
+                .zip(dependencies)
+                .all(|(interface, (name, _))| interface.module_name == *name);
+        exact.then(|| std::mem::take(&mut self.selected_dependency_interfaces))
     }
 
     /// Capture every dependency-owned table and historical symbol row from the current checker.
@@ -150,6 +180,7 @@ impl TypeChecker {
             map_table("trait_rust_derive_paths", &self.dependency_trait_rust_derive_paths),
             map_table("transitive_public_types", &self.transitive_pub_types),
             map_table("transitive_public_traits", &self.transitive_pub_traits),
+            map_table("public_library_type_identities", &*self.public_library_type_identities),
             DependencyInterfaceTableSnapshot {
                 name: "symbol_rows",
                 entries: self
@@ -180,14 +211,132 @@ impl TypeChecker {
         exports: Arc<[ExportedSymbol]>,
         public_only: bool,
     ) -> Arc<ModuleDependencyInterface> {
+        self.seal_module_dependency_interface(module_name, module_ast, exports, public_only, None, true)
+    }
+
+    /// Collect and seal every member of one dependency component exactly once.
+    ///
+    /// Already-installed interfaces provide dependencies outside the component. Component members are predeclared
+    /// together, collected under their own registered module paths and sealed with the exact historical symbol rows
+    /// each collection produced. This is the only declaration-collection route retained for shared interfaces.
+    pub fn build_dependency_interface_component(
+        &mut self,
+        modules: &[(&str, &Program, Arc<[ExportedSymbol]>)],
+        declaration_context: &[(&str, &Program)],
+        public_only: bool,
+    ) -> Vec<Arc<ModuleDependencyInterface>> {
+        let _trace = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::build_dependency_interface_component",
+            modules = modules.len(),
+            public_only,
+        )
+        .entered();
+        let Some((_, first, _)) = modules.first() else {
+            return Vec::new();
+        };
+        self.record_nominal_declaring_modules(first, declaration_context);
+        let programs = modules
+            .iter()
+            .map(|(name, program, _)| (*name, *program))
+            .collect::<Vec<_>>();
+        for (name, _, exports) in modules {
+            self.dependency_exports.insert((*name).to_string(), Arc::clone(exports));
+        }
+        self.predeclare_dependency_interfaces(&programs, public_only);
+        let mut receipts = Vec::with_capacity(modules.len());
+        {
+            let _trace = tracing::trace_span!(
+                target: "incan::invocation",
+                "incan_frontend::import_dependency_interfaces",
+                dependencies = modules.len(),
+                public_only,
+            )
+            .entered();
+            for (name, program, _) in modules {
+                let start = self.symbols.all_symbols().len();
+                let (source_types, source_traits) = self.collected_source_semantics();
+                self.transitive_pub_types = source_types;
+                self.transitive_pub_traits = source_traits;
+                self.public_library_type_identities.clear();
+                self.cached_pub_libraries.clear();
+                self.foreign_pub_type_remappings.clear();
+                self.pub_library_declaration_scopes.clear();
+                if public_only {
+                    self.import_module(program, name);
+                } else {
+                    self.import_module_all(program, name);
+                }
+                let mut compiled_libraries = self.cached_pub_libraries.iter().cloned().collect::<Vec<_>>();
+                compiled_libraries.sort();
+                receipts.push(ProviderCollectionReceipt {
+                    symbol_range: start..self.symbols.all_symbols().len(),
+                    compiled_libraries,
+                    public_library_type_identities: self
+                        .public_library_type_identities
+                        .iter()
+                        .map(|(name, identity)| (name.clone(), identity.clone()))
+                        .collect(),
+                });
+            }
+        }
+        self.refresh_dependency_member_symbols(&programs, public_only);
+        modules
+            .iter()
+            .zip(receipts)
+            .map(|((name, program, exports), receipt)| {
+                self.seal_module_dependency_interface(
+                    name,
+                    program,
+                    Arc::clone(exports),
+                    public_only,
+                    Some(receipt),
+                    false,
+                )
+            })
+            .collect()
+    }
+
+    /// Reconstruct only source-provider nominal layouts before collecting one component member's compiled imports.
+    ///
+    /// Compiled-library caches publish bare, canonical and carrier keys, so key spelling cannot separate them from
+    /// source layouts. The module-keyed direct source tables are the authoritative source-only boundary.
+    fn collected_source_semantics(&self) -> (HashMap<String, Vec<TypeInfo>>, HashMap<String, Vec<TraitInfo>>) {
+        let mut types = HashMap::new();
+        let mut traits = HashMap::new();
+        for (module_name, symbols) in &self.dependency_direct_member_symbols {
+            let identities = self
+                .dependency_direct_member_identities
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default();
+            let (module_types, module_traits) = provider_transitive_semantics(symbols, &identities);
+            extend_semantic_cache(&mut types, &module_types);
+            extend_semantic_cache(&mut traits, &module_traits);
+        }
+        (types, traits)
+    }
+
+    /// Seal one provider from the current cache state, optionally retaining an exact collection-owned symbol range.
+    fn seal_module_dependency_interface(
+        &mut self,
+        module_name: &str,
+        module_ast: &Program,
+        exports: Arc<[ExportedSymbol]>,
+        public_only: bool,
+        collection: Option<ProviderCollectionReceipt>,
+        rebuild_provider_cache: bool,
+    ) -> Arc<ModuleDependencyInterface> {
         self.dependency_exports
             .insert(module_name.to_string(), Arc::clone(&exports));
-        self.register_dependency_derivable_metadata(module_name, module_ast);
-        self.cache_dependency_direct_member_symbols(module_name, module_ast, public_only);
-        self.cache_dependency_registry_definitions(module_name, module_ast, public_only);
-        self.cache_dependency_registry_consts(module_ast);
-        self.cache_dependency_member_symbols(module_name, module_ast, public_only);
-        self.cache_dependency_adoption_traits();
+        if rebuild_provider_cache {
+            self.register_dependency_derivable_metadata(module_name, module_ast);
+            self.cache_dependency_direct_member_symbols(module_name, module_ast, public_only);
+            self.cache_dependency_registry_definitions(module_name, module_ast, public_only);
+            self.cache_dependency_registry_consts(module_ast);
+            self.cache_dependency_member_symbols(module_name, module_ast, public_only);
+            self.cache_dependency_adoption_traits();
+        }
         let module_path = self
             .dependency_module_path_segments
             .get(module_name)
@@ -199,8 +348,42 @@ impl TypeChecker {
             .get(module_name)
             .cloned()
             .unwrap_or_default();
+        let direct_member_symbols = self
+            .dependency_direct_member_symbols
+            .get(module_name)
+            .cloned()
+            .unwrap_or_default();
+        let (transitive_public_types, transitive_public_traits) =
+            provider_transitive_semantics(&direct_member_symbols, &direct_member_identities);
+        let public_library_type_identities = if let Some(receipt) = &collection {
+            receipt.public_library_type_identities.clone()
+        } else {
+            self.public_library_type_identities
+                .iter()
+                .map(|(name, identity)| (name.clone(), identity.clone()))
+                .collect()
+        };
+        let compiled_libraries = collection
+            .as_ref()
+            .map(|receipt| receipt.compiled_libraries.clone())
+            .unwrap_or_else(|| {
+                let mut libraries = self.cached_pub_libraries.iter().cloned().collect::<Vec<_>>();
+                libraries.sort();
+                libraries
+            });
         let owned_identity = |identity: &CanonicalSymbolId| identity_owned_by(identity, &module_path);
         let qualified = |key: &String| key_owned_by(key, &module_path);
+        let symbol_rows = self
+            .symbols
+            .dependency_interface_symbols()
+            .filter(|(id, _, identity)| {
+                collection
+                    .as_ref()
+                    .is_some_and(|receipt| receipt.symbol_range.contains(id))
+                    || identity.is_some_and(&owned_identity)
+            })
+            .map(|(_, symbol, identity)| (symbol.clone(), identity.cloned()))
+            .collect::<Vec<_>>();
         Arc::new(ModuleDependencyInterface {
             module_name: module_name.to_string(),
             module_path: module_path.clone(),
@@ -232,12 +415,7 @@ impl TypeChecker {
                     .cloned()
                     .unwrap_or_default(),
             ),
-            direct_member_symbols: Arc::new(
-                self.dependency_direct_member_symbols
-                    .get(module_name)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
+            direct_member_symbols: Arc::new(direct_member_symbols),
             direct_member_type_aliases: Arc::new(
                 self.dependency_direct_member_type_aliases
                     .get(module_name)
@@ -312,7 +490,16 @@ impl TypeChecker {
                     .map(|(key, value)| (key.clone(), value.clone()))
                     .collect(),
             ),
-            snapshot: self.dependency_interface_snapshot_for(module_name),
+            transitive_public_types: Arc::new(transitive_public_types),
+            transitive_public_traits: Arc::new(transitive_public_traits),
+            compiled_libraries: Arc::from(compiled_libraries),
+            public_library_type_identities: Arc::new(public_library_type_identities.clone()),
+            symbol_rows: Arc::from(symbol_rows.clone()),
+            snapshot: self.dependency_interface_snapshot_for(
+                module_name,
+                Some(&symbol_rows),
+                &public_library_type_identities,
+            ),
         })
     }
 
@@ -340,6 +527,10 @@ impl TypeChecker {
         self.dependency_derivable_trait_identities.clear();
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
+        self.transitive_pub_types.clear();
+        self.transitive_pub_traits.clear();
+        self.public_library_type_identities.clear();
+        self.cached_pub_libraries.clear();
         for interface in interfaces {
             let name = interface.module_name.clone();
             self.dependency_exports
@@ -416,29 +607,81 @@ impl TypeChecker {
                     .iter()
                     .map(|(key, value)| (key.clone(), value.clone())),
             );
+            for (name, values) in interface.transitive_public_types.iter() {
+                self.transitive_pub_types
+                    .entry(name.clone())
+                    .or_default()
+                    .extend(values.iter().cloned());
+            }
+            for (name, values) in interface.transitive_public_traits.iter() {
+                self.transitive_pub_traits
+                    .entry(name.clone())
+                    .or_default()
+                    .extend(values.iter().cloned());
+            }
+            for library in interface.compiled_libraries.iter() {
+                self.install_compiled_library_semantics(library);
+            }
+            self.public_library_type_identities.extend(
+                interface
+                    .public_library_type_identities
+                    .iter()
+                    .map(|(name, identity)| (name.clone(), identity.clone())),
+            );
         }
     }
 
-    /// Replace the just-built legacy dependency layer with the selected immutable interfaces.
+    /// Rebuild one compiled Loaf's checker-local semantic cache from its already-indexed immutable manifest.
     ///
-    /// Shadow comparison remains a test concern so production checking never renders the diagnostic snapshot. The
-    /// legacy collection immediately before this call is retained through stage 4 and removed only after those tests
-    /// prove the direct route in stage 5.
-    pub(super) fn activate_selected_dependency_interfaces(&mut self) {
-        if self.selected_dependency_interfaces.is_empty() {
+    /// Source dependency declarations are never recollected here. The library key list is retained by the shared
+    /// provider interface, and the checker's existing cache guard admits each compiled library at most once.
+    fn install_compiled_library_semantics(&mut self, library: &str) {
+        let loaves = Arc::clone(&self.loaves);
+        let Some(manifest) = loaves.manifest(library) else {
             return;
+        };
+        self.cache_transitive_pub_export_semantics(library, manifest);
+    }
+
+    /// Install selected interfaces without collecting any provider declaration from source again.
+    ///
+    /// Dependency symbol rows are replayed in provider and declaration order because checker-wide semantic scans use
+    /// the historical arena even though ordinary lookup resolves through immutable module-keyed tables.
+    pub fn install_dependency_interfaces_directly(&mut self, interfaces: &[Arc<ModuleDependencyInterface>]) {
+        self.install_dependency_interfaces(interfaces);
+        for interface in interfaces {
+            self.symbols.begin_dependency_interface_bindings();
+            for (symbol, identity) in interface.symbol_rows.iter() {
+                self.symbols.define_import_binding(symbol.clone(), identity.clone());
+            }
+            self.symbols.finish_dependency_interface_bindings();
         }
-        let interfaces = std::mem::take(&mut self.selected_dependency_interfaces);
-        self.install_dependency_interfaces(&interfaces);
     }
 
     /// Capture only the tables owned by `module_name`, excluding every other provider in the checker's closure.
-    fn dependency_interface_snapshot_for(&self, module_name: &str) -> ModuleDependencyInterfaceSnapshot {
+    fn dependency_interface_snapshot_for(
+        &self,
+        module_name: &str,
+        retained_symbol_rows: Option<&[(Symbol, Option<CanonicalSymbolId>)]>,
+        public_library_type_identities: &HashMap<String, PublicLibraryTypeIdentity>,
+    ) -> ModuleDependencyInterfaceSnapshot {
         let module_path = self
             .dependency_module_path_segments
             .get(module_name)
             .cloned()
             .unwrap_or_else(|| vec![module_name.to_string()]);
+        let direct_member_symbols = self
+            .dependency_direct_member_symbols
+            .get(module_name)
+            .cloned()
+            .unwrap_or_default();
+        let direct_member_identities = self
+            .dependency_direct_member_identities
+            .get(module_name)
+            .cloned()
+            .unwrap_or_default();
+        let (transitive_public_types, transitive_public_traits) =
+            provider_transitive_semantics(&direct_member_symbols, &direct_member_identities);
         let tables = vec![
             ordered_module_table("public_exports", module_name, &self.dependency_exports),
             nested_module_table("member_symbols", module_name, &self.dependency_member_symbols),
@@ -508,18 +751,16 @@ impl TypeChecker {
                 &module_path,
                 &self.dependency_trait_rust_derive_paths,
             ),
+            map_table("transitive_public_types", &transitive_public_types),
+            map_table("transitive_public_traits", &transitive_public_traits),
+            map_table("public_library_type_identities", public_library_type_identities),
             DependencyInterfaceTableSnapshot {
                 name: "symbol_rows",
-                entries: self
-                    .symbols
-                    .dependency_interface_symbols()
-                    .filter(|(_, _, identity)| {
-                        identity
-                            .map(|identity| identity_owned_by(identity, &module_path))
-                            .unwrap_or(false)
-                    })
+                entries: retained_symbol_rows
+                    .into_iter()
+                    .flat_map(|rows| rows.iter())
                     .enumerate()
-                    .map(|(index, (_, symbol, identity))| {
+                    .map(|(index, (symbol, identity))| {
                         format!("{index:08}|{}|{}", stable_debug(symbol), stable_debug(&identity))
                     })
                     .collect(),
@@ -529,6 +770,38 @@ impl TypeChecker {
             version: MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION,
             tables,
         }
+    }
+}
+
+/// Reconstruct one provider's retained transitive type and trait contributions from its direct checked members.
+fn provider_transitive_semantics(
+    symbols: &HashMap<String, SymbolKind>,
+    identities: &HashMap<String, CanonicalSymbolId>,
+) -> (HashMap<String, Vec<TypeInfo>>, HashMap<String, Vec<TraitInfo>>) {
+    let mut types = HashMap::<String, Vec<TypeInfo>>::new();
+    let mut traits = HashMap::<String, Vec<TraitInfo>>::new();
+    for (name, symbol) in symbols {
+        match symbol {
+            SymbolKind::Type(info) if !matches!(info, TypeInfo::TypeAlias | TypeInfo::Builtin) => {
+                types.entry(name.clone()).or_default().push(info.clone());
+                if let Some(carrier) = identities
+                    .get(name)
+                    .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
+                {
+                    types.entry(carrier).or_insert_with(|| vec![info.clone()]);
+                }
+            }
+            SymbolKind::Trait(info) => traits.entry(name.clone()).or_default().push(info.clone()),
+            _ => {}
+        }
+    }
+    (types, traits)
+}
+
+/// Merge retained semantic entries while preserving their collection order.
+fn extend_semantic_cache<T: Clone>(target: &mut HashMap<String, Vec<T>>, source: &HashMap<String, Vec<T>>) {
+    for (name, entries) in source {
+        target.entry(name.clone()).or_default().extend(entries.iter().cloned());
     }
 }
 
