@@ -1,12 +1,20 @@
-# behavior: scoped Incan providers retain distinct native identities under consumer aliases, including maximum-length names (#2889)
+# behavior: scoped Incan providers retain distinct native and stored-type identities under consumer aliases, including maximum-length names (#2889)
 # expect-stdout:
 #   11,22,33,44,55
 
+from pub::first import Record as LeftRecord, Node, own_selector as left_selector
+from pub::second import Record as RightRecord, own_selector as right_selector
 from pub::first import make as make_first
 from pub::second import make as make_second
 from pub::folded_left import make as make_folded_left
 from pub::folded_right import make as make_folded_right
 from pub::longest import make as make_longest
+
+
+def selected(value: Option[FrozenStr]) -> str:
+    match value:
+        Some(text) => return str(text)
+        None => return "missing"
 
 
 def main() -> None:
@@ -15,4 +23,19 @@ def main() -> None:
     folded_left = make_folded_left()
     folded_right = make_folded_right()
     longest = make_longest()
+    first_fields = LeftRecord.__fields__()
+    second_fields = RightRecord.__fields__()
+    assert selected(first_fields[0].stored_type) == "record@6ba6d2cdde1c"
+    assert selected(second_fields[0].stored_type) == "record@0ac1c5557c5e"
+    assert selected(first_fields[1].stored_type) == "record@2c40b8ba0f28<i64>"
+    assert selected(first_fields[2].stored_type) == "list<option<record@6ba6d2cdde1c>>"
+    assert selected(first_fields[3].stored_type) == "enum@f9da9eaca86f"
+    assert first_fields[1].position == 2
+    assert selected(first_fields[4].stored_type) == "record@2c40b8ba0f28<list<record@6ba6d2cdde1c>>"
+    assert selected(first_fields[5].stored_type) == "record@e598a76e434e"
+    assert selected(Node.__fields__()[0].stored_type) == "list<record@e598a76e434e>"
+    assert selected(first_fields[6].stored_type) == "enum@a56613f0bb37<record@6ba6d2cdde1c>"
+    assert selected(first_fields[7].stored_type) == "enum@4562ae4736ec"
+    assert left_selector() == selected(first_fields[0].stored_type)
+    assert right_selector() == selected(second_fields[0].stored_type)
     println(f"{first.value},{second.value},{folded_left.value},{folded_right.value},{longest.value}")
