@@ -123,6 +123,30 @@ class Box:
 }
 
 #[test]
+fn malformed_local_in_generic_class_does_not_eject_following_method() {
+    let source = r#"
+class Source[T]:
+  def select(self, value: T) -> T:
+    mut selected: T
+    return value
+
+  def finish(self) -> int:
+    return 1
+"#;
+    let errors = parse_str_err(source, "an uninitialized local must be refused");
+
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected one focused assignment error, got: {errors:?}"
+    );
+    assert!(
+        errors[0].message.contains("Expected '=' in assignment"),
+        "expected the invalid local declaration to own the error, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_parse_trait_bodyless_method_is_abstract() -> Result<(), Vec<CompileError>> {
     let source = r#"
 trait Serializer:
