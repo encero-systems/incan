@@ -240,10 +240,13 @@ impl TypeChecker {
                 .retain(|_, call| call.owner.as_ref() != Some(&identity) || call.kind == InputCallKind::Explicit);
             return;
         }
-        self.retain_input_copy_values(&identity, span);
         if body.is_some() {
             native::retain_native_input_calls(&mut self.type_info.protocols, &self.type_info.rust, &identity, body);
         }
+        // Native signatures introduce the exact by-value parameter types whose Copy decisions authenticate moves.
+        // Retain those calls before snapshotting the body's Copy facts, so an owned native slot cannot disappear
+        // merely because its source expression carries an explicit `Owned` wrapper.
+        self.retain_input_copy_values(&identity, span);
         let (graph, view_errors) = source::build_reporting_views(
             self,
             callable,
