@@ -303,7 +303,8 @@ def check_worker_retirement() -> Result[None, str]:
     waits = len([line for line in lines if "worker_observer_joined" in line])
     detached = len([line for line in lines if "worker_observer_detached" in line])
     releases = len([line for line in lines if "worker_heap_released" in line])
-    assert waits == 0 and detached == 1 and releases == 0, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
+    # The edited request has its own owner generation, so both one-activation worker monitors detach independently.
+    assert waits == 0 and detached == 2 and releases == 0, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
     released_requests = [line for line in lines if "engine request released:" in line]
     assert len(released_requests) == 2, "request teardown did not release its payload verification observations"
     assert "captures=0 verification=0" in released_requests[0]
@@ -348,12 +349,40 @@ def json_text_is(document: JsonValue, key: str, expected: str) -> bool:
                 Some(found) => return found == expected
 
 
+model InstallationReadCounts:
+    """Installation selections and completed engine requests grouped by their emitting process."""
+
+    reused: int = 0
+    service_requests: Dict[str, int] = {}
+    page_selections: Dict[str, int] = {}
+    reuse_processes: list[str] = []
+
+    def observe(mut self, event: JsonValue, category: str) -> Result[None, str]:
+        """Count one service request or installation-page selection from the compatibility trace."""
+        process = str(trace_number(event, "process")?)
+        if category == "engine_unit":
+            self.service_requests[process] = self.service_requests.get(process, 0) + 1
+        if category == "installation_page" or category == "installation_page_reuse":
+            self.page_selections[process] = self.page_selections.get(process, 0) + 1
+        if category == "installation_page_reuse":
+            self.reused += 1
+            self.reuse_processes.append(process)
+        return Ok(None)
+
+    def check(self) -> None:
+        """Require one selection per request while the shared service reuses its decoded first-request page."""
+        assert self.reused == 1, f"two service requests reused their process page {self.reused} times instead of once"
+        process = self.reuse_processes[0]
+        assert self.service_requests.get(process, 0) == 2, "the page reuse did not span the two service requests"
+        assert self.page_selections.get(process, 0) == 2, "a service request selected its installation page more than once"
+
+
 def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
-    """A new work bakery imports the installed page without reopening its original frozen documents."""
+    """Each service request selects the installed page without reopening its original frozen documents."""
     prefix = toolchain_directory()?.resolve().map_err((error) => error.message())?.0 + "/"
     mut events = 0
     mut reads = 0
-    mut reused = 0
+    mut counts = InstallationReadCounts()
     for file in directory.iterdir().map_err((error) => error.message())?:
         for line in file.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
             if line == "":
@@ -361,14 +390,13 @@ def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
             event = parse(line).map_err((error) => error.message())?
             events += 1
             category = trace_text(event, "category")?
-            if category == "installation_page_reuse":
-                reused += 1
+            counts.observe(event, category)?
             if category == "file_read":
                 reads += 1
                 input = trace_text(event, "input")?
                 assert not input.startswith(prefix), f"new work bakery reopened frozen input {input}"
     assert events > 0 and reads > 0, "the cold invocation must record its actual file reads"
-    assert reused == 0, "one request repeated its installation page selection"
+    counts.check()
     return Ok(None)
 
 
@@ -381,7 +409,7 @@ def check_worker_clock(directory: Path) -> Result[None, str]:
             if line == "":
                 continue
             row = parse(line).map_err((error) => error.message())?
-            if trace_text(row, "operation")? != "driver_request":
+            if not json_text_is(row, "operation", "driver_request"):
                 continue
             assert trace_text(row, "clock")? == "host-monotonic-raw"
             assert trace_text(row, "run")? == "host-clock-proof"
