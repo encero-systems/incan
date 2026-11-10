@@ -142,15 +142,44 @@ fn nominal_scope_inventory_matches_fresh_inputs() -> Result<(), Box<dyn std::err
         .check_with_imports(&consumer, &dependencies)
         .map_err(|errors| format!("{errors:?}"))?;
     let legacy_consumer_snapshot = legacy_consumer.dependency_interface_snapshot();
+    let mut interface_builder = TypeChecker::default();
+    interface_builder.set_current_module_path(Some(vec!["first".to_string()]));
+    interface_builder.register_dependency_module_path_segments("first", vec!["first".to_string()]);
+    let direct_interface = interface_builder
+        .build_dependency_interface_component(
+            &[("first", &first, Arc::from(crate::module::exported_symbols(&first)))],
+            &[],
+            true,
+        )
+        .pop()
+        .ok_or("missing direct interface")?;
     let mut shared_consumer = TypeChecker::default();
     shared_consumer.register_dependency_module_path_segments("first", vec!["first".to_string()]);
-    shared_consumer.select_dependency_interfaces(vec![Arc::clone(&first_interface)]);
+    shared_consumer.select_dependency_interfaces(vec![Arc::clone(&direct_interface)]);
     shared_consumer
         .check_with_imports(&consumer, &dependencies)
         .map_err(|errors| format!("{errors:?}"))?;
     assert_eq!(
         legacy_consumer_snapshot,
         shared_consumer.dependency_interface_snapshot()
+    );
+    let mut direct_consumer = TypeChecker::default();
+    direct_consumer.register_dependency_module_path_segments("first", vec!["first".to_string()]);
+    direct_consumer.record_nominal_declaring_modules(&consumer, &dependencies);
+    direct_consumer.install_dependency_interfaces_directly(&[direct_interface]);
+    assert!(
+        direct_consumer
+            .dependency_member_symbol_for_path(&crate::ast::ImportPath::simple(vec!["first".to_string()]), "First")
+            .is_some(),
+        "{:?}",
+        direct_consumer.dependency_interface_snapshot(),
+    );
+    direct_consumer
+        .check_program_with_dependency_semantics(&consumer)
+        .map_err(|errors| format!("{errors:?}"))?;
+    assert_interface_snapshots_match(
+        &legacy_consumer_snapshot,
+        &direct_consumer.dependency_interface_snapshot(),
     );
     let mut checker = TypeChecker::default();
     for (name, dependency) in [("first", &first), ("second", &second), ("first", &first)] {
@@ -252,8 +281,13 @@ fn dependency_interfaces_preserve_imported_static_decorator_bindings() -> Result
     registry_checker
         .check_program(&registry)
         .map_err(|errors| format!("{errors:?}"))?;
-    let registry_interface =
-        registry_checker.seal_current_module_dependency_interface("probe_registry", &registry, registry_exports, true);
+    let mut registry_builder = TypeChecker::default();
+    registry_builder.set_current_module_path(Some(vec!["probe_registry".to_string()]));
+    registry_builder.register_dependency_module_path_segments("probe_registry", vec!["probe_registry".to_string()]);
+    let registry_interface = registry_builder
+        .build_dependency_interface_component(&[("probe_registry", &registry, registry_exports)], &[], true)
+        .pop()
+        .ok_or("missing registry interface")?;
 
     let decorated_exports = Arc::from(crate::module::exported_symbols(&decorated));
     let decorated_dependencies = [("probe_registry", &registry)];
@@ -276,12 +310,19 @@ fn dependency_interfaces_preserve_imported_static_decorator_bindings() -> Result
         &legacy_decorated_snapshot,
         &decorated_checker.dependency_interface_snapshot(),
     );
-    let decorated_interface = decorated_checker.seal_current_module_dependency_interface(
-        "probe_decorated",
-        &decorated,
-        decorated_exports,
-        true,
-    );
+    let mut decorated_builder = TypeChecker::default();
+    decorated_builder.set_current_module_path(Some(vec!["probe_decorated".to_string()]));
+    decorated_builder.register_dependency_module_path_segments("probe_registry", vec!["probe_registry".to_string()]);
+    decorated_builder.register_dependency_module_path_segments("probe_decorated", vec!["probe_decorated".to_string()]);
+    decorated_builder.install_dependency_interfaces_directly(&[Arc::clone(&registry_interface)]);
+    let decorated_interface = decorated_builder
+        .build_dependency_interface_component(
+            &[("probe_decorated", &decorated, decorated_exports)],
+            &decorated_dependencies,
+            true,
+        )
+        .pop()
+        .ok_or("missing decorated interface")?;
 
     let mut consumer_checker = TypeChecker::default();
     consumer_checker.set_current_module_path(Some(vec!["main".to_string()]));
@@ -325,8 +366,13 @@ fn dependency_interfaces_preserve_decorated_generic_calls() -> Result<(), Box<dy
     provider_checker
         .check_program(&provider)
         .map_err(|errors| format!("{errors:?}"))?;
-    let provider_interface =
-        provider_checker.seal_current_module_dependency_interface("provider", &provider, exports, true);
+    let mut provider_builder = TypeChecker::default();
+    provider_builder.set_current_module_path(Some(vec!["provider".to_string()]));
+    provider_builder.register_dependency_module_path_segments("provider", vec!["provider".to_string()]);
+    let provider_interface = provider_builder
+        .build_dependency_interface_component(&[("provider", &provider, exports)], &[], true)
+        .pop()
+        .ok_or("missing provider interface")?;
 
     let dependencies = [("provider", &provider)];
     let mut legacy = TypeChecker::default();
