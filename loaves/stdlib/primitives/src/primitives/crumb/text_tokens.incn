@@ -4,6 +4,7 @@ from rust::std::string import String as RustString
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.text_types import TextError, TextFailure, TextPosition
 from crate.primitives.crumb.text_controls import BIDIRECTIONAL_CONTROLS
+from crate.primitives.crumb.text_names import require_path
 from crate.primitives.crumb.types import ContainerKind, NominalKind, ScalarKind, TypeConstructorKind, TypeNode
 from crate.primitives.text import decode_utf8, encode_utf8
 
@@ -175,7 +176,7 @@ pub class TextTokens:
         if token.kind != TextTokenKind.Word and token.kind != TextTokenKind.Number:
             return Err(TextError(kind=TextFailure.InvalidType, position=token.position))
         name_token = self.take()?
-        name = self.text(name_token)?
+        name = require_path(self.text(name_token)?, name_token.position, TextFailure.InvalidType)?
         scalar_kind = ScalarKind.from_value(name)
         logical_constructor = TypeConstructorKind.from_value(name)
         container_kind = ContainerKind.from_value(name)

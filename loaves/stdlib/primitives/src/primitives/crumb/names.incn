@@ -1,0 +1,33 @@
+"""One Unicode name rule shared by COMIC syntax and Crumb metadata admission."""
+
+from rust::incan_std_primitives::unicode_names import first_nfc_difference, is_xid_name
+
+
+pub enum NameStatus(str):
+    """The closed outcomes of admitting one name without changing its spelling."""
+
+    Valid = "valid"
+    Invalid = "invalid"
+    Unnormalized = "unnormalized"
+
+
+pub model NameAdmission:
+    """One name outcome plus the first scalar that differs from NFC when applicable."""
+
+    pub status: NameStatus
+    pub difference: int
+
+
+pub def admit_name(value: str) -> NameAdmission:
+    """Classify one segment under UAX #31 plus underscore and the exact NFC requirement."""
+    difference = first_nfc_difference(value)
+    if difference >= 0:
+        return NameAdmission(status=NameStatus.Unnormalized, difference=difference)
+    if not is_xid_name(value):
+        return NameAdmission(status=NameStatus.Invalid, difference=-1)
+    return NameAdmission(status=NameStatus.Valid, difference=-1)
+
+
+pub def valid_name(value: str) -> bool:
+    """Return whether one segment follows UAX #31 plus underscore and is already NFC."""
+    return admit_name(value).status == NameStatus.Valid

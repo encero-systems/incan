@@ -1,0 +1,30 @@
+"""COMIC source-position errors around Crumb's shared Unicode name admission."""
+
+from crate.primitives.crumb.names import NameStatus, admit_name
+from crate.primitives.crumb.text_types import TextError, TextFailure, TextPosition
+
+
+pub def require_name(value: str, position: TextPosition, invalid: TextFailure) -> Result[str, TextError]:
+    """Admit one core name, reporting the first scalar whose NFC form differs."""
+    admission = admit_name(value)
+    if admission.status == NameStatus.Unnormalized:
+        return Err(
+            TextError(
+                kind=TextFailure.UnnormalizedName,
+                position=TextPosition(line=position.line, column=position.column + admission.difference),
+            ),
+        )
+    if admission.status == NameStatus.Invalid:
+        return Err(TextError(kind=invalid, position=position))
+    return Ok(value)
+
+
+pub def require_path(value: str, position: TextPosition, invalid: TextFailure) -> Result[str, TextError]:
+    """Admit every nonempty dotted path segment under the same name and NFC contract."""
+    if value == "":
+        return Err(TextError(kind=invalid, position=position))
+    mut offset = 0
+    for segment in value.split("."):
+        require_name(segment, TextPosition(line=position.line, column=position.column + offset), invalid)?
+        offset += len(segment) + 1
+    return Ok(value)

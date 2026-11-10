@@ -5,10 +5,8 @@ from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.framing import encode_native_signed
 from crate.primitives.crumb.hash_stream import HashOutput
 from crate.primitives.crumb.values import Metadata, MetadataEntry
+from crate.primitives.crumb.names import valid_name
 from crate.primitives.text import encode_utf8
-
-# Characters a core property name never contains; profile extensions are admitted by their own profile.
-const PROPERTY_NAME_FORBIDDEN: FrozenSet[str] = {" ", "\t", "\r", "\n", ".", "{", "}", "[", "]", "(", ")", ",", ":", "=", "?", "|", "<", ">", "#", "\"", "+", "-", "*", "/", "\\", "!", "@", "$", "%", "^", "&", ";", "'", "`", "~"}
 
 
 pub def emit_metadata(value: Metadata, mut output: HashOutput, mut budget: Budget) -> Result[None, CrumbError]:
@@ -57,7 +55,7 @@ def emit_map(entries: list[MetadataEntry], mut output: HashOutput, mut budget: B
         budget.charge_elements(1)?
         budget.charge_bytes(16)?
         key = entries[index].key
-        if not property_name(key):
+        if not valid_name(key):
             return Err(CrumbError.invalid_input("metadata map key is not a property name"))
         for _ in range(12):
             budget.charge_bytes(len(key))?
@@ -72,16 +70,3 @@ def emit_map(entries: list[MetadataEntry], mut output: HashOutput, mut budget: B
         output.text(entry.key, budget)?
         emit_metadata(entry.value, output, budget)?
     return Ok(None)
-
-
-def property_name(value: str) -> bool:
-    """Accept one core UAX-style segment while leaving profile extensions to profile admission."""
-    if value == "":
-        return false
-    characters = [character for character in value]
-    if characters[0] >= "0" and characters[0] <= "9":
-        return false
-    for character in characters:
-        if character in PROPERTY_NAME_FORBIDDEN:
-            return false
-    return true
