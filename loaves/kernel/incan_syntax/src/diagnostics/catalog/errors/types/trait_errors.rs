@@ -294,18 +294,23 @@ pub fn pub_modifier_not_allowed_on_language_hook(type_name: &str, method: &str, 
     ))
 }
 
-/// Report duplicate concrete methods that cannot be assigned to distinct same-family trait obligations.
-pub fn duplicate_method_not_trait_backed(type_name: &str, method: &str, span: Span) -> CompileError {
+/// Report a later ordinary method overload whose accepted calls overlap an earlier declaration.
+pub fn conflicting_method_overload(
+    type_name: &str,
+    method: &str,
+    earlier_span: Span,
+    later_span: Span,
+) -> CompileError {
     CompileError::type_error(
         format!(
-            "Type '{}' declares multiple '{}' methods that do not map to adopted trait instantiations",
+            "Type '{}' declares conflicting '{}' method overloads",
             type_name, method
         ),
-        span,
+        later_span,
     )
-    .with_hint(
-        "Duplicate method names are only allowed when each implementation satisfies a same-family trait instantiation",
-    )
+    .with_primary_label("This overload accepts a call the earlier overload also accepts")
+    .with_related_span(earlier_span, "Earlier conflicting overload")
+    .with_hint("Change the positional argument count or a parameter type so each call selects only one overload")
 }
 
 /// Report a method call where arguments and expected type still leave multiple trait-backed overloads.

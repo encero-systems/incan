@@ -548,8 +548,11 @@ impl TypeChecker {
         spans
     }
 
-    /// Ensure overloads that differ only by return type map to same-family trait obligations.
-    pub(super) fn validate_overloaded_methods_are_trait_backed(
+    /// Refuse ordinary method overload declarations whose positional call surfaces conflict under RFC 174.
+    ///
+    /// Same-family RFC 025 trait implementations remain the one exception: two matching obligations may share an
+    /// argument surface because their adopted trait instantiations retain the established result-type tie-break.
+    pub(super) fn validate_method_overload_distinctness(
         &mut self,
         type_name: &str,
         adoptions: &[ResolvedTraitAdoption],
@@ -599,24 +602,36 @@ impl TypeChecker {
                         overload_matches[idx] = Some(obligation_idx);
                     }
                 }
-                let has_trait_backed_overload = overload_matches.iter().any(Option::is_some);
-                for (idx, (source_idx, overload)) in surface_overloads.iter().enumerate() {
-                    if overload_matches[idx].is_some() {
+                for later_idx in 1..surface_overloads.len() {
+                    let Some((earlier_idx, (earlier_source_idx, _))) = surface_overloads
+                        .iter()
+                        .take(later_idx)
+                        .enumerate()
+                        .find(|(earlier_idx, (_, earlier))| {
+                            let (_, later) = surface_overloads[later_idx];
+                            let trait_pair = overload_matches[*earlier_idx].is_some()
+                                && overload_matches[later_idx].is_some()
+                                && overload_matches[*earlier_idx] != overload_matches[later_idx];
+                            !trait_pair && self.method_overload_shapes_conflict(earlier, later)
+                        })
+                    else {
                         continue;
-                    }
-                    let shares_call_shape = surface_overloads.iter().enumerate().any(|(other_idx, (_, other))| {
-                        other_idx != idx && self.method_call_shapes_same(overload, other)
-                    });
-                    if has_trait_backed_overload && !shares_call_shape {
-                        continue;
-                    }
-                    let span = method_spans
-                        .get(method_name)
-                        .and_then(|spans| spans.get(*source_idx).copied())
-                        .or_else(|| method_spans.get(method_name).and_then(|spans| spans.first().copied()))
+                    };
+                    let later_source_idx = surface_overloads[later_idx].0;
+                    let spans = method_spans.get(method_name);
+                    let earlier_span = spans
+                        .and_then(|spans| spans.get(*earlier_source_idx).copied())
                         .unwrap_or_default();
-                    self.errors
-                        .push(errors::duplicate_method_not_trait_backed(type_name, method_name, span));
+                    let later_span = spans
+                        .and_then(|spans| spans.get(later_source_idx).copied())
+                        .unwrap_or_default();
+                    debug_assert!(earlier_idx < later_idx);
+                    self.errors.push(errors::conflicting_method_overload(
+                        type_name,
+                        method_name,
+                        earlier_span,
+                        later_span,
+                    ));
                 }
             }
         }
@@ -632,7 +647,7 @@ impl TypeChecker {
     ) {
         self.validate_duplicate_trait_instantiations(adoptions);
         self.validate_cross_trait_method_collisions(adoptions, method_overloads);
-        self.validate_overloaded_methods_are_trait_backed(type_name, adoptions, method_overloads, method_spans);
+        self.validate_method_overload_distinctness(type_name, adoptions, method_overloads, method_spans);
     }
 
     /// Refuse every explicit `Awaitable[T]` adoption on a source-declared nominal type: a model, class, enum or
