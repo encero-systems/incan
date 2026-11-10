@@ -42,6 +42,13 @@ pub def text(value: Metadata) -> Result[str, CrumbError]:
         _ => return Err(CrumbError.invalid_input("text description property"))
 
 
+pub def symbol(value: Metadata) -> Result[str, CrumbError]:
+    """Require an unquoted property path without conflating it with a string."""
+    match value:
+        Metadata.Symbol(content) => return Ok(content)
+        _ => return Err(CrumbError.invalid_input("symbol description property"))
+
+
 pub def binary(value: Metadata) -> Result[bytes, CrumbError]:
     """Require exact binary identity bytes, never a display-name fallback."""
     match value:
@@ -100,7 +107,7 @@ def charge_inner(value: Metadata, mut budget: Budget) -> Result[None, CrumbError
     """Visit retained metadata only; no property invokes or authorizes application behavior."""
     match value:
         Metadata.Null | Metadata.Boolean(_) => budget.charge_bytes(1)?
-        Metadata.Integer(content) | Metadata.Text(content) => charge_text(content, budget)?
+        Metadata.Integer(content) | Metadata.Text(content) | Metadata.Symbol(content) => charge_text(content, budget)?
         Metadata.Binary(content) => budget.charge_bytes(len(content))?
         Metadata.List(children) =>
             for child in children:
