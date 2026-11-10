@@ -1,7 +1,7 @@
 """Validate every offset once, then address selected retained cell ranges directly."""
 
 from crate.primitives.crumb.budget import Budget
-from crate.primitives.crumb.encoding_buffer import offset_width, offset_table_length
+from crate.primitives.crumb.encoding_buffer import offset_width, offset_table_length, valid_offset_width
 from crate.primitives.crumb.encoding_cursor import EncodingCursor
 from crate.primitives.crumb.descriptions import StoredField
 from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive
@@ -32,7 +32,7 @@ pub def read_index(mut cursor: EncodingCursor, count: int, mut budget: Budget) -
     """Check full table bounds/order/completeness and minimum width before permitting any cell lookup."""
     offset = cursor.absolute()
     width = cursor.byte(budget)?
-    if width not in [1, 2, 4, 8]:
+    if not valid_offset_width(width):
         return Err(failure(BinaryFailure.InvalidOffsetWidth, offset))
     size = offset_table_length(count, width).map_err((e) => primitive(e, offset))?
     budget.charge_elements(count).map_err((e) => primitive(e, offset))?
@@ -64,7 +64,7 @@ pub def offset_at(
     mut budget: Budget,
 ) -> Result[int, BinaryError]:
     """Read one offset with checked address arithmetic; an offset outside host size cannot fit this frame."""
-    if width not in [1, 2, 4, 8] or index < 0 or index >= table.len() // width:
+    if not valid_offset_width(width) or index < 0 or index >= table.len() // width:
         return Err(failure(BinaryFailure.InvalidOffsets, origin))
     position = index * width
     budget.charge_bytes(width).map_err((e) => primitive(e, origin + position))?

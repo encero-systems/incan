@@ -8,6 +8,7 @@ from crate.primitives.crumb.column_value_dictionary import key_id
 from crate.primitives.crumb.column_errors import ColumnError, ColumnFailure, failure, shared, primitive
 from crate.primitives.crumb.column_key_read import ColumnKeys, read_keys, key_at
 from crate.primitives.crumb.column_presence import cell_type, present
+from crate.primitives.crumb.column_types import uses_dictionary
 from crate.primitives.crumb.encoding_cursor import EncodingCursor
 from crate.primitives.crumb.description_dictionary import Dictionary
 from crate.primitives.crumb.encoding_errors import BinaryFailure, failure as binary_failure
@@ -58,7 +59,7 @@ pub def read_column(
             return Err(shared(binary_failure(BinaryFailure.InvalidOffsets, block_origin)))
         length = min([256, rows - index * 256])
         block, values = read_block(node, absent, length, raw, block_origin, keys, dictionary, budget)?
-        if block.encoding in [4, 5]:
+        if uses_dictionary(block.encoding):
             has_codes = true
         if mode == 1:
             for value in values:

@@ -3,6 +3,7 @@
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.column_bits import bit_length
 from crate.primitives.crumb.column_block_data import BlockData
+from crate.primitives.crumb.column_types import BlockEncoding
 from crate.primitives.crumb.column_errors import ColumnError, ColumnFailure, failure, primitive, overflow
 from crate.primitives.crumb.column_numbers import from_coefficient, unzigzag
 from crate.primitives.crumb.column_pack_read import packed_value
@@ -19,7 +20,7 @@ pub def numeric_values(block: &BlockData, node: TypeNode, mut budget: Budget) ->
     for index in range(block.present):
         budget.charge_elements(1).map_err((e) => primitive(e, block.origin))?
         mut number = block.base
-        if block.encoding == 1:
+        if block.encoding == BlockEncoding.FrameOfReference:
             residual = packed_value(block.payload, block.width, block.present, index, block.origin, budget)?
             maximum_width = max(
                 [maximum_width, bit_length(residual, budget).map_err((e) => primitive(e, block.origin))?],
@@ -40,7 +41,7 @@ pub def numeric_values(block: &BlockData, node: TypeNode, mut budget: Budget) ->
         result.append(value)
     if maximum_width != block.width:
         return Err(failure(ColumnFailure.NonminimalBits, block.origin))
-    if block.encoding == 1 and not has_zero:
+    if block.encoding == BlockEncoding.FrameOfReference and not has_zero:
         return Err(failure(ColumnFailure.NonminimalBase, block.origin))
     return Ok(result)
 
@@ -48,7 +49,7 @@ pub def numeric_values(block: &BlockData, node: TypeNode, mut budget: Budget) ->
 pub def numeric_at(block: &BlockData, node: TypeNode, position: int, mut budget: Budget) -> Result[Value, ColumnError]:
     """FOR reads only its addressed residual; delta selection replays no more than 255 deltas."""
     mut number = block.base
-    if block.encoding == 1:
+    if block.encoding == BlockEncoding.FrameOfReference:
         residual = packed_value(block.payload, block.width, block.present, position, block.origin, budget)?
         number = number.add(residual, budget).map_err((e) => primitive(e, block.origin))?
     else:

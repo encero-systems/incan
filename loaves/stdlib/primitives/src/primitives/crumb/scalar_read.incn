@@ -4,7 +4,7 @@ from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.encoding_cursor import EncodingCursor, copied
 from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive
 from crate.primitives.crumb.metadata_read import read_text
-from crate.primitives.crumb.scalar_cells import float_cell
+from crate.primitives.crumb.scalar_cells import float_cell, valid_integer_width
 from crate.primitives.crumb.types import ScalarKind
 from crate.primitives.crumb.values import IntegerValue, Value
 from crate.primitives.crumb.wide_integer import WideInteger
@@ -91,7 +91,7 @@ pub def decimal(
 
 def fixed_integer(data: bytes, signed: bool, origin: int) -> Result[IntegerValue, BinaryError]:
     """Decode a fixed little-endian integer directly into its declared native carrier."""
-    if len(data) not in [1, 2, 4, 8, 16]:
+    if not valid_integer_width(len(data)):
         return Err(failure(BinaryFailure.InvalidCell, origin))
     mut raw: u128 = 0u128
     for index in range(len(data) - 1, -1, -1):

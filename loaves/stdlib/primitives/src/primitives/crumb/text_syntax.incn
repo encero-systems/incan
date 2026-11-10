@@ -25,7 +25,7 @@ pub def parse_type(mut tokens: TextTokens, mut budget: Budget) -> Result[TypeNod
 def parse_primary(mut tokens: TextTokens, mut budget: Budget) -> Result[TypeNode, TextError]:
     """Parse one scalar, named type or parameterized core constructor."""
     token = tokens.peek()
-    if token.kind not in [TextTokenKind.Word, TextTokenKind.Number]:
+    if token.kind != TextTokenKind.Word and token.kind != TextTokenKind.Number:
         return Err(TextError(kind=TextFailure.InvalidType, position=token.position))
     name = tokens.take().text
     scalar_kind = ScalarKind.from_value(name)
@@ -129,7 +129,7 @@ pub def description_at(
     """Require exactly one value-bearing declaration at a path."""
     mut found: list[TextDescription] = []
     for description in descriptions:
-        if description.path == path and description.shape in [NominalKind.Record, NominalKind.Enum]:
+        if description.path == path and (description.shape == NominalKind.Record or description.shape == NominalKind.Enum):
             found.append(description)
     if len(found) == 0:
         return Err(TextError(kind=TextFailure.UnknownDescription, position=position))

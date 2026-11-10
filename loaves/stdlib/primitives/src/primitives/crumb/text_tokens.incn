@@ -3,9 +3,37 @@
 from rust::std::string import String as RustString
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.text_types import TextError, TextFailure, TextPosition
+from crate.primitives.crumb.text_controls import BIDIRECTIONAL_CONTROLS
 from crate.primitives.crumb.types import ContainerKind, TypeConstructorKind
 from crate.primitives.text import encode_utf8
-from crate.primitives.hex import hexlify
+
+
+const LAYOUT_CHARACTERS: FrozenSet[str] = {" ", "\t", "\r", "\n"}
+const PUNCTUATION_CHARACTERS: FrozenSet[str] = {"{", "}", "[", "]", "(", ")", ",", ":", "=", "?", "|", ">"}
+const TOKEN_DELIMITERS: FrozenSet[str] = {
+    " ",
+    "\t",
+    "\r",
+    "\n",
+    "{",
+    "}",
+    "[",
+    "]",
+    "(",
+    ")",
+    ",",
+    ":",
+    "=",
+    "?",
+    "|",
+    "<",
+    ">",
+    "#",
+    "\"",
+}
+const UPPERCASE_HEX: FrozenSet[str] = {"A", "B", "C", "D", "E", "F"}
+const SPECIAL_NUMBERS: FrozenSet[str] = {"inf", "-inf", "nan"}
+const NUMBER_SIGNS: FrozenSet[str] = {"+", "-"}
 
 
 pub enum TextTokenKind:
@@ -147,7 +175,7 @@ def skip_layout(mut scanner: Tokenizer) -> Result[None, TextError]:
     mut again = true
     while again and not scanner.at_end():
         again = false
-        while not scanner.at_end() and scanner.current()? in [" ", "\t", "\r", "\n"]:
+        while not scanner.at_end() and scanner.current()? in LAYOUT_CHARACTERS:
             scanner.advance()?
             again = true
         if not scanner.at_end() and scanner.current()? == "#":
@@ -174,7 +202,7 @@ def token(mut scanner: Tokenizer, mut budget: Budget) -> Result[None, TextError]
             scanner.advance()?
             return retain(scanner, TextTokenKind.Punctuation, "<", b"", position, budget)
         return marker_token(scanner, budget, position)
-    if character in ["{", "}", "[", "]", "(", ")", ",", ":", "=", "?", "|", ">"]:
+    if character in PUNCTUATION_CHARACTERS:
         scanner.advance()?
         return retain(scanner, TextTokenKind.Punctuation, character, b"", position, budget)
     return word_token(scanner, budget, position)
@@ -246,7 +274,7 @@ def unicode_escape(mut scanner: Tokenizer, position: TextPosition) -> Result[str
     mut digits = ""
     while not scanner.at_end() and scanner.current()? != "}":
         digit = scanner.advance()?
-        if hex_value(digit) < 0 or digit in ["A", "B", "C", "D", "E", "F"]:
+        if hex_value(digit) < 0 or digit in UPPERCASE_HEX:
             return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
         digits += digit
     if scanner.at_end() or digits == "" or (len(digits) > 1 and digits.startswith("0")):
@@ -292,7 +320,7 @@ def binary_hex(mut scanner: Tokenizer, position: TextPosition) -> Result[u8, Tex
     low_text = scanner.advance()?
     high = hex_value(high_text)
     low = hex_value(low_text)
-    if high < 0 or low < 0 or high_text in ["A", "B", "C", "D", "E", "F"] or low_text in ["A", "B", "C", "D", "E", "F"]:
+    if high < 0 or low < 0 or high_text in UPPERCASE_HEX or low_text in UPPERCASE_HEX:
         return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
     value: Option[u8] = (high * 16 + low).try_resize()
     match value:
@@ -341,35 +369,15 @@ def retain(
 
 def delimiter(character: str) -> bool:
     """Return whether one scalar ends an unquoted word or numeric token."""
-    return character in [
-        " ",
-        "\t",
-        "\r",
-        "\n",
-        "{",
-        "}",
-        "[",
-        "]",
-        "(",
-        ")",
-        ",",
-        ":",
-        "=",
-        "?",
-        "|",
-        "<",
-        ">",
-        "#",
-        "\"",
-    ]
+    return character in TOKEN_DELIMITERS
 
 
 def numeric_lead(value: str) -> bool:
     """Recognize numeric-looking spellings, including forms semantic admission must refuse."""
-    if value in ["inf", "-inf", "nan"]:
+    if value in SPECIAL_NUMBERS:
         return true
     first = value[0:1]
-    return first >= "0" and first <= "9" or first in ["+", "-"]
+    return first >= "0" and first <= "9" or first in NUMBER_SIGNS
 
 
 def ascii_byte(character: str, position: TextPosition) -> Result[u8, TextError]:
@@ -454,8 +462,7 @@ def check_bidirectional_controls(source: str) -> Result[None, TextError]:
     mut line = 1
     mut column = 1
     for character in source:
-        encoded = hexlify(encode_utf8(character))
-        if encoded in ["e280aa", "e280ab", "e280ac", "e280ad", "e280ae", "e281a6", "e281a7", "e281a8", "e281a9"]:
+        if character in BIDIRECTIONAL_CONTROLS:
             return Err(TextError(kind=TextFailure.BidirectionalControl, position=TextPosition(line=line, column=column)))
         if character == "\n":
             line += 1

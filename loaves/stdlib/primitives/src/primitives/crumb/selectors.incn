@@ -9,6 +9,9 @@ from crate.primitives.crumb.types import ContainerKind, NominalKind, ScalarKind,
 from crate.primitives.text import decode_utf8
 
 
+const SELECTOR_DELIMITERS: FrozenSet[str] = {"<", ">", ","}
+
+
 pub def parse_type(text: str, mut budget: Budget) -> Result[TypeNode, CrumbError]:
     """Accept one complete canonical N spelling, including explicit closed nominal arguments."""
     for _ in range(4):
@@ -71,7 +74,7 @@ class TypeParser:
     def token(mut self, mut budget: Budget) -> Result[str, CrumbError]:
         """Consume one nonempty atom, leaving its delimiter to the owning production."""
         start = self.position + 0
-        while self.position < len(self.text) and self.text[self.position] not in ["<", ">", ","]:
+        while self.position < len(self.text) and self.text[self.position] not in SELECTOR_DELIMITERS:
             budget.charge_elements(1)?
             self.position += 1
         if self.position == start:

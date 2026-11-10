@@ -67,7 +67,7 @@ pub class ColumnSet:
                 mut blocks: list[BlockEncoding] = []
                 for block in column.blocks:
                     budget.charge_elements(1).map_err((e) => primitive(e, block.origin))?
-                    blocks.append(encoding_choice(block.encoding, block.origin)?)
+                    blocks.append(block.encoding)
                 columns.append(ColumnChoice(blocks=blocks))
             result.append(GroupChoice(columns=columns))
         return Ok(result)
@@ -213,15 +213,3 @@ def verify_seal(
     if actual != expected:
         return Err(shared(binary_failure(BinaryFailure.SealMismatch, origin)))
     return Ok(None)
-
-
-def encoding_choice(value: int, origin: int) -> Result[BlockEncoding, ColumnError]:
-    """Translate only admitted physical IDs into the existing explicit writer choices."""
-    match value:
-        0 => return Ok(BlockEncoding.Indexed)
-        1 => return Ok(BlockEncoding.FrameOfReference)
-        2 => return Ok(BlockEncoding.ZigzagDelta)
-        3 => return Ok(BlockEncoding.Runs)
-        4 => return Ok(BlockEncoding.DictionaryPacked)
-        5 => return Ok(BlockEncoding.DictionaryRuns)
-        _ => return Err(failure(ColumnFailure.UnsupportedEncoding, origin))

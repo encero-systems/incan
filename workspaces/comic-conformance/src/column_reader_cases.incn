@@ -119,9 +119,9 @@ def check_block(
         Ok((block, values)) =>
             require_accepted(expected)?
             same_values(values, logical_items(array(expected, "values")?)?, setup)?
-            if block.encoding != integer(expected, "encoding")?:
+            if block.encoding != encoding(integer(expected, "encoding")?)?:
                 return Err("decoded encoding differs")
-            encoded = write_block(node, absent, values, encoding(block.encoding)?, writer_keys, dictionary, setup).map_err(
+            encoded = write_block(node, absent, values, block.encoding, writer_keys, dictionary, setup).map_err(
                 (e) => e.message(),
             )?
             return compare_bytes(encoded, data)
@@ -152,9 +152,11 @@ def check_column(
                 return Err("decoded block count differs")
             mut choices = ColumnChoice(blocks=[])
             for index in range(len(column.blocks)):
-                if column.blocks[index].encoding != expected_encodings[index].expect_int().map_err((e) => e.message())?:
+                if column.blocks[index].encoding != encoding(
+                    expected_encodings[index].expect_int().map_err((e) => e.message())?,
+                )?:
                     return Err("decoded block encoding differs")
-                choices.blocks.append(encoding(column.blocks[index].encoding)?)
+                choices.blocks.append(column.blocks[index].encoding)
             encoded = write_column(node, absent, values, choices, dictionary, setup).map_err((e) => e.message())?
             return compare_bytes(encoded, data)
 

@@ -134,7 +134,7 @@ def container(
 
 def container_name(kind: ContainerKind, count: int) -> Result[str, CrumbError]:
     """Arity is a format rule, not a host collection convention."""
-    if kind in [ContainerKind.List, ContainerKind.Set, ContainerKind.Option] and count != 1:
+    if (kind == ContainerKind.List or kind == ContainerKind.Set or kind == ContainerKind.Option) and count != 1:
         return Err(CrumbError.invalid_input("container arity"))
     if kind == ContainerKind.Map and count != 2:
         return Err(CrumbError.invalid_input("container arity"))

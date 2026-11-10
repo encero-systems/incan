@@ -5,6 +5,7 @@ from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.native_numbers import integer_spelling
 from crate.primitives.crumb.registrations import KindRegistration
 from crate.primitives.crumb.text_syntax import description_at, last_segment, type_spelling
+from crate.primitives.crumb.text_controls import bidirectional_escape
 from crate.primitives.crumb.text_types import (
     TextContext,
     TextDescription,
@@ -583,7 +584,7 @@ def decimal_spelling(coefficient: str, scale: int) -> str:
 
 def normalize_float(spelling: str) -> str:
     """Keep settled non-finite spellings and require a point for finite integer-looking values."""
-    if spelling in ["nan", "NaN"]:
+    if spelling == "nan" or spelling == "NaN":
         return "nan"
     if "e" in spelling:
         parts = spelling.split("e")
@@ -638,31 +639,22 @@ def quoted(value: str) -> str:
 
 def escaped_control(character: str) -> str:
     """Write corpus-covered controls and every bidirectional control as lowercase Unicode escapes."""
+    if let Some(escape) = bidirectional_escape(character):
+        return escape
     encoded = hexlify(encode_utf8(character))
-    if len(encoded) == 2 and (encoded[0:1] in ["0", "1"] or encoded == "7f"):
+    if len(encoded) == 2 and (encoded[0:1] == "0" or encoded[0:1] == "1" or encoded == "7f"):
         mut digits = encoded
         if digits.startswith("0"):
             digits = digits[1:]
         return "\\u{" + digits + "}"
     if encoded >= "c280" and encoded <= "c29f":
         return "\\u{" + encoded[2:] + "}"
-    match encoded:
-        "e280aa" => return "\\u{202a}"
-        "e280ab" => return "\\u{202b}"
-        "e280ac" => return "\\u{202c}"
-        "e280ad" => return "\\u{202d}"
-        "e280ae" => return "\\u{202e}"
-        "e281a6" => return "\\u{2066}"
-        "e281a7" => return "\\u{2067}"
-        "e281a8" => return "\\u{2068}"
-        "e281a9" => return "\\u{2069}"
-        _ => return character
+    return character
 
 
 def binary_literal(data: bytes) -> str:
     """Write printable ASCII directly and every other byte as exact lowercase hexadecimal."""
     printable = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
-    alphabet = [character for character in printable]
     mut result = "b\""
     for value in data:
         if value == 34u8:
@@ -670,7 +662,7 @@ def binary_literal(data: bytes) -> str:
         elif value == 92u8:
             result += "\\\\"
         elif value >= 32u8 and value <= 126u8:
-            result += alphabet[int(value) - 32]
+            result += printable[int(value) - 32]
         else:
             result += "\\x" + byte_hex(value)
     return result + "\""
@@ -678,7 +670,7 @@ def binary_literal(data: bytes) -> str:
 
 def byte_hex(value: int) -> str:
     """Return one byte as exactly two lowercase hexadecimal digits."""
-    digits = [character for character in "0123456789abcdef"]
+    digits = "0123456789abcdef"
     return digits[value // 16] + digits[value % 16]
 
 
