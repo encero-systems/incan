@@ -7,7 +7,7 @@ from std.primitives.crumb.types import TypeNode
 from std.primitives.crumb.values import Projection
 from std.primitives.hex import hexlify
 from case_data import HashExpectation, HashKind, array, field, fields, node, text
-from hash_data import logical, logical_items, metadata, record
+from fixture_adapter import logical, logical_items, metadata, record
 
 
 pub def check_preimage(value: JsonValue, mut budget: Budget) -> Result[bool, str]:

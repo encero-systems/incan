@@ -8,8 +8,7 @@ from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.row_writer import write_rows
 from std.primitives.hex import hexlify
 from case_data import CaseOperation, CaseStatus, ExpectedStatus, array, expected_status, field, text, hex_bytes
-from hash_data import metadata
-from row_case_values import record_value
+from fixture_adapter import metadata, record_value
 from corpus import Corpus
 from execute import RunReport
 
