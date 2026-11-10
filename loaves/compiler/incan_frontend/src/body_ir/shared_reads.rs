@@ -1105,9 +1105,7 @@ fn argument_uses(argument: &bir::ArgumentElement, local: bir::LocalId) -> bool {
         bir::ArgumentElement::One(operand) | bir::ArgumentElement::Named { operand, .. } => {
             uses(operand, local) || projection_uses(operand, local)
         }
-        bir::ArgumentElement::Spread(spread) => {
-            uses(&spread.source, local) || projection_uses(&spread.source, local)
-        }
+        bir::ArgumentElement::Spread(spread) => uses(&spread.source, local) || projection_uses(&spread.source, local),
     }
 }
 

@@ -11,7 +11,7 @@ The owner serves a unit only when its Loaves are all standard packages and its m
 nor vocabulary. Other units are answered `fallback`, and the command prepares them in its own process.
 """
 
-from rust::incan_lang::interop::loaf_names import native_crate_name
+from rust::incan_loaf_names import native_crate_name
 from std.fs import Path
 from std.environ import get_or
 from features import FeatureRequest

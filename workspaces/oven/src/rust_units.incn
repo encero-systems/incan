@@ -9,7 +9,7 @@ Each Rust library also records its graph-selected externs and search directories
 uses those bindings instead of inferring a dependency's identity from an artifact directory.
 """
 
-from rust::incan_lang::interop::loaf_names import artifact_stem, native_crate_name
+from rust::incan_loaf_names import artifact_stem, native_crate_name
 from rust::std::process import id
 from std.fs import Path
 from std.json import JsonValue

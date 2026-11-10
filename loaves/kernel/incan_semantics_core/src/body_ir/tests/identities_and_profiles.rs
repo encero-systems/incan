@@ -40,7 +40,7 @@ fn primitive_metadata_keeps_source_ownership() -> Result<(), String> {
         };
         let path = super::loaf_item_path(&scoped).ok_or("missing scoped native path")?;
         let (native, symbol) = path.split_once("::").ok_or("missing native crate separator")?;
-        assert_eq!(native, incan_lang::interop::loaf_names::native_crate_name(package));
+        assert_eq!(native, incan_loaf_names::native_crate_name(package));
         assert_eq!(
             crate::decode_incan_symbol_identity(symbol).map_err(|error| error.to_string())?,
             Some(scoped)

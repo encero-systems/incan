@@ -1,6 +1,6 @@
 """Prepare the native metadata Rust checking needs and check authored Incan units separately."""
 
-from rust::incan_lang::interop::loaf_names import artifact_stem, native_crate_name
+from rust::incan_loaf_names import artifact_stem, native_crate_name
 from rust::std::time import Instant
 from std.fs import Path
 from std.json import JsonValue

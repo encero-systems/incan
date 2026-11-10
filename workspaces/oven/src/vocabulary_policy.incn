@@ -1,6 +1,6 @@
 """Lock exact vocabulary provider units and apply the build's explicit native-provider admission policy."""
 
-from rust::incan_lang::interop::loaf_names import artifact_stem
+from rust::incan_loaf_names import artifact_stem
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue

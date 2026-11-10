@@ -1,6 +1,6 @@
 """Identify units by compiled sources, effective invocation facts and recorded linked identities; guard reuse locally."""
 
-from rust::incan_lang::interop::loaf_names import artifact_stem, native_crate_name
+from rust::incan_loaf_names import artifact_stem, native_crate_name
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256

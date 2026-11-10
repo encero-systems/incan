@@ -16,8 +16,8 @@ use incan_frontend::ast::{DecoratorArg, DecoratorArgValue, Expr, Literal};
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure};
 use incan_frontend::parsed_module::ParsedModule;
-use incan_lang::interop::loaf_names::native_crate_name;
 use incan_lang::lang::derives::{self, DeriveId};
+use incan_loaf_names::native_crate_name;
 use incan_mir_lowering::{
     RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning, layout_runtime_requirements, program_refusals,
     resume_unit_plan, unit_plan,

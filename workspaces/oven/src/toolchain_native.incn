@@ -1,6 +1,6 @@
 """Build native support once and bind runtime and standard source units to that exact generation."""
 
-from rust::incan_lang::interop::loaf_names import native_crate_name
+from rust::incan_loaf_names import native_crate_name
 from rust::std::env import args
 from std.fs import Path
 from std.json import JsonValue

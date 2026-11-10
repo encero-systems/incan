@@ -202,7 +202,7 @@ impl LoafCallable {
 }
 
 /// The single native-name projection shared by publication, retained bodies and Oven.
-pub use incan_lang::interop::loaf_names::native_crate_name as loaf_crate_name;
+pub use incan_loaf_names::native_crate_name as loaf_crate_name;
 
 /// The compiled item a linked Loaf declares `canonical` as (DD-0007): `<crate>::<encoded identity>`, the item the Loaf
 /// exports at its crate root under the encoding of the declaration's canonical identity. `None` for an identity no

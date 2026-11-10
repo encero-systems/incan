@@ -1,7 +1,7 @@
 //! Demand loading behind an admitted, generation-bound inventory. Summaries contain only facts derived from the
 //! ordinary manifest reader; an unavailable summary takes that reader again rather than guessing at absent facts.
 
-use incan_lang::interop::loaf_names::artifact_stem;
+use incan_loaf_names::artifact_stem;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read;

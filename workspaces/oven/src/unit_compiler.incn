@@ -1,6 +1,6 @@
 """Write and compile one prepared unit through the installed compiler, without resolving dependencies."""
 
-from rust::incan_lang::interop::loaf_names import native_crate_name
+from rust::incan_loaf_names import native_crate_name
 from rust::std::process import Command, Stdio
 from std.fs import Path
 from driver_command import driver_command

@@ -4,7 +4,7 @@
 //! A session is opened once from the unit description Oven supplies (DD-0008) and reused by every stage, so the
 //! Loaves, the vocabulary they bring and the active features are decided once per unit.
 
-use incan_lang::interop::loaf_names::artifact_stem;
+use incan_loaf_names::artifact_stem;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};

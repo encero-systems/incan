@@ -1,6 +1,6 @@
 """Check Incan inspection units and cache their interfaces without building native libraries."""
 
-from rust::incan_lang::interop::loaf_names import artifact_stem
+from rust::incan_loaf_names import artifact_stem
 from rust::std::process import id
 from std.fs import Path
 from features import FeatureRequest

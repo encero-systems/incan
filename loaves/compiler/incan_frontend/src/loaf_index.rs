@@ -8,7 +8,7 @@
 
 //! Here `<name>` is the shared artifact stem: unchanged for bare packages and reversibly encoded for scoped ones.
 
-use incan_lang::interop::loaf_names::artifact_stem;
+use incan_loaf_names::artifact_stem;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -820,7 +820,7 @@ fn normalize_keyword_registration(key: &str, registration: &KeywordRegistration)
 mod scoped_name_tests {
     use super::LoafArtifact;
     use crate::library_manifest::LibraryManifest;
-    use incan_lang::interop::loaf_names::artifact_stem;
+    use incan_loaf_names::artifact_stem;
 
     /// The ordinary retained reader opens encoded filenames while retaining the exact scoped semantic owner.
     #[test]

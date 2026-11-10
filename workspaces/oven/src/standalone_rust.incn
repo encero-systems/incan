@@ -1,6 +1,6 @@
 """Bind standalone source imports to exact compiled registry Loaves before checking their Rust items."""
 
-from rust::incan_lang::interop::loaf_names import artifact_stem
+from rust::incan_loaf_names import artifact_stem
 from std.fs import Path
 from std.json import JsonValue
 from files import json_text, make_directory, parse_json, read_json, write

@@ -1,7 +1,6 @@
 """Bind the shared local graph's exact artifacts to a compiler unit description (DD-0008)."""
 
-from rust::incan_lang::interop::loaf_names import artifact_stem, native_crate_name
-from rust::incan_lang::interop::loaf_names import artifact_stem
+from rust::incan_loaf_names import artifact_stem, native_crate_name
 from std.fs import Path
 from std.json import JsonValue
 from std.toml import TomlValue

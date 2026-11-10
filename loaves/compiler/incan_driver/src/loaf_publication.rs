@@ -7,7 +7,7 @@
 mod exports;
 pub(crate) mod vocab;
 
-use incan_lang::interop::loaf_names::artifact_stem;
+use incan_loaf_names::artifact_stem;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
@@ -76,7 +76,10 @@ impl PreparedLoafPublication {
             write(format!("{}.rustabi", artifact_stem(&self.name)), &rust_abi)?;
         }
         write(format!("{}.native.json", artifact_stem(&self.name)), &self.closure)?;
-        write(format!("{}.incnlib", artifact_stem(&self.name)), self.manifest.as_bytes())
+        write(
+            format!("{}.incnlib", artifact_stem(&self.name)),
+            self.manifest.as_bytes(),
+        )
     }
 }
 

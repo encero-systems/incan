@@ -9,7 +9,7 @@ use incan_driver::error::{CliError, CliResult};
 use incan_driver::rust_abi::cached_rust_facts;
 use incan_driver::session::CompilationSession;
 use incan_driver::unit::UnitDescription;
-use incan_lang::interop::loaf_names::{artifact_stem, native_crate_name};
+use incan_loaf_names::{artifact_stem, native_crate_name};
 
 type Generation = Vec<(PathBuf, Option<String>)>;
 

@@ -3,7 +3,7 @@
 //! unsupported observations keep the ordinary reader. Each reading is bounded in size; a store holds every current
 //! reading and drops, one by one, the readings whose files have changed or gone.
 
-use incan_lang::interop::loaf_names::artifact_stem;
+use incan_loaf_names::artifact_stem;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};

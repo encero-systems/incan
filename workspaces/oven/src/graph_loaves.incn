@@ -1,6 +1,6 @@
 """Read published standard and registry Loaf graphs; legacy source-backed packages have one cached export."""
 
-from rust::incan_lang::interop::loaf_names import artifact_stem
+from rust::incan_loaf_names import artifact_stem
 from std.fs import Path
 from std.toml import TomlValue
 from files import parse_json

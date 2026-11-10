@@ -27,6 +27,3 @@ pub use metadata::{
     rust_source_callable_bound_for_type_param, rust_source_type_param_has_as_fd_bound, split_top_level_rust_args,
     strip_rust_borrow_lifetimes,
 };
-
-/// Shared native/file naming for admitted Loaf identities.
-pub mod loaf_names;
