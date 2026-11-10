@@ -215,6 +215,7 @@ impl CompilationSession {
         };
         let uncovered = imported_rust_paths(modules)
             .into_iter()
+            .chain(self.loaves.stale_shipped_rust_paths())
             .filter(|path| self.loaves.rust_abi_item(path).is_none())
             .collect::<BTreeSet<_>>();
         self.loaves
