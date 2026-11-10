@@ -35,7 +35,7 @@ from toolchain import (
     load_toolchain_at,
 )
 from compiler_facts import admit_fact, verified_fact, relocate_fact, fact_identity
-from unit_rust import add_extern, compile_library_unit
+from unit_rust import add_extern, compile_library_unit, prepare_linked
 from unit_publication import published_identity, record_path, record_payload, verified_payload, relocate_payload
 from unit_freshness import artifact_files, record, fingerprint
 from freshness_fixtures import fixture, make_executable, reconcile, unit_key, write
@@ -76,6 +76,29 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     verify_worker_publication(scratch.path().joinpath("workers"))?
     verify_native_alias_artifacts(scratch.path().joinpath("aliases"))?
     verify_requested_loaf_roots(scratch.path().joinpath("requested-roots"))?
+    verify_checked_product_context(scratch.path().joinpath("checked-products"))?
+    return Ok(None)
+
+
+def verify_checked_product_context(scratch: Path) -> Result[None, str]:
+    """Unchanged library and program preparation retain one stable selection for prior checked products."""
+    setup = fixture(scratch)?
+    mut library = setup.unit
+    library.kind = "library"
+    library.loaves = []
+    first_library = prepare_linked(library, setup.toolchain)?
+    second_library = prepare_linked(library, setup.toolchain)?
+    assert first_library.checked_context is not None
+    assert first_library.checked_context == second_library.checked_context
+    assert first_library.checked_products == second_library.checked_products
+    mut program = setup.unit
+    program.kind = "program"
+    program.loaves = []
+    first_program = prepare_linked(program, setup.toolchain)?
+    second_program = prepare_linked(program, setup.toolchain)?
+    assert first_program.checked_context is not None
+    assert first_program.checked_context == second_program.checked_context
+    assert first_program.checked_products == second_program.checked_products
     return Ok(None)
 
 
