@@ -2,6 +2,7 @@
 
 from table_views import borrowed_at, borrowed_table
 from rust::incan_semantics_core import (
+    HirSourceSpan,
     IncanCallableParam as RustCallableParam,
     IncanType as RustType,
     CanonicalSymbolId,
@@ -294,6 +295,18 @@ def specialize_body(body: &Body, concrete: &RustType, arguments: list[TraitTypeA
         result.params[index].ty = parameter_type
     return_type: RustType = instantiate_type(result.return_type, concrete, arguments)
     result.return_type = return_type
+    # Adoption closes trait binders before the default's own method binders are instantiated.
+    match result.checked_input_profile:
+        Some(profile) =>
+            mut closed_profile = profile.clone()
+            mut requirements: list[tuple[HirSourceSpan, RustType]] = []
+            for requirement in profile.result_requirements:
+                anchor, required_type = requirement
+                closed_type: RustType = instantiate_type(required_type, concrete, arguments)
+                requirements.append((anchor, closed_type))
+            closed_profile.result_requirements = requirements
+            result.checked_input_profile = Some(closed_profile)
+        None => pass
     return result
 
 

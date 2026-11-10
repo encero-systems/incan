@@ -144,6 +144,9 @@ pub(in crate::typechecker) struct InvocationArgument {
 #[derive(Debug, Clone)]
 pub(in crate::typechecker) struct Invocation {
     pub callee: CanonicalSymbolId,
+    /// A generic source result must prove this exact type has independent storage after substitution.
+    /// This is an obligation, not permission to discard dependencies from an arbitrary type argument.
+    pub result_requirement: Option<crate::symbols::ResolvedType>,
     pub receiver: Option<LoanId>,
     /// A native by-value receiver has an evaluation and optional source but no borrow loan.
     pub receiver_owned: bool,

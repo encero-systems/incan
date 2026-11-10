@@ -54,6 +54,7 @@ from lists import list_iterator_locals, taking_iterator_locals, list_parameter_t
 from async_ import future_type, integer_entry, evaluator_name, is_future
 from defaults import default_type
 from type_parameters import Instance, substitute
+from result_requirements import validate_result_requirements
 from computed_statics import enters_module_initialization, initialize_module_statics
 from closures import (
     validate_callable_representation,
@@ -98,6 +99,7 @@ pub def lower_function(
     selected_name = frame_name(evaluator_name(module, body), role)
     cached_decorator, initializing_decorator = frame_decorator_role(module, body, role)?
     validate_callable_representation(body)?
+    validate_result_requirements(body)?
     mut declared_carrier = PlanType.Unit
     match native_source_type(constructors, nominals, enums, unions, body.return_type, intrinsics, file):
         Ok(carrier) => declared_carrier = carrier

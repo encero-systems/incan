@@ -1,6 +1,7 @@
 """Closed native callable instances selected exclusively by checked call-site arguments."""
 
 from rust::incan_semantics_core import (
+    HirSourceSpan,
     IncanCallableParam as RustCallableParam,
     IncanType as RustType,
     SemanticSourceTargetKind,
@@ -270,6 +271,7 @@ pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots
         result.params[index].ty = concrete
     concrete: RustType = substitute(result.return_type, names, storage)?
     result.return_type = source_nominal_storage(source_owners, concrete)?
+    close_result_requirements(result, names, storage)?
     mut name = body_name
     for argument in arguments:
         name += type_component(argument)
@@ -277,6 +279,22 @@ pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots
         name += f"__owned_callable_{slot}"
     result.name = name
     return Ok(result)
+
+
+pub def close_result_requirements(mut body: &mut Body, names: list[str], arguments: list[RustType]) -> Result[None, str]:
+    """Close result obligations with the same declared binders as the frame, retaining their original call anchors."""
+    match body.checked_input_profile:
+        Some(profile) =>
+            mut closed_profile = profile.clone()
+            mut requirements: list[tuple[HirSourceSpan, RustType]] = []
+            for requirement in profile.result_requirements:
+                anchor, required_type = requirement
+                closed_type = substitute(required_type, names, arguments)?
+                requirements.append((anchor, closed_type))
+            closed_profile.result_requirements = requirements
+            body.checked_input_profile = Some(closed_profile)
+        None => pass
+    return Ok(None)
 
 
 pub def instantiate_parameter(

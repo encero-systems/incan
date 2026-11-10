@@ -157,6 +157,10 @@ pub(super) fn project_compiled_frame(
     if let Some(profile) = &mut frame.checked_input_profile {
         audit.identity(&mut profile.owner, false)?;
         profile.owned_initializers.clear();
+        profile.result_requirements.clear();
+        if matches!(profile.version, 3 | 4) {
+            profile.version -= 2;
+        }
     }
     frame.decl_id = declaration_id(identity)?;
     frame.direct_call_id = frame.decl_id.clone();
@@ -267,7 +271,7 @@ pub(super) fn project_body(
         || source
             .checked_input_profile
             .as_ref()
-            .is_some_and(|profile| profile.version != 1)
+            .is_some_and(|profile| !matches!(profile.version, 1 | 3))
     {
         return Err(CoverageReason::UnsupportedConstruct);
     }
@@ -298,6 +302,9 @@ pub(super) fn project_body(
     audit.identity(canonical, false)?;
     if let Some(profile) = &mut body.checked_input_profile {
         audit.identity(&mut profile.owner, false)?;
+        for (_, ty) in &profile.result_requirements {
+            audit.ty(ty)?;
+        }
     }
     body.decl_id = declaration_id(canonical)?;
     body.direct_call_id = body.decl_id.clone();

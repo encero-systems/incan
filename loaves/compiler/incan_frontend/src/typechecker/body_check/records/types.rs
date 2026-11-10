@@ -14,6 +14,16 @@ pub(super) fn type_fields(ty: &ResolvedType, fields: &mut Vec<String>) -> Result
         ResolvedType::Bytes => fields.push("bytes".into()),
         ResolvedType::Unit => fields.push("unit".into()),
         ResolvedType::Unknown => fields.push("unknown".into()),
+        ResolvedType::Named(name) if !name.is_empty() => fields.extend(["named".into(), name.clone()]),
+        ResolvedType::TypeVar(name) if !name.is_empty() => fields.extend(["type-var".into(), name.clone()]),
+        ResolvedType::Generic(_, arguments)
+            if (ty.is_result() && arguments.len() == 2) || (ty.is_option() && arguments.len() == 1) =>
+        {
+            fields.push(if ty.is_result() { "result" } else { "option" }.into());
+            for argument in arguments {
+                type_fields(argument, fields)?;
+            }
+        }
         ResolvedType::Generic(name, arguments) if name == "List" && arguments.len() == 1 => {
             fields.push("list".into());
             type_fields(&arguments[0], fields)?;
@@ -53,6 +63,25 @@ fn read_type_at(fields: &mut std::slice::Iter<'_, String>, depth: usize) -> Resu
         "bytes" => ResolvedType::Bytes,
         "unit" => ResolvedType::Unit,
         "unknown" => ResolvedType::Unknown,
+        "named" => {
+            let name = next(fields)?;
+            if name.is_empty() {
+                return Err(NodeBindingError::Unsupported("empty named type"));
+            }
+            ResolvedType::Named(name.into())
+        }
+        "type-var" => {
+            let name = next(fields)?;
+            if name.is_empty() {
+                return Err(NodeBindingError::Unsupported("empty type binder"));
+            }
+            ResolvedType::TypeVar(name.into())
+        }
+        "result" => ResolvedType::Generic(
+            "Result".into(),
+            vec![read_type_at(fields, depth + 1)?, read_type_at(fields, depth + 1)?],
+        ),
+        "option" => ResolvedType::Generic("Option".into(), vec![read_type_at(fields, depth + 1)?]),
         "list" => ResolvedType::Generic("List".into(), vec![read_type_at(fields, depth + 1)?]),
         "ownership" => {
             let name = next(fields)?;

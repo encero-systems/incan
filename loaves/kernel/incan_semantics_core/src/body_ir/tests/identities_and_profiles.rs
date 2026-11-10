@@ -211,6 +211,7 @@ fn explicit_inputs_require_matching_body_profile() -> Result<(), Box<dyn std::er
     body.params[0].input_access = crate::IncanInputAccess::Shared;
     assert!(body.first_representation_gap().is_some());
     let profile = super::CheckedInputProfile {
+        result_requirements: Vec::new(),
         version: 1,
         owner: body.canonical.clone().ok_or("missing owner")?,
         owned_initializers: Vec::new(),
@@ -236,6 +237,12 @@ fn explicit_inputs_require_matching_body_profile() -> Result<(), Box<dyn std::er
         .ok_or("profile is not an object")?
         .remove("owned_initializers");
     assert!(serde_json::from_value::<super::CheckedInputProfile>(old_profile).is_err());
+    let mut missing_requirements = serde_json::to_value(&profile)?;
+    missing_requirements
+        .as_object_mut()
+        .ok_or("profile is not an object")?
+        .remove("result_requirements");
+    assert!(serde_json::from_value::<super::CheckedInputProfile>(missing_requirements).is_err());
     let assignment = HirSourceSpan::new(10, 30).with_expansion(Some([7; 32]));
     let initializer = super::CheckedOwnedInitializer {
         source: CanonicalSymbolId::module_declaration(
@@ -253,9 +260,14 @@ fn explicit_inputs_require_matching_body_profile() -> Result<(), Box<dyn std::er
         assignment,
     };
     // Initializer transfers travel with both profiles; only the conditional profile may execute them.
-    for version in [1, 2] {
+    for version in [1, 2, 3, 4] {
         body.checked_input_profile = Some(super::CheckedInputProfile {
             version,
+            result_requirements: if version >= 3 {
+                vec![(body.span, IncanType::Primitive(IncanPrimitiveType::Int))]
+            } else {
+                Vec::new()
+            },
             owned_initializers: vec![initializer.clone()],
             ..profile.clone()
         });
@@ -263,7 +275,7 @@ fn explicit_inputs_require_matching_body_profile() -> Result<(), Box<dyn std::er
         assert_eq!(decoded.checked_input_profile, body.checked_input_profile);
         assert_eq!(
             decoded.first_representation_gap().is_some(),
-            version == 1,
+            matches!(version, 1 | 3),
             "profile {version} with an initializer transfer"
         );
     }
@@ -277,6 +289,7 @@ fn explicit_inputs_require_matching_body_profile() -> Result<(), Box<dyn std::er
     assert!(legacy.first_representation_gap().is_some());
     for invalid in [
         super::CheckedInputProfile {
+            result_requirements: Vec::new(),
             version: 3,
             ..profile.clone()
         },
@@ -326,6 +339,7 @@ fn explicit_calls_require_persisted_caller_authority() -> Result<(), Box<dyn std
     );
     caller.canonical = Some(owner.clone());
     caller.checked_input_profile = Some(super::CheckedInputProfile {
+        result_requirements: Vec::new(),
         version: 1,
         owner,
         owned_initializers: Vec::new(),

@@ -46,6 +46,16 @@ impl CheckedInputBody<'_> {
             .ok_or("input value has no checked source type")?;
         self.facts.checked_input_copy_value(self.canonical_owner(), ty)
     }
+    /// Retain each authenticated call's unresolved result obligation for executable-template publication.
+    pub(crate) fn result_requirements(
+        &self,
+    ) -> impl Iterator<Item = (incan_semantics_core::HirSourceSpan, &crate::symbols::ResolvedType)> {
+        self.graph
+            .invocations
+            .iter()
+            .filter_map(|(span, call)| call.result_requirement.as_ref().map(|ty| (*span, ty)))
+    }
+
     /// Read a local's already authenticated request; bindings from other bodies are not part of this view.
     pub(crate) fn local_mode(&self, local: &CanonicalSymbolId) -> Option<OwnershipMode> {
         self.facts
@@ -320,6 +330,17 @@ impl TypeCheckInfo {
                 || call.receiver.is_some() != invocation.receiver_evaluation.is_some()
             {
                 return Err("invocation differs from its checked caller or signature");
+            }
+            let result = self.expr_type(*span).ok_or("invocation result has no checked type")?;
+            let contract = self.selected_input_contract(call)?;
+            let required = call.kind == InputCallKind::Explicit
+                && contract.is_some_and(|contract| {
+                    contract.result_source.is_none()
+                        && contract.modes.iter().all(|mode| mode.component.parameter.is_some())
+                })
+                && super::source::calls::conditional_result(result);
+            if invocation.result_requirement.as_ref() != required.then_some(result) {
+                return Err("invocation has missing or mismatched generic result requirement");
             }
             let mut supplied = std::collections::BTreeSet::new();
             for argument in &invocation.arguments {
