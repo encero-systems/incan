@@ -25,7 +25,7 @@ Primitive type-argument names such as `T.__class_name__()` for `T=int`, `T=float
 
 ### `FieldInfo`
 
-Field metadata returned by `__fields__()`.
+An Incan model returned in the frozen list from `__fields__()`. `std.primitives.reflection.FieldInfo` and `std.reflection.FieldInfo` name the same type. Explicit construction supplies every field below; `==` and `!=` compare all stored fields.
 
 | Field | Type | Description |
 | --- | --- | --- |

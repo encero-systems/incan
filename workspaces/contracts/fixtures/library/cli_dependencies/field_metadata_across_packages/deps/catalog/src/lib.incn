@@ -1,4 +1,5 @@
 from std.primitives import copy_frozen_bytes, hexlify
+from std.primitives.reflection import FieldInfo
 
 
 pub model Account:
@@ -23,3 +24,8 @@ pub def local_record_metadata() -> list[str]:
                 f"{info.name}:{hexlify(copy_frozen_bytes(info.identity))}:{info.canonical}:{','.join([str(name) for name in info.renamed_from])}",
             )
     return result
+
+
+pub def metadata() -> FrozenList[FieldInfo]:
+    """Return the actual primitive-owned records across the provider boundary."""
+    return Account.__fields__()

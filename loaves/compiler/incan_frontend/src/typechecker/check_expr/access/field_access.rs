@@ -85,13 +85,15 @@ impl TypeChecker {
             TypeInfo::Newtype(nt) if field == conventions::NEWTYPE_TUPLE_FIELD => {
                 let underlying = nt.underlying.clone();
                 // The wrapped slot belongs to the newtype's declaration, including one a library returned without
-                // the consumer importing it.
+                // the consumer importing it. A checked carrier key retains that same owner even though it is not a
+                // source symbol-table binding.
                 let owner = self
                     .symbols
                     .lookup(type_name)
                     .and_then(|symbol| self.symbols.identity_of(symbol))
                     .or_else(|| self.public_library_type_identities.get(type_name)?.canonical.as_ref())
-                    .cloned();
+                    .cloned()
+                    .or_else(|| self.checked_nominal_type_identities().get(type_name).cloned());
                 if let Some(owner) = owner {
                     self.type_info.record_resolved_identity(span, owner);
                 }

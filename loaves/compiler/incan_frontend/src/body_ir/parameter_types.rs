@@ -265,7 +265,9 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
                 .declarations
                 .body_ir_native_type_identities
                 .get(&base)
-                .map_or(base.clone(), |owner| owner.declaration_name.clone());
+                .map_or(base.clone(), |owner| {
+                    bir::nominal_carrier_key(owner).unwrap_or_else(|| owner.declaration_name.clone())
+                });
             // A provider-qualified Incan base is a checked nominal, not a Rust item whose crate is named `pub`.
             let base = if crate::typechecker::split_canonical_public_library_type_name(&base).is_some() {
                 match facts.qualify_semantic_type(IncanType::Named(base)) {
@@ -341,8 +343,7 @@ pub(super) fn retained_type_identities(
         if !matches!(
             &identity.origin,
             incan_semantics_core::SymbolOrigin::Package { .. } | incan_semantics_core::SymbolOrigin::RustCrate(_)
-        ) || bir::native_nominal_item(identity).is_none()
-        {
+        ) {
             continue;
         }
         identities.entry(name.clone()).or_insert_with(|| identity.clone());

@@ -12,6 +12,12 @@
 #   Vault
 #   1
 
+model FieldInfo:
+    """An ordinary local name must not replace the primitive metadata carrier."""
+
+    pub own_value: int
+
+
 pub model Vault:
     secret: str = "sealed"
     pub label as "wire_label": str
@@ -40,6 +46,9 @@ def column_count[T]() -> int:
 
 def main() -> None:
     """Print visible fields and generated class names, including one effectful receiver."""
+    local = FieldInfo(own_value=7)
+    assert local.own_value == 7
+    assert str(FieldInfo.__fields__()[0].name) == "own_value"
     vault = Vault(label="public")
     for info in vault.__fields__():
         println(info.name)

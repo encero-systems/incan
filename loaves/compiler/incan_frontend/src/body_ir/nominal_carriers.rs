@@ -208,11 +208,9 @@ pub(crate) fn retain_published_frame(body: &mut bir::Body) {
 /// Retain canonical carriers on decoded declarations without rechecking or changing their persisted ownership.
 pub(crate) fn retain_published_module(module: &mut bir::BodyIrModule) {
     for declaration in &mut module.nominal_declarations {
-        // A checked SDK layout may have been published before its native bridge needed an encoded carrier.
-        // Preserve its exact declaration owner in that carrier slot; a conflicting retained key remains refused.
-        if bir::native_nominal_item(&declaration.canonical).is_some()
-            && let Some(key) = nominal_carrier_key(&declaration.canonical)
-        {
+        // Older source-owned standard layouts were published under short names. Preserve the authenticated
+        // declaration owner in its carrier slot too; a conflicting retained key remains refused.
+        if let Some(key) = nominal_carrier_key(&declaration.canonical) {
             declaration
                 .named_type_identities
                 .entry(key)

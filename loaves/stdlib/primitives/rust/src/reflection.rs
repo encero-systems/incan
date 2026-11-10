@@ -3,11 +3,9 @@
 //! The `HasFieldInfo` trait provides introspection capabilities for structured types, allowing generated code to query
 //! field names and types at runtime.
 //!
-//! This boundary stays in Rust because the rustc MIR adapter must name and construct one concrete `FieldInfo` carrier
-//! and implement native reflection traits for compiler-emitted nominal types. Incan owns the public `std.reflection`
-//! declaration; these types carry that checked contract across the native ABI.
+//! Typed metadata records are owned by the Incan primitive package. This native module retains only the name/value
+//! reflection capabilities and type token needed by native integration; it owns no typed metadata layout.
 
-use crate::frozen::{FrozenBytes, FrozenDict, FrozenList, FrozenStr};
 use std::marker::PhantomData;
 
 /// Provides reflection information about a type's fields.
@@ -36,15 +34,6 @@ pub trait HasFieldInfo {
     fn field_types() -> Vec<&'static str>;
 }
 
-/// Provides the rich field metadata returned by Incan's value-level `__fields__()` helper.
-///
-/// The compiler implements this trait for generated models and classes so generic Incan code can use
-/// `value.__fields__()` through an inferred Rust capability bound without changing the concrete reflection result.
-pub trait HasFieldMetadata {
-    /// Returns field metadata for this value's type.
-    fn __fields__(&self) -> FrozenList<FieldInfo>;
-}
-
 /// Provides value-level field reflection for generic Incan row helpers.
 ///
 /// Concrete model and class values keep their compiler-generated typed `__field_value__()` and `__field_items__()`
@@ -56,15 +45,6 @@ pub trait HasFieldValueReflection {
 
     /// Return reflected field name/value pairs in declaration order.
     fn __field_items__(&self) -> Vec<(String, String)>;
-}
-
-/// Provides type-level field metadata for generated models and classes.
-///
-/// The compiler uses this trait for generic schema helpers that reflect on an explicit type argument, for example
-/// `T.__fields__()`, without requiring a dummy runtime value.
-pub trait HasTypeFieldMetadata {
-    /// Returns field metadata for this type.
-    fn __fields__() -> FrozenList<FieldInfo>;
 }
 
 /// Provides the value-level `__class_name__()` reflection helper for generated models and classes.
@@ -123,21 +103,3 @@ impl_primitive_type_class_name!(u64 => "u64");
 impl_primitive_type_class_name!(u128 => "u128");
 impl_primitive_type_class_name!(usize => "usize");
 impl_primitive_type_class_name!(f32 => "f32");
-
-/// Runtime value type for field reflection (RFC 021).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FieldInfo {
-    pub name: FrozenStr,
-    /// Six-byte compiler identity derived from the field's earliest declared name.
-    pub identity: FrozenBytes,
-    /// Whether the field participates in its model's canonical stored hash.
-    pub canonical: bool,
-    /// Earlier declared names in chronological order, earliest first.
-    pub renamed_from: FrozenList<FrozenStr>,
-    pub alias: Option<FrozenStr>,
-    pub description: Option<FrozenStr>,
-    pub wire_name: FrozenStr,
-    pub type_name: FrozenStr,
-    pub has_default: bool,
-    pub extra: FrozenDict<FrozenStr, FrozenStr>,
-}

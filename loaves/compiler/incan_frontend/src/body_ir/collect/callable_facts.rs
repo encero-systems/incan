@@ -62,6 +62,7 @@ pub(in crate::body_ir) fn collect_published_newtype_returns(
 ) -> HashMap<CanonicalSymbolId, Option<PublishedNewtypeReturn>> {
     let mut returns = HashMap::new();
     let mut newtype_methods = HashSet::new();
+    let layouts = published_newtype_layouts(context);
     for module in context {
         for body in module.callable_declaration_frames() {
             let Some(identity) = body.canonical.as_ref().filter(|identity| {
@@ -74,18 +75,7 @@ pub(in crate::body_ir) fn collect_published_newtype_returns(
             if owner.is_some() {
                 newtype_methods.insert(identity.clone());
             }
-            let declaration = owner.and_then(|owner| {
-                module.nominal_declarations.iter().find(|declaration| {
-                    declaration.canonical == *owner
-                        && declaration.public
-                        && declaration.type_parameters.is_empty()
-                        && declaration.native_item.is_empty()
-                        && declaration.fields == ["0"]
-                        && declaration.field_identities == [owner.clone()]
-                        && declaration.field_public == [true]
-                        && module.is_well_formed_nominal_declaration(declaration)
-                })
-            });
+            let declaration = owner.and_then(|owner| layouts.get(owner).copied().flatten());
             let candidate = declaration.map(|declaration| PublishedNewtypeReturn {
                 ty: body.return_type.clone(),
                 declaration: declaration.clone(),
@@ -104,6 +94,39 @@ pub(in crate::body_ir) fn collect_published_newtype_returns(
     }
     returns.retain(|identity, _| newtype_methods.contains(identity));
     returns
+}
+
+/// Index exact newtype owners across the retained modules: a method may return another module's declaration.
+/// Validate each layout in its own module and keep missing, malformed or conflicting ownership as a denial.
+fn published_newtype_layouts(
+    context: &[bir::BodyIrModule],
+) -> HashMap<CanonicalSymbolId, Option<&bir::NominalDeclaration>> {
+    let mut layouts = HashMap::new();
+    for module in context {
+        for declaration in &module.nominal_declarations {
+            let owner = &declaration.canonical;
+            if owner.kind != SemanticSourceTargetKind::Newtype {
+                continue;
+            }
+            let candidate = (declaration.public
+                && declaration.type_parameters.is_empty()
+                && declaration.native_item.is_empty()
+                && declaration.fields == ["0"]
+                && declaration.field_identities == [owner.clone()]
+                && declaration.field_public == [true]
+                && module.is_well_formed_nominal_declaration(declaration))
+            .then_some(declaration);
+            layouts
+                .entry(owner.clone())
+                .and_modify(|retained| {
+                    if *retained != candidate {
+                        *retained = None;
+                    }
+                })
+                .or_insert(candidate);
+        }
+    }
+    layouts
 }
 
 /// Read only a closed, synchronous source method's own checked newtype return binding. Other copies still contribute
