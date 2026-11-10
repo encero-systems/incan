@@ -4,7 +4,7 @@ from std.json import JsonValue
 from std.primitives.crumb.values import Value, ValueField, MapEntry, Metadata, MetadataEntry
 from std.primitives.crumb.types import NominalKind, TypeNode
 from std.primitives.text import encode_utf8
-from case_data import array, field, fields, hex_bytes, nodes, text, absence
+from case_data import FixtureMetadataKind, FixtureValueKind, array, field, fields, hex_bytes, nodes, text, absence
 
 
 pub def integer(value: JsonValue, key: str) -> Result[int, str]:
@@ -15,21 +15,22 @@ pub def integer(value: JsonValue, key: str) -> Result[int, str]:
 pub def logical(value: JsonValue) -> Result[Value, str]:
     """Preserve explicit absence, exact bits and original collection order before production admission."""
     # A local retains match-capture ownership until direct call matching is fixed (#2800).
-    kind = text(value, "kind")?
+    kind = value_kind(value)?
     match kind:
-        "none" => return Ok(Value.NoneValue)
-        "some" => return Ok(Value.Some([logical(field(value, "value")?)?]))
-        "boolean" => return Ok(Value.Boolean(field(value, "value")?.expect_bool().map_err((error) => error.message())?))
-        "int" => return Ok(Value.Integer(text(value, "value")?))
-        "float" => return Ok(Value.Float(integer(value, "width")?, hex_bytes(text(value, "bits")?)?))
-        "decimal" => return Ok(Value.Decimal(text(value, "coefficient")?, str(integer(value, "scale")?)))
-        "string" => return Ok(Value.Text(text(value, "value")?))
-        "binary" => return Ok(Value.Binary(hex_bytes(text(value, "hex")?)?))
-        "withheld" => return Ok(Value.Withheld)
-        "list" => return Ok(Value.List(logical_items(array(value, "items")?)?))
-        "tuple" => return Ok(Value.Tuple(logical_items(array(value, "items")?)?))
-        "set" => return Ok(Value.Set(logical_items(array(value, "items")?)?))
-        "map" =>
+        FixtureValueKind.NoneValue => return Ok(Value.NoneValue)
+        FixtureValueKind.Some => return Ok(Value.Some([logical(field(value, "value")?)?]))
+        FixtureValueKind.Boolean =>
+            return Ok(Value.Boolean(field(value, "value")?.expect_bool().map_err((error) => error.message())?))
+        FixtureValueKind.Integer => return Ok(Value.Integer(text(value, "value")?))
+        FixtureValueKind.Float => return Ok(Value.Float(integer(value, "width")?, hex_bytes(text(value, "bits")?)?))
+        FixtureValueKind.Decimal => return Ok(Value.Decimal(text(value, "coefficient")?, str(integer(value, "scale")?)))
+        FixtureValueKind.String => return Ok(Value.Text(text(value, "value")?))
+        FixtureValueKind.Binary => return Ok(Value.Binary(hex_bytes(text(value, "hex")?)?))
+        FixtureValueKind.Withheld => return Ok(Value.Withheld)
+        FixtureValueKind.List => return Ok(Value.List(logical_items(array(value, "items")?)?))
+        FixtureValueKind.Tuple => return Ok(Value.Tuple(logical_items(array(value, "items")?)?))
+        FixtureValueKind.Set => return Ok(Value.Set(logical_items(array(value, "items")?)?))
+        FixtureValueKind.Map =>
             mut entries: list[MapEntry] = []
             for item in array(value, "entries")?:
                 pair = item.expect_array().map_err((error) => error.message())?
@@ -37,7 +38,7 @@ pub def logical(value: JsonValue) -> Result[Value, str]:
                     return Err("map entry must have two items")
                 entries.append(MapEntry(key=logical(pair[0])?, value=logical(pair[1])?))
             return Ok(Value.Map(entries))
-        "record" =>
+        FixtureValueKind.Record =>
             mut result: list[ValueField] = []
             for item in array(value, "fields")?:
                 identity = hex_bytes(text(item, "id")?)?
@@ -51,16 +52,16 @@ pub def logical(value: JsonValue) -> Result[Value, str]:
                     ),
                 )
             return Ok(Value.Record(result))
-        "enum" =>
+        FixtureValueKind.Enum =>
             identity = hex_bytes(text(value, "variant_id")?)?
             match logical(field(value, "payload")?)?:
                 Value.Record(payload) => return Ok(Value.Enum(identity, payload))
                 _ => return Err("enum corpus payload must be a record")
-        "union" => return Ok(Value.Union(member(field(value, "member_type")?)?, [logical(field(value, "value")?)?]))
-        "reference" =>
+        FixtureValueKind.Union =>
+            return Ok(Value.Union(member(field(value, "member_type")?)?, [logical(field(value, "value")?)?]))
+        FixtureValueKind.Reference =>
             # observed_target is deliberately not an input to the reference contribution.
             return Ok(Value.Reference(opaque(value, "target_type")?, opaque(value, "identity")?))
-        other => return Err("unsupported logical notation: " + other)
 
 
 pub def logical_items(items: list[JsonValue]) -> Result[list[Value], str]:
@@ -80,9 +81,10 @@ def opaque(value: JsonValue, key: str) -> Result[bytes, str]:
 
 def member(value: JsonValue) -> Result[TypeNode, str]:
     """Closed nominal discriminators retain arguments, independently of payload structural shape."""
-    mut kind = NominalKind.Record
-    if text(value, "kind")? == "enum":
-        kind = NominalKind.Enum
+    kind = match NominalKind.from_value(text(value, "kind")?):
+        Some(selected) => selected
+        None => return Err("unknown fixture nominal kind")
+
     mut arguments: list[TypeNode] = []
     if let Some(items) = value.get("arguments"):
         arguments = nodes(items.expect_array().map_err((error) => error.message())?)?
@@ -92,28 +94,41 @@ def member(value: JsonValue) -> Result[TypeNode, str]:
 pub def metadata(value: JsonValue) -> Result[Metadata, str]:
     """Preserve the complete tagged metadata tree, including uninterpreted property entries."""
     # A local retains match-capture ownership until direct call matching is fixed (#2800).
-    kind = text(value, "kind")?
+    kind = metadata_kind(value)?
     match kind:
-        "null" => return Ok(Metadata.Null)
-        "boolean" =>
+        FixtureMetadataKind.Null => return Ok(Metadata.Null)
+        FixtureMetadataKind.Boolean =>
             return Ok(Metadata.Boolean(field(value, "value")?.expect_bool().map_err((error) => error.message())?))
-        "int" => return Ok(Metadata.Integer(text(value, "value")?))
-        "string" => return Ok(Metadata.Text(text(value, "value")?))
-        "binary" => return Ok(Metadata.Binary(hex_bytes(text(value, "hex")?)?))
-        "list" =>
+        FixtureMetadataKind.Integer => return Ok(Metadata.Integer(text(value, "value")?))
+        FixtureMetadataKind.String => return Ok(Metadata.Text(text(value, "value")?))
+        FixtureMetadataKind.Binary => return Ok(Metadata.Binary(hex_bytes(text(value, "hex")?)?))
+        FixtureMetadataKind.List =>
             mut items: list[Metadata] = []
             for item in array(value, "items")?:
                 items.append(metadata(item)?)
             return Ok(Metadata.List(items))
-        "map" =>
+        FixtureMetadataKind.Map =>
             mut entries: list[MetadataEntry] = []
             for item in array(value, "entries")?:
                 pair = item.expect_array().map_err((error) => error.message())?
-                if len(pair) != 2 or text(pair[0], "kind")? != "string":
+                if len(pair) != 2 or metadata_kind(pair[0])? != FixtureMetadataKind.String:
                     return Err("metadata map requires string keys and pairs")
                 entries.append(MetadataEntry(key=text(pair[0], "value")?, value=metadata(pair[1])?))
             return Ok(Metadata.Map(entries))
-        other => return Err("unsupported metadata notation: " + other)
+
+
+def value_kind(value: JsonValue) -> Result[FixtureValueKind, str]:
+    """Parse a logical fixture tag once before translating its payload."""
+    match FixtureValueKind.from_value(text(value, "kind")?):
+        Some(kind) => return Ok(kind)
+        None => return Err("unsupported logical notation")
+
+
+def metadata_kind(value: JsonValue) -> Result[FixtureMetadataKind, str]:
+    """Parse a metadata fixture tag once before translating its payload."""
+    match FixtureMetadataKind.from_value(text(value, "kind")?):
+        Some(kind) => return Ok(kind)
+        None => return Err("unsupported metadata notation")
 
 
 pub def record(shape: JsonValue, items: list[JsonValue]) -> Result[Value, str]:

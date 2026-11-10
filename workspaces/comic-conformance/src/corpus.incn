@@ -5,13 +5,14 @@ from std.json import JsonValue, parse
 from std.primitives.hash import sha256
 from std.primitives.hex import hexlify
 from std.primitives.text import decode_utf8
+from case_data import CaseOperation, CaseStatus, ReceiptStatus
 
 
 pub model CorpusCase:
     """One independently authored case, retaining its exact JSON strings and float-bit labels."""
 
     pub id: str
-    pub operation: str
+    pub operation: CaseOperation
     pub document: JsonValue
 
 
@@ -75,8 +76,15 @@ def append_cases(
     mut cases: list[CorpusCase],
 ) -> Result[None, str]:
     """Admit a data file only with the declared operation, case count and unique identities."""
-    operation = text(entry, "operation")?
-    if text(contents, "operation")? != operation:
+    operation = match CaseOperation.from_value(text(entry, "operation")?):
+        Some(value) => value
+        None => return Err("unknown corpus operation")
+
+    content_operation = match CaseOperation.from_value(text(contents, "operation")?):
+        Some(value) => value
+        None => return Err("unknown corpus operation")
+
+    if content_operation != operation:
         return Err("corpus operation differs from manifest")
     entries = array(contents, "cases")?
     expected = entry.require("cases").and_then((value) => value.expect_int()).map_err((error) => error.message())?
@@ -97,22 +105,22 @@ pub def inventory(corpus: Corpus) -> JsonValue:
     for item in corpus.cases:
         mut record: dict[str, JsonValue] = {}
         record["id"] = JsonValue.string(item.id)
-        record["operation"] = JsonValue.string(item.operation)
-        record["status"] = JsonValue.string("unsupported")
+        record["operation"] = JsonValue.string(item.operation.value())
+        record["status"] = JsonValue.string(CaseStatus.Unsupported.value())
         records.append(JsonValue.object(record))
     return receipt(corpus, records, 0, 0, len(corpus.cases))
 
 
 pub def receipt(corpus: Corpus, records: list[JsonValue], passed: int, failed: int, unsupported: int) -> JsonValue:
     """Render execution results without confusing verified input inventory with passed codec cases."""
-    mut status = "passed"
+    mut status = ReceiptStatus.Passed
     if failed > 0:
-        status = "failed"
+        status = ReceiptStatus.Failed
     elif unsupported > 0:
-        status = "incomplete"
+        status = ReceiptStatus.Incomplete
     mut receipt: dict[str, JsonValue] = {}
     receipt["schema"] = JsonValue.string("comic.conformance-receipt/1")
-    receipt["status"] = JsonValue.string(status)
+    receipt["status"] = JsonValue.string(status.value())
     receipt["inventory_verified"] = JsonValue.bool(true)
     receipt["manifest_sha256"] = JsonValue.string(corpus.manifest_digest)
     receipt["data_files"] = JsonValue.int(corpus.data_files)

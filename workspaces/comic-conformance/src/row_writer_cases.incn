@@ -7,7 +7,7 @@ from std.primitives.crumb.descriptions import Description, DescriptionMode
 from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.row_writer import write_rows
 from std.primitives.hex import hexlify
-from case_data import array, field, text, hex_bytes
+from case_data import CaseOperation, CaseStatus, ExpectedStatus, array, expected_status, field, text, hex_bytes
 from hash_data import metadata
 from row_case_values import record_value
 from corpus import Corpus
@@ -20,7 +20,7 @@ pub def run_writers(corpus: Corpus, inline_descriptions: JsonValue) -> RunReport
     mut passed = 0
     mut failed = 0
     for example in corpus.cases:
-        if example.operation != "binary_decode" or not example.id.startswith("bytes-"):
+        if example.operation != CaseOperation.BinaryDecode or not example.id.startswith("bytes-"):
             continue
         if not accepted(example.document.get("expected")):
             continue
@@ -29,14 +29,14 @@ pub def run_writers(corpus: Corpus, inline_descriptions: JsonValue) -> RunReport
         match check_writer(example.id, example.document, inline_descriptions):
             Ok(true) =>
                 passed += 1
-                result["status"] = JsonValue.string("passed")
+                result["status"] = JsonValue.string(CaseStatus.Passed.value())
             Ok(false) =>
                 failed += 1
-                result["status"] = JsonValue.string("failed")
+                result["status"] = JsonValue.string(CaseStatus.Failed.value())
                 result["detail"] = JsonValue.string("encoded bytes differ from original literal input_hex")
             Err(error) =>
                 failed += 1
-                result["status"] = JsonValue.string("failed")
+                result["status"] = JsonValue.string(CaseStatus.Failed.value())
                 result["detail"] = JsonValue.string(error)
         results.append(JsonValue.object(result))
     mut code: i32 = 0
@@ -58,8 +58,8 @@ def accepted(expected: Option[JsonValue]) -> bool:
     """Select only original accepted row cases, without treating parser errors as successful refusals."""
     match expected:
         Some(value) =>
-            match text(value, "status"):
-                Ok(status) => return status == "accepted"
+            match expected_status(value):
+                Ok(status) => return status == ExpectedStatus.Accepted
                 Err(_) => return false
         None => return false
 
