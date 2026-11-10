@@ -52,8 +52,7 @@ pub def scalar_cell(kind: ScalarKind, value: Value, mut budget: Budget) -> Resul
 
 pub def integer_cell(value: IntegerValue, width: int, signed: bool, mut budget: Budget) -> Result[bytes, CrumbError]:
     """Range-check a native carrier before producing fixed little-endian two's-complement bytes."""
-    widths = [1, 2, 4, 8, 16]
-    if width not in widths:
+    if not valid_integer_width(width):
         return Err(CrumbError.invalid_input("integer cell width"))
     mut remaining: u128 = 0u128
     match value:
@@ -89,6 +88,11 @@ def unsigned_width(value: u128, width: int) -> bool:
     bits = width * 8
     limit: u128 = 1u128 << bits
     return value < limit
+
+
+pub def valid_integer_width(width: int) -> bool:
+    """Recognize every core fixed integer width without allocating a comparison collection."""
+    return width == 1 or width == 2 or width == 4 or width == 8 or width == 16
 
 
 pub def decimal_cell(precision: int, scale: int, value: Value, mut budget: Budget) -> Result[bytes, CrumbError]:

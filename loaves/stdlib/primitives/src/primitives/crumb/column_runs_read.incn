@@ -2,6 +2,7 @@
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.column_block_data import BlockData
+from crate.primitives.crumb.column_types import BlockEncoding
 from crate.primitives.crumb.column_errors import ColumnError, ColumnFailure, failure, shared, primitive
 from crate.primitives.crumb.column_key_read import ColumnKeys, key_at
 from crate.primitives.crumb.cell_read import cell
@@ -35,7 +36,7 @@ pub def read_runs(
         if length < 1 or length > block.present - total:
             return Err(failure(ColumnFailure.RunLength, offset))
         mut value = Value.NoneValue
-        if block.encoding == 3:
+        if block.encoding == BlockEncoding.Runs:
             raw = cursor.frame(budget).map_err(shared)?
             raw_origin = cursor.absolute() - raw.len()
             encoded = copied(raw, raw_origin, budget).map_err(shared)?

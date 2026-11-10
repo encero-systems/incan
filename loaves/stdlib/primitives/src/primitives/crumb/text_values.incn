@@ -13,6 +13,11 @@ from crate.primitives.hex import hexlify
 from crate.primitives.text import encode_utf8
 
 
+const STORE_KEYS: FrozenSet[str] = {"___id", "___revision", "___model_hash", "___canonical_hash", "___object_hash"}
+const BOOLEAN_SPELLINGS: FrozenSet[str] = {"true", "false"}
+const NONFINITE_SPELLINGS: FrozenSet[str] = {"inf", "-inf", "nan"}
+
+
 pub def parse_root_values(
     mut tokens: TextTokens,
     descriptions: list[TextDescription],
@@ -120,7 +125,7 @@ def parse_cells(
 def field_index(fields: list[FieldShape], key: str, token: TextToken) -> Result[int, TextError]:
     """Resolve an input-only declaration index or an exact field name."""
     if key.startswith("___"):
-        if key not in ["___id", "___revision", "___model_hash", "___canonical_hash", "___object_hash"]:
+        if key not in STORE_KEYS:
             return Err(TextError(kind=TextFailure.UnknownStoreKey, position=token.position))
         return Err(TextError(kind=TextFailure.UnsupportedStoreKey, position=token.position))
     if canonical_unsigned(key):
@@ -201,13 +206,13 @@ def parse_scalar(kind: ScalarKind, mut tokens: TextTokens, mut budget: Budget) -
     """Read one core scalar with exact integer widths, float bits and secret withholding."""
     token = tokens.peek()
     if kind == ScalarKind.Boolean:
-        if token.text not in ["true", "false"]:
+        if token.text not in BOOLEAN_SPELLINGS:
             return Err(TextError(kind=TextFailure.TypeMismatch, position=token.position))
         tokens.take()
         return Ok(Value.Boolean(token.text == "true"))
     if kind.integer_facts().is_some():
         tokens.take()
-        if token.text in ["inf", "-inf", "nan"]:
+        if token.text in NONFINITE_SPELLINGS:
             return Err(TextError(kind=TextFailure.TypeMismatch, position=token.position))
         return parse_integer(kind, token)
     if kind == ScalarKind.Fp32 or kind == ScalarKind.Fp64:
@@ -256,7 +261,7 @@ def parse_integer(kind: ScalarKind, token: TextToken) -> Result[Value, TextError
 def parse_float(kind: ScalarKind, token: TextToken) -> Result[Value, TextError]:
     """Parse through Rust's exact-width scalar and retain canonical IEEE bits."""
     spelling = token.text
-    if spelling not in ["inf", "-inf", "nan"] and not valid_finite_float(spelling):
+    if spelling not in NONFINITE_SPELLINGS and not valid_finite_float(spelling):
         return Err(TextError(kind=TextFailure.InvalidFloat, position=token.position))
     if kind == ScalarKind.Fp32:
         match RustF32.from_str(spelling):
@@ -612,10 +617,16 @@ def u32_bytes(value: u32) -> bytes:
 
 def u64_bytes(value: u64) -> bytes:
     """Write one IEEE binary64 bit pattern in network order."""
-    mut result: list[u8] = []
-    for shift in [56, 48, 40, 32, 24, 16, 8, 0]:
-        result.append(((value >> shift) & 255u64).saturating_resize[u8]())
-    return result
+    return [
+        ((value >> 56) & 255u64).saturating_resize[u8](),
+        ((value >> 48) & 255u64).saturating_resize[u8](),
+        ((value >> 40) & 255u64).saturating_resize[u8](),
+        ((value >> 32) & 255u64).saturating_resize[u8](),
+        ((value >> 24) & 255u64).saturating_resize[u8](),
+        ((value >> 16) & 255u64).saturating_resize[u8](),
+        ((value >> 8) & 255u64).saturating_resize[u8](),
+        (value & 255u64).saturating_resize[u8](),
+    ]
 
 
 def value_index(items: list[Value], candidate: Value) -> int:

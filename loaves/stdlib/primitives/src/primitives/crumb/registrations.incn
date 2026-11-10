@@ -88,11 +88,17 @@ pub class KindRegistry:
 
 def core_shape(kind: str) -> Option[NominalKind]:
     """Recognize the two title-cased core names through their shared nominal-kind vocabulary."""
-    for shape in [NominalKind.Record, NominalKind.Enum]:
-        spelling = shape.value()
-        if kind == spelling[0].upper() + spelling[1:]:
-            return Some(shape)
+    if kind == core_name(NominalKind.Record):
+        return Some(NominalKind.Record)
+    if kind == core_name(NominalKind.Enum):
+        return Some(NominalKind.Enum)
     return None
+
+
+def core_name(shape: NominalKind) -> str:
+    """Render the external title-cased core kind from the closed nominal-kind value."""
+    spelling = shape.value()
+    return spelling[0].upper() + spelling[1:]
 
 
 def charge_name(name: str, mut budget: Budget) -> Result[None, CrumbError]:

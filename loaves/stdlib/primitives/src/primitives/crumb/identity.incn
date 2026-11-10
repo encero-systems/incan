@@ -42,17 +42,23 @@ pub def declaration_preimage(
 ) -> Result[bytes, CrumbError]:
     """Return the binding identity's exact three-component preimage, independent of crumb1 domains."""
     mut output: list[u8] = []
-    for component in [registry, package, earliest_path]:
-        for _ in range(4):
-            budget.charge_bytes(len(component))?
-        data = encode_utf8(component)
-        budget.charge_elements(len(data))?
-        for byte in data:
-            if byte == 0:
-                return Err(CrumbError.invalid_input("nominal identity terminator"))
-        append_bytes(output, data, budget)?
-        append_bytes(output, b"\x00", budget)?
+    append_component(output, registry, budget)?
+    append_component(output, package, budget)?
+    append_component(output, earliest_path, budget)?
     return Ok(output)
+
+
+def append_component(mut output: list[u8], component: str, mut budget: Budget) -> Result[None, CrumbError]:
+    """Append one zero-terminated identity component after refusing an embedded terminator."""
+    for _ in range(4):
+        budget.charge_bytes(len(component))?
+    data = encode_utf8(component)
+    budget.charge_elements(len(data))?
+    for byte in data:
+        if byte == 0:
+            return Err(CrumbError.invalid_input("nominal identity terminator"))
+    append_bytes(output, data, budget)?
+    return append_bytes(output, b"\x00", budget)
 
 
 pub def closed_selector(node: TypeNode, mut budget: Budget) -> Result[bytes, CrumbError]:

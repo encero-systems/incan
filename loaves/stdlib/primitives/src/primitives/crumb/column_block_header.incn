@@ -9,6 +9,7 @@ from crate.primitives.crumb.column_key_read import ColumnKeys
 from crate.primitives.crumb.column_numbers import numeric_type, coefficient
 from crate.primitives.crumb.column_pack_read import validate_pack, octet
 from crate.primitives.crumb.column_value_dictionary import dictionary_type
+from crate.primitives.crumb.column_types import BlockEncoding, uses_dictionary
 from crate.primitives.crumb.cell_read import cell
 from crate.primitives.crumb.encoding_cursor import EncodingCursor
 from crate.primitives.crumb.description_dictionary import Dictionary
@@ -42,14 +43,17 @@ pub def read_header(
         if rows % 8 != 0 and octet(bitmap, size - 1, origin, budget)? >> (rows % 8) != 0:
             return Err(failure(ColumnFailure.NonzeroPadding, origin + size - 1))
         present = rank(bitmap, rows, origin, budget).map_err(shared)?
-    encoding = cursor.length(budget).map_err(shared)?
-    if encoding > 5:
-        return Err(failure(ColumnFailure.UnsupportedEncoding, cursor.absolute()))
-    if present == 0 and encoding != 0:
+    encoding_id = cursor.length(budget).map_err(shared)?
+    mut selected = BlockEncoding.Indexed
+    match BlockEncoding.from_value(encoding_id):
+        Some(value) => selected = value
+        None => return Err(failure(ColumnFailure.UnsupportedEncoding, cursor.absolute()))
+    if present == 0 and selected != BlockEncoding.Indexed:
         return Err(failure(ColumnFailure.EmptyEncoding, cursor.absolute()))
-    if encoding in [1, 2] and not numeric_type(node):
+    numeric = selected == BlockEncoding.FrameOfReference or selected == BlockEncoding.ZigzagDelta
+    if numeric and not numeric_type(node):
         return Err(failure(ColumnFailure.EncodingType, cursor.absolute()))
-    if encoding in [4, 5]:
+    if uses_dictionary(selected):
         if not dictionary_type(node):
             return Err(failure(ColumnFailure.EncodingType, cursor.absolute()))
         if keys.is_none():
@@ -57,15 +61,15 @@ pub def read_header(
     mut cells: Option[CellIndex] = None
     mut width = 0
     mut base = WideInteger.zero()
-    if encoding == 0:
+    if selected == BlockEncoding.Indexed:
         cells = Some(read_index(cursor, present, budget).map_err(shared)?)
-    elif encoding in [1, 2]:
+    elif numeric:
         raw = cursor.frame(budget).map_err(shared)?
         raw_origin = cursor.absolute() - raw.len()
         value = cell(node, raw, raw_origin, dictionary, budget).map_err(shared)?
         base = coefficient(node, value, budget).map_err((e) => primitive(e, raw_origin))?
         width = cursor.length(budget).map_err(shared)?
-    elif encoding == 4:
+    elif selected == BlockEncoding.DictionaryPacked:
         width = cursor.length(budget).map_err(shared)?
         if let Some(admitted) = keys:
             expected = bit_length(WideInteger.from_unsigned((admitted.count - 1).wrapping_resize[u128]()), budget).map_err(
@@ -75,16 +79,16 @@ pub def read_header(
                 return Err(failure(ColumnFailure.NonminimalBits, cursor.absolute()))
     payload_origin = cursor.absolute()
     payload = cursor.take(cursor.remaining(), budget).map_err(shared)?
-    if encoding in [1, 2, 4]:
+    if numeric or selected == BlockEncoding.DictionaryPacked:
         mut count = present + 0
-        if encoding == 2:
+        if selected == BlockEncoding.ZigzagDelta:
             count -= 1
         validate_pack(payload, width, count, payload_origin, budget)?
     return Ok(
         BlockData(
             rows=rows,
             present=present,
-            encoding=encoding,
+            encoding=selected,
             bitmap=bitmap,
             bitmap_origin=origin,
             payload=payload,

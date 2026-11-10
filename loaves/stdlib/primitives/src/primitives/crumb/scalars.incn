@@ -46,8 +46,15 @@ pub def float64_bits(width: int, bits: bytes, mut budget: Budget) -> Result[byte
             fraction *= 2
     high = sign * 2147483648 + wide_exponent * 1048576 + fraction // 4294967296
     low = fraction % 4294967296
-    mut result: list[u8] = []
-    for word in [high, low]:
-        for divisor in [16777216, 65536, 256, 1]:
-            result.append(((word // divisor) % 256).saturating_resize[u8]())
-    return Ok(result)
+    return Ok(
+        [
+            ((high // 16777216) % 256).saturating_resize[u8](),
+            ((high // 65536) % 256).saturating_resize[u8](),
+            ((high // 256) % 256).saturating_resize[u8](),
+            (high % 256).saturating_resize[u8](),
+            ((low // 16777216) % 256).saturating_resize[u8](),
+            ((low // 65536) % 256).saturating_resize[u8](),
+            ((low // 256) % 256).saturating_resize[u8](),
+            (low % 256).saturating_resize[u8](),
+        ],
+    )

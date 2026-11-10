@@ -211,7 +211,7 @@ def parse_property_value(mut tokens: TextTokens, mut budget: Budget) -> Result[M
         result = Metadata.Text(tokens.take().text)
     elif token.kind == TextTokenKind.Binary:
         result = Metadata.Binary(tokens.take().data)
-    elif token.text in ["true", "false"]:
+    elif token.text == "true" or token.text == "false":
         result = Metadata.Boolean(tokens.take().text == "true")
     elif token.text == "None":
         tokens.take()

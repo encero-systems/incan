@@ -49,7 +49,7 @@ pub class EncodingBuffer:
 
     pub def offset(mut self, value: int, width: int, mut budget: Budget) -> Result[None, CrumbError]:
         """Write a nonnegative little-endian offset only if it fits its selected width."""
-        if value < 0 or width not in [1, 2, 4, 8]:
+        if value < 0 or not valid_offset_width(width):
             return Err(CrumbError.invalid_input("encoding offset"))
         if offset_width(value)? > width:
             return Err(CrumbError.invalid_input("encoding offset width"))
@@ -78,6 +78,11 @@ pub def offset_width(length: int) -> Result[int, CrumbError]:
     return Ok(8)
 
 
+pub def valid_offset_width(width: int) -> bool:
+    """Recognize the four fixed offset widths without allocating a comparison collection."""
+    return width == 1 or width == 2 or width == 4 or width == 8
+
+
 pub def indexed(cells: list[bytes], mut budget: Budget) -> Result[bytes, CrumbError]:
     """Build width, count+1 offsets and cells; the containing layout owns count and bitmap."""
     budget.charge_elements(len(cells))?
@@ -102,7 +107,7 @@ pub def indexed(cells: list[bytes], mut budget: Budget) -> Result[bytes, CrumbEr
 
 pub def offset_table_length(count: int, width: int) -> Result[int, CrumbError]:
     """Check count+1 and multiplication before allocating or addressing a fixed-width offset table."""
-    if count < 0 or width not in [1, 2, 4, 8]:
+    if count < 0 or not valid_offset_width(width):
         return Err(CrumbError.invalid_input("offset table dimensions"))
     if count > 9223372036854775807 // width - 1:
         return Err(CrumbError.limit("offset table length"))
