@@ -411,8 +411,8 @@ pub(super) fn pointer_cast_result(
     Ok(scalar(target))
 }
 
-/// Admit a trait-object conversion only from the operand's own reference type to an object reference of the same
-/// mutability. Whether the referent implements the object is rustc's to prove when it builds the conversion.
+/// Admit trait-object conversion from a matching reference or a moved native Box owner. Native metadata and rustc's
+/// solver must still prove the target object, allocator identity and all required bounds before MIR is built.
 pub(super) fn trait_object_result(
     plan: &Plan,
     function: &Function,
@@ -432,12 +432,22 @@ pub(super) fn trait_object_result(
         | (Scalar::ScalarMutRef(inner), Scalar::ModelMutRef(_) | Scalar::ScalarMutRef(_)) => {
             matches!(inner.as_slice(), [Scalar::NativeTraitObject(..)])
         }
+        (Scalar::Model(target), Scalar::Model(source)) if matches!(value.kind, OperandKind::Move(_)) => {
+            let (Some(source), Some(target)) = (model(plan, source), model(plan, *target)) else {
+                return Err(invalid(
+                    function,
+                    "owned trait-object conversion has no retained native owner",
+                ));
+            };
+            let boxes = ["std::boxed::Box", "alloc::boxed::Box"];
+            boxes.contains(&source.library_item.as_str()) && boxes.contains(&target.library_item.as_str())
+        }
         _ => false,
     };
     if !preserved {
         return Err(invalid(
             function,
-            "a trait object conversion keeps its reference's mutability",
+            "a trait object conversion preserves reference mutability or moves a native Box owner",
         ));
     }
     Ok(target)

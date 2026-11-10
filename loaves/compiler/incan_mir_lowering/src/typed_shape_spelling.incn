@@ -1,0 +1,213 @@
+"""Structural typed-value shapes from checked stored slots, independent of public inspection and namespace."""
+
+from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, NumericTypeId, SemanticSourceTargetKind
+from pub::incan_mir_plan import PlanType
+from std.primitives.hash import sha256
+from std.primitives import hexlify
+from frame import Builder
+from table_views import borrowed_at
+from typed_value_constants import value_type
+from stored_types import primitive_selector
+
+
+pub def field_order(builder: Builder, owner: int) -> Result[list[int], str]:
+    """Prove complete stored metadata and sort exact six-byte identities, refusing collisions."""
+    declaration = borrowed_at(builder.nominals, owner)
+    match declaration.reflection_metadata:
+        None => return Err("typed-value shape lacks complete stored field metadata")
+        Some(fields) =>
+            if len(fields) != len(declaration.field_types):
+                return Err("typed-value shape requires fresh complete producer metadata, including private fields")
+            mut keyed: list[tuple[str, int]] = []
+            for slot in range(len(fields)):
+                field = borrowed_at(fields, slot)
+                if int(field.position) != slot or field.name != declaration.fields[slot]:
+                    return Err("typed-value shape has inconsistent physical field metadata")
+                mut digits: list[str] = []
+                for byte in field.record_identity:
+                    digits.append("0123456789abcdef"[int(byte) // 16])
+                    digits.append("0123456789abcdef"[int(byte) % 16])
+                identity = "".join(digits)
+                if len(identity) != 12:
+                    return Err("typed-value field identity is not six bytes")
+                keyed.append((identity, slot))
+            ordered = sorted(keyed)
+            for index in range(1, len(ordered)):
+                if ordered[index - 1][0] == ordered[index][0]:
+                    return Err("typed-value fields have colliding stored identities")
+            return Ok([entry[1] for entry in ordered])
+
+
+pub def spelling(builder: Builder, ty: RustType, active: list[PlanType]) -> Result[str, str]:
+    """Fold structural S, retaining optional layers and referring only to active nominal ancestors."""
+    match ty:
+        RustType.Primitive(primitive) =>
+            match primitive_selector(primitive):
+                Some(value) => return Ok(value)
+                None => return Err("typed-value shape has no portable spelling for target-dependent integer width")
+        RustType.Decimal(precision=precision, scale=scale) => return Ok(f"decimal<{precision},{scale}>")
+        RustType.Tuple(arguments) => return composite(builder, "tuple", arguments, active)
+        RustType.Generic(base=base, args=arguments) =>
+            if ty.is_union():
+                return composite(builder, "union", arguments, active)
+            name = str(base)
+            if name in ["List", "FrozenList", "$FrozenList"]:
+                return composite(builder, "list", arguments, active)
+            if name in ["Set", "FrozenSet", "$FrozenSet"]:
+                return composite(builder, "set", arguments, active)
+            if name in ["Dict", "FrozenDict", "$FrozenDict"]:
+                return composite(builder, "map", arguments, active)
+            if name == "Option":
+                return composite(builder, "option", arguments, active)
+            if name == "Tuple":
+                return composite(builder, "tuple", arguments, active)
+        _ => pass
+    carrier = value_type(builder, ty)?
+    for distance in range(len(active)):
+        if active[len(active) - distance - 1] == carrier:
+            return Ok(f"^{distance}")
+    match carrier:
+        PlanType.Model(owner, _name) =>
+            declaration = borrowed_at(builder.nominals, owner)
+            if declaration.canonical.kind == SemanticSourceTargetKind.Newtype and len(declaration.field_types) == 1:
+                return spelling(builder, declaration.field_types[0], active)
+            if declaration.canonical.kind != SemanticSourceTargetKind.Model:
+                return Err("automatic shape requires a model's stored contract")
+            match declaration.reflection_metadata:
+                None => return Err("typed-value shape has no complete field metadata")
+                Some(fields) =>
+                    mut members: list[str] = []
+                    for slot in field_order(builder, owner)?:
+                        field = borrowed_at(fields, slot)
+                        mut identity: list[str] = []
+                        for byte in field.record_identity:
+                            identity.append("0123456789abcdef"[int(byte) // 16])
+                            identity.append("0123456789abcdef"[int(byte) % 16])
+                        declared = borrowed_at(declaration.field_types, slot)
+                        kind = spelling(builder, declared, active + [carrier])?
+                        mut absent = "r"
+                        if optional_type(declared):
+                            absent = "n"
+                        elif field.default_is_empty:
+                            absent = "e"
+                        mut canonical = "0"
+                        if field.record_canonical:
+                            canonical = "1"
+                        members.append("".join(identity) + ":" + kind + ":" + canonical + ":" + absent)
+                    return Ok("record{" + ";".join(members) + "}")
+        PlanType.Enum(owner, _name) => return enum_spelling(builder, owner, active + [carrier])
+        _ => return Err("typed-value structural spelling is not yet generated for this checked carrier")
+
+
+def composite(builder: Builder, kind: str, arguments: list[RustType], active: list[PlanType]) -> Result[str, str]:
+    """Containers do not add nominal recursion depth; union alternatives share the same enclosing stack."""
+    mut values: list[str] = []
+    for argument in arguments:
+        values.append(spelling(builder, argument, active)?)
+    if kind == "union":
+        keyed = [(hexlify(sha256.digest(value.encode("utf-8"))), value) for value in values]
+        return Ok("union<" + ",".join([pair[1] for pair in sorted(keyed)]) + ">")
+    return Ok(kind + "<" + ",".join(values) + ">")
+
+
+pub def optional_type(ty: RustType) -> bool:
+    """Recognize the checked outer optional constructor without collapsing nested optional layers."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) => return base == "Option" and len(arguments) == 1
+        _ => return false
+
+
+pub def member_identity(name: str) -> str:
+    """The six-byte member identity uses the earliest payload or variant name, with no terminator."""
+    return hexlify(sha256.digest(name.encode("utf-8")))[:12]
+
+
+pub def ordered_names(names: list[str]) -> Result[list[int], str]:
+    """Order checked variant or positional field names by identity and refuse every duplicate digest."""
+    keyed = [(member_identity(names[slot]), slot) for slot in range(len(names))]
+    ordered = sorted(keyed)
+    for slot in range(1, len(ordered)):
+        if ordered[slot - 1][0] == ordered[slot][0]:
+            return Err("typed-value declaration has colliding member identities")
+    return Ok([entry[1] for entry in ordered])
+
+
+pub def payload_spelling(builder: Builder, types: list[RustType], active: list[PlanType]) -> Result[str, str]:
+    """An enum payload has decimal positional names and does not add an anonymous recursion ancestor."""
+    names = [str(slot) for slot in range(len(types))]
+    mut fields: list[str] = []
+    for slot in ordered_names(names)?:
+        mut absent = "r"
+        if optional_type(types[slot]):
+            absent = "n"
+        fields.append(member_identity(names[slot]) + ":" + spelling(builder, types[slot], active)? + ":1:" + absent)
+    return Ok("record{" + ";".join(fields) + "}")
+
+
+pub def enum_spelling(builder: Builder, owner: int, active: list[PlanType]) -> Result[str, str]:
+    """Fold every checked alternative, irrespective of which variant a runtime value currently holds."""
+    declaration = borrowed_at(builder.enums, owner)
+    names = [str(variant.name) for variant in declaration.variants]
+    mut variants: list[str] = []
+    for slot in ordered_names(names)?:
+        variant = borrowed_at(declaration.variants, slot)
+        variants.append(member_identity(names[slot]) + ":" + payload_spelling(builder, variant.fields, active)?)
+    return Ok("enum{" + ";".join(variants) + "}")
+
+
+pub def shape_spelling(builder: Builder, ty: RustType) -> Result[Option[str], str]:
+    """No alternate structural grammar is created for target-dependent integers, including nested fields."""
+    if target_dependent(builder, ty, [])?:
+        return Ok(None)
+    return Ok(Some(spelling(builder, ty, [])?))
+
+
+def target_dependent(builder: Builder, ty: RustType, active: list[PlanType]) -> Result[bool, str]:
+    """Inspect actual stored types; an active recursive declaration was already checked on this path."""
+    match ty:
+        RustType.Primitive(primitive) =>
+            match primitive:
+                Primitive.Numeric(kind) => return Ok(kind == NumericTypeId.ISize or kind == NumericTypeId.USize)
+                _ => return Ok(false)
+        RustType.Decimal(precision=_precision, scale=_scale) => return Ok(false)
+        RustType.Tuple(arguments) =>
+            for argument in arguments:
+                if target_dependent(builder, argument, active)?:
+                    return Ok(true)
+            return Ok(false)
+        RustType.Generic(base=base, args=arguments) =>
+            if ty.is_union() or str(base) in ["List", "FrozenList", "$FrozenList", "Set", "FrozenSet", "$FrozenSet", "Dict", "FrozenDict", "$FrozenDict", "Tuple", "Option", "Result"]:
+                for argument in arguments:
+                    if target_dependent(builder, argument, active)?:
+                        return Ok(true)
+                return Ok(false)
+        _ => pass
+    carrier = value_type(builder, ty)?
+    if carrier in active:
+        return Ok(false)
+    match carrier:
+        PlanType.Model(owner, _name) =>
+            declaration = borrowed_at(builder.nominals, owner)
+            for field in declaration.field_types:
+                if target_dependent(builder, field, active + [carrier])?:
+                    return Ok(true)
+        PlanType.Enum(owner, _name) =>
+            if owner >= len(builder.enums):
+                return Err("target-dependent shape inspection lacks a checked source enum")
+            declaration = borrowed_at(builder.enums, owner)
+            for variant in declaration.variants:
+                for field in variant.fields:
+                    if target_dependent(builder, field, active + [carrier])?:
+                        return Ok(true)
+        _ => pass
+    return Ok(false)
+
+pub def structural_shape(ty: RustType) -> bool:
+    """Primitive and structural type descriptions need no nominal or intrinsic runtime value layout."""
+    match ty:
+        RustType.Primitive(_primitive) => return true
+        RustType.Decimal(precision=_precision, scale=_scale) => return true
+        RustType.Tuple(_arguments) => return true
+        RustType.Generic(base=base, args=_arguments) =>
+            return ty.is_union() or str(base) in ["List", "FrozenList", "$FrozenList", "Set", "FrozenSet", "$FrozenSet", "Dict", "FrozenDict", "$FrozenDict", "Tuple", "Option"]
+        _ => return false

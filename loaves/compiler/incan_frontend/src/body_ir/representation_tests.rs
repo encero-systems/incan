@@ -103,6 +103,8 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_frozen_literal_bound_method_identity()?;
     assert_native_provider_field_layout()?;
     assert_declared_record_namespace()?;
+    assert_automatic_value_protocol_bounds()?;
+    assert_published_protocol_bound_identity()?;
     assert_independently_retained_newtype_return()?;
     assert_generic_newtype_provider_methods()?;
     assert_nested_generic_static_call_bound_mismatch()?;
@@ -383,19 +385,28 @@ pub model MetadataFacts:
                 .find(|value| value.canonical.declaration_name == "MetadataFacts")
                 .and_then(|value| value.reflection_metadata.as_ref())
                 .ok_or("missing checked reflection facts")?;
-            assert_eq!(metadata.len(), 2);
-            assert_eq!(metadata[0].position, 1);
-            assert!(metadata[0].default_is_empty);
-            assert_eq!(metadata[0].renamed_from, ["items"]);
-            let labels = metadata[0]
+            assert_eq!(metadata.len(), 3);
+            assert_eq!(metadata[0].position, 0);
+            assert_eq!(metadata[0].name, "hidden");
+            assert_eq!(metadata[1].position, 1);
+            assert!(metadata[1].default_is_empty);
+            assert_eq!(metadata[1].renamed_from, ["items"]);
+            let labels = metadata[1]
                 .renamed_from_lifecycle
                 .as_ref()
                 .ok_or("missing lifecycle labels")?;
             assert_eq!(labels.since.as_deref(), Some("0.6"));
             assert_eq!(labels.message.as_deref(), Some(""));
             assert_eq!(labels.issue, None);
-            assert_eq!(metadata[1].position, 2);
-            assert!(!metadata[1].default_is_empty);
+            assert_eq!(metadata[2].position, 2);
+            assert!(!metadata[2].default_is_empty);
+            let visible = seed
+                .nominal_declarations
+                .iter()
+                .find(|value| value.canonical.declaration_name == "MetadataFacts")
+                .and_then(|value| value.reflection_fields.as_ref())
+                .ok_or("missing reflection visibility projection")?;
+            assert_eq!(visible, &[1, 2]);
             let declaration = seed
                 .nominal_declarations
                 .iter()
@@ -2011,6 +2022,107 @@ fn assert_declared_record_namespace() -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
+/// Automatic protocol bounds follow concrete stored members and the primitive trait's checked owner. Classes and
+/// foreign same-spelled traits remain ordinary explicit adoptions; private fields and generic arguments still count.
+fn assert_automatic_value_protocol_bounds() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::symbols::{ResolvedType, TypeBoundInfo};
+    use std::collections::HashMap;
+
+    let source = r#"
+trait Walk:
+    def __walk__(self) -> int
+    @staticmethod
+    def __shape__() -> int
+trait Reconstruct with Walk:
+    @staticmethod
+    def __reconstruct__() -> Self
+pub class Resource:
+    pub token: int
+pub model Plain:
+    pub value: int
+pub model Hidden:
+    hidden: Resource
+pub model Box[T]:
+    pub value: T
+pub enum Event[T]:
+    Empty
+    Data(T)
+pub type Count = newtype int
+"#;
+    for package in ["incan_stdlib_primitives", "ordinary_package"] {
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_package_identity(Some(package.to_owned()));
+        checker.set_current_module_path(Some(vec!["primitives".to_owned(), "reflection".to_owned()]));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        for protocol in ["Walk", "Reconstruct"] {
+            let bound = TypeBoundInfo {
+                name: protocol.to_owned(),
+                source_name: None,
+                type_args: Vec::new(),
+                module_path: None,
+                implementation_type_params: Vec::new(),
+                inferred: false,
+            };
+            for ty in [
+                ResolvedType::Int,
+                ResolvedType::Named("Plain".to_owned()),
+                ResolvedType::Named("Count".to_owned()),
+                ResolvedType::Generic("Box".to_owned(), vec![ResolvedType::Str]),
+                ResolvedType::Generic("Event".to_owned(), vec![ResolvedType::Int]),
+                ResolvedType::Generic("Option".to_owned(), vec![ResolvedType::Int]),
+            ] {
+                assert_eq!(
+                    checker.type_satisfies_explicit_bound_info(&ty, &bound, &HashMap::new()),
+                    package == "incan_stdlib_primitives",
+                    "{package}: {ty:?} with {protocol}"
+                );
+            }
+            for ty in [
+                ResolvedType::Named("Resource".to_owned()),
+                ResolvedType::Named("Hidden".to_owned()),
+                ResolvedType::Generic("Box".to_owned(), vec![ResolvedType::Named("Resource".to_owned())]),
+                ResolvedType::Generic("Event".to_owned(), vec![ResolvedType::Named("Resource".to_owned())]),
+            ] {
+                assert!(
+                    !checker.type_satisfies_explicit_bound_info(&ty, &bound, &HashMap::new()),
+                    "{package}: unsupported {ty:?} with {protocol}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A facade import and the provider-qualified bound on its method denote the same admitted trait. A local
+/// same-spelled trait must still fail: source paths are presentation, not the authority for reconstruction.
+fn assert_published_protocol_bound_identity() -> Result<(), Box<dyn std::error::Error>> {
+    for module in ["std.reflection", "std.primitives.reflection"] {
+        let source = format!(
+            "from {module} import Source as InputSource, Reconstruct as Rebuild\ndef restore[T with Rebuild, E, S with InputSource[E]](mut source: S) -> Result[T, E]:\n    return T.__reconstruct__(source)\n"
+        );
+        let (_, module) = checked_metadata_seed(&source)?;
+        let restored = module
+            .bodies
+            .iter()
+            .find(|body| body.name == "restore")
+            .ok_or("missing generic restoration body")?;
+        assert_eq!(restored.type_parameters.len(), 3);
+    }
+    let foreign = "from std.reflection import Reconstruct\ntrait Source[E]:\n    def integer(mut self) -> Result[i128, E]: ...\ndef restore[T with Reconstruct, E, S with Source[E]](mut source: S) -> Result[T, E]:\n    return T.__reconstruct__(source)\n";
+    match checked_metadata_seed(foreign) {
+        Ok(_) => return Err("a same-spelled local Source authorized the primitive reconstruction protocol".into()),
+        Err(error) => assert!(
+            error.to_string().contains("violates generic bound"),
+            "unexpected refusal: {error}"
+        ),
+    }
+    Ok(())
+}
+
 /// A plain implementation inherits the explicit trait input contract before its body and callers are checked.
 #[test]
 fn trait_implementation_inherits_explicit_input_contract() -> Result<(), Box<dyn std::error::Error>> {
@@ -2133,5 +2245,46 @@ def main() -> Result[None, str]:
         .result_requirements
         .clear();
     assert!(stripped.input_profile_gap().is_some());
+    Ok(())
+}
+
+/// A contextual Ok/Some wrapper must not erase an error binder inferred from the source's adopted trait.
+#[test]
+fn nested_reconstruction_result_keeps_inferred_error() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+trait Input[E]:
+    def integer(mut self) -> Result[int, E]
+trait Restore:
+    @staticmethod
+    def rebuild[E, S with Input[E]](mut source: S) -> Result[Self, E]
+class Feed with Input[str]:
+    def integer(mut self) -> Result[int, str]:
+        return Ok(42)
+    def field[T with Restore](mut self) -> Result[Option[T], str]:
+        return Ok(Some(T.rebuild(self)?))
+"#;
+    let (_, _, module) = checked_seed(source)?;
+    let field = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "field")
+        .ok_or("missing generic reader")?;
+    let mut results = 0;
+    for local in &field.locals {
+        if let super::IncanType::Generic { base, args } = &local.ty {
+            if base == "Result" {
+                results += 1;
+                assert!(
+                    matches!(
+                        args.get(1),
+                        Some(super::IncanType::Primitive(super::IncanPrimitiveType::Str))
+                    ),
+                    "reader retained an unresolved error: {:?}",
+                    local.ty
+                );
+            }
+        }
+    }
+    assert!(results > 0, "reader has no retained Result temporary");
     Ok(())
 }

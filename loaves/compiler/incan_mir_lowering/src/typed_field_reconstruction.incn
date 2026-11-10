@@ -1,0 +1,224 @@
+"""Shared stored-field reconstruction, availability, collection and owned-error cleanup."""
+
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core::body_ir import BodyIrModule, Body
+from pub::incan_mir_plan import (
+    Constant, FrozenValue, PlanType, Place, Operand, SourceSpan, RvalueKind, TerminatorKind, Projection, Carrier,
+    assign as plan_assign, place as plan_place,
+)
+from frame import literal, Builder, temporary, place_type, read_place, forget_owned, drop_owned, drop_all_owned
+from options import result_layout, carrier_layout, variant_condition, replace_owned_destination, retain_carrier
+from typed_value_callbacks import callback_body, call_callback
+from typed_value_constants import value_type, static_metadata
+from defaults import evaluate_default
+from table_views import borrowed_at
+
+
+pub def empty_slot(module: BodyIrModule, mut builder: Builder, ty: RustType, span: SourceSpan) -> Result[Place, str]:
+    """Initialize availability independently of the field's own optional layers."""
+    optional = RustType.Generic("Option", [ty])
+    retain_carrier(builder.program.constructors.as_ref(), module, builder.intrinsics, optional, builder.file)?
+    native = value_type(builder, optional)?
+    owner, _layout = carrier_layout(builder, native)?
+    slot = temporary(builder, native, span)
+    replace_owned_destination(builder, slot, RvalueKind.Enum(owner, 0, []), span)
+    return Ok(slot)
+
+
+pub def restore_field(
+    module: BodyIrModule, mut builder: Builder, declared: RustType, reader: Body,
+    info_type: PlanType, description: FrozenValue, default_field: Option[tuple[int, int]], destination: Place,
+    source: Place, source_owner: PlanType, error: RustType, collects: Place, first_error: Place, span: SourceSpan,
+) -> Result[None, str]:
+    """Restore a declared slot; only a successful absent read may select None or an authorized declared default."""
+    info = static_metadata(builder, info_type, description, span)
+    outcome = call_callback(module, builder, reader, [source, info], span, [1])?
+    drop_owned(builder, info.local, span)
+    after = builder.new_block(span)
+    result_or_collect(builder, outcome, destination, collects, first_error, after, span)?
+    stable = builder.owned
+    absent = builder.new_block(span)
+    present = variant_condition(builder, destination, 1, span)
+    builder.finish(TerminatorKind.SwitchBool(present, absent, after), span)
+    builder.current = absent
+    stored = value_type(builder, declared)?
+    mut optional_owner = -1
+    match carrier_layout(builder, stored):
+        Ok((candidate, layout)) =>
+            if layout.carrier == Carrier.Option:
+                optional_owner = candidate
+        Err(_not_carrier) => pass
+    destination_type = place_type(builder.locals, destination)
+    destination_owner, _layout = carrier_layout(builder, destination_type)?
+    if optional_owner >= 0:
+        value = temporary(builder, stored, span)
+        builder.emit(plan_assign(value, RvalueKind.Enum(optional_owner, 0, []), span))
+        replace_owned_destination(builder, destination, RvalueKind.Enum(destination_owner, 1, [read_place(value, true, span)]), span)
+    else:
+        missing = builder.new_block(span)
+        match default_field:
+            Some((owner, index)) =>
+                permission = callback_body(module, builder, source_owner, "Source", error, "takes_default", [])?
+                metadata = static_metadata(builder, info_type, description, span)
+                allowed = call_callback(module, builder, permission, [source, metadata], span, [1])?
+                drop_owned(builder, metadata.local, span)
+                permitted = builder.new_block(span)
+                forget_owned(builder, allowed.local)
+                builder.finish(TerminatorKind.SwitchBool(read_place(allowed, false, span), missing, permitted), span)
+                builder.current = permitted
+                builder.owned = stable
+                declaration = borrowed_at(module.nominal_declarations, owner)
+                match declaration.field_default_body:
+                    None => return Err("generated reconstruction has no retained declared default")
+                    Some(body) =>
+                        value = evaluate_default(module, builder, body, index, stored, span, true)?
+                        replace_owned_destination(builder, destination, RvalueKind.Enum(destination_owner, 1, [value]), span)
+                drop_owners_except(builder, stable, span)
+                builder.finish(TerminatorKind.Goto(after), span)
+            None => builder.finish(TerminatorKind.Goto(missing), span)
+        builder.current = missing
+        builder.owned = stable
+        report = callback_body(module, builder, source_owner, "Source", error, "missing", [])?
+        metadata = static_metadata(builder, info_type, description, span)
+        failure = call_callback(module, builder, report, [source, metadata], span, [1])?
+        drop_owned(builder, metadata.local, span)
+        retain_failure(builder, failure, collects, first_error, span)?
+    drop_owners_except(builder, stable, span)
+    builder.finish(TerminatorKind.Goto(after), span)
+    builder.current = after
+    builder.owned = stable
+    return Ok(None)
+
+pub def result_or_collect(
+    mut builder: Builder, outcome: Place, destination: Place, collects: Place,
+    first_error: Place, continuation: int, span: SourceSpan,
+) -> Result[None, str]:
+    """Transfer a successful payload, or retain the original error and continue only under collecting policy."""
+    _owner, layout = result_layout(builder, place_type(builder.locals, outcome))?
+    failed = builder.new_block(span)
+    success = builder.new_block(span)
+    condition = variant_condition(builder, outcome, 0, span)
+    builder.finish(TerminatorKind.SwitchBool(condition, failed, success), span)
+    forget_owned(builder, outcome.local)
+    owners = builder.owned
+    builder.current = failed
+    failure = temporary(builder, layout.variants[1].fields[0], span)
+    field = Place(local=outcome.local, projection=Projection.VariantField(1, 0, layout.variants[1].fields[0]), span=span)
+    builder.emit(plan_assign(failure, RvalueKind.Use(read_place(field, true, span)), span))
+    builder.owned.append(failure.local)
+    retain_failure(builder, failure, collects, first_error, span)?
+    builder.finish(TerminatorKind.Goto(continuation), span)
+    builder.current = success
+    builder.owned = owners
+    payload = Place(local=outcome.local, projection=Projection.VariantField(0, 0, layout.variants[0].fields[0]), span=span)
+    replace_owned_destination(builder, destination, RvalueKind.Use(read_place(payload, true, span)), span)
+    return Ok(None)
+
+
+def retain_failure(mut builder: Builder, failure: Place, collects: Place, first_error: Place, span: SourceSpan) -> Result[None, str]:
+    """Never re-record a located source failure; retain a fallback owner while the source builds its aggregate."""
+    stop = builder.new_block(span)
+    proceed = builder.new_block(span)
+    owners = builder.owned
+    builder.finish(TerminatorKind.SwitchBool(read_place(collects, false, span), stop, proceed), span)
+    builder.current = stop
+    return_error(builder, failure, span)?
+    builder.current = proceed
+    builder.owned = owners
+    first_type = place_type(builder.locals, first_error)
+    first_owner, _layout = carrier_layout(builder, first_type)?
+    keep = builder.new_block(span)
+    discard = builder.new_block(span)
+    joined = builder.new_block(span)
+    empty = variant_condition(builder, first_error, 0, span)
+    builder.finish(TerminatorKind.SwitchBool(empty, discard, keep), span)
+    builder.current = keep
+    replace_owned_destination(builder, first_error, RvalueKind.Enum(first_owner, 1, [read_place(failure, true, span)]), span)
+    builder.finish(TerminatorKind.Goto(joined), span)
+    builder.current = discard
+    builder.owned = owners
+    drop_owned(builder, failure.local, span)
+    builder.finish(TerminatorKind.Goto(joined), span)
+    builder.current = joined
+    return Ok(None)
+
+
+pub def return_if_present(mut builder: Builder, errors: Place, span: SourceSpan) -> Result[None, str]:
+    """Consume an optional error without allowing an unavailable field to escape as a complete model."""
+    ty = place_type(builder.locals, errors)
+    _owner, layout = carrier_layout(builder, ty)?
+    failed = builder.new_block(span)
+    clear = builder.new_block(span)
+    owners = builder.owned
+    condition = variant_condition(builder, errors, 1, span)
+    builder.finish(TerminatorKind.SwitchBool(condition, clear, failed), span)
+    builder.current = failed
+    failure = temporary(builder, layout.variants[1].fields[0], span)
+    payload = Place(local=errors.local, projection=Projection.VariantField(1, 0, layout.variants[1].fields[0]), span=span)
+    builder.emit(plan_assign(failure, RvalueKind.Use(read_place(payload, true, span)), span))
+    forget_owned(builder, errors.local)
+    builder.owned.append(failure.local)
+    return_error(builder, failure, span)?
+    builder.current = clear
+    builder.owned = owners
+    drop_owned(builder, errors.local, span)
+    return Ok(None)
+
+
+pub def return_error(mut builder: Builder, failure: Place, span: SourceSpan) -> Result[None, str]:
+    """Move the original typed error and release every other initialized value."""
+    result_type = place_type(builder.locals, plan_place(0, span))
+    owner, _layout = result_layout(builder, result_type)?
+    builder.emit(plan_assign(plan_place(0, span), RvalueKind.Enum(owner, 1, [read_place(failure, true, span)]), span))
+    forget_owned(builder, failure.local)
+    drop_all_owned(builder, span)
+    builder.finish(TerminatorKind.Return, span)
+    return Ok(None)
+
+
+pub def drop_owners_except(mut builder: Builder, retained: list[int], span: SourceSpan) -> None:
+    """Clean branch-local temporaries before joining paths with the same initialized storage."""
+    for local in builder.owned[::-1]:
+        if local not in retained:
+            drop_owned(builder, local, span)
+
+
+pub def finish_fields(
+    module: BodyIrModule, mut builder: Builder, source: Place, source_owner: PlanType,
+    error: RustType, collects: Place, first_error: Place, end_method: str, span: SourceSpan,
+) -> Result[None, str]:
+    """Check frame completeness, then surface collected errors or the retained original fallback."""
+    unit = temporary(builder, PlanType.Unit, span)
+    builder.emit(plan_assign(unit, RvalueKind.Use(literal(Constant.Unit, span)), span))
+    builder.owned.append(unit.local)
+    end = callback_body(module, builder, source_owner, "Source", error, end_method, [])?
+    finished = call_callback(module, builder, end, [source], span)?
+    joined = builder.new_block(span)
+    result_or_collect(builder, finished, unit, collects, first_error, joined, span)?
+    builder.finish(TerminatorKind.Goto(joined), span)
+    builder.current = joined
+    reported = callback_body(module, builder, source_owner, "Source", error, "collected", [])?
+    failures = call_callback(module, builder, reported, [source], span)?
+    return_if_present(builder, failures, span)?
+    # A source cannot turn a failed read into a partial successful value by returning no aggregate.
+    return_if_present(builder, first_error, span)?
+    return Ok(None)
+
+
+pub def take_fields(mut builder: Builder, slots: list[Place], span: SourceSpan) -> Result[list[Operand], str]:
+    """Move payloads in physical declaration order only after every failure path has returned."""
+    mut values: list[Operand] = []
+    for slot in slots:
+        ty = place_type(builder.locals, slot)
+        _index, layout = carrier_layout(builder, ty)?
+        valid = builder.new_block(span)
+        unavailable = builder.new_block(span)
+        condition = variant_condition(builder, slot, 1, span)
+        builder.finish(TerminatorKind.SwitchBool(condition, unavailable, valid), span)
+        builder.current = unavailable
+        builder.finish(TerminatorKind.Unreachable, span)
+        builder.current = valid
+        field = Place(local=slot.local, projection=Projection.VariantField(1, 0, layout.variants[1].fields[0]), span=span)
+        values.append(read_place(field, true, span))
+        forget_owned(builder, slot.local)
+    return Ok(values)

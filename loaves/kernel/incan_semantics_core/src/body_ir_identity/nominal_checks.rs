@@ -180,7 +180,8 @@ impl BodyIrModule {
             && contract.required_fields.windows(2).all(|pair| pair[0] < pair[1])
     }
 
-    /// Require each retained reflection record to name its selected physical field in the same order.
+    /// Validate complete stored metadata or a legacy visible projection against exact physical slots. Only complete
+    /// metadata can later authorize generated typed-value hooks; accepting the old projection preserves inspection.
     pub(super) fn nominal_reflection_metadata_matches_fields(declaration: &NominalDeclaration) -> bool {
         let Some(metadata) = &declaration.reflection_metadata else {
             return true;
@@ -188,10 +189,19 @@ impl BodyIrModule {
         let Some(slots) = &declaration.reflection_fields else {
             return false;
         };
-        slots.len() == metadata.len()
-            && slots.iter().zip(metadata).all(|(slot, record)| {
-                declaration.fields.get(*slot) == Some(&record.name)
-                    && record.position == *slot
+        let complete = metadata.len() == declaration.fields.len()
+            && metadata
+                .iter()
+                .enumerate()
+                .all(|(slot, record)| record.position == slot);
+        let visible = slots.len() == metadata.len()
+            && slots
+                .iter()
+                .zip(metadata)
+                .all(|(slot, record)| record.position == *slot);
+        (complete || visible)
+            && metadata.iter().all(|record| {
+                declaration.fields.get(record.position) == Some(&record.name)
                     && (!record.default_is_empty || record.has_default)
                     && (record.renamed_from_lifecycle.is_none() || !record.renamed_from.is_empty())
                     && Self::reflection_record_identity_is_well_formed(record)

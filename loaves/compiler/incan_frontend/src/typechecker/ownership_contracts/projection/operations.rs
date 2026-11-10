@@ -218,6 +218,15 @@ impl CheckedInputBody<'_> {
         execution: &[usize],
         seen: &mut SourceCoverage,
     ) -> Result<(), &'static str> {
+        if let Some(arguments) = super::super::builtins::source_enum_construction(self.facts, expression) {
+            for argument in arguments {
+                let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
+                    return Err("enum operation coverage needs checked fixed payloads");
+                };
+                self.visit_operation_expression(value, parameters, execution, seen)?;
+            }
+            return Ok(());
+        }
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Literal(_) => {}
             // `?` evaluates its carrier; the propagating path leaves the body without a further operation.

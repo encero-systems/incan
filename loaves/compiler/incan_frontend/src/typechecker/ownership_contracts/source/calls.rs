@@ -669,12 +669,14 @@ impl Builder<'_> {
             reason: "temporary argument has no checked type".into(),
         })?;
         // A list literal's own evaluation admits only Copy scalar elements, so it retains no dependency either. A
-        // complete model or class constructor likewise produces fresh storage after its checked fields evaluate.
+        // complete model, class or source enum constructor likewise produces fresh storage after its checked
+        // fields evaluate. The expression path still proves each payload before this temporary gains a loan.
         let fresh_constructor = self
             .checker
             .type_info
             .constructor_field_binding(expression.span)
-            .is_some();
+            .is_some()
+            || self.source_enum_payload_count(expression).is_some();
         let independent_native_result = self.checker.native_result_is_independent(expression.span);
         if !plain_result(ty)
             && !matches!(expression.node, Expr::List(_))

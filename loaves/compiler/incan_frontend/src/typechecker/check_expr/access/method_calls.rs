@@ -656,6 +656,9 @@ impl TypeChecker {
         if let Some(result) = self.check_trait_self_method_call(&call, &base_ty, &arg_types) {
             return result;
         }
+        if let Some(result) = self.check_typed_value_member_call(&call, &base_ty, &arg_types) {
+            return result;
+        }
         if let Some(result) = self.check_nominal_reflection_method_call(&call, &base_ty) {
             return result;
         }

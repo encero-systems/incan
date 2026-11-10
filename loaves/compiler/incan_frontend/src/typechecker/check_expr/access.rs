@@ -81,6 +81,7 @@ mod rust_methods;
 mod rust_projections;
 mod rust_receivers;
 mod rust_traits;
+mod typed_value_members;
 mod web_extractors;
 
 /// Whether an unresolved registered surface can defer its method set to a runtime or stdlib provider.

@@ -1,0 +1,107 @@
+"""Typed immutable values for generated hooks, laid out by the actual Incan carrier declarations."""
+
+from rust::incan_semantics_core import IncanType as RustType
+from pub::incan_mir_plan import FrozenValue, Constant, PlanType, Carrier, SourceSpan, Place, CalleeKind
+from frame import Builder, temporary, terminate_call
+from layout_types import native_source_type
+from options import carrier_layout
+
+
+pub def value_type(builder: Builder, ty: RustType) -> Result[PlanType, str]:
+    """Resolve a retained closed type through the same layout inventory as ordinary values."""
+    return native_source_type(builder.constructors, builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)
+
+
+pub def field_type(builder: Builder, ty: PlanType, name: str) -> Result[PlanType, str]:
+    """Find one carrier field by its checked declaration, refusing absent or non-model layouts."""
+    match ty:
+        PlanType.Model(owner, _native_name) =>
+            declaration = builder.nominals[owner]
+            for position in range(len(declaration.fields)):
+                if declaration.fields[position] == name:
+                    return value_type(builder, declaration.field_types[position])
+        _ => pass
+    return Err(f"typed-value metadata carrier has no field {name}")
+
+
+pub def record(builder: Builder, ty: PlanType, fields: dict[str, FrozenValue]) -> Result[FrozenValue, str]:
+    """Arrange supplied facts in physical field order, checking the entire source-owned schema."""
+    match ty:
+        PlanType.Model(owner, _native_name) =>
+            declaration = builder.nominals[owner]
+            if len(fields) != len(declaration.fields):
+                return Err("typed-value metadata carrier has incompatible fields")
+            mut values: list[FrozenValue] = []
+            for name in declaration.fields:
+                match fields.get(str(name)):
+                    Some(value) => values.append(value.clone())
+                    None => return Err(f"typed-value metadata carrier is missing {name}")
+            return Ok(FrozenValue.Model(owner, values))
+        _ => return Err("typed-value metadata must use its declared model carrier")
+
+
+pub def text(value: str) -> FrozenValue:
+    """Keep exact metadata text as static data, not an allocated runtime string."""
+    return FrozenValue.Scalar(Constant.Text(value))
+
+
+pub def flag(value: bool) -> FrozenValue:
+    """Keep one checked boolean fact."""
+    return FrozenValue.Scalar(Constant.Bool(value))
+
+
+pub def integer(value: int) -> FrozenValue:
+    """Keep one checked source slot."""
+    return FrozenValue.Scalar(Constant.Int(value))
+
+
+pub def sequence(ty: PlanType, values: list[FrozenValue]) -> Result[FrozenValue, str]:
+    """Retain an immutable collection's real type; native validation checks every element."""
+    match ty:
+        PlanType.FrozenCollection(_kind, _arguments) => return Ok(FrozenValue.Collection(ty, values))
+        _ => return Err("typed-value metadata collection is not frozen")
+
+
+pub def element_type(ty: PlanType) -> Result[PlanType, str]:
+    """Select an immutable sequence element from its source-owned carrier."""
+    match ty:
+        PlanType.FrozenCollection(kind, arguments) =>
+            if kind == "FrozenList" and len(arguments) == 1:
+                return Ok(arguments[0])
+        _ => pass
+    return Err("typed-value metadata requires a FrozenList element")
+
+
+pub def optional(builder: Builder, ty: PlanType, value: Option[FrozenValue]) -> Result[FrozenValue, str]:
+    """Preserve absent versus present metadata using the checked Option carrier."""
+    owner, declaration = carrier_layout(builder, ty)?
+    if declaration.carrier != Carrier.Option:
+        return Err("typed-value metadata requires an Option carrier")
+    match value:
+        None => return Ok(FrozenValue.Enum(owner, 0, []))
+        Some(present) => return Ok(FrozenValue.Enum(owner, 1, [present]))
+
+
+pub def optional_type(builder: Builder, ty: PlanType) -> Result[PlanType, str]:
+    """Resolve an Option payload without interpreting a formatted type name."""
+    _owner, declaration = carrier_layout(builder, ty)?
+    if declaration.carrier != Carrier.Option or len(declaration.variants[1].fields) != 1:
+        return Err("typed-value metadata requires one Option payload")
+    return Ok(declaration.variants[1].fields[0])
+
+
+pub def optional_text(builder: Builder, ty: PlanType, value: Option[str]) -> Result[FrozenValue, str]:
+    """An explicitly empty string remains present; absence stays None."""
+    match value:
+        None => return optional(builder, ty, None)
+        Some(present) => return optional(builder, ty, Some(text(present)))
+
+
+pub def static_metadata(mut builder: Builder, ty: PlanType, value: FrozenValue, span: SourceSpan) -> Place:
+    """Materialize immutable source-owned metadata with the generic typed static-value path."""
+    output = temporary(builder, ty, span)
+    name = f"__incan_static_walk_metadata_{builder.name}_{len(builder.blocks)}_{output.local}"
+    terminate_call(builder, CalleeKind.StaticValue(name, ty, value), [], output, span)
+    builder.owned.append(output.local)
+    return output
+

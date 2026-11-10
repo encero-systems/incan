@@ -35,6 +35,25 @@ pub def native_alias_boundary(nominals: &list[NominalDeclaration], source: PlanT
     return retained_nominal_carrier(nominals, source) or retained_nominal_carrier(nominals, target)
 
 
+pub def owned_native_object_boundary(nominals: &list[NominalDeclaration], source: PlanType, target: PlanType) -> bool:
+    """Select a checked Box-owner conversion; rustc must prove its target is a trait object and all bounds hold."""
+    match (source, target):
+        (PlanType.Model(source_owner, _), PlanType.Model(target_owner, _)) =>
+            original = borrowed_at(nominals, source_owner)
+            erased = borrowed_at(nominals, target_owner)
+            boxes = ["std::boxed::Box", "alloc::boxed::Box"]
+            if library_item(original) not in boxes or library_item(erased) not in boxes:
+                return false
+            if len(original.native_type_arguments) != len(erased.native_type_arguments):
+                return false
+            if len(original.native_type_arguments) < 1 or len(original.native_type_arguments) > 2:
+                return false
+            if len(original.native_type_arguments) == 2:
+                return original.native_type_arguments[1] == erased.native_type_arguments[1]
+            return true
+        _ => return false
+
+
 def alias_reference_mode(ty: PlanType) -> int:
     """Keep shared and exclusive loans distinct from owners when forwarding exact native aliases."""
     match ty:

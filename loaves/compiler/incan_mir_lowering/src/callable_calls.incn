@@ -1,5 +1,7 @@
 """Lower calls through bound callables, type parameters, locals, closures, and function pointers."""
 
+from typed_shapes import lower_static_shape
+from typed_reconstructs import lower_generated_reconstruction
 from pub::incan_mir_plan import (
     Carrier,
     CalleeKind,
@@ -132,6 +134,10 @@ pub def lower_named_target(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Call a builtin, a retained project function, or a proven stdlib forwarder selected by canonical identity."""
+    if lower_generated_reconstruction(module, builder, target, arguments, destination, span)?:
+        return Ok(None)
+    if lower_static_shape(module, builder, target, arguments, destination, span)?:
+        return Ok(None)
     if lower_static_field_metadata(builder, target, arguments, destination, span)?:
         return Ok(None)
     match target.builtin:

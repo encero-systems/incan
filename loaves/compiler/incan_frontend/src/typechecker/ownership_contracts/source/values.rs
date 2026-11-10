@@ -165,8 +165,9 @@ impl Builder<'_> {
     }
 
     /// A complete model or class field binding, declared in this project or by a provider, constructs fresh storage
-    /// after evaluating supplied values in written order. Deferred defaults, native constructors and non-Copy place
-    /// transfer require separate proofs.
+    /// after evaluating supplied values in written order. Declaration-owned defaults add no caller-side access;
+    /// supplied and defaulted slots must form an exact partition. Native constructors and non-Copy place transfers
+    /// retain their separate proof requirements.
     pub(super) fn model_construction(
         &mut self,
         callee: &Spanned<Expr>,
@@ -197,17 +198,18 @@ impl Builder<'_> {
                 reason: "construction has no checked field binding".into(),
             })?;
         let mut selected = BTreeSet::new();
-        if !binding.defaulted_slots.is_empty()
-            || binding.field_count != arguments.len()
-            || binding.argument_slots.len() != arguments.len()
+        if binding.argument_slots.len() != arguments.len()
             || binding
                 .argument_slots
                 .iter()
+                .chain(&binding.defaulted_slots)
                 .any(|slot| *slot >= binding.field_count || !selected.insert(*slot))
+            || selected.len() != binding.field_count
+            || binding.defaulted_slots.windows(2).any(|slots| slots[0] >= slots[1])
         {
             return Err(Unavailable {
                 span,
-                reason: "construction needs complete distinct fields without deferred defaults".into(),
+                reason: "construction needs a complete distinct supplied/defaulted field partition".into(),
             });
         }
         let view_arguments = self
@@ -256,10 +258,83 @@ impl Builder<'_> {
         Ok(incoming)
     }
 
+    /// Authenticate a source enum construction by its retained variant and result-owner identities. A method with
+    /// the same spelling, a native variant or an ordinary field is not a source constructor. Payload evaluation is
+    /// handled separately so recognizing fresh aggregate storage never authorizes an unproved payload transfer.
+    pub(super) fn source_enum_payload_count(&self, value: &Spanned<Expr>) -> Option<usize> {
+        super::super::builtins::source_enum_construction(&self.checker.type_info, value)?;
+        let identity = self.checker.type_info.resolved_identity(value.span)?;
+        if identity.kind != SemanticSourceTargetKind::Variant
+            || !matches!(identity.origin, SymbolOrigin::Module(_) | SymbolOrigin::Package { .. })
+        {
+            return None;
+        }
+        let owner = match self.checker.type_info.expr_type(value.span)? {
+            ResolvedType::Named(owner) | ResolvedType::Generic(owner, _) => owner,
+            _ => return None,
+        };
+        let TypeInfo::Enum(declaration) = self.checker.lookup_semantic_type_info(owner)? else {
+            return None;
+        };
+        let name = declaration
+            .variants
+            .iter()
+            .find(|name| declaration.variant_identities.get(*name) == Some(identity))?;
+        declaration.variant_fields.get(name).map(Vec::len)
+    }
+
+    /// Evaluate fresh enum payloads in written order after authenticating the variant's complete checked arity.
+    /// Non-Copy places and stored views retain their ownership proof requirements, just as model fields do.
+    pub(super) fn source_enum_construction(
+        &mut self,
+        value: &Spanned<Expr>,
+        count: usize,
+        mut incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let arguments = match &value.node {
+            Expr::MethodCall(_, _, _, arguments) => arguments.as_slice(),
+            Expr::Field(..) if count == 0 => return Ok(incoming),
+            _ => {
+                return Err(Unavailable {
+                    span: value.span,
+                    reason: "source enum construction lacks its checked payload arguments".into(),
+                });
+            }
+        };
+        if arguments.len() != count {
+            return Err(Unavailable {
+                span: value.span,
+                reason: "source enum construction needs its complete checked payload".into(),
+            });
+        }
+        for argument in arguments {
+            let payload = match argument {
+                CallArg::Positional(payload) | CallArg::Named(_, payload) => payload,
+                _ => {
+                    return Err(Unavailable {
+                        span: value.span,
+                        reason: "source enum construction expansion lacks checked payload access".into(),
+                    });
+                }
+            };
+            if !self.fresh_or_copy_field(payload) {
+                return Err(Unavailable {
+                    span: payload.span,
+                    reason: "non-Copy enum payload needs checked ownership transfer materialization".into(),
+                });
+            }
+            incoming = self.expression(payload, incoming, false)?;
+        }
+        Ok(incoming)
+    }
+
     /// Copy values need no transfer; literal, formatted, list-literal, explicitly cloned and nested constructed
     /// values own their fresh storage (a list literal's elements are Copy scalars, which its own evaluation checks).
     /// A source place with a non-Copy type is never reclassified as fresh merely because its last use is here.
     pub(super) fn fresh_or_copy_field(&self, value: &Spanned<Expr>) -> bool {
+        if self.source_enum_payload_count(value).is_some() {
+            return true;
+        }
         if self
             .checker
             .type_info

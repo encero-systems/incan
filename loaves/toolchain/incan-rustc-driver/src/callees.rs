@@ -69,6 +69,7 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
         CalleeKind::ModuleInitialized(slot) => planned(tcx, &crate::statics::initialized_name(*slot)),
         CalleeKind::ModuleComplete(slot) => planned(tcx, &crate::statics::complete_name(*slot)),
         CalleeKind::FieldMetadata(owner, _) => planned(tcx, &crate::field_metadata::name(*owner)),
+        CalleeKind::StaticValue(name, ..) => planned(tcx, name),
         CalleeKind::StaticMethod(slot, method) => planned(tcx, &crate::statics::method_name(*slot, method)),
     }
 }
@@ -330,10 +331,15 @@ fn external_with_signature(
                 inherent_function_in(tcx, &type_inherent_impls(tcx, target), segment)
                     .ok_or_else(|| PlanError::UnknownCallee(path.into()))?
             }
-            DefKind::Trait => trait_function(tcx, current, segment).ok_or_else(|| PlanError::Unsupported {
-                function: path.into(),
-                reason: "the SDK trait publishes no method with this name".into(),
-            })?,
+            DefKind::Trait => match trait_function(tcx, current, segment) {
+                Some(method) => method,
+                None => inherent_function_for_external(tcx, current, segment, external)?.ok_or_else(|| {
+                    PlanError::Unsupported {
+                        function: path.into(),
+                        reason: "the SDK trait or its object publishes no method with this name".into(),
+                    }
+                })?,
+            },
             _ => return Err(PlanError::UnknownCallee(path.into())),
         };
     }
@@ -490,6 +496,10 @@ pub fn owner_inherent_impls(tcx: TyCtxt<'_>, owner: DefId) -> Vec<DefId> {
 pub(crate) fn type_inherent_impls<'tcx>(tcx: TyCtxt<'tcx>, owner: Ty<'tcx>) -> Vec<DefId> {
     let implementations = match owner.kind() {
         rustc_middle::ty::Adt(adt, _) => owner_inherent_impls(tcx, adt.did()),
+        rustc_middle::ty::Dynamic(predicates, _) => predicates
+            .principal()
+            .map(|principal| owner_inherent_impls(tcx, principal.skip_binder().def_id))
+            .unwrap_or_default(),
         _ => primitive_inherent_impls(tcx, owner).to_vec(),
     };
     implementations

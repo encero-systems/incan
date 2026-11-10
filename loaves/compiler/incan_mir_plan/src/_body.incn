@@ -168,8 +168,8 @@ pub enum RvalueKind:
     Borrow(Place)
     MutBorrow(Place)
     UnsizeSlice(Operand)
-    # A reference to a concrete value, as a reference to a Rust trait object of the same mutability: source type, then
-    # target type. rustc proves the value implements the object's every bound before the conversion is built.
+    # A concrete reference or moved native Box owner converted to the same trait-object carrier: source, then target.
+    # rustc proves the object's complete bounds and owner/allocator compatibility before the conversion is built.
     UnsizeTraitObject(Operand, PlanType, PlanType)
     FunctionItem(Callee)
     ReifyFunction(Operand)
@@ -189,11 +189,13 @@ pub enum RvalueKind:
 
 @derive(Clone, PartialEq)
 pub enum FrozenValue:
-    """Effect-free static data: scalars, raw bytes, and nested frozen collections in source order."""
+    """Effect-free typed constants; aggregate fields and variants retain their checked physical layout."""
 
     Scalar(Constant)
     Bytes(list[int])
     Collection(PlanType, list[FrozenValue])
+    Model(int, list[FrozenValue])
+    Enum(int, int, list[FrozenValue])
 
 
 @derive(Clone, PartialEq)
@@ -246,6 +248,8 @@ pub enum CalleeKind:
     SharedCallableBody(list[PlanType])
     # The exact declaration owner and Incan-owned carrier of a checked generated metadata hook.
     FieldMetadata(int, int)
+    # Materialize an Incan-planned immutable value through native constant evaluation, with no runtime initializer.
+    StaticValue(str, PlanType, FrozenValue)
     # A constructor and lifted body for a consuming environment, forwarded by value exactly once.
     ClosureBodyOnce(str, int)
     # Invoke a borrowed callable object of this signature with one packed argument tuple.

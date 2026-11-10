@@ -283,6 +283,9 @@ impl CheckedInputBody<'_> {
         &self,
         expression: &Spanned<Expr>,
     ) -> Result<Option<(flow::Place, Option<flow::LoanId>)>, &'static str> {
+        if super::super::builtins::source_enum_construction(self.facts, expression).is_some() {
+            return Ok(None);
+        }
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr => {
                 let identity = self

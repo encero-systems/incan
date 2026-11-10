@@ -65,7 +65,7 @@ from text_plan import clone_text
 from numerics import numeric_carrier
 from unions import lower_union_declaration
 from type_parameters import substitute
-from nominal_frames import closed_arguments, closed_type, declaration_storage
+from nominal_frames import closed_arguments, closed_type, declaration_storage, nominal_frames
 from program_context import body_at
 from native_type_identity import ConstructorIndex, native_owner
 from formatting import display_plan_value
@@ -175,8 +175,11 @@ pub def intrinsic_declarations(
     file: str,
     retained: list[EnumDeclaration] = [],
 ) -> Result[list[EnumDeclaration], str]:
-    """Retain concrete carriers after any layouts whose indices an earlier lowering already published."""
+    """Retain existing carrier indices, then collect concrete declaration and scheduled-call carriers."""
     mut declarations = list(retained)
+    _frames, call_types = nominal_frames(module)?
+    for ty in call_types:
+        retain_carrier(constructors, module, declarations, ty, file)?
     for ty in declaration_storage(module):
         if closed_type(ty):
             retain_carrier(constructors, module, declarations, ty, file)?
@@ -532,7 +535,7 @@ pub def retain_carrier(
     return Ok(None)
 
 
-pub def carrier_layout(mut builder: Builder, ty: PlanType) -> Result[tuple[int, EnumDeclaration], str]:
+pub def carrier_layout(builder: Builder, ty: PlanType) -> Result[tuple[int, EnumDeclaration], str]:
     """Resolve only a retained standard carrier, keeping source enums on their existing canonical path."""
     match ty:
         PlanType.Enum(owner, _name) =>

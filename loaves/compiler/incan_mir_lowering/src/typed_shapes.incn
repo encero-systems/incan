@@ -1,0 +1,318 @@
+"""On-demand complete typed shapes, expressed as immutable plan values by Incan."""
+
+from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind, SymbolOrigin, CanonicalSymbolId
+from rust::incan_semantics_core::body_ir import BodyIrModule, NamedCallableTarget, Place as RustPlace, ArgumentElement, FieldMetadata, LifecycleMetadata
+from rust::incan_semantics_core::record_identity import RecordPackageIdentity
+from std.primitives.hash import sha256
+from pub::incan_mir_plan import FrozenValue, PlanType, CalleeKind, SourceSpan
+from frame import Builder, temporary, place_type, terminate_call
+from checked_values import scalar_place
+from type_parameters import substitute
+from table_views import borrowed_at
+from stored_types import stored_type, declaration_identity
+from typed_shape_spelling import field_order, shape_spelling, ordered_names, structural_shape
+from typed_value_constants import value_type, field_type, record, text, flag, integer, sequence, element_type, optional, optional_type, optional_text
+
+
+pub def lower_static_shape(
+    module: BodyIrModule, mut builder: Builder, target: NamedCallableTarget,
+    arguments: &list[ArgumentElement], destination: Option[RustPlace], span: SourceSpan,
+) -> Result[bool, str]:
+    """Select the authentic primitive Walk slot; source-authored hooks retain ordinary callable dispatch."""
+    match target.canonical:
+        None => return Ok(false)
+        Some(identity) =>
+            if identity.kind != SemanticSourceTargetKind.Method or identity.declaration_name != "__shape__":
+                return Ok(false)
+            match identity.origin:
+                SymbolOrigin.Package(library=library, module_path=path) =>
+                    if library != "incan_stdlib_primitives" or path != ["primitives", "reflection"]:
+                        return Ok(false)
+                _ => return Ok(false)
+    if len(arguments) != 0 or len(target.type_args) != 0:
+        return Err("generated __shape__ does not accept arguments")
+    match target.receiver_type:
+        None => return Err("generated __shape__ has no checked receiver")
+        Some(receiver) =>
+            ty = substitute(receiver, builder.type_parameters, builder.type_arguments)?
+            match destination:
+                None => return Err("generated __shape__ has no retained result layout")
+                Some(place) =>
+                    output = scalar_place(builder, place, span)?
+                    result_type = place_type(builder.locals, output)
+                    value = shape(module, builder, ty, result_type, true)?
+                    name = f"__incan_static_{builder.name}_{len(builder.blocks)}_{len(builder.locals)}"
+                    terminate_call(builder, CalleeKind.StaticValue(name, result_type, value), [], output, span)
+                    return Ok(true)
+
+
+pub def shape(
+    module: BodyIrModule, builder: Builder, ty: RustType, result_type: PlanType, include_closure: bool,
+) -> Result[FrozenValue, str]:
+    """Build a shape from full stored metadata; nested closure members have no closure of their own."""
+    fields_type = field_type(builder, result_type, "fields")?
+    variants_type = field_type(builder, result_type, "variants")?
+    declarations_type = field_type(builder, result_type, "declarations")?
+    mut fields: list[FrozenValue] = []
+    mut variants: list[FrozenValue] = []
+    mut closed: list[FrozenValue] = []
+    mut name = str(ty)
+    mut identity: Option[FrozenValue] = None
+    mut selector: Option[str] = None
+    mut carrier = PlanType.Unit
+    if not structural_shape(ty):
+        carrier = value_type(builder, ty)?
+    match carrier:
+        PlanType.Model(owner, _native_name) =>
+            declaration = borrowed_at(builder.nominals, owner)
+            if declaration.canonical.kind == SemanticSourceTargetKind.Newtype and len(declaration.field_types) == 1:
+                return shape(module, builder, declaration.field_types[0], result_type, include_closure)
+            if declaration.canonical.kind != SemanticSourceTargetKind.Model:
+                return Err("automatic __shape__ requires a model stored contract")
+            name = str(declaration.canonical.declaration_name)
+            selector = stored_type(module, builder.constructors, ty)
+            identity = closed_identity(module, builder, declaration.canonical, declaration.record_package_identity, declaration.native_type_arguments)
+            match declaration.reflection_metadata:
+                None => return Err("generated __shape__ lacks complete stored metadata")
+                Some(metadata) =>
+                    info_type = element_type(fields_type)?
+                    for slot in field_order(builder, owner)?:
+                        fields.append(field_info(module, builder, metadata[slot], declaration.field_types[slot], info_type)?)
+        PlanType.Enum(owner, _native_name) =>
+            declaration = borrowed_at(builder.enums, owner)
+            name = str(declaration.canonical.declaration_name)
+            selector = stored_type(module, builder.constructors, ty)
+            identity = closed_identity(module, builder, declaration.canonical, declaration.record_package_identity, declaration.native_type_arguments)
+            info_type = element_type(variants_type)?
+            names = [str(variant.name) for variant in declaration.variants]
+            for slot in ordered_names(names)?:
+                variant = borrowed_at(declaration.variants, slot)
+                variants.append(variant_info(module, builder, names[slot], variant.fields, info_type)?)
+        _ => pass
+    if include_closure:
+        mut reached: list[RustType] = []
+        mut seen: list[PlanType] = [carrier]
+        collect_children(module, builder, ty, seen, reached)?
+        mut order: list[tuple[str, int]] = []
+        for index in range(len(reached)):
+            match stored_type(module, builder.constructors, reached[index]):
+                None => return Err("shape closure contains a type without a stored selector")
+                Some(key) => order.append((key, index))
+        ordered = sorted(order)
+        for index in range(len(ordered)):
+            if index > 0 and ordered[index - 1][0] == ordered[index][0]:
+                return Err("shape closure contains colliding closed type selectors")
+            closed.append(shape(module, builder, reached[ordered[index][1]], result_type, false)?)
+    return record(builder, result_type, {
+        "name": text(name),
+        "identity": optional(builder, field_type(builder, result_type, "identity")?, identity)?,
+        "renamed_from": sequence(field_type(builder, result_type, "renamed_from")?, [])?,
+        "renamed_from_lifecycle": optional(builder, field_type(builder, result_type, "renamed_from_lifecycle")?, None)?,
+        "selector": optional_text(builder, field_type(builder, result_type, "selector")?, selector)?,
+        "spelling": optional_text(builder, field_type(builder, result_type, "spelling")?, shape_spelling(builder, ty)?)?,
+        "fields": sequence(fields_type, fields)?,
+        "variants": sequence(variants_type, variants)?,
+        "declarations": sequence(declarations_type, closed)?,
+    })
+
+
+def unsigned(mut output: list[int], value: int) -> None:
+    """Append canonical unsigned LEB128 for closed-identity counts and selector byte lengths."""
+    mut remaining = value.clone()
+    while remaining >= 128:
+        output.append((remaining % 128) + 128)
+        remaining //= 128
+    output.append(remaining)
+
+
+pub def field_info(
+    module: BodyIrModule, builder: Builder, field: FieldMetadata, ty: RustType, result_type: PlanType,
+) -> Result[FrozenValue, str]:
+    """Preserve the full source-owned FieldInfo contract, including private slots and present-empty labels."""
+    mut identity: list[int] = []
+    for byte in field.record_identity:
+        identity.append(int(byte))
+    mut previous: list[FrozenValue] = []
+    for name in field.renamed_from:
+        previous.append(text(str(name)))
+    mut alias: Option[str] = None
+    mut description: Option[str] = None
+    mut wire_name = str(field.name)
+    match field.alias:
+        None => pass
+        Some(value) =>
+            alias = Some(str(value))
+            wire_name = str(value)
+    match field.description:
+        None => pass
+        Some(value) => description = Some(str(value))
+    lifecycle_type = field_type(builder, result_type, "renamed_from_lifecycle")?
+    mut lifecycle: Option[FrozenValue] = None
+    match field.renamed_from_lifecycle:
+        None => pass
+        Some(labels) => lifecycle = Some(lifecycle_info(builder, labels, optional_type(builder, lifecycle_type)?)?)
+    return record(builder, result_type, {
+        "name": text(str(field.name)),
+        "identity": FrozenValue.Bytes(identity),
+        "canonical": flag(field.record_canonical),
+        "renamed_from": sequence(field_type(builder, result_type, "renamed_from")?, previous)?,
+        "renamed_from_lifecycle": optional(builder, lifecycle_type, lifecycle)?,
+        "position": integer(int(field.position)),
+        "default_is_empty": flag(field.default_is_empty),
+        "stored_type": optional_text(builder, field_type(builder, result_type, "stored_type")?, stored_type(module, builder.constructors, ty))?,
+        "alias": optional_text(builder, field_type(builder, result_type, "alias")?, alias)?,
+        "description": optional_text(builder, field_type(builder, result_type, "description")?, description)?,
+        "wire_name": text(wire_name),
+        "type_name": text(str(field.type_name)),
+        "has_default": flag(field.has_default),
+        "extra": sequence(field_type(builder, result_type, "extra")?, [])?,
+    })
+
+
+def lifecycle_info(builder: Builder, labels: LifecycleMetadata, ty: PlanType) -> Result[FrozenValue, str]:
+    """Use the common lifecycle carrier without granting authority to its descriptive labels."""
+    return record(builder, ty, {
+        "since": optional_text(builder, field_type(builder, ty, "since")?, source_text(labels.since))?,
+        "retire_in": optional_text(builder, field_type(builder, ty, "retire_in")?, source_text(labels.retire_in))?,
+        "message": optional_text(builder, field_type(builder, ty, "message")?, source_text(labels.message))?,
+        "by": optional_text(builder, field_type(builder, ty, "by")?, source_text(labels.by))?,
+        "issue": optional_text(builder, field_type(builder, ty, "issue")?, source_text(labels.issue))?,
+    })
+
+
+def source_text(value: Option[str]) -> Option[str]:
+    """Copy foreign retained text only at the compiler's metadata ownership boundary."""
+    match value:
+        None => return None
+        Some(text) => return Some(str(text))
+
+
+def collect_children(
+    module: BodyIrModule, builder: Builder, ty: RustType, mut seen: list[PlanType], mut reached: list[RustType],
+) -> Result[None, str]:
+    """Visit every stored field type independently of runtime values, stopping only at absent stored selectors."""
+    match ty:
+        RustType.Tuple(arguments) =>
+            for argument in arguments:
+                collect_reached(module, builder, argument, seen, reached)?
+            return Ok(None)
+        RustType.Generic(base=base, args=arguments) =>
+            if ty.is_union() or str(base) in ["List", "FrozenList", "$FrozenList", "Set", "FrozenSet", "$FrozenSet", "Dict", "FrozenDict", "$FrozenDict", "Tuple", "Option"]:
+                for argument in arguments:
+                    collect_reached(module, builder, argument, seen, reached)?
+                return Ok(None)
+        _ => pass
+    carrier = value_type(builder, ty)?
+    match carrier:
+        PlanType.Model(owner, _name) =>
+            declaration = borrowed_at(builder.nominals, owner)
+            for child in declaration.field_types:
+                collect_reached(module, builder, child, seen, reached)?
+        PlanType.Enum(owner, _name) =>
+            declaration = borrowed_at(builder.enums, owner)
+            for variant in declaration.variants:
+                for child in variant.fields:
+                    collect_reached(module, builder, child, seen, reached)?
+        _ => pass
+    return Ok(None)
+
+
+def collect_reached(
+    module: BodyIrModule, builder: Builder, ty: RustType, mut seen: list[PlanType], mut reached: list[RustType],
+) -> Result[None, str]:
+    """A missing field selector stops that whole edge; containers expose their nominal arguments recursively."""
+    if stored_type(module, builder.constructors, ty) == None:
+        return Ok(None)
+    match ty:
+        RustType.Tuple(arguments) =>
+            for argument in arguments:
+                collect_reached(module, builder, argument, seen, reached)?
+            return Ok(None)
+        RustType.Generic(base=base, args=arguments) =>
+            if ty.is_union() or str(base) in ["List", "FrozenList", "$FrozenList", "Set", "FrozenSet", "$FrozenSet", "Dict", "FrozenDict", "$FrozenDict", "Tuple", "Option"]:
+                for argument in arguments:
+                    collect_reached(module, builder, argument, seen, reached)?
+                return Ok(None)
+        _ => pass
+    carrier = value_type(builder, ty)?
+    match carrier:
+        PlanType.Model(owner, _name) =>
+            if builder.nominals[owner].canonical.kind == SemanticSourceTargetKind.Newtype:
+                return collect_reached(module, builder, builder.nominals[owner].field_types[0], seen, reached)
+        PlanType.Enum(_owner, _name) => pass
+        _ => return Ok(None)
+    if carrier in seen:
+        return Ok(None)
+    seen.append(carrier)
+    reached.append(ty)
+    return collect_children(module, builder, ty, seen, reached)
+
+
+def member_bytes(name: str) -> FrozenValue:
+    """The six-byte digest is data; native enum representation never chooses a member's identity."""
+    identity = sha256.digest(name.encode("utf-8"))[:6]
+    return FrozenValue.Bytes([int(byte) for byte in identity])
+
+
+pub def payload_info(
+    module: BodyIrModule, builder: Builder, slot: int, ty: RustType, result_type: PlanType,
+) -> Result[FrozenValue, str]:
+    """Retain each positional payload as decimal field text without creating a constructor keyword."""
+    name = str(slot)
+    return record(builder, result_type, {
+        "name": text(name),
+        "identity": member_bytes(name),
+        "canonical": flag(true),
+        "renamed_from": sequence(field_type(builder, result_type, "renamed_from")?, [])?,
+        "renamed_from_lifecycle": optional(builder, field_type(builder, result_type, "renamed_from_lifecycle")?, None)?,
+        "position": integer(slot),
+        "default_is_empty": flag(false),
+        "stored_type": optional_text(builder, field_type(builder, result_type, "stored_type")?, stored_type(module, builder.constructors, ty))?,
+        "alias": optional(builder, field_type(builder, result_type, "alias")?, None)?,
+        "description": optional(builder, field_type(builder, result_type, "description")?, None)?,
+        "wire_name": text(name),
+        "type_name": text(str(ty)),
+        "has_default": flag(false),
+        "extra": sequence(field_type(builder, result_type, "extra")?, [])?,
+    })
+
+
+pub def variant_info(
+    module: BodyIrModule, builder: Builder, name: str, types: list[RustType], result_type: PlanType,
+) -> Result[FrozenValue, str]:
+    """The complete source payload is available even when no runtime value selects this alternative."""
+    fields_type = field_type(builder, result_type, "fields")?
+    info_type = element_type(fields_type)?
+    mut fields: list[FrozenValue] = []
+    for slot in ordered_names([str(index) for index in range(len(types))])?:
+        fields.append(payload_info(module, builder, slot, types[slot], info_type)?)
+    return record(builder, result_type, {
+        "name": text(name),
+        "identity": member_bytes(name),
+        "description": optional(builder, field_type(builder, result_type, "description")?, None)?,
+        "fields": sequence(fields_type, fields)?,
+        "extra": sequence(field_type(builder, result_type, "extra")?, [])?,
+        "renamed_from": sequence(field_type(builder, result_type, "renamed_from")?, [])?,
+        "renamed_from_lifecycle": optional(builder, field_type(builder, result_type, "renamed_from_lifecycle")?, None)?,
+    })
+
+
+def closed_identity(
+    module: BodyIrModule, builder: Builder, canonical: CanonicalSymbolId,
+    package: Option[RecordPackageIdentity], arguments: list[RustType],
+) -> Option[FrozenValue]:
+    """Frame K from an admitted declaration and each complete actual selector, with no substitute identity."""
+    match declaration_identity(canonical, package):
+        None => return None
+        Some(identity) =>
+            mut framed = [int(byte) for byte in identity]
+            unsigned(framed, len(arguments))
+            for argument in arguments:
+                match stored_type(module, builder.constructors, argument):
+                    None => return None
+                    Some(selector) =>
+                        encoded = selector.encode("utf-8")
+                        unsigned(framed, len(encoded))
+                        for byte in encoded:
+                            framed.append(int(byte))
+            return Some(FrozenValue.Bytes(framed))

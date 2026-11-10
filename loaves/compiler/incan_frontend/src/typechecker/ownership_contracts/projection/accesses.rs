@@ -351,6 +351,15 @@ impl SourceAccesses<'_, '_> {
     /// Visit source expressions according to the producer's actual evaluation policy. Borrowing a stored place
     /// evaluates its address, not its value; fresh borrowed arguments still evaluate their nested value normally.
     fn expression(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
+        if let Some(arguments) = super::super::builtins::source_enum_construction(self.proof.facts, expression) {
+            for argument in arguments {
+                let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
+                    return Err("enum source access coverage needs checked fixed payloads");
+                };
+                self.expression(value, false)?;
+            }
+            return Ok(());
+        }
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => {
                 self.stored_place_access(expression, consume)?
