@@ -59,7 +59,7 @@ pub def admit_dictionary(
     return Ok(dictionary)
 
 
-pub def slot(dictionary: Dictionary, key: bytes, mut budget: Budget) -> Result[int, CrumbError]:
+pub def slot(dictionary: &Dictionary, key: bytes, mut budget: Budget) -> Result[int, CrumbError]:
     """Find an exact closed selector; never fetch a package, guess a revision or use a model hash."""
     text = key_text(key, budget)?
     if text not in dictionary.slots:
@@ -75,7 +75,7 @@ def key_text(key: bytes, mut budget: Budget) -> Result[str, CrumbError]:
     return Ok(hexlify(key))
 
 
-def check_references(node: TypeNode, dictionary: Dictionary, mut budget: Budget) -> Result[None, CrumbError]:
+def check_references(node: TypeNode, dictionary: &Dictionary, mut budget: Budget) -> Result[None, CrumbError]:
     """Follow finite selector arguments only; nominal recursion does not recursively expand definitions."""
     budget.charge_elements(1)?
     budget.enter()?
@@ -84,7 +84,7 @@ def check_references(node: TypeNode, dictionary: Dictionary, mut budget: Budget)
     return result
 
 
-def check_inner(node: TypeNode, dictionary: Dictionary, mut budget: Budget) -> Result[None, CrumbError]:
+def check_inner(node: TypeNode, dictionary: &Dictionary, mut budget: Budget) -> Result[None, CrumbError]:
     """Every named dependency must already exist with the same record/enum shape."""
     match node:
         TypeNode.Nominal(kind, _, _, arguments) =>
