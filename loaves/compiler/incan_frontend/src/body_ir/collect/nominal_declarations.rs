@@ -58,6 +58,7 @@ pub(in crate::body_ir) fn collect_local_enum_declarations(
                 })
                 .collect::<Option<Vec<_>>>()?;
             Some(bir::EnumDeclaration {
+                record_package_identity: type_info.declarations.record_package_identity.clone(),
                 native_item: String::new(),
                 native_type_arguments: Vec::new(),
                 direct_declaration_id: CompilerNodeId::declaration_at(module_identity, declaration.span),
@@ -139,6 +140,11 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
                 .collect::<Option<Vec<_>>>()?;
             let validated_constructor = validated_constructor(&declaration.node, &canonical, type_info);
             let retained = bir::NominalDeclaration {
+                record_package_identity: if matches!(&declaration.node, ast::Declaration::Model(_)) {
+                    type_info.declarations.record_package_identity.clone()
+                } else {
+                    None
+                },
                 trait_adoptions: checked_trait_adoptions(name, &type_parameters, type_info),
                 native_item: bir::native_nominal_item(&canonical).unwrap_or_default(),
                 class_inheritance: None,
@@ -474,6 +480,7 @@ pub(super) fn collect_plain_newtype(
     let newtype_string_conversion =
         super::newtype_string_conversion::automatic_candidate(newtype, &canonical, type_info);
     Some(bir::NominalDeclaration {
+        record_package_identity: None,
         trait_adoptions: checked_trait_adoptions(&newtype.name, &facts.type_params, type_info),
         native_item: String::new(),
         class_inheritance: None,

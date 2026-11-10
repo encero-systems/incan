@@ -136,6 +136,7 @@ fn generic_holder_declaration(
     field: CanonicalSymbolId,
 ) -> crate::body_ir::NominalDeclaration {
     crate::body_ir::NominalDeclaration {
+        record_package_identity: None,
         trait_adoptions: Vec::new(),
         native_item: String::new(),
         class_inheritance: None,
@@ -179,6 +180,10 @@ fn field_record_metadata_round_trips_and_is_revalidated() -> Result<(), Box<dyn 
     field.kind = SemanticSourceTargetKind::Field;
     field.namespace = SymbolNamespace::Member;
     let mut declaration = generic_holder_declaration(owner, field);
+    declaration.record_package_identity = Some(crate::record_identity::RecordPackageIdentity {
+        registry_id: "sha256:3d7781b11f6b80f950bab17238cffa7c1f77b5e1f0e0dbbaa656149d9ffbffb0".to_owned(),
+        scoped_name: "example/catalog".to_owned(),
+    });
     declaration.reflection_fields = Some(vec![0]);
     declaration.reflection_metadata = Some(vec![crate::body_ir::FieldMetadata {
         position: 0,
@@ -204,6 +209,18 @@ fn field_record_metadata_round_trips_and_is_revalidated() -> Result<(), Box<dyn 
     assert!(module.is_well_formed_nominal_declaration(&declaration));
     let decoded = decode_module(&encode_module(&module)?)?;
     assert_eq!(decoded, module);
+
+    let mut invalid_namespace = declaration.clone();
+    if let Some(package) = &mut invalid_namespace.record_package_identity {
+        package.registry_id = "sha256:bad".to_owned();
+    }
+    assert!(!module.is_well_formed_nominal_declaration(&invalid_namespace));
+    invalid_namespace = declaration.clone();
+    invalid_namespace.canonical.origin = SymbolOrigin::Package {
+        library: "consumer/alias".to_owned(),
+        module_path: vec!["lib".to_owned()],
+    };
+    assert!(!module.is_well_formed_nominal_declaration(&invalid_namespace));
 
     for invalid_kind in 0..3 {
         let mut invalid = declaration.clone();

@@ -102,6 +102,7 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_nested_generic_static_call_arguments()?;
     assert_frozen_literal_bound_method_identity()?;
     assert_native_provider_field_layout()?;
+    assert_declared_record_namespace()?;
     assert_independently_retained_newtype_return()?;
     assert_generic_newtype_provider_methods()?;
     assert_nested_generic_static_call_bound_mismatch()?;
@@ -1950,6 +1951,61 @@ def owned_some(packet: Packet) -> Option[list[str]]:
             .find(|body| body.name == name)
             .ok_or("missing wrapper body")?;
         assert_eq!(body.params[0].input_access, expected, "{name}: {body:#?}");
+    }
+    Ok(())
+}
+
+/// Producer namespaces survive checker reset and lowering without changing canonical compiler identities.
+fn assert_declared_record_namespace() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "pub model Value:\n    pub number: int\npub enum Choice:\n    Number(int)\n    Empty\npub class Resource:\n    pub number: int\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let declared = incan_semantics_core::record_identity::RecordPackageIdentity {
+        registry_id: "sha256:3d7781b11f6b80f950bab17238cffa7c1f77b5e1f0e0dbbaa656149d9ffbffb0".to_owned(),
+        scoped_name: "example/catalog".to_owned(),
+    };
+    let mut original_identities = None;
+    for package in [None, Some(declared)] {
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["records".to_owned()]));
+        checker.set_current_package_identity(Some("example/catalog".to_owned()));
+        checker.set_record_package_identity(package.clone());
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let facts = checker.into_type_info();
+        if let Some(original) = &original_identities {
+            assert_eq!(&facts.declarations.declaration_identities, original);
+        } else {
+            original_identities = Some(facts.declarations.declaration_identities.clone());
+        }
+        let providers = ProviderOperationCatalog::new();
+        let context = BodyIrContext {
+            modules: &[],
+            provider_operations: &providers,
+            registry_package: None,
+            library_package: Some("example/catalog"),
+            include_inline_tests: false,
+        };
+        let seed = super::build_module_seed(&program, &["records".to_owned()], &facts, &context);
+        let model = seed
+            .nominal_declarations
+            .iter()
+            .find(|owner| owner.canonical.declaration_name == "Value")
+            .ok_or("missing model")?;
+        assert_eq!(model.record_package_identity, package);
+        let class = seed
+            .nominal_declarations
+            .iter()
+            .find(|owner| owner.canonical.declaration_name == "Resource")
+            .ok_or("missing class")?;
+        assert!(class.record_package_identity.is_none());
+        let choice = seed
+            .enum_declarations
+            .iter()
+            .find(|owner| owner.canonical.declaration_name == "Choice")
+            .ok_or("missing enum")?;
+        assert_eq!(choice.record_package_identity, package);
     }
     Ok(())
 }

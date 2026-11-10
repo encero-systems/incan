@@ -514,6 +514,8 @@ struct CheckingNominalScope {
 
 /// Collect and check a program while retaining accepted semantic facts for Body IR and analysis consumers.
 pub struct TypeChecker {
+    /// The active source package's declared persistent-record namespace; compiler ownership remains separate.
+    record_package_identity: Option<incan_semantics_core::record_identity::RecordPackageIdentity>,
     /// Test-only cold baseline bypasses local table extraction while retaining the original semantic operations.
     #[cfg(test)]
     legacy_body_checking: bool,

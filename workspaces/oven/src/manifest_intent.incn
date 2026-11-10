@@ -7,7 +7,7 @@ from std.toml import TomlValue, TomlKind
 from std.hash import sha256
 from rust::std::str import from_utf8
 from manifest_errors import IntakeError, IntakeErrorKind
-from loaf_identity import crate_name, validate_loaf_identity, validate_project_identity
+from loaf_identity import crate_name, validate_loaf_identity, validate_project_identity, validate_registry_identity
 from toolchain_access import BINARY_SEPARATOR, BUILD_SEPARATOR, ToolchainAccess, access_keys, read_access
 from pub::incan_platform.trace import Operation
 from jec import begin, record, text_size
@@ -38,6 +38,7 @@ const PROJECT_KEYS: FrozenList[str] = [
     "readme",
     "requires-incan",
     "private",
+    "registry-id",
 ]
 
 
@@ -103,6 +104,8 @@ pub model ProjectIntent:
     pub dependencies: list[LocalDependency]
     pub rust_inputs: list[RustInputRequest]
     pub rust_edition: str
+    # The owning manifest's declared registry, not a dependency alias or a registry lookup.
+    pub registry_id: Option[str] = None
     # The crate name of this project's Rust facet, explicit or derived from the Loaf identity.
     pub rust_name: str = ""
     # The Rust facet kind, empty when this project has no Rust facet.
@@ -262,6 +265,13 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
         (error) => refusal(manifest, ["project", "name"], IntakeErrorKind.Invalid, error),
     )?
     version = required(project, "version", manifest, ["project", "version"])?
+    mut registry_id: Option[str] = None
+    if "registry-id" in project:
+        declared_registry = required(project, "registry-id", manifest, ["project", "registry-id"])?
+        validate_registry_identity(declared_registry).map_err(
+            (error) => refusal(manifest, ["project", "registry-id"], IntakeErrorKind.Invalid, error),
+        )?
+        registry_id = Some(declared_registry)
     mut scripts: Dict[str, str] = {}
     if "scripts" in project:
         values = table(project["scripts"], manifest, ["project", "scripts"])?
@@ -307,6 +317,7 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
             dependencies=dependencies,
             rust_inputs=rust_inputs,
             rust_edition=edition,
+            registry_id=registry_id,
             rust_name=rust_name,
             rust_type=rust_type,
             rust_build_script=rust_build_script,

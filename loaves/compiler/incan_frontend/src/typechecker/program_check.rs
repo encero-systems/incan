@@ -212,6 +212,7 @@ impl TypeChecker {
         self.const_eval_state.clear();
         self.const_eval_cache.clear();
         self.type_info = TypeCheckInfo::default();
+        self.type_info.declarations.record_package_identity = self.record_package_identity.clone();
         self.warnings.clear();
         self.errors.clear();
         self.pending_uncopyable_dict_lookups.clear();

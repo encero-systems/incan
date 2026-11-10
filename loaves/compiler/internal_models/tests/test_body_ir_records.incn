@@ -285,6 +285,7 @@ def nominal(
         named_type_identities=[],
         type_parameters=[],
         type_parameter_count=0,
+        record_package_identity=None,
     )
 
 

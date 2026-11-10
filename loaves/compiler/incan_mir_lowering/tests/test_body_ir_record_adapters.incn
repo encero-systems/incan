@@ -121,6 +121,7 @@ pub def test_nominal_and_callable_adapters_keep_witnesses_defaults_and_frame() -
         named_type_identities=[],
         type_parameters=[],
         type_parameter_count=0,
+        record_package_identity=None,
     )
     callable = CompilerLoafCallable(
         canonical=method,
