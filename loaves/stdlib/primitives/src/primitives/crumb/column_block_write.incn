@@ -10,9 +10,9 @@ from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.encoding_buffer import EncodingBuffer, indexed
 from crate.primitives.crumb.cells import cell
 from crate.primitives.crumb.description_dictionary import Dictionary
-from crate.primitives.crumb.scalars import compare_integer, subtract_integer
 from crate.primitives.crumb.types import AbsentPolicy, TypeNode
 from crate.primitives.crumb.values import Value
+from crate.primitives.crumb.wide_integer import WideInteger
 
 
 pub def write_block(
@@ -73,33 +73,38 @@ def payload(
             Some(admitted) => return codes(node, values, encoding, admitted, dictionary, budget)
     if not numeric_type(node) or len(values) == 0:
         return Err(CrumbError.invalid_input("numeric block type or empty input"))
-    mut numbers: list[str] = []
+    mut numbers: list[WideInteger] = []
     for value in values:
         budget.charge_elements(1)?
         numbers.append(coefficient(node, value, budget)?)
     return numeric(numbers, cells, encoding == BlockEncoding.ZigzagDelta, budget)
 
 
-def numeric(numbers: list[str], cells: list[bytes], delta: bool, mut budget: Budget) -> Result[bytes, CrumbError]:
+def numeric(
+    numbers: list[WideInteger],
+    cells: list[bytes],
+    delta: bool,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
     """Compute exact mathematical differences before selecting the minimum packed width."""
     mut base = 0
     if not delta:
         for index in range(1, len(numbers)):
             budget.charge_elements(1)?
-            if compare_integer(numbers[index], numbers[base]) < 0:
+            if numbers[index].compare(numbers[base]) < 0:
                 base = index
-    mut residuals: list[str] = []
+    mut residuals: list[WideInteger] = []
     mut width = 0
     for index in range(len(numbers)):
         budget.charge_elements(1)?
         if delta and index == 0:
             continue
-        mut residual = "0"
+        mut residual = WideInteger.zero()
         if delta:
-            difference = subtract_integer(numbers[index], numbers[index - 1], budget)?
+            difference = numbers[index].subtract(numbers[index - 1], budget)?
             residual = zigzag(difference, budget)?
         else:
-            residual = subtract_integer(numbers[index], numbers[base], budget)?
+            residual = numbers[index].subtract(numbers[base], budget)?
         width = max([width, bit_length(residual, budget)?])
         residuals.append(residual)
     mut output = EncodingBuffer.create()
@@ -142,9 +147,12 @@ def codes(
         positions.append(code_for(keys, node, value, dictionary, budget)?)
     mut output = EncodingBuffer.create()
     if encoding == BlockEncoding.DictionaryPacked:
-        width = bit_length(str(len(keys.values) - 1), budget)?
+        width = bit_length(WideInteger.from_unsigned((len(keys.values) - 1).wrapping_resize[u128]()), budget)?
         output.count(width, budget)?
-        output.append(pack(width, [str(code) for code in positions], budget)?, budget)?
+        output.append(
+            pack(width, [WideInteger.from_unsigned(code.wrapping_resize[u128]()) for code in positions], budget)?,
+            budget,
+        )?
     else:
         mut ends: list[int] = []
         for index in range(1, len(positions)):

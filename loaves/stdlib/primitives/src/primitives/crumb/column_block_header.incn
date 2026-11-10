@@ -2,6 +2,7 @@
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.column_bits import bit_length
+from crate.primitives.crumb.wide_integer import WideInteger
 from crate.primitives.crumb.column_block_data import BlockData
 from crate.primitives.crumb.column_errors import ColumnError, ColumnFailure, failure, shared, primitive
 from crate.primitives.crumb.column_key_read import ColumnKeys
@@ -55,7 +56,7 @@ pub def read_header(
             return Err(failure(ColumnFailure.MissingDictionary, cursor.absolute()))
     mut cells: Option[CellIndex] = None
     mut width = 0
-    mut base = "0"
+    mut base = WideInteger.zero()
     if encoding == 0:
         cells = Some(read_index(cursor, present, budget).map_err(shared)?)
     elif encoding in [1, 2]:
@@ -67,7 +68,9 @@ pub def read_header(
     elif encoding == 4:
         width = cursor.length(budget).map_err(shared)?
         if let Some(admitted) = keys:
-            expected = bit_length(str(admitted.count - 1), budget).map_err((e) => primitive(e, cursor.absolute()))?
+            expected = bit_length(WideInteger.from_unsigned((admitted.count - 1).wrapping_resize[u128]()), budget).map_err(
+                (e) => primitive(e, cursor.absolute()),
+            )?
             if width != expected:
                 return Err(failure(ColumnFailure.NonminimalBits, cursor.absolute()))
     payload_origin = cursor.absolute()

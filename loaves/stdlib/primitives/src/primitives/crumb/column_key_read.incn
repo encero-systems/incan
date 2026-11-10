@@ -12,7 +12,6 @@ from crate.primitives.crumb.encoding_buffer import EncodingBuffer
 from crate.primitives.crumb.description_dictionary import Dictionary
 from crate.primitives.crumb.encoding_errors import BinaryFailure, failure as binary_failure
 from crate.primitives.crumb.encoding_index import CellIndex, read_index, selected, offset_at
-from crate.primitives.crumb.scalars import add_integer
 from crate.primitives.crumb.types import ScalarKind, TypeNode
 from crate.primitives.crumb.values import Value, Projection
 from crate.primitives.text import encode_utf8, decode_utf8
@@ -102,7 +101,7 @@ def next_key(
             return cell(node, raw, origin, dictionary, budget).map_err(shared)
         difference = positive_difference(raw, origin, budget)?
         before = coefficient(node, previous, budget).map_err((e) => primitive(e, origin))?
-        number = add_integer(before, difference, budget).map_err((e) => primitive(e, origin))?
+        number = before.add(difference, budget).map_err((e) => primitive(e, origin))?
         return from_coefficient(node, number, budget).map_err((e) => overflow(e, origin))
     prefix = cursor.length(budget).map_err(shared)?
     if index == 0 and prefix != 0:

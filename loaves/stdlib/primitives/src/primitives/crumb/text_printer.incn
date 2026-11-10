@@ -2,6 +2,7 @@
 
 from rust::std::primitive import f32 as RustF32, f64 as RustF64
 from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.native_numbers import integer_spelling
 from crate.primitives.crumb.registrations import KindRegistration
 from crate.primitives.crumb.text_syntax import description_at, last_segment, type_spelling
 from crate.primitives.crumb.text_types import (
@@ -187,7 +188,7 @@ def render_property_value(
             if flag:
                 return Ok("true")
             return Ok("false")
-        Metadata.Integer(decimal) => return Ok(decimal)
+        Metadata.Integer(number) => return Ok(str(number))
         Metadata.List(items) =>
             mut rendered: list[str] = []
             for item in items:
@@ -252,9 +253,9 @@ def render_value(
             if flag:
                 return Ok("true")
             return Ok("false")
-        Value.Integer(decimal) => return Ok(decimal)
+        Value.Integer(number) => return Ok(integer_spelling(number))
         Value.Float(width, bits) => return float_spelling(width, bits)
-        Value.Decimal(coefficient, scale) => return Ok(decimal_spelling(coefficient, int(scale)))
+        Value.Decimal(coefficient, scale) => return Ok(decimal_spelling(str(coefficient), scale))
         Value.Text(text) => return Ok(quoted(text))
         Value.Binary(data) => return Ok(binary_literal(data))
         Value.Withheld => return Ok("<secret>")

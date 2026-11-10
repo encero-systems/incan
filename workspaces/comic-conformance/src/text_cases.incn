@@ -9,6 +9,7 @@ from std.primitives.crumb.text_syntax import parse_type, type_spelling
 from std.primitives.crumb.text_tokens import TextTokenKind, tokenize
 from std.primitives.crumb.text_types import TextContext, TextDescription, TextDocument, TextRootValue
 from std.primitives.crumb.identity import member_identity
+from std.primitives.crumb.native_numbers import integer_spelling
 from std.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, NominalKind, TypeNode, VariantShape
 from std.primitives.crumb.values import MapEntry, Metadata, MetadataEntry, Value, ValueField
 from std.primitives.hex import hexlify
@@ -284,7 +285,7 @@ def property_value_json(value: Metadata) -> JsonValue:
             fields["value"] = JsonValue.bool(flag)
         Metadata.Integer(decimal) =>
             fields["kind"] = JsonValue.string(FixturePropertyKind.Integer.value())
-            fields["value"] = JsonValue.string(decimal)
+            fields["value"] = JsonValue.string(str(decimal))
         Metadata.List(items) =>
             fields["kind"] = JsonValue.string(FixturePropertyKind.List.value())
             fields["items"] = JsonValue.array([property_value_json(item) for item in items])
@@ -312,7 +313,7 @@ def value_json(value: Value, slot_type: TypeNode, descriptions: list[TextDescrip
         Value.Integer(decimal) =>
             fields["kind"] = JsonValue.string(FixtureValueKind.Integer.value())
             fields["type"] = JsonValue.string(type_spelling(slot_type))
-            fields["value"] = JsonValue.string(decimal)
+            fields["value"] = JsonValue.string(integer_spelling(decimal))
         Value.Float(width, bits) =>
             fields["kind"] = JsonValue.string(FixtureValueKind.Float.value())
             fields["width"] = JsonValue.int(width)
@@ -323,8 +324,8 @@ def value_json(value: Value, slot_type: TypeNode, descriptions: list[TextDescrip
                 TypeNode.Decimal(precision, declared_scale) =>
                     fields["precision"] = JsonValue.int(precision)
                     fields["scale"] = JsonValue.int(declared_scale)
-                _ => fields["scale"] = JsonValue.int(int(scale))
-            fields["coefficient"] = JsonValue.string(coefficient)
+                _ => fields["scale"] = JsonValue.int(scale)
+            fields["coefficient"] = JsonValue.string(str(coefficient))
         Value.Text(text_value) =>
             fields["kind"] = JsonValue.string(FixtureValueKind.String.value())
             fields["value"] = JsonValue.string(text_value)

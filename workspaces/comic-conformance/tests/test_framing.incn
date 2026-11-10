@@ -1,6 +1,14 @@
 """Independent boundary controls for Crumb's exact integer and byte framing."""
 
-from std.primitives.crumb import Budget, CrumbError, CrumbFailure, Reader, encode_signed, encode_unsigned, frame
+from std.primitives.crumb import (
+    Budget,
+    CrumbError,
+    CrumbFailure,
+    Reader,
+    encode_native_signed,
+    encode_native_unsigned,
+    frame,
+)
 
 
 def test_shortest_lengths_and_zero_frame() -> Result[None, CrumbError]:
@@ -11,14 +19,14 @@ def test_shortest_lengths_and_zero_frame() -> Result[None, CrumbError]:
     assert reader.read_length(budget)? == 128
     assert reader.read_frame(budget)? == b""
     assert reader.remaining() == 0
-    assert encode_unsigned("128", budget)? == b"\x80\x01"
+    assert encode_native_unsigned(128u128, budget)? == b"\x80\x01"
     return Ok(None)
 
 
 def test_exact_values_exceed_the_host_integer() -> Result[None, CrumbError]:
     """The neutral U domain includes integers beyond u64 and does not pass through float."""
     mut budget = Budget.create(bytes=1024, elements=1024, depth=8)?
-    assert encode_unsigned("18446744073709551616", budget)? == b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x02"
+    assert encode_native_unsigned(18446744073709551616u128, budget)? == b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x02"
     return Ok(None)
 
 
@@ -66,12 +74,9 @@ def test_full_u64_and_failed_frame_restore_the_cursor() -> Result[None, CrumbErr
 def test_exact_signed_and_framed_values() -> Result[None, CrumbError]:
     """Z crosses negative base-128 boundaries without signed overflow or truncation."""
     mut budget = Budget.create(bytes=4096, elements=4096, depth=2)?
-    assert encode_signed("-1", budget)? == b"\x01"
-    assert encode_signed("-128", budget)? == b"\xff\x01"
-    assert encode_signed("18446744073709551616", budget)? == b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x04"
-    assert encode_signed("-0", budget).is_err()
-    assert encode_unsigned("01", budget).is_err()
-    assert encode_unsigned("1a", budget).is_err()
+    assert encode_native_signed(-1i128, budget)? == b"\x01"
+    assert encode_native_signed(-128i128, budget)? == b"\xff\x01"
+    assert encode_native_signed(18446744073709551616i128, budget)? == b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x04"
     assert frame(b"abc", budget)? == b"\x03abc"
     return Ok(None)
 
@@ -83,7 +88,7 @@ def test_depth_and_work_limits_cannot_be_reset_by_children() -> Result[None, Cru
     assert budget.enter().is_err()
     budget.leave()?
     assert budget.leave().is_err()
-    assert encode_unsigned("100000", budget).is_err()
+    assert encode_native_unsigned(100000u128, budget).is_err()
     return Ok(None)
 
 

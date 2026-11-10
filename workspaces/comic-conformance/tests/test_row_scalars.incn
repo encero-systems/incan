@@ -5,7 +5,7 @@ from std.primitives.crumb.scalar_cells import integer_cell, float_cell, decimal_
 from std.primitives.crumb.selectors import parse_type, parse_key
 from std.primitives.crumb.spelling import selector_spelling
 from std.primitives.crumb.types import NominalKind
-from std.primitives.crumb.values import Value
+from std.primitives.crumb.values import IntegerValue, Value
 from std.primitives.hex import hexlify
 from case_data import hex_bytes
 
@@ -13,15 +13,14 @@ from case_data import hex_bytes
 def test_integer_cells_keep_full_unsigned_and_signed_ranges() -> Result[None, str]:
     """u64 max must not pass through signed int or float; signed min uses exact two's complement."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
-    assert hexlify(integer_cell("18446744073709551615", 8, false, budget).map_err((e) => e.message())?) == "ffffffffffffffff"
-    assert hexlify(integer_cell("-9223372036854775808", 8, true, budget).map_err((e) => e.message())?) == "0000000000000080"
-    assert hexlify(integer_cell("-1", 1, true, budget).map_err((e) => e.message())?) == "ff"
-    assert integer_cell("128", 1, true, budget).is_err()
-    assert integer_cell("-129", 1, true, budget).is_err()
-    assert integer_cell("256", 1, false, budget).is_err()
-    assert integer_cell("-1", 1, false, budget).is_err()
-    assert integer_cell("18446744073709551616", 8, false, budget).is_err()
-    assert integer_cell("01", 8, true, budget).is_err()
+    assert hexlify(integer_cell(IntegerValue.Unsigned(18446744073709551615u128), 8, false, budget).map_err((e) => e.message())?) == "ffffffffffffffff"
+    assert hexlify(integer_cell(IntegerValue.Signed(-9223372036854775808i128), 8, true, budget).map_err((e) => e.message())?) == "0000000000000080"
+    assert hexlify(integer_cell(IntegerValue.Signed(-1i128), 1, true, budget).map_err((e) => e.message())?) == "ff"
+    assert integer_cell(IntegerValue.Signed(128i128), 1, true, budget).is_err()
+    assert integer_cell(IntegerValue.Signed(-129i128), 1, true, budget).is_err()
+    assert integer_cell(IntegerValue.Unsigned(256u128), 1, false, budget).is_err()
+    assert integer_cell(IntegerValue.Signed(-1i128), 1, false, budget).is_err()
+    assert integer_cell(IntegerValue.Unsigned(18446744073709551616u128), 8, false, budget).is_err()
     return Ok(None)
 
 
@@ -44,12 +43,11 @@ def test_float_cells_narrow_exactly_and_keep_signed_zero() -> Result[None, str]:
 def test_decimal_cells_rescale_without_rounding_or_unbounded_zero_allocation() -> Result[None, str]:
     """19.9 becomes coefficient1990 at scale2; excess precision and impossible scales refuse."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
-    value = Value.Decimal("199", "1")
+    value = Value.Decimal(199i128, 1)
     assert hexlify(decimal_cell(10, 2, value, budget).map_err((e) => e.message())?) == "8c1f"
     assert decimal_cell(3, 2, value, budget).is_err()
-    assert decimal_cell(10, 1, Value.Decimal("1991", "2"), budget).is_err()
-    assert decimal_cell(10, 2, Value.Decimal("1", "-99999999999999999999"), budget).is_err()
-    assert hexlify(decimal_cell(10, 2, Value.Decimal("0", "99999999999999999999"), budget).map_err((e) => e.message())?) == "00"
+    assert decimal_cell(10, 1, Value.Decimal(1991i128, 2), budget).is_err()
+    assert hexlify(decimal_cell(10, 2, Value.Decimal(0i128, 2), budget).map_err((e) => e.message())?) == "00"
     return Ok(None)
 
 
@@ -62,6 +60,7 @@ def test_canonical_type_and_closed_selector_admission() -> Result[None, str]:
     assert parse_type("record@070dcdc804d5<>", budget).is_err()
     assert parse_type("option<i8, i8>", budget).is_err()
     assert parse_type("decimal<01,0>", budget).is_err()
+    assert parse_type("decimal<39,0>", budget).is_err()
     assert parse_type("decimal<999999999999999999999,0>", budget).is_err()
     assert parse_type("i8<>", budget).is_err()
     assert parse_type("tuple<>", budget).is_ok()

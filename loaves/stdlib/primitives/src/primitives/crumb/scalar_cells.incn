@@ -2,17 +2,13 @@
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
-from crate.primitives.crumb.framing import encode_signed, frame
+from crate.primitives.crumb.framing import encode_native_signed, frame
 from crate.primitives.crumb.encoding_buffer import EncodingBuffer
-from crate.primitives.crumb.scalars import compare_integer, float64_bits, normalize_decimal
+from crate.primitives.crumb.native_numbers import normalize_decimal
+from crate.primitives.crumb.scalars import float64_bits
 from crate.primitives.crumb.types import ScalarKind
-from crate.primitives.crumb.values import Value
+from crate.primitives.crumb.values import IntegerValue, Value
 from crate.primitives.text import encode_utf8
-
-const SIGNED_MIN: FrozenList[str] = ["-128", "-32768", "-2147483648", "-9223372036854775808"]
-const SIGNED_MAX: FrozenList[str] = ["127", "32767", "2147483647", "9223372036854775807"]
-const UNSIGNED_MAX: FrozenList[str] = ["255", "65535", "4294967295", "18446744073709551615"]
-
 
 pub def scalar_cell(kind: ScalarKind, value: Value, mut budget: Budget) -> Result[bytes, CrumbError]:
     """Match a declared scalar against the exact logical value; no coercion through host float/int."""
@@ -54,69 +50,87 @@ pub def scalar_cell(kind: ScalarKind, value: Value, mut budget: Budget) -> Resul
     return Err(CrumbError.invalid_input("scalar value type"))
 
 
-pub def integer_cell(decimal: str, width: int, signed: bool, mut budget: Budget) -> Result[bytes, CrumbError]:
-    """Range-check canonical decimal before producing fixed little-endian two's-complement bytes."""
-    encode_signed(decimal, budget)?
-    widths = [1, 2, 4, 8]
+pub def integer_cell(value: IntegerValue, width: int, signed: bool, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Range-check a native carrier before producing fixed little-endian two's-complement bytes."""
+    widths = [1, 2, 4, 8, 16]
     if width not in widths:
         return Err(CrumbError.invalid_input("integer cell width"))
-    mut slot = 0
-    for index in range(4):
-        if widths[index] == width:
-            slot = index
-    if signed:
-        if compare_integer(decimal, SIGNED_MIN[slot]) < 0 or compare_integer(decimal, SIGNED_MAX[slot]) > 0:
-            return Err(CrumbError.invalid_input("signed cell range"))
-    elif compare_integer(decimal, "0") < 0 or compare_integer(decimal, UNSIGNED_MAX[slot]) > 0:
-        return Err(CrumbError.invalid_input("unsigned cell range"))
-    negative = decimal.startswith("-")
-    budget.charge_bytes(len(decimal))?
-    mut magnitude = decimal[:]
-    if negative:
-        magnitude = decimal[1:]
-    budget.charge_bytes(width * 8)?
-    mut octets: list[int] = [0 for _ in range(width)]
-    for digit in magnitude:
-        mut carry = int(digit)
-        for index in range(width):
-            budget.charge_elements(1)?
-            next = octets[index] * 10 + carry
-            octets[index] = next % 256
-            carry = next // 256
-    if negative:
-        mut carry = 1
-        for index in range(width):
-            next = 255 - octets[index] + carry
-            octets[index] = next % 256
-            carry = next // 256
+    mut remaining: u128 = 0u128
+    match value:
+        IntegerValue.Signed(number) =>
+            if not signed or not signed_width(number, width):
+                return Err(CrumbError.invalid_input("signed cell range"))
+            remaining = number.wrapping_resize[u128]()
+        IntegerValue.Unsigned(number) =>
+            if signed or not unsigned_width(number, width):
+                return Err(CrumbError.invalid_input("unsigned cell range"))
+            remaining = number
     budget.charge_bytes(width)?
-    return Ok([octet.saturating_resize[u8]() for octet in octets])
+    mut octets: list[u8] = []
+    for _ in range(width):
+        octets.append((remaining % 256u128).wrapping_resize[u8]())
+        remaining = remaining // 256u128
+    return Ok(octets)
+
+
+def signed_width(value: i128, width: int) -> bool:
+    """Return whether a native signed value fits one supported physical width."""
+    if width == 16:
+        return true
+    bits = width * 8
+    limit: i128 = 1i128 << (bits - 1)
+    return value >= 0i128 - limit and value < limit
+
+
+def unsigned_width(value: u128, width: int) -> bool:
+    """Return whether a native unsigned value fits one supported physical width."""
+    if width == 16:
+        return true
+    bits = width * 8
+    limit: u128 = 1u128 << bits
+    return value < limit
 
 
 pub def decimal_cell(precision: int, scale: int, value: Value, mut budget: Budget) -> Result[bytes, CrumbError]:
     """Rescale exactly to the declared scale, refusing precision loss or implicit rounding."""
-    if precision <= 0 or scale < 0 or scale > precision:
+    return encode_native_signed(decimal_coefficient(precision, scale, value, budget)?, budget)
+
+
+pub def decimal_coefficient(precision: int, scale: int, value: Value, mut budget: Budget) -> Result[i128, CrumbError]:
+    """Return the exact coefficient at the declared scale after native precision admission."""
+    if precision <= 0 or precision > 38 or scale < 0 or scale > precision:
         return Err(CrumbError.invalid_input("decimal cell bounds"))
     match value:
         Value.Decimal(coefficient, original_scale) =>
-            normalized, power = normalize_decimal(coefficient, original_scale, budget)?
-            if normalized == "0":
-                return encode_signed("0", budget)
-            mut digits = len(normalized)
-            if normalized.startswith("-"):
-                digits -= 1
+            normalized = normalize_decimal(coefficient, original_scale)?
+            if normalized.coefficient == 0i128:
+                return Ok(0i128)
+            digits = decimal_digits(normalized.coefficient)
             if digits > precision:
                 return Err(CrumbError.invalid_input("decimal cell precision"))
             minimum_scale = scale - (precision - digits)
-            if compare_integer(power, str(minimum_scale)) < 0 or compare_integer(power, str(scale)) > 0:
+            if normalized.scale < minimum_scale or normalized.scale > scale:
                 return Err(CrumbError.invalid_input("decimal cell exact scale"))
-            # The comparisons bound power to a host-sized interval before this conversion.
-            extra = scale - int(power)
-            budget.charge_bytes(len(normalized))?
-            budget.charge_bytes(extra)?
+            extra = scale - normalized.scale
             budget.charge_elements(extra)?
-            return encode_signed(normalized + "".join(["0" for _ in range(extra)]), budget)
+            mut scaled = normalized.coefficient
+            for _ in range(extra):
+                # The precision and minimum-scale checks above bound the result below 10**38.
+                scaled *= 10i128
+            return Ok(scaled)
         _ => return Err(CrumbError.invalid_input("decimal value type"))
+
+
+def decimal_digits(coefficient: i128) -> int:
+    """Count decimal magnitude digits without negating the asymmetric i128 minimum."""
+    mut remaining: u128 = coefficient.wrapping_resize[u128]()
+    if coefficient < 0i128:
+        remaining = (0i128 - (coefficient + 1i128)).wrapping_resize[u128]() + 1u128
+    mut digits = 0
+    while remaining != 0u128:
+        remaining = remaining // 10u128
+        digits += 1
+    return digits
 
 
 pub def float_cell(width: int, bits: bytes, target: int, mut budget: Budget) -> Result[bytes, CrumbError]:

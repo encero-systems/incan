@@ -2,6 +2,8 @@
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.values import IntegerValue
+from crate.primitives.crumb.wide_integer import WideInteger
 
 
 pub class Reader:
@@ -82,42 +84,58 @@ pub class Reader:
         return Ok(value)
 
 
-pub def encode_unsigned(decimal: str, mut budget: Budget) -> Result[bytes, CrumbError]:
-    """Encode a canonical nonnegative decimal string as U, exactly at any caller-admitted size."""
-    groups = _decimal_groups(decimal, budget)?
-    return _pack_groups(groups, budget)
+pub def encode_native_unsigned(value: u128, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Encode one native unsigned value as shortest U without decimal formatting."""
+    return encode_wide_unsigned(WideInteger.from_unsigned(value), budget)
 
 
-pub def encode_signed(decimal: str, mut budget: Budget) -> Result[bytes, CrumbError]:
-    """Encode Z from a canonical signed decimal string; reject negative zero and leading zeros."""
-    negative = decimal.startswith("-")
+pub def encode_native_signed(value: i128, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Encode one native signed value through Z without decimal formatting."""
+    return encode_wide_unsigned(WideInteger.from_signed(value).zigzag(budget)?, budget)
+
+
+pub def encode_integer(value: IntegerValue, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Encode a signed or unsigned logical integer through the shared mathematical Z mapping."""
+    match value:
+        IntegerValue.Signed(number) => return encode_native_signed(number, budget)
+        IntegerValue.Unsigned(number) =>
+            return encode_wide_unsigned(WideInteger.from_unsigned(number).zigzag(budget)?, budget)
+
+
+pub def encode_wide_unsigned(value: WideInteger, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Encode a nonnegative widened physical value as shortest U directly from its bits."""
+    if value.is_negative():
+        return Err(CrumbError.invalid_input("negative unsigned integer"))
+    width = value.bit_length(budget)?
+    if width == 0:
+        return _pack_groups([0], budget)
+    magnitude = value.bytes()
     mut groups: list[int] = []
-    mut carry = 0
-    if negative:
-        if decimal == "-0":
-            return Err(CrumbError.invalid_input("signed integer"))
-        budget.charge_bytes(len(decimal) - 1)?
-        groups = _decimal_groups(decimal[1:], budget)?
-        carry = -1
-    else:
-        groups = _decimal_groups(decimal, budget)?
-    # Z doubles the magnitude and subtracts one for negatives; floor division carries the borrow.
-    for index in range(len(groups)):
+    mut position = 0
+    while position < width:
         budget.charge_elements(1)?
-        value = groups[index] * 2 + carry
-        groups[index] = value % 128
-        carry = value // 128
-    if carry > 0:
-        budget.charge_bytes(1)?
-        groups.append(carry)
-    while len(groups) > 1 and groups[len(groups) - 1] == 0:
-        groups.pop()
+        mut group = 0
+        for bit in range(7):
+            source = position + bit
+            if source < width:
+                byte = int(magnitude[source // 8])
+                group |= ((byte >> (source % 8)) & 1) << bit
+        groups.append(group)
+        position += 7
     return _pack_groups(groups, budget)
+
+
+pub def decode_native_signed(groups: list[int], mut budget: Budget) -> Result[i128, CrumbError]:
+    """Decode one Z value into i128, refusing physical values outside the logical decimal domain."""
+    value = WideInteger.from_base128(groups, budget)?.unzigzag(budget)?.to_signed()
+    match value:
+        Some(number) => return Ok(number)
+        None => return Err(CrumbError.invalid_input("signed integer overflow"))
 
 
 pub def frame(data: bytes, mut budget: Budget) -> Result[bytes, CrumbError]:
     """Encode F with exact byte length; charge the payload copy before creating it."""
-    prefix = encode_unsigned(str(len(data)), budget)?
+    prefix = encode_native_unsigned(len(data).wrapping_resize[u128](), budget)?
     budget.charge_bytes(len(prefix))?
     budget.charge_bytes(len(data))?
     mut output: list[u8] = []
@@ -126,28 +144,6 @@ pub def frame(data: bytes, mut budget: Budget) -> Result[bytes, CrumbError]:
     for byte in data:
         output.append(byte.saturating_resize[u8]())
     return Ok(output)
-
-
-def _decimal_groups(decimal: str, mut budget: Budget) -> Result[list[int], CrumbError]:
-    """Convert decimal digits to little-endian base-128 using bounded exact multiply/add steps."""
-    if len(decimal) == 0 or (len(decimal) > 1 and decimal.startswith("0")):
-        return Err(CrumbError.invalid_input("unsigned integer"))
-    budget.charge_bytes(1)?
-    mut groups: list[int] = [0]
-    for character in decimal:
-        if character < "0" or character > "9":
-            return Err(CrumbError.invalid_input("decimal digit"))
-        # Each step is at most 127 * 10 + 9, regardless of the total integer width.
-        mut carry = int(character)
-        for index in range(len(groups)):
-            budget.charge_elements(1)?
-            value = groups[index] * 10 + carry
-            groups[index] = value % 128
-            carry = value // 128
-        if carry > 0:
-            budget.charge_bytes(1)?
-            groups.append(carry)
-    return Ok(groups)
 
 
 def _pack_groups(groups: list[int], mut budget: Budget) -> Result[bytes, CrumbError]:

@@ -1,5 +1,7 @@
 """Inert COMIC document reading over caller-admitted descriptions and limits."""
 
+from rust::std::primitive import i128 as RustI128
+from rust::std::str import FromStr
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.text_syntax import last_segment, parse_type
 from crate.primitives.crumb.text_tokens import TextTokenKind, TextTokens, tokenize
@@ -215,7 +217,10 @@ def parse_property_value(mut tokens: TextTokens, mut budget: Budget) -> Result[M
         tokens.take()
         result = Metadata.Null
     elif token.kind == TextTokenKind.Number:
-        result = Metadata.Integer(tokens.take().text)
+        number = tokens.take()
+        match RustI128.from_str(number.text):
+            Ok(value) => result = Metadata.Integer(value)
+            Err(_) => return Err(TextError(kind=TextFailure.InvalidProperty, position=number.position))
     elif tokens.accepts("["):
         mut items: list[Metadata] = []
         while not tokens.accepts("]"):

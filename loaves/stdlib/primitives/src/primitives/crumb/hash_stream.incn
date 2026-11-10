@@ -2,7 +2,7 @@
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
-from crate.primitives.crumb.framing import encode_unsigned
+from crate.primitives.crumb.framing import encode_native_unsigned
 from crate.primitives.hash import Sha256Hasher, sha256
 from crate.primitives.text import encode_utf8
 
@@ -62,7 +62,7 @@ pub class HashOutput:
 
     pub def unsigned(mut self, value: int, mut budget: Budget) -> Result[None, CrumbError]:
         """Write an exact nonnegative count with the shared shortest-U implementation."""
-        return self.write(encode_unsigned(str(value), budget)?, budget)
+        return self.write(encode_native_unsigned(value.wrapping_resize[u128](), budget)?, budget)
 
     pub def framed(mut self, value: bytes, mut budget: Budget) -> Result[None, CrumbError]:
         """Stream a known byte length and payload separately instead of concatenating a frame."""

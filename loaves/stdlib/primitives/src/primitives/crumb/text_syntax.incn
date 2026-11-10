@@ -63,7 +63,7 @@ def parse_decimal(mut tokens: TextTokens) -> Result[TypeNode, TextError]:
         return Err(TextError(kind=TextFailure.InvalidType, position=precision_token.position))
     precision = int(precision_token.text)
     scale = int(scale_token.text)
-    if precision <= 0 or scale < 0 or scale > precision:
+    if precision <= 0 or precision > 38 or scale < 0 or scale > precision:
         return Err(TextError(kind=TextFailure.InvalidType, position=precision_token.position))
     return Ok(TypeNode.Decimal(precision, scale))
 

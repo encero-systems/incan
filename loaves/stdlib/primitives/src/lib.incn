@@ -20,6 +20,8 @@ import primitives.crumb.spelling
 import primitives.crumb.identity
 import primitives.crumb.admission
 import primitives.crumb.values
+import primitives.crumb.native_numbers
+import primitives.crumb.wide_integer
 import primitives.crumb.hash_stream
 import primitives.crumb.scalars
 import primitives.crumb.ordering
@@ -39,7 +41,6 @@ import primitives.crumb.records
 import primitives.crumb.row_writer
 import primitives.crumb.encoding_errors
 import primitives.crumb.encoding_cursor
-import primitives.crumb.exact_numbers
 import primitives.crumb.metadata_read
 import primitives.crumb.description_read
 import primitives.crumb.encoding_index

@@ -10,7 +10,7 @@ from std.primitives.crumb.description_dictionary import admit_dictionary
 from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.row_writer import write_rows
 from std.primitives.crumb.types import AbsentPolicy, ContainerKind, ScalarKind, TypeNode
-from std.primitives.crumb.values import Value, ValueField
+from std.primitives.crumb.values import IntegerValue, Value, ValueField
 from encoding_test_support import description, member
 
 
@@ -25,7 +25,11 @@ def test_writer_choices_change_bytes_but_not_the_logical_seal() -> Result[None, 
     mut budget = Budget.create(bytes=16777216, elements=1048576, depth=64).map_err((e) => e.message())?
     registry = KindRegistry.create([], budget).map_err((e) => e.message())?
     declared = description(b"record\x00", [member(b"field1", "i8")])
-    records = [record(Value.Integer("-2")), record(Value.Integer("1")), record(Value.Integer("0"))]
+    records = [
+        record(Value.Integer(IntegerValue.Signed(-2i128))),
+        record(Value.Integer(IntegerValue.Signed(1i128))),
+        record(Value.Integer(IntegerValue.Signed(0i128))),
+    ]
     selected = [GroupChoice(columns=[ColumnChoice(blocks=[BlockEncoding.FrameOfReference])])]
     plain = write_columns([declared], records, registry, true, [], budget).map_err((e) => e.message())?
     packed = write_columns([declared], records, registry, true, selected, budget).map_err((e) => e.message())?
@@ -41,16 +45,23 @@ def test_column_writer_rejects_bad_contracts_and_choice_cardinality() -> Result[
     mut budget = Budget.create(bytes=16777216, elements=1048576, depth=64).map_err((e) => e.message())?
     registry = KindRegistry.create([], budget).map_err((e) => e.message())?
     declared = description(b"record\x00", [member(b"field1", "i8")])
-    rows = [record(Value.Integer("7"))]
+    rows = [record(Value.Integer(IntegerValue.Signed(7i128)))]
     assert write_columns([declared, declared], [], registry, false, [], budget).is_err()
-    assert write_columns([declared], [record(Value.Integer("128"))], registry, false, [], budget).is_err()
+    assert write_columns(
+        [declared],
+        [record(Value.Integer(IntegerValue.Signed(128i128)))],
+        registry,
+        false,
+        [],
+        budget,
+    ).is_err()
     assert write_columns([declared], rows, registry, false, [GroupChoice(columns=[])], budget).is_err()
     missing_block = [GroupChoice(columns=[ColumnChoice(blocks=[])])]
     assert write_columns([declared], rows, registry, false, missing_block, budget).is_err()
     assert write_columns([declared], [], registry, false, missing_block, budget).is_err()
     missing_field = RowRecord(key=b"record\x00", value=Value.Record([]))
     assert write_columns([declared], [missing_field], registry, false, [], budget).is_err()
-    wrong_absence = record(Value.Integer("7"), AbsentPolicy.NoneValue)
+    wrong_absence = record(Value.Integer(IntegerValue.Signed(7i128)), AbsentPolicy.NoneValue)
     assert write_columns([declared], [wrong_absence], registry, false, [], budget).is_err()
     return Ok(None)
 

@@ -1,7 +1,10 @@
 """Translate independently written corpus fixtures to the one logical Crumb value model."""
 
+from rust::std::primitive import i128 as RustI128, u128 as RustU128
+from rust::std::str import FromStr
 from std.json import JsonValue
-from std.primitives.crumb.values import Value, ValueField, MapEntry, Metadata, MetadataEntry
+from std.primitives.crumb.native_numbers import integer_spelling
+from std.primitives.crumb.values import IntegerValue, Value, ValueField, MapEntry, Metadata, MetadataEntry
 from std.primitives.crumb.text_types import TextDescription
 from std.primitives.crumb.types import FieldShape, NominalKind, ScalarKind, TypeNode
 from std.primitives.hex import hexlify
@@ -26,6 +29,31 @@ pub def integer(value: JsonValue, key: str) -> Result[int, str]:
     return field(value, key)?.expect_int().map_err((error) => error.message())
 
 
+def logical_integer(value: JsonValue, key: str) -> Result[IntegerValue, str]:
+    """Parse one exact fixture integer into the signed or unsigned native carrier."""
+    spelling = text(value, key)?
+    mut unsigned = false
+    if let Some(kind) = value.get("type"):
+        unsigned = kind.expect_str().map_err((error) => error.message())?.startswith("u")
+    if unsigned:
+        match RustU128.from_str(spelling):
+            Ok(number) => return Ok(IntegerValue.Unsigned(number))
+            Err(error) => return Err(str(error))
+    match RustI128.from_str(spelling):
+        Ok(number) => return Ok(IntegerValue.Signed(number))
+        Err(_) =>
+            match RustU128.from_str(spelling):
+                Ok(number) => return Ok(IntegerValue.Unsigned(number))
+                Err(error) => return Err(str(error))
+
+
+def signed_integer(value: JsonValue, key: str) -> Result[i128, str]:
+    """Parse one signed fixture integer without a host-sized narrowing."""
+    match RustI128.from_str(text(value, key)?):
+        Ok(number) => return Ok(number)
+        Err(error) => return Err(str(error))
+
+
 pub def logical(value: JsonValue) -> Result[Value, str]:
     """Preserve explicit absence, exact bits and original collection order before production admission."""
     # A local retains match-capture ownership until direct call matching is fixed (#2800).
@@ -35,9 +63,10 @@ pub def logical(value: JsonValue) -> Result[Value, str]:
         FixtureValueKind.Some => return Ok(Value.Some([logical(field(value, "value")?)?]))
         FixtureValueKind.Boolean =>
             return Ok(Value.Boolean(field(value, "value")?.expect_bool().map_err((error) => error.message())?))
-        FixtureValueKind.Integer => return Ok(Value.Integer(text(value, "value")?))
+        FixtureValueKind.Integer => return Ok(Value.Integer(logical_integer(value, "value")?))
         FixtureValueKind.Float => return Ok(Value.Float(integer(value, "width")?, hex_bytes(text(value, "bits")?)?))
-        FixtureValueKind.Decimal => return Ok(Value.Decimal(text(value, "coefficient")?, str(integer(value, "scale")?)))
+        FixtureValueKind.Decimal =>
+            return Ok(Value.Decimal(signed_integer(value, "coefficient")?, integer(value, "scale")?))
         FixtureValueKind.String => return Ok(Value.Text(text(value, "value")?))
         FixtureValueKind.Binary => return Ok(Value.Binary(hex_bytes(text(value, "hex")?)?))
         FixtureValueKind.Withheld => return Ok(Value.Withheld)
@@ -113,7 +142,7 @@ pub def metadata(value: JsonValue) -> Result[Metadata, str]:
         FixtureMetadataKind.Null => return Ok(Metadata.Null)
         FixtureMetadataKind.Boolean =>
             return Ok(Metadata.Boolean(field(value, "value")?.expect_bool().map_err((error) => error.message())?))
-        FixtureMetadataKind.Integer => return Ok(Metadata.Integer(text(value, "value")?))
+        FixtureMetadataKind.Integer => return Ok(Metadata.Integer(signed_integer(value, "value")?))
         FixtureMetadataKind.String => return Ok(Metadata.Text(text(value, "value")?))
         FixtureMetadataKind.Binary => return Ok(Metadata.Binary(hex_bytes(text(value, "hex")?)?))
         FixtureMetadataKind.Symbol => return Ok(Metadata.Symbol(text(value, "name")?))
@@ -156,7 +185,7 @@ pub def metadata_notation(value: Metadata) -> JsonValue:
             result["value"] = JsonValue.bool(item)
         Metadata.Integer(item) =>
             result["kind"] = JsonValue.string(FixtureMetadataKind.Integer.value())
-            result["value"] = JsonValue.string(item)
+            result["value"] = JsonValue.string(str(item))
         Metadata.Text(item) =>
             result["kind"] = JsonValue.string(FixtureMetadataKind.String.value())
             result["value"] = JsonValue.string(item)
@@ -308,7 +337,7 @@ pub def text_property_value(value: JsonValue) -> Result[Metadata, str]:
         FixturePropertyKind.Boolean =>
             flag = field(value, "value")?.expect_bool().map_err((error) => error.message())?
             return Ok(Metadata.Boolean(flag))
-        FixturePropertyKind.Integer => return Ok(Metadata.Integer(text(value, "value")?))
+        FixturePropertyKind.Integer => return Ok(Metadata.Integer(signed_integer(value, "value")?))
         FixturePropertyKind.Null => return Ok(Metadata.Null)
         FixturePropertyKind.Binary => return Ok(Metadata.Binary(hex_bytes(text(value, "hex")?)?))
         FixturePropertyKind.List =>
@@ -337,11 +366,11 @@ pub def text_value(value: JsonValue, descriptions: list[TextDescription]) -> Res
         FixtureValueKind.Boolean =>
             flag = field(value, "value")?.expect_bool().map_err((error) => error.message())?
             return Ok(Value.Boolean(flag))
-        FixtureValueKind.Integer => return Ok(Value.Integer(text(value, "value")?))
+        FixtureValueKind.Integer => return Ok(Value.Integer(logical_integer(value, "value")?))
         FixtureValueKind.Float => return text_float(value)
         FixtureValueKind.Decimal =>
             scale = field(value, "scale")?.expect_int().map_err((error) => error.message())?
-            return Ok(Value.Decimal(text(value, "coefficient")?, str(scale)))
+            return Ok(Value.Decimal(signed_integer(value, "coefficient")?, scale))
         FixtureValueKind.String => return Ok(Value.Text(text(value, "value")?))
         FixtureValueKind.Binary => return Ok(Value.Binary(hex_bytes(text(value, "hex")?)?))
         FixtureValueKind.Withheld => return Ok(Value.Withheld)

@@ -6,7 +6,7 @@ from std.primitives.crumb.row_reader import read_rows, read_prefix
 from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.encoding_errors import BinaryFailure
 from std.primitives.crumb.types import AbsentPolicy
-from std.primitives.crumb.values import Value, ValueField
+from std.primitives.crumb.values import IntegerValue, Value, ValueField
 from std.primitives.views import MappedView
 from encoding_test_support import description, member, backing, encoded, admitted, require_view
 
@@ -14,7 +14,12 @@ from encoding_test_support import description, member, backing, encoded, admitte
 def retained_field() -> Result[MappedView, str]:
     """The set itself leaves scope too; the returned field still owns a valid immutable byte anchor."""
     declared = description(b"record\x00", [member(b"field1", "i8")])
-    value = ValueField(identity=b"field1", canonical=true, absent=AbsentPolicy.Required, value=Value.Integer("7"))
+    value = ValueField(
+        identity=b"field1",
+        canonical=true,
+        absent=AbsentPolicy.Required,
+        value=Value.Integer(IntegerValue.Signed(7i128)),
+    )
     record = RowRecord(key=b"record\x00", value=Value.Record([value]))
     rows = admitted(encoded([declared], [record], true)?)?
     mut budget = Budget.create(bytes=64, elements=64, depth=16).map_err((e) => e.message())?
@@ -37,14 +42,19 @@ def test_selected_field_does_not_decode_large_neighbor() -> Result[None, str]:
     large: bytes = [42u8 for _ in range(16384)]
     values = [
         ValueField(identity=b"field2", canonical=true, absent=AbsentPolicy.Required, value=Value.Binary(large)),
-        ValueField(identity=b"field1", canonical=true, absent=AbsentPolicy.Required, value=Value.Integer("7")),
+        ValueField(
+            identity=b"field1",
+            canonical=true,
+            absent=AbsentPolicy.Required,
+            value=Value.Integer(IntegerValue.Signed(7i128)),
+        ),
     ]
     rows = admitted(encoded([declared], [RowRecord(key=b"record\x00", value=Value.Record(values))], false)?)?
     mut tiny = Budget.create(bytes=128, elements=64, depth=16).map_err((e) => e.message())?
     selected = rows.read_field(0, b"field1", tiny).map_err((e) => e.message())?
     match selected:
         Value.Integer(value) =>
-            assert value == "7"
+            assert value == IntegerValue.Signed(7i128)
         _ => return Err("selected value type changed")
     mut full = Budget.create(bytes=128, elements=64, depth=16).map_err((e) => e.message())?
     match rows.read_record(0, full):
@@ -101,7 +111,12 @@ def test_bad_unselected_cell_prevents_any_set() -> Result[None, str]:
     """The final boolean is corrupt even if a caller would only request the preceding valid integer."""
     declared = description(b"record\x00", [member(b"field1", "i8"), member(b"field2", "boolean")])
     values = [
-        ValueField(identity=b"field1", canonical=true, absent=AbsentPolicy.Required, value=Value.Integer("7")),
+        ValueField(
+            identity=b"field1",
+            canonical=true,
+            absent=AbsentPolicy.Required,
+            value=Value.Integer(IntegerValue.Signed(7i128)),
+        ),
         ValueField(identity=b"field2", canonical=true, absent=AbsentPolicy.Required, value=Value.Boolean(true)),
     ]
     original = encoded([declared], [RowRecord(key=b"record\x00", value=Value.Record(values))], false)?
@@ -141,9 +156,9 @@ def test_bitmap_rank_across_bytes_with_interleaved_required_fields() -> Result[N
         mut value = Value.NoneValue
         if required:
             policy = AbsentPolicy.Required
-            value = Value.Integer(str(index))
+            value = Value.Integer(IntegerValue.Signed(index.wrapping_resize[i128]()))
         elif index % 2 == 0:
-            value = Value.Some([Value.Integer(str(index))])
+            value = Value.Some([Value.Integer(IntegerValue.Signed(index.wrapping_resize[i128]()))])
         values.append(ValueField(identity=identities[index], canonical=true, absent=policy, value=value))
         if index > 0:
             if required:
