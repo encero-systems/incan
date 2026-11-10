@@ -93,6 +93,20 @@ impl RawVocabExports {
             desugarer_artifact: vocab.desugarer_artifact.clone(),
         }
     }
+
+    /// Move the private vocabulary transport into the public semantic value used by compiler consumers.
+    pub(super) fn into_semantic(self) -> VocabExports {
+        VocabExports {
+            metadata_version: self.metadata_version,
+            unit_identity: self.unit_identity,
+            crate_path: self.crate_path,
+            package_name: self.package_name,
+            keyword_registrations: self.keyword_registrations,
+            dsl_surfaces: self.dsl_surfaces,
+            provider_manifest: self.provider_manifest,
+            desugarer_artifact: self.desugarer_artifact,
+        }
+    }
 }
 
 impl RawLibraryManifest {
@@ -153,16 +167,7 @@ impl RawLibraryManifest {
                 statics: self.exports.statics,
             },
             made_private_types: self.made_private_types,
-            vocab: self.vocab.map(|vocab| VocabExports {
-                metadata_version: vocab.metadata_version,
-                unit_identity: vocab.unit_identity,
-                crate_path: vocab.crate_path,
-                package_name: vocab.package_name,
-                keyword_registrations: vocab.keyword_registrations,
-                dsl_surfaces: vocab.dsl_surfaces,
-                provider_manifest: vocab.provider_manifest,
-                desugarer_artifact: vocab.desugarer_artifact,
-            }),
+            vocab: self.vocab.map(RawVocabExports::into_semantic),
             soft_keywords: SoftKeywordExports {
                 activations: self.soft_keywords.activations,
             },

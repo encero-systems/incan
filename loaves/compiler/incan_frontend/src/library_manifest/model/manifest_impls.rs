@@ -3,6 +3,22 @@
 use super::*;
 
 impl LibraryManifest {
+    /// Encode one independently addressed compiler-record value through the generation-bound compact transport.
+    ///
+    /// Installation first validates the complete ordinary manifest with this compiler. The sealed record profile then
+    /// uses this self-describing encoding for each declaration or metadata value separately; it never combines them
+    /// into a selectable whole-manifest cache.
+    pub fn encode_compiler_record_value<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, LibraryManifestError> {
+        retained::encode_value(value).map_err(LibraryManifestError::Serialize)
+    }
+
+    /// Decode one authenticated compiler-record value into the family selected by its sealed record identity.
+    pub(crate) fn decode_compiler_record_value<T: serde::de::DeserializeOwned>(
+        content: &[u8],
+    ) -> Result<T, LibraryManifestError> {
+        retained::decode_value(content).map_err(LibraryManifestError::Parse)
+    }
+
     /// Encode already admitted facts for a private generation-bound cache, preserving the public JSON contract.
     pub(crate) fn encode_retained(&self) -> Result<Vec<u8>, String> {
         super::retained::encode(self)
