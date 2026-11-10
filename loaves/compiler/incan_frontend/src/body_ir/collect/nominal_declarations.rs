@@ -139,6 +139,7 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
                 })
                 .collect::<Option<Vec<_>>>()?;
             let validated_constructor = validated_constructor(&declaration.node, &canonical, type_info);
+            let registered_validation = registered_validation(name, &field_identities, type_info)?;
             let retained = bir::NominalDeclaration {
                 record_package_identity: if matches!(&declaration.node, ast::Declaration::Model(_)) {
                     type_info.declarations.record_package_identity.clone()
@@ -177,7 +178,7 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
                 field_aliases: fields.iter().map(|field| field.node.metadata.alias.clone()).collect(),
                 comparison_equality: None,
                 reflection_metadata: if class_layout.is_none() {
-                    collect_field_metadata(name, fields, type_info)
+                    collect_field_metadata(fields, type_info)
                 } else {
                     None
                 },
@@ -198,6 +199,7 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
                 has_field_defaults: fields.iter().any(|field| field.node.default.is_some()),
                 field_default_body: None,
                 validated_constructor,
+                registered_validation,
                 method_partial_defaults: Vec::new(),
                 display_method: checked_display_method(&declaration.node, type_info),
                 derives: nominal_derives(name, class_layout.is_some(), type_info)?,
@@ -211,6 +213,44 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
             retain_inherited_layout(retained, type_info)
         })
         .collect()
+}
+
+/// Project checked final-validation registrations in their executable order: canonical field order first, then
+/// whole-model declaration order. Every field target must match the retained physical layout exactly.
+fn registered_validation(
+    owner: &str,
+    fields: &[CanonicalSymbolId],
+    type_info: &TypeCheckInfo,
+) -> Option<Vec<bir::RegisteredValidation>> {
+    let checks = type_info
+        .declarations
+        .registered_model_checks
+        .get(owner)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let mut ordered = checks
+        .iter()
+        .enumerate()
+        .map(|(order, check)| {
+            let field = match &check.target_field {
+                Some(target) => Some(fields.iter().position(|field| field == target)?),
+                None => None,
+            };
+            Some((field, order, check))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    ordered.sort_by_key(|(field, order, _)| (field.is_none(), field.unwrap_or(usize::MAX), *order));
+    Some(
+        ordered
+            .into_iter()
+            .map(|(_, _, check)| bir::RegisteredValidation {
+                callable: check.callable.clone(),
+                target_field: check.target_field.clone(),
+                error_type: semantic_type_from_resolved(&check.error_type),
+                registration_span: check.registration_span,
+            })
+            .collect(),
+    )
 }
 
 /// Retain the exact generated constructor and source validator selected by a checked `Validate` model.
@@ -354,7 +394,7 @@ pub(super) fn retain_inherited_layout(
     Some(retained)
 }
 
-/// Retain a class's public field policy and presentation metadata from its checked parent-first layout.
+/// Retain a class's public field policy and complete stored metadata from its checked parent-first layout.
 /// These slots also govern typed overlays, so inherited and local fields share the same visibility decision.
 pub(super) fn retain_class_reflection(retained: &mut bir::NominalDeclaration, facts: &TypeCheckInfo) {
     let Some(layout) = facts.declarations.class_layouts.get(&retained.name) else {
@@ -373,7 +413,6 @@ pub(super) fn retain_class_reflection(retained: &mut bir::NominalDeclaration, fa
             .fields
             .iter()
             .enumerate()
-            .filter(|(_, field)| field.visibility == ast::Visibility::Public)
             .map(|(position, field)| bir::FieldMetadata {
                 position,
                 name: field.name.clone(),
@@ -501,6 +540,7 @@ pub(super) fn collect_plain_newtype(
         has_field_defaults: false,
         field_default_body: None,
         validated_constructor: None,
+        registered_validation: Vec::new(),
         method_partial_defaults: Vec::new(),
         display_method: None,
         newtype_deserialize,
@@ -512,22 +552,15 @@ pub(super) fn collect_plain_newtype(
     })
 }
 
-/// Retain the complete visible field records once, with the same checked visibility and presentation contract as
-/// legacy. Missing checked types make the entire metadata surface unavailable instead of silently omitting a field.
+/// Retain every stored field, including private state required by typed-value generation. Public reflection uses
+/// the separate checked `reflection_fields` projection. Missing types refuse the whole metadata surface.
 pub(super) fn collect_field_metadata(
-    name: &str,
     fields: &[ast::Spanned<ast::FieldDecl>],
     facts: &TypeCheckInfo,
 ) -> Option<Vec<bir::FieldMetadata>> {
     fields
         .iter()
         .enumerate()
-        .filter(|(_, field)| {
-            !facts
-                .declarations
-                .model_type_private_fields
-                .contains(&(name.to_owned(), field.node.name.clone()))
-        })
         .map(|(position, field)| {
             let ty = facts.declarations.model_field_types.get(&field.span)?;
             Some(bir::FieldMetadata {

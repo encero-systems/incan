@@ -146,24 +146,6 @@ impl TypeChecker {
                     self.record_member_declaration_identity(&name, kind, span);
                 }
                 BindingRegistration::Collision {
-                    existing: (previous_kind, _),
-                } if matches!(
-                    (previous_kind, kind),
-                    (MemberBindingKind::Field, MemberBindingKind::Method)
-                        | (MemberBindingKind::Method, MemberBindingKind::Field)
-                ) =>
-                {
-                    // A stored selection and method invocation are distinct source forms: `value.name` versus
-                    // `value.name()`. Both declarations therefore remain active even when their spellings match. If
-                    // the field appears second, retain it as the registry sentinel so a later duplicate field or
-                    // field-like declaration still collides with storage rather than being mistaken for another
-                    // callable coexistence case.
-                    self.record_member_declaration_identity(&name, kind, span);
-                    if kind == MemberBindingKind::Field {
-                        seen.insert((name, surface), (kind, span));
-                    }
-                }
-                BindingRegistration::Collision {
                     existing: (previous_kind, previous_span),
                 } => {
                     self.rejected_member_bindings.insert(span);

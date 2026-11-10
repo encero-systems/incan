@@ -55,6 +55,9 @@ pub struct DeclarationArtifacts {
     pub body_ir_native_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Checked local model field types keyed by exact field declaration span.
     pub model_field_types: HashMap<crate::ast::Span, ResolvedType>,
+    /// Checked RFC 122 final-validation obligations for local models, retained in method declaration order.
+    /// Body IR resolves field slots from the canonical field identity rather than reopening decorator syntax.
+    pub registered_model_checks: HashMap<String, Vec<RegisteredModelCheckInfo>>,
     /// Checked field visibility for local models, keyed first by model name and then canonical field name.
     ///
     /// Field modifiers and the containing model's visibility are resolved by the frontend. Lowering consumes this
@@ -146,6 +149,10 @@ pub struct DeclarationArtifacts {
     /// and enum methods use the same boundary. Body IR consumes these checked facts rather than re-resolving raw
     /// annotations; the record adapter supplies persistent identity separately from this source-revision handle.
     pub method_bindings_by_span: HashMap<crate::ast::Span, FunctionBindingInfo>,
+    /// Imported method headers authenticated in their declaring module. Canonical identity, rather than a local
+    /// source span, distinguishes dependencies whose declarations occupy the same offsets. These headers retain
+    /// ordinary receiver access without inventing an explicit ownership annotation or importing a method body.
+    pub imported_method_headers: BTreeMap<CanonicalSymbolId, crate::symbols::MethodInfo>,
     /// Body IR-only getter signatures and receiver provenance, keyed by the exact property declaration span.
     /// Legacy property metadata and callable binding tables remain unchanged.
     pub body_ir_property_bindings: HashMap<crate::ast::Span, BodyIrPropertyBindingInfo>,
@@ -196,6 +203,19 @@ pub struct DeclarationArtifacts {
     /// recorded too, for their trait defaults expanded into this module; the name keeps them apart from this module's
     /// parameters at the same offsets.
     pub mut_param_markers: HashMap<(crate::ast::Span, String), bool>,
+}
+
+/// One checked final field or whole-model validation obligation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RegisteredModelCheckInfo {
+    /// Exact checked method body selected by the registration.
+    pub callable: CanonicalSymbolId,
+    /// Exact checked field declaration for a field check; absent for a whole-model check.
+    pub target_field: Option<CanonicalSymbolId>,
+    /// Concrete typed failure retained by the check's `Result[None, E]`.
+    pub error_type: ResolvedType,
+    /// Source registration span used for deterministic diagnostics and publication evidence.
+    pub registration_span: crate::ast::Span,
 }
 
 /// A checked decorator application before substitution, with the bindings needed for its native instance.

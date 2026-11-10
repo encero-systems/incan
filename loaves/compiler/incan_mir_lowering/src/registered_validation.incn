@@ -1,0 +1,360 @@
+"""Construct registered-check models and retain every typed final-validation failure."""
+
+from rust::incan_semantics_core import CanonicalSymbolId
+from rust::incan_semantics_core::body_ir import (
+    ArgumentBinding,
+    ArgumentElement,
+    Body,
+    BodyIrModule,
+    ConstructorTarget,
+    LoafCallable,
+)
+from pub::incan_mir_plan import (
+    CalleeKind,
+    Constant,
+    Operand,
+    Place,
+    PlanType,
+    Projection,
+    RvalueKind,
+    SourceSpan,
+    TerminatorKind,
+    assign as plan_assign,
+)
+from table_views import borrowed_at
+from frame import Builder, temporary, read_place, literal, forget_owned, drop_owned, track_rvalue_moves, place_type
+from layout_types import native_source_type, stored_field_type
+from models import constructor_index
+from model_construction import model_field_operands, boxed_operand
+from defaults import model_default_arguments
+from options import assign_carrier, result_layout, variant_condition
+from typed_value_callbacks import borrow_argument, call_callback
+from program_context import body_at
+from classes import frame_type
+from calls import instantiated_external_call
+from call_arguments import call_parameter_type
+from closures import return_representation
+from formatting import native_format_text
+from validation_errors import display_validation_error
+from text_plan import owned_literal
+
+
+pub def lower_registered_model_construction(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    constructor: &ConstructorTarget,
+    elements: &list[ArgumentElement],
+    destination: Place,
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """
+    Construct one completed model, run its retained checks in published order and write the canonical Result.
+
+    The model is assembled exactly once. Checks receive only shared final-state access, and no partially validated value
+    reaches the successful result slot.
+    """
+    match registered_result_owner(builder, destination):
+        None => return Ok(false)
+        Some((result_owner, model_owner, model_type)) =>
+            declaration = borrowed_at(builder.nominals, model_owner)
+            if len(declaration.registered_validation) == 0:
+                return Ok(false)
+            index = constructor_index(builder.nominals, constructor, len(elements), model_type)?
+            if index != model_owner:
+                return Err("invalid Body IR registered validation constructor owner")
+            fields = registered_model_fields(module, builder, index, constructor.binding, elements, span)?
+            value = temporary(builder, model_type, span)
+            construction = RvalueKind.Model(index, fields)
+            track_rvalue_moves(builder, construction)
+            builder.emit(plan_assign(value, construction, span))
+            builder.owned.append(value.local)
+
+            failed, accumulator = collect_registered_validation(module, builder, model_owner, value, span)?
+            finish_registered_result(builder, destination, result_owner, value, accumulator, failed, span)?
+            return Ok(true)
+
+
+pub def collect_registered_validation(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    model_owner: int,
+    value: Place,
+    span: SourceSpan,
+) -> Result[tuple[Place, Place], str]:
+    """Run one model's retained obligations in published order and return runtime failure state plus its umbrella."""
+    # Keep the immutable registration order independently while each callback mutates the plan frame.
+    checks = builder.nominals[model_owner].registered_validation.clone()
+    mut accumulator = initial_validation_error(builder, span)?
+    failed = temporary(builder, PlanType.Bool, span)
+    builder.emit(plan_assign(failed, RvalueKind.Use(literal(Constant.Bool(false), span)), span))
+    for check in checks:
+        argument, location = registered_check_argument(builder, model_owner, value, check.target_field, span)?
+        outcome = call_registered_check(module, builder, check.callable, argument, span)?
+        accumulator = collect_registered_failure(builder, outcome, accumulator, failed, location, span)?
+    return Ok((failed, accumulator))
+
+
+def registered_result_owner(mut builder: Builder, target: Place) -> Option[tuple[int, int, PlanType]]:
+    """Return a Result's model owner only when its error payload is the canonical ValidationError carrier."""
+    target_type = place_type(builder.locals, target)
+    match result_layout(builder, target_type):
+        Err(_reason) => return None
+        Ok((result_owner, declaration)) =>
+            if len(declaration.variants[0].fields) != 1 or declaration.variants[1].fields != [PlanType.ValidationError]:
+                return None
+            match declaration.variants[0].fields[0]:
+                PlanType.Model(owner, name) => return Some((result_owner, owner, PlanType.Model(owner, name)))
+                _ => return None
+
+
+def registered_model_fields(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    owner: int,
+    binding: ArgumentBinding,
+    elements: &list[ArgumentElement],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Materialize constructor fields in canonical order, including declaration-owned defaults."""
+    match binding:
+        ArgumentBinding.Resolved(arguments=_arguments, defaulted_slots=defaults) =>
+            if len(defaults) == 0:
+                return model_field_operands(builder, owner, elements, span)
+        _ => return Err("unsupported Body IR unresolved registered model constructor")
+    return model_default_arguments(module, builder, owner, binding, elements, span)
+
+
+def initial_validation_error(mut builder: Builder, span: SourceSpan) -> Result[Place, str]:
+    """Create the empty aggregate whose later consuming updates retain typed failures in check order."""
+    message = owned_text(builder, "registered final validation failed", span)
+    output = temporary(builder, PlanType.ValidationError, span)
+    instantiated_external_call(
+        builder,
+        "incan_native_runtime::make_validation_error",
+        [],
+        [PlanType.String],
+        PlanType.ValidationError,
+        [read_place(message, true, span)],
+        output,
+        span,
+    )?
+    return Ok(output)
+
+
+def registered_check_argument(
+    builder: &Builder,
+    owner: int,
+    value: Place,
+    target_field: Option[CanonicalSymbolId],
+    span: SourceSpan,
+) -> Result[tuple[Place, str], str]:
+    """Select the exact retained field place, or the immutable completed model for a whole-model check."""
+    declaration = borrowed_at(builder.nominals, owner)
+    match target_field:
+        None => return Ok((value, declaration.name))
+        Some(identity) =>
+            for slot in range(len(declaration.field_identities)):
+                if declaration.field_identities[slot] != identity:
+                    continue
+                ty = stored_field_type(
+                    builder.constructors,
+                    builder.nominals,
+                    builder.enums,
+                    builder.unions,
+                    declaration,
+                    slot,
+                    builder.intrinsics,
+                )?
+                field = Place(local=value.local, projection=Projection.Field(slot, ty), span=span)
+                return Ok((field, declaration.fields[slot]))
+            return Err(f"invalid Body IR registered field identity for {declaration.name}")
+
+
+def call_registered_check(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    identity: CanonicalSymbolId,
+    argument: Place,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Invoke one exact local body or source-absent published callable through its checked ABI."""
+    match registered_body(module, builder, identity.clone())?:
+        Some(body) => return call_callback(module, builder, body, [argument], span)
+        None => pass
+    callable = registered_callable(module, identity)?
+    match callable.declaration_frame():
+        None => return Err("invalid Body IR registered validation callable without a declaration frame")
+        Some(frame) =>
+            if len(frame.params) != 1 or len(callable.type_parameters) != 0 or frame.is_async:
+                return Err("invalid Body IR registered validation callable signature")
+            expected = call_parameter_type(builder, frame, frame.params[0])?
+            operand = borrow_argument(builder, argument, expected, span)?
+            mut result = native_source_type(
+                builder.constructors,
+                builder.nominals,
+                builder.enums,
+                builder.unions,
+                callable.return_type,
+                builder.intrinsics,
+            )?
+            result = return_representation(frame, result)?
+            output = temporary(builder, result, span)
+            match callable.rust_path():
+                None => return Err("invalid Body IR registered validation callable without a native identity")
+                Some(path) =>
+                    instantiated_external_call(builder, path, [], [expected], result, [operand], output, span)?
+                    return Ok(output)
+
+
+def registered_body(
+    module: &BodyIrModule,
+    builder: &Builder,
+    identity: CanonicalSymbolId,
+) -> Result[Option[Body], str]:
+    """Select exactly one synchronous nongeneric local body for a retained registered-check identity."""
+    mut selected = -1
+    for index in builder.program.body_indices.candidates(identity.clone()):
+        body = body_at(module.bodies, index)
+        if body.canonical != Some(identity.clone()) or len(body.params) != 1 or body.is_async:
+            continue
+        if len(body.type_parameters) != 0:
+            continue
+        if selected >= 0:
+            return Err("invalid Body IR registered validation identity selects multiple local bodies")
+        selected = index
+    if selected < 0:
+        return Ok(None)
+    return Ok(Some(body_at(module.bodies, selected).clone()))
+
+
+def registered_callable(module: &BodyIrModule, identity: CanonicalSymbolId) -> Result[LoafCallable, str]:
+    """Select exactly one published source-absent callable for a retained registered-check identity."""
+    mut selected = -1
+    for position in range(len(module.loaf_callables)):
+        if module.loaf_callables[position].canonical != identity:
+            continue
+        if selected >= 0:
+            return Err("invalid Body IR registered validation identity selects multiple published callables")
+        selected = position
+    if selected < 0:
+        return Err("unsupported Body IR registered validation without a local or published callable")
+    return Ok(module.loaf_callables[selected].clone())
+
+
+def collect_registered_failure(
+    mut builder: Builder,
+    outcome: Place,
+    accumulator: Place,
+    failed: Place,
+    location: str,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Append the active Err payload without stringifying or cloning its concrete value, then rejoin ownership state."""
+    outcome_type = place_type(builder.locals, outcome)
+    _owner, result = result_layout(builder, outcome_type)?
+    if result.variants[0].fields != [PlanType.Unit] or len(result.variants[1].fields) != 1:
+        return Err("invalid Body IR registered check result layout")
+    error_type = result.variants[1].fields[0]
+    rejected = builder.new_block(span)
+    accepted = builder.new_block(span)
+    after = builder.new_block(span)
+    condition = variant_condition(builder, outcome, 0, span)
+    builder.finish(TerminatorKind.SwitchBool(condition, rejected, accepted), span)
+    owners = builder.owned
+
+    builder.current = accepted
+    builder.owned = owners
+    drop_owned(builder, outcome.local, span)
+    builder.finish(TerminatorKind.Goto(after), span)
+    accepted_owners = builder.owned
+
+    builder.current = rejected
+    builder.owned = owners
+    payload = Place(local=outcome.local, projection=Projection.VariantField(1, 0, error_type), span=span)
+    message = registered_error_message(builder, payload, error_type, span)?
+    original = temporary(builder, error_type, span)
+    builder.emit(plan_assign(original, RvalueKind.Use(read_place(payload, true, span)), span))
+    forget_owned(builder, outcome.local)
+    builder.owned.append(original.local)
+    boxed = boxed_operand(builder, read_place(original, true, span), error_type, span)
+    located = owned_text(builder, location, span)
+    instantiated_external_call(
+        builder,
+        "incan_std_primitives::validation::ValidationError::with_located_original",
+        [error_type],
+        [PlanType.ValidationError, PlanType.String, PlanType.String, PlanType.Boxed([error_type])],
+        PlanType.ValidationError,
+        [read_place(accumulator, true, span), read_place(located, true, span), read_place(message, true, span), boxed],
+        accumulator,
+        span,
+    )?
+    builder.emit(plan_assign(failed, RvalueKind.Use(literal(Constant.Bool(true), span)), span))
+    builder.finish(TerminatorKind.Goto(after), span)
+    rejected_owners = builder.owned
+    if accepted_owners != rejected_owners:
+        return Err("registered validation branches retain different ownership states")
+    builder.current = after
+    builder.owned = rejected_owners
+    return Ok(accumulator)
+
+
+def registered_error_message(
+    mut builder: Builder,
+    error: Place,
+    error_type: PlanType,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Render Error's Display view before transferring the original payload into typed umbrella storage."""
+    if error_type == PlanType.ValidationError:
+        return display_validation_error(builder, error, span)
+    mut shared = error
+    match error_type:
+        PlanType.Model(owner, name) =>
+            shared = temporary(builder, PlanType.ModelRef(owner, name), span)
+            builder.emit(plan_assign(shared, RvalueKind.Borrow(error), span))
+        PlanType.Enum(owner, name) =>
+            shared = temporary(builder, PlanType.EnumRef(owner, name), span)
+            builder.emit(plan_assign(shared, RvalueKind.Borrow(error), span))
+        _ => pass
+    return native_format_text(builder, read_place(shared, false, span), false, span)
+
+
+def finish_registered_result(
+    mut builder: Builder,
+    target: Place,
+    result_owner: int,
+    value: Place,
+    accumulator: Place,
+    failed: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Expose either the one completed model or the accumulated typed failures, dropping the inactive owner."""
+    rejected = builder.new_block(span)
+    accepted = builder.new_block(span)
+    after = builder.new_block(span)
+    builder.finish(TerminatorKind.SwitchBool(read_place(failed, false, span), accepted, rejected), span)
+    owners = builder.owned
+
+    builder.current = rejected
+    builder.owned = owners
+    assign_carrier(builder, target, result_owner, 1, [read_place(accumulator, true, span)], span)
+    drop_owned(builder, value.local, span)
+    builder.finish(TerminatorKind.Goto(after), span)
+    rejected_owners = builder.owned
+
+    builder.current = accepted
+    builder.owned = owners
+    assign_carrier(builder, target, result_owner, 0, [read_place(value, true, span)], span)
+    drop_owned(builder, accumulator.local, span)
+    builder.finish(TerminatorKind.Goto(after), span)
+    accepted_owners = builder.owned
+    if accepted_owners != rejected_owners:
+        return Err("registered validation result branches retain different ownership states")
+    builder.current = after
+    builder.owned = accepted_owners
+    return Ok(None)
+
+
+def owned_text(mut builder: Builder, value: str, span: SourceSpan) -> Place:
+    """Materialize one owned diagnostic or location string through the runtime's ordinary text literal path."""
+    return owned_literal(builder, value, span)

@@ -108,6 +108,7 @@ mod source_signatures;
 pub use declaration_views::{CheckEnvironmentView, CheckedBindingView, DeclarationView, VisibilityPoint};
 mod trait_bound_relations;
 mod type_info;
+mod typed_value_protocol;
 pub(crate) use type_info::{ClassLayoutInfo, RustCheckedCall};
 mod undetermined_type_params;
 mod union_member_identity;
@@ -237,14 +238,31 @@ enum MemberBindingKind {
     VariantAlias,
 }
 
+/// Derive the checker-owned span for the value read by `receiver.member(args)` before that value is invoked.
+///
+/// The parser represents this spelling as one method-call node, so it has no field-expression span of its own. The
+/// suffix after the receiver is stable authored source space and preserves generated expansion identity, giving the
+/// checker and Body IR one shared key without conflating the callable value's type with the complete call's result.
+pub(crate) fn callable_member_read_span(receiver: Span, call: Span) -> Span {
+    let suffix = Span {
+        start: receiver.end.min(call.end),
+        end: call.end,
+        expansion: call.expansion,
+    };
+    if call.is_generated() {
+        suffix.expansion_child("callable-member-read")
+    } else {
+        suffix
+    }
+}
+
 /// Receiver surface that owns a source member spelling.
 ///
 /// Type-owned methods have no instance receiver and are selected only through a type expression. Fields, properties,
 /// and receiver-bearing methods are selected through an instance. Keeping those surfaces distinct lets a model expose
 /// `TimeDelta.days(value)` while retaining `delta.days` as ordinary stored data without weakening collision checks
-/// within either surface. Within the instance surface, Rust and Incan also distinguish a stored field selection
-/// (`value.name`) from an authored method call (`value.name()`); the collision registry preserves that distinction
-/// explicitly when it encounters those two declaration kinds.
+/// within either surface. A stored field and a receiver-bearing method occupy the same instance surface, so their
+/// shared spelling is refused instead of assigning a method-first meaning to `value.name()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum MemberBindingSurface {
     Type,
@@ -916,6 +934,9 @@ pub struct TypeChecker {
     /// from body proofs; each dependency refresh replaces its own entries and a new import set clears the cache.
     dependency_method_input_contracts:
         std::collections::BTreeMap<CanonicalSymbolId, crate::ownership_metadata::CheckedOwnershipContract>,
+    /// Imported ordinary method headers preserved across the program-check reset with their declaring identities.
+    /// Dependency refresh replaces its own entries; a new import set discards the previous inventory.
+    dependency_method_headers: std::collections::BTreeMap<CanonicalSymbolId, MethodInfo>,
     /// Module path for the program being checked (if known).
     pub current_module_path: Option<Vec<String>>,
     /// Source import aliases with declaration origins known from the dependency import graph.

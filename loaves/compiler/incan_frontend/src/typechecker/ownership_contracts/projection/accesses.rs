@@ -155,6 +155,13 @@ impl SourceAccesses<'_, '_> {
             .find(|closure| &closure.local == identity)
     }
 
+    /// Whether this expression is a canonical declared function value, which executes no caller-owned storage
+    /// access when passed as an argument. Callable locals and closures have non-function binding identities and
+    /// continue through normal place replay.
+    fn source_free_function_item(&self, expression: &Spanned<Expr>) -> bool {
+        matches!(expression.node, Expr::Ident(_)) && self.proof.facts.is_declared_function_item(expression.span)
+    }
+
     /// Read every source a closure retains, proving that a direct call or call-bounded loan uses all captures.
     fn closure_capture_accesses(&mut self, span: crate::ast::Span, loans: &[flow::LoanId]) -> Result<(), &'static str> {
         for id in loans {
@@ -342,6 +349,7 @@ impl SourceAccesses<'_, '_> {
                 IncanInputAccess::Shared | IncanInputAccess::InferredShared | IncanInputAccess::Exclusive => {
                     self.expression(value, true)?
                 }
+                IncanInputAccess::Inferred if self.source_free_function_item(value) => {}
                 IncanInputAccess::Inferred => self.expression(value, false)?,
             }
         }
@@ -351,6 +359,15 @@ impl SourceAccesses<'_, '_> {
     /// Visit source expressions according to the producer's actual evaluation policy. Borrowing a stored place
     /// evaluates its address, not its value; fresh borrowed arguments still evaluate their nested value normally.
     fn expression(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
+        if let Some(arguments) = super::super::builtins::source_enum_construction(self.proof.facts, expression) {
+            for argument in arguments {
+                let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
+                    return Err("enum source access coverage needs checked fixed payloads");
+                };
+                self.expression(value, false)?;
+            }
+            return Ok(());
+        }
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => {
                 self.stored_place_access(expression, consume)?
@@ -446,7 +463,7 @@ impl SourceAccesses<'_, '_> {
             .invocations
             .get(&expression.span)
             .ok_or("source access method call has no checked invocation")?;
-        if self.proof.facts.native_associated_call(expression.span) {
+        if self.proof.facts.associated_input_call(expression.span) {
             return self.invocation_arguments(invocation, arguments);
         }
         if invocation.receiver_owned {

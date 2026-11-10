@@ -823,6 +823,18 @@ pub fn validate_derive_invalid_validate_signature(
     .with_note(format!("Found:    {found}"))
 }
 
+/// Report a registered RFC 122 final check whose target or callable contract is not executable as declared.
+pub fn invalid_registered_validation(owner: &str, method: &str, reason: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Registered final check '{owner}.{method}' is invalid"),
+        span,
+    )
+    .with_note(reason)
+    .with_hint(
+        "Use @validate for an immutable self check, or @validate(field_name) for one exact final field value; return Result[None, E] where E implements Error",
+    )
+}
+
 pub fn validate_derive_disallows_raw_construction(type_name: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!(

@@ -5,7 +5,7 @@ use crate::ast::{CallArg, Expr, Literal, ParamKind, Span, Spanned, Type};
 use crate::diagnostics::errors::{self, TypeArgumentOrigin};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map_call_site};
 use crate::symbols::{CallableParam, FieldInfo, ResolvedType, SymbolKind, TypeInfo, ValueEnumInfo};
-use crate::typechecker::helpers::option_ty;
+use crate::typechecker::helpers::{option_ty, result_ty};
 use crate::typechecker::type_info::ConstructorFieldBinding;
 use incan_lang::lang::conventions::TYPE_CONSTRUCTOR_HOOK;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};

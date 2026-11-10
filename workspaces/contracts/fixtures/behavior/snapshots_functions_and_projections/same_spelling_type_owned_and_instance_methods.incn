@@ -1,4 +1,4 @@
-# behavior: a static method and an instance method that share one spelling are each selected by their receiver, including a stored field of the same name read at the end of a fluent chain
+# behavior: a static method and an instance method that share one spelling are each selected by their receiver, while a type-owned static factory may share a stored field's spelling without changing instance field reads
 # expect-stdout:
 #   5
 #   -5
@@ -21,12 +21,12 @@ model Span:
     def days(value: int) -> Span:
         return Span(days=value)
 
-    def days(self, value: int) -> Span:
+    def advance(self, value: int) -> Span:
         return Span(days=self.days + value)
 
 
 def main() -> None:
     counter = Counter.next(4)
     println(counter.next())
-    span = Span.days(-7).days(2)
+    span = Span.days(-7).advance(2)
     println(span.days)

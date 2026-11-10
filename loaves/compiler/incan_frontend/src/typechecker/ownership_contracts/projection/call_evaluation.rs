@@ -278,17 +278,25 @@ impl CheckedInputBody<'_> {
         Ok(())
     }
 
-    /// Resolve ordinary owners and explicit aliases through existing checked binding and field identities.
+    /// Resolve ordinary owners and explicit aliases through existing checked binding and field identities. A
+    /// declared function item is a callable value with no caller-owned source place; the checked function identity
+    /// and type must agree before it is treated as source-free.
     pub(super) fn call_place(
         &self,
         expression: &Spanned<Expr>,
     ) -> Result<Option<(flow::Place, Option<flow::LoanId>)>, &'static str> {
+        if super::super::builtins::source_enum_construction(self.facts, expression).is_some() {
+            return Ok(None);
+        }
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr => {
                 let identity = self
                     .facts
                     .resolved_identity(expression.span)
                     .ok_or("input place has no canonical identity")?;
+                if self.facts.is_declared_function_item(expression.span) {
+                    return Ok(None);
+                }
                 // A closure local holds its closure value; its loan is the captured borrow, not an alias.
                 if let Some(id) = self.graph.local_loans.get(identity)
                     && !self.graph.closures.values().any(|closure| &closure.local == identity)
@@ -336,7 +344,9 @@ impl CheckedInputBody<'_> {
                 let Some(call) = self.facts.protocols.explicit_input_calls.get(&inner.span) else {
                     return Ok(None);
                 };
-                if crate::ownership_metadata::returned_view(self.facts.selected_input_contract(call)?)?.is_none() {
+                if crate::ownership_metadata::returned_view(self.facts.selected_input_contract(call)?.as_deref())?
+                    .is_none()
+                {
                     return Ok(None);
                 }
                 let mut loans = self.graph.loans.iter().enumerate().filter(|(_, loan)| {

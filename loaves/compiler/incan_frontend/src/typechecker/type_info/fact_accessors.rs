@@ -98,6 +98,15 @@ impl TypeCheckInfo {
         self.references.resolved_identities.get(&span)
     }
 
+    /// Whether a checked expression is a declared function item rather than callable storage owned by the current
+    /// body. Canonical function identity and function value type must agree, so a shadowing local or closure cannot
+    /// acquire source-free evaluation merely from its spelling or type.
+    pub(crate) fn is_declared_function_item(&self, span: Span) -> bool {
+        self.resolved_identity(span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
+            && matches!(self.expr_type(span), Some(ResolvedType::Function(..)))
+    }
+
     /// Record the RFC 120 canonical identity proven for one source reference.
     ///
     /// Expression and type-reference checking share this write boundary so consumers never need to know which AST

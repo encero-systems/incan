@@ -25,6 +25,7 @@ pub enum DecoratorId {
     NoImplicitCoercion,
     StaticMethod,
     ClassMethod,
+    Validate,
     Requires,
     Describe,
     ProviderOperation,
@@ -129,6 +130,14 @@ pub const DECORATORS: &[DecoratorInfo] = &[
         "Mark a method as a class method (no implicit self receiver).",
         RFC::_000,
         Since(0, 2),
+    ),
+    info(
+        DecoratorId::Validate,
+        "validate",
+        &[],
+        "Register a construction-safe final field or model check.",
+        RFC::_122,
+        Since(0, 6),
     ),
     info(
         DecoratorId::Requires,

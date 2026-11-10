@@ -131,6 +131,7 @@ impl TypeChecker {
             .collect::<Vec<_>>();
         for method in active_model_methods {
             self.check_method_with_owner_type_params(&method.node, method.span, &model.name, &model.type_params);
+            self.record_registered_model_check(model, &method.node, method.span);
         }
         self.continue_declaration_owner(declaration, |checker| {
             checker.check_method_partials(&model.name, &model.method_partials)
@@ -145,9 +146,153 @@ impl TypeChecker {
         }
     }
 
+    /// Validate and retain one compiler-owned `@validate` registration after ordinary method checking has resolved
+    /// its exact callable, target field and failure type. Invalid registrations never become lowering authority.
+    fn record_registered_model_check(&mut self, model: &ModelDecl, method: &MethodDecl, method_span: Span) {
+        let registrations = method
+            .decorators
+            .iter()
+            .filter(|decorator| {
+                decorators::from_segments(&decorator.node.path.segments) == Some(DecoratorId::Validate)
+            })
+            .collect::<Vec<_>>();
+        if registrations.is_empty() {
+            return;
+        }
+        let registration = registrations[0];
+        let refuse = |checker: &mut Self, reason: &str| {
+            checker.errors.push(errors::invalid_registered_validation(
+                &model.name,
+                &method.name,
+                reason,
+                registration.span,
+            ));
+        };
+        if registrations.len() != 1 {
+            refuse(self, "a method may register exactly one final check");
+            return;
+        }
+        if !method.type_params.is_empty() || method.result_source.is_some() {
+            refuse(self, "a registered check cannot be generic or declare a borrowed result source");
+            return;
+        }
+        let Some(binding) = self
+            .type_info
+            .declarations
+            .method_bindings_by_span
+            .get(&method_span)
+            .cloned()
+        else {
+            refuse(self, "the checked method signature is unavailable");
+            return;
+        };
+        if binding.is_async {
+            refuse(self, "a registered check must be synchronous");
+            return;
+        }
+        let (Some(ok), Some(error_type)) = (
+            binding.return_type.result_ok_type(),
+            binding.return_type.result_err_type(),
+        ) else {
+            refuse(self, "the return type must be Result[None, E]");
+            return;
+        };
+        if ok != &ResolvedType::Unit {
+            refuse(self, "the successful result must be None and cannot replace the final value");
+            return;
+        }
+        let error_name = match error_type {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => Some(name.as_str()),
+            _ => None,
+        };
+        if !error_name.is_some_and(|name| {
+            name == "ValidationError"
+                || self.type_implements_trait(name, builtin_traits::as_str(TraitId::Error))
+        }) {
+            refuse(self, "the failure type E must implement Error");
+            return;
+        }
+        let target_field = match registration.node.args.as_slice() {
+            [] if !registration.node.is_call => {
+                if method.receiver != Some(Receiver::Immutable) || !binding.params.is_empty() {
+                    refuse(self, "a whole-model check must have the signature def check(self) -> Result[None, E]");
+                    return;
+                }
+                None
+            }
+            [DecoratorArg::Positional(target)] => {
+                let Expr::Ident(field_name) = &target.node else {
+                    refuse(self, "a field check target must be one declared field name");
+                    return;
+                };
+                if method.receiver.is_some() || binding.params.len() != 1 {
+                    refuse(self, "a field check must receive exactly one explicitly typed field value and no self");
+                    return;
+                }
+                let parameter = &binding.params[0];
+                if parameter.kind != ParamKind::Normal || parameter.has_default {
+                    refuse(self, "a field check parameter must be one required ordinary parameter");
+                    return;
+                }
+                if !model.fields.iter().any(|field| field.node.name == *field_name) {
+                    refuse(self, "the registered field target does not exist on this model");
+                    return;
+                }
+                let Some((field_type, identity)) = self.lookup_symbol(field_name).and_then(|symbol| {
+                    let SymbolKind::Field(info) = &symbol.kind else {
+                        return None;
+                    };
+                    Some((info.ty.clone(), info.identity.clone()?))
+                }) else {
+                    refuse(self, "the registered field target has no checked type and canonical identity");
+                    return;
+                };
+                if parameter.ty != field_type {
+                    refuse(self, "the check parameter type must exactly match the final field type");
+                    return;
+                }
+                Some(identity)
+            }
+            _ => {
+                refuse(self, "use bare @validate or one positional field name");
+                return;
+            }
+        };
+        let Some(callable) = binding.identity else {
+            refuse(self, "the registered check has no canonical callable identity");
+            return;
+        };
+        self.type_info
+            .declarations
+            .registered_model_checks
+            .entry(model.name.clone())
+            .or_default()
+            .push(super::type_info::RegisteredModelCheckInfo {
+                callable,
+                target_field,
+                error_type: error_type.clone(),
+                registration_span: registration.span,
+            });
+    }
+
     /// Complete declaration-only derive checks after model member validation, without revisiting its fields or
     /// defaults.
     pub(super) fn complete_model_declaration(&mut self, model: &ModelDecl, has_validate: bool) {
+        if has_validate
+            && let Some(check) = self
+                .type_info
+                .declarations
+                .registered_model_checks
+                .get(&model.name)
+                .and_then(|checks| checks.first())
+        {
+            self.errors.push(errors::invalid_registered_validation(
+                &model.name,
+                "<model>",
+                "registered final checks use canonical Result[Self, ValidationError] construction and cannot be combined with the legacy Validate derive",
+                check.registration_span,
+            ));
+        }
         if has_validate {
             self.check_validate_derive_model(model);
         }

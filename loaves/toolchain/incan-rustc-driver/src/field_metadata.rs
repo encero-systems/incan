@@ -91,7 +91,7 @@ fn accessor(owner: i64, output: &PlanType, span: Span) -> Box<ast::Item> {
         thin_vec![local(&storage_name(owner), span)],
         span,
     );
-    accessor_item(owner, output, value, span)
+    accessor_item(&name(owner), output, value, span)
 }
 
 /// Name the private static slice independently from its accessor's function identity.
@@ -153,11 +153,11 @@ fn storage(
 }
 
 /// Declare the native accessor with its exact validated frozen-list result type.
-fn accessor_item(owner: i64, output: &PlanType, value: Box<ast::Expr>, span: Span) -> Box<ast::Item> {
+pub(crate) fn accessor_item(name: &str, output: &PlanType, value: Box<ast::Expr>, span: Span) -> Box<ast::Item> {
     crate::declarations::item(
         ast::ItemKind::Fn(Box::new(ast::Fn {
             defaultness: ast::Defaultness::Implicit,
-            ident: ident(&name(owner), span),
+            ident: ident(name, span),
             generics: ast::Generics::default(),
             sig: ast::FnSig {
                 header: ast::FnHeader::default(),

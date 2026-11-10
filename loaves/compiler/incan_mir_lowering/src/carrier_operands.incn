@@ -16,7 +16,7 @@ from pub::incan_mir_plan import (
     assign as plan_assign,
     place as plan_place,
 )
-from layout_types import shared_receiver_type, native_alias_boundary, native_source_type
+from layout_types import shared_receiver_type, native_alias_boundary, native_source_type, owned_native_object_boundary
 from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
 from rust::incan_semantics_core::body_ir import Pattern as RustPattern, Operand as RustOperand, OwnershipFact
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
@@ -201,7 +201,9 @@ pub def boundary_plan_operand(
             if actual_source == target or not native_alias_boundary(builder.nominals, actual_source, target):
                 return Ok(result)
             alias = temporary(builder, target, span)
-            alias_operation = RvalueKind.NativeAlias(result, actual_source, target)
+            mut alias_operation = RvalueKind.NativeAlias(result, actual_source, target)
+            if owned_native_object_boundary(builder.nominals, actual_source, target):
+                alias_operation = RvalueKind.UnsizeTraitObject(result, actual_source, target)
             forget_moved_arguments(builder, [result])
             builder.emit(plan_assign(alias, alias_operation, span))
             if snapshot_owns(target):

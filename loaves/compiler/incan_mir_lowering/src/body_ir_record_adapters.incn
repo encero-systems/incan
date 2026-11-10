@@ -18,6 +18,7 @@ from pub::internal_models.body_ir_declarations import (
     CompilerBodyIrModule,
     CompilerLoafCallable,
     CompilerNominalDeclaration,
+    CompilerRegisteredValidation,
     CompilerTraitAdoption,
     CompilerValidatedConstructor,
     NamedTypeIdentity,
@@ -52,6 +53,7 @@ from rust::incan_semantics_core::body_ir import (
     TraitFieldImplementation as RustTraitFieldImplementation,
     TraitTypeArgument as RustTraitTypeArgument,
     ValidatedConstructor as RustValidatedConstructor,
+    RegisteredValidation as RustRegisteredValidation,
 )
 from compiler_record_adapters import (
     authored_plan_checked_type,
@@ -471,6 +473,41 @@ def native_validated_constructor(
         None => return Ok(None)
 
 
+def authored_registered_validation(
+    checks: &list[RustRegisteredValidation],
+    provenance: &BodyIrRecordProvenance,
+) -> Result[list[CompilerRegisteredValidation], str]:
+    """Project ordered final checks without changing their canonical callable, target or typed failure."""
+    mut retained: list[CompilerRegisteredValidation] = []
+    for check in checks:
+        retained.append(
+            CompilerRegisteredValidation(
+                callable=authored_identity(check.callable, provenance)?,
+                target_field=authored_optional_identity(check.target_field, provenance)?,
+                error_type=authored_type(check.error_type, provenance)?,
+                registration_span=hir_source_span(check.registration_span, provenance.fallback_source_file),
+            ),
+        )
+    return Ok(retained)
+
+
+def native_registered_validation(
+    checks: list[CompilerRegisteredValidation],
+) -> Result[list[RustRegisteredValidation], str]:
+    """Restore ordered final checks only from complete authored identities and checked types."""
+    mut retained: list[RustRegisteredValidation] = []
+    for check in checks:
+        retained.append(
+            RustRegisteredValidation(
+                callable=native_canonical_symbol_id(check.callable)?,
+                target_field=native_optional_identity(check.target_field)?,
+                error_type=native_checked_type(check.error_type)?,
+                registration_span=native_hir_source_span(check.registration_span)?,
+            ),
+        )
+    return Ok(retained)
+
+
 pub def authored_nominal_declaration(
     declaration: &RustNominalDeclaration,
     provenance: &BodyIrRecordProvenance,
@@ -504,6 +541,7 @@ pub def authored_nominal_declaration(
         has_field_defaults=declaration.has_field_defaults,
         field_default_body=authored_optional_boxed_body(declaration.field_default_body, provenance)?,
         validated_constructor=authored_validated_constructor(declaration.validated_constructor, provenance)?,
+        registered_validation=authored_registered_validation(declaration.registered_validation, provenance)?,
         method_partial_defaults=[value.clone() for value in declaration.method_partial_defaults.iter()],
         display_method=authored_optional_identity(declaration.display_method, provenance)?,
         newtype_deserialize=declaration.newtype_deserialize.clone(),
@@ -549,6 +587,7 @@ pub def native_nominal_declaration(declaration: CompilerNominalDeclaration) -> R
             has_field_defaults=declaration.has_field_defaults,
             field_default_body=native_optional_boxed_body(declaration.field_default_body)?,
             validated_constructor=native_validated_constructor(declaration.validated_constructor)?,
+            registered_validation=native_registered_validation(declaration.registered_validation)?,
             method_partial_defaults=declaration.method_partial_defaults,
             display_method=native_optional_identity(declaration.display_method)?,
             newtype_deserialize=declaration.newtype_deserialize,

@@ -641,19 +641,50 @@ mod tests {
         Ok(())
     }
 
-    /// A callable's mut marker does not shift its explicit ownership component path.
+    /// A generic callable's input mode remains on that callable through publication and source-absent import instead
+    /// of becoming an outer function ownership contract.
     #[test]
     fn nested_mutable_callable_modes_round_trip() -> Result<(), Box<dyn std::error::Error>> {
-        let source = "pub def accept(action: (mut Borrowed[str]) -> str) -> None:\n    pass\n";
+        let source = "pub def accept[T](action: (mut BorrowedMut[T]) -> int) -> None:\n    pass\n";
         let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = TypeChecker::new();
         checker.set_current_package_identity(Some("provider".into()));
-        assert!(checker.check_program(&program).is_err());
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
         let exports = collect_checked_public_exports(&program, &checker);
         let manifest = LibraryManifest::from_checked_exports("provider", "1.0.0", &exports);
         let restored = LibraryManifest::from_json_str(&manifest.to_json_string()?)?;
-        assert!(restored.has_explicit_ownership_contracts());
+        assert!(!restored.has_explicit_ownership_contracts());
+        let callable = restored
+            .exports
+            .functions
+            .first()
+            .and_then(|function| function.params.first())
+            .ok_or("missing callable parameter")?;
+        assert!(matches!(
+            &callable.ty,
+            TypeRef::Function { params, .. }
+                if matches!(
+                    params.first(),
+                    Some(TypeRef::MutParam { inner })
+                        if matches!(inner.as_ref(), TypeRef::Applied { name, args, .. }
+                            if name == OwnershipMode::BorrowedMut.as_str() && args.len() == 1)
+                )
+        ));
+        let directory = tempfile::tempdir()?;
+        std::fs::write(directory.path().join("provider.incnlib"), restored.to_json_string()?)?;
+        let entry = crate::loaf_index::LoafIndex::dependency("provider", "provider", directory.path())?;
+        let mut consumer = TypeChecker::new();
+        consumer.set_current_package_identity(Some("consumer".into()));
+        consumer.set_loaves(std::sync::Arc::new(crate::loaf_index::LoafIndex::new([entry])?));
+        let source = "from pub::provider import accept\ndef change(mut value: BorrowedMut[list[int]]) -> int:\n    value.append(3)\n    return len(value)\ndef main() -> None:\n    accept(change)\n";
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        consumer
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
         Ok(())
     }
 

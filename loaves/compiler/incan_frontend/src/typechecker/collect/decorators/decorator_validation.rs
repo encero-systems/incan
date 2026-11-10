@@ -575,6 +575,11 @@ impl TypeChecker {
     /// Compiler-owned decorators and stdlib marker decorators keep their existing compiler semantics. Unknown paths in
     /// known compiler namespaces stay diagnostic-only rather than becoming user-defined decorators.
     pub fn is_user_defined_decorator_candidate(&mut self, dec: &Decorator) -> bool {
+        // A builtin's canonical source spelling remains builtin after its declaration scope has been suspended. Alias
+        // resolution is still needed below for imported decorators, but it must not reinterpret a direct core path.
+        if decorators::from_segments(&dec.path.segments).is_some() {
+            return false;
+        }
         if self.decorator_id(dec).is_some() {
             return false;
         }
