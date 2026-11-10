@@ -17,6 +17,7 @@ pub def read_unit(value: JsonValue) -> Result[UnitDescription, str]:
             project_root=required_text(value, "project_root")?,
             source_root=required_text(value, "source_root")?,
             package=required_text(value, "package")?,
+            registry_id=optional_text(value, "registry_id")?,
             version=required_text(value, "version")?,
             profile=required_text(value, "profile")?,
             declared_features=texts(value, "declared_features")?,
