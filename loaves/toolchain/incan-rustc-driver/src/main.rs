@@ -29,6 +29,7 @@ mod codegraph;
 mod command_diagnostics;
 mod command_format;
 mod comparison_bridges;
+mod compiler_records;
 mod coroutines;
 mod declarations;
 mod dependency_report;
@@ -88,7 +89,7 @@ use incan_driver::unit::UnitDescription;
 const CHECK_CERTIFICATE: &str = "incan.compiler-check/1\n";
 
 const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | \
-                     --source-interface UNIT SYSROOT DIRECTORY | --dependencies UNIT SYSROOT [OPTIONS] | \
+                     --source-interface UNIT SYSROOT DIRECTORY | --dependencies UNIT SYSROOT [OPTIONS] | --compiler-records INSTALLED OUTPUT | \
                      --check UNIT SYSROOT [--format text|json] [--certify PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY HOME | --identity SYSROOT\n\
                      OPTIONS: --rustc-arg ARG, --library, --shared-native DIR (native artifacts and ABI caches come from UNIT)";
 
@@ -118,6 +119,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
         Some("--unit") => frontend::compile(&args[1..]),
         Some("--source-interface") => frontend::source_interface(&args[1..]),
         Some("--dependencies") => frontend::dependency_report(&args[1..]),
+        Some("--compiler-records") => compiler_records::export(&args[1..]),
         Some("--check") => exit_with(check(&args[1..])?),
         Some("--explain") => exit_with(command_diagnostics::explain(&args[1..])?),
         Some("--fmt") => exit_with(format(&args[1..])?),

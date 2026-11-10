@@ -92,7 +92,8 @@ impl IndexedLoaf {
     /// Admit a small inventory, or use full admission when its private proof is missing or stale.
     pub fn open(key: String, namespace: LoafNamespace, dir: PathBuf, name: &str) -> Result<Self, LoafIndexError> {
         let path = dir.join(format!("{}.incnlib", artifact_stem(name)));
-        if let Some(summary) = retained(&path)
+        if !super::compiler_record_set::configured()
+            && let Some(summary) = retained(&path)
             && summary.identity.name == name
         {
             return Ok(Self {

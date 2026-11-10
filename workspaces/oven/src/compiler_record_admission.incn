@@ -1,0 +1,101 @@
+"""Convert installed Loaf artifacts once and admit their bounded compiler records as one sealed set (#2946)."""
+
+from rust::std::process import Command
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+from pub::incan_platform.store import Snapshot, begin, commit, put
+from files import read_json
+from json_fields import required_items, required_text
+from observation import file_digest
+from sealed_set import Profile, Record, SetSpec, admit, export_set
+from store_path_conversion import snapshot
+
+pub const COMPILER_RECORD_PROFILE: str = "incan.compiler-records/1"
+const EXPORT_SCHEMA: str = "incan.compiler-record-export/1"
+
+
+pub model CompilerRecordPin:
+    """The installed store root and exact sealed-set digest written into the toolchain pin."""
+
+    pub root: str
+    pub digest: str
+
+    pub def to_json(self) -> JsonValue:
+        """Encode the two authoritative pin fields without exposing the converter's scratch transport."""
+        return JsonValue.object({"root": JsonValue.string(self.root), "digest": JsonValue.string(self.digest)})
+
+
+pub def convert(driver: str, installed: Path, installation: Path) -> Result[CompilerRecordPin, str]:
+    """
+    Validate installed manifests with the candidate compiler and admit their record values through sealed-set.
+
+    The compiler owns semantic decoding and the declaration-family split. Oven owns content admission and records only
+    the resulting installed store root plus sealed-set digest. Scratch exports never become a selectable cache.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    converted = temporary.path().joinpath("converted")
+    output = Command
+        .new(driver)
+        .arg("--compiler-records")
+        .arg(installed.0)
+        .arg(converted.0)
+        .output()
+        .map_err((error) => f"cannot convert installed compiler records: {error}")?
+    if not output.status.success():
+        return Err("cannot convert installed compiler records: " + decoded(output.stderr))
+    index = read_json(converted.joinpath("index.json"))?
+    if required_text(index, "schema")? != EXPORT_SCHEMA:
+        return Err("candidate compiler returned an unsupported record export")
+    source = temporary.path().joinpath("source")
+    mut view = snapshot(source).map_err((error) => error.message())?
+    mut records: list[Record] = []
+    mut receipt: list[str] = []
+    for item in required_items(index, "records")?:
+        key = required_text(item, "key")?
+        revision = required_text(item, "revision")?
+        object = required_text(item, "object")?
+        if object != f"objects/{revision}":
+            return Err(f"compiler record `{key}` names a non-canonical object")
+        path = converted.joinpath(object)
+        if file_digest(path)? != revision:
+            return Err(f"compiler record `{key}` differs from revision {revision}")
+        view = write_value(view, key, path.read_bytes().map_err((error) => error.message())?)?
+        records.append(Record(key=key, revision=revision, payloads=[], references=[]))
+        receipt.append(f"{key}\t{revision}")
+    profile = compiler_record_profile()
+    spec = SetSpec(
+        profile=profile,
+        origin="installed-toolchain",
+        producer=file_digest(Path(driver))?,
+        receipt=hexlify(sha256.digest("\n".join(receipt).encode("utf-8"))),
+        records=records,
+        namespaces=[],
+        dependencies=[],
+    )
+    relative = "compiler-records"
+    transport = installation.joinpath(relative)
+    digest = export_set(view, spec, transport).map_err((error) => error.message())?
+    _ = admit(installation.joinpath("compiler-record-store"), transport, digest, profile).map_err(
+        (error) => error.message(),
+    )?
+    return Ok(CompilerRecordPin(root=relative, digest=digest))
+
+
+pub def compiler_record_profile() -> Profile:
+    """The exact identity, value schema and codec accepted for installed compiler records."""
+    return Profile(identity=COMPILER_RECORD_PROFILE, schema=COMPILER_RECORD_PROFILE, codec="json/1")
+
+
+def write_value(view: Snapshot, key: str, value: bytes) -> Result[Snapshot, str]:
+    """Publish one converter value into the temporary source snapshot used only for sealed export."""
+    return commit(put(begin(view), key, value)).map_err((error) => error.message())
+
+
+def decoded(value: bytes) -> str:
+    """Render a candidate-driver refusal without making invalid UTF-8 hide installation failure."""
+    match value.decode("utf-8", "replace"):
+        Ok(text) => return text.strip()
+        Err(_) => return "candidate compiler returned non-text diagnostics"

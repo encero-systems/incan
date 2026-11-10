@@ -402,9 +402,7 @@ fn result_requirement_types_roundtrip_without_widening_record_owners() -> Result
     let (program, checker, owner) = fixture(source, "forward")?;
     assert!(matches!(
         Positions::new(&checker, &program, owner, false),
-        Err(NodeBindingError::Unsupported(
-            "modified, generic, or generated owner"
-        ))
+        Err(NodeBindingError::Unsupported("modified, generic, or generated owner"))
     ));
     Ok(())
 }

@@ -17,6 +17,7 @@ incan_format = { loaf = "incan_format", path = "../../compiler/incan_format" }
 incan_driver = { loaf = "incan_driver", path = "../../compiler/incan_driver" }
 thiserror = { loaf = "crates-io/thiserror", version = "2" }
 serde_json = { loaf = "crates-io/serde_json", version = "1" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
 sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }

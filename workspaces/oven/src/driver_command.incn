@@ -12,6 +12,13 @@ pub def driver_command(toolchain: Toolchain) -> Result[Command, str]:
     mut command = Command.new(toolchain.driver)
     configure_sdk(command, toolchain.sysroot)?
     command.env_remove("RUSTC_BOOTSTRAP")
+    command.env_remove("INCAN_COMPILER_RECORD_ROOT")
+    command.env_remove("INCAN_COMPILER_RECORD_DIGEST")
+    match toolchain.compiler_records:
+        Some(pin) =>
+            command.env("INCAN_COMPILER_RECORD_ROOT", pin.root)
+            command.env("INCAN_COMPILER_RECORD_DIGEST", pin.digest)
+        None => pass
     if OS == "macos":
         command.env("RC_UUID_SALT", DARWIN_UUID_SALT)
     # C ABI checks use the toolchain's own Clang when it carries one, never whichever compiler the machine has.

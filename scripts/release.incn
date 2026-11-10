@@ -243,9 +243,11 @@ def prepare_candidate_home(run: ReleaseRun) -> Result[None, str]:
     """Select immutable seed artifacts by absolute identity inside a fresh writable candidate home."""
     seed = run.seed_home.joinpath(TOOLCHAIN_DIRECTORY)
     run.paths.toolchain.mkdir(true, true).map_err((error) => error.message())?
-    manifest = JsonValue
+    mut manifest = JsonValue
         .parse(seed.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?)
         .map_err((error) => error.message())?
+    # The seed's admitted compiler records describe the seed's Loaves; the candidate builds its own from source.
+    _ = manifest.remove("compiler_records").map_err((error) => error.message())?
     run.paths.toolchain
         .joinpath("toolchain.json")
         .write_text(absolute_manifest(manifest, seed.0)?, "utf-8", "strict", None)
