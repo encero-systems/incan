@@ -1,9 +1,9 @@
-"""Typed row refusals retain boundary context without embedding input contents."""
+"""Typed binary refusals retain boundary context without embedding input contents."""
 
 from crate.primitives.crumb.errors import CrumbError, CrumbFailure
 
 
-pub enum RowFailure(str):
+pub enum BinaryFailure(str):
     """Stable semantic categories, separate from diagnostic wording and corpus labels."""
 
     BadMagic = "bad_magic"
@@ -44,10 +44,10 @@ pub enum RowFailure(str):
     RecordIndex = "record_index"
 
 
-pub model RowError:
+pub model BinaryError:
     """The deepest known offset/member plus an optional primitive cause; no secret payload is retained."""
 
-    pub kind: RowFailure
+    pub kind: BinaryFailure
     pub offset: int
     pub field: Option[bytes] = None
     pub variant: Option[bytes] = None
@@ -55,35 +55,47 @@ pub model RowError:
 
     pub def message(self) -> str:
         """Render the category and byte position; input contents never become diagnostic text."""
-        return f"Crumb row {self.kind:?} at byte {self.offset}"
+        return f"Crumb binary {self.kind.value()} at byte {self.offset}"
 
 
-pub def failure(kind: RowFailure, offset: int) -> RowError:
+pub def failure(kind: BinaryFailure, offset: int) -> BinaryError:
     """Construct a format refusal at a known byte boundary."""
-    return RowError(kind=kind, offset=offset)
+    return BinaryError(kind=kind, offset=offset)
 
 
-pub def primitive(error: CrumbError, offset: int, fallback: RowFailure = RowFailure.InvalidCell) -> RowError:
+pub def primitive(error: CrumbError, offset: int, fallback: BinaryFailure = BinaryFailure.InvalidCell) -> BinaryError:
     """Preserve budget/framing categories and the original cause when crossing the primitive boundary."""
     mut kind = fallback
     match error.kind:
-        CrumbFailure.Limit => kind = RowFailure.LimitExceeded
-        CrumbFailure.Truncated => kind = RowFailure.Truncated
-        CrumbFailure.Nonminimal => kind = RowFailure.NoncanonicalInteger
-        CrumbFailure.Overflow => kind = RowFailure.IntegerOverflow
+        CrumbFailure.Limit => kind = BinaryFailure.LimitExceeded
+        CrumbFailure.Truncated => kind = BinaryFailure.Truncated
+        CrumbFailure.Nonminimal => kind = BinaryFailure.NoncanonicalInteger
+        CrumbFailure.Overflow => kind = BinaryFailure.IntegerOverflow
         CrumbFailure.InvalidInput => pass
-    return RowError(kind=kind, offset=offset, cause=Some(error))
+    return BinaryError(kind=kind, offset=offset, cause=Some(error))
 
 
-pub def in_field(error: RowError, member: bytes) -> RowError:
+pub def in_field(error: BinaryError, member: bytes) -> BinaryError:
     """Keep a deeper field identity when present; otherwise annotate the failing outer stored field."""
     if error.field.is_some():
         return error
-    return RowError(kind=error.kind, offset=error.offset, field=Some(member), variant=error.variant, cause=error.cause)
+    return BinaryError(
+        kind=error.kind,
+        offset=error.offset,
+        field=Some(member),
+        variant=error.variant,
+        cause=error.cause,
+    )
 
 
-pub def in_variant(error: RowError, identity: bytes) -> RowError:
+pub def in_variant(error: BinaryError, identity: bytes) -> BinaryError:
     """Add an enum payload identity without replacing a deeper variant or field context."""
     if error.variant.is_some():
         return error
-    return RowError(kind=error.kind, offset=error.offset, field=error.field, variant=Some(identity), cause=error.cause)
+    return BinaryError(
+        kind=error.kind,
+        offset=error.offset,
+        field=error.field,
+        variant=Some(identity),
+        cause=error.cause,
+    )

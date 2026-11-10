@@ -1,8 +1,8 @@
 """Independent physical scalar and closed-selector boundary tests for the row writer."""
 
 from std.primitives.crumb import Budget
-from std.primitives.crumb.row_scalars import integer_cell, float_cell, decimal_cell
-from std.primitives.crumb.row_selectors import parse_type, parse_key
+from std.primitives.crumb.scalar_cells import integer_cell, float_cell, decimal_cell
+from std.primitives.crumb.selectors import parse_type, parse_key
 from std.primitives.crumb.spelling import selector_spelling
 from std.primitives.crumb.types import NominalKind
 from std.primitives.crumb.values import Value

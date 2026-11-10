@@ -5,9 +5,9 @@ from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.hashes import description_hash
 from crate.primitives.crumb.registrations import KindRegistry
-from crate.primitives.crumb.row_buffer import RowBuffer
-from crate.primitives.crumb.row_selectors import parse_key, parse_type
-from crate.primitives.crumb.row_metadata import (
+from crate.primitives.crumb.encoding_buffer import EncodingBuffer
+from crate.primitives.crumb.selectors import parse_key, parse_type
+from crate.primitives.crumb.metadata_values import (
     get,
     text,
     binary,
@@ -192,13 +192,13 @@ def absent_policy(name: str) -> Result[AbsentPolicy, CrumbError]:
 
 pub def encode_entry(description: StoredDescription, mut budget: Budget) -> Result[bytes, CrumbError]:
     """Emit the original mode with complete D metadata; references never substitute a model hash."""
-    mut output = RowBuffer.create()
+    mut output = EncodingBuffer.create()
     if description.source.mode == DescriptionMode.Reference:
         output.octet(1, budget)?
         output.frame(description.key, budget)?
         output.append(description.digest, budget)?
         return output.finish(budget)
-    mut body = RowBuffer.create()
+    mut body = EncodingBuffer.create()
     if description.kind == NominalKind.Record:
         body.frame(encode(without(description.source.metadata, "fields", budget)?, budget)?, budget)?
         encode_fields(description.fields, body, budget)?
@@ -206,7 +206,7 @@ pub def encode_entry(description: StoredDescription, mut budget: Budget) -> Resu
         body.frame(encode(without(description.source.metadata, "variants", budget)?, budget)?, budget)?
         body.count(len(description.variants), budget)?
         for variant in description.variants:
-            mut payload = RowBuffer.create()
+            mut payload = EncodingBuffer.create()
             payload.frame(encode(without(variant.metadata, "fields", budget)?, budget)?, budget)?
             encode_fields(variant.fields, payload, budget)?
             body.count(variant.position, budget)?
@@ -216,7 +216,11 @@ pub def encode_entry(description: StoredDescription, mut budget: Budget) -> Resu
     return output.finish(budget)
 
 
-def encode_fields(fields: list[StoredField], mut output: RowBuffer, mut budget: Budget) -> Result[None, CrumbError]:
+def encode_fields(
+    fields: list[StoredField],
+    mut output: EncodingBuffer,
+    mut budget: Budget,
+) -> Result[None, CrumbError]:
     """Write identity-sorted fields with a permutation back to the original declaration sequence."""
     output.count(len(fields), budget)?
     for field in fields:

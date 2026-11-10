@@ -1,7 +1,7 @@
 """Literal width boundaries and failures exercise physical framing separately from logical hashes."""
 
 from std.primitives.crumb import Budget
-from std.primitives.crumb.row_buffer import RowBuffer, indexed, offset_width, offset_table_length
+from std.primitives.crumb.encoding_buffer import EncodingBuffer, indexed, offset_width, offset_table_length
 from std.primitives.hex import hexlify
 
 
@@ -31,7 +31,7 @@ def test_writer_limit_is_not_a_partial_success() -> Result[None, str]:
     mut budget = Budget.create(bytes=2, elements=65536, depth=64).map_err((e) => e.message())?
     assert indexed([b"abc"], budget).is_err()
     mut ample = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
-    mut writer = RowBuffer.create()
+    mut writer = EncodingBuffer.create()
     assert writer.octet(256, ample).is_err()
     assert writer.length() == 0
     assert writer.offset(256, 1, ample).is_err()

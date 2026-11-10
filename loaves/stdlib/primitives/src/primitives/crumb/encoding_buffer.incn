@@ -1,11 +1,11 @@
-"""Bounded owned byte assembly for row envelopes and their indexed cells."""
+"""Bounded owned byte assembly for binary encodings and their indexed cells."""
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.framing import encode_unsigned
 
 
-pub class RowBuffer:
+pub class EncodingBuffer:
     """Private output while writing; callers receive bytes only after the complete operation succeeds."""
 
     data: list[u8]
@@ -13,7 +13,7 @@ pub class RowBuffer:
     @staticmethod
     pub def create() -> Self:
         """Start an empty operation-local buffer with no externally exposed partial view."""
-        return RowBuffer(data=[])
+        return EncodingBuffer(data=[])
 
     pub def length(self) -> int:
         """Return the currently accumulated byte length for checked offsets and frames."""
@@ -22,7 +22,7 @@ pub class RowBuffer:
     pub def append(mut self, value: bytes, mut budget: Budget) -> Result[None, CrumbError]:
         """Charge the copy and check host addition before modifying the buffer."""
         if len(value) > 9223372036854775807 - len(self.data):
-            return Err(CrumbError.limit("row buffer length"))
+            return Err(CrumbError.limit("encoding buffer length"))
         budget.charge_bytes(len(value))?
         for byte in value:
             self.data.append(byte.saturating_resize[u8]())
@@ -31,7 +31,7 @@ pub class RowBuffer:
     pub def octet(mut self, value: int, mut budget: Budget) -> Result[None, CrumbError]:
         """Append exactly one checked byte; no silently truncated tag or bitmap is permitted."""
         if value < 0 or value > 255:
-            return Err(CrumbError.invalid_input("row octet"))
+            return Err(CrumbError.invalid_input("encoding octet"))
         budget.charge_bytes(1)?
         self.data.append(value.saturating_resize[u8]())
         return Ok(None)
@@ -39,7 +39,7 @@ pub class RowBuffer:
     pub def count(mut self, value: int, mut budget: Budget) -> Result[None, CrumbError]:
         """Host-sized nonnegative lengths are a representable subset of the exact unsigned L domain."""
         if value < 0:
-            return Err(CrumbError.invalid_input("negative row length"))
+            return Err(CrumbError.invalid_input("negative encoding length"))
         return self.append(encode_unsigned(str(value), budget)?, budget)
 
     pub def frame(mut self, value: bytes, mut budget: Budget) -> Result[None, CrumbError]:
@@ -50,9 +50,9 @@ pub class RowBuffer:
     pub def offset(mut self, value: int, width: int, mut budget: Budget) -> Result[None, CrumbError]:
         """Write a nonnegative little-endian offset only if it fits its selected width."""
         if value < 0 or width not in [1, 2, 4, 8]:
-            return Err(CrumbError.invalid_input("row offset"))
+            return Err(CrumbError.invalid_input("encoding offset"))
         if offset_width(value)? > width:
-            return Err(CrumbError.invalid_input("row offset width"))
+            return Err(CrumbError.invalid_input("encoding offset width"))
         mut remaining = value + 0
         for _ in range(width):
             self.octet(remaining % 256, budget)?
@@ -68,7 +68,7 @@ pub class RowBuffer:
 pub def offset_width(length: int) -> Result[int, CrumbError]:
     """Choose the smallest permitted width, including one byte for the zero final offset."""
     if length < 0:
-        return Err(CrumbError.invalid_input("negative row offset"))
+        return Err(CrumbError.invalid_input("negative encoding offset"))
     if length <= 255:
         return Ok(1)
     if length <= 65535:
@@ -79,7 +79,7 @@ pub def offset_width(length: int) -> Result[int, CrumbError]:
 
 
 pub def indexed(cells: list[bytes], mut budget: Budget) -> Result[bytes, CrumbError]:
-    """Build width, count+1 offsets and cells; the containing row/collection owns count and bitmap."""
+    """Build width, count+1 offsets and cells; the containing layout owns count and bitmap."""
     budget.charge_elements(len(cells))?
     mut total = 0
     for cell in cells:
@@ -88,7 +88,7 @@ pub def indexed(cells: list[bytes], mut budget: Budget) -> Result[bytes, CrumbEr
         total += len(cell)
     width = offset_width(total)?
     offset_table_length(len(cells), width)?
-    mut output = RowBuffer.create()
+    mut output = EncodingBuffer.create()
     output.octet(width, budget)?
     mut position = 0
     output.offset(position, width, budget)?

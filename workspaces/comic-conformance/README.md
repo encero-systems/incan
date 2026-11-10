@@ -28,7 +28,7 @@ The runner admits the same pinned corpus, translates its independently authored 
 incan run workspaces/comic-conformance/src/read_cases_main.incn -- specs/comic/corpus/manifest.json
 ```
 
-This separate receipt requires all 81 original binary row cases, 163 actual decode executions after expanding every proper prefix, and 33 original-shape decode/re-encode comparisons. Each prefix receives a fresh operation budget. A failed setup or notation translation is a failed test, never a successful format refusal. Refusals are compared through the typed `RowFailure` category, not parsed diagnostic messages.
+This separate receipt requires all 81 original binary row cases, 163 actual decode executions after expanding every proper prefix, and 33 original-shape decode/re-encode comparisons. Each prefix receives a fresh operation budget. A failed setup or notation translation is a failed test, never a successful format refusal. Refusals are compared through the typed `BinaryFailure` category, not parsed diagnostic messages.
 
 Accepted cases check record count, sealing status, exact nominal selectors and logical object contributions against independently authored expected values. The test translator uses decoded description facts only for field flags omitted from the expected-value notation. It then re-encodes the actual decoded records and complete written descriptions, preserving inline/reference mode, and compares with the original literal input. It never returns the original bytes as its encoded result. The independently authored writer fixtures remain a separate check of those descriptions and byte layouts.
 

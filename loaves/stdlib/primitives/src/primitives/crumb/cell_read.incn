@@ -1,14 +1,14 @@
-"""Typed recursive row admission and explicit logical materialization over bounded retained cells."""
+"""Typed recursive binary admission and explicit logical materialization over bounded retained cells."""
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.identity import closed_selector
 from crate.primitives.crumb.ordering import compare, compare_selectors
-from crate.primitives.crumb.row_cursor import RowCursor
-from crate.primitives.crumb.row_descriptions import StoredDescription, StoredField
-from crate.primitives.crumb.row_dictionary import Dictionary, slot
-from crate.primitives.crumb.row_errors import RowError, RowFailure, failure, primitive, in_field, in_variant
-from crate.primitives.crumb.row_index import CellIndex, RecordIndex, read_record_index, read_index, selected, bit
-from crate.primitives.crumb.row_scalar_read import scalar, decimal
+from crate.primitives.crumb.encoding_cursor import EncodingCursor
+from crate.primitives.crumb.descriptions import StoredDescription, StoredField
+from crate.primitives.crumb.description_dictionary import Dictionary, slot
+from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive, in_field, in_variant
+from crate.primitives.crumb.encoding_index import CellIndex, RecordIndex, read_record_index, read_index, selected, bit
+from crate.primitives.crumb.scalar_read import scalar, decimal
 from crate.primitives.crumb.types import TypeNode, NominalKind, ContainerKind, AbsentPolicy
 from crate.primitives.crumb.values import Value, ValueField, MapEntry, Projection
 from crate.primitives.views import MappedView
@@ -28,16 +28,16 @@ pub def read_root(
     origin: int,
     dictionary: Dictionary,
     mut budget: Budget,
-) -> Result[DecodedRoot, RowError]:
+) -> Result[DecodedRoot, BinaryError]:
     """Resolve enum variants in identity order; decode every reachable cell before returning its row index."""
-    mut cursor = RowCursor.create(view, origin)?
+    mut cursor = EncodingCursor.create(view, origin)?
     if written.kind == NominalKind.Record:
         index = read_record_index(written.fields, cursor, budget)?
         fields = read_fields(written.fields, index, dictionary, budget)?
         return Ok(DecodedRoot(value=Value.Record(fields), index=index, variant=None))
     variant = cursor.length(budget)?
     if variant >= len(written.variants):
-        return Err(failure(RowFailure.VariantIndex, origin))
+        return Err(failure(BinaryFailure.VariantIndex, origin))
     index = read_record_index(written.variants[variant].fields, cursor, budget).map_err(
         (e) => in_variant(e, written.variants[variant].identity),
     )?
@@ -54,7 +54,7 @@ def read_fields(
     index: RecordIndex,
     dictionary: Dictionary,
     mut budget: Budget,
-) -> Result[list[ValueField], RowError]:
+) -> Result[list[ValueField], BinaryError]:
     """Build only a transient logical record; the admitted set retains offsets, not every decoded record."""
     mut fields: list[ValueField] = []
     mut eligible = 0
@@ -86,7 +86,7 @@ def read_fields(
     return Ok(fields)
 
 
-pub def absent(field: StoredField, origin: int) -> Result[Value, RowError]:
+pub def absent(field: StoredField, origin: int) -> Result[Value, BinaryError]:
     """Restore only the explicit stored absence, never a constructor default or missing-data guess."""
     if field.shape.absent == AbsentPolicy.NoneValue:
         return Ok(Value.NoneValue)
@@ -96,7 +96,7 @@ pub def absent(field: StoredField, origin: int) -> Result[Value, RowError]:
             TypeNode.Container(ContainerKind.Set, _) => return Ok(Value.Set([]))
             TypeNode.Container(ContainerKind.Map, _) => return Ok(Value.Map([]))
             _ => pass
-    return Err(failure(RowFailure.InvalidDescription, origin))
+    return Err(failure(BinaryFailure.InvalidDescription, origin))
 
 
 pub def read_field_cell(
@@ -105,24 +105,24 @@ pub def read_field_cell(
     origin: int,
     dictionary: Dictionary,
     mut budget: Budget,
-) -> Result[Value, RowError]:
+) -> Result[Value, BinaryError]:
     """The presence bit substitutes only one outer Option tag; redundant empty presence is invalid."""
     if field.shape.absent == AbsentPolicy.NoneValue:
         match field.shape.storage_type:
             TypeNode.Container(ContainerKind.Option, arguments) =>
                 value = cell(arguments[0], view, origin, dictionary, budget)?
                 return Ok(Value.Some([value]))
-            _ => return Err(failure(RowFailure.InvalidDescription, origin))
+            _ => return Err(failure(BinaryFailure.InvalidDescription, origin))
     value = cell(field.shape.storage_type, view, origin, dictionary, budget)?
     if field.shape.absent == AbsentPolicy.Empty:
         match value:
             Value.List(items) | Value.Set(items) =>
                 if len(items) == 0:
-                    return Err(failure(RowFailure.RedundantPresence, origin))
+                    return Err(failure(BinaryFailure.RedundantPresence, origin))
             Value.Map(entries) =>
                 if len(entries) == 0:
-                    return Err(failure(RowFailure.RedundantPresence, origin))
-            _ => return Err(failure(RowFailure.InvalidDescription, origin))
+                    return Err(failure(BinaryFailure.RedundantPresence, origin))
+            _ => return Err(failure(BinaryFailure.InvalidDescription, origin))
     return Ok(value)
 
 
@@ -132,7 +132,7 @@ pub def cell(
     origin: int,
     dictionary: Dictionary,
     mut budget: Budget,
-) -> Result[Value, RowError]:
+) -> Result[Value, BinaryError]:
     """Every entered typed cell consumes shared depth; failure unwinds the balanced entry before returning."""
     budget.charge_elements(1).map_err((e) => primitive(e, origin))?
     budget.enter().map_err((e) => primitive(e, origin))?
@@ -147,18 +147,18 @@ def cell_inner(
     origin: int,
     dictionary: Dictionary,
     mut budget: Budget,
-) -> Result[Value, RowError]:
+) -> Result[Value, BinaryError]:
     """Only the admitted written selector chooses interpretation; no application constructor is invoked."""
     match node:
         TypeNode.Scalar(kind) => return scalar(kind, view, origin, budget)
         TypeNode.Decimal(precision, scale) => return decimal(precision, scale, view, origin, budget)
         TypeNode.Nominal(_, _, _) =>
-            key = closed_selector(node, budget).map_err((e) => primitive(e, origin, RowFailure.InvalidSelector))?
-            position = slot(dictionary, key, budget).map_err((e) => primitive(e, origin, RowFailure.InvalidSelector))?
+            key = closed_selector(node, budget).map_err((e) => primitive(e, origin, BinaryFailure.InvalidSelector))?
+            position = slot(dictionary, key, budget).map_err((e) => primitive(e, origin, BinaryFailure.InvalidSelector))?
             decoded = read_root(dictionary.entries[position], view, origin, dictionary, budget)?
             return Ok(decoded.value)
         TypeNode.Container(kind, arguments) => return container(kind, arguments, view, origin, dictionary, budget)
-        _ => return Err(failure(RowFailure.InvalidSelector, origin))
+        _ => return Err(failure(BinaryFailure.InvalidSelector, origin))
 
 
 def container(
@@ -168,9 +168,9 @@ def container(
     origin: int,
     dictionary: Dictionary,
     mut budget: Budget,
-) -> Result[Value, RowError]:
+) -> Result[Value, BinaryError]:
     """Check tags/counts before indexing, and consume the complete frame selected by the enclosing offsets."""
-    mut cursor = RowCursor.create(view, origin)?
+    mut cursor = EncodingCursor.create(view, origin)?
     if kind == ContainerKind.Option:
         tag = cursor.byte(budget)?
         mut value = Value.NoneValue
@@ -179,20 +179,20 @@ def container(
             child_origin = cursor.absolute() - child.len()
             value = Value.Some([cell(arguments[0], child, child_origin, dictionary, budget)?])
         elif tag != 0:
-            return Err(failure(RowFailure.InvalidCell, origin))
+            return Err(failure(BinaryFailure.InvalidCell, origin))
         if cursor.remaining() != 0:
-            return Err(failure(RowFailure.InvalidCell, cursor.absolute()))
+            return Err(failure(BinaryFailure.InvalidCell, cursor.absolute()))
         return Ok(value)
     if kind == ContainerKind.Union:
         return union_cell(arguments, cursor, dictionary, budget)
     count = cursor.length(budget)?
     budget.charge_elements(count).map_err((e) => primitive(e, origin))?
     if kind == ContainerKind.Tuple and count != len(arguments):
-        return Err(failure(RowFailure.ArityMismatch, origin))
+        return Err(failure(BinaryFailure.ArityMismatch, origin))
     mut slots = count + 0
     if kind == ContainerKind.Map:
         if count > (9223372036854775807 - 1) // 2:
-            return Err(failure(RowFailure.LimitExceeded, origin))
+            return Err(failure(BinaryFailure.LimitExceeded, origin))
         slots = count * 2
     index = read_index(cursor, slots, budget)?
     if kind == ContainerKind.Map:
@@ -211,7 +211,7 @@ def container(
         ContainerKind.List => return Ok(Value.List(values))
         ContainerKind.Tuple => return Ok(Value.Tuple(values))
         ContainerKind.Set => return Ok(Value.Set(values))
-        _ => return Err(failure(RowFailure.InvalidSelector, origin))
+        _ => return Err(failure(BinaryFailure.InvalidSelector, origin))
 
 
 def map_cell(
@@ -219,7 +219,7 @@ def map_cell(
     index: CellIndex,
     dictionary: Dictionary,
     mut budget: Budget,
-) -> Result[Value, RowError]:
+) -> Result[Value, BinaryError]:
     """Keys are strictly ordered under object comparison; no user equality or last-write-wins operation runs."""
     mut entries: list[MapEntry] = []
     for position in range(index.count // 2):
@@ -233,27 +233,27 @@ def map_cell(
     return Ok(Value.Map(entries))
 
 
-def checked_order(previous: Value, current: Value, origin: int, mut budget: Budget) -> Result[None, RowError]:
+def checked_order(previous: Value, current: Value, origin: int, mut budget: Budget) -> Result[None, BinaryError]:
     """Reject duplicates and descending physical order before any canonical projection can erase distinctions."""
     relation = compare(previous, current, Projection.Object, budget).map_err((e) => primitive(e, origin))?
     if relation == 0:
-        return Err(failure(RowFailure.DuplicateKey, origin))
+        return Err(failure(BinaryFailure.DuplicateKey, origin))
     if relation > 0:
-        return Err(failure(RowFailure.CollectionOrder, origin))
+        return Err(failure(BinaryFailure.CollectionOrder, origin))
     return Ok(None)
 
 
 def union_cell(
     arguments: list[TypeNode],
-    mut cursor: RowCursor,
+    mut cursor: EncodingCursor,
     dictionary: Dictionary,
     mut budget: Budget,
-) -> Result[Value, RowError]:
+) -> Result[Value, BinaryError]:
     """The physical index selects the written descriptor's N/K ordering, never source declaration order."""
     offset = cursor.absolute()
     requested = cursor.length(budget)?
     if requested >= len(arguments):
-        return Err(failure(RowFailure.UnionIndex, offset))
+        return Err(failure(BinaryFailure.UnionIndex, offset))
     for candidate in arguments:
         mut rank = 0
         for other in arguments:
@@ -265,4 +265,4 @@ def union_cell(
             view = cursor.take(cursor.remaining(), budget)?
             value = cell(candidate, view, origin, dictionary, budget)?
             return Ok(Value.Union(candidate, [value]))
-    return Err(failure(RowFailure.UnionIndex, offset))
+    return Err(failure(BinaryFailure.UnionIndex, offset))
