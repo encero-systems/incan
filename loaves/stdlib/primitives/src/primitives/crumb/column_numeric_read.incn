@@ -11,7 +11,7 @@ from crate.primitives.crumb.types import TypeNode
 from crate.primitives.crumb.values import Value
 
 
-pub def numeric_values(block: BlockData, node: TypeNode, mut budget: Budget) -> Result[list[Value], ColumnError]:
+pub def numeric_values(block: &BlockData, node: TypeNode, mut budget: Budget) -> Result[list[Value], ColumnError]:
     """One sequential admission pass; delta blocks never re-decode every earlier prefix for each row."""
     mut result: list[Value] = []
     mut current = block.base
@@ -46,7 +46,7 @@ pub def numeric_values(block: BlockData, node: TypeNode, mut budget: Budget) -> 
     return Ok(result)
 
 
-pub def numeric_at(block: BlockData, node: TypeNode, position: int, mut budget: Budget) -> Result[Value, ColumnError]:
+pub def numeric_at(block: &BlockData, node: TypeNode, position: int, mut budget: Budget) -> Result[Value, ColumnError]:
     """FOR reads only its addressed residual; delta selection replays no more than 255 deltas."""
     mut number = block.base
     if block.encoding == 1:

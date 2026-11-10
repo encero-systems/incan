@@ -13,7 +13,7 @@ from crate.primitives.crumb.value_admission import validate
 
 
 pub def read_runs(
-    block: BlockData,
+    block: &BlockData,
     node: TypeNode,
     keys: Option[ColumnKeys],
     dictionary: Dictionary,

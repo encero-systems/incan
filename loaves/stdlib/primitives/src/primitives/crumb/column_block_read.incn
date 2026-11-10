@@ -47,7 +47,7 @@ pub def read_block(
 
 
 def stored_values(
-    block: BlockData,
+    block: &BlockData,
     node: TypeNode,
     keys: Option[ColumnKeys],
     dictionary: Dictionary,
@@ -67,7 +67,7 @@ def stored_values(
 
 
 pub def block_at(
-    block: BlockData,
+    block: &BlockData,
     node: TypeNode,
     absent: AbsentPolicy,
     keys: Option[ColumnKeys],
@@ -89,7 +89,7 @@ pub def block_at(
 
 
 def stored_at(
-    block: BlockData,
+    block: &BlockData,
     node: TypeNode,
     keys: Option[ColumnKeys],
     dictionary: Dictionary,

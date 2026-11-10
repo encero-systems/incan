@@ -70,7 +70,7 @@ pub def read_group(
 
 
 pub def group_value(
-    group: GroupData,
+    group: &GroupData,
     position: int,
     dictionary: Dictionary,
     mut budget: Budget,

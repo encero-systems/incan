@@ -5,6 +5,7 @@ from crate.primitives.crumb.column_block_data import BlockData
 from crate.primitives.crumb.column_block_read import block_at
 from crate.primitives.crumb.column_errors import ColumnError, shared, primitive, in_field
 from crate.primitives.crumb.column_group_read import GroupData
+from crate.primitives.crumb.column_data_read import column_at
 from crate.primitives.crumb.column_key_read import ColumnKeys
 from crate.primitives.crumb.description_dictionary import Dictionary
 from crate.primitives.crumb.encoding_errors import BinaryFailure, failure
@@ -96,6 +97,40 @@ pub def project(
     if is_enum:
         result.read(budget)?
     return Ok(result)
+
+
+pub def project_value(
+    group: &GroupData,
+    position: int,
+    identity: bytes,
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[Value, ColumnError]:
+    """Read a selected root field while borrowing the admitted group's complete block set."""
+    if position < 0 or position >= group.rows:
+        return Err(shared(failure(BinaryFailure.RecordIndex, 0)))
+    index = group.description
+    mut selected = -1
+    is_enum = dictionary.entries[index].kind == NominalKind.Enum
+    if is_enum:
+        selected = 0
+    else:
+        for field_index in range(len(dictionary.entries[index].fields)):
+            budget.charge_elements(1).map_err((e) => primitive(e, 0))?
+            if dictionary.entries[index].fields[field_index].shape.identity == identity:
+                selected = field_index
+                break
+    if selected < 0:
+        return Err(shared(failure(BinaryFailure.MissingField, 0)))
+    value = column_at(group.columns[selected], position, dictionary, budget).map_err((e) => in_field(e, identity))?
+    if is_enum:
+        match value:
+            Value.Enum(_, fields) => return enum_member(fields, identity, budget)
+            _ =>
+                return Err(
+                    shared(failure(BinaryFailure.InvalidCell, group.columns[selected].blocks[position // 256].origin)),
+                )
+    return Ok(value)
 
 
 def enum_member(fields: list[ValueField], identity: bytes, mut budget: Budget) -> Result[Value, ColumnError]:
