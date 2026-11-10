@@ -28,6 +28,8 @@ import primitives.crumb.ordering
 import primitives.crumb.value_admission
 import primitives.crumb.contributions
 import primitives.crumb.metadata
+import primitives.crumb.names
+import primitives.crumb.text_names
 import primitives.crumb.hashes
 import primitives.crumb.registrations
 import primitives.crumb.encoding_buffer

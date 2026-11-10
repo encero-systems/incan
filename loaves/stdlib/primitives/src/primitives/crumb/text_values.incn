@@ -4,6 +4,7 @@ from rust::std::primitive import f32 as RustF32, f64 as RustF64, i128 as RustI12
 from rust::std::str import FromStr
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.native_numbers import integer_compare, integer_spelling
+from crate.primitives.crumb.text_names import require_name, require_path
 from crate.primitives.crumb.text_syntax import description_at, last_segment, resolve_named, type_spelling
 from crate.primitives.crumb.text_tokens import TextToken, TextTokenKind, TextTokens
 from crate.primitives.crumb.text_types import TextDescription, TextError, TextFailure, TextPosition, TextRootValue
@@ -25,7 +26,7 @@ pub def parse_root_values(
 ) -> Result[list[TextRootValue], TextError]:
     """Read one root value or table after requiring its prior unique description."""
     type_token = tokens.take()?
-    type_name = tokens.text(type_token)?
+    type_name = require_path(tokens.text(type_token)?, type_token.position, TextFailure.UnknownDescription)?
     description = description_at(descriptions, type_name, type_token.position)?
     tokens.require("<<")?
     mut values: list[TextRootValue] = []
@@ -101,7 +102,14 @@ def parse_cells(
             saw_key = true
             key = tokens.text(tokens.take()?)?
             tokens.take()?
-            selected = field_index(fields, key, key_token)?
+            if not canonical_unsigned(key) and not key.startswith("___"):
+                selected = field_index(
+                    fields,
+                    require_name(key, key_token.position, TextFailure.UnknownField)?,
+                    key_token,
+                )?
+            else:
+                selected = field_index(fields, key, key_token)?
         elif saw_key:
             return Err(TextError(kind=TextFailure.PositionalAfterKey, position=key_token.position))
         else:
@@ -390,7 +398,7 @@ def parse_union(
     next = tokens.peek_at(1)?
     if tokens.text(next)? == "<<":
         selector_token = tokens.take()?
-        selector = tokens.text(selector_token)?
+        selector = require_path(tokens.text(selector_token)?, selector_token.position, TextFailure.AmbiguousUnion)?
         tokens.take()?
         member = union_member(members, selector, descriptions, token.position)?
         value = parse_value(member, descriptions, tokens, budget)?
@@ -451,7 +459,7 @@ def parse_enum(
 ) -> Result[Value, TextError]:
     """Read one enum name, accepting an optional owning-enum qualifier."""
     token = tokens.take()?
-    mut name = tokens.text(token)?
+    mut name = require_path(tokens.text(token)?, token.position, TextFailure.UnknownVariant)?
     parts = name.split(".")
     if len(parts) > 1:
         if parts[len(parts) - 2] != last_segment(description.path):

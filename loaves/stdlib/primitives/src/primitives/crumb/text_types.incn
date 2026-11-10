@@ -58,6 +58,7 @@ pub enum TextFailure(str):
     UnknownKind = "unknown_kind"
     UnknownStoreKey = "unknown_store_key"
     UnknownVariant = "unknown_variant"
+    UnnormalizedName = "unnormalized_name"
     UnsupportedMarker = "unsupported_marker"
     UnsupportedStoreKey = "unsupported_store_key"
     ValueTypeNoSingleDeclaration = "value_type_no_single_declaration"

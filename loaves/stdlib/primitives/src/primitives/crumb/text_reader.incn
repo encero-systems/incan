@@ -4,7 +4,8 @@ from rust::std::primitive import i128 as RustI128
 from rust::std::str import FromStr
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.text_syntax import last_segment
-from crate.primitives.crumb.text_tokens import TextTokenKind, TextTokens, tokenize
+from crate.primitives.crumb.text_names import require_name, require_path
+from crate.primitives.crumb.text_tokens import TextToken, TextTokenKind, TextTokens, tokenize
 from crate.primitives.crumb.text_types import (
     TextContext,
     TextDescription,
@@ -61,10 +62,10 @@ def parse_description(
     match budget.enter():
         Err(_) => return Err(limit_error(tokens.peek()?.position))
         Ok(_) => pass
-    path = require_word(tokens, TextFailure.InvalidEntry)?
+    path = require_path_word(tokens, TextFailure.InvalidEntry)?
     tokens.require("=")?
     kind_token = tokens.peek()?
-    kind = require_word(tokens, TextFailure.UnknownKind)?
+    kind = require_path_word(tokens, TextFailure.UnknownKind)?
     shape = registered_shape(kind, context, kind_token.position, budget)?
     tokens.require("{")?
     mut properties: list[MetadataEntry] = []
@@ -115,7 +116,7 @@ def registered_shape(
 def parse_field(mut tokens: TextTokens, mut budget: Budget) -> Result[FieldShape, TextError]:
     """Read a field, retaining metadata while projecting canonical and absent policies."""
     name_token = tokens.peek()?
-    name = require_word(tokens, TextFailure.InvalidFields)?
+    name = require_name_word(tokens, TextFailure.InvalidFields)?
     if name.startswith("___"):
         return Err(TextError(kind=TextFailure.ReservedField, position=name_token.position))
     mut properties: list[MetadataEntry] = []
@@ -168,7 +169,7 @@ def parse_field(mut tokens: TextTokens, mut budget: Budget) -> Result[FieldShape
 def parse_variant(mut tokens: TextTokens, mut budget: Budget) -> Result[VariantShape, TextError]:
     """Read one enum variant, its identity history and its optional named payload description."""
     name_token = tokens.peek()?
-    name = require_word(tokens, TextFailure.UnknownVariant)?
+    name = require_name_word(tokens, TextFailure.UnknownVariant)?
     mut properties: list[MetadataEntry] = []
     if tokens.accepts("[")?:
         while not tokens.accepts("]")?:
@@ -195,7 +196,7 @@ def parse_variant(mut tokens: TextTokens, mut budget: Budget) -> Result[VariantS
 def parse_property(mut tokens: TextTokens, mut budget: Budget) -> Result[MetadataEntry, TextError]:
     """Read inert description metadata in its authored order."""
     position = tokens.peek()?.position
-    name = require_word(tokens, TextFailure.InvalidProperty)?
+    name = require_name_word(tokens, TextFailure.InvalidProperty)?
     if "." in name:
         return Err(TextError(kind=TextFailure.InvalidProperty, position=position))
     tokens.require("=")?
@@ -242,7 +243,7 @@ def parse_property_value(mut tokens: TextTokens, mut budget: Budget) -> Result[M
             tokens.accepts(",")?
         result = Metadata.Map(properties)
     elif token.kind == TextTokenKind.Word:
-        result = Metadata.Symbol(require_word(tokens, TextFailure.InvalidProperty)?)
+        result = Metadata.Symbol(require_name_word(tokens, TextFailure.InvalidProperty)?)
     else:
         return Err(TextError(kind=TextFailure.InvalidProperty, position=token.position))
     budget.leave().map_err((_) => limit_error(token.position))?
@@ -408,12 +409,24 @@ def resolve_node(
         _ => return Ok(node)
 
 
-def require_word(mut tokens: TextTokens, kind: TextFailure) -> Result[str, TextError]:
+def word_token(mut tokens: TextTokens, kind: TextFailure) -> Result[TextToken, TextError]:
     """Consume one nonempty word token or return the caller-selected refusal category."""
     token = tokens.peek()?
     if token.kind != TextTokenKind.Word or tokens.text(token)? == "":
         return Err(TextError(kind=kind, position=token.position))
-    return tokens.text(tokens.take()?)
+    return tokens.take()
+
+
+def require_name_word(mut tokens: TextTokens, kind: TextFailure) -> Result[str, TextError]:
+    """Consume and admit one core UAX #31 name without normalizing its spelling."""
+    token = word_token(tokens, kind)?
+    return require_name(tokens.text(token)?, token.position, kind)
+
+
+def require_path_word(mut tokens: TextTokens, kind: TextFailure) -> Result[str, TextError]:
+    """Consume and admit one dotted path under the shared segment rule."""
+    token = word_token(tokens, kind)?
+    return require_path(tokens.text(token)?, token.position, kind)
 
 
 def refuse_duplicate_declaration(
