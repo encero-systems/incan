@@ -1,7 +1,7 @@
 [project]
 name = "incan_worker_host"
 version = "0.6.0-dev.8"
-description = "The compiler worker host: the incan.compiler-worker/1 protocol and the worker process lifecycle"
+description = "The compiler worker host: versioned compile and record protocols and the worker process lifecycle"
 
 [dependencies]
 incan_platform = { path = "../../platform" }

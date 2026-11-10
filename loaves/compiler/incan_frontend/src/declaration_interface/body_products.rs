@@ -10,6 +10,7 @@
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
+use incan_lang::lang::builtins::{self, BuiltinFnId};
 use incan_lang::lang::types::numerics::{self, NumericTypeId};
 use incan_semantics_core::body_ir::{Body, BodyIrModule};
 use incan_semantics_core::stable_identity::StableIdentityProjection;
@@ -51,8 +52,10 @@ pub struct CallableBodyInputs {
 struct BodyInput {
     header: CheckedCallableInterface,
     span: Span,
+    header_source: String,
     source: String,
     reads: Vec<ReadGuard>,
+    declaration: Vec<Vec<String>>,
 }
 
 /// One complete positive lookup and the exact source headers that produced its previously accepted signatures.
@@ -73,8 +76,10 @@ type SignatureInputs = BTreeMap<String, Vec<(Span, String)>>;
 struct BodyProduct {
     header: CheckedCallableInterface,
     fingerprints: CheckedDeclarationFingerprints,
+    header_source: String,
     source: String,
     reads: Vec<ReadGuard>,
+    declaration: Vec<Vec<String>>,
     contexts: Vec<(CanonicalSymbolId, CanonicalSymbolId, u32)>,
     body: Body,
 }
@@ -84,8 +89,10 @@ struct BodyProduct {
 #[derive(Debug, Clone)]
 pub struct ValidatedCallableBodies {
     program: Program,
+    declarations: BTreeMap<Span, BodyProduct>,
     bodies: BTreeMap<Span, BodyProduct>,
     owner: incan_semantics_core::SymbolOrigin,
+    producer_package: String,
 }
 
 impl CallableBodyProducts {
@@ -128,19 +135,42 @@ impl CallableBodyProducts {
         admitted_functions(program)?;
         let headers = signature_inputs(program, source)?;
         let names = headers.keys().cloned().collect::<BTreeSet<_>>();
+        let owner = self
+            .entries
+            .first()
+            .ok_or_else(|| invalid("callable products have no producer identity"))?
+            .header
+            .identity()
+            .origin
+            .clone();
+        let owner_matches = match &owner {
+            incan_semantics_core::SymbolOrigin::Module(module_path) => module_path == module,
+            incan_semantics_core::SymbolOrigin::Package { library, module_path } => {
+                library == package && module_path == module
+            }
+            incan_semantics_core::SymbolOrigin::RustCrate(_) | incan_semantics_core::SymbolOrigin::Builtin => false,
+        };
         if namespace(program) != self.namespace || environment_inputs(program, source)? != self.environment {
             return Ok(ValidatedCallableBodies {
                 program: program.clone(),
+                declarations: BTreeMap::new(),
                 bodies: BTreeMap::new(),
-                owner: incan_semantics_core::SymbolOrigin::Builtin,
+                owner,
+                producer_package: package.to_owned(),
             });
         }
-        let owner = incan_semantics_core::SymbolOrigin::Package {
-            library: package.to_owned(),
-            module_path: module.to_vec(),
-        };
+        if !owner_matches {
+            return Ok(ValidatedCallableBodies {
+                program: program.clone(),
+                declarations: BTreeMap::new(),
+                bodies: BTreeMap::new(),
+                owner,
+                producer_package: package.to_owned(),
+            });
+        }
 
         // ---- Selection: admit exact untouched scalar bodies and every consumed source header ----
+        let mut declarations = BTreeMap::new();
         let mut bodies = BTreeMap::new();
         let entries = self
             .entries
@@ -159,21 +189,28 @@ impl CallableBodyProducts {
             let Some(reads) = admitted_reads(function, &names) else {
                 continue;
             };
+            let Some(header_source) = header_source(&headers, &function.name, declaration.span) else {
+                continue;
+            };
             let input = source_slice(source, declaration.span)?;
             if entry.header.identity().origin == owner
                 && entry.body.span == declaration.span
-                && entry.source == input
-                && matching_reads(&entry.reads, &reads, &headers)
+                && entry.header_source == header_source
             {
-                bodies.insert(declaration.span, entry.clone());
+                declarations.insert(declaration.span, entry.clone());
+                if entry.source == input && matching_reads(&entry.reads, &reads, &headers) {
+                    bodies.insert(declaration.span, entry.clone());
+                }
             }
         }
 
         // ---- Replay: bind accepted products to the exact parsed program ----
         Ok(ValidatedCallableBodies {
             program: program.clone(),
+            declarations,
             bodies,
             owner,
+            producer_package: package.to_owned(),
         })
     }
 
@@ -212,12 +249,19 @@ impl CallableBodyProducts {
         }
         let mut identities = BTreeSet::new();
         let mut locators = BTreeSet::new();
+        let mut owner = None;
         for entry in &self.entries {
             body_scope(&entry.contexts)?;
             if !resolved_scalar_header(&entry.header)? {
                 return Err(invalid("scalar body product has a nonprimitive checked signature"));
             }
+            if entry.declaration.is_empty() || entry.header_source.is_empty() {
+                return Err(invalid("scalar body product has no declaration record"));
+            }
             let mut body = entry.body.clone();
+            if owner.get_or_insert_with(|| entry.header.identity().origin.clone()) != &entry.header.identity().origin {
+                return Err(invalid("callable products contain multiple producer identities"));
+            }
             if !identities.insert(entry.header.identity())
                 || !locators.insert(body.span)
                 || entry
@@ -237,6 +281,27 @@ impl CallableBodyInputs {
     /// Capture accepted headers and lexical ownership before consuming a successful checker. Unwitnessed reads and
     /// diagnostics refuse capture; missing evidence can never be interpreted as an empty dependency set.
     pub fn from_checked(program: &Program, source: &str, checker: &TypeChecker) -> Result<Self, LibraryManifestError> {
+        Self::from_checked_with_package(program, source, checker, None)
+    }
+
+    /// Capture private products for an authored unit. The unit package is transport ownership for program modules;
+    /// their canonical declarations remain module-owned.
+    pub fn from_checked_for_unit(
+        program: &Program,
+        source: &str,
+        checker: &TypeChecker,
+        producer_package: &str,
+    ) -> Result<Self, LibraryManifestError> {
+        Self::from_checked_with_package(program, source, checker, Some(producer_package))
+    }
+
+    /// Capture accepted inputs while separating the private replay envelope from semantic symbol ownership.
+    fn from_checked_with_package(
+        program: &Program,
+        source: &str,
+        checker: &TypeChecker,
+        producer_package: Option<&str>,
+    ) -> Result<Self, LibraryManifestError> {
         // ---- Admission: preserve ordinary diagnostics and the complete source namespace ----
         admitted_functions(program)?;
         if !checker.errors.is_empty() || !checker.warnings().is_empty() {
@@ -249,7 +314,7 @@ impl CallableBodyInputs {
         }) {
             return Err(invalid("callable products have no admitted scalar body"));
         }
-        let interface = CheckedCallableModule::from_checked_names(program, checker, &names)?;
+        let interface = CheckedCallableModule::from_checked_names(program, checker, &names, producer_package)?;
         let checked_reads = interface.read_inventory()?;
 
         // ---- Headers: unsupported bodies stay on the full path independently of scalar neighbors ----
@@ -261,15 +326,28 @@ impl CallableBodyInputs {
             let Some(reads) = admitted_reads(function, &names) else {
                 continue;
             };
-            let header = CheckedCallableInterface::from_checked(function, declaration.span, checker)?;
+            let header = match producer_package {
+                Some(package) => {
+                    CheckedCallableInterface::from_checked_for_product(function, declaration.span, checker, package)?
+                }
+                None => CheckedCallableInterface::from_checked(function, declaration.span, checker)?,
+            };
             if !resolved_scalar_header(&header)? {
                 continue;
             }
+            let Some(header_source) = header_source(&headers, &function.name, declaration.span) else {
+                continue;
+            };
+            let Some(record) = checker.produced_declaration_record(declaration.span) else {
+                continue;
+            };
             declarations.push(BodyInput {
                 header,
                 span: declaration.span,
+                header_source: header_source.to_owned(),
                 source: source_slice(source, declaration.span)?.to_owned(),
                 reads: capture_reads(reads, &checked_reads, &headers)?,
+                declaration: record.clone(),
             });
         }
 
@@ -325,8 +403,10 @@ impl CallableBodyInputs {
         for BodyInput {
             header,
             span,
+            header_source,
             source,
             reads,
+            declaration,
         } in self.declarations
         {
             let mut body = bodies
@@ -345,8 +425,10 @@ impl CallableBodyInputs {
             entries.push(BodyProduct {
                 header,
                 fingerprints,
+                header_source,
                 source,
                 reads,
+                declaration,
                 contexts,
                 body,
             });
@@ -407,18 +489,26 @@ impl ValidatedCallableBodies {
             .map(|package| incan_semantics_core::SymbolOrigin::Package {
                 library: package.to_owned(),
                 module_path: checker.current_module_path.clone().unwrap_or_default(),
+            })
+            .unwrap_or_else(|| {
+                incan_semantics_core::SymbolOrigin::Module(checker.current_module_path.clone().unwrap_or_default())
             });
-        if self.program != *program || Some(self.owner) != owner {
+        if self.program != *program || self.owner != owner {
             return;
         }
         for declaration in &program.declarations {
             let Declaration::Function(function) = &declaration.node else {
                 continue;
             };
-            let Some(entry) = self.bodies.get(&declaration.span) else {
+            let Some(entry) = self.declarations.get(&declaration.span) else {
                 continue;
             };
-            let Ok(current) = CheckedCallableInterface::from_checked(function, declaration.span, checker) else {
+            let Ok(current) = CheckedCallableInterface::from_checked_for_product(
+                function,
+                declaration.span,
+                checker,
+                &self.producer_package,
+            ) else {
                 continue;
             };
             if current.identity() != entry.header.identity()
@@ -430,6 +520,10 @@ impl ValidatedCallableBodies {
             {
                 continue;
             }
+            checker.retain_declaration_record(declaration.span, entry.declaration.clone());
+            let Some(entry) = self.bodies.get(&declaration.span) else {
+                continue;
+            };
             let Ok(scope) = body_scope(&entry.contexts) else {
                 continue;
             };
@@ -452,8 +546,16 @@ impl ValidatedCallableBodies {
 
     /// Report whether this validated selection contains any source-body products.
     pub fn is_empty(&self) -> bool {
-        self.bodies.is_empty()
+        self.declarations.is_empty() && self.bodies.is_empty()
     }
+}
+
+/// Select one physical header from the complete overload-preserving signature inventory.
+fn header_source<'a>(headers: &'a SignatureInputs, name: &str, span: Span) -> Option<&'a str> {
+    headers
+        .get(name)?
+        .iter()
+        .find_map(|(candidate, source)| (*candidate == span).then_some(source.as_str()))
 }
 
 /// Require ordinary physical declarations. Non-function declarations are retained as exact environment inputs;
@@ -480,8 +582,9 @@ fn admitted_reads(function: &FunctionDecl, names: &BTreeSet<String>) -> Option<B
     if !scalar_signature(function) || is_synthetic_span(statement.span) {
         return None;
     }
-    let Statement::Return(Some(value)) = &statement.node else {
-        return None;
+    let value = match &statement.node {
+        Statement::Return(Some(value)) | Statement::Expr(value) => value,
+        _ => return None,
     };
     let mut reads = BTreeSet::new();
     let mut bindings: BTreeSet<String> = function
@@ -599,8 +702,10 @@ fn body_scope(contexts: &[(CanonicalSymbolId, CanonicalSymbolId, u32)]) -> Resul
 
 /// Recognize only the language's primitive scalar annotations; checker acceptance remains authoritative.
 fn scalar_type(ty: &Type) -> bool {
-    matches!(ty, Type::Simple(name) if matches!(numerics::from_str(name),
-        Some(NumericTypeId::I64 | NumericTypeId::F64 | NumericTypeId::Bool)))
+    matches!(ty, Type::Unit)
+        || matches!(ty, Type::Simple(name) if matches!(ResolvedType::builtin_simple(name),
+            Some(ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool | ResolvedType::Str | ResolvedType::Unit)
+            | Some(ResolvedType::Numeric(NumericTypeId::I64 | NumericTypeId::F64 | NumericTypeId::Bool))))
 }
 
 /// Require the checker's actual primitive types, not annotations that an import could shadow. These bodies cannot
@@ -608,11 +713,13 @@ fn scalar_type(ty: &Type) -> bool {
 pub(super) fn resolved_scalar_header(header: &CheckedCallableInterface) -> Result<bool, LibraryManifestError> {
     let function = header.function()?;
     let scalar = |ty: &ResolvedType| {
-        matches!(ty, ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool)
-            || matches!(
-                ty,
-                ResolvedType::Numeric(NumericTypeId::I64 | NumericTypeId::F64 | NumericTypeId::Bool)
-            )
+        matches!(
+            ty,
+            ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool | ResolvedType::Str | ResolvedType::Unit
+        ) || matches!(
+            ty,
+            ResolvedType::Numeric(NumericTypeId::I64 | NumericTypeId::F64 | NumericTypeId::Bool)
+        )
     };
     Ok(function.type_params.is_empty()
         && !function.is_async
@@ -632,7 +739,7 @@ fn parameter_expression(
     }
     match &expression.node {
         Expr::Ident(name) => bindings.contains(name),
-        Expr::Literal(Literal::Int(_) | Literal::Float(_) | Literal::Bool(_)) => true,
+        Expr::Literal(Literal::Int(_) | Literal::Float(_) | Literal::Bool(_) | Literal::String(_)) => true,
         Expr::Binary(left, _, right) => {
             parameter_expression(left, bindings, names, reads) && parameter_expression(right, bindings, names, reads)
         }
@@ -641,7 +748,7 @@ fn parameter_expression(
             let Expr::Ident(name) = &callee.node else {
                 return false;
             };
-            if !names.contains(name) || bindings.contains(name) {
+            if bindings.contains(name) {
                 return false;
             }
             if !values.iter().all(|value| {
@@ -650,8 +757,11 @@ fn parameter_expression(
             }) {
                 return false;
             }
-            reads.insert(name.clone());
-            true
+            if names.contains(name) {
+                reads.insert(name.clone());
+                return true;
+            }
+            matches!(builtins::from_str(name), Some(BuiltinFnId::Print))
         }
         _ => false,
     }
