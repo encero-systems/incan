@@ -39,6 +39,7 @@ from rust::incan_semantics_core::body_ir import (
     ConstantDeclaration,
     EnumDeclaration,
 )
+from rust::incan_semantics_core::record_identity import RecordPackageIdentity
 from body_ir_values import CompilerBlock
 from checked_types import CheckedType
 from compiler_records import CanonicalSymbolId, HirSourceSpan
@@ -136,7 +137,7 @@ pub model CompilerBody:
 
 
 pub model CompilerNominalDeclaration:
-    """All 28 live NominalDeclaration fields, including validation, adoption and owned-callable facts."""
+    """All 29 live NominalDeclaration fields, including validation, adoption and owned-callable facts."""
 
     pub trait_adoptions: list[CompilerTraitAdoption]
     pub native_item: str
@@ -166,6 +167,7 @@ pub model CompilerNominalDeclaration:
     pub named_type_identities: list[NamedTypeIdentity]
     pub type_parameters: list[str]
     pub type_parameter_count: int
+    pub record_package_identity: Option[RecordPackageIdentity]
 
 
 pub model CompilerLoafCallable:

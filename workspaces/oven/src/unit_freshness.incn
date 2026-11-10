@@ -199,10 +199,13 @@ pub def description_digest(unit: UnitDescription) -> Result[str, str]:
         flags = native_executable_arguments(unit.profile)
     selected = [f"feature={feature}" for feature in sorted(unit.active_features)]
     declared = [f"declared-feature={feature}" for feature in sorted(unit.declared_features)]
+    mut record_identity: list[str] = []
+    if let Some(registry) = unit.registry_id:
+        record_identity.append(f"registry-id={registry}")
     return fingerprint(
         [json_text(facts)?] + flags + selected + declared + sorted(bindings) + sorted(unit.rust_crates) + sorted(
             unit.vocab_admissions,
-        ) + access_facts(unit),
+        ) + access_facts(unit) + record_identity,
     )
 
 

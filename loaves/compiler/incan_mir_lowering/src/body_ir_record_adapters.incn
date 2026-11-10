@@ -512,6 +512,7 @@ pub def authored_nominal_declaration(
         named_type_identities=authored_identity_map(declaration.named_type_identities, provenance)?,
         type_parameters=[str(parameter) for parameter in declaration.type_parameters.iter()],
         type_parameter_count=int(declaration.type_parameter_count),
+        record_package_identity=declaration.record_package_identity.clone(),
     )
     if not valid_nominal_declaration(authored.clone()):
         return Err("native nominal declaration has inconsistent parallel field or adoption facts")
@@ -519,7 +520,7 @@ pub def authored_nominal_declaration(
 
 
 pub def native_nominal_declaration(declaration: CompilerNominalDeclaration) -> Result[RustNominalDeclaration, str]:
-    """Restore all 28 nominal fields and refuse stale slots, malformed defaults or a mismatched adoption owner."""
+    """Restore all 29 nominal fields and refuse stale slots, malformed defaults or a mismatched adoption owner."""
     if not valid_nominal_declaration(declaration.clone()):
         return Err("authored nominal declaration has inconsistent parallel field or adoption facts")
     canonical = declaration.canonical.clone()
@@ -556,6 +557,7 @@ pub def native_nominal_declaration(declaration: CompilerNominalDeclaration) -> R
             named_type_identities=native_identity_map(declaration.named_type_identities)?,
             type_parameters=declaration.type_parameters,
             type_parameter_count=native_index(declaration.type_parameter_count)?,
+            record_package_identity=declaration.record_package_identity,
         ),
     )
 

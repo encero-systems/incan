@@ -8,6 +8,7 @@ impl TypeChecker {
     /// Native queries, statement-block tracking and hash-key inference each initialize their own empty state.
     pub fn new() -> Self {
         Self {
+            record_package_identity: None,
             #[cfg(test)]
             legacy_body_checking: false,
             #[cfg(test)]
@@ -194,6 +195,14 @@ impl TypeChecker {
     /// Set the defining package for declarations checked for a compiled-library artifact.
     pub fn set_current_package_identity(&mut self, package_identity: Option<String>) {
         self.symbols.set_package_identity(package_identity);
+    }
+
+    /// Install the already admitted owning package fact without changing symbol ownership or asking a registry.
+    pub fn set_record_package_identity(
+        &mut self,
+        identity: Option<incan_semantics_core::record_identity::RecordPackageIdentity>,
+    ) {
+        self.record_package_identity = identity;
     }
 
     /// Return accumulated non-fatal diagnostics (warnings/lints) from the last check.

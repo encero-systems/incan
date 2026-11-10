@@ -64,3 +64,13 @@ pub def crate_name(identity: str) -> str:
     """Derive a default Rust crate name from the last Loaf-name component, replacing hyphens with underscores."""
     parts = identity.split("/")
     return parts[len(parts) - 1].replace("-", "_")
+
+
+pub def validate_registry_identity(identity: str) -> Result[None, str]:
+    """Require the declared root-key SHA-256 spelling without contacting a registry or normalizing it."""
+    if len(identity) != 71 or not identity.startswith("sha256:"):
+        return Err("registry-id must be sha256: followed by 64 lowercase hexadecimal digits")
+    for character in identity[7:]:
+        if character not in "0123456789abcdef":
+            return Err("registry-id must be sha256: followed by 64 lowercase hexadecimal digits")
+    return Ok(None)
