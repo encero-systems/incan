@@ -573,6 +573,10 @@ pub class Writer:
 "#;
     let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
     let program = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+    let mut checker = typechecker::TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("ordinary method overloads should check: {errors:?}"))?;
     let class = program
         .declarations
         .iter()
@@ -628,7 +632,6 @@ pub class Writer:
             made_private: None,
         },
     ];
-    let checker = typechecker::TypeChecker::new();
     let api_methods = methods(
         &class.methods,
         &class.method_aliases,
@@ -653,6 +656,28 @@ pub class Writer:
             .map(|param| param.name.as_str())
             .collect::<Vec<_>>(),
         vec!["value", "_endian"]
+    );
+
+    let conflicting = r#"
+class ConflictingWriter:
+    def write(self, value: int) -> int:
+        return value
+
+    def write(self, value: int, radix: int = 10) -> int:
+        return value + radix
+"#;
+    let conflicting_tokens = lexer::lex(conflicting).map_err(|errors| format!("{errors:?}"))?;
+    let conflicting_program = parser::parse(&conflicting_tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut conflicting_checker = typechecker::TypeChecker::new();
+    let conflicts = conflicting_checker
+        .check_program(&conflicting_program)
+        .err()
+        .ok_or_else(|| "overlapping method overloads should be refused".to_string())?;
+    assert!(
+        conflicts
+            .iter()
+            .any(|error| error.message == "Type 'ConflictingWriter' declares conflicting 'write' method overloads"),
+        "expected the RFC 174 declaration conflict, got {conflicts:?}"
     );
     Ok(())
 }
