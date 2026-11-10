@@ -160,7 +160,7 @@ impl TypeChecker {
         let mut json_members = Vec::new();
         for variant in active_variants {
             for field_ty in &variant.node.fields {
-                let resolved = self.resolve_type_checked(field_ty);
+                let resolved = self.resolve_stored_type_checked(field_ty);
                 self.type_info
                     .declarations
                     .enum_payload_types

@@ -44,6 +44,31 @@ impl Builder<'_> {
         if self.checker.type_info.constructor_field_binding(span).is_some() {
             return self.model_construction(callee, arguments, span, incoming);
         }
+        if let Some(view_fields) = self.enum_view_constructor_fields(callee, span) {
+            if view_fields.iter().any(|field| *field) {
+                return self.enum_view_construction(arguments, &view_fields, span, incoming);
+            }
+            let view_fields = self.enum_argument_view_sources(arguments)?;
+            if view_fields.iter().any(|field| *field) {
+                return self.enum_view_construction(arguments, &view_fields, span, incoming);
+            }
+        }
+        if self
+            .checker
+            .type_info
+            .resolved_identity(span)
+            .is_some_and(|identity| identity.kind == incan_semantics_core::SemanticSourceTargetKind::Variant)
+            && self
+                .checker
+                .type_info
+                .expr_type(span)
+                .is_some_and(|ty| self.checker.type_holds_borrow(ty))
+        {
+            let view_fields = self.enum_argument_view_sources(arguments)?;
+            if view_fields.iter().any(|field| *field) {
+                return self.enum_view_construction(arguments, &view_fields, span, incoming);
+            }
+        }
         if !matches!(callee.node, Expr::Ident(_)) {
             return Err(Unavailable {
                 span,

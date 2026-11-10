@@ -217,6 +217,7 @@ impl TypeChecker {
         self.const_eval_state.clear();
         self.const_eval_cache.clear();
         self.type_info = TypeCheckInfo::default();
+        self.view_type_cache.get_mut().clear();
         if preserve_dependency_semantics {
             self.type_info
                 .declarations

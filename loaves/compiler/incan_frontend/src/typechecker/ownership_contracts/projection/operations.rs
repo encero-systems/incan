@@ -372,6 +372,13 @@ impl CheckedInputBody<'_> {
         if retained || list {
             return Ok(());
         }
+        if self
+            .facts
+            .resolved_identity(expression.span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+        {
+            return Ok(());
+        }
         if !self.facts.native_associated_call(expression.span) {
             self.authenticate_method_receiver(expression, receiver)?;
         }

@@ -139,16 +139,17 @@ impl TypeChecker {
             let ResolvedNamespaceMemberKind::Symbol(SymbolKind::Type(TypeInfo::Enum(enum_info))) = resolved.kind else {
                 return None;
             };
-            return Self::source_enum_variant_payload_types(&enum_info, expected_ty, variant_name);
+            return self.source_enum_variant_payload_types(&enum_info, expected_ty, variant_name);
         }
         let Some(TypeInfo::Enum(enum_info)) = self.lookup_semantic_type_info(enum_name) else {
             return None;
         };
-        Self::source_enum_variant_payload_types(enum_info, expected_ty, variant_name)
+        self.source_enum_variant_payload_types(enum_info, expected_ty, variant_name)
     }
 
     /// Select one source enum variant's payloads and substitute the matched subject's type arguments.
     fn source_enum_variant_payload_types(
+        &self,
         enum_info: &EnumInfo,
         expected_ty: &ResolvedType,
         variant_name: &str,
@@ -173,7 +174,10 @@ impl TypeChecker {
                 .map(|fields| {
                     fields
                         .iter()
-                        .map(|field| substitute_resolved_type(field, &substitutions))
+                        .map(|field| {
+                            let field = substitute_resolved_type(field, &substitutions);
+                            self.explicit_ownership_value_type(&field).unwrap_or(field)
+                        })
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default(),

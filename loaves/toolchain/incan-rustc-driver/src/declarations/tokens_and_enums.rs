@@ -272,74 +272,105 @@ pub(super) fn hashed_type(name: &str, leaves: &[&ListLeaf], span: Span) -> Box<a
 }
 
 /// Inject source-ordered unit and tuple variants as AST nodes; executable bodies still enter only through MIR.
-pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box<ast::Item> {
+/// Retained payload references receive the declaration-owned lifetime binders recorded by lowering.
+pub fn enum_declaration(
+    plan: &crate::plan::Plan,
+    value: &crate::plan::EnumDeclaration,
+    span: Span,
+) -> Result<Box<ast::Item>, crate::error::PlanError> {
     if value.carrier != Carrier::Declared || !value.library_item.is_empty() {
-        return library_alias(&value.name, value.public, span);
+        return Ok(library_alias(&value.name, value.public, span));
     }
-    let variants = value
+    let mut field_types = value
         .variants
         .iter()
-        .map(|variant| {
-            let fields = variant
-                .fields
-                .iter()
-                .map(|field| ast::FieldDef {
-                    attrs: ThinVec::new(),
-                    id: ast::DUMMY_NODE_ID,
-                    span,
-                    vis: visibility(false, span),
-                    mut_restriction: ast::MutRestriction {
-                        kind: ast::RestrictionKind::Unrestricted,
-                        span,
-                        tokens: None,
-                    },
-                    safety: ast::Safety::Default,
-                    ident: None,
-                    ty: ty(field, span),
-                    default: None,
-                    is_placeholder: false,
-                })
-                .collect();
-            ast::Variant {
+        .flat_map(|variant| variant.fields.iter().map(|field| ty(field, span)))
+        .collect::<Vec<_>>();
+    let generics = crate::signature_lifetimes::apply_model_field_lifetimes(
+        plan,
+        &mut field_types,
+        value.view_lifetime_count,
+        span,
+    )
+    .map_err(|reason| crate::error::PlanError::Invalid {
+        function: value.name.clone(),
+        reason: reason.into(),
+    })?;
+    let mut selected = field_types.into_iter();
+    let mut token_types = Vec::new();
+    let mut variants = ThinVec::new();
+    for variant in &value.variants {
+        let mut variant_token_types = Vec::new();
+        let mut fields = ThinVec::new();
+        for _ in &variant.fields {
+            let field_type = selected.next().ok_or_else(|| crate::error::PlanError::Invalid {
+                function: value.name.clone(),
+                reason: "enum lifetime field inventory is incomplete".into(),
+            })?;
+            variant_token_types.push(field_type.clone());
+            fields.push(ast::FieldDef {
                 attrs: ThinVec::new(),
                 id: ast::DUMMY_NODE_ID,
                 span,
                 vis: visibility(false, span),
-                ident: ident(&variant.name, span),
-                data: if variant.fields.is_empty() {
-                    ast::VariantData::Unit(ast::DUMMY_NODE_ID)
-                } else {
-                    ast::VariantData::Tuple(fields, ast::DUMMY_NODE_ID)
+                mut_restriction: ast::MutRestriction {
+                    kind: ast::RestrictionKind::Unrestricted,
+                    span,
+                    tokens: None,
                 },
-                disr_expr: None,
+                safety: ast::Safety::Default,
+                ident: None,
+                ty: field_type,
+                default: None,
                 is_placeholder: false,
-            }
-        })
-        .collect();
+            });
+        }
+        token_types.push(variant_token_types);
+        variants.push(ast::Variant {
+            attrs: ThinVec::new(),
+            id: ast::DUMMY_NODE_ID,
+            span,
+            vis: visibility(false, span),
+            ident: ident(&variant.name, span),
+            data: if fields.is_empty() {
+                ast::VariantData::Unit(ast::DUMMY_NODE_ID)
+            } else {
+                ast::VariantData::Tuple(fields, ast::DUMMY_NODE_ID)
+            },
+            disr_expr: None,
+            is_placeholder: false,
+        });
+    }
+    if selected.next().is_some() {
+        return Err(crate::error::PlanError::Invalid {
+            function: value.name.clone(),
+            reason: "enum lifetime field inventory has trailing entries".into(),
+        });
+    }
     let mut declaration = item(
-        ast::ItemKind::Enum(
-            ident(&value.name, span),
-            ast::Generics::default(),
-            ast::EnumDef { variants },
-        ),
+        ast::ItemKind::Enum(ident(&value.name, span), generics, ast::EnumDef { variants }),
         span,
     );
     declaration.vis = visibility(value.public, span);
-    declaration.tokens = Some(enum_tokens(value, span));
-    declaration
+    declaration.tokens = Some(enum_tokens(value, &token_types, span));
+    Ok(declaration)
 }
 
 /// Preserve enum tokens for derives from the exact planned layout without parsing generated Rust source.
-pub(super) fn enum_tokens(value: &crate::plan::EnumDeclaration, span: Span) -> ast::tokenstream::LazyAttrTokenStream {
+pub(super) fn enum_tokens(
+    value: &crate::plan::EnumDeclaration,
+    field_types: &[Vec<Box<ast::Ty>>],
+    span: Span,
+) -> ast::tokenstream::LazyAttrTokenStream {
     use ast::token::{Delimiter, Token, TokenKind};
     use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing};
     let mut variants = Vec::new();
-    for variant in &value.variants {
+    for (variant, field_types) in value.variants.iter().zip(field_types) {
         variants.push(name_token(&variant.name, span));
-        if !variant.fields.is_empty() {
+        if !field_types.is_empty() {
             let mut fields = Vec::new();
-            for field in &variant.fields {
-                fields.extend(type_tokens(&ty(field, span)));
+            for field in field_types {
+                fields.extend(type_tokens(field));
                 fields.push(AttrTokenTree::Token(Token::new(TokenKind::Comma, span), Spacing::Alone));
             }
             variants.push(AttrTokenTree::Delimited(

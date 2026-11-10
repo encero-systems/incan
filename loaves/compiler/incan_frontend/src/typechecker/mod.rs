@@ -775,6 +775,11 @@ pub struct TypeChecker {
     pub const_eval_cache: HashMap<String, const_eval::ConstEvalResult>,
     /// Reusable typechecker output for downstream stages.
     pub type_info: TypeCheckInfo,
+    /// Concrete source types already classified by the current program's complete nominal storage graph.
+    ///
+    /// The graph is immutable after declaration collection. Caching its transitive view-type result prevents every
+    /// callable, field and constructor from recursively rescanning the same cyclic declaration closure.
+    view_type_cache: RefCell<HashMap<(ResolvedType, bool), bool>>,
     /// Current source-order boundary for borrowed declaration/environment readers.
     visibility_point: VisibilityPoint,
     /// Public exports for imported dependency modules, keyed by module name.

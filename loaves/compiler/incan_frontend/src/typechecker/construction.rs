@@ -111,6 +111,7 @@ impl TypeChecker {
             const_eval_state: HashMap::new(),
             const_eval_cache: HashMap::new(),
             type_info: TypeCheckInfo::default(),
+            view_type_cache: RefCell::new(HashMap::new()),
             visibility_point: VisibilityPoint::default(),
             dependency_exports: HashMap::new(),
             selected_dependency_interfaces: Vec::new(),
