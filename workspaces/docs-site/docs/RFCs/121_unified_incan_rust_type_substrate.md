@@ -11,6 +11,7 @@
     - RFC 030 (`std.collections`)
     - RFC 041 (first-class Rust interop authoring)
     - RFC 043 (Rust trait implementation from Incan)
+    - RFC 054 (explicit call-site generics)
     - RFC 091 (integer storage carriers)
     - RFC 097 (Rust-hosted Incan caller)
     - RFC 120 (canonical source symbol identity)
@@ -156,6 +157,8 @@ shop.readings.Reading.note is Option<String>
 
 4. Every other standard-library type, including `FrozenStr`, `FrozenBytes`, `FrozenList[T]`, `FrozenDict[K, V]`, and `FrozenSet[T]`, must have exactly one Rust definition, owned by the standard-library Loaf that declares it and identified by its RFC 120 canonical identity. Consumers must reference that definition and must not regenerate it. Two libraries using the same standard-library type must produce mutually compatible Rust values.
 
+    A frozen value must be immutable, must copy in constant time without copying its contents, and must compare and hash by its contents. Its storage must be static for a constant and shared for a value produced while the program runs, such as one a decoder reconstructs or reflection returns. Shared storage must be safe to share between tasks and must be released when the last copy goes, so producing a frozen value at run time never leaks it.
+
 5. A user-declared `model` or `class` must compile to a Rust struct, an `enum` to a Rust enum, and a `newtype` to a Rust struct holding its underlying type. Incan's validation and derives (RFC 024) must attach to that same type, with no shadow representation.
 
 6. An anonymous union (RFC 029) must compile to one Rust enum per distinct set of member types, shared by every use of that set. `T | None` must be `Option<T>`.
@@ -178,6 +181,39 @@ shop.readings.Reading.note is Option<String>
 
 15. `incan inspect types` must report, for a given type, its identity, its Rust representation, and any exception that applies to it. It must also list every named exception.
 
+### Calls into Rust
+
+A call from Incan into an imported Rust item follows that item's inspected or shipped signature. These rules hold for free functions, methods, associated functions and constructors:
+
+```incan
+from rust::demo import create_widget, Config, Error, Stream
+
+widget = create_widget(name="primary", enabled=true)    # keywords bind by Rust parameter name
+config = Config(port=8080)                               # other fields from Config's Default
+stream = Stream.open[f32](config)?                       # explicit type arguments, checked by count
+
+def on_error(error: Error) -> None:
+    println(error.to_string())
+
+stream.on_error(on_error)                                # an Incan function where Rust takes a callable
+```
+
+16. Positional arguments must bind in the Rust parameter order. A keyword argument must bind to the Rust parameter of that name when the signature names it, and the call must lower to Rust's positional order. A keyword the signature does not name must be refused; it must not be mapped to a position by guessing.
+
+17. A Rust struct with named fields may be constructed with keyword fields. A field may be omitted only when the type implements `Default`; each omitted field then takes that `Default` value. Without `Default`, every field is required.
+
+18. Explicit type arguments must match the number of type parameters the Rust item declares, including the type parameters of the type a type-only generic item belongs to. A mismatch must be refused when checking, not when Rust compiles. A type argument may be inferred from an annotated result, also through `Result.unwrap()`. A literal passed to a parameter bounded by `Into[T]` must stay inferable rather than becoming an ambiguous conversion.
+
+19. Ownership must follow the signature, under RFC 164: an owned parameter takes the value and may bind it mutably, a shared borrow passes `Borrowed[T]`, and an exclusive borrow requires a `mut` binding and passes `BorrowedMut[T]`. A trait-object parameter takes a borrowed value whose type implements the trait. A receiver that is a guard dereferencing to its target must not be confused with an owned receiver. No name, configuration key or manifest section may decide ownership instead of the signature.
+
+20. An Incan function or closure must be accepted where Rust expects a callable, through a callable bound or a Rust callable type alias, when its parameters and result match the bound under RFC 128. A callable bound whose parameters borrow a slice takes an Incan callable whose parameters borrow a list. A callable that does not match, such as one that takes by value what Rust lends, must be refused when checking.
+
+21. Arguments and results adapt only as rule 9 allows: a `list[T]` reaches a borrowed slice parameter without a copy, a `str` reaches a borrowed string parameter, and a Rust `String` result is an Incan `str`. A Rust `Result<T, E>` is `Result[T, E]`, and `usize` and `isize` are themselves, as rule 2 requires. A Rust function whose result type is the diverging `!` returns a value that fits any expected type, because the call does not return.
+
+22. A Rust name that is an Incan keyword must remain reachable: an item through `as` in its import, and a field through its keyword spelling in field access and keyword arguments.
+
+23. When the signature cannot decide one of these rules, for example because it names no parameters, the call must be refused with a diagnostic that names the Rust item and the missing fact. The compiler must not fall back to a guess, a copy or a conversion.
+
 ## Design details
 
 ### Integers and carriers
@@ -190,7 +226,9 @@ RFC 041 already lowers `Dict[K, V]` to `HashMap<K, V>`, and that fixes its requi
 
 ### Frozen types
 
-`FrozenStr`, `FrozenBytes`, `FrozenList[T]`, `FrozenDict[K, V]`, and `FrozenSet[T]` are standard-library types over baked, read-only data, so rule 4 covers them. They are not `Vec` or `HashMap` with immutability added. RFC 041's table lists those Rust types for them, and this RFC treats that as what rule 9 keeps: the adaptation a Rust API can ask for.
+`FrozenStr`, `FrozenBytes`, `FrozenList[T]`, `FrozenDict[K, V]`, and `FrozenSet[T]` are standard-library types over read-only data, so rule 4 covers them. They are not `Vec` or `HashMap` with immutability added.
+
+Their data is either baked into the program or produced while it runs. A constant's frozen value points at static data and costs nothing to keep. A frozen value that a decoder reconstructs (RFC 173), that reflection returns, or that a written `__shape__` composes, points at shared, reference-counted storage instead. Either way, copying the value copies a handle and never the contents, which is how a newtype over `FrozenStr` or `FrozenBytes` stays copyable: an assignment or an argument copies the handle, and the original stays usable. Equality and hashing look at the contents, so a constant and a decoded value with the same contents are equal and hash the same. Leaking a value to give it static storage would cost memory for every decoded record, which is why shared storage exists. RFC 041's table lists those Rust types for them, and this RFC treats that as what rule 9 keeps: the adaptation a Rust API can ask for.
 
 ### Traits and the exception list
 
@@ -236,3 +274,5 @@ RFC 097 describes the caller boundary in terms of this RFC, and its type table l
 - **`int` is a default carrier, not a fixed type.** Nothing an author can declare under RFC 009 or RFC 091 is lost.
 - **RFC 041's table is the base for built-ins, and its adaptations stay.** Frozen types are the correction: they are standard-library types, with `Vec`, `HashMap` and `HashSet` remaining as adaptations.
 - **Representation is readable through reflection,** and each field names its parent by identity.
+- **Frozen values are static or shared.** A constant keeps its free static backing, and a frozen value produced at run time shares reference-counted storage, so decoding and composing frozen values neither copies contents on every pass nor leaks a value per record. Copying the contents on each copy, or giving reconstructed fields mutable collections instead, would each break what a frozen type promises.
+- **A call into Rust follows the inspected signature.** Keyword binding, `Default` fields, type-argument counts, ownership and callable bounds all come from the Rust item, so a call means what the Rust item declares, and a fact the signature lacks is refused rather than guessed.
