@@ -189,7 +189,7 @@ impl TypeChecker {
     /// These caches are used only by the consumer-side typechecker when imported signatures mention provider types
     /// that the consumer did not explicitly import by name (for example `Session.read_csv(...) -> LazyFrame[T]`).
     /// They do not change source-visible name resolution.
-    pub(in crate::typechecker::collect) fn cache_transitive_pub_export_semantics(
+    pub(in crate::typechecker) fn cache_transitive_pub_export_semantics(
         &mut self,
         library: &str,
         manifest: &LibraryManifest,

@@ -468,32 +468,36 @@ impl TypeChecker {
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
         self.record_nominal_declaring_modules(program, dependencies);
-        self.predeclare_dependency_interfaces(dependencies, true);
-        drop(prepare);
-        // First: import all dependencies
-        {
-            let _trace = tracing::trace_span!(
-                target: "incan::invocation",
-                "incan_frontend::import_dependency_interfaces",
-                dependencies = dependencies.len(),
-                public_only = true,
-            )
-            .entered();
-            for (name, dep_ast) in dependencies {
-                self.import_module(dep_ast, name);
+        if let Some(interfaces) = self.take_exact_dependency_interfaces(dependencies) {
+            self.install_dependency_interfaces_directly(&interfaces);
+            drop(prepare);
+        } else {
+            self.predeclare_dependency_interfaces(dependencies, true);
+            drop(prepare);
+            // First: import all dependencies
+            {
+                let _trace = tracing::trace_span!(
+                    target: "incan::invocation",
+                    "incan_frontend::import_dependency_interfaces",
+                    dependencies = dependencies.len(),
+                    public_only = true,
+                )
+                .entered();
+                for (name, dep_ast) in dependencies {
+                    self.import_module(dep_ast, name);
+                }
+            }
+            {
+                let _trace = tracing::trace_span!(
+                    target: "incan::invocation",
+                    "incan_frontend::refresh_dependency_interfaces",
+                    dependencies = dependencies.len(),
+                    public_only = true,
+                )
+                .entered();
+                self.refresh_dependency_member_symbols(dependencies, true);
             }
         }
-        {
-            let _trace = tracing::trace_span!(
-                target: "incan::invocation",
-                "incan_frontend::refresh_dependency_interfaces",
-                dependencies = dependencies.len(),
-                public_only = true,
-            )
-            .entered();
-            self.refresh_dependency_member_symbols(dependencies, true);
-        }
-        self.activate_selected_dependency_interfaces();
 
         // Then check the main program
         let _trace = tracing::trace_span!(
@@ -572,31 +576,35 @@ impl TypeChecker {
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
         self.record_nominal_declaring_modules(program, dependencies);
-        self.predeclare_dependency_interfaces(dependencies, false);
-        drop(prepare);
-        {
-            let _trace = tracing::trace_span!(
-                target: "incan::invocation",
-                "incan_frontend::import_dependency_interfaces",
-                dependencies = dependencies.len(),
-                public_only = false,
-            )
-            .entered();
-            for (name, dep_ast) in dependencies {
-                self.import_module_all(dep_ast, name);
+        if let Some(interfaces) = self.take_exact_dependency_interfaces(dependencies) {
+            self.install_dependency_interfaces_directly(&interfaces);
+            drop(prepare);
+        } else {
+            self.predeclare_dependency_interfaces(dependencies, false);
+            drop(prepare);
+            {
+                let _trace = tracing::trace_span!(
+                    target: "incan::invocation",
+                    "incan_frontend::import_dependency_interfaces",
+                    dependencies = dependencies.len(),
+                    public_only = false,
+                )
+                .entered();
+                for (name, dep_ast) in dependencies {
+                    self.import_module_all(dep_ast, name);
+                }
+            }
+            {
+                let _trace = tracing::trace_span!(
+                    target: "incan::invocation",
+                    "incan_frontend::refresh_dependency_interfaces",
+                    dependencies = dependencies.len(),
+                    public_only = false,
+                )
+                .entered();
+                self.refresh_dependency_member_symbols(dependencies, false);
             }
         }
-        {
-            let _trace = tracing::trace_span!(
-                target: "incan::invocation",
-                "incan_frontend::refresh_dependency_interfaces",
-                dependencies = dependencies.len(),
-                public_only = false,
-            )
-            .entered();
-            self.refresh_dependency_member_symbols(dependencies, false);
-        }
-        self.activate_selected_dependency_interfaces();
         let _trace = tracing::trace_span!(
             target: "incan::invocation",
             "incan_frontend::check_program",
