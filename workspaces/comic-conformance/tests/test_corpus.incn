@@ -62,7 +62,7 @@ def test_verified_text_is_retained_after_the_source_changes() -> Result[None, st
     """Dispatch uses verified text snapshots even if a source file changes after loading."""
     directory = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = directory.path()
-    data = "{\"operation\":\"text_parse\",\"cases\":[{\"id\":\"snapshot\"}]}"
+    data = "{\"operation\":\"text_read\",\"cases\":[{\"id\":\"snapshot\"}]}"
     root.joinpath("cases.json").write_text(data, "utf-8", "strict", None).map_err((error) => error.message())?
     digest = hexlify(sha256.digest(encode_utf8(data)))
     text_path = root.joinpath("input.comic")
@@ -72,7 +72,7 @@ def test_verified_text_is_retained_after_the_source_changes() -> Result[None, st
         [
             "{\"schema\":\"comic.foundation-corpus/1\",",
             "\"files\":[{\"path\":\"cases.json\",",
-            "\"operation\":\"text_parse\",",
+            "\"operation\":\"text_read\",",
             "\"cases\":1,",
             "\"sha256\":\"",
             digest,

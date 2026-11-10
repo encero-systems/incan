@@ -5,7 +5,7 @@ from rust::std::process import exit
 from std.fs import Path
 from std.json import JsonValue
 from corpus import load
-from case_data import field, text, hex_bytes
+from case_data import CaseOperation, CaseStatus, ExpectedStatus, expected_status, field, text, hex_bytes
 from row_reader_cases import check_reader
 
 
@@ -18,7 +18,7 @@ def run(manifest: str) -> Result[i32, str]:
     mut roundtrips = 0
     mut results: list[JsonValue] = []
     for item in corpus.cases:
-        if item.operation != "binary_decode" or not item.id.startswith("bytes-"):
+        if item.operation != CaseOperation.BinaryDecode or not item.id.startswith("bytes-"):
             continue
         mut result: dict[str, JsonValue] = {}
         result["id"] = JsonValue.string(item.id)
@@ -26,20 +26,20 @@ def run(manifest: str) -> Result[i32, str]:
         match checked:
             Ok(true) =>
                 passed += 1
-                result["status"] = JsonValue.string("passed")
+                result["status"] = JsonValue.string(CaseStatus.Passed.value())
                 if item.document.get("transform").is_some():
                     executions += len(hex_bytes(text(item.document, "input_hex")?)?)
                 else:
                     executions += 1
-                if text(field(item.document, "expected")?, "status")? == "accepted":
+                if expected_status(field(item.document, "expected")?)? == ExpectedStatus.Accepted:
                     roundtrips += 1
             Ok(false) =>
                 failed += 1
-                result["status"] = JsonValue.string("failed")
+                result["status"] = JsonValue.string(CaseStatus.Failed.value())
                 result["detail"] = JsonValue.string("computed result differs")
             Err(error) =>
                 failed += 1
-                result["status"] = JsonValue.string("failed")
+                result["status"] = JsonValue.string(CaseStatus.Failed.value())
                 result["detail"] = JsonValue.string(error)
         results.append(JsonValue.object(result))
     document = JsonValue.object(
