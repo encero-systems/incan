@@ -100,29 +100,51 @@ pub def decimal_cell(precision: int, scale: int, value: Value, mut budget: Budge
     return encode_native_signed(decimal_coefficient(precision, scale, value, budget)?, budget)
 
 
+pub def decimal_native_cell(
+    precision: int,
+    scale: int,
+    coefficient: i128,
+    original_scale: int,
+    mut budget: Budget,
+) -> Result[bytes, CrumbError]:
+    """Encode a typed decimal directly, without constructing a schema-less Value node."""
+    return encode_native_signed(decimal_native_coefficient(precision, scale, coefficient, original_scale, budget)?, budget)
+
+
 pub def decimal_coefficient(precision: int, scale: int, value: Value, mut budget: Budget) -> Result[i128, CrumbError]:
     """Return the exact coefficient at the declared scale after native precision admission."""
-    if precision <= 0 or precision > 38 or scale < 0 or scale > precision:
-        return Err(CrumbError.invalid_input("decimal cell bounds"))
     match value:
         Value.Decimal(coefficient, original_scale) =>
-            normalized = normalize_decimal(coefficient, original_scale)?
-            if normalized.coefficient == 0i128:
-                return Ok(0i128)
-            digits = decimal_digits(normalized.coefficient)
-            if digits > precision:
-                return Err(CrumbError.invalid_input("decimal cell precision"))
-            minimum_scale = scale - (precision - digits)
-            if normalized.scale < minimum_scale or normalized.scale > scale:
-                return Err(CrumbError.invalid_input("decimal cell exact scale"))
-            extra = scale - normalized.scale
-            budget.charge_elements(extra)?
-            mut scaled = normalized.coefficient
-            for _ in range(extra):
-                # The precision and minimum-scale checks above bound the result below 10**38.
-                scaled *= 10i128
-            return Ok(scaled)
+            return decimal_native_coefficient(precision, scale, coefficient, original_scale, budget)
         _ => return Err(CrumbError.invalid_input("decimal value type"))
+
+
+def decimal_native_coefficient(
+    precision: int,
+    scale: int,
+    coefficient: i128,
+    original_scale: int,
+    mut budget: Budget,
+) -> Result[i128, CrumbError]:
+    """Rescale one native coefficient exactly under the declared decimal bounds."""
+    if precision <= 0 or precision > 38 or scale < 0 or scale > precision:
+        return Err(CrumbError.invalid_input("decimal cell bounds"))
+    normalized = normalize_decimal(coefficient, original_scale)?
+    if normalized.coefficient == 0i128:
+        return Ok(0i128)
+    digits = decimal_digits(normalized.coefficient)
+    if digits > precision:
+        return Err(CrumbError.invalid_input("decimal cell precision"))
+    minimum_scale = scale - (precision - digits)
+    if normalized.scale < minimum_scale or normalized.scale > scale:
+        return Err(CrumbError.invalid_input("decimal cell exact scale"))
+    extra = scale - normalized.scale
+    budget.charge_elements(extra)?
+    mut scaled = normalized.coefficient
+    for _ in range(extra):
+        # The precision and minimum-scale checks above bound the result below 10**38.
+        scaled *= 10i128
+    return Ok(scaled)
 
 
 def decimal_digits(coefficient: i128) -> int:
