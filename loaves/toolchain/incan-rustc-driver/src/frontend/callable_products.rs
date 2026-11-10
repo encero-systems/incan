@@ -10,7 +10,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use incan_driver::session::CompilationSession;
-use incan_driver::unit::{UnitDescription, UnitKind};
+use incan_driver::unit::UnitDescription;
 use incan_frontend::declaration_interface::{CallableBodyInputs, CallableBodyProducts};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::TypeChecker;
@@ -102,12 +102,12 @@ impl CallableProducts {
     }
 }
 
-/// Use only Oven's explicit item directory and well-formed context digest. The source-independent context excludes
-/// authored bytes but retains the exact compiler, interfaces, ABI and features. Current module inventory and exact
-/// declaration source/provenance are independently checked by the frontend before any body can skip work.
+/// Use only Oven's explicit item directory and well-formed context digest. Library, program and test units share the
+/// same source-independent semantic key; current module inventory and exact declaration source/provenance are still
+/// independently checked by the frontend before any body can skip work.
 fn product_directory(unit: &UnitDescription) -> Option<PathBuf> {
     let context = unit.checked_context.as_deref()?;
-    if unit.kind != UnitKind::Library || context.len() != 64 || !context.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if context.len() != 64 || !context.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }
     unit.checked_products.clone()
