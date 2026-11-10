@@ -10374,6 +10374,7 @@ metadata_key = IDENT (&quot;.&quot; IDENT)* ;
 <li><code>retire_in</code> must not change behavior. Once the package's version reaches it, a lint must suggest removing the lifecycle facts and must keep the earlier name, because RFC 165 derives the field's identity from it.</li>
 <li>Checked metadata must preserve every rename fact, so that API diffs, generated documentation, RFC 106's graph and RFC 165's stored records can use them. RFC 173 exposes the same checked field, variant and declaration rename facts through its public shape carriers; codecs must not inspect compiler-private records to obtain them.</li>
 <li>A rename must not change a wire name or make a decoder accept the old one. Wire names follow <code>alias</code> and <code>as</code>.</li>
+<li>A positional enum payload (RFC 137) carries no metadata, so it has no rename: its name is its position, as RFC 173 states. A payload converted from positional to named keeps its identity by giving its position as its earlier name, as in <code>Finished(path [renamed_from="0"]: str, size [renamed_from="1"]: int)</code>.</li>
 </ul>
 <h3 id="safe-metadata-values">Safe metadata values<a class="headerlink" href="#safe-metadata-values" title="Permanent link">&para;</a></h3>
 <p>Metadata values must be safe metadata values. A safe metadata value must be representable without executing user code. This RFC requires support for:</p>

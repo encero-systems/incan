@@ -9726,7 +9726,9 @@
 <li>RFC 068 (protocol hooks for core language syntax; <code>__call__</code> and the fixed-arity callable traits)</li>
 <li>RFC 082 (checked API documentation; docstring parsing)</li>
 <li>RFC 115 (fallible iteration and combinators; stored generic callbacks)</li>
+<li>RFC 120 (canonical source symbol identity; the member namespace)</li>
 <li>RFC 141 (type matching; <code>std.reflection</code> <code>TypeInfo</code> and <code>ParameterListInfo</code>)</li>
+<li>RFC 176 (visibility)</li>
 <li>
 <h1 id="1790-a-mut-parameter-marker-in-function-types">1790 (a <code>mut</code> parameter marker in function types)<a class="headerlink" href="#1790-a-mut-parameter-marker-in-function-types" title="Permanent link">&para;</a></h1>
 </li>
@@ -9971,8 +9973,7 @@
     <span class="n">check</span><span class="p">:</span> <span class="nc">Check</span>
 
     <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="k">mut</span> <span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-        <span class="k">mut</span> <span class="n">check</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">check</span>
-        <span class="k">if</span> <span class="n">check</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
             <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: ok&quot;</span>
         <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: rejected&quot;</span>
 
@@ -10056,6 +10057,13 @@
 <h3 id="calling-a-bounded-value">Calling a bounded value<a class="headerlink" href="#calling-a-bounded-value" title="Permanent link">&para;</a></h3>
 <p>A value whose type is a <code>Callable</code>-bounded type parameter must be callable with call syntax. Argument binding and result typing must use the shared signature rules. Every call allowed by the required signature must be accepted by the supplied callable: keyword names and kinds must be compatible, promised optional parameters must be omittable, and an implementation must not introduce additional required arguments. A callable may provide additional defaults or accept more calls without requiring callers to use them. The same compatibility relation must apply to the checked signature model and <code>Callable</code> arguments; the wrapper does not introduce another argument-binding system.</p>
 <p>Receiver access and invocation multiplicity must also be checked. <code>mut</code> is required to invoke a mutating receiver. A read-only generic parameter must have a proven read-only call capability; a signature-only bound must not be treated as such proof. If a consuming callable is supplied, ownership analysis must prove each invocation legal; repeated invocation cannot be assumed merely from the parameter and result types. These requirements must survive generic forwarding and library metadata. A function body requiring repeatable or read-only invocation must have that requirement checked against supplied callables before lowering, including across package boundaries.</p>
+<h3 id="calling-a-callable-member">Calling a callable member<a class="headerlink" href="#calling-a-callable-member" title="Permanent link">&para;</a></h3>
+<p><code>obj.name(args)</code>, where <code>name</code> is a field or computed property whose type is callable, reads the member and calls it, exactly as <code>(obj.name)(args)</code> does.</p>
+<ul>
+<li>RFC 120 checks every spelling once on each member surface, so a type cannot declare a field, a computed property and an instance method with one name. This call therefore never competes with a method call, and a declaration that gives a field and a method one name is refused.</li>
+<li>The member must be visible where the call is written (RFC 176), and the call needs the access its callable requires: a callable that changes its own state needs a mutable receiver, such as <code>mut self</code> or a <code>mut</code> binding.</li>
+<li>Calling a member that is not callable is refused, as calling any other non-callable value is.</li>
+</ul>
 <h3 id="adoption">Adoption<a class="headerlink" href="#adoption" title="Permanent link">&para;</a></h3>
 <ul>
 <li>A declaration that adopts <code>Callable[G]</code> must define <code>__call__</code> with a signature compatible with <code>G</code> under the shared signature rules. It must accept every call promised by <code>G</code>; additional optional parameters are permitted. A missing <code>__call__</code> or an incompatible parameter contract, mutation marker, or return type must be refused at the declaration, and the diagnostic must show the required signature. A different parameter count alone is not a mismatch.</li>
@@ -10143,6 +10151,8 @@
 <li><strong>A return type on the marker, <code>Fn[int] -&gt; str</code>.</strong> New syntax for one construct, and it makes the Rust interop vocabulary the way to write an ordinary Incan bound. The markers stay shorthand for functions and methods.</li>
 <li><strong>A hidden return-type parameter on nominal owners.</strong> It would let <code>model Holder[F with Fn[int]]</code> compile by adding a parameter the author never wrote, which changes the type's arity everywhere it is named.</li>
 <li><strong>Keep the fixed-arity traits for the standard library and add <code>Callable</code> beside them.</strong> Two spellings for one capability, and the fixed-arity ones would still carry the limit.</li>
+<li><strong>Method first, then a callable field of the same name.</strong> RFC 120 already refuses a field and a method with one name, so a precedence rule would only decide programs that are refused. Allowing them would also let a later method silently take over calls that ran the field.</li>
+<li><strong>Only <code>(obj.name)(args)</code> calls a callable field.</strong> <code>obj.name(args)</code> would then be an error on a member whose meaning is unambiguous, which pushes authors to copy the field into a local before every call.</li>
 </ul>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>

@@ -10368,6 +10368,10 @@
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>Add Python-style rest parameters and unpacking to Incan as one static, type-directed binding model: functions may capture extra positional and keyword arguments with <code>*args</code> and <code>**kwargs</code>, calls may unpack positional and keyword values with <code>f(*xs)</code> and <code>f(**kw)</code>, and collection literals may spread existing lists and dictionaries with <code>[*xs]</code> and <code>{**kw}</code> while lowering to explicit typed containers rather than runtime reflection.</p>
+<div class="admonition note">
+<p class="admonition-title">Follow-on clarification in RFC 174</p>
+<p><a href="../../../174_overloaded_functions_and_methods/#variadic-capture-and-fixed-parameters">RFC 174: Overloaded functions and methods</a> proposes keeping <code>*name: T</code> while collecting the arguments as a homogeneous tuple, and specifies how fixed and variadic overloads coexist. This implemented RFC retains its original list-based capture contract below; the proposed tuple capture is not recorded here as shipped behavior.</p>
+</div>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>*name: T</code> captures extra positional arguments and binds <code>name</code> as a <code>List[T]</code></li>

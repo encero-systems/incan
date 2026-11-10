@@ -9906,6 +9906,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#types-that-hold-borrows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Types that hold borrows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#public-contracts-and-diagnostics" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10334,11 +10345,32 @@
 <p>An owned handle may retain shared immutable storage through a checked resource contract. Ownership of that handle must preserve its release obligations and all other retained dependencies. It must not imply that a database lease has been acquired unless the library operation actually acquires or transfers one.</p>
 <p>A borrowed projection must not outlive its buffers, guards, mappings or required lease. A movable or independently retained projection must explicitly own whatever keeps it valid. Storage compaction, buffer refill, owner replacement and release must respect those dependencies. This RFC supplies the language-level proof; the owning library supplies runtime retention and concurrency guarantees.</p>
 <p>No default reference-counting strategy, pinning mechanism or universal lease type is introduced. Stable-address and self-referential cases must be expressed through supported ownership contracts or diagnosed; the compiler must not assume that moving an owner preserves borrowed addresses.</p>
+<h3 id="types-that-hold-borrows">Types that hold borrows<a class="headerlink" href="#types-that-hold-borrows" title="Permanent link">&para;</a></h3>
+<p>A <code>class</code>, <code>model</code>, <code>enum</code> or newtype may declare a field or payload whose type holds a borrow: <code>Borrowed[T]</code>, <code>BorrowedMut[T]</code>, <code>Reference[T]</code>, or a type that itself holds one. Such a type is a view type. Each of its values carries one source dependency, as a returned reference does:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">GraphReader</span><span class="p">:</span>
+    <span class="n">graph</span><span class="p">:</span> <span class="nc">Borrowed</span><span class="p">[</span><span class="nc">Graph</span><span class="p">]</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">from_graph</span><span class="p">(</span><span class="n">graph</span><span class="p">:</span> <span class="nc">Borrowed</span><span class="p">[</span><span class="nc">Graph</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">GraphReader</span> <span class="kn">from</span><span class="w"> </span><span class="nn">graph</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nc">GraphReader</span><span class="p">(</span><span class="n">graph</span><span class="o">=</span><span class="n">graph</span><span class="p">)</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Graph</span><span class="p">:</span>
+    <span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">read_view</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">GraphReader</span> <span class="kn">from</span><span class="w"> </span><span class="nn">self</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nc">GraphReader</span><span class="o">.</span><span class="n">from_graph</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+</code></pre></div>
+<p><code>GraphReader.from_graph</code> initializes its own private field under RFC 176. Both producing methods retain the same source dependency; passing through the factory does not detach the reader from the graph.</p>
+<ul>
+<li>Every borrow a value holds must come from one source, and the call that produces the value names it with its <code>from</code> clause. A value built from borrows of two independent sources is refused, and the diagnostic names both, because that would need a lifetime per field.</li>
+<li>The value cannot outlive its source, and it prevents conflicting access to the source until its last dependent use. Storing it in a field, a container, a result or a closure keeps the dependency, so a type with a field of a view type is itself a view type.</li>
+<li>A view type has no automatic <code>Walk</code> or <code>Reconstruct</code> (RFC 173), because a stored value cannot carry a borrow.</li>
+<li>Published signatures that produce or accept a view type carry its source dependency.</li>
+<li>Crossing <code>await</code>, <code>yield</code> or a task boundary follows the same rules as any other borrow.</li>
+</ul>
 <h3 id="public-contracts-and-diagnostics">Public contracts and diagnostics<a class="headerlink" href="#public-contracts-and-diagnostics" title="Permanent link">&para;</a></h3>
 <p>Callable types and published metadata must preserve explicit modes and result dependencies. Implementations, overrides and adapters must satisfy the declared contract; they must not silently replace a shared parameter with a consuming one or erase a result dependency. Callable contracts must retain the source relation by parameter identity or position under renaming, rather than the provider's local spelling. Ordinary callable inference may preserve a relation without rewriting it as a user annotation. An explicitly written callable annotation must not erase a dependency: if its source syntax cannot express the required relation, the checker must diagnose the mismatch and identify the missing source relationship. Overrides and adapters may not require stronger input access or return broader borrowing dependencies than the declared contract permits. This RFC does not introduce new higher-ranked callable syntax.</p>
 <p>Diagnostics must identify the requested mode, source place, conflicting action and dependent use or escape. Tooling should distinguish inferred and explicit contracts. An author must be able to inspect whether a result borrows, owns materialized data or owns a handle retaining shared storage. A value's name or a presumed method convention must not supply that evidence.</p>
 <h3 id="acceptance-scenarios">Acceptance scenarios<a class="headerlink" href="#acceptance-scenarios" title="Permanent link">&para;</a></h3>
-<p>Adoption must demonstrate accepted and refused programs for shared field returns, exclusive write-through, explicit transfer, valid reborrowing, owner replacement, ambiguous result sources and returned aggregates retaining borrows. Library-boundary checks must work without reading provider bodies. Acceptance must also cover fluent chains, nested field-source substitution, disjoint sibling edits, rejected overlapping edits and owner replacement, retained <code>mut</code> references, success/error branch sensitivity, partial mutation on failure and recovery through the original owner. Storage-shaped and graph-shaped fixtures must demonstrate borrowed versus retained readers, invalid cursor escape, buffer reuse conflicts and valid retained batches without requiring the complete libraries to ship. Native interop must preserve the same source contracts in both calling directions. Source diagnostics and actual execution must agree; successful type checking alone is insufficient.</p>
+<p>Adoption must demonstrate accepted and refused programs for shared field returns, exclusive write-through, explicit transfer, valid reborrowing, owner replacement, ambiguous result sources, returned aggregates retaining borrows, and view types: one built from a single source, one outliving its source, and one built from two independent sources. Library-boundary checks must work without reading provider bodies. Acceptance must also cover fluent chains, nested field-source substitution, disjoint sibling edits, rejected overlapping edits and owner replacement, retained <code>mut</code> references, success/error branch sensitivity, partial mutation on failure and recovery through the original owner. Storage-shaped and graph-shaped fixtures must demonstrate borrowed versus retained readers, invalid cursor escape, buffer reuse conflicts and valid retained batches without requiring the complete libraries to ship. Native interop must preserve the same source contracts in both calling directions. Source diagnostics and actual execution must agree; successful type checking alone is insufficient.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="relationship-to-existing-borrowing-rfcs">Relationship to existing borrowing RFCs<a class="headerlink" href="#relationship-to-existing-borrowing-rfcs" title="Permanent link">&para;</a></h3>
 <p>RFC 129 remains the authority for ordinary inferred bindings and its <code>mut</code> contract. This RFC defines an optional explicit boundary and names where it extends the ordinary annotation rule. It does not reopen write-through assignment or permit hidden clone repair. RFC 005 and RFC 023 remain historical records of earlier interop and inference contracts; this proposal supplies an explicit surface without requiring those annotations in ordinary code.</p>
@@ -10383,7 +10415,7 @@
 <li><strong>Failure is not rollback.</strong> <code>Err</code> and <code>?</code> preserve already-performed changes. Errors that retain no borrow permit recovery through the original owner after temporary access ends; explicitly borrowed error payloads retain their dependencies. Atomicity belongs to the operation's documented implementation.</li>
 <li><strong>Last dependent use governs exclusivity.</strong> Analysis accounts for branches, loops, reborrows, closures and suspension; it is not a textual end-of-block rule.</li>
 <li><strong>Native compatibility preserves safety.</strong> Existing native references and canonical types retain their actual access and lifetime contracts. Unsupported projections or lifetime relationships receive diagnostics, not erased dependencies or fabricated clones.</li>
-<li><strong>Additional lifetime syntax is not introduced here.</strong> Independent multiple-source clauses, explicitly lifetime-parameterized user fields and higher-ranked callable binders are not part of this design. The accepted contract must reject a boundary it cannot express rather than pretending it is single-source.</li>
+<li><strong>Additional lifetime syntax is not introduced here.</strong> Independent multiple-source clauses, explicitly lifetime-parameterized user fields and higher-ranked callable binders are not part of this design. The accepted contract must reject a boundary it cannot express rather than pretending it is single-source. A declared type whose borrows all come from one source needs none of them: it is a view type with that one source dependency.</li>
 <li><strong>Diagnostics explain the relationship.</strong> Identify the requested access, originating source, conflicting operation and dependent use; expose inferred versus explicit contracts to tooling.</li>
 </ul>
 
