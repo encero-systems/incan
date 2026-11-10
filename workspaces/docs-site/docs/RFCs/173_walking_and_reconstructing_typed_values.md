@@ -296,11 +296,11 @@ A walker sees kinds of value, and each kind has its members. A source answers wi
 | Field | Type | Description |
 | --- | --- | --- |
 | `name` | `FrozenStr` | The type's name, for diagnostics |
-| `identity` | `FrozenBytes` | The model's or enum's identity under RFC 165, distinct from its structural model hash; empty for other types |
+| `identity` | `Option[FrozenBytes]` | The model's or enum's identity under RFC 165, distinct from its structural model hash; `None` for other types, and for a model or enum whose package has no canonical identity, such as one declared in a script |
 | `renamed_from` | `FrozenList[FrozenStr]` | The declaration's earlier names under RFC 085, earliest first, empty when it has none |
 | `renamed_from_lifecycle` | `Option[LifecycleInfo]` | The declaration rename block's optional lifecycle facts under RFC 085, using the same carrier as fields and variants |
-| `selector` | `FrozenStr` | The text a `stored_type` uses to name this model or enum: its identity, followed by its type arguments when it is a generic instantiation, under *Generic models* in RFC 165; empty for other types |
-| `spelling` | `FrozenStr` | The type's canonical spelling, with nested models and enums folded in, under *Record hashes* in RFC 165 |
+| `selector` | `Option[FrozenStr]` | The text a `stored_type` uses to name this model or enum: its identity, followed by its type arguments when it is a generic instantiation, under *Generic models* in RFC 165, each named by its own `selector` when it is a model or enum and by its built-in spelling otherwise, so `Box[int]` has one; `None` for other types, when the identity is `None`, and when a type argument names, at any depth, a model or enum whose `selector` is `None` |
+| `spelling` | `Option[FrozenStr]` | The type's canonical spelling, with nested models and enums folded in, under *Record hashes* in RFC 165; `None` when the type holds `isize` or `usize` at any depth, whose width depends on the target |
 | `fields` | `FrozenList[FieldInfo]` | Every stored field, in ascending identity order |
 | `variants` | `FrozenList[VariantInfo]` | An enum's variants, in ascending identity order |
 | `declarations` | `FrozenList[ShapeInfo]` | Every other model and enum this shape can reach, each once, in ascending `selector` order |
@@ -313,7 +313,7 @@ A walker sees kinds of value, and each kind has its members. A source answers wi
 | --- | --- | --- |
 | `identity` | `FrozenBytes` | The field's identity under RFC 165 |
 | `canonical` | `bool` | RFC 085's `canonical`, true when absent |
-| `stored_type` | `FrozenStr` | The field's declared type in canonical spelling: aliases resolved, a newtype as what it holds, generic arguments concrete, a nested model or enum by its `selector` so that its own evolution does not move this text |
+| `stored_type` | `Option[FrozenStr]` | The field's declared type in canonical spelling: aliases resolved, a newtype as what it holds, generic arguments concrete, a nested model or enum by its `selector` so that its own evolution does not move this text; `None` when the type names, at any depth, a model or enum whose `selector` is `None`, or `isize` or `usize`, whose width depends on the target |
 | `default_is_empty` | `bool` | Whether the declared default is an empty collection |
 | `position` | `int` | The field's place in declaration order |
 | `renamed_from` | `FrozenList[FrozenStr]` | The field's earlier names under RFC 085, earliest first, empty when it has none |
@@ -321,7 +321,7 @@ A walker sees kinds of value, and each kind has its members. A source answers wi
 
 `VariantInfo` must gain `identity`, `renamed_from` and `renamed_from_lifecycle`, with the same meanings. `ShapeInfo.of[T]()` returns the same shape as `T.__shape__()` and supplies the explicit scalar representation used by the custom class example. The `identity` of a shape is not a digest-based claim that two unrelated declarations are interchangeable. A format that keeps declaration order sorts by `position`. `__fields__()` keeps its order and still leaves out what it leaves out today.
 
-`stored_type` and `spelling` are specified text for formats to store and compare. They are not RFC 141's `TypeInfo`, and `type_name` remains display text. The compiler supplies checked field and variant identities under RFC 165 and diagnoses collisions within a declaration. This protocol introduces no replacement identity width or cross-revision compatibility policy. A format computes its model hash from `spelling` under its own named profile; structural spelling must use deterministic back-references for recursive model shapes, so recursion produces a finite description. Declared type identity and structural model hash remain distinct. A new codec hash profile needs no compiler change.
+`stored_type` and `spelling` are specified text for formats to store and compare. They are not RFC 141's `TypeInfo`, and `type_name` remains display text. The compiler supplies checked field and variant identities under RFC 165 and diagnoses collisions within a declaration. This protocol introduces no replacement identity width or cross-revision compatibility policy, and no stand-in for a missing identity. A model or enum whose package has no canonical identity keeps all its members, and its field identities and `spelling` describe it fully. Only its `identity`, its `selector` and the `stored_type` of each field naming it are `None`, and `declarations` reaches only what a `stored_type` names, so it stops at such a field. A format that stores these texts must refuse such a value before writing anything, naming the field, rather than substitute a name or another hash. A format computes its model hash from `spelling` under its own named profile; structural spelling must use deterministic back-references for recursive model shapes, so recursion produces a finite description. Declared type identity and structural model hash remain distinct. A new codec hash profile needs no compiler change.
 
 ### Interaction with existing features
 
@@ -377,6 +377,7 @@ The kinds in `Walker[E]` become a public contract, and adding one means a walker
 | Evolution and containers | Preserve renamed field identities and reordered fields; enforce Crumb's absent-value rules. Round trip nested payload enums, lists, tuples, dicts and newtypes; refuse invalid variants, lengths and out-of-range values with their paths. |
 | Refusal | A field with no members is refused at a call and through a bound, naming the path, in nested, optional and collection positions. A secret type is refused without suggesting a handwritten protocol; an ordinary unsupported class may supply one. |
 | Rename metadata | Field, variant and model/enum declaration rename histories and their lifecycle blocks survive a package boundary and remain available through the public shape carriers. A bare declaration rename resolves in its owning module; a qualified rename retains the earlier identity after a move. |
+| Without a package identity | A model declared in a script, and one in a package with a bare name, walks, describes and reconstructs with its field identities and `spelling`, and reports `None` for its `identity`, its `selector` and the `stored_type` of each field naming it, at any depth. A format that stores identities refuses to encode it before writing anything, naming the field. |
 | Visibility | A public model with private fields round trips outside its defining context without an explicit derive; ordinary caller initialization and assignment of those fields remain rejected. A private stored value survives a later change to its declaration default. |
 | By hand | A class with written members works through the same bounds as a model, and a model that writes `__walk__` without `__shape__` is refused. |
 | Cost | A program that reaches no member compiles the same amount of code as one that declares no such members. |
@@ -387,6 +388,7 @@ The kinds in `Walker[E]` become a public contract, and adding one means a walker
 - **The shared contract is kinds of value:** a format implements the kinds once and meets every type through them, including types declared after it was written.
 - **Identity order:** the hot formats need it, and it costs them nothing when the walk arrives that way.
 - **Facts, not hashes:** the compiler gives identities and spellings, and formats hash them under their own profiles.
+- **No stand-in identity:** a model whose package has no canonical identity keeps its members, because walking and rebuilding need no identity and most formats store none. It reports no identity rather than one made from local names, because a format would store that identity and it would change when the package takes its scoped name.
 - **Models, enums and newtypes have it automatically; classes by hand:** a model is its data, and a class is a live object until its author says what its data is.
 - **Private fields remain data:** automatic walking and model-owned reconstruction include them without an explicit derive. Ordinary field access, initialization and assignment remain governed by their existing visibility rules; secret protection is independent.
 - **Reconstruction restores final state:** `__reconstruct__` restores stored values, including private fields, and enforces final validation without repeating input normalization or construction fieldmethods. Explicit migrations and codec profiles retain their own roles.
