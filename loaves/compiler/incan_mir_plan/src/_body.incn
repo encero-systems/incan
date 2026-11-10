@@ -366,6 +366,7 @@ pub model FieldMetadata:
     pub renamed_from_lifecycle: Option[FieldLifecycle]
     pub position: int
     pub default_is_empty: bool
+    pub stored_type: Option[str]
     pub alias: Option[str]
     pub description: Option[str]
     pub type_name: str

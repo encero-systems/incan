@@ -4,3 +4,32 @@ pub model Item:
 
 pub def make() -> Item:
     return Item(value=22)
+
+
+pub model Box[T]:
+    pub value: T
+
+
+pub enum State:
+    Ready
+    Failed
+
+
+pub model Node:
+    pub children: list[Node]
+
+
+pub model Record:
+    pub item: Item
+    hidden: bool = false
+    pub boxed: Box[int]
+    pub nested: list[Option[Item]]
+    pub state: State
+    pub nested_box: Box[list[Item]]
+    pub tree: Node
+
+
+pub def own_selector() -> str:
+    match Record.__fields__()[0].stored_type:
+        Some(value) => return str(value)
+        None => return "missing"

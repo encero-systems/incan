@@ -87,6 +87,7 @@ def test_public_recursive_walker() -> Result[None, str]:
         renamed_from_lifecycle=Some(lifecycle),
         position=0,
         default_is_empty=false,
+        stored_type=Some("i64"),
         alias=None,
         description=None,
         wire_name="count",
