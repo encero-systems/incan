@@ -2897,6 +2897,76 @@
         "column": 18,
         "status": "refused"
       }
+    },
+    {
+      "id": "read-names-nfc-distinct",
+      "purpose": "Names in NFC with diacritics or from another script are accepted, and each is a different name from the ASCII name it resembles",
+      "expected": {
+        "status": "accepted",
+        "document": {
+          "descriptions": [
+            {
+              "path": "example.Word",
+              "kind": "Record",
+              "fields": [
+                {
+                  "name": "INCAN",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "ĮŃĆĄŅ",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                },
+                {
+                  "name": "ІNСАN",
+                  "type": "i64",
+                  "absent": "required",
+                  "canonical": true
+                }
+              ]
+            }
+          ],
+          "values": [
+            {
+              "kind": "record",
+              "type": "example.Word",
+              "fields": {
+                "INCAN": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "1"
+                },
+                "ĮŃĆĄŅ": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "2"
+                },
+                "ІNСАN": {
+                  "kind": "int",
+                  "type": "i64",
+                  "value": "3"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "input_file": "text/read-names-nfc-distinct.comic"
+    },
+    {
+      "id": "read-refuse-unnormalized-name",
+      "purpose": "A name not in NFC is refused rather than normalized",
+      "expected": {
+        "status": "refused",
+        "kind": "unnormalized_name",
+        "line": 1,
+        "column": 25
+      },
+      "input_file": "text/read-refuse-unnormalized-name.comic"
     }
   ]
 }
