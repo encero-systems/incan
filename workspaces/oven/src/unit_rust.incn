@@ -137,11 +137,7 @@ pub def compile_library_unit(
     compiler: str = "",
 ) -> Result[i32, str]:
     """Prepare private callable products for ordinary libraries, then publish through the complete native key."""
-    mut ready = library
-    if ready.checked_context is None:
-        match retain_callable_products(library, toolchain):
-            Ok(retained) => ready = retained
-            Err(reason) => trace(f"{library.package}: private callable products unavailable: {reason}")
+    ready = with_callable_products(library, toolchain)
     return compile_retained_library(ready, toolchain, output, compiler)
 
 
@@ -305,7 +301,19 @@ pub def prepare_linked(
     unit.search = unique(directories)
     for cache in unit.rust_abi:
         admit_fact(Path(cache))?
-    return prepare_vocabulary(unit, toolchain)
+    ready = prepare_vocabulary(unit, toolchain)?
+    return Ok(with_callable_products(ready, toolchain))
+
+
+def with_callable_products(unit: UnitDescription, toolchain: Toolchain) -> UnitDescription:
+    """Attach one stable checked-product selection after every semantic input has been prepared."""
+    if unit.checked_context is not None:
+        return unit
+    match retain_callable_products(unit, toolchain):
+        Ok(retained) => return retained
+        Err(reason) =>
+            trace(f"{unit.package}: private callable products unavailable: {reason}")
+            return unit
 
 
 def members(values: list[str]) -> set[str]:

@@ -772,7 +772,7 @@ mod tests {
         scalar_local_source_edits(source)?;
         let mutable = source
             .replace("first(value:", "first(mut value:")
-            .replace("doubled = value * 2", "value = value * 2\n    mut doubled = value")
+            .replace("doubled = value * 2", "value = value * 2\n    mut doubled = value + 0")
             .replace(
                 "result: int = value + 3",
                 "mut result: int = value + 3\n    result = result + 1\n    result = result - 1",
@@ -970,6 +970,7 @@ mod tests {
                 provider_operations: &providers,
                 registry_package: None,
                 library_package: Some("interface_test"),
+                include_inline_tests: false,
             },
         )
     }
