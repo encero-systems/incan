@@ -92,7 +92,7 @@ One rule covers fields and methods.
 - Library metadata records the visibility of every declaration and member. A consumer of a compiled library sees exactly what a consumer of its source would, through direct imports, aliases and any number of re-exports.
 - A compiled class with private fields is constructed through the package's own construction path, so a consumer cannot set those fields.
 - Generated output never makes a private declaration or member reachable: no public constructor that takes private fields, and no public accessor that the source lacks.
-- A library whose metadata records no member visibility, because an earlier compiler produced it, exposes every method until it is rebuilt.
+- Compiled libraries must carry the visibility metadata required by the current toolchain contract. Missing or unsupported visibility metadata makes the artifact incompatible: the compiler must refuse it with a diagnostic naming the library and requiring a rebuild with a supported toolchain. It must not infer public visibility or provide a legacy-artifact compatibility fallback.
 - Field metadata may record `made_private` when a field changes from public to private, so tools can show the migration (RFC 085).
 
 ### Standard library
@@ -138,4 +138,4 @@ The 0.5 release made unmarked model fields private, and 0.6 extended the rule to
 - **One member rule.** Fields and methods of one type follow one rule, so a reader learns it once.
 - **A module-private type contains its members.** Marking each member of a type nobody outside the module can name would add nothing.
 - **Trait methods follow their trait.** Calling a trait method is a promise the trait makes, not the implementing type.
-- **Privacy survives compilation.** A compiled library's consumer sees what a source consumer sees.
+- **Privacy survives compilation.** A compiled library's consumer sees what a source consumer sees. Missing metadata is an incompatible artifact, never permission to expose members. This RFC provides no compatibility path for older compiled artifacts that do not satisfy the current contract.
