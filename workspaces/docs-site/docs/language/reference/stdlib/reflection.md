@@ -37,6 +37,7 @@ An Incan model returned in the frozen list from `__fields__()`. `std.primitives.
 | `description` | `Option[FrozenStr]` | Documentation string, if set via `[description="..."]` |
 | `wire_name` | `FrozenStr` | Effective wire name (alias if present, else declared name) |
 | `type_name` | `FrozenStr` | Incan type display (e.g. `"str"`, `"int"`, `"Option[str]"`) |
+| `stored_type` | `Option[FrozenStr]` | Canonical stored-type selector from the checked field type; absent when a nested type has no persistent representation |
 | `has_default` | `bool` | Whether the field has a default value |
 | `default_is_empty` | `bool` | Whether the source default is a literal empty list, dictionary, tuple or set; strings, bytes, missing defaults and unevaluated expressions are false |
 | `position` | `int` | Zero-based slot before the public view removes private fields; class slots follow the checked parent-first layout |
@@ -47,6 +48,27 @@ Notes:
 
 - Field metadata like `[alias="..."]` and `[description="..."]` is model-only.
 - For a `class`, `FieldInfo.alias` and `FieldInfo.description` are always `None`, `FieldInfo.wire_name == FieldInfo.name`, `FieldInfo.canonical` is `true`, and `FieldInfo.renamed_from` is empty.
+
+### Stored-type selectors
+
+`stored_type` describes the declared type, independently of a value. For example, `int` is `Some("i64")`, `str` is `Some("string")`, and `dict[str, Option[int]]` is `Some("map<string,option<i64>>")`. Fixed-width numeric declarations retain their width. Aliases, transparent newtypes and frozen collections use their underlying stored type. `type_name` remains the human-readable Incan spelling.
+
+| Declared type | Selector |
+| --- | --- |
+| `bool` | `boolean` |
+| `int`, fixed signed widths | `i64`, or the declared `i8` through `i128` |
+| Fixed unsigned widths | The declared `u8` through `u128` |
+| `float`, `f64`, `f32` | `fp64`, `fp64`, `fp32` |
+| `str`, `FrozenStr`, `bytes`, `FrozenBytes` | `string`, `string`, `binary`, `binary` |
+| `decimal[P, S]` | `decimal<P,S>` |
+| `None` | `tuple<>` |
+| `list[T]`, `set[T]`, `dict[K, V]`, `tuple[A, B]`, `Option[T]` | `list<T>`, `set<T>`, `map<K,V>`, `tuple<A,B>`, `option<T>` with each argument replaced by its selector |
+| `A \| B` | `union<A,B>` with members ordered by the SHA-256 of their UTF-8 selector, then by selector on a digest collision |
+| Model or enum with a persistent package namespace | `record@HEX` or `enum@HEX`, followed by `<...>` for concrete generic arguments |
+
+`HEX` is the first 12 lowercase hexadecimal digits of SHA-256 over the registry identity, scoped package name and canonical declaration path, in that order. Each component is UTF-8 followed by one zero byte; declaration path segments are dot-separated. An open type argument has no selector. Callable types, references, Rust-owned types and builtin `Result` have no stored selector.
+
+A nested model or enum uses its declaring package's persistent identity and closed type arguments. Its package must declare both a scoped `name` and a valid [`registry-id`](../../../tooling/reference/project_configuration.md#registry-id) in `[project]`. Import aliases do not change it. A script-local model, a class, a declaration without a persistent package namespace, or a target-dependent `isize` or `usize` has no stored selector. That absence propagates through containing types: `list[LocalModel]` has `stored_type=None` when `LocalModel` has no persistent identity. A missing selector does not change ordinary field access or construction. It is not a promise that the type can be serialized, and a selector grants no authority to reconstruct untrusted data.
 
 ## Compiler-generated field value views
 

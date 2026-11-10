@@ -189,6 +189,7 @@ fn entry(field: &FieldMetadata, carrier: &str, lifecycle: &str, span: Span) -> B
         ),
         ("position", integer(field.position, span)),
         ("default_is_empty", boolean(field.default_is_empty, span)),
+        ("stored_type", optional_text(&field.stored_type, span)),
         ("alias", optional_text(&field.alias, span)),
         ("description", optional_text(&field.description, span)),
         (

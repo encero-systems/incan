@@ -16,6 +16,8 @@ pub model FieldInfo:
     pub renamed_from_lifecycle: Option[LifecycleInfo]
     pub position: int
     pub default_is_empty: bool
+    # Canonical storage selector, absent when any nested type lacks a persistent representation.
+    pub stored_type: Option[FrozenStr]
     pub alias: Option[FrozenStr]
     pub description: Option[FrozenStr]
     pub wire_name: FrozenStr
