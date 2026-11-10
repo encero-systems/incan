@@ -92,7 +92,7 @@ One rule covers fields and methods.
 - Library metadata records the visibility of every declaration and member. A consumer of a compiled library sees exactly what a consumer of its source would, through direct imports, aliases and any number of re-exports.
 - A compiled class with private fields is constructed through the package's own construction path, so a consumer cannot set those fields.
 - Generated output never makes a private declaration or member reachable: no public constructor that takes private fields, and no public accessor that the source lacks.
-- Compiled libraries must carry the visibility metadata required by the current toolchain contract. Missing or unsupported visibility metadata makes the artifact incompatible: the compiler must refuse it with a diagnostic naming the library and requiring a rebuild with a supported toolchain. It must not infer public visibility or provide a legacy-artifact compatibility fallback.
+- Compiled libraries must carry the visibility metadata required by the current toolchain contract. Missing or unsupported visibility metadata makes the artifact incompatible: Oven must invalidate it for reuse and recompile the library from its matching source under the current toolchain. If the required source is unavailable, it must stop with a diagnostic naming the library and the source needed to rebuild it. The compiler must not consume the incompatible artifact, infer public visibility or provide a legacy-artifact compatibility fallback.
 - Field metadata may record `made_private` when a field changes from public to private, so tools can show the migration (RFC 085).
 
 ### Standard library
