@@ -2,7 +2,7 @@
 
 from intake import DependencyEdge, LocalIntake, ManifestReader
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
-from rust_activation import DependencyDomain
+from rust_activation import ActivationPurpose, DependencyDomain
 from rust_target import target_configuration
 from toolchain import Toolchain, load_toolchain, rust_compiler
 
@@ -33,6 +33,7 @@ pub def resolve_features(
     reader: ManifestReader = ManifestReader(),
     selected_toolchain: Option[Toolchain] = None,
     selected_facets: list[LocalFacet] = [],
+    purpose: ActivationPurpose = ActivationPurpose.Normal,
 ) -> Result[ActiveGraph, str]:
     """
     Project the build engine's selection onto the Incan dependency declarations.
@@ -51,6 +52,7 @@ pub def resolve_features(
         features=request.features,
         defaults=request.default_features,
         all_features=request.all_features,
+        purpose=purpose,
     )
     mut facets = selected_facets
     if len(facets) == 0:
