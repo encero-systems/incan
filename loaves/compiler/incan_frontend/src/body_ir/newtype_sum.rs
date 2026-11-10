@@ -66,6 +66,15 @@ impl BodyBuilder<'_, '_> {
         if identity.kind != super::SemanticSourceTargetKind::Newtype {
             return None;
         }
+        let Some((primitive, zero)) = sum_primitive(&facts.underlying) else {
+            return Some(self.unsupported_typed_operand(
+                "numeric-newtype sum without a supported primitive payload".into(),
+                target,
+                scope,
+                source_span,
+                out,
+            ));
+        };
 
         // ---- Complete local layout and hook selection ----
         let accepted = self.type_info.body_ir_iterator_sum_items.get(&span);
@@ -91,10 +100,9 @@ impl BodyBuilder<'_, '_> {
             || !hook_matches
             || accepted.map(|item| self.checked_type(item)) != Some(target.clone())
             || self.method_call_result_type(span) != target
-            || facts.underlying != crate::symbols::ResolvedType::Int
             || !facts.type_params.is_empty()
             || declaration.fields != ["0"]
-            || declaration.field_types != [IncanType::Primitive(IncanPrimitiveType::Int)]
+            || declaration.field_types != [IncanType::Primitive(primitive.clone())]
             || declaration.field_identities != [identity.clone()]
             || incan_semantics_core::canonical_module_identity(identity).as_deref() != Some(self.module_identity)
         {
@@ -108,7 +116,16 @@ impl BodyBuilder<'_, '_> {
         }
 
         // ---- Owned consumption and final reconstruction ----
-        let (total, iterator) = self.newtype_sum_loop(receiver, &declaration, &target, scope, source_span, out);
+        let (total, iterator) = self.newtype_sum_loop(
+            receiver,
+            &declaration,
+            &target,
+            primitive,
+            zero,
+            scope,
+            source_span,
+            out,
+        );
         let result = self.finish_newtype_sum(
             owner,
             &declaration,
@@ -216,6 +233,8 @@ impl BodyBuilder<'_, '_> {
         receiver: &ast::Spanned<ast::Expr>,
         declaration: &bir::NominalDeclaration,
         target: &IncanType,
+        primitive: IncanPrimitiveType,
+        zero: bir::Constant,
         scope: bir::ScopeId,
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
@@ -230,12 +249,12 @@ impl BodyBuilder<'_, '_> {
             },
             span,
         });
-        let integer = IncanType::Primitive(IncanPrimitiveType::Int);
-        let accumulator = self.new_temp(integer.clone(), scope, span);
+        let primitive = IncanType::Primitive(primitive);
+        let accumulator = self.new_temp(primitive.clone(), scope, span);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place: bir::Place::from_local(accumulator),
-                rvalue: bir::Rvalue::Use(bir::Operand::Constant(bir::Constant::Int(0))),
+                rvalue: bir::Rvalue::Use(bir::Operand::Constant(zero)),
             },
             span,
         });
@@ -286,7 +305,18 @@ impl BodyBuilder<'_, '_> {
             },
             span,
         });
-        (self.temp_operand(accumulator, &integer), iterator)
+        (self.temp_operand(accumulator, &primitive), iterator)
+    }
+}
+
+/// Select the primitive payload and additive identity supported by the RFC 088 newtype bridge.
+fn sum_primitive(underlying: &crate::symbols::ResolvedType) -> Option<(IncanPrimitiveType, bir::Constant)> {
+    match underlying {
+        crate::symbols::ResolvedType::Int => Some((IncanPrimitiveType::Int, bir::Constant::Int(0))),
+        crate::symbols::ResolvedType::Float => {
+            Some((IncanPrimitiveType::Float, bir::Constant::Float("0.0".to_owned())))
+        }
+        _ => None,
     }
 }
 
