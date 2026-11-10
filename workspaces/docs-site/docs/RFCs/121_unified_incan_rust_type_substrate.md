@@ -11,6 +11,7 @@
     - RFC 030 (`std.collections`)
     - RFC 041 (first-class Rust interop authoring)
     - RFC 043 (Rust trait implementation from Incan)
+    - RFC 054 (explicit call-site generics)
     - RFC 091 (integer storage carriers)
     - RFC 097 (Rust-hosted Incan caller)
     - RFC 120 (canonical source symbol identity)
@@ -178,6 +179,39 @@ shop.readings.Reading.note is Option<String>
 
 15. `incan inspect types` must report, for a given type, its identity, its Rust representation, and any exception that applies to it. It must also list every named exception.
 
+### Calls into Rust
+
+A call from Incan into an imported Rust item follows that item's inspected or shipped signature. These rules hold for free functions, methods, associated functions and constructors:
+
+```incan
+from rust::demo import create_widget, Config, Error, Stream
+
+widget = create_widget(name="primary", enabled=true)    # keywords bind by Rust parameter name
+config = Config(port=8080)                               # other fields from Config's Default
+stream = Stream.open[f32](config)?                       # explicit type arguments, checked by count
+
+def on_error(error: Error) -> None:
+    println(error.to_string())
+
+stream.on_error(on_error)                                # an Incan function where Rust takes a callable
+```
+
+16. Positional arguments must bind in the Rust parameter order. A keyword argument must bind to the Rust parameter of that name when the signature names it, and the call must lower to Rust's positional order. A keyword the signature does not name must be refused; it must not be mapped to a position by guessing.
+
+17. A Rust struct with named fields may be constructed with keyword fields. A field may be omitted only when the type implements `Default`; each omitted field then takes that `Default` value. Without `Default`, every field is required.
+
+18. Explicit type arguments must match the number of type parameters the Rust item declares, including the type parameters of the type a type-only generic item belongs to. A mismatch must be refused when checking, not when Rust compiles. A type argument may be inferred from an annotated result, also through `Result.unwrap()`. A literal passed to a parameter bounded by `Into[T]` must stay inferable rather than becoming an ambiguous conversion.
+
+19. Ownership must follow the signature, under RFC 164: an owned parameter takes the value and may bind it mutably, a shared borrow passes `Borrowed[T]`, and an exclusive borrow requires a `mut` binding and passes `BorrowedMut[T]`. A trait-object parameter takes a borrowed value whose type implements the trait. A receiver that is a guard dereferencing to its target must not be confused with an owned receiver. No name, configuration key or manifest section may decide ownership instead of the signature.
+
+20. An Incan function or closure must be accepted where Rust expects a callable, through a callable bound or a Rust callable type alias, when its parameters and result match the bound under RFC 128. A callable bound whose parameters borrow a slice takes an Incan callable whose parameters borrow a list. A callable that does not match, such as one that takes by value what Rust lends, must be refused when checking.
+
+21. Arguments and results adapt only as rule 9 allows: a `list[T]` reaches a borrowed slice parameter without a copy, a `str` reaches a borrowed string parameter, and a Rust `String` result is an Incan `str`. A Rust `Result<T, E>` is `Result[T, E]`, and `usize` and `isize` are themselves, as rule 2 requires. A Rust function whose result type is the diverging `!` returns a value that fits any expected type, because the call does not return.
+
+22. A Rust name that is an Incan keyword must remain reachable: an item through `as` in its import, and a field through its keyword spelling in field access and keyword arguments.
+
+23. When the signature cannot decide one of these rules, for example because it names no parameters, the call must be refused with a diagnostic that names the Rust item and the missing fact. The compiler must not fall back to a guess, a copy or a conversion.
+
 ## Design details
 
 ### Integers and carriers
@@ -236,3 +270,4 @@ RFC 097 describes the caller boundary in terms of this RFC, and its type table l
 - **`int` is a default carrier, not a fixed type.** Nothing an author can declare under RFC 009 or RFC 091 is lost.
 - **RFC 041's table is the base for built-ins, and its adaptations stay.** Frozen types are the correction: they are standard-library types, with `Vec`, `HashMap` and `HashSet` remaining as adaptations.
 - **Representation is readable through reflection,** and each field names its parent by identity.
+- **A call into Rust follows the inspected signature.** Keyword binding, `Default` fields, type-argument counts, ownership and callable bounds all come from the Rust item, so a call means what the Rust item declares, and a fact the signature lacks is refused rather than guessed.
