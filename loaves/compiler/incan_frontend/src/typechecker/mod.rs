@@ -771,6 +771,11 @@ pub struct TypeChecker {
     visibility_point: VisibilityPoint,
     /// Public exports for imported dependency modules, keyed by module name.
     pub dependency_exports: DependencyExportInterfaces,
+    /// Exact immutable provider interfaces selected by driver dependency indexes for the next check.
+    ///
+    /// This staging slot is consumed after the legacy oracle has populated its comparison state. It never widens the
+    /// closure and is empty for direct API callers that still exercise legacy dependency collection.
+    selected_dependency_interfaces: Vec<Arc<ModuleDependencyInterface>>,
     /// Exact source-module member symbols collected from dependencies, keyed by canonical module name.
     ///
     /// Direct source imports use this map before falling back to ambient symbol lookup so `from module import name as

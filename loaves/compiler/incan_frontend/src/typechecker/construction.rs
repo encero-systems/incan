@@ -109,6 +109,7 @@ impl TypeChecker {
             type_info: TypeCheckInfo::default(),
             visibility_point: VisibilityPoint::default(),
             dependency_exports: HashMap::new(),
+            selected_dependency_interfaces: Vec::new(),
             dependency_member_symbols: HashMap::new(),
             dependency_member_type_aliases: HashMap::new(),
             dependency_registry_definitions: HashMap::new(),
