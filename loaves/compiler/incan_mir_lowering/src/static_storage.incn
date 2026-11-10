@@ -480,7 +480,7 @@ def load_computed_static(mut builder: Builder, slot: int, ty: PlanType, span: So
 
 pub def snapshot_owns(ty: PlanType) -> bool:
     """Whether a loaded static value owns resources its frame must drop, rather than being a plain copy."""
-    if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.FrozenStr:
+    if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit:
         return false
     return not callable_copy_type(ty)
 

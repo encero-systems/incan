@@ -66,6 +66,11 @@ pub fn items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> 
         let index = usize::try_from(*owner).map_err(|_| PlanError::UnknownCallee(name(*owner)))?;
         let info_index = usize::try_from(*info).map_err(|_| PlanError::UnknownCallee(name(*owner)))?;
         let lifecycle = lifecycle_carrier(plan, &plan.models[info_index])?;
+        if let Some(fields) = &plan.models[index].reflection_metadata {
+            for field in fields {
+                items.push(renamed_storage(*owner, field, span));
+            }
+        }
         items.push(storage(
             *owner,
             &plan.models[index],
@@ -99,6 +104,55 @@ fn storage_name(owner: i64) -> String {
     format!("__incan_field_records_{owner}")
 }
 
+/// Name one field's explicit static earlier-name slice so destructible frozen handles are never temporary-promoted.
+fn renamed_storage_name(owner: i64, position: i64) -> String {
+    format!("__incan_field_renames_{owner}_{position}")
+}
+
+/// Store frozen earlier names in their own static slice because an inline array of non-Copy handles cannot be promoted.
+fn renamed_storage(owner: i64, field: &FieldMetadata, span: Span) -> Box<ast::Item> {
+    let entries = field
+        .renamed_from
+        .iter()
+        .map(|value| frozen_text(value, span))
+        .collect();
+    let array = expression(ast::ExprKind::Array(entries), span);
+    let slice = expression(
+        ast::ExprKind::AddrOf(ast::BorrowKind::Ref, ast::Mutability::Not, array),
+        span,
+    );
+    let element = crate::declarations::ty(&PlanType::FrozenStr, span);
+    let ty = Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: Box::new(ast::Ty {
+                    id: ast::DUMMY_NODE_ID,
+                    kind: ast::TyKind::Slice(element),
+                    span,
+                    tokens: None,
+                }),
+                mutbl: ast::Mutability::Not,
+            },
+        ),
+        span,
+        tokens: None,
+    });
+    crate::declarations::item(
+        ast::ItemKind::Static(Box::new(ast::StaticItem {
+            ident: ident(&renamed_storage_name(owner, field.position), span),
+            ty,
+            safety: ast::Safety::Default,
+            mutability: ast::Mutability::Not,
+            expr: Some(slice),
+            define_opaque: None,
+            eii_impls: ThinVec::new(),
+        })),
+        span,
+    )
+}
+
 /// Construct the records in an explicit static initializer; const-function calls do not promote runtime temporaries.
 fn storage(
     owner: i64,
@@ -113,7 +167,7 @@ fn storage(
         .as_ref()
         .into_iter()
         .flatten()
-        .map(|field| entry(field, &metadata.name, lifecycle, span))
+        .map(|field| entry(owner, field, &metadata.name, lifecycle, span))
         .collect();
     let array = expression(ast::ExprKind::Array(entries), span);
     let slice = expression(
@@ -177,12 +231,15 @@ fn accessor_item(owner: i64, output: &PlanType, value: Box<ast::Expr>, span: Spa
 }
 
 /// Initialize the Incan-declared record; native type checking verifies these facts against its actual field layout.
-fn entry(field: &FieldMetadata, carrier: &str, lifecycle: &str, span: Span) -> Box<ast::Expr> {
+fn entry(owner: i64, field: &FieldMetadata, carrier: &str, lifecycle: &str, span: Span) -> Box<ast::Expr> {
     let values = [
         ("name", frozen_text(&field.name, span)),
         ("identity", frozen_bytes(&field.record_identity, span)),
         ("canonical", boolean(field.record_canonical, span)),
-        ("renamed_from", frozen_text_list(&field.renamed_from, span)),
+        (
+            "renamed_from",
+            frozen_text_list(&renamed_storage_name(owner, field.position), span),
+        ),
         (
             "renamed_from_lifecycle",
             optional_lifecycle(&field.renamed_from_lifecycle, lifecycle, span),
@@ -339,14 +396,8 @@ fn frozen_bytes(bytes: &[i64], span: Span) -> Box<ast::Expr> {
     )
 }
 
-/// Construct an immutable list of frozen earlier-name strings from static storage.
-fn frozen_text_list(values: &[String], span: Span) -> Box<ast::Expr> {
-    let entries = values.iter().map(|value| frozen_text(value, span)).collect();
-    let array = expression(ast::ExprKind::Array(entries), span);
-    let slice = expression(
-        ast::ExprKind::AddrOf(ast::BorrowKind::Ref, ast::Mutability::Not, array),
-        span,
-    );
+/// Construct an immutable list over the field's explicit static earlier-name storage.
+fn frozen_text_list(storage: &str, span: Span) -> Box<ast::Expr> {
     call(
         &[
             "incan_std_primitives",
@@ -354,7 +405,7 @@ fn frozen_text_list(values: &[String], span: Span) -> Box<ast::Expr> {
             collections::as_str(CollectionTypeId::FrozenList),
             "new",
         ],
-        thin_vec![slice],
+        thin_vec![local(storage, span)],
         span,
     )
 }

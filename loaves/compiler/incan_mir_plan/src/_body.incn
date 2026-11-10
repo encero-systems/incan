@@ -137,7 +137,7 @@ pub enum RvalueKind:
 
     Tuple preserves the ordered operand layout of its destination type.
     Range preserves the four scalar operands in Body IR's declared range field order and requires a RangeValue destination.
-    FrozenText wraps a static Text literal in the dependency-owned FrozenStr carrier; a dynamic text operand is refused.
+    FrozenText wraps a static Text literal in the dependency-owned FrozenStr carrier; runtime producers use native constructors.
     FrozenBytes wraps exact unsigned literal bytes in the dependency-owned static byte carrier.
     Array moves or copies its listed operands into a fixed array. Borrow creates
     a shared reference to a checked place; MutBorrow creates a mutable list or nominal receiver reference. UnsizeSlice converts an array reference

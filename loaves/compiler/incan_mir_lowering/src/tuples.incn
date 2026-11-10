@@ -188,12 +188,13 @@ pub def carrier_element(element: TupleElement) -> bool:
         TupleElement.Set(_leaf) => return true
         TupleElement.Model(_owner, _name) => return true
         TupleElement.Enum(_owner, _name) => return true
+        TupleElement.FrozenCollection(_name, _elements) => return true
         TupleElement.Tuple(_elements) => return true
         _ => return false
 
 
 pub def owned_carrier(ty: PlanType) -> bool:
-    """Report whether a list, nominal or dependency-owned validation error keeps its enclosing tuple initialized."""
+    """Report whether a value owns storage that keeps its enclosing tuple initialized."""
     match ty:
         PlanType.ValidationError => return true
         PlanType.List(_leaf, _depth) => return true
@@ -201,6 +202,9 @@ pub def owned_carrier(ty: PlanType) -> bool:
         PlanType.Set(_leaf) => return true
         PlanType.Model(_owner, _name) => return true
         PlanType.Enum(_owner, _name) => return true
+        PlanType.FrozenStr => return true
+        PlanType.FrozenBytes => return true
+        PlanType.FrozenCollection(_name, _elements) => return true
         _ => return false
 
 
@@ -213,6 +217,9 @@ pub def element_has_owner(element: TupleElement) -> bool:
         TupleElement.Set(_leaf) => return true
         TupleElement.Model(_owner, _name) => return true
         TupleElement.Enum(_owner, _name) => return true
+        TupleElement.FrozenStr => return true
+        TupleElement.FrozenBytes => return true
+        TupleElement.FrozenCollection(_name, _elements) => return true
         TupleElement.Tuple(elements) =>
             for nested in elements:
                 if element_has_owner(nested):

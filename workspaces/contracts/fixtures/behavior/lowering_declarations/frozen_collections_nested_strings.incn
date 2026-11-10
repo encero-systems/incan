@@ -8,19 +8,34 @@
 #   1
 #   2
 #   2
+#   true
+#   true
+#   true
+#   true
 
-from rust::incan_std_primitives::frozen import FrozenList as NativeFrozenList, FrozenDict as NativeFrozenDict
+from rust::incan_std_primitives::frozen import (
+    FrozenList as NativeFrozenList,
+    FrozenDict as NativeFrozenDict,
+    FrozenStr as NativeFrozenStr,
+)
+from rust::std::hash import DefaultHasher, Hash as NativeHash, Hasher
+from rust::std::clone import Clone as NativeClone
+from rust::std::string import String as RustString
 from std.rust import Static
 
 const TABLE: FrozenDict[str, FrozenList[str]] = {"names": ["alpha", "beta"], "empty": []}
 const NAMES: FrozenList[str] = ["alpha", "beta"]
 const CHUNKS: FrozenList[FrozenBytes] = [b"ab", b"c"]
 const ENTRIES: FrozenDict[int, int] = {1: 7}
+const RUNTIME_TEXT: FrozenStr = "runtime"
+const RUNTIME_NUMBERS: FrozenList[int] = [3, 1, 4]
 
 
-def retain_inferred_owner[K with Static, V with Static](value: NativeFrozenDict[K, V]) -> None:
+def retain_inferred_owner[K with (NativeClone, Static), V with (NativeClone, Static)](
+    value: NativeFrozenDict[K, V],
+) -> None:
     """Exercise a later method on the owner inferred from a constructor with explicit tuple arguments."""
-    inferred = NativeFrozenList.new[tuple[K, V]](value.as_slice())
+    inferred = NativeFrozenList.from_owned[tuple[K, V]](value.as_slice().to_vec())
     _ = inferred.get(0)
 
 
@@ -28,6 +43,27 @@ def native_frozen_length[T with Static](values: list[T]) -> int:
     """Leak the list into native frozen storage held by a local, then read its length through that local."""
     frozen = NativeFrozenList.leak(values)
     return int(frozen.len())
+
+
+def retain_runtime_text(value: FrozenStr) -> FrozenStr:
+    """Copy one runtime frozen-text handle while keeping the argument usable."""
+    copied = value
+    assert value == RUNTIME_TEXT
+    return copied
+
+
+def retain_runtime_numbers(value: FrozenList[int]) -> FrozenList[int]:
+    """Copy one runtime frozen-list handle while keeping the argument usable."""
+    copied = value
+    assert value.len() == 3
+    return copied
+
+
+def native_hash[T with NativeHash](value: T) -> u64:
+    """Hash a frozen carrier through its native content-based implementation."""
+    mut hasher = DefaultHasher.new()
+    NativeHash.hash(value, hasher)
+    return Hasher.finish(hasher)
 
 
 def main() -> None:
@@ -49,3 +85,12 @@ def main() -> None:
     retain_inferred_owner[int, int](ENTRIES)
     # 3. Leak text into native frozen storage inside a function with a type parameter.
     println(native_frozen_length[str](["native", "storage"]))
+    # 4. Runtime frozen storage copies handles, while equality and hashing compare contents across storage kinds.
+    shared_text: FrozenStr = NativeFrozenStr.from_owned(RustString.from("runtime"))
+    copied_text = retain_runtime_text(shared_text)
+    println(shared_text == RUNTIME_TEXT)
+    println(native_hash(copied_text) == native_hash(RUNTIME_TEXT))
+    shared_numbers: FrozenList[int] = NativeFrozenList.from_owned[int]([3, 1, 4])
+    copied_numbers = retain_runtime_numbers(shared_numbers)
+    println(shared_numbers == RUNTIME_NUMBERS)
+    println(native_hash(copied_numbers) == native_hash(RUNTIME_NUMBERS))

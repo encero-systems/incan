@@ -46,6 +46,7 @@ from formatting import display_operand, lower_format
 from list_values import value_operand
 from carrier_operands import boundary_operand
 from result_carriers import frozen_operand
+from frozen_plan import clone_frozen_handle
 
 
 pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSpan) -> Result[Operand, str]:
@@ -53,13 +54,15 @@ pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSp
     Materialize the checker's clone fact through a source nominal's real derived Clone implementation.
 
     A shared model reference, such as a receiver, already is the borrow that Clone takes. An immutable scalar
-    reference, including a text reference, function pointer or static frozen wrapper copies the value through the ordinary carrier-payload read.
+    reference copies its referent or clones its frozen handle through the ordinary carrier-payload read.
     """
     match place_type(builder.locals, value):
         PlanType.FunctionPointer(_signature) => return carrier_payload_value(builder, value, span)
         PlanType.ScalarRef(_elements) => return carrier_payload_value(builder, value, span)
         PlanType.TupleRef(_elements) => return Ok(read_place(value, false, span))
-        PlanType.FrozenCollectionRef(_name, _elements) => return Ok(read_place(value, false, span))
+        PlanType.FrozenCollectionRef(name, elements) =>
+            referent = Place(local=value.local, projection=Projection.Deref(PlanType.FrozenCollection(name, elements)), span=span)
+            return clone_frozen_handle(builder, referent, span)
         PlanType.FrozenStr | PlanType.FrozenBytes => return carrier_payload_value(builder, value, span)
         PlanType.StringRef => return carrier_payload_value(builder, value, span)
         PlanType.ValidationError => return carrier_payload_value(builder, value, span)

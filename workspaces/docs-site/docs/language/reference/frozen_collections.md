@@ -1,6 +1,6 @@
 # Frozen collections (reference)
 
-This page specifies the frozen collection types a `const` holds, `FrozenList[T]`, `FrozenSet[T]` and `FrozenDict[K, V]`, and the reads they answer. Refusals are reported with `INCAN-T0001`.
+This page specifies the frozen collection types that constants hold and that library operations such as decoding and reflection may produce: `FrozenList[T]`, `FrozenSet[T]` and `FrozenDict[K, V]`. Refusals are reported with `INCAN-T0001`.
 
 ## Types
 
@@ -14,6 +14,7 @@ This page specifies the frozen collection types a `const` holds, `FrozenList[T]`
 - A frozen type annotates a parameter, a return type or a binding. A value of the frozen type is accepted there; a `list`, `set` or `dict` value is refused, and a frozen value is refused where a `list`, `set` or `dict` is expected.
 - `FrozenList(...)`, `FrozenSet(...)` and `FrozenDict(...)` are not constructors: a call is refused.
 - A frozen collection is read-only. A mutating method, such as `append` or `add`, and an index assignment are refused.
+- Copying a frozen collection, including assignment and argument passing, takes constant time and leaves the original usable. Equality and hashing use the contents, whether the value came from a constant or a library operation.
 
 ## Reads
 
