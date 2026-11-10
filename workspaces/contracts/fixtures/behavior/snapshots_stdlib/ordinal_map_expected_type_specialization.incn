@@ -1,0 +1,82 @@
+# behavior: expected result types retain several OrdinalMap static-factory specializations through native lowering (#2915)
+# expect-stdout:
+#   ordinal-map specialization ok
+
+from std.collections import OrdinalKey, OrdinalMap, OrdinalMapError
+
+
+@derive(Clone, Eq)
+model Key with OrdinalKey:
+    """A valid user-authored ordinal key for the first contextual specialization."""
+
+    value: int
+
+    @staticmethod
+    def ordinal_encoding() -> str:
+        """Return the fixture's versioned key encoding."""
+        return "test:key-v1"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """Decode the fixture's one-byte payload."""
+        return Ok(Key(value=int(data[0])))
+
+    def ordinal_bytes(self) -> bytes:
+        """Encode the key value in one byte."""
+        value: u8 = self.value.wrapping_resize()
+        return [value]
+
+
+@derive(Clone, Eq)
+model OtherKey with OrdinalKey:
+    """A deliberately invalid key encoding for the second contextual specialization."""
+
+    value: int
+
+    @staticmethod
+    def ordinal_encoding() -> str:
+        """Return the deliberately non-versioned encoding."""
+        return "bad"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """Decode the fixture's one-byte payload."""
+        return Ok(OtherKey(value=int(data[0])))
+
+    def ordinal_bytes(self) -> bytes:
+        """Encode the key value in one byte."""
+        value: u8 = self.value.wrapping_resize()
+        return [value]
+
+
+def accept(result: Result[OrdinalMap[Key], OrdinalMapError]) -> None:
+    """Require the first factory call to close as `OrdinalMap[Key]`."""
+    assert result.is_ok()
+
+
+def accept_other(result: Result[OrdinalMap[OtherKey], OrdinalMapError]) -> None:
+    """Require the second factory call to close independently as `OrdinalMap[OtherKey]`."""
+    assert result.is_err()
+
+
+def exercise_round_trips() -> Result[None, OrdinalMapError]:
+    """Keep a user-authored key's factory owner through serialization."""
+    key_map: OrdinalMap[Key] = OrdinalMap.from_keys([Key(value=1)])?
+    key_restored: OrdinalMap[Key] = OrdinalMap.from_bytes(key_map.to_bytes())?
+    assert key_restored.require(Key(value=1))? == 0
+    return Ok(None)
+
+
+def run() -> Result[None, OrdinalMapError]:
+    """Exercise independent expected types and the neighboring round-trip factory paths."""
+    accept(OrdinalMap.from_keys([Key(value=1)]))
+    accept_other(OrdinalMap.from_keys([OtherKey(value=2)]))
+    exercise_round_trips()?
+    return Ok(None)
+
+
+def main() -> None:
+    """Report the expected specialization result without hiding a decoding failure."""
+    match run():
+        Ok(_) => println("ordinal-map specialization ok")
+        Err(_) => println("ordinal-map specialization failed")

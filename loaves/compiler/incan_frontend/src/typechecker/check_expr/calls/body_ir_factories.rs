@@ -7,11 +7,14 @@ use super::body_ir_generics::{concrete, normalized};
 use crate::ast::{CallArg, Span};
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{MethodInfo, ResolvedType, TypeInfo};
+use crate::typechecker::helpers::decimal_shape;
 use crate::typechecker::nominal_type_param_bounds::NominalTypeParamBounds;
 
 impl TypeChecker {
     /// Retain a selected source static factory from its original owner signature and already checked context.
     /// Concrete callers close its owner; a provider's active declared binders remain explicit for specialization.
+    /// A bare receiver's legacy `K = K` echo supplies no caller constraint and yields to a closed argument or result.
+    /// Accepted context-typed aggregate arguments publish that same closed owner to Body IR after all bounds pass.
     /// Private bindings and Body IR tables keep legacy's open Self result and Rust inference unchanged.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn retain_body_ir_factory_owner(
@@ -44,7 +47,7 @@ impl TypeChecker {
             ResolvedType::Generic(_, arguments) => names
                 .iter()
                 .zip(arguments)
-                .filter(|(_, argument)| self.factory_type_is_bound(argument))
+                .filter(|(_, argument)| factory_type_is_fixed(argument))
                 .map(|(name, argument)| (name.clone(), argument.clone()))
                 .collect::<HashMap<_, _>>(),
             _ => HashMap::new(),
@@ -53,23 +56,34 @@ impl TypeChecker {
         // ---- Checked argument and destination constraints ----
         let mut bindings: HashMap<_, _> = legacy
             .iter()
-            .filter(|(_, ty)| self.factory_type_is_bound(ty))
+            .filter(|(name, ty)| {
+                self.factory_type_is_bound(ty)
+                    && !matches!((receiver, ty), (ResolvedType::Named(_), ResolvedType::TypeVar(value)) if value == *name)
+            })
             .map(|(name, ty)| (name.clone(), ty.clone()))
             .collect();
         if let Some(expected) = expected {
             self.infer_type_param_bindings(&result, &normalized(expected, &[], self), &mut bindings);
         }
+        let mut closed_arguments = Vec::new();
         for (expression, parameter) in Self::arguments_with_parameter_types(&parameters, args) {
             let Some(actual) = self.body_ir_checked_value_type(expression.span) else {
                 return;
             };
             let actual = normalized(actual, &[], self);
             let parameter = normalized(parameter, &names, self);
+            // A context-typed aggregate can retain the factory's owner binder even after the destination closes it.
+            // Apply only the bindings already proved by the destination or legacy inference before admission.
+            let closed = substitute_resolved_type(&actual, &bindings);
+            if closed != actual {
+                closed_arguments.push((expression.span, closed.clone()));
+            }
+            let actual = closed;
             if !self.factory_type_is_bound(&actual) {
                 return;
             }
             let constrained = substitute_resolved_type(&parameter, &fixed);
-            if self.factory_type_is_bound(&constrained) && !self.types_compatible(&constrained, &actual) {
+            if factory_type_is_fixed(&constrained) && !self.types_compatible(&constrained, &actual) {
                 self.refuse_body_ir_factory_result(span);
                 return;
             }
@@ -107,6 +121,9 @@ impl TypeChecker {
             }
             return;
         }
+        for (span, actual) in closed_arguments {
+            self.type_info.expressions.body_ir_expr_types.insert(span, actual);
+        }
         self.type_info
             .calls
             .body_ir_factory_owner_types
@@ -123,7 +140,7 @@ impl TypeChecker {
     /// Admit only fixed leaves and type parameters declared by the active frame, recursively through storage.
     /// Unknown placeholders and callee-owned binders cannot create an executable owner fact.
     fn factory_type_is_bound(&self, ty: &ResolvedType) -> bool {
-        if concrete(ty) {
+        if factory_type_is_fixed(ty) {
             return true;
         }
         match ty {
@@ -212,5 +229,26 @@ impl TypeChecker {
             .collect();
         let template = ResolvedType::Generic(owner.clone(), arguments);
         Some((owner.clone(), names, template))
+    }
+}
+
+/// Whether a checked factory type has no unresolved source binder, while treating validated decimal precision and
+/// scale arguments as const metadata rather than generic type variables.
+fn factory_type_is_fixed(ty: &ResolvedType) -> bool {
+    if concrete(ty) || decimal_shape(ty).is_some() {
+        return true;
+    }
+    match ty {
+        ResolvedType::Generic(_, parts) | ResolvedType::Tuple(parts) => parts.iter().all(factory_type_is_fixed),
+        ResolvedType::Ref(inner)
+        | ResolvedType::RefMut(inner)
+        | ResolvedType::FrozenList(inner)
+        | ResolvedType::FrozenSet(inner)
+        | ResolvedType::TypeToken(inner) => factory_type_is_fixed(inner),
+        ResolvedType::FrozenDict(key, value) => factory_type_is_fixed(key) && factory_type_is_fixed(value),
+        ResolvedType::Function(parameters, result) => {
+            parameters.iter().all(|parameter| factory_type_is_fixed(&parameter.ty)) && factory_type_is_fixed(result)
+        }
+        _ => false,
     }
 }
