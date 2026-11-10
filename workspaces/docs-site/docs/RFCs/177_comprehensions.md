@@ -1,6 +1,6 @@
 # RFC 177: Comprehensions
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-11-10
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -9,7 +9,7 @@
     - RFC 088 (iterator adapters)
     - RFC 129 (shared or copied bindings)
     - RFC 164 (explicit ownership and borrowing)
-- **Issue:** —
+- **Issue:** [#2975](https://github.com/encero-systems/incan/issues/2975)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —

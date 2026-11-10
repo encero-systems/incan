@@ -1,6 +1,6 @@
 # RFC 175: Bidirectional controls and confusable identifiers
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-11-10
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**

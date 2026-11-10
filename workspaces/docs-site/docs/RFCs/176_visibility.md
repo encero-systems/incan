@@ -1,6 +1,6 @@
 # RFC 176: Visibility
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-11-10
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -13,7 +13,7 @@
     - RFC 137 (named enum payload fields)
     - RFC 149 (non-exhaustive public contracts)
     - RFC 174 (overloaded functions and methods)
-- **Issue:** [#2570](https://github.com/encero-systems/incan/issues/2570), [#2812](https://github.com/encero-systems/incan/issues/2812)
+- **Issue:** [#2974](https://github.com/encero-systems/incan/issues/2974) (implementation and conformance); [#2570](https://github.com/encero-systems/incan/issues/2570), [#2812](https://github.com/encero-systems/incan/issues/2812) (completed fixes)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —

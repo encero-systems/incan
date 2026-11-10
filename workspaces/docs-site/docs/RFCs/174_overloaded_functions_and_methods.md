@@ -1,6 +1,6 @@
 # RFC 174: Overloaded functions and methods
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-11-10
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -14,7 +14,7 @@
     - RFC 106 (declaration identity in the compiler-backed context graph)
     - RFC 122 (model construction)
     - RFC 128 (one `Callable` trait over function types)
-- **Issue:** [#2890](https://github.com/encero-systems/incan/issues/2890)
+- **Issue:** [#2973](https://github.com/encero-systems/incan/issues/2973) (implementation and conformance); [#2890](https://github.com/encero-systems/incan/issues/2890) (completed regression fix)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
