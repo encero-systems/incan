@@ -54,6 +54,10 @@ Canonical form puts descriptions first, sorted by path, then values in the order
 
 A path is a dotted sequence of segments read as one token, such as `example.billing.Invoice`. A segment follows Unicode identifier rules (UAX #31: an `XID_Start` character or `_`, then `XID_Continue` characters). A profile may admit more in a segment, such as hyphens in registry names or a bracketed version, and must define where.
 
+Every name is in Unicode Normalization Form C (NFC). The rule covers path segments, field and variant names, and property names, including the names a profile admits beyond UAX #31. A reader refuses a name that is not in NFC, pointing at its first character that differs from the name's NFC form. It never normalizes the name, so every name keeps its exact bytes and has one spelling. `ĮŃĆĄŅ`, written with precomposed letters, is a name. The same word written as `I` followed by a combining ogonek (U+0328), and so on, is refused.
+
+Names that look alike are still different names. `ĮŃĆĄŅ` and `ІNСАN`, which is written with the Cyrillic letters `І`, `С` and `А`, are each a different name from `INCAN`. The core doesn't refuse a name for resembling another. A reader or a tool that displays names may warn when a name mixes scripts, or when two names in one document have the same UTS #39 skeleton, and such a warning never turns a valid read into a refusal. A profile may refuse such names in its own kinds.
+
 A path is absolute: it starts at a root its profile defines and never passes through an alias or link. Inside a value, a type or variant may be written by its short name when the slot admits exactly one type with that name. A short name that could mean two types is refused.
 
 The printer writes a type's short name, its last path segment, whenever the slot admits no other type with that name, and the full path otherwise: `File << (…)` in an `example.File | example.Folder` slot, but `a.Id << 3` in an `a.Id | b.Id` slot. A variant prints as its name alone, as `Pending`. Only when the slot admits two enums with a variant of that name does it take its enum's name too, as `Status.Pending`.

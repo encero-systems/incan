@@ -4,7 +4,7 @@ Status: experimental value rules with an exact draft preimage grammar and indepe
 
 ## Identity is not a hash of contents
 
-A member identity is the first six bytes of SHA-256 over the UTF-8 bytes of its earliest name, with no terminator. A rename retains that earliest name. Identities must be unique within one written record or enum description. Sorting is lexicographic unsigned byte order. Display spelling, import aliases and declaration order do not select a field.
+A member identity is the first six bytes of SHA-256 over the UTF-8 bytes of its earliest name, with no terminator. A name is in NFC (see [text](text.md#names-and-paths)), so each name has one spelling and one identity. A rename retains that earliest name. Identities must be unique within one written record or enum description. Sorting is lexicographic unsigned byte order. Display spelling, import aliases and declaration order do not select a field.
 
 The member vectors in the corpus include a known six-byte collision. Width reduces accidental risk; it does not replace collision refusal when a description contains equal identities.
 

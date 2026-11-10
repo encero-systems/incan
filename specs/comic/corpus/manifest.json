@@ -29,8 +29,8 @@
     {
       "path": "text-read.json",
       "operation": "text_read",
-      "cases": 80,
-      "sha256": "df5c785212d930ac0a094bc160eb2d12cbd12c95f9de0038e02a173e0f3f0a81"
+      "cases": 82,
+      "sha256": "c2b3414d91cf6f72ccaeeda479ebd9d023778bc578992ca1a16d7f23f122402d"
     },
     {
       "path": "text-print.json",
@@ -233,6 +233,10 @@
       "sha256": "4af2c4ed680e55f76b072578e6d5a0bb644b43cf94f3ed6772d2322aae97b674"
     },
     {
+      "path": "text/read-names-nfc-distinct.comic",
+      "sha256": "d71f3f7445c537d8051176966e42c18472d88f96a490d6d59f00ef0f18ec1de9"
+    },
+    {
       "path": "text/read-names-reversed.comic",
       "sha256": "0d313388da31b31af61773345ca6ae04d623931d71123079442dabb8e33732e9"
     },
@@ -387,6 +391,10 @@
     {
       "path": "text/read-refuse-unknown-store-key.comic",
       "sha256": "631605d2d9c5eb1b5d483dc3ed69a8eb6814ba7084492bf879fb9f38d11eeccd"
+    },
+    {
+      "path": "text/read-refuse-unnormalized-name.comic",
+      "sha256": "fd79a302ac204120d827411b2d0fed078245e894707ce2618f4a417fbe8337f6"
     },
     {
       "path": "text/read-refuse-value-cut.comic",
