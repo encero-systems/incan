@@ -217,8 +217,13 @@ impl TypeChecker {
                 .declarations
                 .ownership_contracts
                 .clone_from(&self.dependency_method_input_contracts);
+            self.type_info
+                .declarations
+                .imported_method_headers
+                .clone_from(&self.dependency_method_headers);
         } else {
             self.dependency_method_input_contracts.clear();
+            self.dependency_method_headers.clear();
         }
         self.type_info.declarations.record_package_identity = self.record_package_identity.clone();
         self.warnings.clear();

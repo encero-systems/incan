@@ -32,6 +32,23 @@ pub(crate) struct CheckedOwnedLocal<'a> {
 }
 
 impl<'a> CheckedInputBody<'a> {
+    /// The semantic owner retained by a reference-valued pattern binding. Physical reference storage is separate
+    /// from this dependency; the validated graph fixes the exact source, including projections and loan ancestry.
+    pub(crate) fn reference_binding_source(
+        &self,
+        identity: &CanonicalSymbolId,
+    ) -> Result<Option<CheckedInputSource>, &'static str> {
+        let Some(id) = self.graph.local_loans.get(identity) else {
+            return Ok(None);
+        };
+        let loan = self
+            .graph
+            .loans
+            .get(id.0)
+            .ok_or("reference binding has no checked loan")?;
+        calls::project_source(&loan.source).map(Some)
+    }
+
     /// Whether this aggregate expression physically stores references retained by its checked owned local.
     pub(crate) fn dependent_value(&self, span: HirSourceSpan) -> bool {
         self.graph.dependent_values.contains(&span)

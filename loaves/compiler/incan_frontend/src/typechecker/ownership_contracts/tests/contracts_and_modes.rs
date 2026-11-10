@@ -248,6 +248,64 @@ fn modes_are_refused_at_every_annotation_depth() -> Result<(), Box<dyn std::erro
             checker.errors
         );
     }
+    for mode in ["Borrowed", "BorrowedMut", "Owned"] {
+        let binding = if mode == "BorrowedMut" { "mut " } else { "" };
+        let source = format!(
+            "def apply(callback: Callable[{mode}[str], int], {binding}value: {mode}[str]) -> int:\n    return callback(value)\n"
+        );
+        let checker = checked(&source)?;
+        assert!(
+            checker.errors.is_empty(),
+            "{source}\n{:?}\n{:?}",
+            checker.errors,
+            flow_summary(&checker)
+        );
+    }
+    for source in [
+        "def apply(callback: Callable[Borrowed[str], int], value: Borrowed[str]) -> int:\n    return callback(value)\ndef length(value: Borrowed[str]) -> int:\n    return len(value)\ndef main() -> None:\n    assert apply(length, \"kept\") == 4\n",
+        "def apply[T](callback: Callable[Borrowed[T], int], value: Borrowed[T]) -> int:\n    return callback(value)\ndef length(value: Borrowed[str]) -> int:\n    return len(value)\ndef main() -> None:\n    assert apply(length, \"kept\") == 4\n",
+        "def apply(callback: (mut BorrowedMut[list[int]]) -> int, mut value: BorrowedMut[list[int]]) -> int:\n    return callback(value)\ndef append_one(mut value: BorrowedMut[list[int]]) -> int:\n    value.append(3)\n    return len(value)\ndef main() -> None:\n    mut values = [1, 2]\n    assert apply(append_one, values) == 3\n    assert len(values) == 3\n",
+    ] {
+        let declared_callable = checked(source)?;
+        assert!(
+            declared_callable.errors.is_empty(),
+            "{source}\n{:?}\n{:?}",
+            declared_callable.errors,
+            flow_summary(&declared_callable)
+        );
+    }
+    for (source, code) in [
+        (
+            "def apply(callback: (mut BorrowedMut[list[int]]) -> int, value: Borrowed[list[int]]) -> int:\n    return callback(value)\n",
+            "INCAN-T0126",
+        ),
+        (
+            "def apply(callback: Callable[int, Borrowed[str]], value: int) -> Borrowed[str]:\n    return callback(value)\n",
+            "INCAN-T0124",
+        ),
+        (
+            "def apply(callback: Callable[Owned[list[int]], int], value: Owned[list[int]]) -> int:\n    return callback(value)\ndef count(value: Owned[list[int]]) -> int:\n    return len(value)\ndef main() -> None:\n    values = [1, 2]\n    assert apply(count, values) == 2\n    assert len(values) == 2\n",
+            "INCAN-T0126",
+        ),
+    ] {
+        let checker = checked(source)?;
+        assert!(
+            checker.errors.iter().any(|error| error.stable_code() == Some(code)),
+            "{source}\nexpected {code}: {:?}\n{:?}",
+            checker.errors,
+            flow_summary(&checker)
+        );
+    }
+    let mismatch = checked(
+        "def apply(callback: Callable[Owned[str], int], value: Owned[str]) -> int:\n    return callback(value)\ndef length(value: Borrowed[str]) -> int:\n    return len(value)\ndef main() -> None:\n    assert apply(length, \"kept\") == 4\n",
+    )?;
+    assert!(
+        mismatch.errors.iter().any(|error| error
+            .message
+            .contains("expected '(Owned[Str]) -> Int', found '(Borrowed[Str]) -> Int'")),
+        "{:?}",
+        mismatch.errors
+    );
     Ok(())
 }
 

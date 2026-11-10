@@ -99,6 +99,86 @@ fn imported_trait_inputs_are_inherited() -> Result<(), Box<dyn std::error::Error
         matches!(&binding.params[0].ty, ResolvedType::Generic(name, _) if name == "Borrowed"),
         "{binding:?}"
     );
+    // Ordinary generic trait receivers require the imported declaration header too. Equal declaration offsets in
+    // different modules must not collide, and a shared input never authorizes a mutable receiver.
+    let first = "pub trait First:\n    def read(self) -> str: ...\n";
+    let other = "pub trait Other:\n    def read(self) -> int: ...\n";
+    let first = crate::parser::parse(&crate::lexer::lex(first).map_err(|errors| format!("{errors:?}"))?)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let other = crate::parser::parse(&crate::lexer::lex(other).map_err(|errors| format!("{errors:?}"))?)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let source = "from first import First\nfrom other import Other\ndef text[T with First](value: Borrowed[T]) -> str:\n    return value.read()\ndef number[T with Other](value: Borrowed[T]) -> int:\n    return value.read()\n";
+    let program = crate::parser::parse(&crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&program, &[("first", &first), ("other", &other)])
+        .map_err(|errors| format!("{errors:?}"))?;
+    assert_eq!(checker.type_info.declarations.imported_method_headers.len(), 2);
+    assert_eq!(checker.type_info.protocols.explicit_input_calls.len(), 2);
+    for call in checker.type_info.protocols.explicit_input_calls.values() {
+        assert!(checker.type_info.selected_input_contract(call).is_ok());
+        let owner = call.owner.as_ref().ok_or("missing caller identity")?;
+        assert!(checker.type_info.checked_input_body(owner)?.is_some());
+        let mut missing = checker.type_info.clone();
+        missing.declarations.imported_method_headers.remove(&call.callee);
+        assert!(missing.selected_input_contract(call).is_err());
+        let mut wrong_receiver = call.clone();
+        wrong_receiver.receiver = Some(crate::ast::Receiver::Mutable);
+        assert!(checker.type_info.selected_input_contract(&wrong_receiver).is_err());
+    }
+    // The native driver installs sealed interfaces instead of recollecting these declarations.
+    let mut interface_builder = TypeChecker::new();
+    for name in ["first", "other"] {
+        interface_builder.register_dependency_module_path_segments(name, vec![name.to_string()]);
+    }
+    let interfaces = interface_builder.build_dependency_interface_component(
+        &[
+            (
+                "first",
+                &first,
+                std::sync::Arc::from(crate::module::exported_symbols(&first)),
+            ),
+            (
+                "other",
+                &other,
+                std::sync::Arc::from(crate::module::exported_symbols(&other)),
+            ),
+        ],
+        &[],
+        true,
+    );
+    let mut shared = TypeChecker::new();
+    for name in ["first", "other"] {
+        shared.register_dependency_module_path_segments(name, vec![name.to_string()]);
+    }
+    shared.select_dependency_interfaces(interfaces);
+    shared
+        .check_with_imports(&program, &[("first", &first), ("other", &other)])
+        .map_err(|errors| format!("{errors:?}"))?;
+    assert_eq!(shared.type_info.declarations.imported_method_headers.len(), 2);
+    assert_eq!(shared.type_info.protocols.explicit_input_calls.len(), 2);
+    for call in shared.type_info.protocols.explicit_input_calls.values() {
+        assert!(shared.type_info.selected_input_contract(call).is_ok());
+        assert!(
+            shared
+                .type_info
+                .checked_input_body(call.owner.as_ref().ok_or("missing shared caller")?)?
+                .is_some()
+        );
+    }
+    let mutable = "pub trait Editor:\n    def change(mut self) -> None: ...\n";
+    let mutable = crate::parser::parse(&crate::lexer::lex(mutable).map_err(|errors| format!("{errors:?}"))?)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let source =
+        "from editor import Editor\ndef change[T with Editor](value: Borrowed[T]) -> None:\n    value.change()\n";
+    let program = crate::parser::parse(&crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?)
+        .map_err(|errors| format!("{errors:?}"))?;
+    assert!(
+        TypeChecker::new()
+            .check_with_imports(&program, &[("editor", &mutable)])
+            .is_err()
+    );
     Ok(())
 }
 
@@ -120,6 +200,16 @@ fn dependency_refresh_replaces_input_contracts() -> Result<(), Box<dyn std::erro
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         checker.import_module(&program, "protocols");
         assert_eq!(checker.dependency_method_input_contracts.len(), expected);
+        assert_eq!(checker.dependency_method_headers.len(), 1);
+        let header = checker
+            .dependency_method_headers
+            .values()
+            .next()
+            .ok_or("missing imported header")?;
+        assert_eq!(
+            matches!(&header.params[0].ty, ResolvedType::Generic(name, _) if name == "Borrowed"),
+            expected == 1,
+        );
     }
     Ok(())
 }

@@ -272,6 +272,7 @@ impl TypeChecker {
             self.remap_symbol_kind_through_declaring_module(library, manifest, declaration.as_ref(), &mut kind);
             self.remap_symbol_kind_with_import_aliases(&mut kind, &canonical_remapping);
             Self::mark_compiled_class_field_provider(&mut kind, library);
+            self.retain_admitted_method_headers(&kind);
             if let SymbolKind::Type(info) = kind {
                 self.cache_retained_nominal_layout(declaration.as_ref(), &info);
                 self.transitive_pub_types.entry(canonical_name).or_default().push(info);

@@ -102,6 +102,9 @@ impl TypeChecker {
         if self.trait_self_satisfies_own_bound(ty, bound, bindings) {
             return true;
         }
+        if let Some(satisfies) = self.typed_value_protocol_bound(ty, bound) {
+            return satisfies;
+        }
         if bound.name == builtin_traits::as_str(TraitId::Awaitable) {
             let expected_output = bound
                 .type_args

@@ -60,6 +60,8 @@ impl TypeChecker {
     pub(in crate::typechecker) fn record_indirect_input_call(
         &mut self,
         callee_span: Span,
+        declared: &[CallableParam],
+        result: &ResolvedType,
         parameters: &[CallableParam],
         span: Span,
     ) {
@@ -72,6 +74,11 @@ impl TypeChecker {
         if callee.kind != SemanticSourceTargetKind::Parameter {
             return;
         }
+        // Keep the exact checked lexical signature independently of the value-projected invocation parameters.
+        self.type_info.expressions.body_ir_binding_types.insert(
+            callee.clone(),
+            ResolvedType::Function(declared.to_vec(), Box::new(result.clone())),
+        );
         self.type_info.protocols.explicit_input_calls.insert(
             span,
             super::InputCall {
@@ -292,6 +299,35 @@ impl TypeChecker {
             .retain(|identity, _| identity.origin != origin);
         self.collect_method_ownership_headers(program);
         self.inherit_trait_input_contracts(program);
+        self.type_info
+            .declarations
+            .imported_method_headers
+            .retain(|identity, _| identity.origin != origin);
+        self.dependency_method_headers
+            .retain(|identity, _| identity.origin != origin);
+        for declaration in &program.declarations {
+            let (owner, methods) = match &declaration.node {
+                Declaration::Model(owner) => (&owner.name, &owner.methods),
+                Declaration::Class(owner) => (&owner.name, &owner.methods),
+                Declaration::Enum(owner) => (&owner.name, &owner.methods),
+                Declaration::Newtype(owner) => (&owner.name, &owner.methods),
+                Declaration::Trait(owner) => (&owner.name, &owner.methods),
+                _ => continue,
+            };
+            for method in methods {
+                let Some((header, _)) = self.collected_ownership_method(owner, method) else {
+                    continue;
+                };
+                let Some(identity) = header.identity.as_ref().filter(|identity| identity.origin == origin) else {
+                    continue;
+                };
+                self.type_info
+                    .declarations
+                    .imported_method_headers
+                    .insert(identity.clone(), header.clone());
+                self.dependency_method_headers.insert(identity.clone(), header);
+            }
+        }
         self.dependency_method_input_contracts
             .retain(|identity, _| identity.origin != origin);
         for (identity, contract) in &self.type_info.declarations.ownership_contracts {
@@ -299,6 +335,33 @@ impl TypeChecker {
                 self.dependency_method_input_contracts
                     .insert(identity.clone(), contract.clone());
             }
+        }
+    }
+
+    /// Retain admitted method headers from sealed source interfaces or canonically remapped compiled declarations.
+    /// The canonical member, not a consumer alias or call-site instantiation, owns the receiver access contract.
+    pub(in crate::typechecker) fn retain_admitted_method_headers(&mut self, kind: &crate::symbols::SymbolKind) {
+        use crate::symbols::SymbolKind;
+        let (methods, overloads) = match kind {
+            SymbolKind::Type(TypeInfo::Model(info)) => (&info.methods, Some(&info.method_overloads)),
+            SymbolKind::Type(TypeInfo::Class(info)) => (&info.methods, Some(&info.method_overloads)),
+            SymbolKind::Type(TypeInfo::Enum(info)) => (&info.methods, Some(&info.method_overloads)),
+            SymbolKind::Type(TypeInfo::Newtype(info)) => (&info.methods, Some(&info.method_overloads)),
+            SymbolKind::Trait(info) => (&info.methods, None),
+            _ => return,
+        };
+        for header in methods
+            .values()
+            .chain(overloads.into_iter().flat_map(|groups| groups.values().flatten()))
+        {
+            let Some(identity) = header.identity.as_ref() else {
+                continue;
+            };
+            self.type_info
+                .declarations
+                .imported_method_headers
+                .insert(identity.clone(), header.clone());
+            self.dependency_method_headers.insert(identity.clone(), header.clone());
         }
     }
 
@@ -786,11 +849,8 @@ impl TypeChecker {
                 arguments.iter().collect()
             }
             ResolvedType::Tuple(elements) => elements.iter().collect(),
-            ResolvedType::Function(parameters, result) => parameters
-                .iter()
-                .map(|parameter| &parameter.ty)
-                .chain(std::iter::once(result.as_ref()))
-                .collect(),
+            // These modes govern invoking the callable, not storage or loans of its outer value.
+            ResolvedType::Function(..) => Vec::new(),
             ResolvedType::Ref(inner)
             | ResolvedType::RefMut(inner)
             | ResolvedType::FrozenList(inner)
@@ -861,5 +921,17 @@ impl TypeChecker {
     /// Report malformed source relationships consistently for direct and alias-expanded signatures.
     fn ownership_source_error(message: &str, span: Span) -> CompileError {
         CompileError::type_error(message.to_owned(), span).with_stable_code("INCAN-T0124")
+    }
+}
+
+impl crate::typechecker::TypeCheckInfo {
+    /// Whether method syntax selected an associated callable whose written type token is not a runtime receiver.
+    /// Native associated functions retain function identities; source `@staticmethod` declarations retain method
+    /// identities, so both the absent receiver and the selected declaration kind are required.
+    pub(in crate::typechecker) fn associated_input_call(&self, span: Span) -> bool {
+        self.protocols.explicit_input_calls.get(&span).is_some_and(|call| {
+            call.receiver.is_none()
+                && (call.kind == super::InputCallKind::Native || call.callee.kind == SemanticSourceTargetKind::Method)
+        })
     }
 }

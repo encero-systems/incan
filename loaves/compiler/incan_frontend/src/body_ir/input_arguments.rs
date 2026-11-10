@@ -30,7 +30,7 @@ impl BodyBuilder<'_, '_> {
                 .map_err(|reason| reason.to_string())?
                 .as_ref()
                 .ok_or("explicit input call has no owning source body proof")?;
-            let invocation = proof.invocation(span, target)?;
+            let invocation = proof.invocation(span, target, arguments)?;
             if invocation.receiver.is_some() {
                 return Err("explicit method inputs require their checked receiver materialization".into());
             }
@@ -60,7 +60,7 @@ impl BodyBuilder<'_, '_> {
                 .map_err(|reason| reason.to_string())?
                 .as_ref()
                 .ok_or("explicit method call has no owning source body proof")?;
-            let mut invocation = proof.invocation(span, target)?;
+            let mut invocation = proof.invocation(span, target, arguments)?;
             let checked = invocation
                 .receiver
                 .take()
@@ -145,21 +145,25 @@ impl BodyBuilder<'_, '_> {
                 .get(*slot)
                 .ok_or("explicit input has no selected value parameter")?;
             let ty = super::parameter_types::physical_type_argument(self.checked_type(&parameter.ty));
-            let value = match argument.source {
-                Some(CheckedInputSource::Place { root, fields, elements }) => {
-                    if super::parameter_types::physical_type_argument(self.resolve_ty(expression.span)) != ty {
-                        return Err("explicit source-place input cannot coerce or copy its owner".into());
+            let value = if argument.reference_result {
+                self.lower_reference_input(expression, &ty, argument.access, scope, out)?
+            } else {
+                match argument.source {
+                    Some(CheckedInputSource::Place { root, fields, elements }) => {
+                        if super::parameter_types::physical_type_argument(self.resolve_ty(expression.span)) != ty {
+                            return Err("explicit source-place input cannot coerce or copy its owner".into());
+                        }
+                        let place = self.lower_expr_to_place(expression, scope, out);
+                        self.authenticate_input_place(&place, &root, &fields, &elements)?;
+                        self.explicit_place_operand(place, &ty, argument.access, expression)?
                     }
-                    let place = self.lower_expr_to_place(expression, scope, out);
-                    self.authenticate_input_place(&place, &root, &fields, &elements)?;
-                    self.explicit_place_operand(place, &ty, argument.access, expression)?
-                }
-                Some(CheckedInputSource::CarriedLocal) => {
-                    return Err("explicit input argument cannot use a retained carrier local proof".into());
-                }
-                Some(CheckedInputSource::Temporary) | None => {
-                    let value = self.lower_boundary_value(expression, Some(&ty), scope, out);
-                    self.explicit_temporary_operand(value, ty, argument.access, expression.span, scope, out)?
+                    Some(CheckedInputSource::CarriedLocal) => {
+                        return Err("explicit input argument cannot use a retained carrier local proof".into());
+                    }
+                    Some(CheckedInputSource::Temporary) | None => {
+                        let value = self.lower_boundary_value(expression, Some(&ty), scope, out);
+                        self.explicit_temporary_operand(value, ty, argument.access, expression.span, scope, out)?
+                    }
                 }
             };
             let entry = lowered
@@ -202,8 +206,46 @@ impl BodyBuilder<'_, '_> {
         Ok((operands, binding))
     }
 
-    /// The physical local and every stored field must name the checked source place; similar names or layouts do
-    /// not authorize a borrow. Indexed, global and adapted carriers remain refused by this first consumer.
+    /// Evaluate an authenticated native reference result once and reborrow its actual referent. The source graph
+    /// retains the owner lifetime independently; substituting that owner would lose projections or downcasts.
+    fn lower_reference_input(
+        &mut self,
+        expression: &ast::Spanned<ast::Expr>,
+        referent: &IncanType,
+        access: IncanInputAccess,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<bir::Operand, String> {
+        let actual = super::parameter_types::physical_type_argument(self.resolve_ty(expression.span));
+        let valid = match (&actual, access) {
+            (IncanType::Ref(inner), IncanInputAccess::Shared) => inner.as_ref() == referent,
+            (IncanType::RefMut(inner), IncanInputAccess::Shared | IncanInputAccess::Exclusive) => {
+                inner.as_ref() == referent
+            }
+            _ => false,
+        };
+        if !valid {
+            return Err(format!(
+                "native reference input cannot lend {actual:?} as {access:?} {referent:?}"
+            ));
+        }
+        let place = self.lower_expr_to_place(expression, scope, out);
+        let local = place
+            .local_id()
+            .and_then(|id| self.locals.get(id.index()))
+            .ok_or("native reference input has no evaluated storage")?;
+        if local.origin != bir::LocalOrigin::Temporary || !place.projection.is_empty() || local.ty != actual {
+            return Err("native reference input differs from its evaluated reference carrier".into());
+        }
+        Ok(bir::Operand::place(
+            place,
+            super::returned_views::view_fact(access),
+            false,
+        ))
+    }
+
+    /// Authenticate physical storage against its checked owner dependency, including a reference-valued pattern
+    /// local and each remaining canonical field or index. Similar names or layouts do not authorize a borrow.
     pub(super) fn authenticate_input_place(
         &self,
         place: &bir::Place,
@@ -215,8 +257,44 @@ impl BodyBuilder<'_, '_> {
             .local_id()
             .and_then(|id| self.locals.get(id.index()))
             .ok_or("explicit input has no local owner storage")?;
-        if local.identity.as_deref() != Some(root) || place.projection.len() != fields.len() + elements.len() {
-            return Err("explicit input storage differs from its checked source owner".into());
+        // A pattern can store the actual returned reference while its graph loan still protects the source owner.
+        // Authenticate that relationship before comparing the physical projections following the reference.
+        let reference_source = if matches!(local.ty, IncanType::Ref(_) | IncanType::RefMut(_)) {
+            match (self.input_body.as_ref(), local.identity.as_deref()) {
+                (Ok(Some(proof)), Some(identity)) => proof.reference_binding_source(identity)?,
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let (fields, elements) = match reference_source {
+            Some(CheckedInputSource::Place {
+                root: source,
+                fields: prefix,
+                elements: indices,
+            }) => {
+                let width = prefix.len() + indices.len();
+                if &source != root
+                    || !fields.starts_with(&prefix)
+                    || !elements.starts_with(&indices)
+                    || elements[indices.len()..].iter().any(|position| *position < width)
+                {
+                    return Err("reference input differs from its checked owner dependency".into());
+                }
+                (
+                    fields[prefix.len()..].to_vec(),
+                    elements[indices.len()..]
+                        .iter()
+                        .map(|position| position - width)
+                        .collect(),
+                )
+            }
+            Some(_) => return Err("reference input requires a checked stored owner".into()),
+            None if local.identity.as_deref() == Some(root) => (fields.to_vec(), elements.to_vec()),
+            None => return Err("explicit input storage differs from its checked source owner".into()),
+        };
+        if place.projection.len() != fields.len() + elements.len() {
+            return Err("explicit input storage differs from its checked source projection".into());
         }
         let mut fields = fields.iter();
         for (position, projection) in place.projection.iter().enumerate() {
