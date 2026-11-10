@@ -7,7 +7,7 @@ from std.primitives.crumb.descriptions import Description, DescriptionMode
 from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.row_writer import write_rows
 from std.primitives.crumb.types import AbsentPolicy
-from std.primitives.crumb.values import Metadata, MetadataEntry, Value, ValueField
+from std.primitives.crumb.values import IntegerValue, Metadata, MetadataEntry, Value, ValueField
 
 
 def description(storage: str = "i8", absent: str = "required", kind: str = "Record") -> Description:
@@ -61,8 +61,19 @@ def test_writer_refuses_wrong_field_type_and_contract() -> Result[None, str]:
     registry = KindRegistry.create([], budget).map_err((e) => e.message())?
     original = description()
     assert write_rows([original], [record(Value.Text("7"))], registry, false, budget).is_err()
-    assert write_rows([original], [record(Value.Integer("128"))], registry, false, budget).is_err()
-    wrong = ValueField(identity=b"field1", canonical=false, absent=AbsentPolicy.Required, value=Value.Integer("7"))
+    assert write_rows(
+        [original],
+        [record(Value.Integer(IntegerValue.Signed(128i128)))],
+        registry,
+        false,
+        budget,
+    ).is_err()
+    wrong = ValueField(
+        identity=b"field1",
+        canonical=false,
+        absent=AbsentPolicy.Required,
+        value=Value.Integer(IntegerValue.Signed(7i128)),
+    )
     assert write_rows([original], [RowRecord(key=b"record\x00", value=Value.Record([wrong]))], registry, false, budget).is_err()
     missing = RowRecord(key=b"record\x00", value=Value.Record([]))
     assert write_rows([original], [missing], registry, false, budget).is_err()
@@ -89,7 +100,13 @@ def test_writer_budget_and_depth_fail_without_a_successful_prefix() -> Result[No
     mut setup = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
     registry = KindRegistry.create([], setup).map_err((e) => e.message())?
     mut tiny = Budget.create(bytes=8, elements=65536, depth=64).map_err((e) => e.message())?
-    assert write_rows([description()], [record(Value.Integer("7"))], registry, true, tiny).is_err()
+    assert write_rows(
+        [description()],
+        [record(Value.Integer(IntegerValue.Signed(7i128)))],
+        registry,
+        true,
+        tiny,
+    ).is_err()
     mut shallow = Budget.create(bytes=65536, elements=65536, depth=1).map_err((e) => e.message())?
     assert write_rows([description()], [], registry, false, shallow).is_err()
     assert shallow.leave().is_err()
@@ -100,7 +117,13 @@ def test_inline_writer_retains_unknown_metadata() -> Result[None, str]:
     """Uninterpreted description properties survive inline encoding rather than disappearing at admission."""
     mut budget = Budget.create(bytes=1048576, elements=1048576, depth=64).map_err((e) => e.message())?
     registry = KindRegistry.create([], budget).map_err((e) => e.message())?
-    encoded = write_rows([description()], [record(Value.Integer("7"))], registry, false, budget).map_err(
+    encoded = write_rows(
+        [description()],
+        [record(Value.Integer(IntegerValue.Signed(7i128)))],
+        registry,
+        false,
+        budget,
+    ).map_err(
         (e) => e.message(),
     )?
     # Independently literal UTF-8 bytes for the annotation's stored value.

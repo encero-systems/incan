@@ -5,7 +5,7 @@ from std.primitives.crumb.encoding_cursor import EncodingCursor
 from std.primitives.crumb.encoding_errors import BinaryFailure
 from std.primitives.crumb.metadata_read import read_metadata
 from std.primitives.crumb.metadata_values import encode
-from std.primitives.crumb.exact_numbers import signed_decimal, fixed_integer
+from std.primitives.crumb.wide_integer import WideInteger
 from std.primitives.views import MappedFile, MappedView
 from std.primitives.hex import hexlify
 
@@ -47,15 +47,20 @@ def test_lengths_refuse_nonminimal_overflow_and_host_truncation() -> Result[None
 def test_exact_numeric_reconstruction_without_host_narrowing() -> Result[None, str]:
     """The full signed/unsigned64 endpoints are literal expectations, not outputs from a paired encoder."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
-    low = signed_decimal([127, 127, 127, 127, 127, 127, 127, 127, 127, 1], 0, budget).map_err((e) => e.message())?
-    assert low == "-9223372036854775808"
-    high = fixed_integer(b"\xff\xff\xff\xff\xff\xff\xff\xff", false, 0, budget).map_err((e) => e.message())?
-    assert high == "18446744073709551615"
-    assert signed_decimal([1], 0, budget).map_err((e) => e.message())? == "-1"
-    assert signed_decimal([0], 0, budget).map_err((e) => e.message())? == "0"
-    assert signed_decimal([-1], 0, budget).is_err()
-    assert signed_decimal([128], 0, budget).is_err()
-    assert signed_decimal([9223372036854775807], 0, budget).is_err()
+    low = WideInteger.from_base128([127, 127, 127, 127, 127, 127, 127, 127, 127, 1], budget).map_err(
+        (e) => e.message(),
+    )?.unzigzag(budget).map_err((e) => e.message())?
+    assert low.to_signed() == Some(-9223372036854775808i128)
+    high = WideInteger.from_magnitude(b"\xff\xff\xff\xff\xff\xff\xff\xff")
+    assert high.to_unsigned() == Some(18446744073709551615u128)
+    assert WideInteger.from_base128([1], budget).map_err((e) => e.message())?.unzigzag(budget).map_err(
+        (e) => e.message(),
+    )?.to_signed() == Some(-1i128)
+    assert WideInteger.from_base128([0], budget).map_err((e) => e.message())?.unzigzag(budget).map_err(
+        (e) => e.message(),
+    )?.to_signed() == Some(0i128)
+    assert WideInteger.from_base128([-1], budget).is_err()
+    assert WideInteger.from_base128([128], budget).is_err()
     return Ok(None)
 
 

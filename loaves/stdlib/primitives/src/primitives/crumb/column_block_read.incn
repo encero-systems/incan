@@ -13,7 +13,6 @@ from crate.primitives.crumb.cell_read import cell
 from crate.primitives.crumb.description_dictionary import Dictionary
 from crate.primitives.crumb.encoding_errors import BinaryFailure, failure as binary_failure
 from crate.primitives.crumb.encoding_index import selected, bit, rank
-from crate.primitives.crumb.scalars import compare_integer
 from crate.primitives.crumb.types import TypeNode, ContainerKind, AbsentPolicy
 from crate.primitives.crumb.values import Value
 from crate.primitives.views import MappedView
@@ -116,9 +115,15 @@ def stored_at(
         None => return Err(failure(ColumnFailure.MissingDictionary, block.origin))
         Some(admitted) =>
             number = packed_value(block.payload, block.width, block.present, position, block.origin, budget)?
-            if compare_integer(number, str(admitted.count)) >= 0:
-                return Err(failure(ColumnFailure.DictionaryCode, block.origin))
-            return key_at(admitted, int(number), dictionary, budget)
+            match number.to_unsigned():
+                Some(value) =>
+                    match value.try_resize[int]():
+                        Some(code) =>
+                            if code >= admitted.count:
+                                return Err(failure(ColumnFailure.DictionaryCode, block.origin))
+                            return key_at(admitted, code, dictionary, budget)
+                        None => return Err(failure(ColumnFailure.DictionaryCode, block.origin))
+                None => return Err(failure(ColumnFailure.DictionaryCode, block.origin))
 
 
 pub def absent_value(node: TypeNode, absent: AbsentPolicy, origin: int) -> Result[Value, ColumnError]:

@@ -3,7 +3,7 @@
 This module provides bounded integer and byte framing for Crumb profiles.
 
 ```incan
-from std.primitives.crumb import Budget, CrumbError, CrumbFailure, Reader, encode_signed, encode_unsigned, frame
+from std.primitives.crumb import Budget, CrumbError, CrumbFailure, Reader, encode_native_signed, encode_native_unsigned, frame
 ```
 
 ## Request budget
@@ -22,11 +22,11 @@ Pass the same mutable budget through a request and its children. Failed operatio
 
 | API | Return type | Contract |
 | --- | --- | --- |
-| `encode_unsigned(decimal: str, mut budget: Budget)` | `Result[bytes, CrumbError]` | Encode exact nonnegative decimal digits as shortest unsigned base-128, low group first. |
-| `encode_signed(decimal: str, mut budget: Budget)` | `Result[bytes, CrumbError]` | Encode signed digits using zigzag: `2*n` for nonnegative values, `-2*n-1` otherwise. |
+| `encode_native_unsigned(value: u128, mut budget: Budget)` | `Result[bytes, CrumbError]` | Encode a native nonnegative integer as shortest unsigned base-128, low group first. |
+| `encode_native_signed(value: i128, mut budget: Budget)` | `Result[bytes, CrumbError]` | Encode a native signed integer using zigzag: `2*n` for nonnegative values, `-2*n-1` otherwise. |
 | `frame(data: bytes, mut budget: Budget)` | `Result[bytes, CrumbError]` | Return the shortest encoded byte length followed by copied payload bytes. |
 
-Integer input is canonical ASCII decimal: no whitespace, plus sign or leading zeros; zero is `"0"`. Signed input may begin with `-`, but `"-0"` is refused. Values can exceed `u64` within the caller's limits. They are never converted through a floating-point or host-sized integer.
+Logical integers use `i128` or `u128`, which cover every declared core integer width. Declared scalar kinds still govern range admission and fixed-width row and column encoding. Values are never converted through floating point or a host-sized integer.
 
 Base-128 uses seven payload bits per octet, with bit 7 set except in the final octet. Zero is `00`; 128 is `80 01`. Encoded payload lengths are separate from arbitrary-precision integer values.
 
@@ -63,7 +63,7 @@ The child modules `std.primitives.crumb.types`, `.spelling`, `.identity` and `.a
 
 | Variant | Meaning |
 | --- | --- |
-| `Scalar(ScalarKind)` | One admitted scalar kind: `boolean`, signed/unsigned 8/16/32/64-bit integers, `fp32`, `fp64`, `string`, `binary`, `secret_string`, `secret_bytes` or `reference`. |
+| `Scalar(ScalarKind)` | One admitted scalar kind: `boolean`, signed/unsigned 8/16/32/64/128-bit integers, `fp32`, `fp64`, `string`, `binary`, `secret_string`, `secret_bytes` or `reference`. |
 | `Decimal(int, int)` | Precision and scale, with positive precision and `0 <= scale <= precision`. |
 | `Container(ContainerKind, list[TypeNode])` | `List`, `Set` and `Option` take one argument, `Map` two, `Tuple` any number and `Union` at least one. |
 | `Nominal(NominalKind, bytes, list[TypeNode])` | `Record` or `Enum`, a six-byte declaration identity, and ordered closed arguments. This is a selector without structural fields. |
@@ -143,9 +143,9 @@ Domains start with the exact bytes `crumb1`, zero, then purpose byte: object `01
 | Variant | Input contract |
 | --- | --- |
 | `NoneValue`, `Some(list[Value])` | Some has exactly one child. Nested absent states remain distinct; present optional wrappers do not change their child's contribution. |
-| `Boolean(bool)`, `Integer(str)` | Integers use canonical exact decimal strings and may exceed host width. |
+| `Boolean(bool)`, `Integer(IntegerValue)` | `IntegerValue.Signed(i128)` and `.Unsigned(u128)` retain the declared domain's signedness. |
 | `Float(int, bytes)` | Width is 32 or 64; bytes are the corresponding IEEE bits in big-endian order. Binary32 widens exactly. All NaNs normalize; signed zeros remain distinct. |
-| `Decimal(str, str)` | Exact coefficient and scale. Trailing coefficient zeros are removed and scale adjusted without host-width limits; zero normalizes to coefficient and scale zero. |
+| `Decimal(i128, int)` | Exact native coefficient and integer scale. Declared precision is from 1 through 38 digits. Trailing coefficient zeros are removed and the scale adjusted; zero normalizes to coefficient and scale zero. |
 | `Text(str)`, `Binary(bytes)`, `Withheld` | Text is exact UTF-8 with no Unicode normalization. Withheld is a distinct contribution, not an empty value. |
 | `List(list[Value])`, `Tuple(list[Value])`, `Set(list[Value])` | Lists and tuples retain order. Sets are ordered by stored-value comparison; duplicate original values are invalid. |
 | `Map(list[MapEntry])` | `MapEntry(key: Value, value: Value)` retains original entries; duplicate original keys are invalid. |
@@ -160,7 +160,7 @@ Stored comparison is numeric for integers and decimals, preserves signed-zero or
 
 ### Complete metadata inputs
 
-`Metadata` supports `Null`, `Boolean(bool)`, `Integer(str)`, `Text(str)`, `Binary(bytes)`, `List(list[Metadata])` and `Map(list[MetadataEntry])`. `MetadataEntry(key: str, value: Metadata)` uses exact string keys. Duplicate keys are refused; map entries encode in UTF-8 key order, while lists retain order. Every supplied property participates in the digest, including properties this layer does not interpret. A consumer must separately admit any property interpretation that changes value decoding or reconstruction. Uninterpreted metadata remains data and is retained in full.
+`Metadata` supports `Null`, `Boolean(bool)`, `Integer(i128)`, `Text(str)`, `Binary(bytes)`, `Symbol(str)`, `List(list[Metadata])` and `Map(list[MetadataEntry])`. `MetadataEntry(key: str, value: Metadata)` uses exact string keys. Duplicate keys are refused; map entries encode in direct UTF-8 byte order, while lists retain order. Every supplied property participates in the digest, including properties this layer does not interpret. A consumer must separately admit any property interpretation that changes value decoding or reconstruction. Uninterpreted metadata remains data and is retained in full.
 
 ## Profile kind registrations
 
@@ -271,24 +271,16 @@ No failed finite admission exposes a partial set or unchecked view. The prefix A
 | `read_comic_text(source: str, context: TextContext, mut budget: Budget)` | `Result[TextDocument, TextError]` | Read an already decoded string under the same token, element and nesting limits. Callers that begin with bytes use `read_comic` so UTF-8 validation and the input-byte charge remain part of the operation. |
 | `print_comic(document: TextDocument, context: TextContext, mut budget: Budget)` | `Result[bytes, TextError]` | Return the unique canonical UTF-8 form with LF separators and a final newline. Output bytes and traversed document elements consume the shared budget. Invalid typed carriers, unknown kinds and limit exhaustion return `TextError`. |
 
-`TextError(kind: str, position: TextPosition)` reports a stable refusal category. `TextPosition(line: int, column: int)` is one-based and counts Unicode scalar values. `TextError.message() -> str` returns `"<kind> at <line>:<column>"`. Printer errors use position `1:1`.
+`TextError(kind: TextFailure, position: TextPosition)` reports a stable refusal category. `TextFailure` is a string-valued enum. `TextPosition(line: int, column: int)` is one-based and counts Unicode scalar values. `TextError.message() -> str` returns `"<kind> at <line>:<column>"`. Printer errors use position `1:1`.
 
-`TextDocument(descriptions: list[TextDescription], values: list[TextValue])` owns descriptions and root values. Descriptions are printed by path and kind; values retain their document order, and consecutive root values of one type print as one table.
+`TextDocument(descriptions: list[TextDescription], values: list[TextRootValue])` owns descriptions and root values. Descriptions are printed by path and kind; values retain their document order, and consecutive root values of one type print as one table.
 
 | Carrier | Fields or variants |
 | --- | --- |
-| `TextDescription` | `path: str`, `kind: str`, `shape: str`, `properties: list[TextProperty]`, `fields: list[TextField]`, `variants: list[TextVariant]` |
-| `TextField` | `name: str`, `storage_type: TextType`, `absent: AbsentPolicy`, `canonical: bool`, `properties: list[TextProperty]` |
-| `TextVariant` | `name: str`, `fields: list[TextField]` |
-| `TextProperty` | `name: str`, `value: TextPropertyValue` |
-| `TextNamedValue` | `name: str`, `value: TextValue` |
-| `TextMapEntry` | `key: TextValue`, `value: TextValue` |
+| `TextDescription` | `path: str`, `kind: str`, `shape: NominalKind`, `identity: Option[bytes]`, `properties: Metadata`, `fields: list[FieldShape]`, `variants: list[VariantShape]` |
+| `TextRootValue` | `storage_type: TypeNode`, `value: Value` |
 
-`TextType` has `Scalar(str)`, `Decimal(int, int)`, `List(list[TextType])`, `Set(list[TextType])`, `Map(list[TextType])`, `Option(list[TextType])`, `Union(list[TextType])`, `Reference(list[TextType])` and `Named(str)`. The list-backed constructor variants contain their declared fixed arity: one item for list, set, option and reference; two for map; one or more for union.
-
-`TextPropertyValue` has `Symbol(str)`, `Text(str)`, `Boolean(bool)`, `Integer(str)`, `List(list[TextPropertyValue])` and `Group(list[TextProperty])`. Symbols and groups remain inert. A known registration supplies canonical outer and nested property orders; an unknown order retains read order.
-
-`TextValue` has `NoneValue`, `Some(list[TextValue])`, `Boolean(bool)`, `Integer(str, str)`, `Float(int, bytes)`, `Decimal(str, int, int)`, `Text(str)`, `Binary(bytes)`, `Withheld(str)`, `List(list[TextValue])`, `Set(list[TextValue])`, `Map(list[TextMapEntry])`, `Record(str, list[TextNamedValue])`, `Enum(str, str, list[TextNamedValue])`, `Union(str, list[TextValue])` and `Reference(str, str)`. Integer values retain their exact storage type and decimal digits. Float values retain width and network-order IEEE bits; printing derives the shortest canonical spelling from those bits. Decimal values retain coefficient, precision and scale. Withheld secret values print only as `<secret>`.
+COMIC parsing and printing use the same `TypeNode`, `Value` and `Metadata` model as binary Crumb. Integer values retain native signed or unsigned carriers, float values retain width and network-order IEEE bits, and decimals retain a native coefficient and integer scale. A known registration supplies canonical outer and nested property orders; an unknown order retains read order.
 
 Comments are discarded. A cut between complete entries yields the shorter document; a cut inside a value or table returns `unexpected_end`. Raw Unicode bidirectional controls are refused everywhere and must use the canonical escaped spelling in string data. A reference retains its target type and identity text without resolution.
 

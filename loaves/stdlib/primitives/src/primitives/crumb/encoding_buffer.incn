@@ -2,7 +2,7 @@
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
-from crate.primitives.crumb.framing import encode_unsigned
+from crate.primitives.crumb.framing import encode_native_unsigned
 
 
 pub class EncodingBuffer:
@@ -40,7 +40,7 @@ pub class EncodingBuffer:
         """Host-sized nonnegative lengths are a representable subset of the exact unsigned L domain."""
         if value < 0:
             return Err(CrumbError.invalid_input("negative encoding length"))
-        return self.append(encode_unsigned(str(value), budget)?, budget)
+        return self.append(encode_native_unsigned(value.wrapping_resize[u128](), budget)?, budget)
 
     pub def frame(mut self, value: bytes, mut budget: Budget) -> Result[None, CrumbError]:
         """Append the shortest length and exact payload under one shared request budget."""

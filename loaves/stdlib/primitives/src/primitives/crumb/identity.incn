@@ -2,7 +2,7 @@
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
-from crate.primitives.crumb.framing import encode_unsigned, frame
+from crate.primitives.crumb.framing import encode_native_unsigned, frame
 from crate.primitives.crumb.types import TypeNode
 from crate.primitives.crumb.spelling import selector_spelling
 from crate.primitives.hash import sha256
@@ -69,7 +69,7 @@ pub def closed_selector(node: TypeNode, mut budget: Budget) -> Result[bytes, Cru
             # 2. Arguments are framed individually; parameter names never enter K.
             mut output: list[u8] = []
             append_bytes(output, identity, budget)?
-            append_bytes(output, encode_unsigned(str(len(arguments)), budget)?, budget)?
+            append_bytes(output, encode_native_unsigned(len(arguments).wrapping_resize[u128](), budget)?, budget)?
             for argument in arguments:
                 spelling = selector_spelling(argument, budget)?
                 append_bytes(output, frame(encode_utf8(spelling), budget)?, budget)?

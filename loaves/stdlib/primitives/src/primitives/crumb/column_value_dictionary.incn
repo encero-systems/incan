@@ -8,7 +8,7 @@ from crate.primitives.crumb.ordering import order_values
 from crate.primitives.crumb.encoding_buffer import EncodingBuffer, indexed
 from crate.primitives.crumb.cells import cell
 from crate.primitives.crumb.description_dictionary import Dictionary
-from crate.primitives.crumb.scalars import subtract_integer
+from crate.primitives.crumb.wide_integer import WideInteger
 from crate.primitives.crumb.types import ScalarKind, TypeNode
 from crate.primitives.crumb.values import Value, Projection
 from crate.primitives.hex import hexlify
@@ -93,7 +93,7 @@ pub def encode_keys(
     mut chunks: list[bytes] = []
     mut chunk = EncodingBuffer.create()
     mut previous: bytes = b""
-    mut previous_number = "0"
+    mut previous_number = WideInteger.zero()
     for index in range(len(keys.values)):
         budget.charge_elements(1)?
         if index != 0 and index % 16 == 0:
@@ -104,7 +104,7 @@ pub def encode_keys(
             if index % 16 == 0:
                 chunk.frame(cell(node, keys.values[index], dictionary, budget)?, budget)?
             else:
-                difference = subtract_integer(number, previous_number, budget)?
+                difference = number.subtract(previous_number, budget)?
                 chunk.frame(magnitude_bytes(difference, budget)?, budget)?
             previous_number = number
         else:

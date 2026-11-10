@@ -2,6 +2,7 @@
 
 from crate.primitives.crumb.encoding_index import CellIndex
 from crate.primitives.views import MappedView
+from crate.primitives.crumb.wide_integer import WideInteger
 
 
 pub model BlockData:
@@ -16,4 +17,4 @@ pub model BlockData:
     pub origin: int
     pub cells: Option[CellIndex] = None
     pub width: int = 0
-    pub base: str = "0"
+    pub base: WideInteger

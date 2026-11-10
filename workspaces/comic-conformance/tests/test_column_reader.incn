@@ -9,7 +9,7 @@ from std.primitives.crumb.registrations import KindRegistry
 from std.primitives.crumb.encoding_errors import BinaryFailure
 from std.primitives.crumb.encoding_buffer import EncodingBuffer
 from std.primitives.crumb.records import RowRecord
-from std.primitives.crumb.values import Value, ValueField
+from std.primitives.crumb.values import IntegerValue, Value, ValueField
 from std.primitives.crumb.types import AbsentPolicy
 from encoding_test_support import description, member, backing
 
@@ -25,7 +25,7 @@ def retained_field() -> Result[ColumnField, str]:
             identity=b"field1",
             canonical=true,
             absent=AbsentPolicy.Required,
-            value=Value.Integer(str(number)),
+            value=Value.Integer(IntegerValue.Signed(number.wrapping_resize[i128]())),
         )
         records.append(RowRecord(key=b"record\x00", value=Value.Record([field])))
     choices = [GroupChoice(columns=[ColumnChoice(blocks=[BlockEncoding.FrameOfReference, BlockEncoding.ZigzagDelta])])]
@@ -45,7 +45,7 @@ def test_retained_column_field_outlives_its_set() -> Result[None, str]:
     mut budget = Budget.create(bytes=4096, elements=4096, depth=64).map_err((e) => e.message())?
     match field.read(budget).map_err((e) => e.message())?:
         Value.Integer(value) =>
-            assert value == "256"
+            assert value == IntegerValue.Signed(256i128)
         _ => return Err("retained numeric field lost its type")
     return Ok(None)
 
@@ -55,7 +55,12 @@ def test_projection_does_not_materialize_a_large_neighbor() -> Result[None, str]
     mut budget = Budget.create(bytes=16777216, elements=1048576, depth=128).map_err((e) => e.message())?
     registry = KindRegistry.create([], budget).map_err((e) => e.message())?
     declared = description(b"record\x00", [member(b"field1", "i8"), member(b"field2", "binary")])
-    small = ValueField(identity=b"field1", canonical=true, absent=AbsentPolicy.Required, value=Value.Integer("7"))
+    small = ValueField(
+        identity=b"field1",
+        canonical=true,
+        absent=AbsentPolicy.Required,
+        value=Value.Integer(IntegerValue.Signed(7i128)),
+    )
     payload: bytes = [1u8 for _ in range(16384)]
     large = ValueField(identity=b"field2", canonical=true, absent=AbsentPolicy.Required, value=Value.Binary(payload))
     rows = [RowRecord(key=b"record\x00", value=Value.Record([small, large]))]
@@ -64,7 +69,7 @@ def test_projection_does_not_materialize_a_large_neighbor() -> Result[None, str]
     mut small_budget = Budget.create(bytes=8192, elements=8192, depth=64).map_err((e) => e.message())?
     match admitted.read_field(0, b"field1", small_budget).map_err((e) => e.message())?:
         Value.Integer(value) =>
-            assert value == "7"
+            assert value == IntegerValue.Signed(7i128)
         _ => return Err("projected field lost its type")
     mut large_budget = Budget.create(bytes=8192, elements=8192, depth=64).map_err((e) => e.message())?
     assert admitted.read_field(0, b"field2", large_budget).is_err()
@@ -84,7 +89,12 @@ def test_corrupt_unselected_column_prevents_set_admission() -> Result[None, str]
     mut budget = Budget.create(bytes=16777216, elements=1048576, depth=128).map_err((e) => e.message())?
     registry = KindRegistry.create([], budget).map_err((e) => e.message())?
     declared = description(b"record\x00", [member(b"field1", "i8"), member(b"field2", "boolean")])
-    first = ValueField(identity=b"field1", canonical=true, absent=AbsentPolicy.Required, value=Value.Integer("7"))
+    first = ValueField(
+        identity=b"field1",
+        canonical=true,
+        absent=AbsentPolicy.Required,
+        value=Value.Integer(IntegerValue.Signed(7i128)),
+    )
     last = ValueField(identity=b"field2", canonical=true, absent=AbsentPolicy.Required, value=Value.Boolean(false))
     rows = [RowRecord(key=b"record\x00", value=Value.Record([first, last]))]
     raw = write_columns([declared], rows, registry, false, [], budget).map_err((e) => e.message())?

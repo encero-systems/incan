@@ -42,7 +42,7 @@ def spell_inner(node: TypeNode, nominal: bool, mut active: list[str], mut budget
     match node:
         TypeNode.Scalar(kind) => return compose("", [scalar_spelling(kind)], "", "", budget)
         TypeNode.Decimal(precision, scale) =>
-            if precision <= 0 or scale < 0 or scale > precision:
+            if precision <= 0 or precision > 38 or scale < 0 or scale > precision:
                 return Err(CrumbError.invalid_input("decimal bounds"))
             return compose("decimal<", [str(precision), str(scale)], ",", ">", budget)
         TypeNode.Container(kind, items) => return container(kind, items, nominal, active, budget)

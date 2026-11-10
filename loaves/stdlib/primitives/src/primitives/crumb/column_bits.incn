@@ -1,23 +1,14 @@
-"""Exact packed unsigned values, including residuals and zigzag deltas wider than u64."""
+"""Exact packed unsigned values, including residuals and zigzag deltas wider than u128."""
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
-from crate.primitives.crumb.framing import encode_unsigned
 from crate.primitives.crumb.encoding_buffer import EncodingBuffer
+from crate.primitives.crumb.wide_integer import WideInteger
 
 
-pub def bit_length(decimal: str, mut budget: Budget) -> Result[int, CrumbError]:
+pub def bit_length(value: WideInteger, mut budget: Budget) -> Result[int, CrumbError]:
     """Return exact magnitude width; canonical zero needs no packed bits."""
-    groups = encode_unsigned(decimal, budget)?
-    if len(groups) > 9223372036854775807 // 7:
-        return Err(CrumbError.limit("packed integer width"))
-    mut top = int(groups[len(groups) - 1])
-    mut width = (len(groups) - 1) * 7
-    while top > 0:
-        budget.charge_elements(1)?
-        width += 1
-        top = top >> 1
-    return Ok(width)
+    return value.bit_length(budget)
 
 
 pub def packed_length(width: int, count: int) -> Result[int, CrumbError]:
@@ -33,8 +24,8 @@ pub def packed_length(width: int, count: int) -> Result[int, CrumbError]:
     return Ok(length)
 
 
-pub def pack(width: int, values: list[str], mut budget: Budget) -> Result[bytes, CrumbError]:
-    """Pack exactly width low-first bits per canonical unsigned value, with zero final padding."""
+pub def pack(width: int, values: list[WideInteger], mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Pack exactly width low-first bits per nonnegative widened value, with zero final padding."""
     length = packed_length(width, len(values))?
     budget.charge_elements(width)?
     budget.charge_elements(len(values))?
@@ -43,15 +34,15 @@ pub def pack(width: int, values: list[str], mut budget: Budget) -> Result[bytes,
     mut pending = 0
     mut used = 0
     for value in values:
-        groups = encode_unsigned(value, budget)?
-        if bit_length(value, budget)? > width:
+        if value.bit_length(budget)? > width:
             return Err(CrumbError.invalid_input("packed value exceeds width"))
+        magnitude = value.bytes()
         for position in range(width):
             budget.charge_elements(1)?
             mut bit = 0
-            group_index = position // 7
-            if group_index < len(groups):
-                bit = (int(groups[group_index]) >> (position % 7)) & 1
+            byte_index = position // 8
+            if byte_index < len(magnitude):
+                bit = (int(magnitude[byte_index]) >> (position % 8)) & 1
             pending |= bit << used
             used += 1
             if used == 8:
@@ -63,9 +54,9 @@ pub def pack(width: int, values: list[str], mut budget: Budget) -> Result[bytes,
     return output.finish(budget)
 
 
-pub def magnitude_bytes(decimal: str, mut budget: Budget) -> Result[bytes, CrumbError]:
-    """Shortest unsigned little-endian octets for a strictly positive numeric dictionary difference."""
-    width = bit_length(decimal, budget)?
-    if width == 0:
+pub def magnitude_bytes(value: WideInteger, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Return shortest little-endian octets for a strictly positive dictionary difference."""
+    if value.is_negative() or value.is_zero():
         return Err(CrumbError.invalid_input("nonpositive dictionary difference"))
-    return pack(width, [decimal], budget)
+    budget.charge_bytes(len(value.bytes()))?
+    return Ok(value.bytes())

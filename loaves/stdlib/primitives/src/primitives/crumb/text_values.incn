@@ -1,14 +1,14 @@
 """Typed COMIC value reading through document-owned descriptions."""
 
-from rust::std::primitive import f32 as RustF32, f64 as RustF64
+from rust::std::primitive import f32 as RustF32, f64 as RustF64, i128 as RustI128, u128 as RustU128
 from rust::std::str import FromStr
 from crate.primitives.crumb.budget import Budget
-from crate.primitives.crumb.scalars import compare_integer
+from crate.primitives.crumb.native_numbers import integer_compare, integer_spelling
 from crate.primitives.crumb.text_syntax import description_at, last_segment, resolve_named, type_spelling
 from crate.primitives.crumb.text_tokens import TextToken, TextTokenKind, TextTokens
 from crate.primitives.crumb.text_types import TextDescription, TextError, TextFailure, TextPosition, TextRootValue
 from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, NominalKind, ScalarKind, TypeNode
-from crate.primitives.crumb.values import MapEntry, Value, ValueField
+from crate.primitives.crumb.values import IntegerValue, MapEntry, Value, ValueField
 from crate.primitives.hex import hexlify
 from crate.primitives.text import encode_utf8
 
@@ -236,10 +236,21 @@ def parse_integer(kind: ScalarKind, token: TextToken) -> Result[Value, TextError
     value = token.text
     if not canonical_integer(value):
         return Err(TextError(kind=TextFailure.InvalidInteger, position=token.position))
-    minimum, maximum = integer_range(kind)
-    if compare_integer(value, minimum) < 0 or compare_integer(value, maximum) > 0:
-        return Err(TextError(kind=TextFailure.IntegerOutOfRange, position=token.position))
-    return Ok(Value.Integer(value))
+    match kind.integer_facts():
+        Some((true, bits)) =>
+            match RustI128.from_str(value):
+                Ok(number) =>
+                    if signed_in_width(number, bits):
+                        return Ok(Value.Integer(IntegerValue.Signed(number)))
+                Err(_) => pass
+        Some((false, bits)) =>
+            match RustU128.from_str(value):
+                Ok(number) =>
+                    if unsigned_in_width(number, bits):
+                        return Ok(Value.Integer(IntegerValue.Unsigned(number)))
+                Err(_) => pass
+        None => pass
+    return Err(TextError(kind=TextFailure.IntegerOutOfRange, position=token.position))
 
 
 def parse_float(kind: ScalarKind, token: TextToken) -> Result[Value, TextError]:
@@ -276,7 +287,9 @@ def parse_decimal(precision: int, scale: int, mut tokens: TextTokens) -> Result[
         coefficient = "0"
     if len(coefficient.replace("-", "")) > precision:
         return Err(TextError(kind=TextFailure.DecimalPrecision, position=token.position))
-    return Ok(Value.Decimal(coefficient, str(scale)))
+    match RustI128.from_str(coefficient):
+        Ok(value) => return Ok(Value.Decimal(value, scale))
+        Err(_) => return Err(TextError(kind=TextFailure.DecimalPrecision, position=token.position))
 
 
 def parse_optional(
@@ -519,18 +532,20 @@ def canonical_unsigned(value: str) -> bool:
     return true
 
 
-def integer_range(kind: ScalarKind) -> tuple[str, str]:
-    """Return the exact inclusive decimal range of one core integer spelling."""
-    match kind:
-        ScalarKind.I8 => return ("-128", "127")
-        ScalarKind.I16 => return ("-32768", "32767")
-        ScalarKind.I32 => return ("-2147483648", "2147483647")
-        ScalarKind.I64 => return ("-9223372036854775808", "9223372036854775807")
-        ScalarKind.U8 => return ("0", "255")
-        ScalarKind.U16 => return ("0", "65535")
-        ScalarKind.U32 => return ("0", "4294967295")
-        ScalarKind.U64 => return ("0", "18446744073709551615")
-        _ => return ("0", "0")
+def signed_in_width(value: i128, bits: int) -> bool:
+    """Check one parsed signed value against its declared storage width."""
+    if bits == 128:
+        return true
+    limit: i128 = 1i128 << (bits - 1)
+    return value >= 0i128 - limit and value < limit
+
+
+def unsigned_in_width(value: u128, bits: int) -> bool:
+    """Check one parsed unsigned value against its declared storage width."""
+    if bits == 128:
+        return true
+    limit: u128 = 1u128 << bits
+    return value < limit
 
 
 def valid_finite_float(value: str) -> bool:
@@ -654,7 +669,7 @@ def compare_text_values(left: Value, right: Value) -> int:
     match left:
         Value.Integer(left_value) =>
             match right:
-                Value.Integer(right_value) => return compare_integer(left_value, right_value)
+                Value.Integer(right_value) => return integer_compare(left_value, right_value)
                 _ => pass
         _ => pass
     left_key = order_key(left)
@@ -673,7 +688,7 @@ def order_key(value: Value) -> str:
             if flag:
                 return "b1"
             return "b0"
-        Value.Integer(decimal) => return "i" + decimal
+        Value.Integer(number) => return "i" + integer_spelling(number)
         Value.Text(text) => return "s" + text
         Value.Binary(data) => return "x" + hexlify(data)
         Value.NoneValue => return "n"

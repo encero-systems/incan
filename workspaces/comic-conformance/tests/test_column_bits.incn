@@ -3,25 +3,38 @@
 from std.primitives.crumb import Budget
 from std.primitives.crumb.column_bits import bit_length, pack, packed_length, magnitude_bytes
 from std.primitives.hex import hexlify
-from std.primitives.crumb.scalars import add_integer, subtract_integer
 from std.primitives.crumb.column_numbers import zigzag, unzigzag
+from std.primitives.crumb.wide_integer import WideInteger
 
 
 def test_packing_crosses_octets_without_host_integer_narrowing() -> Result[None, str]:
     """Low-bit-first values cross byte boundaries; unsigned64 and 65-bit values stay exact."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
-    assert bit_length("0", budget).map_err((e) => e.message())? == 0
-    assert bit_length("18446744073709551615", budget).map_err((e) => e.message())? == 64
-    assert bit_length("36893488147419103230", budget).map_err((e) => e.message())? == 65
-    assert hexlify(pack(3, ["1", "2", "7"], budget).map_err((e) => e.message())?) == "d101"
-    assert hexlify(pack(0, ["0", "0"], budget).map_err((e) => e.message())?) == ""
-    raw = pack(65, ["36893488147419103230"], budget).map_err((e) => e.message())?
+    zero = WideInteger.zero()
+    maximum = WideInteger.from_unsigned(18446744073709551615u128)
+    doubled = WideInteger.from_unsigned(36893488147419103230u128)
+    assert bit_length(zero, budget).map_err((e) => e.message())? == 0
+    assert bit_length(maximum, budget).map_err((e) => e.message())? == 64
+    assert bit_length(doubled, budget).map_err((e) => e.message())? == 65
+    assert hexlify(
+        pack(
+            3,
+            [
+                WideInteger.from_unsigned(1u128),
+                WideInteger.from_unsigned(2u128),
+                WideInteger.from_unsigned(7u128),
+            ],
+            budget,
+        ).map_err((e) => e.message())?,
+    ) == "d101"
+    assert hexlify(pack(0, [zero, zero], budget).map_err((e) => e.message())?) == ""
+    raw = pack(65, [doubled], budget).map_err((e) => e.message())?
     assert hexlify(raw) == "feffffffffffffff01"
-    high = magnitude_bytes("18446744073709551615", budget).map_err((e) => e.message())?
+    high = magnitude_bytes(maximum, budget).map_err((e) => e.message())?
     assert hexlify(high) == "ffffffffffffffff"
-    assert pack(0, ["1"], budget).is_err()
-    assert pack(3, ["8"], budget).is_err()
-    assert magnitude_bytes("0", budget).is_err()
+    assert pack(0, [WideInteger.from_unsigned(1u128)], budget).is_err()
+    assert pack(3, [WideInteger.from_unsigned(8u128)], budget).is_err()
+    assert magnitude_bytes(zero, budget).is_err()
     assert packed_length(9223372036854775807, 2).is_err()
     assert packed_length(0, 9223372036854775807).map_err((e) => e.message())? == 0
     return Ok(None)
@@ -30,13 +43,19 @@ def test_packing_crosses_octets_without_host_integer_narrowing() -> Result[None,
 def test_signed_column_arithmetic_keeps_extreme_differences() -> Result[None, str]:
     """Signed subtraction of unsigned values and arbitrary decimal magnitudes never wraps."""
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?
-    span = subtract_integer("9223372036854775807", "-9223372036854775808", budget).map_err((e) => e.message())?
-    assert span == "18446744073709551615"
-    assert add_integer("-10", "10", budget).map_err((e) => e.message())? == "0"
-    assert add_integer("999999999999999999999999999999", "1", budget).map_err((e) => e.message())? == "1000000000000000000000000000000"
-    assert subtract_integer("0", "18446744073709551615", budget).map_err((e) => e.message())? == "-18446744073709551615"
-    assert zigzag("-18446744073709551615", budget).map_err((e) => e.message())? == "36893488147419103229"
-    assert unzigzag("36893488147419103229", budget).map_err((e) => e.message())? == "-18446744073709551615"
-    assert add_integer("-0", "1", budget).is_err()
-    assert subtract_integer("1", "01", budget).is_err()
+    span = WideInteger.from_signed(9223372036854775807i128).subtract(
+        WideInteger.from_signed(-9223372036854775808i128),
+        budget,
+    ).map_err((e) => e.message())?
+    assert span.to_unsigned() == Some(18446744073709551615u128)
+    zero = WideInteger.from_signed(-10i128).add(WideInteger.from_signed(10i128), budget).map_err(
+        (e) => e.message(),
+    )?
+    assert zero.is_zero()
+    negative_span = WideInteger.zero().subtract(WideInteger.from_unsigned(18446744073709551615u128), budget).map_err(
+        (e) => e.message(),
+    )?
+    encoded = zigzag(negative_span, budget).map_err((e) => e.message())?
+    assert encoded.to_unsigned() == Some(36893488147419103229u128)
+    assert unzigzag(encoded, budget).map_err((e) => e.message())?.compare(negative_span) == 0
     return Ok(None)

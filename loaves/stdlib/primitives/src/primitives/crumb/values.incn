@@ -10,21 +10,29 @@ pub enum Projection(str):
     Canonical = "canonical"
 
 
+pub enum IntegerValue:
+    """One fixed-width logical integer, retaining whether its declared domain is signed or unsigned."""
+
+    Signed(i128)
+    Unsigned(u128)
+
+
 pub enum Value:
     """
     Owned format values supplied after binding admission, not executable runtime objects.
 
-    Integers and decimal coefficients/scales use canonical exact decimal strings. Float inputs
-    retain their IEEE bits and width. Some and Union carry exactly one child. Record fields
-    retain their original identities and absent policies; references retain only opaque identities.
+    Integers use native i128/u128 carriers and decimals use a native i128 coefficient with an
+    integer scale. Float inputs retain their IEEE bits and width. Some and Union carry exactly one
+    child. Record fields retain their original identities and absent policies; references retain
+    only opaque identities.
     """
 
     NoneValue
     Some(list[Value])
     Boolean(bool)
-    Integer(str)
+    Integer(IntegerValue)
     Float(int, bytes)
-    Decimal(str, str)
+    Decimal(i128, int)
     Text(str)
     Binary(bytes)
     Withheld
@@ -59,7 +67,7 @@ pub enum Metadata:
 
     Null
     Boolean(bool)
-    Integer(str)
+    Integer(i128)
     Text(str)
     Binary(bytes)
     Symbol(str)

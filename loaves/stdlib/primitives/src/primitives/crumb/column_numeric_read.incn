@@ -6,7 +6,6 @@ from crate.primitives.crumb.column_block_data import BlockData
 from crate.primitives.crumb.column_errors import ColumnError, ColumnFailure, failure, primitive, overflow
 from crate.primitives.crumb.column_numbers import from_coefficient, unzigzag
 from crate.primitives.crumb.column_pack_read import packed_value
-from crate.primitives.crumb.scalars import add_integer
 from crate.primitives.crumb.types import TypeNode
 from crate.primitives.crumb.values import Value
 
@@ -25,16 +24,16 @@ pub def numeric_values(block: &BlockData, node: TypeNode, mut budget: Budget) ->
             maximum_width = max(
                 [maximum_width, bit_length(residual, budget).map_err((e) => primitive(e, block.origin))?],
             )
-            if residual == "0":
+            if residual.is_zero():
                 has_zero = true
-            number = add_integer(block.base, residual, budget).map_err((e) => primitive(e, block.origin))?
+            number = block.base.add(residual, budget).map_err((e) => primitive(e, block.origin))?
         elif index > 0:
             residual = packed_value(block.payload, block.width, block.present - 1, index - 1, block.origin, budget)?
             maximum_width = max(
                 [maximum_width, bit_length(residual, budget).map_err((e) => primitive(e, block.origin))?],
             )
             difference = unzigzag(residual, budget).map_err((e) => primitive(e, block.origin))?
-            number = add_integer(current, difference, budget).map_err((e) => primitive(e, block.origin))?
+            number = current.add(difference, budget).map_err((e) => primitive(e, block.origin))?
         current = number
         value = from_coefficient(node, number, budget).map_err((e) => overflow(e, block.origin))?
         budget.charge_bytes(16).map_err((e) => primitive(e, block.origin))?
@@ -51,11 +50,11 @@ pub def numeric_at(block: &BlockData, node: TypeNode, position: int, mut budget:
     mut number = block.base
     if block.encoding == 1:
         residual = packed_value(block.payload, block.width, block.present, position, block.origin, budget)?
-        number = add_integer(number, residual, budget).map_err((e) => primitive(e, block.origin))?
+        number = number.add(residual, budget).map_err((e) => primitive(e, block.origin))?
     else:
         for index in range(position):
             budget.charge_elements(1).map_err((e) => primitive(e, block.origin))?
             residual = packed_value(block.payload, block.width, block.present - 1, index, block.origin, budget)?
             difference = unzigzag(residual, budget).map_err((e) => primitive(e, block.origin))?
-            number = add_integer(number, difference, budget).map_err((e) => primitive(e, block.origin))?
+            number = number.add(difference, budget).map_err((e) => primitive(e, block.origin))?
     return from_coefficient(node, number, budget).map_err((e) => overflow(e, block.origin))

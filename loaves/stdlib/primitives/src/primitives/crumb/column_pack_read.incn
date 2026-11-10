@@ -4,7 +4,7 @@ from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.column_bits import packed_length
 from crate.primitives.crumb.column_errors import ColumnError, ColumnFailure, failure, primitive, shared
 from crate.primitives.crumb.encoding_errors import BinaryFailure, failure as binary_failure
-from crate.primitives.crumb.exact_numbers import unsigned_decimal
+from crate.primitives.crumb.wide_integer import WideInteger
 from crate.primitives.views import MappedView
 
 
@@ -35,46 +35,35 @@ pub def packed_value(
     position: int,
     origin: int,
     mut budget: Budget,
-) -> Result[str, ColumnError]:
+) -> Result[WideInteger, ColumnError]:
     """Read only this value's bit range; preceding packed values need not be decoded."""
     length = packed_length(width, count).map_err((e) => primitive(e, origin))?
     if length != view.len() or position < 0 or position >= count:
         return Err(shared(binary_failure(BinaryFailure.InvalidOffsets, origin)))
     budget.charge_elements(width).map_err((e) => primitive(e, origin))?
     if width == 0:
-        return Ok("0")
-    mut groups: list[int] = []
-    mut group = 0
-    mut used = 0
+        return Ok(WideInteger.zero())
+    mut magnitude: list[u8] = [0u8 for _ in range((width + 7) // 8)]
     start = width * position
     for bit in range(width):
         source = start + bit
         value = (octet(view, source // 8, origin, budget)? >> (source % 8)) & 1
-        group |= value << used
-        used += 1
-        if used == 7:
-            budget.charge_bytes(8).map_err((e) => primitive(e, origin))?
-            groups.append(group)
-            group = 0
-            used = 0
-    if used != 0:
-        budget.charge_bytes(8).map_err((e) => primitive(e, origin))?
-        groups.append(group)
-    return unsigned_decimal(groups, 128, origin, budget).map_err(shared)
+        target = bit // 8
+        magnitude[target] = (int(magnitude[target]) | (value << (bit % 8))).saturating_resize[u8]()
+    return Ok(WideInteger.from_magnitude(magnitude))
 
 
-pub def positive_difference(view: MappedView, origin: int, mut budget: Budget) -> Result[str, ColumnError]:
+pub def positive_difference(view: MappedView, origin: int, mut budget: Budget) -> Result[WideInteger, ColumnError]:
     """Read a shortest positive little-endian magnitude, including differences wider than u64."""
     if view.len() == 0:
         return Err(failure(ColumnFailure.NonminimalDelta, origin))
     if octet(view, view.len() - 1, origin, budget)? == 0:
         return Err(failure(ColumnFailure.NonminimalDelta, origin))
-    mut groups: list[int] = []
+    mut magnitude: list[u8] = []
     budget.charge_elements(view.len()).map_err((e) => primitive(e, origin))?
     for index in range(view.len()):
-        budget.charge_bytes(8).map_err((e) => primitive(e, origin))?
-        groups.append(octet(view, index, origin, budget)?)
-    return unsigned_decimal(groups, 256, origin, budget).map_err(shared)
+        magnitude.append(octet(view, index, origin, budget)?.saturating_resize[u8]())
+    return Ok(WideInteger.from_magnitude(magnitude))
 
 
 pub def octet(view: MappedView, index: int, origin: int, mut budget: Budget) -> Result[int, ColumnError]:
