@@ -54,6 +54,10 @@ Canonical form puts descriptions first, sorted by path, then values in the order
 
 A path is a dotted sequence of segments read as one token, such as `example.billing.Invoice`. A segment follows Unicode identifier rules (UAX #31: an `XID_Start` character or `_`, then `XID_Continue` characters). A profile may admit more in a segment, such as hyphens in registry names or a bracketed version, and must define where.
 
+Every name is in Unicode Normalization Form C (NFC). The rule covers path segments, field and variant names, and property names, including the names a profile admits beyond UAX #31. A reader refuses a name that is not in NFC, pointing at its first character that differs from the name's NFC form. It never normalizes the name, so every name keeps its exact bytes and has one spelling. `ĮŃĆĄŅ`, written with precomposed letters, is a name. The same word written as `I` followed by a combining ogonek (U+0328), and so on, is refused.
+
+Names that look alike are still different names. `ĮŃĆĄŅ` and `ІNСАN`, which is written with the Cyrillic letters `І`, `С` and `А`, are each a different name from `INCAN`. The core doesn't refuse a name for resembling another. A reader or a tool that displays names may warn when a name mixes scripts, or when two names in one document have the same UTS #39 skeleton, and such a warning never turns a valid read into a refusal. A profile may refuse such names in its own kinds.
+
 A path is absolute: it starts at a root its profile defines and never passes through an alias or link. Inside a value, a type or variant may be written by its short name when the slot admits exactly one type with that name. A short name that could mean two types is refused.
 
 The printer writes a type's short name, its last path segment, whenever the slot admits no other type with that name, and the full path otherwise: `File << (…)` in an `example.File | example.Folder` slot, but `a.Id << 3` in an `a.Id | b.Id` slot. A variant prints as its name alone, as `Pending`. Only when the slot admits two enums with a variant of that name does it take its enum's name too, as `Status.Pending`.
@@ -69,7 +73,7 @@ A description is written in `{ }`. Inside it, `:` declares and `=` sets:
 - Field metadata goes in `[ ]` after the name, as in `placed_at [canonical = false]: string` and `price [renamed_from = ["unit_price"]]: decimal<10, 2>`. `canonical` defaults to `true`.
 - `key = value` sets a property of the declaration itself, such as a profile's `visibility = Public`. A property may group further properties in `{ }`, as a profile's function signature `type = { … }` does.
 - Properties come before the members and print in the order their kind declares them: the core for `Record` and `Enum`, a profile for its own kinds. `Incan.Function` declares `visibility`, `decorators`, `type` and `body`, so a function prints them in that order, whatever order a hand-written document used. Field metadata follows the same rule. A printer that has a profile's registration, which maps its kinds to `Record` or `Enum`, but not the kinds' own declarations reads the shape and keeps that profile's properties in the order it read them. A kind that no registration maps is refused.
-- In an enum, each member is a variant: `Pending`, or `Shipped(carrier: string, tracking: string)` with named payload fields.
+- In an enum, each member is a variant: `Pending`, or `Shipped(carrier: string, tracking: string)` with named payload fields. A variant may instead list only its payload types, as `Moved(i64, i64)`. Its fields are then named by position, `0`, `1` and so on, and it prints the same way. One variant does not mix the two forms.
 
 The core kinds are `Record` and `Enum`. A profile may define its own kinds, such as `Incan.Model` and `Incan.Enum`, which add that language's facts. The [profile registrations](../profiles.json) map each such kind to `Record` or `Enum`, so a reader that does not know the profile still reads the description.
 
@@ -78,8 +82,8 @@ A declaration's kind decides its type names. Inside a profile's kind, the profil
 | Type | Text |
 | --- | --- |
 | Boolean | `boolean` |
-| Integers | `i8`, `i16`, `i32`, `i64` |
-| Unsigned integers | `u8`, `u16`, `u32`, `u64`, from Substrait's unsigned-integer extension |
+| Integers | `i8`, `i16`, `i32`, `i64`, and COMIC's `i128` |
+| Unsigned integers | `u8`, `u16`, `u32`, `u64`, from Substrait's unsigned-integer extension, and COMIC's `u128` |
 | Floats | `fp32`, `fp64` |
 | Decimal | `decimal<P, S>`, precision and scale |
 | String, binary | `string`, `binary`, and `varchar<L>`, `fixedchar<L>`, `fixedbinary<L>` |
@@ -134,7 +138,7 @@ The printer writes one form:
 
 **Wrapped values.** Where a slot admits more than one type, a value names its type with `<<`: `Month << 4` for a newtype, `i64 << 3` in an `i64 | string` slot. Elsewhere a newtype or union member is written bare.
 
-`Type << ( … )` lists stored fields. It is not a constructor call, and reading one never runs a constructor, field method or default. It rebuilds the stored state and runs the type's final validation, the same as decoding a Crumb.
+`Type << ( … )` lists stored fields. It is not a constructor call, and reading one never runs a constructor, field method or default. It rebuilds the stored state, and the requested type's final validation then checks that state, the same as after decoding a Crumb.
 
 `<<` takes one value or a list of them, and every value in either is the same cell list. `Type << [(…)]` reads exactly as `Type << (…)`. Consecutive values of one type may be written one at a time or as one table; the printer writes a single value as `Type << ( … )` and two or more consecutive values as one table. Each row is one value with its own hashes. A table is layout only; no hash covers it.
 
@@ -191,9 +195,32 @@ The printer produces exactly one text for a document:
 
 Readers accept any whitespace between tokens. The printer's output must not depend on terminal width, locale, host map iteration or a language formatter.
 
+## What a read produces
+
+Text is a syntax for the [value domain](values.md). Reading produces the same descriptions and values a crumb decodes to, and printing writes them back:
+
+- **Names and identities.** Each field and variant takes its identity from its earliest name, which is the first in its `renamed_from` when it has one and its own name otherwise, under [hashes](hashes.md). A value's fields and variant are matched to its type's description by name and held by identity. Printing finds the names again through the description.
+- **Resolved types.** A path resolves to a description in the document, a type the reader's caller admits, or a type of the description's profile, before the read returns. A path that none of them resolves is refused, so no unresolved name reaches the value domain.
+- **Nominal identities.** A described type's identity comes from its package's canonical identity. Its profile derives it where its paths name the package, as the Incan profile's `pub.` paths do, and the reader's caller supplies it otherwise. When neither does, the type has no identity: it still reads and prints as text, and encoding it as a crumb is refused, because a crumb stores identities.
+- **References.** `ref<T>` keeps its target type `T`, and a reference value keeps both the target type's identity and the target's own.
+- **Properties.** A property value is one [metadata value](hashes.md#complete-description-preimage-d):
+
+| Text | Metadata |
+| --- | --- |
+| An unquoted path, as `Public` | Symbol |
+| `"text"` | String |
+| `true`, `false` | Boolean |
+| `42` | Integer |
+| `None` | Null |
+| `b"…"` | Binary |
+| `[ … ]` | List |
+| `{ name = value, … }` | Map, keyed by property name |
+
+A symbol stays a symbol and a string stays a string, as in values. A map holds its entries in the order read, so a printer without the kind's declared order keeps that order.
+
 ## Reading safely
 
-Reading builds data and runs nothing. A reader runs under caller-visible limits on bytes, nesting depth, the length of one string or number, and memory. It checks each table row and nested value against them as it reads, so a short document cannot make it allocate far more than its own size. A reference never expands into a copy of its target, so a document has no alias to multiply.
+Reading runs nothing from the document: a document holds no code, and a description grants none. The only code a read reaches is the final validation of the type the caller requested, which the caller's own implementation of that type supplies, as the [reconstruction boundary](values.md#reconstruction-boundary) states. A reader runs under caller-visible limits on bytes, nesting depth, the length of one string or number, and memory. It checks each table row and nested value against them as it reads, so a short document cannot make it allocate far more than its own size. A reference never expands into a copy of its target, so a document has no alias to multiply.
 
 One text reads as one value or is refused. A key given twice, two declarations of one kind at one path, a value type that names no single declaration values can have, a value of a type with no description, an unknown `___` key and an ambiguous short name are refused, never settled by keeping the first or the last. Reading a value as a type means it fits that type's description, not that the type's owner wrote it.
 

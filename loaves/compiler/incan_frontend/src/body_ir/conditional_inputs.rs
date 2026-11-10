@@ -146,7 +146,8 @@ impl BodyBuilder<'_, '_> {
 
 impl BodyBuilder<'_, '_> {
     /// Retain the profile the checker admitted: profile 1 for a straight-line body, profile 2 for a body with
-    /// statement-ifs, which also carries its owned initializer identities for native authentication.
+    /// statement-ifs, which also carries its owned initializer identities for native authentication. Profiles 3 and 4
+    /// retain those respective rules while adding result obligations discharged by closed instantiation.
     pub(super) fn checked_function_input_profile(
         &mut self,
         owner: &incan_semantics_core::CanonicalSymbolId,
@@ -188,8 +189,25 @@ impl BodyBuilder<'_, '_> {
                 return None;
             }
         };
+        let result_requirements: Vec<_> = proof
+            .result_requirements()
+            .map(|(span, ty)| {
+                (
+                    span,
+                    super::parameter_types::retain_parameter_type(
+                        super::semantic_type_from_resolved(ty),
+                        &self.type_parameters,
+                    ),
+                )
+            })
+            .collect();
         Some(bir::CheckedInputProfile {
-            version,
+            version: if result_requirements.is_empty() {
+                version
+            } else {
+                version + 2
+            },
+            result_requirements,
             owner: proof.canonical_owner().clone(),
             owned_initializers: if version == 2 {
                 std::mem::take(&mut self.input_owned_initializers)

@@ -2,10 +2,10 @@
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
-from crate.primitives.crumb.framing import encode_signed
+from crate.primitives.crumb.framing import encode_native_signed
 from crate.primitives.crumb.hash_stream import HashOutput
 from crate.primitives.crumb.values import Metadata, MetadataEntry
-from crate.primitives.hex import hexlify
+from crate.primitives.crumb.names import valid_name
 from crate.primitives.text import encode_utf8
 
 
@@ -26,9 +26,9 @@ def emit_inner(value: Metadata, mut output: HashOutput, mut budget: Budget) -> R
             if flag:
                 return output.write(b"\x01\x01", budget)
             return output.write(b"\x01\x00", budget)
-        Metadata.Integer(decimal) =>
+        Metadata.Integer(number) =>
             output.write(b"\x02", budget)?
-            return output.write(encode_signed(decimal, budget)?, budget)
+            return output.write(encode_native_signed(number, budget)?, budget)
         Metadata.Text(text) =>
             output.write(b"\x03", budget)?
             return output.text(text, budget)
@@ -49,20 +49,20 @@ def emit_inner(value: Metadata, mut output: HashOutput, mut budget: Budget) -> R
 
 def emit_map(entries: list[MetadataEntry], mut output: HashOutput, mut budget: Budget) -> Result[None, CrumbError]:
     """Reject duplicate keys before emitting their table; never silently apply last-write-wins."""
-    mut keys: list[tuple[str, int]] = []
+    mut keys: list[tuple[bytes, int]] = []
     mut seen: set[str] = set()
     for index in range(len(entries)):
         budget.charge_elements(1)?
         budget.charge_bytes(16)?
         key = entries[index].key
-        if not property_name(key):
+        if not valid_name(key):
             return Err(CrumbError.invalid_input("metadata map key is not a property name"))
         for _ in range(12):
             budget.charge_bytes(len(key))?
         if key in seen:
             return Err(CrumbError.invalid_input("duplicate metadata key"))
         seen.add(key)
-        keys.append((hexlify(encode_utf8(key)), index))
+        keys.append((encode_utf8(key), index))
     output.write(b"\x06", budget)?
     output.unsigned(len(entries), budget)?
     for pair in sorted(keys):
@@ -70,52 +70,3 @@ def emit_map(entries: list[MetadataEntry], mut output: HashOutput, mut budget: B
         output.text(entry.key, budget)?
         emit_metadata(entry.value, output, budget)?
     return Ok(None)
-
-
-def property_name(value: str) -> bool:
-    """Accept one core UAX-style segment while leaving profile extensions to profile admission."""
-    if value == "":
-        return false
-    characters = [character for character in value]
-    if characters[0] >= "0" and characters[0] <= "9":
-        return false
-    for character in characters:
-        if character in [
-            " ",
-            "\t",
-            "\r",
-            "\n",
-            ".",
-            "{",
-            "}",
-            "[",
-            "]",
-            "(",
-            ")",
-            ",",
-            ":",
-            "=",
-            "?",
-            "|",
-            "<",
-            ">",
-            "#",
-            "\"",
-            "+",
-            "-",
-            "*",
-            "/",
-            "\\",
-            "!",
-            "@",
-            "$",
-            "%",
-            "^",
-            "&",
-            ";",
-            "'",
-            "`",
-            "~",
-        ]:
-            return false
-    return true

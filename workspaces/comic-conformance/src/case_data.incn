@@ -109,6 +109,7 @@ pub enum FixtureMetadataKind(str):
     Integer = "int"
     String = "string"
     Binary = "binary"
+    Symbol = "symbol"
     List = "list"
     Map = "map"
 
@@ -119,6 +120,43 @@ pub enum FixtureTypeKind(str):
     Record = "record"
     Enum = "enum"
     Recursive = "recur"
+
+
+pub enum FixtureNominalShape(str):
+    """The uppercase nominal-shape spelling used by independent text fixtures."""
+
+    Record = "Record"
+    Enum = "Enum"
+
+    pub def nominal_kind(self) -> NominalKind:
+        """Convert fixture notation to the shared logical shape."""
+        match self:
+            FixtureNominalShape.Record => return NominalKind.Record
+            FixtureNominalShape.Enum => return NominalKind.Enum
+
+
+pub enum FixturePropertyKind(str):
+    """The tagged property-value forms admitted by COMIC text fixtures."""
+
+    Symbol = "symbol"
+    String = "string"
+    Boolean = "boolean"
+    Integer = "int"
+    Null = "null"
+    Binary = "binary"
+    List = "list"
+    PropertyGroup = "property_group"
+
+
+pub enum FixtureScalarAlias(str):
+    """Legacy scalar spellings retained by independently pinned negative vectors."""
+
+    F64 = "f64"
+
+    pub def scalar_kind(self) -> ScalarKind:
+        """Map a fixture-only spelling to the shared scalar vocabulary."""
+        match self:
+            FixtureScalarAlias.F64 => return ScalarKind.Fp64
 
 
 pub def text(value: JsonValue, key: str) -> Result[str, str]:

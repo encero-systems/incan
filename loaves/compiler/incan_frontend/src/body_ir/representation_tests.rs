@@ -102,9 +102,11 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_nested_generic_static_call_arguments()?;
     assert_frozen_literal_bound_method_identity()?;
     assert_native_provider_field_layout()?;
+    assert_declared_record_namespace()?;
     assert_independently_retained_newtype_return()?;
     assert_generic_newtype_provider_methods()?;
     assert_nested_generic_static_call_bound_mismatch()?;
+    assert_nominal_carrier_maps_stay_shared()?;
     let mut changed = seed.clone();
     changed.bodies[0].native_attributes.push(bir::NativeAttribute {
         path: "selected::attribute".to_owned(),
@@ -238,6 +240,43 @@ fn assert_independently_retained_newtype_return() -> Result<(), Box<dyn std::err
     ] {
         let returns = super::collect::collect_published_newtype_returns(&context);
         assert!(returns.get(&method).is_some_and(Option::is_none));
+    }
+    Ok(())
+}
+
+/// Prove nominal-carrier retention refines each callable's canonical map without replacing that allocation.
+fn assert_nominal_carrier_maps_stay_shared() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Value:\n    number: int\ndef make() -> Value:\n    return Value(number=1)\ndef forward() -> Value:\n    return make()\n";
+    let (program, facts, mut module) = checked_seed(source)?;
+    let opaque_carriers = super::opaque_returns::collect(&module, &facts);
+    super::trait_values::retain_inputs(&mut module, &program, &facts, &[]);
+    super::trait_returns::retain_returns(&mut module, &program, &facts, &[]);
+    super::opaque_returns::retain(&mut module, &opaque_carriers);
+    assert!(
+        super::nominal_carriers::return_index_keeps_identity_maps_borrowed(&module),
+        "the return index retained a whole canonical map per callable"
+    );
+    let identities = module
+        .bodies
+        .iter()
+        .map(|body| {
+            Ok((
+                body.canonical.clone().ok_or("missing callable identity")?,
+                std::sync::Arc::as_ptr(&body.named_type_identities),
+            ))
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>, &'static str>>()?;
+
+    super::nominal_carriers::retain(&mut module, &facts, &[]);
+
+    for body in &module.bodies {
+        let canonical = body.canonical.as_ref().ok_or("missing retained callable identity")?;
+        let original = identities.get(canonical).ok_or("missing original canonical map")?;
+        assert!(
+            std::ptr::eq(*original, std::sync::Arc::as_ptr(&body.named_type_identities)),
+            "nominal retention replaced the shared canonical map for {}",
+            body.name
+        );
     }
     Ok(())
 }
@@ -675,6 +714,7 @@ fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
         .find(|body| body.name == "leaf")
         .ok_or("missing profiled loan body")?;
     leaf.checked_input_profile = Some(bir::CheckedInputProfile {
+        result_requirements: Vec::new(),
         version: 1,
         owner: leaf.canonical.clone().ok_or("missing profiled loan identity")?,
         parameters: leaf
@@ -1913,5 +1953,185 @@ def owned_some(packet: Packet) -> Option[list[str]]:
             .ok_or("missing wrapper body")?;
         assert_eq!(body.params[0].input_access, expected, "{name}: {body:#?}");
     }
+    Ok(())
+}
+
+/// Producer namespaces survive checker reset and lowering without changing canonical compiler identities.
+fn assert_declared_record_namespace() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "pub model Value:\n    pub number: int\npub enum Choice:\n    Number(int)\n    Empty\npub class Resource:\n    pub number: int\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let declared = incan_semantics_core::record_identity::RecordPackageIdentity {
+        registry_id: "sha256:3d7781b11f6b80f950bab17238cffa7c1f77b5e1f0e0dbbaa656149d9ffbffb0".to_owned(),
+        scoped_name: "example/catalog".to_owned(),
+    };
+    let mut original_identities = None;
+    for package in [None, Some(declared)] {
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["records".to_owned()]));
+        checker.set_current_package_identity(Some("example/catalog".to_owned()));
+        checker.set_record_package_identity(package.clone());
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let facts = checker.into_type_info();
+        if let Some(original) = &original_identities {
+            assert_eq!(&facts.declarations.declaration_identities, original);
+        } else {
+            original_identities = Some(facts.declarations.declaration_identities.clone());
+        }
+        let providers = ProviderOperationCatalog::new();
+        let context = BodyIrContext {
+            modules: &[],
+            provider_operations: &providers,
+            registry_package: None,
+            library_package: Some("example/catalog"),
+            include_inline_tests: false,
+        };
+        let seed = super::build_module_seed(&program, &["records".to_owned()], &facts, &context);
+        let model = seed
+            .nominal_declarations
+            .iter()
+            .find(|owner| owner.canonical.declaration_name == "Value")
+            .ok_or("missing model")?;
+        assert_eq!(model.record_package_identity, package);
+        let class = seed
+            .nominal_declarations
+            .iter()
+            .find(|owner| owner.canonical.declaration_name == "Resource")
+            .ok_or("missing class")?;
+        assert!(class.record_package_identity.is_none());
+        let choice = seed
+            .enum_declarations
+            .iter()
+            .find(|owner| owner.canonical.declaration_name == "Choice")
+            .ok_or("missing enum")?;
+        assert_eq!(choice.record_package_identity, package);
+    }
+    Ok(())
+}
+
+/// A plain implementation inherits the explicit trait input contract before its body and callers are checked.
+#[test]
+fn trait_implementation_inherits_explicit_input_contract() -> Result<(), Box<dyn std::error::Error>> {
+    for (mode, access) in [
+        ("Borrowed", incan_semantics_core::IncanInputAccess::Shared),
+        ("BorrowedMut", incan_semantics_core::IncanInputAccess::Exclusive),
+        ("Owned", incan_semantics_core::IncanInputAccess::Owned),
+    ] {
+        let source = format!(
+            "trait Observe:\n    def observe[T](self, value: {mode}[T]) -> None:\n        pass\nclass Observer with Observe:\n    def observe[T](self, value: T) -> None:\n        pass\n"
+        );
+        let (program, facts, seed) = checked_seed(&source)?;
+        let crate::ast::Declaration::Class(owner) = &program.declarations[1].node else {
+            return Err("missing Observer class".into());
+        };
+        let span = owner.methods[0].span;
+        let body = seed
+            .bodies
+            .iter()
+            .find(|body| {
+                body.canonical
+                    .as_ref()
+                    .is_some_and(|identity| identity.declaration_span == span)
+            })
+            .ok_or("missing concrete observe body")?;
+        assert_eq!(body.params[1].input_access, access, "{mode}: {body:#?}");
+        assert!(
+            matches!(body.params[1].ty, incan_semantics_core::IncanType::TypeVar(_)),
+            "body type {:?}; binding {:?}; contracts {:?}",
+            body.params[1].ty,
+            facts.declarations.method_bindings_by_span.get(&span),
+            facts.declarations.ownership_contracts
+        );
+    }
+    Ok(())
+}
+
+/// An abstract trait declares the input ABI but does not acquire a fabricated executable body.
+#[test]
+fn abstract_trait_inputs_govern_the_concrete_body() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "trait Observe:\n    def observe[T](self, value: Borrowed[T]) -> None: ...\nclass Observer with Observe:\n    def observe[T](self, value: T) -> None:\n        pass\n";
+    let (_, _, seed) = checked_seed(source)?;
+    assert_eq!(
+        seed.bodies.len(),
+        1,
+        "{:?}",
+        seed.bodies.iter().map(|body| &body.name).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        seed.bodies[0].params[1].input_access,
+        incan_semantics_core::IncanInputAccess::Shared
+    );
+    assert!(matches!(
+        seed.bodies[0].params[1].ty,
+        incan_semantics_core::IncanType::TypeVar(_)
+    ));
+    Ok(())
+}
+
+/// The source checker's conditional result survives executable serialization with declaration-scoped binders;
+/// stripping the requirements cannot turn its generic profile into an unconditional source proof.
+#[test]
+fn generic_result_profile_retains_symbolic_requirement() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"trait Visit:
+    def visit[E, W with Sink[E]](self, mut sink: BorrowedMut[W]) -> Result[None, E]:
+        pass
+
+trait Sink[E]:
+    def feed[V with Visit](mut self, value: Borrowed[V]) -> Result[None, E]:
+        return value.visit(self)
+
+class Value with Visit:
+    pub count: int
+    def visit[E, W with Sink[E]](self, mut sink: W) -> Result[None, E]:
+        return Ok(None)
+
+class Reader with Sink[str]:
+    pub count: int
+
+def main() -> Result[None, str]:
+    value = Value(count=7)
+    mut reader = Reader(count=0)
+    reader.feed(value)?
+    assert value.count == 7
+    return Ok(None)
+"#;
+    let (_, _, seed) = checked_seed(source)?;
+    let body = seed
+        .bodies
+        .iter()
+        .find(|body| {
+            body.canonical
+                .as_ref()
+                .is_some_and(|owner| owner.declaration_name == "feed")
+        })
+        .ok_or("missing generic feed body")?;
+    let profile = body
+        .checked_input_profile
+        .as_ref()
+        .ok_or("missing generic input profile")?;
+    assert_eq!(profile.version, 3);
+    assert_eq!(profile.result_requirements.len(), 1);
+    assert_eq!(
+        profile.result_requirements[0].1,
+        super::IncanType::Generic {
+            base: "Result".into(),
+            args: vec![
+                super::IncanType::Primitive(super::IncanPrimitiveType::Unit),
+                super::IncanType::TypeVar("E".into())
+            ],
+        }
+    );
+    let decoded: bir::Body = postcard::from_bytes(&postcard::to_allocvec(body)?)?;
+    assert_eq!(decoded.checked_input_profile, body.checked_input_profile);
+    let mut stripped = decoded;
+    stripped
+        .checked_input_profile
+        .as_mut()
+        .ok_or("lost profile")?
+        .result_requirements
+        .clear();
+    assert!(stripped.input_profile_gap().is_some());
     Ok(())
 }

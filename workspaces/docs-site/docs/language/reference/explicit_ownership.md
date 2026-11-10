@@ -36,6 +36,28 @@ A call borrows each borrowed argument from existing storage for the invocation. 
 
 Each call takes its declared access for the invocation, whether the callee reads or writes the argument. Calls to ordinary functions from a body with explicit annotations keep the callee's inferred parameter contract.
 
+### Trait implementations
+
+A trait method's explicit input contract also governs its implementations. An implementation may write the underlying type alone; it inherits the trait's mode for that parameter. Repeating the same mode is permitted. Writing a different mode, or implementing conflicting trait input contracts with one method, produces `INCAN-T0123`.
+
+```incan
+trait Observer:
+    def observe[T](self, value: Borrowed[T]) -> None: ...
+
+
+class Ignore with Observer:
+    def observe[T](self, value: T) -> None:
+        pass
+```
+
+Calling `Ignore().observe(value)` borrows `value`, including when its type cannot be cloned. The implementation cannot transfer the borrowed value or mutate it through a `mut` binding. The same contract applies through imported traits and generic supertraits. This rule does not change ordinary duckborrowing for parameters without an explicit trait input contract.
+
+### Generic results
+
+An explicit source call can return a generic `Result` or `Option` without a result-source clause when its concrete payloads have independent storage. The generic declaration retains an obligation for that exact call; substituting a type argument does not silently declare it independent. The same obligation travels with a published generic Loaf body and is checked when the consumer instantiates it.
+
+The current native route discharges this obligation for primitive values and nested `Result`/`Option` carriers of primitive values. Nominal, native and borrowed payloads that need further dependency facts are refused before native execution. This does not remove a declared result-source relationship or weaken ordinary duckborrowing.
+
 ## Locals
 
 A local declared `Borrowed[T]` or `BorrowedMut[T]` is an alias of a checked local or stored-field place. Reads and writes use that original place; the alias does not allocate an independent value or acquire a separate drop obligation. Assigning through a writable alias writes through to its target; it does not retarget the alias. Reading a Copy referent produces a value. Reading a non-Copy referent retains the borrow and cannot transfer or return its ownership.

@@ -5,7 +5,7 @@ from std.primitives.crumb.records import RowRecord
 from std.primitives.crumb.descriptions import Description, DescriptionMode
 from std.primitives.crumb.encoding_errors import BinaryFailure
 from std.primitives.crumb.types import AbsentPolicy, NominalKind, TypeNode
-from std.primitives.crumb.values import Value, ValueField, Metadata, MetadataEntry
+from std.primitives.crumb.values import IntegerValue, Value, ValueField, Metadata, MetadataEntry
 from encoding_test_support import description, member, encoded, admitted
 
 
@@ -47,7 +47,10 @@ def test_nominal_union_discriminator_survives_equal_shapes() -> Result[None, str
     left = description(b"aaaaaa\x00", [member(b"field1", "i8")])
     right = description(b"bbbbbb\x00", [member(b"field1", "i8")])
     root = description(b"zzzzzz\x00", [member(b"field1", "union<record@626262626262,record@616161616161>")])
-    selected = Value.Union(TypeNode.Nominal(NominalKind.Record, "", Some(b"bbbbbb"), []), [stored(Value.Integer("7"))])
+    selected = Value.Union(
+        TypeNode.Nominal(NominalKind.Record, "", Some(b"bbbbbb"), []),
+        [stored(Value.Integer(IntegerValue.Signed(7i128)))],
+    )
     records = [RowRecord(key=b"zzzzzz\x00", value=stored(selected))]
     rows = admitted(encoded([root, right, left], records, true)?)?
     mut budget = Budget.create(bytes=65536, elements=65536, depth=32).map_err((e) => e.message())?
@@ -89,7 +92,14 @@ def test_enum_projection_retains_known_variant_context() -> Result[None, str]:
     )
     value = Value.Enum(
         b"tagone",
-        [ValueField(identity=b"field1", canonical=true, absent=AbsentPolicy.Required, value=Value.Integer("7"))],
+        [
+            ValueField(
+                identity=b"field1",
+                canonical=true,
+                absent=AbsentPolicy.Required,
+                value=Value.Integer(IntegerValue.Signed(7i128)),
+            ),
+        ],
     )
     rows = admitted(encoded([source], [RowRecord(key=b"enumxx\x00", value=value)], true)?)?
     mut budget = Budget.create(bytes=65536, elements=65536, depth=64).map_err((e) => e.message())?

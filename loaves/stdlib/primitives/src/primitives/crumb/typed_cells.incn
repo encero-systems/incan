@@ -1,0 +1,778 @@
+"""Pump RFC 173 typed values directly between protocol callbacks and canonical Crumb cells."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.description_dictionary import Dictionary
+from crate.primitives.crumb.descriptions import StoredDescription
+from crate.primitives.crumb.encoding_buffer import EncodingBuffer, indexed
+from crate.primitives.crumb.encoding_cursor import EncodingCursor, copied
+from crate.primitives.crumb.encoding_errors import BinaryError
+from crate.primitives.crumb.encoding_index import CellIndex, RecordIndex, bit, rank, read_index, read_record_index, selected
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.framing import frame
+from crate.primitives.crumb.scalar_cells import integer_cell, decimal_native_cell
+from crate.primitives.crumb.scalar_read import typed_integer, typed_boolean, typed_text, typed_bytes, typed_decimal
+from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, NominalKind, ScalarKind, TypeNode
+from crate.primitives.crumb.values import IntegerValue
+from crate.primitives.reflection import DecimalValue, FieldInfo, Reconstruct, SequenceKind, ShapeInfo, Source, VariantInfo, Walk, Walker
+from crate.primitives.text import copy_frozen_bytes, encode_utf8
+from crate.primitives.views import MappedView
+
+
+pub model TypedRootCell:
+    """Completed root bytes plus field cells retained for direct column transposition."""
+
+    pub key: bytes
+    pub data: bytes
+    pub cells: list[bytes]
+    pub present: list[bool]
+
+
+pub class TypedCellWriter with Walker[CrumbError]:
+    """Encode one declared typed cell without allocating a schema-less Value tree."""
+
+    node: TypeNode
+    budget: Budget
+    result: Option[bytes] = None
+    slots: list[bytes] = []
+    position: int = 0
+    expected: int = -1
+    optional_present: Option[bool] = None
+    unwrapped: Option[bytes] = None
+    container_count: Option[int] = None
+    description: Option[StoredDescription] = None
+    field_cells: list[bytes] = []
+    field_present: list[bool] = []
+    field_seen: list[bool] = []
+    model_begun: bool = false
+    model_finished: bool = false
+
+    @staticmethod
+    pub def create(node: TypeNode, budget: Budget) -> Self:
+        """Create one empty writer for a description-selected cell type."""
+        return TypedCellWriter(node=node, budget=budget)
+
+    @staticmethod
+    pub def create_root(description: StoredDescription, budget: Budget) -> Self:
+        """Create one root writer whose model shape comes from an admitted caller description."""
+        return TypedCellWriter(node=description.selector, budget=budget, description=Some(description))
+
+    pub def finish(self) -> Result[bytes, CrumbError]:
+        """Return the one complete cell produced by the typed walk."""
+        match self.result:
+            Some(value) => return Ok(value)
+            None => return Err(CrumbError.invalid_input("typed cell produced no value"))
+
+    pub def finish_root(self) -> Result[tuple[bytes, bytes], CrumbError]:
+        """Return the admitted root key and complete bytes after a model walk finished."""
+        completed = self.finish_root_cell()?
+        return Ok((completed.key, completed.data))
+
+    pub def finish_root_cell(self) -> Result[TypedRootCell, CrumbError]:
+        """Return the complete row cell and its already encoded fields for a typed column writer."""
+        if not self.model_finished:
+            return Err(CrumbError.invalid_input("typed root model incomplete"))
+        key = self.writer_description()?.key
+        return Ok(
+            TypedRootCell(
+                key=key,
+                data=self.finish()?,
+                cells=self.field_cells,
+                present=self.field_present,
+            ),
+        )
+
+    pub def stored_field(self, absent: AbsentPolicy) -> Result[Option[bytes], CrumbError]:
+        """Apply one declared outer-absence policy without materializing a Value node."""
+        if absent == AbsentPolicy.Required:
+            return Ok(Some(self.finish()?))
+        if absent == AbsentPolicy.NoneValue:
+            match (self.optional_present, self.unwrapped):
+                (Some(false), _) => return Ok(None)
+                (Some(true), Some(value)) => return Ok(Some(value))
+                _ => return Err(CrumbError.invalid_input("typed optional field"))
+        match self.container_count:
+            Some(0) => return Ok(None)
+            Some(_) => return Ok(Some(self.finish()?))
+            None => return Err(CrumbError.invalid_input("typed empty field"))
+
+    def bool(mut self, value: bool) -> Result[None, CrumbError]:
+        """Encode one boolean selected by the caller-supplied description."""
+        self.expect_scalar(ScalarKind.Boolean)?
+        self.budget.charge_bytes(1)?
+        if value:
+            self.result = Some(b"\x01")
+        else:
+            self.result = Some(b"\x00")
+        return Ok(None)
+
+    def str(mut self, value: str) -> Result[None, CrumbError]:
+        """Encode one UTF-8 string selected by the caller-supplied description."""
+        self.expect_scalar(ScalarKind.String)?
+        for _ in range(4):
+            self.budget.charge_bytes(len(value))?
+        self.result = Some(frame(encode_utf8(value), self.budget)?)
+        return Ok(None)
+
+    def bytes(mut self, value: bytes) -> Result[None, CrumbError]:
+        """Encode one byte string selected by the caller-supplied description."""
+        self.expect_scalar(ScalarKind.Binary)?
+        self.result = Some(frame(value, self.budget)?)
+        return Ok(None)
+
+    def integer(mut self, value: i128) -> Result[None, CrumbError]:
+        """Range-check and encode one signed fixed-width integer."""
+        match self.node:
+            TypeNode.Scalar(kind) =>
+                match kind.integer_facts():
+                    Some((true, bits)) =>
+                        self.result = Some(integer_cell(IntegerValue.Signed(value), bits // 8, true, self.budget)?)
+                        return Ok(None)
+                    _ => pass
+            _ => pass
+        return Err(CrumbError.invalid_input("typed signed integer kind"))
+
+    def unsigned(mut self, value: u128) -> Result[None, CrumbError]:
+        """Range-check and encode one unsigned fixed-width integer."""
+        match self.node:
+            TypeNode.Scalar(kind) =>
+                match kind.integer_facts():
+                    Some((false, bits)) =>
+                        self.result = Some(integer_cell(IntegerValue.Unsigned(value), bits // 8, false, self.budget)?)
+                        return Ok(None)
+                    _ => pass
+            _ => pass
+        return Err(CrumbError.invalid_input("typed unsigned integer kind"))
+
+    def float(mut self, value: f64) -> Result[None, CrumbError]:
+        """Refuse until the protocol exposes the declared float width alongside its widened value."""
+        return Err(CrumbError.invalid_input("typed float width unavailable"))
+
+    def decimal(mut self, value: DecimalValue) -> Result[None, CrumbError]:
+        """Encode one exact native decimal under the description's declared precision and scale."""
+        match self.node:
+            TypeNode.Decimal(precision, scale) =>
+                self.result = Some(
+                    decimal_native_cell(precision, scale, value.coefficient, int(value.scale), self.budget)?,
+                )
+                return Ok(None)
+            _ => return Err(CrumbError.invalid_input("typed decimal kind"))
+
+    def none(mut self) -> Result[None, CrumbError]:
+        """Encode one absent optional layer."""
+        match self.node:
+            TypeNode.Container(ContainerKind.Option, arguments) =>
+                if len(arguments) == 1:
+                    self.budget.charge_bytes(1)?
+                    self.result = Some(b"\x00")
+                    self.optional_present = Some(false)
+                    return Ok(None)
+            _ => pass
+        return Err(CrumbError.invalid_input("typed None kind"))
+
+    def some[V with Walk](mut self, value: V) -> Result[None, CrumbError]:
+        """Encode one present optional layer through a child typed-cell writer."""
+        match self.node:
+            TypeNode.Container(ContainerKind.Option, arguments) =>
+                if len(arguments) == 1:
+                    mut child = TypedCellWriter.create(arguments[0], self.budget)
+                    value.__walk__(child)?
+                    mut output = EncodingBuffer.create()
+                    output.octet(1, self.budget)?
+                    present = child.finish()?
+                    output.frame(present, self.budget)?
+                    self.result = Some(output.finish(self.budget)?)
+                    self.optional_present = Some(true)
+                    self.unwrapped = Some(present)
+                    return Ok(None)
+            _ => pass
+        return Err(CrumbError.invalid_input("typed option kind"))
+
+    def begin_sequence(mut self, kind: SequenceKind, length: int) -> Result[None, CrumbError]:
+        """Start one list or tuple; sets need logical ordering support before direct encoding."""
+        expected = self.sequence_kind()?
+        if expected != kind or kind == SequenceKind.Set or length < 0:
+            return Err(CrumbError.invalid_input("typed sequence kind"))
+        self.budget.charge_elements(length)?
+        self.slots = []
+        self.position = 0
+        self.expected = length
+        return Ok(None)
+
+    def element[V with Walk](mut self, value: V) -> Result[None, CrumbError]:
+        """Encode one sequence element through its statically selected child type."""
+        node = self.sequence_element(self.position)?
+        mut child = TypedCellWriter.create(node, self.budget)
+        value.__walk__(child)?
+        self.slots.append(child.finish()?)
+        self.position += 1
+        return Ok(None)
+
+    def end_sequence(mut self) -> Result[None, CrumbError]:
+        """Finish one list or tuple with its canonical indexed cell payload."""
+        match self.node:
+            TypeNode.Container(ContainerKind.Tuple, arguments) =>
+                if len(arguments) != len(self.slots):
+                    return Err(CrumbError.invalid_input("typed tuple arity"))
+            TypeNode.Container(ContainerKind.List, _) => pass
+            _ => return Err(CrumbError.invalid_input("typed sequence end"))
+        if self.position != self.expected:
+            return Err(CrumbError.invalid_input("typed sequence length"))
+        mut output = EncodingBuffer.create()
+        output.count(len(self.slots), self.budget)?
+        output.append(indexed(self.slots, self.budget)?, self.budget)?
+        self.result = Some(output.finish(self.budget)?)
+        self.container_count = Some(self.position)
+        return Ok(None)
+
+    def begin_dict(mut self, length: int) -> Result[None, CrumbError]:
+        """Start one map whose handwritten walk supplies canonical key order."""
+        match self.node:
+            TypeNode.Container(ContainerKind.Map, arguments) =>
+                if len(arguments) != 2 or length < 0:
+                    return Err(CrumbError.invalid_input("typed map shape"))
+            _ => return Err(CrumbError.invalid_input("typed map kind"))
+        self.budget.charge_elements(length)?
+        self.slots = []
+        self.position = 0
+        self.expected = length
+        return Ok(None)
+
+    def entry[K with Walk, V with Walk](mut self, key: K, value: V) -> Result[None, CrumbError]:
+        """Encode one map entry without constructing an untyped key or value node."""
+        match self.node:
+            TypeNode.Container(ContainerKind.Map, arguments) =>
+                mut key_writer = TypedCellWriter.create(arguments[0], self.budget)
+                key.__walk__(key_writer)?
+                mut value_writer = TypedCellWriter.create(arguments[1], self.budget)
+                value.__walk__(value_writer)?
+                self.slots.append(key_writer.finish()?)
+                self.slots.append(value_writer.finish()?)
+                self.position += 1
+                return Ok(None)
+            _ => return Err(CrumbError.invalid_input("typed map entry"))
+
+    def end_dict(mut self) -> Result[None, CrumbError]:
+        """Finish one map in the canonical order supplied by its handwritten walk."""
+        if self.position != self.expected:
+            return Err(CrumbError.invalid_input("typed map length"))
+        mut output = EncodingBuffer.create()
+        output.count(self.position, self.budget)?
+        output.append(indexed(self.slots, self.budget)?, self.budget)?
+        self.result = Some(output.finish(self.budget)?)
+        self.container_count = Some(self.position)
+        return Ok(None)
+
+    def begin_model(mut self, shape: ShapeInfo) -> Result[None, CrumbError]:
+        """Bind a root model walk to the caller's exact admitted description."""
+        description = self.writer_description()?
+        if description.kind != NominalKind.Record or copy_frozen_bytes(shape.identity) != description.key or self.model_begun:
+            return Err(CrumbError.invalid_input("typed root model shape"))
+        self.model_begun = true
+        self.field_cells = []
+        self.field_present = []
+        self.field_seen = []
+        for _ in description.fields:
+            self.field_cells.append(b"")
+            self.field_present.append(false)
+            self.field_seen.append(false)
+        return Ok(None)
+
+    def field[V with Walk](mut self, info: FieldInfo, value: V) -> Result[None, CrumbError]:
+        """Encode one identity-selected root field directly under its stored type and absence policy."""
+        description = self.writer_description()?
+        mut selected_field = -1
+        for index in range(len(description.fields)):
+            if copy_frozen_bytes(info.identity) == description.fields[index].shape.identity:
+                selected_field = index
+        if selected_field < 0 or self.field_seen[selected_field]:
+            return Err(CrumbError.invalid_input("typed root field identity"))
+        if info.canonical != description.fields[selected_field].shape.canonical:
+            return Err(CrumbError.invalid_input("typed root field contract"))
+        mut child = TypedCellWriter.create(description.fields[selected_field].shape.storage_type, self.budget)
+        value.__walk__(child)?
+        match child.stored_field(description.fields[selected_field].shape.absent)?:
+            Some(cell) =>
+                self.field_cells[selected_field] = cell
+                self.field_present[selected_field] = true
+            None => pass
+        self.field_seen[selected_field] = true
+        return Ok(None)
+
+    def end_model(mut self) -> Result[None, CrumbError]:
+        """Finish a root record in identity order with the Value path's exact presence layout."""
+        description = self.writer_description()?
+        if not self.model_begun or self.model_finished:
+            return Err(CrumbError.invalid_input("typed root model state"))
+        mut bitmap: list[u8] = []
+        mut cells: list[bytes] = []
+        mut eligible = 0
+        for index in range(len(description.fields)):
+            if not self.field_seen[index]:
+                return Err(CrumbError.invalid_input("typed root missing field"))
+            present = self.field_present[index]
+            if description.fields[index].shape.absent != AbsentPolicy.Required:
+                if eligible % 8 == 0:
+                    self.budget.charge_bytes(1)?
+                    bitmap.append(0u8)
+                if present:
+                    last = len(bitmap) - 1
+                    bitmap[last] = (int(bitmap[last]) | (1 << (eligible % 8))).saturating_resize[u8]()
+                eligible += 1
+            if present:
+                cells.append(self.field_cells[index])
+            elif description.fields[index].shape.absent == AbsentPolicy.Required:
+                return Err(CrumbError.invalid_input("typed required field absence"))
+        mut output = EncodingBuffer.create()
+        output.append(bitmap, self.budget)?
+        output.append(indexed(cells, self.budget)?, self.budget)?
+        self.result = Some(output.finish(self.budget)?)
+        self.model_finished = true
+        return Ok(None)
+
+    def expect_scalar(self, expected: ScalarKind) -> Result[None, CrumbError]:
+        """Require the description-selected scalar kind before writing bytes."""
+        match self.node:
+            TypeNode.Scalar(actual) =>
+                if actual == expected:
+                    return Ok(None)
+            _ => pass
+        return Err(CrumbError.invalid_input("typed scalar kind"))
+
+    def sequence_kind(self) -> Result[SequenceKind, CrumbError]:
+        """Translate a description container into RFC 173's sequence vocabulary."""
+        match self.node:
+            TypeNode.Container(ContainerKind.List, _) => return Ok(SequenceKind.List)
+            TypeNode.Container(ContainerKind.Set, _) => return Ok(SequenceKind.Set)
+            TypeNode.Container(ContainerKind.Tuple, _) => return Ok(SequenceKind.Tuple)
+            _ => return Err(CrumbError.invalid_input("typed sequence shape"))
+
+    def sequence_element(self, position: int) -> Result[TypeNode, CrumbError]:
+        """Return the declared child selector for one sequence position."""
+        match self.node:
+            TypeNode.Container(ContainerKind.List, arguments) | TypeNode.Container(ContainerKind.Set, arguments) =>
+                if len(arguments) == 1:
+                    return Ok(arguments[0])
+            TypeNode.Container(ContainerKind.Tuple, arguments) =>
+                if position >= 0 and position < len(arguments):
+                    return Ok(arguments[position])
+            _ => pass
+        return Err(CrumbError.invalid_input("typed sequence element"))
+
+    def writer_description(self) -> Result[StoredDescription, CrumbError]:
+        """Return the admitted root description or reject model callbacks inside an ordinary cell."""
+        match self.description:
+            Some(description) => return Ok(description)
+            None => return Err(CrumbError.invalid_input("typed nested model unavailable"))
+
+
+pub class TypedCellSource with Source[CrumbError]:
+    """Reconstruct one typed value directly from an admitted canonical cell view."""
+
+    node: TypeNode
+    view: MappedView
+    origin: int
+    dictionary: Dictionary
+    budget: Budget
+    index: Option[CellIndex] = None
+    position: int = 0
+    entries: int = 0
+    description: Option[StoredDescription] = None
+    record: Option[RecordIndex] = None
+    field_seen: list[bool] = []
+    column_views: list[MappedView] = []
+    column_origins: list[int] = []
+    column_present: list[bool] = []
+    model_begun: bool = false
+    model_finished: bool = false
+
+    @staticmethod
+    pub def create(node: TypeNode, view: MappedView, origin: int, dictionary: Dictionary, budget: Budget) -> Self:
+        """Create one source over a description-selected retained cell."""
+        return TypedCellSource(node=node, view=view, origin=origin, dictionary=dictionary, budget=budget)
+
+    @staticmethod
+    pub def create_root(
+        description: StoredDescription,
+        view: MappedView,
+        origin: int,
+        dictionary: Dictionary,
+        budget: Budget,
+    ) -> Self:
+        """Create one root source whose model shape comes from an admitted caller description."""
+        return TypedCellSource(
+            node=description.selector,
+            view=view,
+            origin=origin,
+            dictionary=dictionary,
+            budget=budget,
+            description=Some(description),
+        )
+
+    @staticmethod
+    pub def create_column_root(
+        description: StoredDescription,
+        backing: MappedView,
+        views: list[MappedView],
+        origins: list[int],
+        present: list[bool],
+        dictionary: Dictionary,
+        budget: Budget,
+    ) -> Self:
+        """Create one root source whose field cells were selected directly from typed columns."""
+        return TypedCellSource(
+            node=description.selector,
+            view=backing,
+            origin=0,
+            dictionary=dictionary,
+            budget=budget,
+            description=Some(description),
+            column_views=views,
+            column_origins=origins,
+            column_present=present,
+        )
+
+    def bool(mut self) -> Result[bool, CrumbError]:
+        """Read one canonical boolean directly."""
+        self.expect_scalar(ScalarKind.Boolean)?
+        return typed_boolean(self.view, self.origin, self.budget).map_err(as_crumb)
+
+    def str(mut self) -> Result[str, CrumbError]:
+        """Read one canonical UTF-8 string directly."""
+        self.expect_scalar(ScalarKind.String)?
+        return typed_text(self.view, self.origin, self.budget).map_err(as_crumb)
+
+    def bytes(mut self) -> Result[bytes, CrumbError]:
+        """Read one canonical byte string directly."""
+        self.expect_scalar(ScalarKind.Binary)?
+        return typed_bytes(self.view, self.origin, self.budget).map_err(as_crumb)
+
+    def integer(mut self) -> Result[i128, CrumbError]:
+        """Read one signed fixed-width integer directly."""
+        match self.node:
+            TypeNode.Scalar(kind) =>
+                match typed_integer(kind, self.view, self.origin, self.budget).map_err(as_crumb)?:
+                    IntegerValue.Signed(value) => return Ok(value)
+                    IntegerValue.Unsigned(_) => pass
+            _ => pass
+        return Err(CrumbError.invalid_input("typed signed integer"))
+
+    def unsigned(mut self) -> Result[u128, CrumbError]:
+        """Read one unsigned fixed-width integer directly."""
+        match self.node:
+            TypeNode.Scalar(kind) =>
+                match typed_integer(kind, self.view, self.origin, self.budget).map_err(as_crumb)?:
+                    IntegerValue.Unsigned(value) => return Ok(value)
+                    IntegerValue.Signed(_) => pass
+            _ => pass
+        return Err(CrumbError.invalid_input("typed unsigned integer"))
+
+    def float(mut self) -> Result[f64, CrumbError]:
+        """Refuse until the protocol retains the exact float width needed by Crumb."""
+        return Err(CrumbError.invalid_input("typed float width unavailable"))
+
+    def decimal(mut self) -> Result[DecimalValue, CrumbError]:
+        """Read one exact decimal into RFC 173's native carrier."""
+        match self.node:
+            TypeNode.Decimal(precision, scale) =>
+                return typed_decimal(precision, scale, self.view, self.origin, self.budget).map_err(as_crumb)
+            _ => return Err(CrumbError.invalid_input("typed decimal"))
+
+    def none(mut self) -> Result[None, CrumbError]:
+        """Read one absent optional layer and reject a present tag."""
+        mut cursor = self.option_cursor()?
+        if cursor.byte(self.budget).map_err(as_crumb)? != 0 or cursor.remaining() != 0:
+            return Err(CrumbError.invalid_input("typed None cell"))
+        return Ok(None)
+
+    def some[V with Reconstruct](mut self) -> Result[Option[V], CrumbError]:
+        """Read one optional layer and reconstruct its present child directly."""
+        mut cursor = self.option_cursor()?
+        tag = cursor.byte(self.budget).map_err(as_crumb)?
+        if tag == 0:
+            if cursor.remaining() != 0:
+                return Err(CrumbError.invalid_input("typed option tail"))
+            return Ok(None)
+        if tag != 1:
+            return Err(CrumbError.invalid_input("typed option tag"))
+        child_view = cursor.frame(self.budget).map_err(as_crumb)?
+        if cursor.remaining() != 0:
+            return Err(CrumbError.invalid_input("typed option tail"))
+        match self.node:
+            TypeNode.Container(ContainerKind.Option, arguments) =>
+                mut child = TypedCellSource.create(
+                    arguments[0],
+                    child_view,
+                    cursor.absolute() - child_view.len(),
+                    self.dictionary,
+                    self.budget,
+                )
+                return Ok(Some(V.__reconstruct__(child)?))
+            _ => return Err(CrumbError.invalid_input("typed option shape"))
+
+    def begin_sequence(mut self, kind: SequenceKind) -> Result[None, CrumbError]:
+        """Admit one indexed list or tuple before element reconstruction."""
+        expected = self.sequence_kind()?
+        if expected != kind or kind == SequenceKind.Set:
+            return Err(CrumbError.invalid_input("typed sequence kind"))
+        mut cursor = EncodingCursor.create(self.view, self.origin).map_err(as_crumb)?
+        count = cursor.length(self.budget).map_err(as_crumb)?
+        if kind == SequenceKind.Tuple:
+            match self.node:
+                TypeNode.Container(ContainerKind.Tuple, arguments) =>
+                    if count != len(arguments):
+                        return Err(CrumbError.invalid_input("typed tuple arity"))
+                _ => pass
+        self.index = Some(read_index(cursor, count, self.budget).map_err(as_crumb)?)
+        self.position = 0
+        return Ok(None)
+
+    def element[V with Reconstruct](mut self) -> Result[Option[V], CrumbError]:
+        """Reconstruct the next sequence element directly from its retained cell view."""
+        match self.index:
+            None => return Err(CrumbError.invalid_input("typed sequence not begun"))
+            Some(admitted) =>
+                if self.position >= admitted.count:
+                    return Ok(None)
+                view, origin = selected(admitted, self.position, self.budget).map_err(as_crumb)?
+                node = self.sequence_element(self.position)?
+                self.position += 1
+                mut child = TypedCellSource.create(node, view, origin, self.dictionary, self.budget)
+                return Ok(Some(V.__reconstruct__(child)?))
+
+    def end_sequence(mut self) -> Result[None, CrumbError]:
+        """Require complete sequence consumption."""
+        match self.index:
+            Some(admitted) =>
+                if self.position == admitted.count:
+                    return Ok(None)
+            None => pass
+        return Err(CrumbError.invalid_input("typed sequence incomplete"))
+
+    def begin_dict(mut self) -> Result[None, CrumbError]:
+        """Admit one indexed map before entry reconstruction."""
+        match self.node:
+            TypeNode.Container(ContainerKind.Map, arguments) =>
+                if len(arguments) != 2:
+                    return Err(CrumbError.invalid_input("typed map shape"))
+            _ => return Err(CrumbError.invalid_input("typed map kind"))
+        mut cursor = EncodingCursor.create(self.view, self.origin).map_err(as_crumb)?
+        self.entries = cursor.length(self.budget).map_err(as_crumb)?
+        self.index = Some(read_index(cursor, self.entries * 2, self.budget).map_err(as_crumb)?)
+        self.position = 0
+        return Ok(None)
+
+    def entry[K with Reconstruct, V with Reconstruct](mut self) -> Result[Option[tuple[K, V]], CrumbError]:
+        """Reconstruct the next typed map entry without an untyped key/value pair."""
+        if self.position >= self.entries:
+            return Ok(None)
+        match (self.node, self.index):
+            (TypeNode.Container(ContainerKind.Map, arguments), Some(admitted)) =>
+                key_view, key_origin = selected(admitted, self.position * 2, self.budget).map_err(as_crumb)?
+                value_view, value_origin = selected(admitted, self.position * 2 + 1, self.budget).map_err(as_crumb)?
+                self.position += 1
+                mut key_source = TypedCellSource.create(
+                    arguments[0],
+                    key_view,
+                    key_origin,
+                    self.dictionary,
+                    self.budget,
+                )
+                mut value_source = TypedCellSource.create(
+                    arguments[1],
+                    value_view,
+                    value_origin,
+                    self.dictionary,
+                    self.budget,
+                )
+                return Ok(Some((K.__reconstruct__(key_source)?, V.__reconstruct__(value_source)?)))
+            _ => return Err(CrumbError.invalid_input("typed map not begun"))
+
+    def end_dict(mut self) -> Result[None, CrumbError]:
+        """Require complete map consumption."""
+        if self.position != self.entries:
+            return Err(CrumbError.invalid_input("typed map incomplete"))
+        return Ok(None)
+
+    def begin_model(mut self, shape: ShapeInfo) -> Result[None, CrumbError]:
+        """Bind a root model reconstruction to the caller's exact admitted description."""
+        description = self.source_description()?
+        if description.kind != NominalKind.Record or copy_frozen_bytes(shape.identity) != description.key or self.model_begun:
+            return Err(CrumbError.invalid_input("typed root model shape"))
+        if len(self.column_views) == 0:
+            mut cursor = EncodingCursor.create(self.view, self.origin).map_err(as_crumb)?
+            self.record = Some(read_record_index(description.fields, cursor, self.budget).map_err(as_crumb)?)
+        elif len(self.column_views) != len(description.fields) or len(self.column_origins) != len(description.fields) or len(
+            self.column_present,
+        ) != len(description.fields):
+            return Err(CrumbError.invalid_input("typed column field count"))
+        self.field_seen = []
+        for _ in description.fields:
+            self.field_seen.append(false)
+        self.model_begun = true
+        return Ok(None)
+
+    def field[V with Reconstruct](mut self, info: FieldInfo) -> Result[Option[V], CrumbError]:
+        """Reconstruct one identity-selected root field directly from its retained cell range."""
+        description = self.source_description()?
+        mut selected_field = -1
+        for index in range(len(description.fields)):
+            if copy_frozen_bytes(info.identity) == description.fields[index].shape.identity:
+                selected_field = index
+        if selected_field < 0 or self.field_seen[selected_field]:
+            return Err(CrumbError.invalid_input("typed root field identity"))
+        if info.canonical != description.fields[selected_field].shape.canonical:
+            return Err(CrumbError.invalid_input("typed root field contract"))
+        field = description.fields[selected_field]
+        if len(self.column_views) != 0:
+            self.field_seen[selected_field] = true
+            if not self.column_present[selected_field]:
+                return Ok(None)
+            mut column_node = field.shape.storage_type
+            if field.shape.absent == AbsentPolicy.NoneValue:
+                match column_node:
+                    TypeNode.Container(ContainerKind.Option, arguments) =>
+                        if len(arguments) != 1:
+                            return Err(CrumbError.invalid_input("typed optional field shape"))
+                        column_node = arguments[0]
+                    _ => return Err(CrumbError.invalid_input("typed optional field shape"))
+            mut column_child = TypedCellSource.create(
+                column_node,
+                self.column_views[selected_field],
+                self.column_origins[selected_field],
+                self.dictionary,
+                self.budget,
+            )
+            return Ok(Some(V.__reconstruct__(column_child)?))
+        index = match self.record:
+            None => return Err(CrumbError.invalid_input("typed root model not begun"))
+            Some(value) => value
+        mut present = true
+        if field.shape.absent != AbsentPolicy.Required:
+            present = bit(index.bitmap, field.eligible_before, index.bitmap_origin).map_err(as_crumb)?
+        self.field_seen[selected_field] = true
+        if not present:
+            return Ok(None)
+        position = field.required_before + rank(
+            index.bitmap,
+            field.eligible_before,
+            index.bitmap_origin,
+            self.budget,
+        ).map_err(as_crumb)?
+        raw, origin = selected(index.cells, position, self.budget).map_err(as_crumb)?
+        mut node = field.shape.storage_type
+        if field.shape.absent == AbsentPolicy.NoneValue:
+            match node:
+                TypeNode.Container(ContainerKind.Option, arguments) =>
+                    if len(arguments) != 1:
+                        return Err(CrumbError.invalid_input("typed optional field shape"))
+                    node = arguments[0]
+                _ => return Err(CrumbError.invalid_input("typed optional field shape"))
+        mut child = TypedCellSource.create(node, raw, origin, self.dictionary, self.budget)
+        return Ok(Some(V.__reconstruct__(child)?))
+
+    def end_model(mut self) -> Result[None, CrumbError]:
+        """Require every declared root field to have been requested exactly once."""
+        if not self.model_begun or self.model_finished:
+            return Err(CrumbError.invalid_input("typed root model state"))
+        for seen in self.field_seen:
+            if not seen:
+                return Err(CrumbError.invalid_input("typed root unread field"))
+        self.model_finished = true
+        return Ok(None)
+
+    def begin_variant(mut self, shape: ShapeInfo) -> Result[VariantInfo, CrumbError]:
+        """Nested variants wait for complete ShapeInfo declarations from RFC 173."""
+        return Err(CrumbError.invalid_input("nested typed variant unavailable"))
+
+    def end_variant(mut self) -> Result[None, CrumbError]:
+        """Nested variants wait for complete ShapeInfo declarations from RFC 173."""
+        return Err(CrumbError.invalid_input("nested typed variant end unavailable"))
+
+    def member(mut self) -> Result[FrozenStr, CrumbError]:
+        """Union reconstruction waits for its complete declared spelling closure."""
+        return Err(CrumbError.invalid_input("typed union unavailable"))
+
+    def reference(mut self, kind: FrozenStr) -> Result[FrozenBytes, CrumbError]:
+        """Reference reconstruction waits for its admitted target selector mapping."""
+        return Err(CrumbError.invalid_input("typed reference unavailable"))
+
+    def missing(mut self, info: FieldInfo) -> CrumbError:
+        """Create one stable missing-field failure."""
+        return CrumbError.invalid_input("missing typed field " + str(info.name))
+
+    def takes_default(self, info: FieldInfo) -> bool:
+        """Cell sources never invent a missing field default."""
+        return false
+
+    def invalid(mut self, error: ValidationError) -> CrumbError:
+        """Preserve a validation failure's text in Crumb's typed failure channel."""
+        return CrumbError.invalid_input(str(error))
+
+    def collects(self) -> bool:
+        """Typed cell reconstruction is fail-fast."""
+        return false
+
+    def collected(self) -> Option[CrumbError]:
+        """Fail-fast reconstruction retains no independent failure collection."""
+        return None
+
+    def malformed(mut self, reason: str) -> CrumbError:
+        """Convert malformed typed input into Crumb's failure channel."""
+        return CrumbError.invalid_input(reason)
+
+    def numeric_range(mut self, requested_type: FrozenStr) -> CrumbError:
+        """Report an exact requested numeric type that cannot hold the stored value."""
+        return CrumbError.invalid_input("typed numeric range " + str(requested_type))
+
+    def shape_mismatch(mut self, expected: FrozenStr, actual: FrozenStr) -> CrumbError:
+        """Report both sides of a typed shape mismatch."""
+        return CrumbError.invalid_input("typed shape " + str(expected) + " != " + str(actual))
+
+    def option_cursor(self) -> Result[EncodingCursor, CrumbError]:
+        """Open one option cell only when its declared arity is valid."""
+        match self.node:
+            TypeNode.Container(ContainerKind.Option, arguments) =>
+                if len(arguments) == 1:
+                    return EncodingCursor.create(self.view, self.origin).map_err(as_crumb)
+            _ => pass
+        return Err(CrumbError.invalid_input("typed option shape"))
+
+    def expect_scalar(self, expected: ScalarKind) -> Result[None, CrumbError]:
+        """Require the description-selected scalar kind before decoding bytes."""
+        match self.node:
+            TypeNode.Scalar(actual) =>
+                if actual == expected:
+                    return Ok(None)
+            _ => pass
+        return Err(CrumbError.invalid_input("typed scalar kind"))
+
+    def sequence_kind(self) -> Result[SequenceKind, CrumbError]:
+        """Translate a description container into RFC 173's sequence vocabulary."""
+        match self.node:
+            TypeNode.Container(ContainerKind.List, _) => return Ok(SequenceKind.List)
+            TypeNode.Container(ContainerKind.Set, _) => return Ok(SequenceKind.Set)
+            TypeNode.Container(ContainerKind.Tuple, _) => return Ok(SequenceKind.Tuple)
+            _ => return Err(CrumbError.invalid_input("typed sequence shape"))
+
+    def sequence_element(self, position: int) -> Result[TypeNode, CrumbError]:
+        """Return the declared child selector for one sequence position."""
+        match self.node:
+            TypeNode.Container(ContainerKind.List, arguments) | TypeNode.Container(ContainerKind.Set, arguments) =>
+                if len(arguments) == 1:
+                    return Ok(arguments[0])
+            TypeNode.Container(ContainerKind.Tuple, arguments) =>
+                if position >= 0 and position < len(arguments):
+                    return Ok(arguments[position])
+            _ => pass
+        return Err(CrumbError.invalid_input("typed sequence element"))
+
+    def source_description(self) -> Result[StoredDescription, CrumbError]:
+        """Return the admitted root description or reject a nested model without its own supplied description."""
+        match self.description:
+            Some(description) => return Ok(description)
+            None => return Err(CrumbError.invalid_input("typed nested model unavailable"))
+
+
+def as_crumb(error: BinaryError) -> CrumbError:
+    """Keep one binary refusal in the typed Crumb failure channel."""
+    return CrumbError.invalid_input(error.message())

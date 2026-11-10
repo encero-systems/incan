@@ -2,9 +2,9 @@
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
-from crate.primitives.crumb.framing import encode_signed
 from crate.primitives.crumb.values import MapEntry, Projection, Value, ValueField
-from crate.primitives.crumb.scalars import float64_bits, normalize_decimal
+from crate.primitives.crumb.native_numbers import normalize_decimal
+from crate.primitives.crumb.scalars import float64_bits
 from crate.primitives.crumb.spelling import selector_spelling
 from crate.primitives.crumb.ordering import compare, order_values, order_entries
 from crate.primitives.hex import hexlify
@@ -23,9 +23,9 @@ def validate_inner(value: Value, mut budget: Budget) -> Result[None, CrumbError]
     """No canonical omission may hide malformed input or original duplicate map keys/set elements."""
     match value:
         Value.NoneValue | Value.Boolean(_) | Value.Withheld => pass
-        Value.Integer(decimal) => checked = encode_signed(decimal, budget)?
+        Value.Integer(_) => budget.charge_bytes(16)?
         Value.Float(width, bits) => checked = float64_bits(width, bits, budget)?
-        Value.Decimal(coefficient, scale) => checked = normalize_decimal(coefficient, scale, budget)?
+        Value.Decimal(coefficient, scale) => checked = normalize_decimal(coefficient, scale)?
         Value.Text(text) =>
             for _ in range(4):
                 budget.charge_bytes(len(text))?

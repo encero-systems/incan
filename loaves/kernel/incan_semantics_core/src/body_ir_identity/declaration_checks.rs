@@ -150,6 +150,9 @@ impl BodyIrModule {
     /// Whether a normal enum layout and every variant belong to their exact declared owner. A native enum may retain
     /// only its checked Copy capability beside that identity; the adapter verifies it against the concrete Rust type.
     pub fn is_well_formed_native_enum_declaration(&self, declaration: &crate::body_ir::EnumDeclaration) -> bool {
+        if !Self::record_package_matches_owner(declaration.record_package_identity.as_ref(), &declaration.canonical) {
+            return false;
+        }
         if declaration.type_parameters.iter().any(String::is_empty)
             || declaration.type_parameters.iter().collect::<BTreeSet<_>>().len() != declaration.type_parameters.len()
         {

@@ -1,11 +1,14 @@
 //! The compiled Loaves a compilation reaches, and the one index every consumer reads them through (DD-0007).
 //!
 //! A compiled Loaf is one artifact directory per profile: its library manifest (`<name>.incnlib`), its governed bodies
-//! (`<name>.incnbody`), its library unit (`lib<name>.rlib`), the unit's native closure (`<name>.native.json`), and an
+//! (`<name>.incnbody`), its library unit (`lib<crate>.rlib`), the unit's native closure (`<name>.native.json`), and an
 //! optional manifest-authenticated native ABI cache (`<name>.rustabi`). An
 //! ordinary dependency owns `pub::<key>`; a standard package owns the `std.*` roots the compiler-pinned
 //! [`STANDARD_PACKAGE_NAMESPACE_POLICIES`] assign to it. A module path resolves to exactly one entry.
 
+//! Here `<name>` is the shared artifact stem: unchanged for bare packages and reversibly encoded for scoped ones.
+
+use incan_loaf_names::artifact_stem;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -16,7 +19,7 @@ use incan_lang::interop::RustItemMetadata;
 use incan_lang::lang::standard_packages::{STANDARD_PACKAGE_NAMESPACE_POLICIES, StandardPackageNamespacePolicy};
 use incan_vocab::{KeywordActivation, KeywordRegistration, KeywordSpec};
 
-use crate::rust_abi_cache::RustAbiCache;
+use crate::rust_abi_cache::{RustAbiCache, RustTypeAliasLookup, ShippedRustAbiCache};
 
 mod decoded_manifest;
 mod lazy_entry;
@@ -93,6 +96,8 @@ pub struct LoafArtifact {
     pub manifest: Arc<LibraryManifest>,
     /// Manifest-authenticated native facts decoded lazily from the Loaf's indexed ABI asset.
     rust_abi_cache: Option<Arc<RustAbiCache>>,
+    /// Paths from a version-10 cache index that the candidate must re-extract without decoding old records.
+    stale_rust_paths: BTreeSet<String>,
 }
 
 impl LoafArtifact {
@@ -106,7 +111,7 @@ impl LoafArtifact {
         let _invocation =
             tracing::trace_span!(target: "incan::invocation", "incan_frontend::read_loaf_manifest", loaf = name)
                 .entered();
-        let path = dir.join(format!("{name}.{LIBRARY_MANIFEST_EXTENSION}"));
+        let path = dir.join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", artifact_stem(name)));
         let unreadable = |reason: String| LoafIndexError::Unreadable {
             path: path.clone(),
             reason,
@@ -121,13 +126,14 @@ impl LoafArtifact {
             digest,
             feature_projection: BTreeSet::new(),
         };
-        let rust_abi_cache = Self::read_rust_abi_cache(dir, name, &manifest)?;
+        let (rust_abi_cache, stale_rust_paths) = Self::read_rust_abi_cache(dir, name, &manifest)?;
         Ok(Self {
             identity,
             name: name.to_owned(),
             dir: dir.to_path_buf(),
             manifest,
             rust_abi_cache,
+            stale_rust_paths,
         })
     }
 
@@ -138,11 +144,11 @@ impl LoafArtifact {
         dir: &Path,
         name: &str,
         manifest: &LibraryManifest,
-    ) -> Result<Option<Arc<RustAbiCache>>, LoafIndexError> {
+    ) -> Result<(Option<Arc<RustAbiCache>>, BTreeSet<String>), LoafIndexError> {
         let Some(expected) = manifest.rust_abi.as_ref().and_then(|abi| abi.cache_digest.as_ref()) else {
-            return Ok(None);
+            return Ok((None, BTreeSet::new()));
         };
-        let path = dir.join(format!("{name}.rustabi"));
+        let path = dir.join(format!("{}.rustabi", artifact_stem(name)));
         let unreadable = |reason: String| LoafIndexError::Unreadable {
             path: path.clone(),
             reason,
@@ -154,24 +160,29 @@ impl LoafArtifact {
         if digest != *expected {
             return Err(unreadable("native ABI cache digest differs from the manifest".into()));
         }
-        let cache = RustAbiCache::decode_owned(bytes).map_err(unreadable)?;
-        Ok(Some(Arc::new(cache)))
+        match RustAbiCache::decode_shipped(bytes).map_err(unreadable)? {
+            ShippedRustAbiCache::Current(cache) => Ok((Some(Arc::new(cache)), BTreeSet::new())),
+            ShippedRustAbiCache::Previous(paths) => Ok((None, paths)),
+        }
     }
 
     /// The library manifest file.
     pub fn manifest_path(&self) -> PathBuf {
-        self.dir.join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", self.name))
+        self.dir
+            .join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", artifact_stem(&self.name)))
     }
 
     /// The governed bodies file: the executable representation callers instantiate.
     pub fn bodies_path(&self) -> PathBuf {
-        self.dir
-            .join(format!("{}.{EXECUTABLE_REPRESENTATION_EXTENSION}", self.name))
+        self.dir.join(format!(
+            "{}.{EXECUTABLE_REPRESENTATION_EXTENSION}",
+            artifact_stem(&self.name)
+        ))
     }
 
     /// The library unit's native closure: the rlibs and search paths it links.
     pub fn native_closure_path(&self) -> PathBuf {
-        self.dir.join(format!("{}.native.json", self.name))
+        self.dir.join(format!("{}.native.json", artifact_stem(&self.name)))
     }
 
     /// Read the library unit's native closure. A relative path in it (a packed toolchain's Loaf) names its target from
@@ -185,7 +196,7 @@ impl LoafNativeClosure {
     /// Read the native closure of the Loaf `name` in `dir` without reading its manifest: linking needs only the
     /// closure file, and a Loaf the program never imports must not be decoded to link it.
     pub fn read(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
-        let path = dir.join(format!("{name}.native.json"));
+        let path = dir.join(format!("{}.native.json", artifact_stem(name)));
         let bytes = std::fs::read(&path).map_err(|error| LoafIndexError::Unreadable {
             path: path.clone(),
             reason: error.to_string(),
@@ -445,6 +456,15 @@ impl LoafIndex {
         self.forget_resolved_rust_items();
     }
 
+    /// Paths whose manifest-authenticated version-10 cache was skipped and must be extracted by this compiler.
+    pub fn stale_shipped_rust_paths(&self) -> BTreeSet<String> {
+        self.entries
+            .values()
+            .filter(|entry| entry.summary.rust_abi_cache_declared && !entry.summary.rust_abi_cache)
+            .flat_map(|entry| entry.summary.rust_paths.iter().cloned())
+            .collect()
+    }
+
     /// Name the Rust crates the unit declares. Private indexed snapshots do not answer for them, so their facts come
     /// from the unit's own caches and extraction. Explicit dependency reexports retain their declared ABI.
     pub fn declare_rust_crates(&mut self, crates: impl IntoIterator<Item = String>) {
@@ -608,17 +628,39 @@ impl LoafIndex {
         if let Some(resolved) = self.resolved_rust_items.lock().ok()?.get(canonical_path) {
             return Some(Arc::clone(resolved));
         }
-        let resolved = Arc::new(self.resolve_rust_abi_item(canonical_path)?);
+        let resolved = Arc::new(self.resolve_rust_fact(canonical_path, Clone::clone, RustAbiCache::get)?);
         if let Ok(mut items) = self.resolved_rust_items.lock() {
             items.insert(canonical_path.to_owned(), Arc::clone(&resolved));
         }
         Some(resolved)
     }
 
-    /// Resolve one item through the lookup order, without the shared store. A private indexed snapshot belongs to its
-    /// producer's closure, where visible paths and implementations can differ from the unit's. For a crate the unit
-    /// declares, only explicit dependency reexports precede the unit's own caches and extraction.
-    fn resolve_rust_abi_item(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    /// Alias-only Rust metadata for `canonical_path`, following the full-item lookup order without expanding a cache
+    /// record's methods, trait implementations, fields or variants.
+    ///
+    /// A full item already resolved for another purpose remains the authority. Otherwise, encoded caches project the
+    /// two alias fields directly and create no parallel memo or second metadata table.
+    pub(crate) fn rust_type_alias(&self, canonical_path: &str) -> Option<RustTypeAliasLookup> {
+        if let Some(resolved) = self.resolved_rust_items.lock().ok()?.get(canonical_path) {
+            return Some(RustTypeAliasLookup::from_item(resolved));
+        }
+        self.resolve_rust_fact(
+            canonical_path,
+            RustTypeAliasLookup::from_item,
+            RustAbiCache::get_type_alias,
+        )
+    }
+
+    /// Resolve one projection through the common Rust-fact lookup order, without adding a parallel memo or provider
+    /// traversal. A private indexed snapshot belongs to its producer's closure, where visible paths and
+    /// implementations can differ from the unit's. For a crate the unit declares, only explicit dependency reexports
+    /// precede the unit's own caches and extraction.
+    fn resolve_rust_fact<T>(
+        &self,
+        canonical_path: &str,
+        project_item: impl Fn(&RustItemMetadata) -> T,
+        read_cache: impl Fn(&RustAbiCache, &str) -> Result<Option<T>, String>,
+    ) -> Option<T> {
         let root = canonical_path.split("::").next().unwrap_or(canonical_path);
         let declared = self.declared_rust_crates.contains(root);
         let shipping = || {
@@ -638,7 +680,7 @@ impl LoafIndex {
                 .as_ref()
                 .and_then(|abi| abi.get(canonical_path))
             {
-                return Some(item.clone());
+                return Some(project_item(item));
             }
         }
         for entry in shipping().filter(|entry| !declared && entry.summary.rust_abi_cache) {
@@ -648,38 +690,34 @@ impl LoafIndex {
             let Some(cache) = entry.artifact.rust_abi_cache.as_ref() else {
                 continue;
             };
-            if let Some(item) = self.cache_item(cache, canonical_path, || entry.artifact.dir.clone()) {
+            if let Some(item) = self.cache_fact(read_cache(cache, canonical_path), || entry.artifact.dir.clone()) {
                 return Some(item);
             }
         }
         for cache in &self.rust_abi_caches {
-            if let Some(item) = self.cache_item(cache, canonical_path, || PathBuf::from("the toolchain Rust ABI cache"))
-            {
+            if let Some(item) = self.cache_fact(read_cache(cache, canonical_path), || {
+                PathBuf::from("the toolchain Rust ABI cache")
+            }) {
                 return Some(item);
             }
         }
         for cache in &self.rust_fact_caches {
-            if let Some(item) = self.cache_item(cache, canonical_path, || PathBuf::from("the bounded Rust facts cache"))
-            {
+            if let Some(item) = self.cache_fact(read_cache(cache, canonical_path), || {
+                PathBuf::from("the bounded Rust facts cache")
+            }) {
                 return Some(item);
             }
         }
         #[cfg(test)]
         if let Some(item) = self.rust_facts.get(canonical_path) {
-            return Some(item.clone());
+            return Some(project_item(item));
         }
         None
     }
 
-    /// Read one path from one ABI cache, retaining a read failure for `validate_demands` instead of treating it as a
-    /// missing item. `origin` names the cache in that failure.
-    fn cache_item(
-        &self,
-        cache: &RustAbiCache,
-        canonical_path: &str,
-        origin: impl FnOnce() -> PathBuf,
-    ) -> Option<RustItemMetadata> {
-        match cache.get(canonical_path) {
+    /// Admit one projected cache read while retaining a failure for [`Self::validate_demands`].
+    fn cache_fact<T>(&self, result: Result<Option<T>, String>, origin: impl FnOnce() -> PathBuf) -> Option<T> {
+        match result {
             Ok(item) => item,
             Err(reason) => {
                 let _ = self
@@ -776,4 +814,38 @@ fn normalize_keyword_registration(key: &str, registration: &KeywordRegistration)
         keywords,
         valid_decorators: registration.valid_decorators.clone(),
     })
+}
+
+#[cfg(test)]
+mod scoped_name_tests {
+    use super::LoafArtifact;
+    use crate::library_manifest::LibraryManifest;
+    use incan_loaf_names::artifact_stem;
+
+    /// The ordinary retained reader opens encoded filenames while retaining the exact scoped semantic owner.
+    #[test]
+    fn scoped_artifacts_retain_their_producer_name() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        for name in ["alpha/catalog", "beta/catalog", "scope-a/catalog", "scope/a-catalog"] {
+            let manifest = LibraryManifest::new(name, "1.0.0");
+            let stem = artifact_stem(name);
+            let path = directory.path().join(format!("{stem}.incnlib"));
+            std::fs::write(&path, manifest.to_json_string()?)?;
+            for _ in 0..2 {
+                let artifact = LoafArtifact::read(directory.path(), name)?;
+                assert_eq!(artifact.manifest.name, name);
+                assert_eq!(artifact.identity.name, name);
+                assert_eq!(artifact.manifest_path(), path);
+                assert_eq!(
+                    artifact.bodies_path(),
+                    directory.path().join(format!("{stem}.incnbody"))
+                );
+                assert_eq!(
+                    artifact.native_closure_path(),
+                    directory.path().join(format!("{stem}.native.json"))
+                );
+            }
+        }
+        Ok(())
+    }
 }

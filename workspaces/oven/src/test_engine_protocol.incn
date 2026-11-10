@@ -34,10 +34,6 @@ from engine_messages import (
     Submit,
     Accepted,
     Captured,
-    Prepare,
-    NeedPrerequisite,
-    Evaluate,
-    Produced,
     Query,
     Page,
     Event,
@@ -579,27 +575,6 @@ def check_bodies() -> Result[None, str]:
         ),
         Message.Accepted(Accepted(capture_token="descriptor", interest_token="descriptor")),
         Message.Captured(Captured(epoch="descriptor", snapshot="descriptor")),
-        Message.Prepare(
-            Prepare(stage="descriptor", snapshot="descriptor", demand_root="descriptor", producer_profile="descriptor"),
-        ),
-        Message.NeedPrerequisite(NeedPrerequisite(keys_root="descriptor", earlier_rank=1)),
-        Message.Evaluate(
-            Evaluate(
-                work_root="descriptor",
-                snapshot="descriptor",
-                prepared_root="descriptor",
-                reservation="descriptor",
-                cancellation_generation=1,
-            ),
-        ),
-        Message.Produced(
-            Produced(
-                staged_root="descriptor",
-                witness_root="descriptor",
-                diagnostic_root="descriptor",
-                counter_root="descriptor",
-            ),
-        ),
         Message.Query(
             Query(snapshot="descriptor", query_root="descriptor", cursor="descriptor", row_limit=1, byte_limit=1),
         ),
@@ -635,6 +610,8 @@ def check_bodies() -> Result[None, str]:
         assert refused_body(decode(tag, joined([raw, scalar(0, 1)])))
     assert refused_body(decode(16, joined([scalar(1, 2), scalar(0, 4), scalar(999, 2)])))
     assert refused_body(decode(15, joined([scalar(1, 2), scalar(0, 4), scalar(999, 2)])))
+    for worker_record_tag in [6, 7, 8, 9]:
+        assert refused_body(decode(worker_record_tag, scalar(1, 2)))
     assert refused_body(decode(65535, scalar(1, 2)))
     assert refused_body(decode(1, scalar(2, 2)))
     assert refused_body(decode(1, joined([scalar(1, 2), scalar(4294967295, 4)])))

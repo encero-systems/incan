@@ -3,7 +3,7 @@
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.identity import closed_selector
-from crate.primitives.crumb.ordering import order_values, order_entries, compare_selectors
+from crate.primitives.crumb.ordering import compare, order_values, order_entries, compare_selectors
 from crate.primitives.crumb.encoding_buffer import EncodingBuffer, indexed
 from crate.primitives.crumb.descriptions import StoredDescription, StoredField
 from crate.primitives.crumb.description_dictionary import Dictionary, slot
@@ -191,8 +191,13 @@ def container(
         (ContainerKind.Set, Value.Set(items)) =>
             output.count(len(items), budget)?
             order = order_values(items, Projection.Object, budget)?
-            for index in order:
-                cells.append(cell(arguments[0], items[index], dictionary, budget)?)
+            for position in range(len(order)):
+                if (
+                    position > 0
+                    and compare(items[order[position - 1]], items[order[position]], Projection.Object, budget)? == 0
+                ):
+                    return Err(CrumbError.invalid_input("duplicate set element"))
+                cells.append(cell(arguments[0], items[order[position]], dictionary, budget)?)
         (ContainerKind.Tuple, Value.Tuple(items)) =>
             if len(items) != len(arguments):
                 return Err(CrumbError.invalid_input("tuple cell arity"))
@@ -204,9 +209,19 @@ def container(
                 return Err(CrumbError.limit("map offset count"))
             output.count(len(entries), budget)?
             order = order_entries(entries, Projection.Object, budget)?
-            for index in order:
-                cells.append(cell(arguments[0], entries[index].key, dictionary, budget)?)
-                cells.append(cell(arguments[1], entries[index].value, dictionary, budget)?)
+            for position in range(len(order)):
+                if (
+                    position > 0
+                    and compare(
+                        entries[order[position - 1]].key,
+                        entries[order[position]].key,
+                        Projection.Object,
+                        budget,
+                    )? == 0
+                ):
+                    return Err(CrumbError.invalid_input("duplicate map key"))
+                cells.append(cell(arguments[0], entries[order[position]].key, dictionary, budget)?)
+                cells.append(cell(arguments[1], entries[order[position]].value, dictionary, budget)?)
         _ => return Err(CrumbError.invalid_input("collection cell type"))
     output.append(indexed(cells, budget)?, budget)?
     return output.finish(budget)

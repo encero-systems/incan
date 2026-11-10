@@ -4,6 +4,7 @@
 //! A session is opened once from the unit description Oven supplies (DD-0008) and reused by every stage, so the
 //! Loaves, the vocabulary they bring and the active features are decided once per unit.
 
+use incan_loaf_names::artifact_stem;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -89,6 +90,8 @@ pub struct CompilationSession {
     desugar_diagnostics: Arc<Mutex<BTreeMap<PathBuf, Vec<diagnostics::CompileError>>>>,
     /// The unit as Oven describes it.
     unit: UnitDescription,
+    /// Native-only accepted scalar body products; checking and graph sessions leave this inventory empty.
+    callable_body_reuse: BTreeMap<PathBuf, incan_frontend::declaration_interface::ValidatedCallableBodies>,
     /// The unit's source root, copied from its description.
     pub source_root: PathBuf,
     /// The compiled Loaves the program imports from: its dependencies and the standard packages.
@@ -115,8 +118,9 @@ impl CompilationSession {
         Self::open(unit, false)
     }
 
-    /// Open a native program session with admitted inventories and first-use manifest demand. Source analysis,
-    /// declaration closure and lowering run anew; no previous source footprint supplies negative lookup facts.
+    /// Open a native program session with admitted inventories and first-use manifest demand. No previous source
+    /// footprint supplies negative lookup facts. A native producer may separately install explicit scalar-body
+    /// products after parsing and vocabulary expansion have established their current source provenance.
     pub fn for_native_program(unit: &UnitDescription) -> CliResult<Self> {
         Self::open(unit, false)
     }
@@ -141,7 +145,9 @@ impl CompilationSession {
         let mut deferred = Vec::new();
         for loaf in &unit.loaves {
             let key = if loaf.standard { &loaf.name } else { &loaf.key };
-            let manifest = loaf.dir.join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", loaf.name));
+            let manifest = loaf
+                .dir
+                .join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", artifact_stem(&loaf.name)));
             if (formatting || unit.not_prepared_loaves.contains(&loaf.name))
                 && !manifest
                     .try_exists()
@@ -179,12 +185,22 @@ impl CompilationSession {
             declared_features: unit.declared_features.clone(),
             contract_model_bundles,
             unit: unit.clone(),
+            callable_body_reuse: BTreeMap::new(),
         })
     }
 
     /// The unit as Oven describes it.
     pub fn unit(&self) -> &UnitDescription {
         &self.unit
+    }
+
+    /// Install products selected against this session's exact parsed inputs. General analysis and inspection do not
+    /// call this method; the frontend validates each selection again before skipping accepted scalar bodies.
+    pub fn set_callable_body_reuse(
+        &mut self,
+        products: BTreeMap<PathBuf, incan_frontend::declaration_interface::ValidatedCallableBodies>,
+    ) {
+        self.callable_body_reuse = products;
     }
 
     /// The compiled Loaves the program imports from.
@@ -215,6 +231,7 @@ impl CompilationSession {
         };
         let uncovered = imported_rust_paths(modules)
             .into_iter()
+            .chain(self.loaves.stale_shipped_rust_paths())
             .filter(|path| self.loaves.rust_abi_item(path).is_none())
             .collect::<BTreeSet<_>>();
         self.loaves
@@ -283,6 +300,7 @@ impl CompilationSession {
             package,
             None,
             visit,
+            &self.callable_body_reuse,
         );
         let mut expansion_errors = self.expansion_failures(modules);
         match checked {

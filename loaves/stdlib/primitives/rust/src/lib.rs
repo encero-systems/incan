@@ -16,6 +16,7 @@ pub mod strings;
 pub mod sync;
 pub mod task;
 pub mod time;
+pub mod unicode_names;
 pub mod validation;
 
 pub use reflection::{HasClassName, HasFieldInfo, HasFieldValueReflection, HasTypeClassName};

@@ -1,5 +1,6 @@
 """Lock exact vocabulary provider units and apply the build's explicit native-provider admission policy."""
 
+from rust::incan_loaf_names import artifact_stem
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue
@@ -27,7 +28,7 @@ pub def admit_vocabulary(unit: UnitDescription) -> Result[UnitDescription, str]:
     for loaf in ready.loaves:
         if loaf.name in ready.not_prepared_loaves:
             continue
-        manifest = Path(loaf.dir).joinpath(f"{loaf.name}.incnlib")
+        manifest = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib")
         if not manifest.is_file():
             continue
         declared = manifest_vocabulary(manifest)?

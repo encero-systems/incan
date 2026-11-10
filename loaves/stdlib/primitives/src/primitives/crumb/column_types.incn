@@ -1,0 +1,34 @@
+"""Explicit physical choices for column blocks; logical values and descriptions remain shared."""
+
+
+pub enum BlockEncoding(int):
+    """An admitted physical choice, not a claim that all writers select the same bytes."""
+
+    Indexed = 0
+    FrameOfReference = 1
+    ZigzagDelta = 2
+    Runs = 3
+    DictionaryPacked = 4
+    DictionaryRuns = 5
+
+
+pub model ColumnChoice:
+    """One encoding per 256-position block; dictionary use follows the selected code encodings."""
+
+    pub blocks: list[BlockEncoding]
+
+
+pub model GroupChoice:
+    """Choices in field-identity order, or one column for a complete root enum."""
+
+    pub columns: list[ColumnChoice]
+
+
+pub def encoding_id(encoding: BlockEncoding) -> int:
+    """Map stable profile IDs explicitly rather than depending on enum declaration layout."""
+    return encoding.value()
+
+
+pub def uses_dictionary(encoding: BlockEncoding) -> bool:
+    """Only the two code encodings require a shared complete-column dictionary."""
+    return encoding == BlockEncoding.DictionaryPacked or encoding == BlockEncoding.DictionaryRuns

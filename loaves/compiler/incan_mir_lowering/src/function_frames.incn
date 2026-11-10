@@ -54,6 +54,7 @@ from lists import list_iterator_locals, taking_iterator_locals, list_parameter_t
 from async_ import future_type, integer_entry, evaluator_name, is_future
 from defaults import default_type
 from type_parameters import Instance, substitute
+from result_requirements import validate_result_requirements
 from computed_statics import enters_module_initialization, initialize_module_statics
 from closures import (
     validate_callable_representation,
@@ -70,6 +71,7 @@ from call_arguments import lacks_exclusive_parameter, owned_collection, stored_p
 from builtin_calls import validate_exact_float
 from frame_instances import entry_result
 from list_iteration import frozen_list_snapshot_type
+from redo_counts import record_lowering
 
 
 pub def lower_function(
@@ -96,8 +98,10 @@ pub def lower_function(
     enums: &list[RustEnumDeclaration] = borrowed_table(module.enum_declarations)
     span = location(body.span, source, file)
     selected_name = frame_name(evaluator_name(module, body), role)
+    record_lowering(program.observe_work, body, selected_name, type_arguments, file)
     cached_decorator, initializing_decorator = frame_decorator_role(module, body, role)?
     validate_callable_representation(body)?
+    validate_result_requirements(body)?
     mut declared_carrier = PlanType.Unit
     match native_source_type(constructors, nominals, enums, unions, body.return_type, intrinsics, file):
         Ok(carrier) => declared_carrier = carrier
@@ -145,7 +149,8 @@ pub def lower_function(
     match body.returned_view:
         Some(view) =>
             builder.carries_view = (
-                view.access != IncanInputAccess.Owned and (view.carried.is_some() or len(view.component) != 0)
+                view.access != IncanInputAccess.Owned
+                and (view.carried.is_some() or len(view.component) != 0)
             )
         None => pass
     initialize_body_frame(module, body, builder, parameters, declared_type, span)?

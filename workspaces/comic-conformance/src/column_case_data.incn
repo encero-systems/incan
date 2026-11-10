@@ -1,0 +1,51 @@
+"""Independent logical column inputs and explicit physical choices, not a decoder of expected bytes."""
+
+from std.json import JsonValue
+from std.primitives.crumb.column_types import BlockEncoding, ColumnChoice, GroupChoice
+from std.primitives.crumb.types import ScalarKind
+from std.primitives.crumb.values import Value
+from std.primitives.text import decode_utf8
+from case_data import array, field, hex_bytes
+from fixture_adapter import logical_items
+
+
+pub def encoding(value: int) -> Result[BlockEncoding, str]:
+    """Translate literal profile IDs from test inputs with no default or inferred fallback."""
+    match BlockEncoding.from_value(value):
+        Some(encoding) => return Ok(encoding)
+        None => return Err("unknown writer input encoding")
+
+
+pub def choices(source: JsonValue, identity: str) -> Result[list[GroupChoice], str]:
+    """Test fixture choices retain only IDs/group boundaries; expected payload bytes remain independent."""
+    rows = field(source, identity)?.expect_array().map_err((e) => e.message())?
+    mut groups: list[GroupChoice] = []
+    for row in rows:
+        mut columns: list[ColumnChoice] = []
+        for column in row.expect_array().map_err((e) => e.message())?:
+            mut blocks: list[BlockEncoding] = []
+            for item in column.expect_array().map_err((e) => e.message())?:
+                blocks.append(encoding(item.expect_int().map_err((e) => e.message())?)?)
+            columns.append(ColumnChoice(blocks=blocks))
+        groups.append(GroupChoice(columns=columns))
+    return Ok(groups)
+
+
+pub def key_values(source: JsonValue, name: str, hexadecimal: str, values: str) -> Result[list[Value], str]:
+    """Raw string/binary keys or exact numeric values are written independently in the corpus."""
+    if source.get(values).is_some():
+        return logical_items(array(source, values)?)
+    if source.get(hexadecimal).is_none():
+        return Ok([])
+    mut output: list[Value] = []
+    for item in array(source, hexadecimal)?:
+        raw = hex_bytes(item.expect_str().map_err((e) => e.message())?)?
+        match ScalarKind.from_value(name):
+            Some(ScalarKind.Binary) => output.append(Value.Binary(raw))
+            Some(ScalarKind.String) =>
+                valid, decoded = decode_utf8(raw, false)
+                if not valid:
+                    return Err("invalid independent key UTF-8")
+                output.append(Value.Text(decoded))
+            _ => return Err("nonbinary independent dictionary keys")
+    return Ok(output)

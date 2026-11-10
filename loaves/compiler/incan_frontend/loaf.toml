@@ -1,4 +1,5 @@
 [dependencies]
+incan_loaf_names = { loaf = "incan_loaf_names", path = "../../kernel/incan_loaf_names" }
 postcard = { default-features = false, features = ["use-std"], loaf = "crates-io/postcard", version = "1.1" }
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
 incan_format = { loaf = "incan_format", path = "../incan_format" }

@@ -4,7 +4,8 @@ from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.values import MapEntry, Projection, Value, ValueField
 from crate.primitives.crumb.types import AbsentPolicy, TypeNode, NominalKind
-from crate.primitives.crumb.scalars import compare_integer, compare_decimal, float64_bits
+from crate.primitives.crumb.native_numbers import compare_decimals, integer_compare
+from crate.primitives.crumb.scalars import float64_bits
 from crate.primitives.crumb.spelling import selector_spelling
 from crate.primitives.crumb.identity import closed_selector
 from crate.primitives.hash import sha256
@@ -92,12 +93,11 @@ def compare_inner(left: Value, right: Value, projection: Projection, mut budget:
                 return Ok(1)
             return Ok(-1)
         (Value.Integer(a), Value.Integer(b)) =>
-            budget.charge_bytes(len(a))?
-            budget.charge_bytes(len(b))?
-            return Ok(compare_integer(a, b))
+            return Ok(integer_compare(a, b))
         (Value.Float(a_width, a), Value.Float(b_width, b)) =>
             return Ok(text_order(float_key(a_width, a, budget)?, float_key(b_width, b, budget)?))
-        (Value.Decimal(a, a_scale), Value.Decimal(b, b_scale)) => return compare_decimal(a, a_scale, b, b_scale, budget)
+        (Value.Decimal(a, a_scale), Value.Decimal(b, b_scale)) =>
+            return compare_decimals(a, a_scale, b, b_scale, budget)
         (Value.Text(a), Value.Text(b)) =>
             budget.charge_elements(len(a))?
             budget.charge_elements(len(b))?

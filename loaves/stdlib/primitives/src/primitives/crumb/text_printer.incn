@@ -1,0 +1,692 @@
+"""Canonical COMIC printing from inert typed descriptions and values."""
+
+from rust::std::primitive import f32 as RustF32, f64 as RustF64
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.native_numbers import integer_spelling
+from crate.primitives.crumb.registrations import KindRegistration
+from crate.primitives.crumb.text_syntax import description_at, last_segment, type_spelling
+from crate.primitives.crumb.text_controls import bidirectional_escape
+from crate.primitives.crumb.text_types import (
+    TextContext,
+    TextDescription,
+    TextDocument,
+    TextError,
+    TextFailure,
+    TextPosition,
+    TextRootValue,
+)
+from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, NominalKind, TypeNode, VariantShape
+from crate.primitives.crumb.values import MapEntry, Metadata, MetadataEntry, Value, ValueField
+from crate.primitives.hex import hexlify
+from crate.primitives.text import decode_utf8, encode_utf8
+
+
+pub def print_comic(document: TextDocument, context: TextContext, mut budget: Budget) -> Result[bytes, TextError]:
+    """Print one deterministic UTF-8 document with descriptions before ordered root values."""
+    mut entries: list[str] = []
+    for description in ordered_descriptions(document.descriptions):
+        budget.charge_elements(1).map_err((_) => print_error(TextFailure.Limit))?
+        registration = context.kinds
+            .registration(description.kind, budget)
+            .map_err((_) => print_error(TextFailure.UnknownKind))?
+        entries.append(render_description(description, registration)?)
+    mut index = 0
+    while index < len(document.values):
+        budget.charge_elements(1).map_err((_) => print_error(TextFailure.Limit))?
+        storage_type = root_type(document.values[index])?
+        mut end = index + 1
+        while end < len(document.values) and type_spelling(document.values[end].storage_type) == storage_type:
+            end += 1
+        entries.append(render_root_group(document.values[index:end], storage_type, document.descriptions)?)
+        index = end
+    result = "\n\n".join(entries) + "\n"
+    encoded = encode_utf8(result)
+    budget.charge_bytes(len(encoded)).map_err((_) => print_error(TextFailure.Limit))?
+    return Ok(encoded)
+
+
+def ordered_descriptions(descriptions: list[TextDescription]) -> list[TextDescription]:
+    """Sort descriptions by absolute path and kind without consulting host map order."""
+    mut result: list[TextDescription] = []
+    for description in descriptions:
+        mut selected = 0
+        key = description.path + "\\u{0}" + description.kind
+        while selected < len(result) and result[selected].path + "\\u{0}" + result[selected].kind < key:
+            selected += 1
+        result.append(description)
+        mut current = len(result) - 1
+        while current > selected:
+            previous = result[current - 1]
+            result[current - 1] = result[current]
+            result[current] = previous
+            current -= 1
+    return result
+
+
+def render_description(description: TextDescription, registration: Option[KindRegistration]) -> Result[str, TextError]:
+    """Render one description using its registered property order and declared member order."""
+    mut items: list[str] = []
+    mut properties = metadata_entries(description.properties)?
+    match registration:
+        Some(value) => properties = ordered_properties(properties, value.property_order)
+        None => pass
+    for property in properties:
+        items.append(render_property(property, registration)?)
+    if description.shape == NominalKind.Enum:
+        for variant in description.variants:
+            items.append(render_variant(variant, registration)?)
+    else:
+        for field in description.fields:
+            items.append(render_field(field, registration)?)
+    prefix = f"{description.path} = {description.kind} "
+    inline = prefix + "{ " + ", ".join(items) + " }"
+    if len(inline) <= 120:
+        return Ok(inline)
+    mut lines: list[str] = []
+    for item in items:
+        lines.append("    " + item)
+    return Ok(prefix + "{\n" + "\n".join(lines) + "\n}")
+
+
+def ordered_properties(properties: list[MetadataEntry], order: Option[list[str]]) -> list[MetadataEntry]:
+    """Apply a declared property order, retaining unknown properties in read order afterward."""
+    match order:
+        None => return properties
+        Some(names) =>
+            mut result: list[MetadataEntry] = []
+            for name in names:
+                for property in properties:
+                    if property.key == name:
+                        result.append(property)
+            for property in properties:
+                mut known = false
+                for name in names:
+                    if property.key == name:
+                        known = true
+                if not known:
+                    result.append(property)
+            return result
+
+
+def render_variant(value: VariantShape, registration: Option[KindRegistration]) -> Result[str, TextError]:
+    """Render one enum variant, its complete metadata and its named payload description."""
+    mut result = value.name
+    mut metadata: list[MetadataEntry] = []
+    if len(value.renamed_from) > 0:
+        metadata.append(
+            MetadataEntry(
+                key="renamed_from",
+                value=Metadata.List([Metadata.Symbol(name) for name in value.renamed_from]),
+            ),
+        )
+    if len(metadata) > 0:
+        mut rendered: list[str] = []
+        for property in metadata:
+            rendered.append(render_property(property, registration)?)
+        result += " [" + ", ".join(rendered) + "]"
+    if len(value.fields) == 0:
+        return Ok(result)
+    mut fields: list[str] = []
+    for field in value.fields:
+        fields.append(render_field(field, registration)?)
+    return Ok(result + "(" + ", ".join(fields) + ")")
+
+
+def render_field(value: FieldShape, registration: Option[KindRegistration]) -> Result[str, TextError]:
+    """Render field metadata, storage type and explicit absent value."""
+    mut result = value.name
+    mut metadata: list[MetadataEntry] = []
+    if len(value.renamed_from) > 0:
+        metadata.append(
+            MetadataEntry(
+                key="renamed_from",
+                value=Metadata.List([Metadata.Symbol(name) for name in value.renamed_from]),
+            ),
+        )
+    if not value.canonical:
+        metadata.append(MetadataEntry(key="canonical", value=Metadata.Boolean(false)))
+    if len(metadata) > 0:
+        mut rendered: list[str] = []
+        for property in metadata:
+            rendered.append(render_property(property, registration)?)
+        result += " [" + ", ".join(rendered) + "]"
+    result += ": " + type_spelling(value.storage_type)
+    match value.absent:
+        AbsentPolicy.NoneValue => result += " = None"
+        AbsentPolicy.Empty =>
+            match value.storage_type:
+                TypeNode.Container(ContainerKind.List, _) => result += " = []"
+                TypeNode.Container(ContainerKind.Set, _) | TypeNode.Container(ContainerKind.Map, _) => result += " = {}"
+                _ => return Err(print_error(TextFailure.InvalidAbsentValue))
+        AbsentPolicy.Required => pass
+    return Ok(result)
+
+
+def render_property(value: MetadataEntry, registration: Option[KindRegistration]) -> Result[str, TextError]:
+    """Render one inert declaration property, ordering a registered nested group when known."""
+    mut group_order: Option[list[str]] = None
+    match registration:
+        Some(item) =>
+            for group in item.property_groups:
+                if group.name == value.key:
+                    group_order = Some(group.order)
+        None => pass
+    return Ok(value.key + " = " + render_property_value(value.value, group_order, registration)?)
+
+
+def render_property_value(
+    value: Metadata,
+    group_order: Option[list[str]],
+    registration: Option[KindRegistration],
+) -> Result[str, TextError]:
+    """Render closed property values without resolving symbols or executing profile behavior."""
+    match value:
+        Metadata.Null => return Ok("None")
+        Metadata.Symbol(name) => return Ok(name)
+        Metadata.Text(text) => return Ok(quoted(text))
+        Metadata.Binary(data) => return Ok(binary_literal(data))
+        Metadata.Boolean(flag) =>
+            if flag:
+                return Ok("true")
+            return Ok("false")
+        Metadata.Integer(number) => return Ok(str(number))
+        Metadata.List(items) =>
+            mut rendered: list[str] = []
+            for item in items:
+                rendered.append(render_property_value(item, None, registration)?)
+            return Ok("[" + ", ".join(rendered) + "]")
+        Metadata.Map(properties) =>
+            mut rendered: list[str] = []
+            for property in ordered_properties(properties, group_order):
+                rendered.append(render_property(property, registration)?)
+            return Ok("{ " + ", ".join(rendered) + " }")
+    return Err(print_error(TextFailure.InvalidProperty))
+
+
+def metadata_entries(value: Metadata) -> Result[list[MetadataEntry], TextError]:
+    """Require the ordered property map used by one text declaration."""
+    match value:
+        Metadata.Map(entries) => return Ok(entries)
+        _ => return Err(print_error(TextFailure.InvalidMetadata))
+
+
+def render_root_group(
+    values: list[TextRootValue],
+    storage_type: str,
+    descriptions: list[TextDescription],
+) -> Result[str, TextError]:
+    """Render one value alone or two or more consecutive records as a canonical table."""
+    if len(values) == 1:
+        rendered = render_value(values[0].value, values[0].storage_type, false, 0, descriptions)?
+        return Ok(storage_type + " << " + rendered)
+    mut rows: list[str] = []
+    for value in values:
+        rows.append("    " + render_value(value.value, value.storage_type, true, 4, descriptions)? + ",")
+    return Ok(storage_type + " << [\n" + "\n".join(rows) + "\n]")
+
+
+def root_type(value: TextRootValue) -> Result[str, TextError]:
+    """Return the described type that owns one root record or enum value."""
+    match value.value:
+        Value.Record(_) | Value.Enum(_, _) => return Ok(type_spelling(value.storage_type))
+        _ => return Err(print_error(TextFailure.RootType))
+
+
+def render_value(
+    value: Value,
+    slot_type: TypeNode,
+    row: bool,
+    indent: int,
+    descriptions: list[TextDescription],
+) -> Result[str, TextError]:
+    """Render one value through its declared slot so optional and union layers stay explicit."""
+    match value:
+        Value.NoneValue => return Ok("None")
+        Value.Some(items) =>
+            if len(items) != 1:
+                return Err(print_error(TextFailure.InvalidOptional))
+            inner = optional_inner(slot_type)?
+            rendered = render_value(items[0], inner, row, indent, descriptions)?
+            match items[0]:
+                Value.NoneValue | Value.Some(_) => return Ok("Some(" + rendered + ")")
+                _ => return Ok(rendered)
+        Value.Boolean(flag) =>
+            if flag:
+                return Ok("true")
+            return Ok("false")
+        Value.Integer(number) => return Ok(integer_spelling(number))
+        Value.Float(width, bits) => return float_spelling(width, bits)
+        Value.Decimal(coefficient, scale) => return Ok(decimal_spelling(str(coefficient), scale))
+        Value.Text(text) => return Ok(quoted(text))
+        Value.Binary(data) => return Ok(binary_literal(data))
+        Value.Withheld => return Ok("<secret>")
+        Value.List(items) => return render_list(items, list_item_type(slot_type)?, indent, descriptions)
+        Value.Tuple(_) => return Err(print_error(TextFailure.InvalidValue))
+        Value.Set(items) => return render_set(items, set_item_type(slot_type)?, indent, descriptions)
+        Value.Map(entries) => return render_map(entries, map_types(slot_type)?, indent, descriptions)
+        Value.Record(fields) => return render_record(fields, slot_type, row, indent, descriptions)
+        Value.Enum(variant, fields) =>
+            return render_enum(variant, fields, slot_type, slot_type, row, indent, descriptions)
+        Value.Union(member, items) =>
+            if len(items) != 1:
+                return Err(print_error(TextFailure.InvalidUnion))
+            return render_union(member, items[0], slot_type, indent, descriptions)
+        Value.Reference(target_identity, identity) =>
+            check_reference_target(target_identity, slot_type)?
+            valid, text = decode_utf8(identity, false)
+            if not valid:
+                return Err(print_error(TextFailure.InvalidValue))
+            return Ok(text)
+    return Err(print_error(TextFailure.InvalidValue))
+
+
+def check_reference_target(identity: bytes, slot_type: TypeNode) -> Result[None, TextError]:
+    """Match a reference's held target-type identity to its resolved slot, retaining empty only for textual None."""
+    match slot_type:
+        TypeNode.Reference(items) =>
+            if len(items) != 1:
+                return Err(print_error(TextFailure.InvalidType))
+            match items[0]:
+                TypeNode.Nominal(_, _, Some(expected), _) =>
+                    if identity == expected:
+                        return Ok(None)
+                TypeNode.Nominal(_, _, None, _) =>
+                    if len(identity) == 0:
+                        return Ok(None)
+                _ => pass
+        _ => pass
+    return Err(print_error(TextFailure.TypeMismatch))
+
+
+def render_record(
+    values: list[ValueField],
+    slot_type: TypeNode,
+    row: bool,
+    indent: int,
+    descriptions: list[TextDescription],
+) -> Result[str, TextError]:
+    """Render record cells by name for values and position-until-gap for rows."""
+    description = description_at(descriptions, type_spelling(slot_type), print_position())?
+    mut cells: list[str] = []
+    mut gap = false
+    for field in description.fields:
+        stored = identity_field(values, field.identity)?
+        absent = is_absent(stored.value, field)
+        if absent:
+            gap = true
+        else:
+            rendered = render_value(stored.value, field.storage_type, row, indent + 4, descriptions)?
+            if row and not gap:
+                cells.append(rendered)
+            else:
+                cells.append(field.name + "=" + rendered)
+    return cell_list(cells, indent)
+
+
+def render_enum(
+    variant_identity: bytes,
+    values: list[ValueField],
+    slot_type: TypeNode,
+    ambiguity_slot: TypeNode,
+    row: bool,
+    indent: int,
+    descriptions: list[TextDescription],
+) -> Result[str, TextError]:
+    """Render a variant name, qualifying only an ambiguous union variant, plus its payload cells."""
+    storage_type = type_spelling(slot_type)
+    description = description_at(descriptions, storage_type, print_position())?
+    variant = variant_at(description, variant_identity)?
+    mut name = variant.name
+    if ambiguous_variant(ambiguity_slot, variant.name, descriptions):
+        name = last_segment(storage_type) + "." + variant.name
+    if len(variant.fields) == 0:
+        return Ok(name)
+    mut cells: list[str] = []
+    for field in variant.fields:
+        stored = identity_field(values, field.identity)?
+        if not is_absent(stored.value, field):
+            rendered = render_value(stored.value, field.storage_type, row, indent + 4, descriptions)?
+            if row:
+                cells.append(rendered)
+            else:
+                cells.append(field.name + "=" + rendered)
+    return Ok(name + cell_list(cells, indent)?)
+
+
+def render_union(
+    member: TypeNode,
+    value: Value,
+    slot_type: TypeNode,
+    indent: int,
+    descriptions: list[TextDescription],
+) -> Result[str, TextError]:
+    """Render enum variants directly and every other union member with its canonical selector."""
+    member_type = union_type(slot_type, type_spelling(member))?
+    match value:
+        Value.Enum(variant, fields) =>
+            return render_enum(variant, fields, member_type, slot_type, false, indent, descriptions)
+        _ =>
+            selector = union_selector(member_type, slot_type)
+            return Ok(selector + " << " + render_value(value, member_type, false, indent, descriptions)?)
+
+
+def render_list(
+    items: list[Value],
+    item_type: TypeNode,
+    indent: int,
+    descriptions: list[TextDescription],
+) -> Result[str, TextError]:
+    """Break multi-record and payload-variant lists into one canonical row per line."""
+    mut multiline = len(items) > 1
+    for item in items:
+        if not row_shaped(item):
+            multiline = false
+    if not multiline:
+        mut rendered: list[str] = []
+        for item in items:
+            rendered.append(render_value(item, item_type, false, indent, descriptions)?)
+        return Ok("[" + ", ".join(rendered) + "]")
+    mut lines: list[str] = []
+    for item in items:
+        lines.append(spaces(indent + 4) + render_value(item, item_type, true, indent + 4, descriptions)? + ",")
+    return Ok("[\n" + "\n".join(lines) + "\n" + spaces(indent) + "]")
+
+
+def row_shaped(value: Value) -> bool:
+    """Return whether a direct list element participates in record-row layout."""
+    match value:
+        Value.Record(_) => return true
+        Value.Enum(_, fields) => return len(fields) > 0
+        Value.Union(_, items) =>
+            if len(items) == 1:
+                return row_shaped(items[0])
+        _ => return false
+    return false
+
+
+def render_set(
+    items: list[Value],
+    item_type: TypeNode,
+    indent: int,
+    descriptions: list[TextDescription],
+) -> Result[str, TextError]:
+    """Render already canonically ordered set elements."""
+    mut rendered: list[str] = []
+    for item in items:
+        rendered.append(render_value(item, item_type, false, indent, descriptions)?)
+    return Ok("{" + ", ".join(rendered) + "}")
+
+
+def render_map(
+    entries: list[MapEntry],
+    types: tuple[TypeNode, TypeNode],
+    indent: int,
+    descriptions: list[TextDescription],
+) -> Result[str, TextError]:
+    """Render already canonically ordered map entries with explicit key-value punctuation."""
+    key_type, value_type = types
+    mut rendered: list[str] = []
+    for entry in entries:
+        key = render_value(entry.key, key_type, false, indent, descriptions)?
+        value = render_value(entry.value, value_type, false, indent, descriptions)?
+        rendered.append(key + ": " + value)
+    return Ok("{" + ", ".join(rendered) + "}")
+
+
+def cell_list(cells: list[str], indent: int) -> Result[str, TextError]:
+    """Keep a cell list inline unless nested layout or the fixed 120-column limit requires a break."""
+    inline = "(" + ", ".join(cells) + ")"
+    mut multiline = len(spaces(indent) + inline) > 120
+    for cell in cells:
+        if "\n" in cell:
+            multiline = true
+    if not multiline:
+        return Ok(inline)
+    mut lines: list[str] = []
+    for cell in cells:
+        lines.append(spaces(indent + 4) + cell + ",")
+    return Ok("(\n" + "\n".join(lines) + "\n" + spaces(indent) + ")")
+
+
+def identity_field(values: list[ValueField], identity: bytes) -> Result[ValueField, TextError]:
+    """Find the single materialized field by description identity, never by its current display name."""
+    mut found: list[ValueField] = []
+    for value in values:
+        if value.identity == identity:
+            found.append(value)
+    if len(found) != 1:
+        return Err(print_error(TextFailure.InvalidFields))
+    return Ok(found[0])
+
+
+def is_absent(value: Value, field: FieldShape) -> bool:
+    """Compare a field only with its declared outer absent value."""
+    match field.absent:
+        AbsentPolicy.NoneValue =>
+            match value:
+                Value.NoneValue => return true
+                _ => return false
+        AbsentPolicy.Empty =>
+            match value:
+                Value.List(items) | Value.Set(items) => return len(items) == 0
+                Value.Map(entries) => return len(entries) == 0
+                _ => return false
+        AbsentPolicy.Required => return false
+
+
+def variant_at(description: TextDescription, identity: bytes) -> Result[VariantShape, TextError]:
+    """Find one declared enum variant by identity so renames do not change stored values."""
+    for variant in description.variants:
+        if variant.identity == identity:
+            return Ok(variant)
+    return Err(print_error(TextFailure.UnknownVariant))
+
+
+def ambiguous_variant(slot_type: TypeNode, name: str, descriptions: list[TextDescription]) -> bool:
+    """Return whether two enum members of a union own the same variant name."""
+    mut count = 0
+    match slot_type:
+        TypeNode.Container(ContainerKind.Union, members) =>
+            for member in members:
+                match member:
+                    TypeNode.Nominal(_, path, _, _) =>
+                        for description in descriptions:
+                            if description.path == path and description.shape == NominalKind.Enum:
+                                for variant in description.variants:
+                                    if variant.name == name:
+                                        count += 1
+                    _ => pass
+        _ => pass
+    return count > 1
+
+
+def union_type(slot_type: TypeNode, spelling: str) -> Result[TypeNode, TextError]:
+    """Resolve an exact union member spelling retained by the typed carrier."""
+    match slot_type:
+        TypeNode.Container(ContainerKind.Union, members) =>
+            for member in members:
+                if type_spelling(member) == spelling:
+                    return Ok(member)
+        _ => pass
+    return Err(print_error(TextFailure.InvalidUnion))
+
+
+def union_selector(member: TypeNode, slot_type: TypeNode) -> str:
+    """Use a short selector unless another union member has the same final segment."""
+    spelling = type_spelling(member)
+    short = last_segment(spelling)
+    mut count = 0
+    match slot_type:
+        TypeNode.Container(ContainerKind.Union, members) =>
+            for candidate in members:
+                if last_segment(type_spelling(candidate)) == short:
+                    count += 1
+        _ => pass
+    if count > 1:
+        return spelling
+    return short
+
+
+def optional_inner(slot_type: TypeNode) -> Result[TypeNode, TextError]:
+    """Return the single storage type carried by an optional slot."""
+    match slot_type:
+        TypeNode.Container(ContainerKind.Option, items) =>
+            if len(items) == 1:
+                return Ok(items[0])
+        _ => pass
+    return Err(print_error(TextFailure.InvalidOptional))
+
+
+def list_item_type(slot_type: TypeNode) -> Result[TypeNode, TextError]:
+    """Return the single item type carried by a list slot."""
+    match slot_type:
+        TypeNode.Container(ContainerKind.List, items) =>
+            if len(items) == 1:
+                return Ok(items[0])
+        _ => pass
+    return Err(print_error(TextFailure.InvalidList))
+
+
+def set_item_type(slot_type: TypeNode) -> Result[TypeNode, TextError]:
+    """Return the single item type carried by a set slot."""
+    match slot_type:
+        TypeNode.Container(ContainerKind.Set, items) =>
+            if len(items) == 1:
+                return Ok(items[0])
+        _ => pass
+    return Err(print_error(TextFailure.InvalidSet))
+
+
+def map_types(slot_type: TypeNode) -> Result[tuple[TypeNode, TypeNode], TextError]:
+    """Return the key and value types carried by a map slot."""
+    match slot_type:
+        TypeNode.Container(ContainerKind.Map, items) =>
+            if len(items) == 2:
+                return Ok((items[0], items[1]))
+        _ => pass
+    return Err(print_error(TextFailure.InvalidMap))
+
+
+def decimal_spelling(coefficient: str, scale: int) -> str:
+    """Insert the declared decimal point and retain every required fractional zero."""
+    mut sign = ""
+    mut digits = coefficient
+    if digits.startswith("-"):
+        sign = "-"
+        digits = digits[1:]
+    while len(digits) <= scale:
+        digits = "0" + digits
+    split = len(digits) - scale
+    if scale == 0:
+        return sign + digits + "d"
+    return sign + digits[0:split] + "." + digits[split:] + "d"
+
+
+def normalize_float(spelling: str) -> str:
+    """Keep settled non-finite spellings and require a point for finite integer-looking values."""
+    if spelling == "nan" or spelling == "NaN":
+        return "nan"
+    if "e" in spelling:
+        parts = spelling.split("e")
+        mut exponent = parts[1]
+        mut sign = ""
+        if exponent.startswith("+"):
+            exponent = exponent[1:]
+        elif exponent.startswith("-"):
+            sign = "-"
+            exponent = exponent[1:]
+        while len(exponent) > 1 and exponent.startswith("0"):
+            exponent = exponent[1:]
+        return parts[0] + "e" + sign + exponent
+    if spelling == "inf" or spelling == "-inf" or "." in spelling:
+        return spelling
+    return spelling + ".0"
+
+
+def float_spelling(width: int, bits: bytes) -> Result[str, TextError]:
+    """Derive shortest round-tripping digits from exact IEEE bits, independent of input spelling."""
+    if width == 32 and len(bits) == 4:
+        mut value: u32 = 0u32
+        for byte in bits:
+            value = (value << 8) | byte.saturating_resize[u32]()
+        return Ok(normalize_float(str(RustF32.from_bits(value))))
+    if width == 64 and len(bits) == 8:
+        mut value: u64 = 0u64
+        for byte in bits:
+            value = (value << 8) | byte.saturating_resize[u64]()
+        return Ok(normalize_float(str(RustF64.from_bits(value))))
+    return Err(print_error(TextFailure.InvalidFloatBits))
+
+
+def quoted(value: str) -> str:
+    """Escape controls, quotes, backslashes and bidirectional controls without normalization."""
+    mut result = "\""
+    for character in value:
+        if character == "\\":
+            result += "\\\\"
+        elif character == "\"":
+            result += "\\\""
+        elif character == "\n":
+            result += "\\n"
+        elif character == "\t":
+            result += "\\t"
+        elif character == "\r":
+            result += "\\r"
+        else:
+            result += escaped_control(character)
+    return result + "\""
+
+
+def escaped_control(character: str) -> str:
+    """Write corpus-covered controls and every bidirectional control as lowercase Unicode escapes."""
+    if let Some(escape) = bidirectional_escape(character):
+        return escape
+    encoded = hexlify(encode_utf8(character))
+    if len(encoded) == 2 and (encoded[0:1] == "0" or encoded[0:1] == "1" or encoded == "7f"):
+        mut digits = encoded
+        if digits.startswith("0"):
+            digits = digits[1:]
+        return "\\u{" + digits + "}"
+    if encoded >= "c280" and encoded <= "c29f":
+        return "\\u{" + encoded[2:] + "}"
+    return character
+
+
+def binary_literal(data: bytes) -> str:
+    """Write printable ASCII directly and every other byte as exact lowercase hexadecimal."""
+    printable = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+    mut result = "b\""
+    for value in data:
+        if value == 34u8:
+            result += "\\\""
+        elif value == 92u8:
+            result += "\\\\"
+        elif value >= 32u8 and value <= 126u8:
+            result += printable[int(value) - 32]
+        else:
+            result += "\\x" + byte_hex(value)
+    return result + "\""
+
+
+def byte_hex(value: int) -> str:
+    """Return one byte as exactly two lowercase hexadecimal digits."""
+    digits = "0123456789abcdef"
+    return digits[value // 16] + digits[value % 16]
+
+
+def spaces(count: int) -> str:
+    """Create deterministic four-space indentation without formatter state."""
+    mut result = ""
+    for _ in range(count):
+        result += " "
+    return result
+
+
+def print_position() -> TextPosition:
+    """Use a stable synthetic position for typed-document printer refusals."""
+    return TextPosition(line=1, column=1)
+
+
+def print_error(kind: TextFailure) -> TextError:
+    """Return a stable typed-document refusal without inventing source coordinates."""
+    return TextError(kind=kind, position=print_position())

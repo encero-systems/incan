@@ -1,5 +1,6 @@
 """Build native support once and bind runtime and standard source units to that exact generation."""
 
+from rust::incan_loaf_names import native_crate_name
 from rust::std::env import args
 from std.fs import Path
 from std.json import JsonValue
@@ -284,7 +285,7 @@ def require_fresh_generation(toolchain: Toolchain) -> Result[None, str]:
     for package in standard_packages()?:
         for profile in ["debug", "release"]:
             directory = standard_artifact_dir(package.name, profile)?
-            library = directory.joinpath(f"lib{package.name.replace("-", "_")}.rlib")
+            library = directory.joinpath(f"lib{native_crate_name(package.name)}.rlib")
             if library.is_file():
                 return Err("native support production cannot replace an installed standard Loaf's dependencies")
     return Ok(None)

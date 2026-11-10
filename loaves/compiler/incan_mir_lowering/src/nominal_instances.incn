@@ -1,5 +1,7 @@
 """Concrete nominal layouts selected from checked Body IR types, retaining source declaration identities."""
 
+from type_parameters import close_result_requirements
+
 from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind, SymbolOrigin
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
@@ -647,4 +649,5 @@ def close_owner_body(body: &Body, instance: &NominalInstance) -> Result[Body, st
         result.params[index].ty = concrete.clone()
     concrete: RustType = substitute(result.return_type, names, arguments)?
     result.return_type = concrete.clone()
+    close_result_requirements(result, names, arguments)?
     return Ok(result)

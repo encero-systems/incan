@@ -8,6 +8,7 @@ impl TypeChecker {
     /// Native queries, statement-block tracking and hash-key inference each initialize their own empty state.
     pub fn new() -> Self {
         Self {
+            record_package_identity: None,
             #[cfg(test)]
             legacy_body_checking: false,
             #[cfg(test)]
@@ -20,6 +21,8 @@ impl TypeChecker {
             body_checks: Vec::new(),
             checked_bodies: Vec::new(),
             checked_declarations: Vec::new(),
+            produced_declaration_records: std::collections::BTreeMap::new(),
+            callable_declaration_reuse: std::collections::BTreeMap::new(),
             lazy_result_bodies: HashSet::new(),
             iteration_replacement_bodies: HashSet::new(),
             dictionary_lookup_bodies: HashSet::new(),
@@ -88,6 +91,7 @@ impl TypeChecker {
             const_decls: HashMap::new(),
             static_decls: Vec::new(),
             local_function_decls: HashMap::new(),
+            callable_body_reuse: None,
             current_module_public_declarations: HashSet::new(),
             receiver_plan_inputs: Default::default(),
             body_ir_decorator_factory_span: None,
@@ -144,6 +148,7 @@ impl TypeChecker {
             foreign_pub_type_remappings: HashMap::new(),
             pub_library_declaration_scopes: HashMap::new(),
             dependency_semantics_pending: false,
+            dependency_method_input_contracts: Default::default(),
             current_module_path: None,
             source_import_targets: HashMap::new(),
             declared_crate_names: None,
@@ -158,6 +163,12 @@ impl TypeChecker {
             pending_trait_supertraits: Vec::new(),
             native_queries: NativeQueryState::default(),
         }
+    }
+
+    /// Install producer-validated bodies for one exact program. Declaration collection and final publication still
+    /// run; only admitted scalar bodies with complete source-call witnesses skip checking and feed Body IR directly.
+    pub fn set_callable_body_reuse(&mut self, products: crate::declaration_interface::ValidatedCallableBodies) {
+        self.callable_body_reuse = Some(products);
     }
 
     /// Set the declared Rust crate names from `loaf.toml [rust-dependencies]` for checked direct imports and derives.
@@ -194,6 +205,14 @@ impl TypeChecker {
     /// Set the defining package for declarations checked for a compiled-library artifact.
     pub fn set_current_package_identity(&mut self, package_identity: Option<String>) {
         self.symbols.set_package_identity(package_identity);
+    }
+
+    /// Install the already admitted owning package fact without changing symbol ownership or asking a registry.
+    pub fn set_record_package_identity(
+        &mut self,
+        identity: Option<incan_semantics_core::record_identity::RecordPackageIdentity>,
+    ) {
+        self.record_package_identity = identity;
     }
 
     /// Return accumulated non-fatal diagnostics (warnings/lints) from the last check.

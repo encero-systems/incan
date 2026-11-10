@@ -223,6 +223,13 @@ pub(super) fn project(positions: &Positions, graph: &Graph, fields: &mut Vec<Str
         let mut row = vec![anchor(positions, *span)?];
         let key = canonical_key(&row);
         row.push(positions.identity(&invocation.callee)?);
+        match &invocation.result_requirement {
+            Some(ty) => {
+                row.push("some".into());
+                super::types::type_fields(ty, &mut row)?;
+            }
+            None => row.push("none".into()),
+        }
         loan_option(invocation.receiver, &mut row);
         row.push(invocation.receiver_owned.to_string());
         match &invocation.receiver_source {
@@ -535,6 +542,15 @@ impl Reader<'_> {
     fn invocation(&mut self, schema: usize) -> Result<Invocation, NodeBindingError> {
         Ok(Invocation {
             callee: self.identity()?,
+            result_requirement: if schema >= 3 {
+                match super::types::next(&mut self.values)? {
+                    "none" => None,
+                    "some" => Some(super::types::read_type(&mut self.values)?),
+                    _ => return Err(NodeBindingError::Unsupported("result requirement tag")),
+                }
+            } else {
+                None
+            },
             receiver: self.loan_option()?,
             receiver_owned: self.boolean()?,
             receiver_source: self.optional(Self::place)?,

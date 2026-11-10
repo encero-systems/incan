@@ -17,6 +17,7 @@ use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_lang::lang::derives::{self, DeriveId};
+use incan_loaf_names::native_crate_name;
 use incan_mir_lowering::{
     RefusalPlanning, RuntimeRequirement, SourceInputs, UnitPlanning, layout_runtime_requirements, program_refusals,
     resume_unit_plan, unit_plan,
@@ -24,6 +25,7 @@ use incan_mir_lowering::{
 use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NativeUnionDeclaration, NominalDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
+mod callable_products;
 mod checked_program;
 mod declaration_validation;
 
@@ -124,6 +126,8 @@ struct RuntimeDependencyContext {
 
 /// Checked owning modules and their source provenance, with one explicit native entry module.
 struct CheckedProgram {
+    /// Invocation-local producer evidence for self-contained scalar native function products.
+    cacheable_bodies: Vec<(incan_semantics_core::CompilerNodeId, String)>,
     dependencies: RuntimeDependencyContext,
     modules: Vec<BodyIrModule>,
     sources: Vec<String>,
@@ -252,7 +256,15 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
     let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
     let receipt = RefusalReceipt(None);
     let mut program = check_compilation_source(unit, rust, false, receipt.clone())?;
-    lower_compilation_plan(&mut program, kind, overflow_checks, &source, &receipt, &mut Vec::new())?;
+    lower_compilation_plan(
+        &mut program,
+        kind,
+        overflow_checks,
+        &source,
+        &receipt,
+        &mut Vec::new(),
+        None,
+    )?;
     print!(
         "{}",
         crate::dependency_report::render(
@@ -276,6 +288,7 @@ fn reached_names(program: &CheckedProgram) -> BTreeSet<String> {
 /// breaks source dependency cycles such as the runtime's standard trait bounds without importing a prior runtime.
 /// Consumers that require the provider's compiled crate still refuse until ordinary compilation supplies it.
 pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    crate::native_timing::observe_frontend(false);
     let [unit_path, sysroot, directory] = arguments else {
         return Err("usage: --source-interface UNIT SYSROOT DIRECTORY".into());
     };
@@ -287,13 +300,13 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
         return Err("a source interface requires a library unit".into());
     }
     let directory = Path::new(directory);
-    let library = directory.join(format!("lib{}.rlib", unit.package.replace('-', "_")));
+    let library = directory.join(format!("lib{}.rlib", native_crate_name(&unit.package)));
     if library.exists() {
         return Err("a source interface cannot replace a compiled library's publication".into());
     }
     let dependencies = dependencies(&unit, &[])?;
     let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
-    let loaf_links = unit.loaves.iter().map(|loaf| loaf.name.replace('-', "_")).collect();
+    let loaf_links = unit.loaves.iter().map(|loaf| native_crate_name(&loaf.name)).collect();
     let mut closure = LoafNativeClosure {
         externs: dependencies.externs,
         search: unit.own_search.clone(),
@@ -344,6 +357,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     timing.mark("unit_descriptor");
     let source_path = unit.source.clone();
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::compile_unit", input = %source_path.display()).entered();
+    crate::native_timing::observe_frontend(true);
     let identity = crate::identity::verify(Path::new(&arguments[3]))?;
     let output = Path::new(&arguments[2]);
     let (certificate, options) = crate::certified_options(&arguments[4..]);
@@ -361,10 +375,11 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     // A library's closure publishes only the directories beyond the toolchain generation's search index.
     let published_search = unit.own_search.clone();
     let loaf_links: std::collections::BTreeSet<String> =
-        unit.loaves.iter().map(|loaf| loaf.name.replace('-', "_")).collect();
+        unit.loaves.iter().map(|loaf| native_crate_name(&loaf.name)).collect();
     // The grant comes only from the description, read after the identity check and the bootstrap refusal.
     let access = unit.toolchain_access.clone();
     let rust = dependencies.rust_facts(&unit, Path::new(&arguments[3]));
+    let native_products = callable_products::native_directory(&unit);
     let mut program = check_compilation_source(unit, rust, resident, receipt.clone())?;
     if census_complete(&mut program, kind, overflow_checks)? {
         return Ok(());
@@ -377,6 +392,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         &source_path,
         &receipt,
         &mut published_unions,
+        native_products,
     )?;
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
 
@@ -467,8 +483,11 @@ fn lower_compilation_plan(
     source: &Path,
     receipt: &RefusalReceipt,
     published_unions: &mut Vec<NativeUnionDeclaration>,
+    native_products: Option<String>,
 ) -> Result<crate::plan::Plan, Box<dyn std::error::Error>> {
-    tracing::debug!(target: "incan::invocation", modules = ?program.modules, "checked direct-route Body IR");
+    tracing::debug!(target: "incan::invocation", modules = program.modules.len(),
+        module_body_entries = program.modules.iter().map(|module| module.bodies.len()).sum::<usize>(),
+        "checked Body IR inventory");
     let kind_name = kind.as_str().to_owned();
     let file = program
         .files
@@ -482,6 +501,8 @@ fn lower_compilation_plan(
     loop {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
         let inputs = SourceInputs {
+            scalar_products: native_products.clone(),
+            scalar_bodies: program.cacheable_bodies.clone(),
             sources: program.sources.clone(),
             files: program.files.clone(),
             tests: program.tests.iter().map(|test| test.name.clone()).collect(),
@@ -563,6 +584,8 @@ fn census_complete(
         let outcome = program_refusals(
             &program.modules,
             SourceInputs {
+                scalar_products: None,
+                scalar_bodies: Vec::new(),
                 sources: program.sources.clone(),
                 files: program.files.clone(),
                 tests: Vec::new(),
@@ -584,6 +607,8 @@ fn census_complete(
         match program_refusals(
             &program.modules,
             SourceInputs {
+                scalar_products: None,
+                scalar_bodies: Vec::new(),
                 sources: program.sources.clone(),
                 files: program.files.clone(),
                 tests: Vec::new(),

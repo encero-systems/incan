@@ -514,6 +514,8 @@ struct CheckingNominalScope {
 
 /// Collect and check a program while retaining accepted semantic facts for Body IR and analysis consumers.
 pub struct TypeChecker {
+    /// The active source package's declared persistent-record namespace; compiler ownership remains separate.
+    record_package_identity: Option<incan_semantics_core::record_identity::RecordPackageIdentity>,
     /// Test-only cold baseline bypasses local table extraction while retaining the original semantic operations.
     #[cfg(test)]
     legacy_body_checking: bool,
@@ -536,6 +538,10 @@ pub struct TypeChecker {
     body_open_diagnostics: Vec<CompileError>,
     /// Completed declaration/default/initializer outputs, separate from callable statement outputs.
     checked_declarations: Vec<std::sync::Arc<body_check::CheckedBodyView>>,
+    /// Declaration-family records emitted at their settlement boundary, before any module product observes them.
+    produced_declaration_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    /// Producer-validated declaration records selected for the current source revision and consumed once by owner.
+    callable_declaration_reuse: std::collections::BTreeMap<Span, body_check::records::Fields>,
     /// Callable bodies that produced a checked lazy result and therefore need retained-result ownership analysis.
     /// The marker is consumed when that body's flow is finalized; it never becomes a published semantic fact.
     lazy_result_bodies: HashSet<CanonicalSymbolId>,
@@ -697,6 +703,8 @@ pub struct TypeChecker {
     pub static_decls: Vec<(StaticDecl, Span)>,
     /// Collected module-level function declarations for static dependency analysis.
     pub local_function_decls: HashMap<String, FunctionDecl>,
+    /// Accepted scalar-body products selected for one exact parsed input by the native producer.
+    callable_body_reuse: Option<crate::declaration_interface::ValidatedCallableBodies>,
     /// Names of the declarations the program being checked marks `pub`.
     ///
     /// A public library carries a parameter default that constructs a model or class to its consumers only when they
@@ -910,6 +918,10 @@ pub struct TypeChecker {
         HashMap<String, HashMap<Vec<String>, HashMap<String, String>>>,
     /// Whether a manual [`Self::import_module`] call prepared dependency-only semantics for the next program check.
     dependency_semantics_pending: bool,
+    /// Header-only ownership facts from imported source modules. Replayed into a fresh program check separately
+    /// from body proofs; each dependency refresh replaces its own entries and a new import set clears the cache.
+    dependency_method_input_contracts:
+        std::collections::BTreeMap<CanonicalSymbolId, crate::ownership_metadata::CheckedOwnershipContract>,
     /// Module path for the program being checked (if known).
     pub current_module_path: Option<Vec<String>>,
     /// Source import aliases with declaration origins known from the dependency import graph.

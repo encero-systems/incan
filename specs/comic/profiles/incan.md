@@ -39,6 +39,27 @@ This is the model's schema descriptor (RFC 086) printed, not a second descriptio
 
 Inside Incan's kinds, types are Incan's own, written as Incan writes them, in either case: `int`, `float`, `str`, `bytes`, `bool`, `Decimal { scale = 2 }`, `list[T]`, `dict[K, V]`, `set[T]`, `tuple[A, B]`, `Option[T]`, `SecretStr`, `SecretBytes`, and model and enum paths. A width or bound is written as Incan writes it, as `Int { storage = u32, ge = 0 }`. This profile maps them onto COMIC's value domain itself and doesn't bind them to the core kinds' Substrait types; an implementation may still reuse Substrait's types where they fit.
 
+Each Incan type stores as one type of the value domain:
+
+| Incan | Stored as |
+| --- | --- |
+| `bool` | `boolean` |
+| `int` | `i64`; a declared storage width, as `Int { storage = u32 }`, stores as that width, from `i8` to `i128` and `u8` to `u128` |
+| `isize`, `usize` | Not stored |
+| `float`, `f32` | `fp64`, `fp32` |
+| `str`, `bytes` | `string`, `binary` |
+| `decimal[P, S]` | `decimal<P,S>` |
+| `list[T]`, `set[T]`, `dict[K, V]`, `tuple[A, B]` | `list<T>`, `set<T>`, `map<K,V>`, `tuple<A,B>` |
+| `Option[T]` | `option<T>` |
+| `None` | `tuple<>`, the empty tuple, whose one value is `()` |
+| `Result[T, E]` | The standard library's generic enum, with variants `Ok` and `Err` |
+| `A \| B` | `union<A,B>` |
+| `SecretStr`, `SecretBytes` | `secret_string`, `secret_bytes` |
+| A model or an enum | A record or an enum, named by its closed selector |
+| A newtype, an alias or a frozen collection | What it holds |
+
+A stored type is spelled as [hashes.md](../spec/hashes.md)'s N spells these, so a field of type `Result[int, shop.Error]` stores as `enum@HEX<i64,enum@HEX>`, and RFC 173's `stored_type` is that text. The `None` type is the empty tuple because it has exactly one value, and keeping that value apart from absence keeps `Option[None]`'s `None` and `Some(None)` apart. `Result` is an enum, as RFC 173 walks it, so it needs no shape of its own; its selector uses the standard library's canonical identity like any other declaration's, and a declaration whose package has none has no selector. `isize` and `usize` are as wide as the target's pointers, so a stored value would change meaning between targets: they still walk and reconstruct, but they have no stored type and no spelling, and a type that holds one has no spelling either. Encoding a value holding one is refused, naming the field, with a hint to declare a fixed width such as `u64`.
+
 ## Modules and links
 
 A module is a binding, and an import is a link on it:
@@ -139,7 +160,7 @@ oven.Locked = Incan.Model {
     loaf: Loaf
     version: str
     digest: str
-    trust [canonical = false]: oven.Trust
+    signature [canonical = false]: oven.Signature
     satisfied_by [canonical = false]: oven.Satisfied
     target_features: list[str] = []
     dependencies: list[Loaf] = []
@@ -151,7 +172,7 @@ oven.Registry = Incan.Model { endpoint: str, protocol: str }
 
 oven.Satisfied = Incan.Enum { Source, Asset }
 
-oven.Trust = Incan.Enum { Verified(signer: str), Unverified }
+oven.Signature = Incan.Enum { Verified(signer: str), Unverified }
 
 oven.Locked << [
     (pub.crates-io.aho-corasick, "1.1.4", "sha256:558ce675…", Verified("…"), Source, ["perf-literal", "std"], [pub.crates-io.memchr]),
@@ -168,7 +189,7 @@ oven.Lock << (
 )
 ~~~
 
-`satisfied_by` and `trust` are noncanonical, so a newly baked asset moves the object projection and not the graph identity. The resolved graph identity binds each entry's origin, name, version and dependency edges, shaped like RFC 106's closure digest. `oven.lock` stays TOML until this proposal is adopted.
+`signature` records the signature check made when the Loaf was locked. It is not compile-time trust, which RFC 117 decides from the consumer's own trust entries and never from a field a lock carries. `satisfied_by` and `signature` are noncanonical, so a newly baked asset moves the object projection and not the graph identity. The resolved graph identity binds each entry's origin, name, version and dependency edges, shaped like RFC 106's closure digest. `oven.lock` stays TOML until this proposal is adopted.
 
 ## Open
 

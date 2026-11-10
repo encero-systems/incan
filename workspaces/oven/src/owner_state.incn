@@ -11,6 +11,7 @@ The owner serves a unit only when its Loaves are all standard packages and its m
 nor vocabulary. Other units are answered `fallback`, and the command prepares them in its own process.
 """
 
+from rust::incan_loaf_names import native_crate_name
 from std.fs import Path
 from std.environ import get_or
 from features import FeatureRequest
@@ -320,7 +321,7 @@ def guard_paths(unit: UnitDescription) -> Result[list[str], str]:
         paths.append(Path(package.root).joinpath("loaf.toml").0)
     # 4. So does a rebuilt standard provider or compiler facade the unit links.
     for loaf in unit.loaves:
-        paths.append(Path(loaf.dir).joinpath(f"lib{loaf.name.replace("-", "_")}.rlib").0)
+        paths.append(Path(loaf.dir).joinpath(f"lib{native_crate_name(loaf.name)}.rlib").0)
     return Ok(unique(paths))
 
 

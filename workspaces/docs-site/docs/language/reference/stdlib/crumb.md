@@ -3,7 +3,7 @@
 This module provides bounded integer and byte framing for Crumb profiles.
 
 ```incan
-from std.primitives.crumb import Budget, CrumbError, CrumbFailure, Reader, encode_signed, encode_unsigned, frame
+from std.primitives.crumb import Budget, CrumbError, CrumbFailure, Reader, encode_native_signed, encode_native_unsigned, frame
 ```
 
 ## Request budget
@@ -22,11 +22,11 @@ Pass the same mutable budget through a request and its children. Failed operatio
 
 | API | Return type | Contract |
 | --- | --- | --- |
-| `encode_unsigned(decimal: str, mut budget: Budget)` | `Result[bytes, CrumbError]` | Encode exact nonnegative decimal digits as shortest unsigned base-128, low group first. |
-| `encode_signed(decimal: str, mut budget: Budget)` | `Result[bytes, CrumbError]` | Encode signed digits using zigzag: `2*n` for nonnegative values, `-2*n-1` otherwise. |
+| `encode_native_unsigned(value: u128, mut budget: Budget)` | `Result[bytes, CrumbError]` | Encode a native nonnegative integer as shortest unsigned base-128, low group first. |
+| `encode_native_signed(value: i128, mut budget: Budget)` | `Result[bytes, CrumbError]` | Encode a native signed integer using zigzag: `2*n` for nonnegative values, `-2*n-1` otherwise. |
 | `frame(data: bytes, mut budget: Budget)` | `Result[bytes, CrumbError]` | Return the shortest encoded byte length followed by copied payload bytes. |
 
-Integer input is canonical ASCII decimal: no whitespace, plus sign or leading zeros; zero is `"0"`. Signed input may begin with `-`, but `"-0"` is refused. Values can exceed `u64` within the caller's limits. They are never converted through a floating-point or host-sized integer.
+Logical integers use `i128` or `u128`, which cover every declared core integer width. Declared scalar kinds still govern range admission and fixed-width row and column encoding. Values are never converted through floating point or a host-sized integer.
 
 Base-128 uses seven payload bits per octet, with bit 7 set except in the final octet. Zero is `00`; 128 is `80 01`. Encoded payload lengths are separate from arbitrary-precision integer values.
 
@@ -63,7 +63,7 @@ The child modules `std.primitives.crumb.types`, `.spelling`, `.identity` and `.a
 
 | Variant | Meaning |
 | --- | --- |
-| `Scalar(ScalarKind)` | One admitted scalar kind: `boolean`, signed/unsigned 8/16/32/64-bit integers, `fp32`, `fp64`, `string`, `binary`, `secret_string`, `secret_bytes` or `reference`. |
+| `Scalar(ScalarKind)` | One admitted scalar kind: `boolean`, signed/unsigned 8/16/32/64/128-bit integers, `fp32`, `fp64`, `string`, `binary`, `secret_string`, `secret_bytes` or `reference`. |
 | `Decimal(int, int)` | Precision and scale, with positive precision and `0 <= scale <= precision`. |
 | `Container(ContainerKind, list[TypeNode])` | `List`, `Set` and `Option` take one argument, `Map` two, `Tuple` any number and `Union` at least one. |
 | `Nominal(NominalKind, bytes, list[TypeNode])` | `Record` or `Enum`, a six-byte declaration identity, and ordered closed arguments. This is a selector without structural fields. |
@@ -143,9 +143,9 @@ Domains start with the exact bytes `crumb1`, zero, then purpose byte: object `01
 | Variant | Input contract |
 | --- | --- |
 | `NoneValue`, `Some(list[Value])` | Some has exactly one child. Nested absent states remain distinct; present optional wrappers do not change their child's contribution. |
-| `Boolean(bool)`, `Integer(str)` | Integers use canonical exact decimal strings and may exceed host width. |
+| `Boolean(bool)`, `Integer(IntegerValue)` | `IntegerValue.Signed(i128)` and `.Unsigned(u128)` retain the declared domain's signedness. |
 | `Float(int, bytes)` | Width is 32 or 64; bytes are the corresponding IEEE bits in big-endian order. Binary32 widens exactly. All NaNs normalize; signed zeros remain distinct. |
-| `Decimal(str, str)` | Exact coefficient and scale. Trailing coefficient zeros are removed and scale adjusted without host-width limits; zero normalizes to coefficient and scale zero. |
+| `Decimal(i128, int)` | Exact native coefficient and integer scale. Declared precision is from 1 through 38 digits. Trailing coefficient zeros are removed and the scale adjusted; zero normalizes to coefficient and scale zero. |
 | `Text(str)`, `Binary(bytes)`, `Withheld` | Text is exact UTF-8 with no Unicode normalization. Withheld is a distinct contribution, not an empty value. |
 | `List(list[Value])`, `Tuple(list[Value])`, `Set(list[Value])` | Lists and tuples retain order. Sets are ordered by stored-value comparison; duplicate original values are invalid. |
 | `Map(list[MapEntry])` | `MapEntry(key: Value, value: Value)` retains original entries; duplicate original keys are invalid. |
@@ -160,7 +160,7 @@ Stored comparison is numeric for integers and decimals, preserves signed-zero or
 
 ### Complete metadata inputs
 
-`Metadata` supports `Null`, `Boolean(bool)`, `Integer(str)`, `Text(str)`, `Binary(bytes)`, `List(list[Metadata])` and `Map(list[MetadataEntry])`. `MetadataEntry(key: str, value: Metadata)` uses exact string keys. Duplicate keys are refused; map entries encode in UTF-8 key order, while lists retain order. Every supplied property participates in the digest, including properties this layer does not interpret. A consumer must separately admit any property interpretation that changes value decoding or reconstruction. Uninterpreted metadata remains data and is retained in full.
+`Metadata` supports `Null`, `Boolean(bool)`, `Integer(i128)`, `Text(str)`, `Binary(bytes)`, `Symbol(str)`, `List(list[Metadata])` and `Map(list[MetadataEntry])`. `MetadataEntry(key: str, value: Metadata)` uses exact string keys. Duplicate keys are refused; map entries encode in direct UTF-8 byte order, while lists retain order. Every supplied property participates in the digest, including properties this layer does not interpret. A consumer must separately admit any property interpretation that changes value decoding or reconstruction. Uninterpreted metadata remains data and is retained in full.
 
 ## Profile kind registrations
 
@@ -257,4 +257,106 @@ An absent-policy optional cell omits its outer option tag. `field_view` returns 
 | `LimitExceeded` | Shared resource allowance or host representation exhausted. |
 | `MissingField`, `RecordIndex` | Invalid field identity/unknown field or a negative/out-of-range record lookup. |
 
-No failed finite admission exposes a partial set or unchecked view. The prefix API still requires a complete envelope; a paused transport is not successful completion. There is no column decoder, incremental record-yielding stream or generated model reconstruction in this surface.
+No failed finite admission exposes a partial set or unchecked view. The prefix API still requires a complete envelope; a paused transport is not successful completion. This row surface does not provide an incremental record-yielding stream or generated model reconstruction. The finite column reader is described below.
+
+## COMIC text
+
+`std.primitives.crumb` exports the bounded COMIC reader, canonical printer and their inert typed carriers. The reader accepts UTF-8 data and never loads code, follows references or evaluates declaration properties.
+
+| API | Return type | Contract |
+| --- | --- | --- |
+| `TextContext.create(registrations: list[KindRegistration], admitted_type_names: list[str], mut budget: Budget)` | `Result[TextContext, CrumbError]` | Build a text context through the checked shared kind registry. Registration names and ordering facts consume the supplied budget. |
+| `TextContext.core(mut budget: Budget)` | `Result[TextContext, CrumbError]` | Build a context containing only the core `Record` and `Enum` kinds. |
+| `read_comic(data: bytes, context: TextContext, mut budget: Budget)` | `Result[TextDocument, TextError]` | Decode one UTF-8 COMIC snapshot. Input bytes, retained token bytes, token elements and nesting consume the shared budget. Invalid UTF-8, malformed grammar, unknown or duplicate declarations, type mismatches, ambiguous selections and limit exhaustion return `TextError`. |
+| `read_comic_text(source: str, context: TextContext, mut budget: Budget)` | `Result[TextDocument, TextError]` | Read an already decoded string under the same token, element and nesting limits. Callers that begin with bytes use `read_comic` so UTF-8 validation and the input-byte charge remain part of the operation. |
+| `print_comic(document: TextDocument, context: TextContext, mut budget: Budget)` | `Result[bytes, TextError]` | Return the unique canonical UTF-8 form with LF separators and a final newline. Output bytes and traversed document elements consume the shared budget. Invalid typed carriers, unknown kinds and limit exhaustion return `TextError`. |
+
+`TextError(kind: TextFailure, position: TextPosition)` reports a stable refusal category. `TextFailure` is a string-valued enum. `TextPosition(line: int, column: int)` is one-based and counts Unicode scalar values. `TextError.message() -> str` returns `"<kind> at <line>:<column>"`. Printer errors use position `1:1`.
+
+`TextDocument(descriptions: list[TextDescription], values: list[TextRootValue])` owns descriptions and root values. Descriptions are printed by path and kind; values retain their document order, and consecutive root values of one type print as one table.
+
+| Carrier | Fields or variants |
+| --- | --- |
+| `TextDescription` | `path: str`, `kind: str`, `shape: NominalKind`, `identity: Option[bytes]`, `properties: Metadata`, `fields: list[FieldShape]`, `variants: list[VariantShape]` |
+| `TextRootValue` | `storage_type: TypeNode`, `value: Value` |
+
+COMIC parsing and printing use the same `TypeNode`, `Value` and `Metadata` model as binary Crumb. Integer values retain native signed or unsigned carriers, float values retain width and network-order IEEE bits, and decimals retain a native coefficient and integer scale. A known registration supplies canonical outer and nested property orders; an unknown order retains read order.
+
+Comments are discarded. A cut between complete entries yields the shorter document; a cut inside a value or table returns `unexpected_end`. Raw Unicode bidirectional controls are refused everywhere and must use the canonical escaped spelling in string data. A reference retains its target type and identity text without resolution.
+
+## Finite column writer
+
+`std.primitives.crumb.column_writer` writes one complete experimental `crumb-columns/1` envelope from the same `Description` and `RowRecord` inputs as the row writer. It admits complete descriptions and all final stored values before returning owned bytes. It does not construct application models, resolve references, normalize constructor inputs or change logical record order.
+
+```incan
+from std.primitives.crumb.column_writer import write_columns
+from std.primitives.crumb.column_types import BlockEncoding, ColumnChoice, GroupChoice
+```
+
+| API | Return type | Contract |
+| --- | --- | --- |
+| `write_columns(descriptions: list[Description], records: list[RowRecord], registry: KindRegistry, sealed: bool, choices: list[GroupChoice], mut budget: Budget)` | `Result[bytes, CrumbError]` | Return one complete codec-2 envelope or an error. All arguments are explicit. An empty `choices` list selects indexed typed cells throughout; a nonempty list must provide every maximal consecutive nominal group's complete column/block choices. |
+
+`GroupChoice(columns: list[ColumnChoice])` follows field-identity order for record fields, or has one column containing complete root-enum cells. `ColumnChoice(blocks: list[BlockEncoding])` has one choice per 256 logical row positions, including absent positions. An empty record type has zero field columns but still counts as a logical record. Adjacent records with the same K form one group; nonadjacent runs remain separate.
+
+| `BlockEncoding` | Physical form | Stored types |
+| --- | --- | --- |
+| `Indexed` | Minimum-width offsets plus typed row cells | All row cell types |
+| `FrameOfReference` | Minimum exact value plus packed unsigned differences | Fixed integers and decimal coefficients |
+| `ZigzagDelta` | First value plus packed exact signed differences | Fixed integers and decimal coefficients |
+| `Runs` | Positive lengths and canonical typed cells | All row cell types |
+| `DictionaryPacked` | Packed codes into the shared column dictionary | String, binary, fixed integers and decimal coefficients |
+| `DictionaryRuns` | Positive lengths and dictionary codes | The same dictionary types |
+
+A group column shares one sorted distinct-key dictionary whenever any block chooses a code encoding. It includes values occurring in all of that column's blocks, including blocks using other encodings. String/binary keys use longest byte prefixes; numeric keys use exact positive differences. Both restart every 16 keys. Blocks do not create independent dictionaries. Counts and widths can exceed 255 where the profile permits; caller budgets still apply.
+
+Only the declared outer absence is removed. `Some(None)` remains present, a required empty collection retains its typed cell, and a block containing only absent values requires `Indexed`. Invalid choice cardinalities, incompatible encodings, wrong field identities/contracts, invalid stored values and missing descriptions return `CrumbError.InvalidInput`. Resource failures return `CrumbError.Limit`. No failure returns a successful byte prefix.
+
+Every selected encoding has exact canonical bytes, but column bytes are not canonical across choices or writers. Two choices can encode the same records differently. The optional seal hashes ordered logical values exactly as the row codec does; it is independent of group packing, dictionaries and encoding IDs. It does not authenticate the sender.
+
+This finite writer transposes groups in memory under the shared request budget. It does not promise minimum-size encoding, streaming output, spooling or native-array borrowing. Byte/work allowances are explicit protocol accounting rather than an exact allocator or resident-memory bound.
+
+## Finite column reader
+
+`std.primitives.crumb.column_reader` admits a complete experimental `crumb-columns/1` envelope before exposing a `ColumnSet`. Admission checks every block and dictionary, including unselected data, and verifies a supplied logical seal. Descriptions, typed cells and logical hashes use the same contracts as the row codec; no application model constructors or normalization hooks run.
+
+```incan
+from std.primitives.crumb.column_reader import ColumnSet, read_columns, read_prefix
+from std.primitives.crumb.column_projection import ColumnField
+from std.primitives.crumb.column_errors import ColumnError, ColumnFailure
+```
+
+| API | Return type | Contract |
+| --- | --- | --- |
+| `read_columns(view: MappedView, supplied: list[Description], registry: KindRegistry, require_sealed: bool, mut budget: Budget)` | `Result[ColumnSet, ColumnError]` | Admit exactly one complete envelope, rejecting trailing bytes. Every argument is explicit. |
+| `read_prefix(view: MappedView, supplied: list[Description], registry: KindRegistry, require_sealed: bool, mut budget: Budget)` | `Result[tuple[ColumnSet, int], ColumnError]` | Admit a complete leading envelope and return its consumed byte length. This is an explicit framed boundary, not transport completion or partial admission. |
+| `columns.len()` | `int` | Return the logical record count, including zero-field records. |
+| `columns.is_sealed()` | `bool` | Report successful complete logical-seal verification. |
+| `columns.descriptions(mut budget: Budget)` | `Result[list[Description], ColumnError]` | Copy complete descriptions and their original inline/reference modes. |
+| `columns.choices(mut budget: Budget)` | `Result[list[GroupChoice], ColumnError]` | Return admitted physical encoding choices for explicit original-shape re-encoding. |
+| `columns.read_record(index: int, mut budget: Budget)` | `Result[RowRecord, ColumnError]` | Materialize one format record and its nominal key. |
+| `columns.field(index: int, identity: bytes, mut budget: Budget)` | `Result[ColumnField, ColumnError]` | Retain the selected block, backing and type/dictionary facts independently of the set's scope. |
+| `columns.read_field(index: int, identity: bytes, mut budget: Budget)` | `Result[Value, ColumnError]` | Select and materialize one field. Unknown identities differ from valid declared absence. |
+| `field.read(mut budget: Budget)` | `Result[Value, ColumnError]` | Decode an independently retained selection under an explicit access budget. |
+
+Record positions are zero-based and field identities are six bytes. Group lookup binary-searches logical prefixes; a column selects its 256-position block directly. Packed values use addressed bits. Delta values replay at most the selected block's preceding deltas; runs scan only the selected block. Dictionary lookup begins at the selected 16-key restart. These are bounded accesses, not a constant-time claim for all representations. Root-enum columns contain complete enum cells, so selecting one payload field can decode that one enum value.
+
+Packed values do not necessarily occupy an independent byte slice. `ColumnField` therefore provides explicit decoding rather than pretending to be a native-array borrow or an encoded row-cell view. It retains the complete underlying allocation, and can keep a large envelope alive. Mapped-file contents must remain stable through the caller/store's own protocol; a retained mapping cannot prevent external writes. The set retains indexes and encoded backing rather than all decoded records. Admission temporarily materializes bounded blocks, and seal checking may revisit selected values within a block.
+
+Both admission and later access consume shared byte/work/depth allowances. Reconstructed dictionary prefixes and repeated run payloads are charged, not merely their compact physical bytes. Callers can supply fresh access budgets after admission. Allowances are conservative protocol accounting, not an exact allocator or resident-memory bound. Original-shape re-encoding uses both descriptions and `choices()`; equal logical records alone do not imply equal column bytes.
+
+### Column failures
+
+`ColumnError` contains `kind: ColumnFailure`, `offset: int`, `field: Option[bytes] = None`, `variant: Option[bytes] = None` and `cause: Option[RowError] = None`. Offsets are relative to the supplied view. Shared framing, description, cell, seal and resource refusals retain their typed row cause; field and variant context identifies the deepest available member. `message() -> str` reports categories and positions without input payloads.
+
+| `ColumnFailure` categories | Meaning |
+| --- | --- |
+| `Shared` | A preserved shared row failure, including resource exhaustion. |
+| `UnsupportedEncoding`, `EncodingType`, `EmptyEncoding` | Unknown encoding, incompatible stored type or non-indexed encoding for an all-absent block. |
+| `NonzeroPadding`, `NonminimalBits`, `NonminimalBase`, `NonminimalDelta`, `ValueOverflow` | Invalid packed padding, nonminimal numeric representation or reconstructed value outside its declared type. |
+| `RunLength`, `AdjacentRuns` | Invalid positive run counts/lengths, wrong total or redundant adjacent runs. |
+| `DictionaryCode`, `MissingDictionary`, `DictionaryMembership`, `UnusedDictionary` | Invalid code, unavailable keys, keys not exactly matching all column values or a dictionary without a code-encoded block. |
+| `NonmaximalPrefix`, `DictionaryOrder`, `InvalidPrefix`, `RestartOffset`, `RestartPrefix` | Nonminimal key encoding, unordered keys, invalid prefix or restart. |
+| `NonmaximalGroup`, `BlockCount` | Adjacent groups with the same nominal identity or an inconsistent block count. |
+
+A failed finite admission returns no partial set or unchecked selection. This surface does not provide incremental record yields, application model reconstruction or automatic typed-array borrowing.

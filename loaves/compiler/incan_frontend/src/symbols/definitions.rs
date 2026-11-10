@@ -3,6 +3,12 @@
 use super::*;
 
 impl SymbolTable {
+    /// Return the physical index that the next entered scope will receive. Retained checked lexical identities
+    /// must match this locator before body reuse; this value never becomes an edit-stable semantic identity.
+    pub(crate) fn next_scope_index(&self) -> usize {
+        self.scopes.len()
+    }
+
     /// Enter a new scope
     pub fn enter_scope(&mut self, kind: ScopeKind) {
         let new_scope = Scope::new(Some(self.current_scope), kind);

@@ -24,6 +24,7 @@ pub def test_formatting_changes_evidence_not_effective_requests() -> Result[None
                     assert left.evidence.raw_bytes != right.evidence.raw_bytes
                     assert left.evidence.sha256_digest != right.evidence.sha256_digest
     snapshot_controls()?
+    record_identity_controls()?
     return Ok(None)
 
 
@@ -321,3 +322,23 @@ pub def test_amended_loaf_refuses_retired_grammar() -> None:
 def project_manifest(extra: str) -> str:
     """Supply the required project identity before the intent under test."""
     return "[project]\nname='app'\nversion='0.1.0'\n" + extra
+
+
+def record_identity_controls() -> Result[None, str]:
+    """A package may declare its own registry identity without asking a registry or changing a dependency alias."""
+    source = "[project]\nname='example/catalog'\nversion='1.0.0'\nregistry-id='sha256:3d7781b11f6b80f950bab17238cffa7c1f77b5e1f0e0dbbaa656149d9ffbffb0'\n"
+    project = parse_intent(source, "loaf.toml").map_err((error) => error.message())?
+    assert project.name == "example/catalog"
+    registry = "sha256:3d7781b11f6b80f950bab17238cffa7c1f77b5e1f0e0dbbaa656149d9ffbffb0"
+    assert project.registry_id == Some(registry)
+    default = parse_intent("[project]\nname='example/catalog'\nversion='1.0.0'\n", "loaf.toml").map_err((error) => error.message())?
+    assert default.registry_id == None
+    bare = parse_intent(source.replace("example/catalog", "catalog"), "loaf.toml").map_err((error) => error.message())?
+    assert bare.registry_id == Some(registry)
+    for invalid in ["", "sha256:00", registry.upper(), registry + "0", registry.replace("sha256:", "sha512:")]:
+        match parse_intent(source.replace(registry, invalid), "loaf.toml"):
+            Ok(_) => fail("invalid registry identity was accepted")
+            Err(error) =>
+                assert error.kind == IntakeErrorKind.Invalid
+                assert error.field == ["project", "registry-id"]
+    return Ok(None)

@@ -146,6 +146,9 @@ pub struct ValidatedConstructor {
 /// [`ConstructorTarget::binding`], rather than treating constructor argument spelling as layout evidence.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NominalDeclaration {
+    /// Declared persistent namespace of the source producer; absent for runtime or unscoped declarations.
+    #[serde(default)]
+    pub record_package_identity: Option<crate::record_identity::RecordPackageIdentity>,
     /// Checked explicit and derive-expanded adoptions; an absent older fact grants no native trait authority.
     #[serde(default)]
     pub trait_adoptions: Vec<TraitAdoption>,
@@ -296,6 +299,7 @@ pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
     let module = native_nominal_module(identity)?;
     let derives = ["Debug", "Clone", "PartialEq", "Eq"].map(str::to_owned).to_vec();
     Some(NominalDeclaration {
+        record_package_identity: None,
         trait_adoptions: Vec::new(),
         native_item,
         class_inheritance: None,
@@ -347,6 +351,7 @@ pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Opti
     let module = native_nominal_module(identity)?;
     let type_parameters = (0..arity).map(|index| format!("T{index}")).collect::<Vec<_>>();
     Some(NominalDeclaration {
+        record_package_identity: None,
         trait_adoptions: Vec::new(),
         native_item,
         class_inheritance: None,

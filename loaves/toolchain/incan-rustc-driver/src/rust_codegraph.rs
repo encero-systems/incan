@@ -62,6 +62,9 @@ impl rustc_driver::Callbacks for Observer {
     /// Give hand-written Rust invocations the same opt-in phase diagnostics as Incan's native boundary.
     fn config(&mut self, config: &mut interface::Config) {
         crate::native_timing::Timing::requested().configure(config);
+        if self.codegen {
+            config.override_queries = Some(|_session, providers| crate::native_timing::provide_codegen(providers));
+        }
     }
 
     /// Extract only after name resolution and type checking succeeded; method targets come from typeck results.

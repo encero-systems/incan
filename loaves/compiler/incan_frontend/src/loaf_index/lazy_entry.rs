@@ -1,6 +1,7 @@
 //! Demand loading behind an admitted, generation-bound inventory. Summaries contain only facts derived from the
 //! ordinary manifest reader; an unavailable summary takes that reader again rather than guessing at absent facts.
 
+use incan_loaf_names::artifact_stem;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read;
@@ -25,6 +26,9 @@ pub(super) struct Summary {
     pub provider_operations: bool,
     pub native_unions: bool,
     pub rust_paths: BTreeSet<String>,
+    /// Whether the manifest names an external native ABI cache, independently of this compiler accepting its layout.
+    #[serde(default)]
+    pub rust_abi_cache_declared: bool,
     /// Whether admission validated an external indexed native ABI asset for this Loaf.
     pub rust_abi_cache: bool,
 }
@@ -41,8 +45,21 @@ impl Summary {
             rust_paths: manifest
                 .rust_abi
                 .as_ref()
-                .map(|abi| abi.items.iter().map(|item| item.canonical_path.clone()).collect())
-                .unwrap_or_default(),
+                .map(|abi| {
+                    abi.items
+                        .iter()
+                        .map(|item| item.canonical_path.clone())
+                        .collect::<BTreeSet<_>>()
+                })
+                .unwrap_or_default()
+                .into_iter()
+                .chain(artifact.stale_rust_paths.iter().cloned())
+                .collect(),
+            rust_abi_cache_declared: manifest
+                .rust_abi
+                .as_ref()
+                .and_then(|abi| abi.cache_digest.as_ref())
+                .is_some(),
             rust_abi_cache: artifact.rust_abi_cache.is_some(),
         }
     }
@@ -74,7 +91,7 @@ impl IndexedLoaf {
 
     /// Admit a small inventory, or use full admission when its private proof is missing or stale.
     pub fn open(key: String, namespace: LoafNamespace, dir: PathBuf, name: &str) -> Result<Self, LoafIndexError> {
-        let path = dir.join(format!("{name}.incnlib"));
+        let path = dir.join(format!("{}.incnlib", artifact_stem(name)));
         if let Some(summary) = retained(&path)
             && summary.identity.name == name
         {

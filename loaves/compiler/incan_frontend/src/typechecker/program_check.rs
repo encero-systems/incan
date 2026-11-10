@@ -152,6 +152,9 @@ impl TypeChecker {
             .entered();
             self.prepare_program_body_facts();
         }
+        if let Some(reuse) = self.callable_body_reuse.take() {
+            reuse.install(program, self);
+        }
         {
             let _trace = tracing::trace_span!(
                 target: "incan::invocation",
@@ -192,6 +195,8 @@ impl TypeChecker {
         self.body_checks.clear();
         self.checked_bodies.clear();
         self.checked_declarations.clear();
+        self.produced_declaration_records.clear();
+        self.callable_declaration_reuse.clear();
         self.refused_ownership_authorities.clear();
         self.diagnostic_owner_ranges.clear();
         self.body_open_diagnostics.clear();
@@ -212,6 +217,15 @@ impl TypeChecker {
         self.const_eval_state.clear();
         self.const_eval_cache.clear();
         self.type_info = TypeCheckInfo::default();
+        if preserve_dependency_semantics {
+            self.type_info
+                .declarations
+                .ownership_contracts
+                .clone_from(&self.dependency_method_input_contracts);
+        } else {
+            self.dependency_method_input_contracts.clear();
+        }
+        self.type_info.declarations.record_package_identity = self.record_package_identity.clone();
         self.warnings.clear();
         self.errors.clear();
         self.pending_uncopyable_dict_lookups.clear();
@@ -332,7 +346,17 @@ impl TypeChecker {
         }
         for decl in &program.declarations {
             if !matches!(decl.node, Declaration::Const(_)) {
-                self.check_environment_declaration(decl);
+                if self.has_declaration_record(decl.span) {
+                    let Declaration::Function(function) = &decl.node else {
+                        self.check_environment_declaration(decl);
+                        continue;
+                    };
+                    self.visibility_point = VisibilityPoint::BeforeDeclaration(decl.span);
+                    self.check_reused_function(program, function, decl.span);
+                    self.visibility_point = VisibilityPoint::AfterDeclaration(decl.span);
+                } else {
+                    self.check_environment_declaration(decl);
+                }
             }
         }
         #[cfg(test)]
@@ -344,6 +368,24 @@ impl TypeChecker {
         }
         #[cfg(not(test))]
         self.settle_body_checks(program);
+    }
+
+    /// Keep a retained scalar body only at its original physical lexical scope. Earlier unsupported bodies may
+    /// introduce different scopes after an edit; that invalidates this product rather than renumbering identities.
+    pub(in crate::typechecker) fn callable_body_matches_current_scope(&mut self, span: Span) -> bool {
+        let Some(scope) = self.type_info.reused_callable_scopes.get(&span) else {
+            return false;
+        };
+        if scope.is_none_or(|scope| scope == self.symbols.next_scope_index()) {
+            return self.type_info.reused_callable_bodies.contains_key(&span);
+        }
+        self.type_info.reused_callable_scopes.remove(&span);
+        if let Some(body) = self.type_info.reused_callable_bodies.remove(&span) {
+            self.type_info
+                .reused_callable_contexts
+                .retain(|(_, owner, _)| Some(owner) != body.canonical.as_ref());
+        }
+        false
     }
 
     /// Retain layout and trait facts after body checking without publishing a nominal snapshot yet. Native module

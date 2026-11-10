@@ -1,0 +1,287 @@
+//! Complete candidate inventories for checked local free-function names.
+//!
+//! Other declarations remain outside this inventory. A lookup witness applies to a local free-function name only
+//! when its live binding contains exactly the retained candidates, never to a member, builtin or dependency overlay.
+//! These records do not replace the
+//! checker's lookup recorder or authorize selective body checking; they provide a checked replay boundary for its
+//! callable candidate sets.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use incan_semantics_core::stable_identity::{DeclarationSignature, StableDeclarationId, StableIdentityProjection};
+use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
+use serde::{Deserialize, Serialize};
+
+use super::{CheckedCallableInterface, encode_record, invalid};
+use crate::ast::{Declaration, Program};
+use crate::library_exports::CheckedNamedExport;
+use crate::library_manifest::LibraryManifestError;
+use crate::symbols::SymbolKind;
+use crate::typechecker::TypeChecker;
+
+/// One accepted source-only callable namespace, retaining private declarations and every overload candidate.
+/// This deliberately narrower name prevents treating an admitted free-function table as a general module interface.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedCallableModule {
+    schema: u32,
+    origin: SymbolOrigin,
+    callables: Vec<CallableEntry>,
+}
+
+/// Keep the complete contract digest beside the header whose producer established its nominal correspondence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CallableEntry {
+    header: CheckedCallableInterface,
+    signature: String,
+}
+
+/// The complete result of a callable-namespace query, including an empty candidate set.
+/// A new or removed overload invalidates this observation even when a previously selected callee is unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CallableLookupWitness {
+    origin: SymbolOrigin,
+    name: String,
+    candidates: Vec<(StableDeclarationId, String)>,
+}
+
+/// One producer-owned positive lookup with the checked callable signatures its body digest consumes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CheckedCallableRead {
+    /// Every candidate, including private declarations and overloads, in canonical order.
+    pub(crate) witness: CallableLookupWitness,
+    /// Existing canonical roots paired with their accepted stable signature projections.
+    pub(crate) signatures: Vec<(CanonicalSymbolId, DeclarationSignature)>,
+}
+
+impl CheckedCallableModule {
+    /// Capture local free functions from an accepted ordinary module. Every retained name must resolve to exactly
+    /// those checked declarations; an imported candidate or ambiguous overlay refuses capture of this inventory.
+    pub fn from_checked(program: &Program, checker: &TypeChecker) -> Result<Self, LibraryManifestError> {
+        Self::capture(program, checker, None, None)
+    }
+
+    /// Capture complete live candidate sets for explicitly requested local names only. Other names make no negative
+    /// lookup claim and remain outside this private product's read authority.
+    pub(super) fn from_checked_names(
+        program: &Program,
+        checker: &TypeChecker,
+        names: &BTreeSet<String>,
+        producer_package: Option<&str>,
+    ) -> Result<Self, LibraryManifestError> {
+        let module = Self::capture(program, checker, Some(names), producer_package)?;
+        for entry in &module.callables {
+            if !super::body_products::resolved_scalar_header(&entry.header)? {
+                return Err(invalid(
+                    "scalar candidate inventory contains a nonprimitive checked signature",
+                ));
+            }
+        }
+        Ok(module)
+    }
+
+    /// Encode the ordinary checked headers for every requested name, without copying unrelated declaration shapes.
+    /// All overloads of a requested name are retained and checked against the live lookup at the producer boundary.
+    fn capture(
+        program: &Program,
+        checker: &TypeChecker,
+        names: Option<&BTreeSet<String>>,
+        producer_package: Option<&str>,
+    ) -> Result<Self, LibraryManifestError> {
+        if !checker.errors.is_empty() {
+            return Err(invalid("callable module requires an accepted source-only namespace"));
+        }
+        let mut callables = Vec::new();
+        for declaration in &program.declarations {
+            let Declaration::Function(function) = &declaration.node else {
+                continue;
+            };
+            if names.is_some_and(|names| !names.contains(&function.name)) {
+                continue;
+            }
+            let header = match producer_package {
+                Some(package) => {
+                    CheckedCallableInterface::from_checked_for_product(function, declaration.span, checker, package)?
+                }
+                None => CheckedCallableInterface::from_checked(function, declaration.span, checker)?,
+            };
+            let signature = header.signature_digest(
+                &checker.type_info().declarations.named_type_identities,
+                &StableIdentityProjection::default(),
+            )?;
+            callables.push(CallableEntry { header, signature });
+        }
+        callables.sort_by(|left, right| left.header.identity.cmp(&right.header.identity));
+        let origin = callables
+            .first()
+            .ok_or_else(|| invalid("empty callable module has no checked producer identity"))?
+            .header
+            .identity
+            .origin
+            .clone();
+        let module = Self {
+            schema: 1,
+            origin,
+            callables,
+        };
+        module.validate()?;
+        for (name, read) in module.read_inventory()? {
+            if !current_candidates_match(checker, &name, &read) {
+                return Err(invalid("local callable inventory has an imported or changed binding"));
+            }
+        }
+        Ok(module)
+    }
+
+    /// Record all local free-function candidates, retaining absence within this inventory as a real dependency.
+    /// Absence does not establish a negative lookup in the module's imported, nominal or builtin namespaces.
+    pub fn lookup(&self, name: &str) -> CallableLookupWitness {
+        CallableLookupWitness {
+            origin: self.origin.clone(),
+            name: name.to_owned(),
+            candidates: self
+                .callables
+                .iter()
+                .filter(|entry| entry.header.identity.declaration_name == name)
+                .map(|entry| (entry.header.identity.clone(), entry.signature.clone()))
+                .collect(),
+        }
+    }
+
+    /// Index positive reads once for item producers. Signatures come from accepted headers, never from parsed
+    /// spellings; consumers retain the complete candidate set rather than guessing a single overload.
+    pub(crate) fn read_inventory(&self) -> Result<BTreeMap<String, CheckedCallableRead>, LibraryManifestError> {
+        self.validate()?;
+        let mut reads = BTreeMap::new();
+        for entry in &self.callables {
+            let name = entry.header.identity.declaration_name.clone();
+            let read = reads.entry(name.clone()).or_insert_with(|| CheckedCallableRead {
+                witness: CallableLookupWitness {
+                    origin: self.origin.clone(),
+                    name,
+                    candidates: Vec::new(),
+                },
+                signatures: Vec::new(),
+            });
+            let canonical = entry.header.canonical_identity().clone();
+            let signature = entry
+                .header
+                .identity
+                .signature
+                .clone()
+                .ok_or_else(|| invalid("callable read has no accepted signature projection"))?;
+            read.witness
+                .candidates
+                .push((entry.header.identity.clone(), entry.signature.clone()));
+            read.signatures.push((canonical, signature));
+        }
+        Ok(reads)
+    }
+
+    /// Validate the complete candidate inventory against a current independently accepted namespace.
+    /// Unobserved declarations may change; a query in another module cannot satisfy this witness.
+    pub fn validates(&self, witness: &CallableLookupWitness) -> bool {
+        self.lookup(&witness.name) == *witness
+    }
+
+    /// Replay every retained callable at its current root identity after matching complete contracts. This is not
+    /// checker installation: current headers must come from a separately accepted declaration environment.
+    pub fn replay_at(&self, current: &Self) -> Result<Vec<CheckedNamedExport>, LibraryManifestError> {
+        self.validate()?;
+        current.validate()?;
+        if self.origin != current.origin || self.callables.len() != current.callables.len() {
+            return Err(invalid("callable module replay changed its declaration inventory"));
+        }
+        self.callables
+            .iter()
+            .zip(&current.callables)
+            .map(|(retained, current)| {
+                if retained.signature != current.signature {
+                    return Err(invalid("callable module replay changed a checked signature"));
+                }
+                retained.header.replay_at(&current.header)
+            })
+            .collect()
+    }
+
+    /// Encode a validated namespace with the same authenticated framing as its retained callable headers.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, LibraryManifestError> {
+        self.validate()?;
+        encode_record(&serde_json::to_vec(self).map_err(|error| invalid(&error.to_string()))?)
+    }
+
+    /// Decode only an authenticated, complete candidate inventory. A damaged private record is an ordinary miss.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, LibraryManifestError> {
+        let payload = super::decode_record(bytes)?;
+        let module: Self = serde_json::from_slice(payload).map_err(|error| invalid(&error.to_string()))?;
+        module.validate()?;
+        Ok(module)
+    }
+
+    /// Refuse ambiguous identity ownership, missing digests and noncanonical ordering before exposing a namespace.
+    fn validate(&self) -> Result<(), LibraryManifestError> {
+        if self.schema != 1 || self.callables.is_empty() {
+            return Err(invalid("unsupported or empty checked callable module"));
+        }
+        let mut identities = BTreeSet::new();
+        let mut previous = None;
+        for entry in &self.callables {
+            entry.header.validate()?;
+            let identity = entry.header.identity();
+            if identity.origin != self.origin
+                || !identities.insert(identity)
+                || previous.is_some_and(|previous| previous >= identity)
+                || !valid_digest(&entry.signature)
+            {
+                return Err(invalid(
+                    "callable module lost its complete ordered declaration inventory",
+                ));
+            }
+            previous = Some(identity);
+        }
+        Ok(())
+    }
+}
+
+/// Compare a live callable lookup's complete canonical candidate set with the producer's accepted local read.
+/// Unknown bindings and imported overload additions are misses; source spellings never stand in for identities.
+pub(super) fn current_candidates_match(checker: &TypeChecker, name: &str, read: &CheckedCallableRead) -> bool {
+    let Some(id) = checker.symbols.lookup(name) else {
+        return false;
+    };
+    let Some(symbol) = checker.symbols.get(id) else {
+        return false;
+    };
+    let candidates = match &symbol.kind {
+        SymbolKind::Function(_) => checker.symbols.identity_of(id).cloned().map(|identity| vec![identity]),
+        SymbolKind::FunctionOverloads(overloads) => overloads
+            .iter()
+            .map(|overload| overload.identity.clone())
+            .collect::<Option<Vec<_>>>(),
+        _ => None,
+    };
+    let Some(mut candidates) = candidates else {
+        return false;
+    };
+    candidates.sort();
+    let mut accepted = read
+        .signatures
+        .iter()
+        .map(|(identity, _)| identity.clone())
+        .collect::<Vec<_>>();
+    accepted.sort();
+    candidates == accepted
+}
+
+/// Accept the semantic digest owner's exact representation, never a missing or truncated signature witness.
+fn valid_digest(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|digest| {
+        digest.len() == 64
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
+}

@@ -1,0 +1,158 @@
+"""Complete bounded block admission and direct selected-value materialization."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.column_block_data import BlockData
+from crate.primitives.crumb.column_block_header import read_header
+from crate.primitives.crumb.column_errors import ColumnError, ColumnFailure, failure, shared, primitive
+from crate.primitives.crumb.column_key_read import ColumnKeys, key_at
+from crate.primitives.crumb.column_numeric_read import numeric_values, numeric_at
+from crate.primitives.crumb.column_pack_read import packed_value
+from crate.primitives.crumb.column_presence import cell_type
+from crate.primitives.crumb.column_types import BlockEncoding, uses_dictionary
+from crate.primitives.crumb.column_runs_read import read_runs
+from crate.primitives.crumb.cell_read import cell
+from crate.primitives.crumb.description_dictionary import Dictionary
+from crate.primitives.crumb.encoding_errors import BinaryFailure, failure as binary_failure
+from crate.primitives.crumb.encoding_index import selected, bit, rank
+from crate.primitives.crumb.types import TypeNode, ContainerKind, AbsentPolicy
+from crate.primitives.crumb.values import Value
+from crate.primitives.views import MappedView
+
+
+pub def read_block(
+    node: TypeNode,
+    absent: AbsentPolicy,
+    rows: int,
+    view: MappedView,
+    origin: int,
+    keys: Option[ColumnKeys],
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[tuple[BlockData, list[Value]], ColumnError]:
+    """Decode every reachable stored cell once, then restore only declared outer absence."""
+    stored_type = cell_type(node, absent, budget).map_err((e) => primitive(e, origin))?
+    block = read_header(stored_type, absent, rows, view, origin, keys, dictionary, budget)?
+    stored = stored_values(block, stored_type, keys, dictionary, budget)?
+    mut values: list[Value] = []
+    mut position = 0
+    for index in range(rows):
+        budget.charge_elements(1).map_err((e) => primitive(e, origin))?
+        budget.charge_bytes(16).map_err((e) => primitive(e, origin))?
+        if absent != AbsentPolicy.Required and not bit(block.bitmap, index, block.bitmap_origin).map_err(shared)?:
+            values.append(absent_value(node, absent, origin)?)
+        else:
+            values.append(restore_present(stored[position], absent, origin)?)
+            position += 1
+    return Ok((block, values))
+
+
+def stored_values(
+    block: &BlockData,
+    node: TypeNode,
+    keys: Option[ColumnKeys],
+    dictionary: Dictionary,
+    mut budget: Budget,
+) -> Result[list[Value], ColumnError]:
+    """Numeric and run admission are sequential; no quadratic replay of delta prefixes."""
+    if block.encoding == BlockEncoding.FrameOfReference or block.encoding == BlockEncoding.ZigzagDelta:
+        return numeric_values(block, node, budget)
+    if block.encoding == BlockEncoding.Runs or block.encoding == BlockEncoding.DictionaryRuns:
+        return read_runs(block, node, keys, dictionary, -1, budget)
+    mut values: list[Value] = []
+    for index in range(block.present):
+        budget.charge_elements(1).map_err((e) => primitive(e, block.origin))?
+        budget.charge_bytes(16).map_err((e) => primitive(e, block.origin))?
+        values.append(stored_at(block, node, keys, dictionary, index, budget)?)
+    return Ok(values)
+
+
+pub def block_at(
+    block: &BlockData,
+    node: TypeNode,
+    absent: AbsentPolicy,
+    keys: Option[ColumnKeys],
+    dictionary: Dictionary,
+    position: int,
+    mut budget: Budget,
+) -> Result[Value, ColumnError]:
+    """Read one logical position after admission, without touching preceding blocks or fields."""
+    if position < 0 or position >= block.rows:
+        return Err(shared(binary_failure(BinaryFailure.RecordIndex, block.origin)))
+    mut stored_position = position + 0
+    if absent != AbsentPolicy.Required:
+        if not bit(block.bitmap, position, block.bitmap_origin).map_err(shared)?:
+            return absent_value(node, absent, block.origin)
+        stored_position = rank(block.bitmap, position, block.bitmap_origin, budget).map_err(shared)?
+    stored_type = cell_type(node, absent, budget).map_err((e) => primitive(e, block.origin))?
+    value = stored_at(block, stored_type, keys, dictionary, stored_position, budget)?
+    return restore_present(value, absent, block.origin)
+
+
+def stored_at(
+    block: &BlockData,
+    node: TypeNode,
+    keys: Option[ColumnKeys],
+    dictionary: Dictionary,
+    position: int,
+    mut budget: Budget,
+) -> Result[Value, ColumnError]:
+    """Select two cell offsets, direct packed bits, or bounded delta/run replay according to encoding."""
+    if position < 0 or position >= block.present:
+        return Err(shared(binary_failure(BinaryFailure.RecordIndex, block.origin)))
+    if block.encoding == BlockEncoding.Indexed:
+        match block.cells:
+            Some(index) =>
+                raw, origin = selected(index, position, budget).map_err(shared)?
+                return cell(node, raw, origin, dictionary, budget).map_err(shared)
+            None => return Err(shared(binary_failure(BinaryFailure.InvalidOffsets, block.origin)))
+    if block.encoding == BlockEncoding.FrameOfReference or block.encoding == BlockEncoding.ZigzagDelta:
+        return numeric_at(block, node, position, budget)
+    if block.encoding == BlockEncoding.Runs or block.encoding == BlockEncoding.DictionaryRuns:
+        values = read_runs(block, node, keys, dictionary, position, budget)?
+        if len(values) != 1:
+            return Err(failure(ColumnFailure.RunLength, block.origin))
+        return Ok(values[0])
+    if not uses_dictionary(block.encoding):
+        return Err(failure(ColumnFailure.UnsupportedEncoding, block.origin))
+    match keys:
+        None => return Err(failure(ColumnFailure.MissingDictionary, block.origin))
+        Some(admitted) =>
+            number = packed_value(block.payload, block.width, block.present, position, block.origin, budget)?
+            match number.to_unsigned():
+                Some(value) =>
+                    match value.try_resize[int]():
+                        Some(code) =>
+                            if code >= admitted.count:
+                                return Err(failure(ColumnFailure.DictionaryCode, block.origin))
+                            return key_at(admitted, code, dictionary, budget)
+                        None => return Err(failure(ColumnFailure.DictionaryCode, block.origin))
+                None => return Err(failure(ColumnFailure.DictionaryCode, block.origin))
+
+
+pub def absent_value(node: TypeNode, absent: AbsentPolicy, origin: int) -> Result[Value, ColumnError]:
+    """Restore the declared absence, never an application constructor default."""
+    if absent == AbsentPolicy.NoneValue:
+        return Ok(Value.NoneValue)
+    if absent == AbsentPolicy.Empty:
+        match node:
+            TypeNode.Container(ContainerKind.List, _) => return Ok(Value.List([]))
+            TypeNode.Container(ContainerKind.Set, _) => return Ok(Value.Set([]))
+            TypeNode.Container(ContainerKind.Map, _) => return Ok(Value.Map([]))
+            _ => pass
+    return Err(shared(binary_failure(BinaryFailure.InvalidDescription, origin)))
+
+
+def restore_present(value: Value, absent: AbsentPolicy, origin: int) -> Result[Value, ColumnError]:
+    """The bitmap removes one Option layer; present empty collections are refused, not normalized away."""
+    if absent == AbsentPolicy.NoneValue:
+        return Ok(Value.Some([value]))
+    if absent == AbsentPolicy.Empty:
+        match value:
+            Value.List(items) | Value.Set(items) =>
+                if len(items) == 0:
+                    return Err(failure(ColumnFailure.RedundantAbsence, origin))
+            Value.Map(items) =>
+                if len(items) == 0:
+                    return Err(failure(ColumnFailure.RedundantAbsence, origin))
+            _ => return Err(shared(binary_failure(BinaryFailure.InvalidDescription, origin)))
+    return Ok(value)

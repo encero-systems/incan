@@ -36,6 +36,7 @@ from library_model_arguments import library_model_arguments, local_generic_item
 from string_conversion_contracts import conversion_name, conversion_trait
 from symbols import model_symbol
 from reflection_carriers import is_field_metadata_carrier
+from stored_types import stored_type
 from pub::incan_mir_plan import source_span as plan_span
 
 
@@ -189,7 +190,7 @@ pub def lower_model_declarations(
                 library_type_arguments=library_arguments,
                 field_serde_names=serde_names,
                 checked_deserialize=checked_deserialize,
-                reflection_metadata=planned_field_metadata(declaration),
+                reflection_metadata=planned_field_metadata(module, constructors, declaration),
                 field_metadata_carrier=is_field_metadata_carrier(declaration),
                 comparison_methods=comparisons[owner],
                 fallible_iterator=fallible_methods(constructors, module, owner, native_names, intrinsics)?,
@@ -258,13 +259,18 @@ def planned_lifecycle(value: &Option[CheckedLifecycle]) -> Option[FieldLifecycle
             ))
 
 
-def planned_field_metadata(declaration: &NominalDeclaration) -> Option[list[FieldMetadata]]:
-    """Copy checked metadata values without recovering missing visibility, type names, or defaults."""
+def planned_field_metadata(
+    module: &BodyIrModule, constructors: &ConstructorIndex, declaration: &NominalDeclaration,
+) -> Option[list[FieldMetadata]]:
+    """Retain checked visibility and defaults; derive stored selectors from each original typed field slot."""
     match declaration.reflection_metadata:
         None => return None
         Some(fields) =>
             mut result: list[FieldMetadata] = []
             for field in fields:
+                mut stored: Option[str] = None
+                if int(field.position) < len(declaration.field_types):
+                    stored = stored_type(module, constructors, declaration.field_types[int(field.position)])
                 mut alias: Option[str] = None
                 mut description: Option[str] = None
                 mut record_identity: list[int] = []
@@ -288,6 +294,7 @@ def planned_field_metadata(declaration: &NominalDeclaration) -> Option[list[Fiel
                         renamed_from_lifecycle=planned_lifecycle(field.renamed_from_lifecycle),
                         position=int(field.position),
                         default_is_empty=field.default_is_empty,
+                        stored_type=stored,
                         alias=alias,
                         description=description,
                         type_name=str(field.type_name),

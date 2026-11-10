@@ -3,11 +3,37 @@
 use super::*;
 
 impl BodyIrModule {
+    /// Admit declared record namespaces only for source models/enums and retain package ownership when it is known.
+    pub(super) fn record_package_matches_owner(
+        package: Option<&crate::record_identity::RecordPackageIdentity>,
+        owner: &CanonicalSymbolId,
+    ) -> bool {
+        let Some(package) = package else {
+            return true;
+        };
+        if package.validate().is_err()
+            || !matches!(
+                owner.kind,
+                SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Enum
+            )
+        {
+            return false;
+        }
+        match &owner.origin {
+            crate::SymbolOrigin::Module(_) => true,
+            crate::SymbolOrigin::Package { library, .. } => library == &package.scoped_name,
+            _ => false,
+        }
+    }
+
     /// Whether a retained layout agrees with its canonical identities and physical declaration scope. Native layouts
     /// either match a fixed carrier or extend an opaque skeleton with public metadata-selected fields, whose exact
     /// native types rustc verifies. A linked Loaf's item must encode its canonical declaration. A selected native
     /// equality witness must be a member of its model; lowering separately validates that body's executable ABI.
     pub fn is_well_formed_nominal_declaration(&self, declaration: &NominalDeclaration) -> bool {
+        if !Self::record_package_matches_owner(declaration.record_package_identity.as_ref(), &declaration.canonical) {
+            return false;
+        }
         if !Self::nominal_trait_adoptions_are_well_formed(declaration) {
             return false;
         }

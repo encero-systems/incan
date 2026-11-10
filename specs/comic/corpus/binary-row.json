@@ -5845,7 +5845,7 @@
     },
     {
       "id": "bytes-reference",
-      "input_hex": "43524d420101003b0101071ddb0b3ce6d300ac1111cb3070e1374a2f4642c0af953c753f3caa79deb8628eff3d088de61d4801000e01000b071ddb0b3ce6d300026162",
+      "input_hex": "43524d420101003b0101071ddb0b3ce6d3008adfc6a3887444bc0b16a5dfe2de1fb480606f5040977aa4133ec4a5b7b950f901000e01000b071ddb0b3ce6d300026162",
       "supplied_descriptions": [
         {
           "kind": "map",
@@ -5918,7 +5918,7 @@
                         },
                         {
                           "kind": "string",
-                          "value": "reference"
+                          "value": "ref<record@1ddb0b3ce6d3>"
                         }
                       ],
                       [
@@ -5980,7 +5980,7 @@
         },
         {
           "meaning": "one dictionary entry",
-          "hex": "0101071ddb0b3ce6d300ac1111cb3070e1374a2f4642c0af953c753f3caa79deb8628eff3d088de61d48"
+          "hex": "0101071ddb0b3ce6d3008adfc6a3887444bc0b16a5dfe2de1fb480606f5040977aa4133ec4a5b7b950f9"
         },
         {
           "meaning": "one row, shape slot zero, framed row",

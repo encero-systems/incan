@@ -15,6 +15,34 @@ impl TypeChecker {
         self.observe_body_local(span);
     }
 
+    /// Consume a selected declaration value at its ordinary source-order position, then either reuse its exact Body
+    /// IR product or check the current statements in a frame reconstructed from the already collected signature.
+    /// A refused record falls back before any declaration check is skipped.
+    pub(in crate::typechecker) fn check_reused_function(
+        &mut self,
+        program: &Program,
+        function: &FunctionDecl,
+        span: Span,
+    ) {
+        let Some(binding) = self.declaration_view().function(span).cloned() else {
+            self.check_function(function, span);
+            return;
+        };
+        if !matches!(self.reuse_declaration_record(program, span), Ok(true)) {
+            self.check_function(function, span);
+            return;
+        }
+        if self.callable_body_matches_current_scope(span) {
+            self.symbols.enter_scope(crate::symbols::ScopeKind::Function);
+            self.symbols.exit_scope();
+            return;
+        }
+        let prepared = self.prepare_reused_function_body(function, span, &binding);
+        self.check_prepared_function(function, span, prepared);
+        #[cfg(test)]
+        self.observe_body_local(span);
+    }
+
     /// Run a declaration's actual semantic rules in the same scoped writer used for callable bodies. Constants keep
     /// their const-evaluation owner, statics retain registry initialization rules, and defaults retain declaration
     /// visibility. Reserve the publication position before nested bodies so traversal order remains source order.
@@ -101,6 +129,7 @@ impl TypeChecker {
             );
         }
         self.check_work.body_local_checks += 1;
+        self.record_check_work("body", "callable", span);
         #[cfg(test)]
         if self.legacy_body_checking {
             self.retain_callable_input_bindings(ownership_source);
@@ -131,6 +160,7 @@ impl TypeChecker {
         }
         self.check_work.body_local_checks += 1;
         self.check_work.property_bodies += 1;
+        self.record_check_work("body", "property", span);
         #[cfg(test)]
         if self.legacy_body_checking {
             self.check_property_body_in_frame(body);
@@ -231,7 +261,11 @@ impl TypeChecker {
             published.dictionary.clear();
             published.append(self);
             if checked.local.kind == LocalOwnerKind::Declaration {
+                let owner = checked.owner();
                 self.checked_declarations.push(checked);
+                if let Ok(fields) = records::produce_declaration(self, program, owner) {
+                    self.produced_declaration_records.insert(owner, fields);
+                }
             } else {
                 self.checked_bodies.push(checked);
             }

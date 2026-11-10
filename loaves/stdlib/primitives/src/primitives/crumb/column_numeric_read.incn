@@ -1,0 +1,61 @@
+"""Exact numeric reconstruction and canonical width/base validation."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.column_bits import bit_length
+from crate.primitives.crumb.column_block_data import BlockData
+from crate.primitives.crumb.column_types import BlockEncoding
+from crate.primitives.crumb.column_errors import ColumnError, ColumnFailure, failure, primitive, overflow
+from crate.primitives.crumb.column_numbers import from_coefficient, unzigzag
+from crate.primitives.crumb.column_pack_read import packed_value
+from crate.primitives.crumb.types import TypeNode
+from crate.primitives.crumb.values import Value
+
+
+pub def numeric_values(block: &BlockData, node: TypeNode, mut budget: Budget) -> Result[list[Value], ColumnError]:
+    """One sequential admission pass; delta blocks never re-decode every earlier prefix for each row."""
+    mut result: list[Value] = []
+    mut current = block.base
+    mut maximum_width = 0
+    mut has_zero = false
+    for index in range(block.present):
+        budget.charge_elements(1).map_err((e) => primitive(e, block.origin))?
+        mut number = block.base
+        if block.encoding == BlockEncoding.FrameOfReference:
+            residual = packed_value(block.payload, block.width, block.present, index, block.origin, budget)?
+            maximum_width = max(
+                [maximum_width, bit_length(residual, budget).map_err((e) => primitive(e, block.origin))?],
+            )
+            if residual.is_zero():
+                has_zero = true
+            number = block.base.add(residual, budget).map_err((e) => primitive(e, block.origin))?
+        elif index > 0:
+            residual = packed_value(block.payload, block.width, block.present - 1, index - 1, block.origin, budget)?
+            maximum_width = max(
+                [maximum_width, bit_length(residual, budget).map_err((e) => primitive(e, block.origin))?],
+            )
+            difference = unzigzag(residual, budget).map_err((e) => primitive(e, block.origin))?
+            number = current.add(difference, budget).map_err((e) => primitive(e, block.origin))?
+        current = number
+        value = from_coefficient(node, number, budget).map_err((e) => overflow(e, block.origin))?
+        budget.charge_bytes(16).map_err((e) => primitive(e, block.origin))?
+        result.append(value)
+    if maximum_width != block.width:
+        return Err(failure(ColumnFailure.NonminimalBits, block.origin))
+    if block.encoding == BlockEncoding.FrameOfReference and not has_zero:
+        return Err(failure(ColumnFailure.NonminimalBase, block.origin))
+    return Ok(result)
+
+
+pub def numeric_at(block: &BlockData, node: TypeNode, position: int, mut budget: Budget) -> Result[Value, ColumnError]:
+    """FOR reads only its addressed residual; delta selection replays no more than 255 deltas."""
+    mut number = block.base
+    if block.encoding == BlockEncoding.FrameOfReference:
+        residual = packed_value(block.payload, block.width, block.present, position, block.origin, budget)?
+        number = number.add(residual, budget).map_err((e) => primitive(e, block.origin))?
+    else:
+        for index in range(position):
+            budget.charge_elements(1).map_err((e) => primitive(e, block.origin))?
+            residual = packed_value(block.payload, block.width, block.present - 1, index, block.origin, budget)?
+            difference = unzigzag(residual, budget).map_err((e) => primitive(e, block.origin))?
+            number = number.add(difference, budget).map_err((e) => primitive(e, block.origin))?
+    return from_coefficient(node, number, budget).map_err((e) => overflow(e, block.origin))

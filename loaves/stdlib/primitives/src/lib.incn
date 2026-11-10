@@ -20,12 +20,16 @@ import primitives.crumb.spelling
 import primitives.crumb.identity
 import primitives.crumb.admission
 import primitives.crumb.values
+import primitives.crumb.native_numbers
+import primitives.crumb.wide_integer
 import primitives.crumb.hash_stream
 import primitives.crumb.scalars
 import primitives.crumb.ordering
 import primitives.crumb.value_admission
 import primitives.crumb.contributions
 import primitives.crumb.metadata
+import primitives.crumb.names
+import primitives.crumb.text_names
 import primitives.crumb.hashes
 import primitives.crumb.registrations
 import primitives.crumb.encoding_buffer
@@ -39,14 +43,25 @@ import primitives.crumb.records
 import primitives.crumb.row_writer
 import primitives.crumb.encoding_errors
 import primitives.crumb.encoding_cursor
-import primitives.crumb.exact_numbers
 import primitives.crumb.metadata_read
 import primitives.crumb.description_read
 import primitives.crumb.encoding_index
 import primitives.crumb.scalar_read
+import primitives.crumb.typed_cells
+import primitives.crumb.typed_rows
+import primitives.crumb.typed_columns
 import primitives.crumb.cell_read
 import primitives.crumb.row_projection
 import primitives.crumb.row_reader
+import primitives.crumb.column_bits
+import primitives.crumb.column_numbers
+import primitives.crumb.column_types
+import primitives.crumb.column_presence
+import primitives.crumb.column_value_dictionary
+import primitives.crumb.column_block_write
+import primitives.crumb.column_data_write
+import primitives.crumb.column_group_write
+import primitives.crumb.column_writer
 import primitives.environ
 import primitives.fs
 import primitives.fs.file
@@ -100,3 +115,16 @@ pub from primitives.native_strings import nul_terminated_utf8
 pub from primitives.output import write_stderr_line, write_stdout_line
 pub from primitives.text import copy_frozen_bytes, decode_utf8, encode_frozen_utf8, encode_utf8
 import primitives.reflection as primitive_reflection
+import primitives.crumb.column_errors
+import primitives.crumb.column_pack_read
+import primitives.crumb.column_key_read
+import primitives.crumb.column_block_data
+import primitives.crumb.column_block_header
+import primitives.crumb.column_runs_read
+import primitives.crumb.column_numeric_read
+import primitives.crumb.column_block_read
+import primitives.crumb.column_data_read
+import primitives.crumb.column_directory
+import primitives.crumb.column_group_read
+import primitives.crumb.column_projection
+import primitives.crumb.column_reader

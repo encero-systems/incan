@@ -60,7 +60,7 @@ The first column profile flattens **root record fields**, not arbitrary nested p
 | ID | Encoding | Admitted stored cell types |
 | --- | --- | --- |
 | 0 | Indexed typed cells | Every row/1 cell type |
-| 1 | Frame-of-reference packed integers | i8/i16/i32/i64, u8/u16/u32/u64, decimal<P,S> coefficients |
+| 1 | Frame-of-reference packed integers | i8/i16/i32/i64/i128, u8/u16/u32/u64/u128, decimal<P,S> coefficients |
 | 2 | Zigzag-delta packed integers | Same as 1 |
 | 3 | Runs of typed cells | Every row/1 cell type |
 | 4 | Shared dictionary and packed codes | string, binary, or the integer/decimal types above |

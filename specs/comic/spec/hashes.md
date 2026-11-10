@@ -4,7 +4,7 @@ Status: experimental value rules with an exact draft preimage grammar and indepe
 
 ## Identity is not a hash of contents
 
-A member identity is the first six bytes of SHA-256 over the UTF-8 bytes of its earliest name, with no terminator. A rename retains that earliest name. Identities must be unique within one written record or enum description. Sorting is lexicographic unsigned byte order. Display spelling, import aliases and declaration order do not select a field.
+A member identity is the first six bytes of SHA-256 over the UTF-8 bytes of its earliest name, with no terminator. A name is in NFC (see [text](text.md#names-and-paths)), so each name has one spelling and one identity. A rename retains that earliest name. Identities must be unique within one written record or enum description. Sorting is lexicographic unsigned byte order. Display spelling, import aliases and declaration order do not select a field.
 
 The member vectors in the corpus include a known six-byte collision. Width reduces accidental risk; it does not replace collision refusal when a description contains equal identities.
 
@@ -103,7 +103,7 @@ A reference's target-type identity is the binding's stable type identity, not it
 
 ### Canonical type spelling S
 
-S is ASCII with no whitespace. It represents shape, not a source-language display spelling. Scalar tokens are `boolean`, `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `fp32`, `fp64`, `string`, `binary`, `secret_string` and `secret_bytes`. `decimal<P,S>` uses canonical decimal integers, with positive precision and `0 <= S <= P` in this profile. No leading zeros or plus signs occur. A wider primitive profile must register unsupported scalar widths explicitly rather than silently substituting a machine type.
+S is ASCII with no whitespace. It represents shape, not a source-language display spelling. Scalar tokens are `boolean`, `i8`, `i16`, `i32`, `i64`, `i128`, `u8`, `u16`, `u32`, `u64`, `u128`, `fp32`, `fp64`, `string`, `binary`, `secret_string` and `secret_bytes`. `decimal<P,S>` uses canonical decimal integers, with positive precision and `0 <= S <= P` in this profile. No leading zeros or plus signs occur. A wider primitive profile must register unsupported scalar widths explicitly rather than silently substituting a machine type.
 
 | Shape | S |
 | --- | --- |
@@ -114,7 +114,7 @@ S is ASCII with no whitespace. It represents shape, not a source-language displa
 | Enum | `enum{ID:record{...};ID:record{...};...}` with sorted variant IDs and payload records |
 | Union | `union<T1,T2,...>` sorted by SHA-256 of each S(member), with the full spelling as a collision tie-breaker |
 | Recursive edge | `^D`, where D is the zero-based distance to the referenced active record/enum ancestor |
-| Typed reference | `reference`; nominal target constraints remain in the separately admitted binding description |
+| Typed reference | `reference`; its target type enters N, not S |
 
 Fields and variants sort by their six-byte identities. Empty records and enums have empty braces. Optional nesting is not collapsed in S. Alias and newtype shapes fold as their underlying type; concrete generic instantiations substitute their actual types. Nominal names, display paths, documentation and nonempty construction defaults do not enter S. The admitted absent policy does enter S; optional type alone does not imply that the field may be omitted. Their exclusion is not permission to discard them from a complete description.
 
@@ -124,7 +124,7 @@ For a union member's S, use the same enclosing active stack for every alternativ
 
 ### Union selector spelling N
 
-A value must distinguish two unrelated nominal union members even when they have the same shape. N therefore uses `record@HEX` or `enum@HEX` for a nominal member, where HEX is its six-byte declaration identity, written as 12 lowercase hexadecimal digits. For this identity scheme, hash the registry id, scoped package name, and earliest module path plus declaration name as UTF-8 strings, each followed by one zero byte, then take the first six SHA-256 bytes. None of the three strings may contain a zero byte. Imports and display aliases never enter this input; rename history supplies the earliest owner and path. A closed nominal with arguments uses `record@HEX<N(arg0),N(arg1),...>` or the enum equivalent. With zero arguments, omit the angle brackets; empty `<>` is noncanonical. It uses the scalar and container syntax of S otherwise, recursively replacing nominal occurrences with their closed selectors. Aliases and constrained newtypes fold as their underlying type as required by the value profile.
+A value must distinguish two unrelated nominal union members even when they have the same shape. N therefore uses `record@HEX` or `enum@HEX` for a nominal member, where HEX is its six-byte declaration identity, written as 12 lowercase hexadecimal digits. For this identity scheme, hash the registry id, scoped package name, and earliest module path plus declaration name as UTF-8 strings, each followed by one zero byte, then take the first six SHA-256 bytes. None of the three strings may contain a zero byte. Imports and display aliases never enter this input; rename history supplies the earliest owner and path. A closed nominal with arguments uses `record@HEX<N(arg0),N(arg1),...>` or the enum equivalent. With zero arguments, omit the angle brackets; empty `<>` is noncanonical. It uses the scalar and container syntax of S otherwise, recursively replacing nominal occurrences with their closed selectors. A typed reference is `ref<N(T)>` for its target type `T`, so a description's field type keeps the target that S leaves out. Aliases and constrained newtypes fold as their underlying type as required by the value profile.
 
 S is the structural model projection; N is the identity-bearing union discriminator, corresponding to stored type identity rather than a display path. Two distinct legal union alternatives whose N is identical after alias/newtype folding are not distinguishable under this value profile and must be refused at profile admission, not selected by declaration order. The caller may use an explicitly discriminated enum instead. This refusal does not affect a language's ability to declare such a union or use another profile.
 
@@ -160,7 +160,7 @@ Vectors cover domains, empty kinds, scalar widths, signed zero, NaNs, exact inte
 
 ## Complete-description preimage D
 
-The description domain is distinct from the model domain. D encodes the complete admitted description as a metadata tree: null, Boolean, exact integer, string, binary, ordered list or string-keyed map. It carries the nominal identity, declared kind and path, every member's identity/name/type/absence/canonical setting, declaration order, rename facts and properties. Do not drop unknown properties from the digest; a reader either understands their profile or refuses admission. Property values with richer types must carry their type and exact data in an admitted metadata structure. D never evaluates a property, loads a type or executes validation.
+The description domain is distinct from the model domain. D encodes the complete admitted description as a metadata tree: null, Boolean, exact integer, string, binary, symbol, ordered list or string-keyed map. It carries the nominal identity, declared kind and path, every member's identity/name/type/absence/canonical setting, declaration order, rename facts and properties. Do not drop unknown properties from the digest; a reader either understands their profile or refuses admission. Property values with richer types must carry their type and exact data in an admitted metadata structure. D never evaluates a property, loads a type or executes validation.
 
 | Metadata value | D |
 | --- | --- |
@@ -171,8 +171,9 @@ The description domain is distinct from the model domain. D encodes the complete
 | Binary | `04 || F(bytes)` |
 | List | `05 || U(count) || D(item)...` |
 | Map | `06 || U(count) || (F(UTF-8 key) || D(value))...`, keys sorted by exact UTF-8 bytes |
+| Symbol | `07 || F(UTF-8 path)` |
 
-Map keys must be unique. Metadata lists preserve order. Strings are not normalized. A complete record description contains `nominal` (the binary closed selector K), `kind`, `path`, `fields` in declaration order and `properties`. Each field carries `id` (six binary bytes), `name`, `type` (N of the storage type), `absent` (`required`, `none` or `empty`), `canonical` and `properties`. An enum uses `variants`, each with `id`, `name`, payload `fields` and `properties`. Additional profile facts are retained in properties, including any richer declared-type constraints. A profile must not erase a constraint merely because storage uses its underlying type.
+Map keys must be unique, and each is a property name: a path segment under [text](text.md#names-and-paths). Admission refuses any other key. A symbol is an unquoted path, such as `Public`, and differs from the string with the same characters. Metadata lists preserve order. Strings are not normalized. A complete record description contains `nominal` (the binary closed selector K), `kind`, `path`, `fields` in declaration order and `properties`. Each field carries `id` (six binary bytes), `name`, `type` (N of the storage type), `absent` (`required`, `none` or `empty`), `canonical` and `properties`. An enum uses `variants`, each with `id`, `name`, payload `fields` and `properties`. Additional profile facts are retained in properties, including any richer declared-type constraints. A profile must not erase a constraint merely because storage uses its underlying type.
 
 This metadata tree is a canonical description contract, not a runtime model instance or JSON wire format. It makes the full-description digest independent of a row codec's offsets, compression and dictionary numbering. An inline codec may deliberately carry D directly; another codec may encode the same description differently and still compute D for its digest. A description reference binds the complete K selector and this digest, never just its structural model hash.
 

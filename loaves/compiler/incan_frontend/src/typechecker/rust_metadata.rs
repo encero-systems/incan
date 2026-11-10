@@ -1,5 +1,7 @@
 //! Rust item metadata queries, Rust path display, and native and public-library type identity.
 
+use crate::rust_abi_cache::RustTypeAliasLookup;
+
 use super::*;
 
 impl TypeChecker {
@@ -234,6 +236,26 @@ impl TypeChecker {
             return Some(metadata);
         }
         self.rust_item_metadata_for_path(canonical_path)
+    }
+
+    /// Return alias-only metadata from an attached item or directly from the ABI cache's record projection.
+    ///
+    /// Attached metadata is already owned for another checker operation. A cache-only request must not expand an
+    /// entire type surface merely to learn whether it has an alias target.
+    pub(super) fn known_rust_type_alias_for_path(&self, canonical_path: &str) -> Option<RustTypeAliasLookup> {
+        let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
+        if let Some(metadata) = self.symbols.all_symbols().iter().find_map(|sym| {
+            let SymbolKind::RustItem(info) = &sym.kind else {
+                return None;
+            };
+            if Self::normalize_rust_namespace_path(info.path.as_str()) != canonical_path {
+                return None;
+            }
+            info.metadata.as_deref()
+        }) {
+            return Some(RustTypeAliasLookup::from_item(metadata));
+        }
+        self.loaves.rust_type_alias(canonical_path)
     }
 
     /// Return the Rust definition metadata for a canonical path.

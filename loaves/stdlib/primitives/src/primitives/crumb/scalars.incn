@@ -1,138 +1,7 @@
-"""Exact scalar normalization and comparison without rounding through host floating-point values."""
+"""Exact floating-point normalization without logical conversion through host floats."""
 
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
-from crate.primitives.crumb.framing import encode_signed
-
-
-pub def compare_integer(left: str, right: str) -> int:
-    """Compare validated canonical integers by sign and magnitude, independent of encoded U/Z bytes."""
-    left_negative = left.startswith("-")
-    right_negative = right.startswith("-")
-    if left_negative != right_negative:
-        if left_negative:
-            return -1
-        return 1
-    if left_negative:
-        return -compare_magnitude(left[1:], right[1:])
-    return compare_magnitude(left, right)
-
-
-def compare_magnitude(left: str, right: str) -> int:
-    """Canonical digits compare by length before lexicographic digit order."""
-    if len(left) < len(right):
-        return -1
-    if len(left) > len(right):
-        return 1
-    if left < right:
-        return -1
-    if left > right:
-        return 1
-    return 0
-
-
-pub def subtract_count(value: str, count: int, mut budget: Budget) -> Result[str, CrumbError]:
-    """Subtract a nonnegative host count from an arbitrary exact signed integer."""
-    if count < 0:
-        return Err(CrumbError.invalid_input("negative subtraction count"))
-    encode_signed(value, budget)?
-    if value.startswith("-"):
-        return Ok("-" + add_magnitudes(value[1:], str(count), budget)?)
-    amount = str(count)
-    if compare_magnitude(value, amount) >= 0:
-        return subtract_magnitudes(value, amount, budget)
-    return Ok("-" + subtract_magnitudes(amount, value, budget)?)
-
-
-def add_magnitudes(left: str, right: str, mut budget: Budget) -> Result[str, CrumbError]:
-    """Bounded decimal addition uses only one-digit arithmetic and one output buffer."""
-    mut index = 0
-    mut carry = 0
-    mut digits: list[str] = []
-    while index < len(left) or index < len(right) or carry != 0:
-        budget.charge_elements(1)?
-        budget.charge_bytes(1)?
-        mut digit = carry
-        if index < len(left):
-            digit += int(left[len(left) - index - 1])
-        if index < len(right):
-            digit += int(right[len(right) - index - 1])
-        digits.append(str(digit % 10))
-        carry = digit // 10
-        index += 1
-    budget.charge_bytes(len(digits))?
-    return Ok("".join([digits[len(digits) - 1 - index] for index in range(len(digits))]))
-
-
-def subtract_magnitudes(left: str, right: str, mut budget: Budget) -> Result[str, CrumbError]:
-    """Subtract ordered nonnegative magnitudes, returning canonical digits without negative zero."""
-    mut borrow = 0
-    mut digits: list[str] = []
-    for index in range(len(left)):
-        budget.charge_elements(1)?
-        budget.charge_bytes(1)?
-        mut digit = int(left[len(left) - index - 1]) - borrow
-        if index < len(right):
-            digit -= int(right[len(right) - index - 1])
-        borrow = 0
-        if digit < 0:
-            digit += 10
-            borrow = 1
-        digits.append(str(digit))
-    while len(digits) > 1 and digits[len(digits) - 1] == "0":
-        digits.pop()
-    budget.charge_bytes(len(digits))?
-    return Ok("".join([digits[len(digits) - 1 - index] for index in range(len(digits))]))
-
-
-pub def normalize_decimal(coefficient: str, scale: str, mut budget: Budget) -> Result[tuple[str, str], CrumbError]:
-    """Remove trailing coefficient zeros exactly; normalized scales may be negative or exceed host width."""
-    encode_signed(coefficient, budget)?
-    encode_signed(scale, budget)?
-    if coefficient == "0":
-        return Ok(("0", "0"))
-    mut end = len(coefficient)
-    while coefficient[end - 1] == "0":
-        budget.charge_elements(1)?
-        end -= 1
-    budget.charge_bytes(end)?
-    return Ok((coefficient[:end], subtract_count(scale, len(coefficient) - end, budget)?))
-
-
-pub def compare_decimal(
-    left_coefficient: str,
-    left_scale: str,
-    right_coefficient: str,
-    right_scale: str,
-    mut budget: Budget,
-) -> Result[int, CrumbError]:
-    """Compare exact decimals by sign, decimal exponent and padded significant digits, never by float."""
-    left, left_power = normalize_decimal(left_coefficient, left_scale, budget)?
-    right, right_power = normalize_decimal(right_coefficient, right_scale, budget)?
-    if left == "0" or right == "0" or left.startswith("-") != right.startswith("-"):
-        return Ok(compare_integer(left, right))
-    negative = left.startswith("-")
-    if negative:
-        return compare_decimal(right[1:], right_power, left[1:], left_power, budget)
-    # Compare scale-minus-digit-count: smaller means the larger positive value.
-    left_order = subtract_count(left_power, len(left), budget)?
-    right_order = subtract_count(right_power, len(right), budget)?
-    order = compare_integer(left_order, right_order)
-    if order != 0:
-        return Ok(-order)
-    for index in range(max([len(left), len(right)])):
-        budget.charge_elements(1)?
-        mut left_digit = "0"
-        mut right_digit = "0"
-        if index < len(left):
-            left_digit = left[index]
-        if index < len(right):
-            right_digit = right[index]
-        if left_digit < right_digit:
-            return Ok(-1)
-        if left_digit > right_digit:
-            return Ok(1)
-    return Ok(0)
 
 
 pub def float64_bits(width: int, bits: bytes, mut budget: Budget) -> Result[bytes, CrumbError]:
@@ -177,8 +46,15 @@ pub def float64_bits(width: int, bits: bytes, mut budget: Budget) -> Result[byte
             fraction *= 2
     high = sign * 2147483648 + wide_exponent * 1048576 + fraction // 4294967296
     low = fraction % 4294967296
-    mut result: list[u8] = []
-    for word in [high, low]:
-        for divisor in [16777216, 65536, 256, 1]:
-            result.append(((word // divisor) % 256).saturating_resize[u8]())
-    return Ok(result)
+    return Ok(
+        [
+            ((high // 16777216) % 256).saturating_resize[u8](),
+            ((high // 65536) % 256).saturating_resize[u8](),
+            ((high // 256) % 256).saturating_resize[u8](),
+            (high % 256).saturating_resize[u8](),
+            ((low // 16777216) % 256).saturating_resize[u8](),
+            ((low // 65536) % 256).saturating_resize[u8](),
+            ((low // 256) % 256).saturating_resize[u8](),
+            (low % 256).saturating_resize[u8](),
+        ],
+    )
