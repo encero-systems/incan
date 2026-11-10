@@ -447,6 +447,7 @@ impl TypeChecker {
         .entered();
         self.dependency_semantics_pending = false;
         self.dependency_method_input_contracts.clear();
+        self.dependency_method_headers.clear();
         self.hash_key_inference.type_params.clear();
         self.transitive_pub_types.clear();
         self.public_library_type_identities.clear();
@@ -556,6 +557,7 @@ impl TypeChecker {
         .entered();
         self.dependency_semantics_pending = false;
         self.dependency_method_input_contracts.clear();
+        self.dependency_method_headers.clear();
         self.hash_key_inference.type_params.clear();
         self.transitive_pub_types.clear();
         self.public_library_type_identities.clear();

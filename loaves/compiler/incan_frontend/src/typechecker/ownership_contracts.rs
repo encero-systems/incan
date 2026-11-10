@@ -9,6 +9,7 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOr
 
 mod admission;
 mod builtins;
+mod callables;
 mod checked;
 mod copy;
 mod dictionary;
@@ -436,7 +437,7 @@ impl TypeChecker {
         true
     }
 
-    /// Refuse explicit mode annotations at every nesting depth, including aliases, fields and callable signatures.
+    /// Refuse unsupported stored modes, while callable inputs retain their own independent invocation contract.
     ///
     /// The annotation retains its generic shape; this diagnostic prevents interpreting that shape as a value wrapper
     /// or turning it into a native reference before the contract's executable semantics exist.
@@ -473,7 +474,21 @@ impl TypeChecker {
             }
             Type::Function(parameters, result) => {
                 for parameter in parameters {
-                    self.refuse_unimplemented_ownership_annotation(parameter);
+                    let input = match &parameter.node {
+                        Type::MutParam(inner) => inner.as_ref(),
+                        _ => parameter,
+                    };
+                    match &input.node {
+                        Type::Generic(name, arguments)
+                            if arguments.len() == 1
+                                && self
+                                    .explicit_ownership_mode(name)
+                                    .is_some_and(|mode| mode != OwnershipMode::Reference) =>
+                        {
+                            self.refuse_unimplemented_ownership_annotation(&arguments[0]);
+                        }
+                        _ => self.refuse_unimplemented_ownership_annotation(parameter),
+                    }
                 }
                 self.refuse_unimplemented_ownership_annotation(result);
             }

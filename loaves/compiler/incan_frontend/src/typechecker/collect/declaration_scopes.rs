@@ -294,6 +294,7 @@ impl TypeChecker {
         };
         self.remap_symbol_kind_with_import_aliases(&mut kind, scope);
         Self::mark_compiled_class_field_provider(&mut kind, library);
+        self.retain_admitted_method_headers(&kind);
         match kind {
             SymbolKind::Type(info) if !matches!(info, TypeInfo::TypeAlias | TypeInfo::Builtin) => {
                 let declaration = self

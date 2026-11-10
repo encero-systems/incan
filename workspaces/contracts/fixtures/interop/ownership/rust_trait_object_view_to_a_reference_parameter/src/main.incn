@@ -1,9 +1,39 @@
-# behavior: a Rust trait object behind a shared pointer is viewed through as_ref and handed to a Rust function taking the trait object by reference, twice
+# behavior: a Rust trait object behind a shared pointer is viewed through as_ref and handed to a Rust function taking the trait object by reference, twice; an owned generic Box conversion retains the concrete type identity without cloning (#2945); a returned downcast reference retains its actual payload, source lifetime and parenthesized argument (#2947); a non-generic validation umbrella retains heterogeneous original Error payloads, locations, order and repeatable exact-identity borrows without Clone (#2472)
 # expect-stdout:
 #   3
 #   3
 
 from rust::tiny_arrow import count, make
+from std.traits.error import Error
+from rust::std::any import Any, TypeId
+from rust::std::boxed import Box
+from rust::incan_std_primitives::validation import ValidationError
+
+
+model RetainedValue:
+    pub text: str
+
+
+model RetainedFailure with Error:
+    pub detail: str
+
+    def message(self) -> str:
+        return self.detail
+
+
+model OtherFailure with Error:
+    pub code: int
+
+    def message(self) -> str:
+        return f"other {self.code}"
+
+
+def typed_box[T](value: Owned[T]) -> Owned[Box[Any]]:
+    return Box.new(value)
+
+
+def recover[T](value: Borrowed[Any]) -> Option[Borrowed[T]] from value:
+    return value.downcast_ref[T]()
 
 
 # `make()` holds three elements, and `as_ref()` already yields the `&dyn Array` that `count` takes, so a second `&`
@@ -12,3 +42,46 @@ def main() -> None:
     array = make()
     println(f"{count(array.as_ref())}")
     println(f"{count(array.as_ref())}")
+    retained = typed_box(RetainedValue(text="original owned payload"))
+    assert retained.as_ref().type_id() == TypeId.of[RetainedValue]()
+    assert retained.as_ref().type_id() != TypeId.of[str]()
+    # Inspecting the common object does not consume it or replace its concrete identity.
+    assert retained.as_ref().type_id() == TypeId.of[RetainedValue]()
+    match recover[RetainedValue](retained.as_ref()):
+        Some(value) => assert value.text == "original owned payload"
+        None => assert false
+    # Parentheses do not change the native call's selected loan or reference value.
+    match recover[RetainedValue]((retained.as_ref())):
+        Some(value) => assert value.text == "original owned payload"
+        None => assert false
+    match recover[str](retained.as_ref()):
+        Some(_) => assert false
+        None => pass
+    mut failures = ValidationError.from_located_original(
+        "profile.name",
+        "first failure",
+        typed_box(RetainedFailure(detail="retained detail")),
+    )
+    assert failures.member_count() == 1
+    assert failures.member_location(0) == Some("profile.name")
+    assert failures.member_message(0) == Some("first failure")
+    match failures.original_at[RetainedFailure](0):
+        Some(error) => assert error.detail == "retained detail"
+        None => assert false
+    match failures.original_at[OtherFailure](0):
+        Some(_) => assert false
+        None => pass
+    failures.push_located_original(
+        "profile.age",
+        "second failure",
+        typed_box(OtherFailure(code=7)),
+    )
+    assert failures.member_count() == 2
+    assert failures.member_location(1) == Some("profile.age")
+    assert failures.member_message(1) == Some("second failure")
+    match failures.original_at[RetainedFailure](0):
+        Some(error) => assert error.detail == "retained detail"
+        None => assert false
+    match failures.original_at[OtherFailure](1):
+        Some(error) => assert error.code == 7
+        None => assert false

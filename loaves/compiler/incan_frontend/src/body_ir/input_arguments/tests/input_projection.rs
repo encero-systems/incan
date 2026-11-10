@@ -332,12 +332,19 @@ fn constructed_nested_models_keep_direct_input_authority() -> Result<(), Box<dyn
     Ok(())
 }
 
-/// A model's omitted field computation and a non-Copy source field transfer need their own access/storage proof.
+/// Declaration-owned defaults retain their checked construction, while moving a non-Copy caller field still
+/// requires an explicit transfer proof; admitting defaults must not weaken that independent refusal.
 #[test]
-fn construction_defaults_and_noncopy_place_fields_stay_refused() -> Result<(), Box<dyn std::error::Error>> {
-    for source in [
-        "model Page:\n    title: str = \"default\"\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef main() -> int:\n    page = Page()\n    return read(1)\n",
-        "model Page:\n    title: str\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef main() -> int:\n    title = \"stored\"\n    page = Page(title=title)\n    return read(1)\n",
+fn construction_defaults_preserve_noncopy_place_field_refusal() -> Result<(), Box<dyn std::error::Error>> {
+    for (source, accepted) in [
+        (
+            "model Page:\n    title: str = \"default\"\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef main() -> int:\n    page = Page()\n    return read(1)\n",
+            true,
+        ),
+        (
+            "model Page:\n    title: str\ndef read(value: Borrowed[int]) -> int:\n    return value\ndef main() -> int:\n    title = \"stored\"\n    page = Page(title=title)\n    return read(1)\n",
+            false,
+        ),
     ] {
         let module = staged(source, false)?;
         let body = module
@@ -345,7 +352,7 @@ fn construction_defaults_and_noncopy_place_fields_stay_refused() -> Result<(), B
             .iter()
             .find(|body| body.name == "main")
             .ok_or("no caller")?;
-        assert!(body.first_representation_gap().is_some());
+        assert_eq!(body.first_representation_gap().is_none(), accepted, "{source}");
     }
     Ok(())
 }

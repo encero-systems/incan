@@ -592,6 +592,10 @@ pub struct RustTraitInfo {
     /// ordinary trait-namespace lookup from hiding a macro that implements a differently named trait.
     #[serde(default)]
     pub derive_macro: Option<RustMacroInfo>,
+    /// Public inherent methods on this trait's admitted nongeneric object, distinct from implementing trait slots.
+    /// For example, Any's downcast_ref belongs to dyn Any and is not an obligation on Any implementers.
+    #[serde(default)]
+    pub object_methods: Vec<RustMethodSig>,
 }
 
 #[cfg(test)]

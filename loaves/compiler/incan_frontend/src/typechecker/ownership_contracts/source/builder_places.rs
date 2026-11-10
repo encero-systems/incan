@@ -358,6 +358,12 @@ impl Builder<'_> {
         source: &Place,
         incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
+        if let Some(relation) = self
+            .native_result_relation(value)?
+            .filter(|relation| relation.carried.is_none())
+        {
+            return self.native_view_return(value, &relation, exclusive, source, incoming);
+        }
         // A call returning a view of exactly the declared source satisfies the relation through its result loan.
         if let Some(view) = self.view_source(value)? {
             let (incoming, path) = self.evaluate_view_source(value, view, incoming)?;
@@ -393,6 +399,40 @@ impl Builder<'_> {
                 self.expression(value, incoming, true)
             }
         }
+    }
+
+    /// Prove a native reference result against its declared source and access without deriving output permission
+    /// from the access granted to the native input. Every retained owner must be the declared source.
+    pub(super) fn native_view_return(
+        &mut self,
+        value: &Spanned<Expr>,
+        relation: &super::super::native::NativeResultDependencies,
+        exclusive: bool,
+        source: &Place,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        let access = relation.view_access.ok_or(Unavailable {
+            span: value.span,
+            reason: "native returned view has no checked reference access".into(),
+        })?;
+        if exclusive && access != incan_semantics_core::IncanInputAccess::Exclusive {
+            return Err(Unavailable {
+                span: value.span,
+                reason: "shared native result cannot supply an exclusive returned view".into(),
+            });
+        }
+        let (incoming, loans) = self.evaluate_native_result(value, relation, incoming)?;
+        if loans.is_empty()
+            || loans
+                .iter()
+                .any(|loan| self.graph.loans.get(loan.0).is_none_or(|loan| loan.source != *source))
+        {
+            return Err(Unavailable {
+                span: value.span,
+                reason: "native returned view does not retain exactly its declared source".into(),
+            });
+        }
+        Ok(incoming)
     }
 
     /// Prove a top-level owned return against its declared source dependency. Native lifetime-bearing values and
@@ -435,6 +475,9 @@ impl Builder<'_> {
 
     /// Distinguish stored sources from fresh computed values without swallowing missing checked projection facts.
     pub(super) fn optional_place(&mut self, expression: &Spanned<Expr>) -> Result<Option<Path>, Unavailable> {
+        if self.source_enum_payload_count(expression).is_some() {
+            return Ok(None);
+        }
         match &expression.node {
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => self.place(expression).map(Some),
             Expr::Paren(inner) => self.optional_place(inner),

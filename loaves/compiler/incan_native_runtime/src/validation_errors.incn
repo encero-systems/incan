@@ -1,5 +1,7 @@
-"""Construct and borrow the dependency-owned validation error without replacing its runtime contract."""
+"""Construct, retain and borrow dependency-owned validation errors without replacing their runtime contract."""
 
+from std.traits.error import Error
+from rust::std::boxed import Box
 from rust::incan_std_primitives::validation import ValidationError as NativeValidationError
 
 
@@ -16,3 +18,44 @@ pub def make_coded_validation_error(message: str, code: str) -> NativeValidation
 pub def format_validation_error(value: &NativeValidationError) -> str:
     """Borrow the actual runtime Display so later reads retain the error's owned payload."""
     return value.to_string()
+
+
+pub def retain_validation_error[E with Error](error: Owned[E]) -> NativeValidationError:
+    """Own one concrete error behind the validation umbrella while preserving its exact runtime identity."""
+    message = error.message()
+    return NativeValidationError.from_original(message, Box.new(error))
+
+
+pub def retain_located_validation_error[E with Error](location: str, error: Owned[E]) -> NativeValidationError:
+    """Own one located concrete error without stringifying away the payload that produced its diagnostic."""
+    message = error.message()
+    return NativeValidationError.from_located_original(location, message, Box.new(error))
+
+
+pub def append_validation_error[E with Error](
+    mut value: NativeValidationError,
+    error: Owned[E],
+) -> NativeValidationError:
+    """Append one concrete error in source order and return the same non-cloneable umbrella."""
+    message = error.message()
+    value.push_original(message, Box.new(error))
+    return value
+
+
+pub def append_located_validation_error[E with Error](
+    mut value: NativeValidationError,
+    location: str,
+    error: Owned[E],
+) -> NativeValidationError:
+    """Append one located concrete error in source order and return the same non-cloneable umbrella."""
+    message = error.message()
+    value.push_located_original(location, message, Box.new(error))
+    return value
+
+
+pub def original_validation_error[E](
+    value: &NativeValidationError,
+    index: usize,
+) -> Option[Borrowed[E]] from value:
+    """Borrow member `index` only when the requested type has the exact retained concrete identity."""
+    return value.original_at[E](index)

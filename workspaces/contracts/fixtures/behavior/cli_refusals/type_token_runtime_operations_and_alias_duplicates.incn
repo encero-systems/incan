@@ -1,4 +1,4 @@
-# behavior: primitive and trait type tokens refuse comparison, hashing, serialization, pattern matching, field and method access; bare traits remain compile-time names; overloads whose transparent aliases normalize to one token key are duplicate declarations; and method declarations whose accepted argument ranges and types overlap are refused (#1033; RFC 174)
+# behavior: primitive and trait type tokens refuse comparison, hashing, serialization, pattern matching, field and method access; bare traits remain compile-time names; overloads whose transparent aliases normalize to one token key are duplicate declarations; method declarations whose accepted argument ranges and types overlap are refused; and an instance field refuses a same-name method or property on the same surface while a type-owned method remains separate (#1033, #2948; RFC 120, RFC 174)
 # expect-diagnostic: INCAN-T0001
 
 type Count = int
@@ -25,6 +25,35 @@ class ConflictingWriter:
 
     def write(self, value: int, radix: int = 10) -> int:
         return value + radix
+
+
+model FieldThenMethod:
+    conflict: int
+
+    def conflict(self) -> int:
+        return 1
+
+
+model MethodThenField:
+    def conflict(self) -> int:
+        return 1
+
+    conflict: int
+
+
+model FieldThenProperty:
+    conflict: int
+
+    property conflict -> int:
+        return 1
+
+
+model TypeOwnedBesideField:
+    allowed: int
+
+    @staticmethod
+    def allowed(value: int) -> TypeOwnedBesideField:
+        return TypeOwnedBesideField(allowed=value)
 
 
 def refuse_operations(token: Type[int]) -> None:
