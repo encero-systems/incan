@@ -102,6 +102,8 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
     assert_nested_generic_static_call_arguments()?;
     assert_frozen_literal_bound_method_identity()?;
     assert_native_provider_field_layout()?;
+    assert_independently_retained_newtype_return()?;
+    assert_generic_newtype_provider_methods()?;
     assert_nested_generic_static_call_bound_mismatch()?;
     let mut changed = seed.clone();
     changed.bodies[0].native_attributes.push(bir::NativeAttribute {
@@ -113,6 +115,130 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
         .err()
         .ok_or("baseline omitted an invocation-only field")?;
     assert!(difference.to_string().contains("native_attributes"));
+    Ok(())
+}
+
+/// A standard package owns generic newtype methods just like any other source package. Their wrapped-field
+/// projections and callable coverage must survive canonical carrier qualification without a native bridge.
+fn assert_generic_newtype_provider_methods() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_semantics_core::executable_representation::{DeclarationCoverage, SurfaceReader, build_surface};
+    use std::collections::BTreeSet;
+
+    for source in [
+        "pub type Mutex[T] = newtype T:\n    pub def get(self) -> T:\n        return self.0\n",
+        "@derive(Clone)\npub type Mutex[T with Clone] = newtype list[T]:\n    pub def get(self) -> list[T]:\n        return self.0\n",
+    ] {
+        for package in ["application", "incan_stdlib_primitives"] {
+            let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+            let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            let module_path = vec!["primitives".to_owned(), "async".to_owned(), "sync".to_owned()];
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(module_path.clone()));
+            checker.set_current_package_identity(Some(package.to_owned()));
+            checker
+                .check_program(&program)
+                .map_err(|errors| format!("{errors:?}"))?;
+            let mut facts = checker.into_type_info();
+            let owner = facts
+                .declarations
+                .declaration_identities
+                .values()
+                .find(|identity| identity.declaration_name == "Mutex")
+                .ok_or("missing checked generic newtype identity")?
+                .clone();
+            let key = bir::nominal_carrier_key(&owner).ok_or("missing checked generic carrier")?;
+            // Generated SDK operations retain a provider identity even without an explicit source import.
+            facts
+                .declarations
+                .body_ir_native_type_identities
+                .insert(key.clone(), owner.clone());
+            facts
+                .declarations
+                .body_ir_native_type_identities
+                .insert(owner.declaration_name.clone(), owner);
+            let providers = ProviderOperationCatalog::new();
+            let context = BodyIrContext {
+                modules: &[],
+                provider_operations: &providers,
+                registry_package: None,
+                library_package: Some(package),
+                include_inline_tests: false,
+            };
+            let module = super::build_body_ir_module(&program, &module_path, &facts, &context);
+            let method = module
+                .bodies
+                .iter()
+                .find(|body| body.name == "get")
+                .ok_or("missing newtype method")?;
+            let identity = method.canonical.clone().ok_or("missing newtype method identity")?;
+            let public = BTreeSet::from([identity.clone()]);
+            let bytes = build_surface(
+                std::slice::from_ref(&module),
+                package,
+                "0.1.0",
+                &public,
+                &BTreeSet::new(),
+            )?;
+            let reader = SurfaceReader::open(&bytes)?;
+            let coverage = reader.index().coverage(&identity)?;
+            assert!(
+                matches!(coverage, DeclarationCoverage::Covered { .. }),
+                "{package}: {coverage:?}; body: {method:#?}; layouts: {:#?}",
+                module.nominal_declarations
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A method and its returned newtype may be retained in separate publication fragments. The owner remains exact,
+/// and neither missing storage nor conflicting copies may be resolved by context order or a short name.
+fn assert_independently_retained_newtype_return() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "pub type Token = newtype str\npub class Factory:\n    pub def token(self) -> Token:\n        return Token(\"value\")\n";
+    let (_, _, seed) = checked_seed(source)?;
+    let owner = seed
+        .nominal_declarations
+        .iter()
+        .find(|declaration| declaration.name == "Token")
+        .ok_or("missing checked Token layout")?
+        .clone();
+    let method = seed
+        .callable_declaration_frames()
+        .find(|body| body.name.ends_with("token"))
+        .and_then(|body| body.canonical.clone())
+        .ok_or("missing checked token method")?;
+    let mut methods = seed.clone();
+    methods
+        .nominal_declarations
+        .retain(|declaration| declaration.canonical != owner.canonical);
+    let mut layouts = seed.clone();
+    layouts.bodies.clear();
+    layouts
+        .nominal_declarations
+        .retain(|declaration| declaration.canonical == owner.canonical);
+    assert!(layouts.is_well_formed_nominal_declaration(&owner));
+    for context in [
+        vec![methods.clone(), layouts.clone()],
+        vec![layouts.clone(), methods.clone()],
+    ] {
+        let returns = super::collect::collect_published_newtype_returns(&context);
+        let returned = returns
+            .get(&method)
+            .and_then(Option::as_ref)
+            .ok_or("separately retained newtype owner was refused")?;
+        assert_eq!(returned.declaration, owner);
+    }
+    let missing = super::collect::collect_published_newtype_returns(&[methods.clone()]);
+    assert!(missing.get(&method).is_some_and(Option::is_none));
+    let mut conflict = layouts.clone();
+    conflict.nominal_declarations[0].field_types = vec![super::IncanType::Primitive(super::IncanPrimitiveType::Int)];
+    for context in [
+        vec![methods.clone(), layouts.clone(), conflict.clone()],
+        vec![conflict, layouts, methods],
+    ] {
+        let returns = super::collect::collect_published_newtype_returns(&context);
+        assert!(returns.get(&method).is_some_and(Option::is_none));
+    }
     Ok(())
 }
 
@@ -162,10 +288,11 @@ fn assert_nested_generic_static_call_arguments() -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
-/// A native-backed declaration uses the same physical owner while its provider builds and after import.
+/// Reflection records use their Incan provider layout, including the primitive package and same-named local types.
 fn assert_native_provider_field_layout() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
-pub class FieldInfo:
+@derive(Eq)
+pub model FieldInfo:
     pub name: FrozenStr
     pub identity: FrozenBytes
     pub canonical: bool
@@ -179,49 +306,65 @@ pub class FieldInfo:
 pub model Holder:
     pub fields: FrozenList[FieldInfo]
 "#;
-    for (package, module_name, native) in [
-        (None, "reflection", false),
-        (Some("application"), "reflection", false),
-        (Some("incan_stdlib_primitives"), "ordinary", false),
-        (Some("incan_stdlib_primitives"), "reflection", true),
-    ] {
-        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-        let module_path = vec![module_name.to_owned()];
-        let mut checker = TypeChecker::new();
-        checker.set_current_module_path(Some(module_path.clone()));
-        checker.set_current_package_identity(package.map(str::to_owned));
-        checker
-            .check_program(&program)
-            .map_err(|errors| format!("{errors:?}"))?;
-        let facts = checker.into_type_info();
-        let providers = ProviderOperationCatalog::new();
-        let context = BodyIrContext {
-            modules: &[],
-            provider_operations: &providers,
-            registry_package: None,
-            library_package: package,
-            include_inline_tests: false,
-        };
-        let seed = super::build_module_seed(&program, &module_path, &facts, &context);
-        let declaration = seed
-            .nominal_declarations
-            .iter()
-            .find(|value| value.canonical.declaration_name == "FieldInfo")
-            .ok_or("missing provider FieldInfo declaration")?;
-        let holder = seed
-            .nominal_declarations
-            .iter()
-            .find(|value| value.canonical.declaration_name == "Holder")
-            .ok_or("missing containing model")?;
-        let consumer = bir::native_nominal_item(&declaration.canonical).unwrap_or_default();
-        assert_eq!(!consumer.is_empty(), native);
-        if declaration.native_item != consumer {
-            return Err(format!(
-                "provider layout {:?}; consumer layout {:?}; declaration {:?}; containing field types {:?}",
-                declaration.native_item, consumer, declaration.canonical, holder.field_types
-            )
-            .into());
+    for kind in ["model", "class"] {
+        let source = source.replace("pub model FieldInfo:", &format!("pub {kind} FieldInfo:"));
+        for (package, module_parts) in [
+            (None, vec!["reflection"]),
+            (Some("application"), vec!["reflection"]),
+            (Some("incan_stdlib_primitives"), vec!["ordinary"]),
+            (Some("incan_stdlib_primitives"), vec!["reflection"]),
+            (Some("incan_stdlib_primitives"), vec!["primitives", "reflection"]),
+        ] {
+            let tokens = crate::lexer::lex(&source).map_err(|errors| format!("{errors:?}"))?;
+            let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            let module_path = module_parts.into_iter().map(str::to_owned).collect::<Vec<_>>();
+            let mut checker = TypeChecker::new();
+            checker.set_current_module_path(Some(module_path.clone()));
+            checker.set_current_package_identity(package.map(str::to_owned));
+            checker
+                .check_program(&program)
+                .map_err(|errors| format!("{errors:?}"))?;
+            let facts = checker.into_type_info();
+            let providers = ProviderOperationCatalog::new();
+            let context = BodyIrContext {
+                modules: &[],
+                provider_operations: &providers,
+                registry_package: None,
+                library_package: package,
+                include_inline_tests: false,
+            };
+            let seed = super::build_module_seed(&program, &module_path, &facts, &context);
+            let declaration = seed
+                .nominal_declarations
+                .iter()
+                .find(|value| value.canonical.declaration_name == "FieldInfo")
+                .ok_or("missing provider FieldInfo declaration")?;
+            let holder = seed
+                .nominal_declarations
+                .iter()
+                .find(|value| value.canonical.declaration_name == "Holder")
+                .ok_or("missing containing model")?;
+            let consumer = bir::native_nominal_item(&declaration.canonical).unwrap_or_default();
+            assert!(consumer.is_empty());
+            if declaration.native_item != consumer {
+                return Err(format!(
+                    "provider layout {:?}; consumer layout {:?}; declaration {:?}; containing field types {:?}",
+                    declaration.native_item, consumer, declaration.canonical, holder.field_types
+                )
+                .into());
+            }
+            let key = bir::nominal_carrier_key(&declaration.canonical).ok_or("missing source carrier key")?;
+            let mut published = seed.clone();
+            for value in &mut published.nominal_declarations {
+                value.named_type_identities.remove(&key);
+            }
+            super::nominal_carriers::retain_published_module(&mut published);
+            let retained = published
+                .nominal_declarations
+                .iter()
+                .find(|value| value.canonical.declaration_name == "FieldInfo")
+                .ok_or("missing admitted provider layout")?;
+            assert_eq!(retained.carrier_name(), key);
         }
     }
     Ok(())
@@ -1442,21 +1585,39 @@ fn checked_metadata_seed(source: &str) -> Result<(TypeCheckInfo, bir::BodyIrModu
     use crate::loaf_index::LoafIndex;
     use std::sync::Arc;
 
-    let sdk = include_str!("../../../../stdlib/primitives/src/reflection.incn");
+    let sdk = include_str!("../../../../stdlib/primitives/src/primitives/reflection.incn");
+    let facade = include_str!("../../../../stdlib/primitives/src/reflection.incn");
     let tokens = crate::lexer::lex(sdk).map_err(|errors| format!("{errors:?}"))?;
-    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-    let mut declaring = TypeChecker::new();
-    declaring.set_current_package_identity(Some("incan_stdlib_primitives".into()));
-    declaring.set_current_module_path(Some(vec!["reflection".into()]));
-    declaring
-        .check_program(&program)
-        .map_err(|errors| format!("{errors:?}"))?;
-    let module_path = vec!["reflection".to_owned()];
-    let exports = collect_checked_public_exports(&program, &declaring);
+    let declaration = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let tokens = crate::lexer::lex(facade).map_err(|errors| format!("{errors:?}"))?;
+    let facade = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let owner_path = vec!["primitives".to_owned(), "reflection".to_owned()];
+    let mut modules = Vec::new();
+    let mut checked_exports = Vec::new();
+    for (module_path, program) in [
+        (owner_path.clone(), &declaration),
+        (vec!["reflection".to_owned()], &facade),
+    ] {
+        let mut declaring = TypeChecker::new();
+        declaring.set_current_package_identity(Some("incan_stdlib_primitives".into()));
+        declaring.set_current_module_path(Some(module_path.clone()));
+        if module_path == owner_path {
+            declaring
+                .check_program(program)
+                .map_err(|errors| format!("{errors:?}"))?;
+        } else {
+            declaring.register_dependency_module_path_segments("primitives_reflection", owner_path.clone());
+            declaring
+                .check_with_imports(program, &[("primitives_reflection", &declaration)])
+                .map_err(|errors| format!("{errors:?}"))?;
+        }
+        checked_exports.push((module_path.clone(), collect_checked_public_exports(program, &declaring)));
+        modules.push(collect_checked_api_metadata(program, &declaring, module_path));
+    }
     let mut api = CheckedApiMetadataPackage {
         schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
         package: None,
-        modules: vec![collect_checked_api_metadata(&program, &declaring, module_path.clone())],
+        modules,
         public_namespaces: Vec::new(),
     };
     materialize_checked_api_public_namespaces(&mut api)?;
@@ -1464,7 +1625,7 @@ fn checked_metadata_seed(source: &str) -> Result<(TypeCheckInfo, bir::BodyIrModu
     manifest.contract_metadata.identity_graph.extend_checked_api_exports(
         "incan_stdlib_primitives",
         &api,
-        &[(module_path, exports)],
+        &checked_exports,
     )?;
     manifest.contract_metadata.api = Some(api);
     let directory = tempfile::tempdir()?;

@@ -33,6 +33,7 @@ from nominal_instances import NominalInstance
 from library_model_arguments import library_model_arguments, local_generic_item
 from string_conversion_contracts import conversion_name, conversion_trait
 from symbols import model_symbol
+from reflection_carriers import is_field_metadata_carrier
 from pub::incan_mir_plan import source_span as plan_span
 
 
@@ -187,6 +188,7 @@ pub def lower_model_declarations(
                 field_serde_names=serde_names,
                 checked_deserialize=checked_deserialize,
                 reflection_metadata=planned_field_metadata(declaration),
+                field_metadata_carrier=is_field_metadata_carrier(declaration),
                 comparison_methods=comparisons[owner],
                 fallible_iterator=fallible_methods(constructors, module, owner, native_names, intrinsics)?,
                 iterator=iterator_methods(constructors, module, owner, native_names, intrinsics)?,

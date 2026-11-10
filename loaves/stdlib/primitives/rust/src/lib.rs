@@ -18,10 +18,7 @@ pub mod task;
 pub mod time;
 pub mod validation;
 
-pub use reflection::{
-    FieldInfo, HasClassName, HasFieldInfo, HasFieldMetadata, HasFieldValueReflection, HasTypeClassName,
-    HasTypeFieldMetadata,
-};
+pub use reflection::{HasClassName, HasFieldInfo, HasFieldValueReflection, HasTypeClassName};
 
 /// Internal re-exports used by compiler-generated code and primitive async sources.
 ///

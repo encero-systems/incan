@@ -210,8 +210,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// A checked provider method can return a source newtype the consumer never imports. Its own return binding and
     /// exact retained declaration authorize slot zero; missing layout or conflicting checked bindings deny it. The
     /// caller has already selected this record by the call's canonical method identity, never by source spelling.
-    /// Standard-package owners intentionally have no encoded carrier key; their checked identity and layout provide
-    /// the same authority without requiring one.
+    /// Source-owned standard packages use the same checked carrier identities as other packages; a return from
+    /// another module remains bound to its exact declaring layout.
     fn published_newtype_field_owner<'declaration>(
         &'declaration self,
         owner: &str,

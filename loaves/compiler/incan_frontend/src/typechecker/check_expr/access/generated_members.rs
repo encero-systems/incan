@@ -275,12 +275,15 @@ impl TypeChecker {
             }
         }
         let (library, path) = self.loaf_module(&module)?;
-        let (SymbolKind::Type(TypeInfo::Class(info)), _) =
-            self.lookup_pub_library_module_symbol_member(&library, &path, name)?
-        else {
+        let (SymbolKind::Type(info), _) = self.lookup_pub_library_module_symbol_member(&library, &path, name)? else {
             return None;
         };
-        let selected = info.fields.get(field)?;
+        let fields = match &info {
+            TypeInfo::Model(model) => &model.fields,
+            TypeInfo::Class(class) => &class.fields,
+            _ => return None,
+        };
+        let selected = fields.get(field)?;
         if let Some(identity) = selected.identity.clone() {
             self.type_info.record_resolved_identity(span, identity);
         }

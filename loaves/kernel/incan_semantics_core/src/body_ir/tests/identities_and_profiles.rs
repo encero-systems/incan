@@ -2,36 +2,36 @@
 
 use super::*;
 
-/// Only an authenticated SDK native bridge gains a source carrier key; equal names remain distinct owners.
+/// Primitive metadata records use source-owned layouts; neither their package nor an equal name creates a bridge.
 #[test]
-fn sdk_native_carrier_key_preserves_source_identity() -> Result<(), String> {
+fn primitive_metadata_keeps_source_ownership() -> Result<(), String> {
     let mut sdk = crate::CanonicalSymbolId::module_declaration(
-        vec!["reflection".into()],
+        vec!["primitives".into(), "reflection".into()],
         "FieldInfo",
-        crate::SemanticSourceTargetKind::Class,
+        crate::SemanticSourceTargetKind::Model,
         crate::HirSourceSpan::new(52, 423),
     );
     sdk.origin = crate::SymbolOrigin::Package {
         library: "incan_stdlib_primitives".into(),
-        module_path: vec!["reflection".into()],
+        module_path: vec!["primitives".into(), "reflection".into()],
     };
-    let key = super::nominal_carrier_key(&sdk).ok_or("missing SDK source carrier")?;
-    assert!(!key.contains("::"));
+    assert!(super::native_nominal_item(&sdk).is_none());
+    assert!(super::nominal_carrier_key(&sdk).is_some());
+    let compiled = super::loaf_item_path(&sdk).ok_or("missing compiled provider identity")?;
+    let symbol = compiled
+        .strip_prefix("incan_stdlib_primitives::")
+        .ok_or("metadata layout belongs to the wrong native crate")?;
     assert_eq!(
-        super::native_nominal_item(&sdk).as_deref(),
-        Some("incan_std_primitives::reflection::FieldInfo")
+        crate::decode_incan_symbol_identity(symbol).map_err(|error| error.to_string())?,
+        Some(sdk.clone())
     );
     let mut local = sdk.clone();
     local.origin = crate::SymbolOrigin::Package {
         library: "application".into(),
         module_path: vec!["reflection".into()],
     };
-    assert_ne!(super::nominal_carrier_key(&local), Some(key));
+    assert!(super::nominal_carrier_key(&local).is_some());
     assert!(super::native_nominal_item(&local).is_none());
-    let mut ordinary = sdk;
-    ordinary.declaration_name = "OtherRecord".into();
-    assert!(super::nominal_carrier_key(&ordinary).is_none());
-    assert!(super::native_nominal_item(&ordinary).is_none());
     Ok(())
 }
 
