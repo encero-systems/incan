@@ -2,7 +2,7 @@
 
 from std.fs import Path
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
-from rust_activation import DependencyDomain
+from rust_activation import ActivationPurpose, DependencyDomain
 from rust_units import build_dependencies
 from rust_binaries import compile_binary
 from rust_build import RustBuild, prepared_build, rust_output
@@ -33,7 +33,7 @@ pub def build_rust_tests(request: RustBuild) -> Result[list[str], str]:
         features=prepared.features,
         defaults=prepared.default_features,
         all_features=prepared.all_features,
-        environment="test",
+        purpose=ActivationPurpose.Test,
     )
     producers = production_roots(root, declared.kind, needs_library, prepared)
     facets = local_facets(
