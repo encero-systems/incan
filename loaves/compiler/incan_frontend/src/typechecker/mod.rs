@@ -538,6 +538,10 @@ pub struct TypeChecker {
     body_open_diagnostics: Vec<CompileError>,
     /// Completed declaration/default/initializer outputs, separate from callable statement outputs.
     checked_declarations: Vec<std::sync::Arc<body_check::CheckedBodyView>>,
+    /// Declaration-family records emitted at their settlement boundary, before any module product observes them.
+    produced_declaration_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    /// Producer-validated declaration records selected for the current source revision and consumed once by owner.
+    callable_declaration_reuse: std::collections::BTreeMap<Span, body_check::records::Fields>,
     /// Callable bodies that produced a checked lazy result and therefore need retained-result ownership analysis.
     /// The marker is consumed when that body's flow is finalized; it never becomes a published semantic fact.
     lazy_result_bodies: HashSet<CanonicalSymbolId>,

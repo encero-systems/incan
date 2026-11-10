@@ -11,10 +11,6 @@ from engine_messages import (
     Submit,
     Accepted,
     Captured,
-    Prepare,
-    NeedPrerequisite,
-    Evaluate,
-    Produced,
     Query,
     Page,
     Event,
@@ -40,10 +36,6 @@ pub def encode(message: Message) -> Result[tuple[int, bytes], Refusal]:
         Message.Submit(value) => return bounded(3, encode_submit(value)?)
         Message.Accepted(value) => return bounded(4, encode_accepted(value)?)
         Message.Captured(value) => return bounded(5, encode_captured(value)?)
-        Message.Prepare(value) => return bounded(6, encode_prepare(value)?)
-        Message.NeedPrerequisite(value) => return bounded(7, encode_needprerequisite(value)?)
-        Message.Evaluate(value) => return bounded(8, encode_evaluate(value)?)
-        Message.Produced(value) => return bounded(9, encode_produced(value)?)
         Message.Query(value) => return bounded(10, encode_query(value)?)
         Message.Page(value) => return bounded(11, encode_page(value)?)
         Message.Event(value) => return bounded(12, encode_event(value)?)
@@ -90,14 +82,6 @@ def decode_fields(tag: int, mut reader: Decoder) -> Result[Message, Refusal]:
         return Ok(Message.Accepted(decode_accepted(reader)?))
     if tag == 5:
         return Ok(Message.Captured(decode_captured(reader)?))
-    if tag == 6:
-        return Ok(Message.Prepare(decode_prepare(reader)?))
-    if tag == 7:
-        return Ok(Message.NeedPrerequisite(decode_needprerequisite(reader)?))
-    if tag == 8:
-        return Ok(Message.Evaluate(decode_evaluate(reader)?))
-    if tag == 9:
-        return Ok(Message.Produced(decode_produced(reader)?))
     if tag == 10:
         return Ok(Message.Query(decode_query(reader)?))
     if tag == 11:
@@ -274,111 +258,6 @@ def decode_captured(mut reader: Decoder) -> Result[Captured, Refusal]:
     epoch = reader.text()?
     snapshot = reader.text()?
     return Ok(Captured(epoch=epoch, snapshot=snapshot))
-
-
-def encode_prepare(value: Prepare) -> Result[bytes, Refusal]:
-    """Encode Prepare's ordered v1 fields."""
-    return Ok(
-        joined(
-            [
-                scalar(1, 2),
-                text(value.stage)?,
-                text(value.snapshot)?,
-                text(value.demand_root)?,
-                text(value.producer_profile)?,
-            ],
-        ),
-    )
-
-
-def decode_prepare(mut reader: Decoder) -> Result[Prepare, Refusal]:
-    """Decode Prepare's fields only after checking their declared lengths."""
-    stage = reader.text()?
-    snapshot = reader.text()?
-    demand_root = reader.text()?
-    producer_profile = reader.text()?
-    return Ok(Prepare(stage=stage, snapshot=snapshot, demand_root=demand_root, producer_profile=producer_profile))
-
-
-def encode_needprerequisite(value: NeedPrerequisite) -> Result[bytes, Refusal]:
-    """Encode NeedPrerequisite's ordered v1 fields."""
-    if value.earlier_rank < 0 or value.earlier_rank > 4294967295:
-        return Err(Refusal(kind=RefusalKind.Schema, detail="NeedPrerequisite.earlier_rank exceeds u32"))
-    return Ok(joined([scalar(1, 2), text(value.keys_root)?, scalar(int(value.earlier_rank), 4)]))
-
-
-def decode_needprerequisite(mut reader: Decoder) -> Result[NeedPrerequisite, Refusal]:
-    """Decode NeedPrerequisite's fields only after checking their declared lengths."""
-    keys_root = reader.text()?
-    earlier_rank = int(reader.number(4)?)
-    return Ok(NeedPrerequisite(keys_root=keys_root, earlier_rank=earlier_rank))
-
-
-def encode_evaluate(value: Evaluate) -> Result[bytes, Refusal]:
-    """Encode Evaluate's ordered v1 fields."""
-    if value.cancellation_generation < 0 or value.cancellation_generation > 4294967295:
-        return Err(Refusal(kind=RefusalKind.Schema, detail="Evaluate.cancellation_generation exceeds u32"))
-    return Ok(
-        joined(
-            [
-                scalar(1, 2),
-                text(value.work_root)?,
-                text(value.snapshot)?,
-                text(value.prepared_root)?,
-                text(value.reservation)?,
-                scalar(int(value.cancellation_generation), 4),
-            ],
-        ),
-    )
-
-
-def decode_evaluate(mut reader: Decoder) -> Result[Evaluate, Refusal]:
-    """Decode Evaluate's fields only after checking their declared lengths."""
-    work_root = reader.text()?
-    snapshot = reader.text()?
-    prepared_root = reader.text()?
-    reservation = reader.text()?
-    cancellation_generation = int(reader.number(4)?)
-    return Ok(
-        Evaluate(
-            work_root=work_root,
-            snapshot=snapshot,
-            prepared_root=prepared_root,
-            reservation=reservation,
-            cancellation_generation=cancellation_generation,
-        ),
-    )
-
-
-def encode_produced(value: Produced) -> Result[bytes, Refusal]:
-    """Encode Produced's ordered v1 fields."""
-    return Ok(
-        joined(
-            [
-                scalar(1, 2),
-                text(value.staged_root)?,
-                text(value.witness_root)?,
-                text(value.diagnostic_root)?,
-                text(value.counter_root)?,
-            ],
-        ),
-    )
-
-
-def decode_produced(mut reader: Decoder) -> Result[Produced, Refusal]:
-    """Decode Produced's fields only after checking their declared lengths."""
-    staged_root = reader.text()?
-    witness_root = reader.text()?
-    diagnostic_root = reader.text()?
-    counter_root = reader.text()?
-    return Ok(
-        Produced(
-            staged_root=staged_root,
-            witness_root=witness_root,
-            diagnostic_root=diagnostic_root,
-            counter_root=counter_root,
-        ),
-    )
 
 
 def encode_query(value: Query) -> Result[bytes, Refusal]:

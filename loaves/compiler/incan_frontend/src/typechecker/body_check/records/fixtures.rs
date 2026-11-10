@@ -3,10 +3,17 @@
 use super::*;
 
 /// Test-sink entry: check a fixture, select one owner, return only its canonical primitives and drop the checker.
-/// This intentionally measures no production reuse; a future record producer calls `project` at its own boundary.
+/// This measures the production declaration record without selecting it for reuse.
 pub(crate) fn fixture_projection(source: &str, name: &str, declaration: bool) -> Result<Fields, NodeBindingError> {
     let (program, checker, owner) = fixture(source, name)?;
-    project(&checker, &program, owner, declaration)
+    if declaration {
+        return checker
+            .produced_declaration_records
+            .get(&owner)
+            .cloned()
+            .ok_or(NodeBindingError::MissingOwner);
+    }
+    project_final(&checker, &program, owner)
 }
 
 /// Test baseline: independently check the current revision, retain its coordinate bindings, reconstruct the supplied
