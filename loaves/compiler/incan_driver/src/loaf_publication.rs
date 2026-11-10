@@ -7,6 +7,7 @@
 mod exports;
 pub(crate) mod vocab;
 
+use incan_lang::interop::loaf_names::artifact_stem;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
@@ -298,7 +299,8 @@ fn retain_feature_requirements(manifest: &mut LibraryManifest, modules: &[Parsed
 /// unit's own Body IR modules) projected onto the manifest's public identities; `<name>.incngraph`, the already-encoded
 /// graph from that same checking pass; `<name>.native.json`, the unit's native closure; an indexed `<name>.rustabi`
 /// when dependency-owned native facts are needed; and `<name>.incnlib` last,
-/// so its presence means the artifact set is complete.
+/// so its presence means the artifact set is complete. `<name>` is the shared artifact stem; the manifest retains
+/// the original semantic package name.
 pub fn write_loaf(
     dir: &Path,
     mut manifest: LibraryManifest,
@@ -335,18 +337,18 @@ pub fn write_loaf(
         representation_version: EXECUTABLE_REPRESENTATION_VERSION,
         content_digest: hex::encode(Sha256::digest(&surface)),
     });
-    write(format!("{name}.incnbody"), &surface)?;
-    write(format!("{name}.incngraph"), graph)?;
+    write(format!("{}.incnbody", artifact_stem(&name)), &surface)?;
+    write(format!("{}.incngraph", artifact_stem(&name)), graph)?;
     write_rust_abi_cache(dir, &mut manifest)?;
 
     // ---- Native closure and manifest ----
     let closure = serde_json::to_vec_pretty(&sibling_relative_closure(dir, closure))
         .map_err(|error| CliError::failure(format!("cannot encode the native closure of {name}: {error}")))?;
-    write(format!("{name}.native.json"), &closure)?;
+    write(format!("{}.native.json", artifact_stem(&name)), &closure)?;
     let manifest = manifest
         .to_json_string()
         .map_err(|error| CliError::failure(format!("invalid library manifest for {name}: {error}")))?;
-    write(format!("{name}.incnlib"), manifest.as_bytes())
+    write(format!("{}.incnlib", artifact_stem(&name)), manifest.as_bytes())
 }
 
 /// Publish sibling artifacts relative to their common artifact root so moving an otherwise identical build to a new
@@ -398,7 +400,7 @@ fn write_rust_abi_cache(dir: &Path, manifest: &mut LibraryManifest) -> CliResult
         .map(|item| (item.canonical_path.clone(), item))
         .collect::<BTreeMap<_, _>>();
     let bytes = incan_frontend::rust_abi_cache::encode_rust_abi_cache(&indexed).map_err(CliError::failure)?;
-    let path = dir.join(format!("{}.rustabi", manifest.name));
+    let path = dir.join(format!("{}.rustabi", artifact_stem(&manifest.name)));
     fs::write(&path, &bytes).map_err(|error| CliError::failure(format!("cannot write {}: {error}", path.display())))?;
     abi.cache_digest = Some(format!("sha256:{:x}", Sha256::digest(&bytes)));
     Ok(())
