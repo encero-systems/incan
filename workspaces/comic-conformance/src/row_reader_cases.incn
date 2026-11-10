@@ -12,9 +12,8 @@ from std.primitives.crumb.values import Projection
 from std.primitives.hex import hexlify
 from encoding_test_support import backing
 from case_data import CaseTransform, ExpectedStatus, array, expected_status, field, hex_bytes, text
-from hash_data import metadata
-from row_case_values import record_value
-from row_read_data import category, metadata_notation
+from fixture_adapter import metadata, metadata_notation, record_value
+from row_read_data import category
 
 
 pub def check_reader(example: JsonValue) -> Result[bool, str]:

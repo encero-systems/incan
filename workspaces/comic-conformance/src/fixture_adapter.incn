@@ -1,10 +1,22 @@
-"""Translate independently written logical corpus inputs; no expected contribution bytes enter production."""
+"""Translate independently written corpus fixtures to the one logical Crumb value model."""
 
 from std.json import JsonValue
 from std.primitives.crumb.values import Value, ValueField, MapEntry, Metadata, MetadataEntry
 from std.primitives.crumb.types import NominalKind, TypeNode
+from std.primitives.hex import hexlify
 from std.primitives.text import encode_utf8
-from case_data import FixtureMetadataKind, FixtureValueKind, array, field, fields, hex_bytes, nodes, text, absence
+from case_data import (
+    FixtureMetadataKind,
+    FixtureValueKind,
+    array,
+    field,
+    fields,
+    hex_bytes,
+    nodes,
+    text,
+    absence,
+    selector_text,
+)
 
 
 pub def integer(value: JsonValue, key: str) -> Result[int, str]:
@@ -131,6 +143,36 @@ def metadata_kind(value: JsonValue) -> Result[FixtureMetadataKind, str]:
         None => return Err("unsupported metadata notation")
 
 
+pub def metadata_notation(value: Metadata) -> JsonValue:
+    """Translate decoded metadata back to the independent fixture notation without discarding properties."""
+    mut result: dict[str, JsonValue] = {}
+    match value:
+        Metadata.Null => result["kind"] = JsonValue.string(FixtureMetadataKind.Null.value())
+        Metadata.Boolean(item) =>
+            result["kind"] = JsonValue.string(FixtureMetadataKind.Boolean.value())
+            result["value"] = JsonValue.bool(item)
+        Metadata.Integer(item) =>
+            result["kind"] = JsonValue.string(FixtureMetadataKind.Integer.value())
+            result["value"] = JsonValue.string(item)
+        Metadata.Text(item) =>
+            result["kind"] = JsonValue.string(FixtureMetadataKind.String.value())
+            result["value"] = JsonValue.string(item)
+        Metadata.Binary(item) =>
+            result["kind"] = JsonValue.string(FixtureMetadataKind.Binary.value())
+            result["hex"] = JsonValue.string(hexlify(item))
+        Metadata.List(items) =>
+            result["kind"] = JsonValue.string(FixtureMetadataKind.List.value())
+            result["items"] = JsonValue.array([metadata_notation(item) for item in items])
+        Metadata.Map(entries) =>
+            mut items: list[JsonValue] = []
+            for entry in entries:
+                key = metadata_notation(Metadata.Text(entry.key))
+                items.append(JsonValue.array([key, metadata_notation(entry.value)]))
+            result["kind"] = JsonValue.string(FixtureMetadataKind.Map.value())
+            result["entries"] = JsonValue.array(items)
+    return JsonValue.object(result)
+
+
 pub def record(shape: JsonValue, items: list[JsonValue]) -> Result[Value, str]:
     """Attach the declared field facts to actual adaptation outputs, not expected output values."""
     declared = fields(shape)?
@@ -147,3 +189,102 @@ pub def record(shape: JsonValue, items: list[JsonValue]) -> Result[Value, str]:
             ),
         )
     return Ok(Value.Record(result))
+
+
+def property_value(description: JsonValue, name: str) -> Result[JsonValue, str]:
+    """Read independent tagged metadata notation without invoking production description admission."""
+    for item in array(description, "entries")?:
+        pair = item.expect_array().map_err((error) => error.message())?
+        if len(pair) != 2:
+            return Err("invalid writer metadata pair")
+        if text(pair[0], "value")? == name:
+            return Ok(pair[1])
+    return Err("missing writer metadata property: " + name)
+
+
+def find_description(key: str, descriptions: list[JsonValue]) -> Result[JsonValue, str]:
+    """Use caller-supplied selector labels for nested inputs, never a computed model hash."""
+    for description in descriptions:
+        if text(property_value(description, "nominal")?, "hex")? == key:
+            return Ok(description)
+    return Err("missing writer input description")
+
+
+pub def record_value(record: JsonValue, descriptions: list[JsonValue]) -> Result[Value, str]:
+    """Attach explicitly authored field facts to stored values without normalizing a model."""
+    description = find_description(text(record, "selector_hex")?, descriptions)?
+    if let Some(tag) = record.get("variant_id"):
+        identity = tag.expect_str().map_err((error) => error.message())?
+        for variant in array(property_value(description, "variants")?, "items")?:
+            if text(property_value(variant, "id")?, "hex")? == identity:
+                return Ok(Value.Enum(hex_bytes(identity)?, record_fields(record, variant, descriptions)?))
+        return Err("missing writer input variant")
+    return Ok(Value.Record(record_fields(record, description, descriptions)?))
+
+
+def record_fields(
+    record: JsonValue,
+    description: JsonValue,
+    descriptions: list[JsonValue],
+) -> Result[list[ValueField], str]:
+    """Copy field identity, canonical, and absence facts from independent description fixtures."""
+    mut output: list[ValueField] = []
+    declared = array(property_value(description, "fields")?, "items")?
+    for item in array(record, "fields")?:
+        identity = text(item, "id")?
+        mut found = false
+        for member in declared:
+            if text(property_value(member, "id")?, "hex")? == identity:
+                canonical = field(property_value(member, "canonical")?, "value")?.expect_bool().map_err(
+                    (error) => error.message(),
+                )?
+                absent = absence(text(property_value(member, "absent")?, "value")?)?
+                output.append(
+                    ValueField(
+                        identity=hex_bytes(identity)?,
+                        canonical=canonical,
+                        absent=absent,
+                        value=fixture_value(field(item, "value")?, descriptions)?,
+                    ),
+                )
+                found = true
+        if not found:
+            return Err("missing writer input field")
+    return Ok(output)
+
+
+pub def fixture_value(value: JsonValue, descriptions: list[JsonValue]) -> Result[Value, str]:
+    """Translate a fixture value, resolving identity-bearing record and enum forms through supplied descriptions."""
+    kind = value_kind(value)?
+    match kind:
+        FixtureValueKind.Record | FixtureValueKind.Enum => return record_value(value, descriptions)
+        FixtureValueKind.Some => return Ok(Value.Some([fixture_value(field(value, "value")?, descriptions)?]))
+        FixtureValueKind.List => return Ok(Value.List(fixture_values(array(value, "items")?, descriptions)?))
+        FixtureValueKind.Tuple => return Ok(Value.Tuple(fixture_values(array(value, "items")?, descriptions)?))
+        FixtureValueKind.Set => return Ok(Value.Set(fixture_values(array(value, "items")?, descriptions)?))
+        FixtureValueKind.Map =>
+            mut entries: list[MapEntry] = []
+            for item in array(value, "entries")?:
+                pair = item.expect_array().map_err((error) => error.message())?
+                if len(pair) != 2:
+                    return Err("writer map pair")
+                entries.append(
+                    MapEntry(key=fixture_value(pair[0], descriptions)?, value=fixture_value(pair[1], descriptions)?),
+                )
+            return Ok(Value.Map(entries))
+        FixtureValueKind.Union =>
+            return Ok(
+                Value.Union(
+                    selector_text(text(value, "member_type")?)?,
+                    [fixture_value(field(value, "value")?, descriptions)?],
+                ),
+            )
+        _ => return logical(value)
+
+
+def fixture_values(items: list[JsonValue], descriptions: list[JsonValue]) -> Result[list[Value], str]:
+    """Preserve fixture sequence order while resolving nested nominal values."""
+    mut values: list[Value] = []
+    for item in items:
+        values.append(fixture_value(item, descriptions)?)
+    return Ok(values)
