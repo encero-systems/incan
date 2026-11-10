@@ -2,9 +2,23 @@
 
 use super::*;
 
-/// Project one declaration or settled body into portable field primitives; every unsupported nonempty native field
-/// refuses the profile. The caller owns the result and can destroy every original native value after this returns.
-pub(crate) fn project(
+/// Emit one declaration record at the declaration producer's settlement boundary. Unsupported nonempty native
+/// fields refuse this profile; no later whole-check observer can manufacture a declaration record.
+pub(crate) fn produce_declaration(
+    checker: &TypeChecker,
+    program: &Program,
+    owner: Span,
+) -> Result<Fields, NodeBindingError> {
+    encode_settled(checker, program, owner, true)
+}
+
+/// Project a settled statement value for the still-bootstrap final-family oracle.
+pub(crate) fn project_final(checker: &TypeChecker, program: &Program, owner: Span) -> Result<Fields, NodeBindingError> {
+    encode_settled(checker, program, owner, false)
+}
+
+/// Encode one settled owner through the checker profile's canonical field grammar.
+fn encode_settled(
     checker: &TypeChecker,
     program: &Program,
     owner: Span,
