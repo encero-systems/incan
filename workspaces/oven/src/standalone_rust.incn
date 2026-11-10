@@ -1,5 +1,6 @@
 """Bind standalone source imports to exact compiled registry Loaves before checking their Rust items."""
 
+from rust::incan_loaf_names import artifact_stem
 from std.fs import Path
 from std.json import JsonValue
 from files import json_text, make_directory, parse_json, read_json, write
@@ -94,7 +95,7 @@ pub def published_bindings(
     for loaf in unit.loaves:
         if loaf.standard != standard:
             continue
-        closure = Path(loaf.dir).joinpath(f"{loaf.name}.native.json")
+        closure = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.native.json")
         if not closure.is_file():
             continue
         for name, artifact in native_bindings(closure, toolchain.native_closures)?:

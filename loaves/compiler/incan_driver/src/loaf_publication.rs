@@ -7,6 +7,7 @@
 mod exports;
 pub(crate) mod vocab;
 
+use incan_loaf_names::artifact_stem;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
@@ -69,13 +70,16 @@ impl PreparedLoafPublication {
             fs::write(&path, bytes)
                 .map_err(|error| CliError::failure(format!("cannot write {}: {error}", path.display())))
         };
-        write(format!("{}.incnbody", self.name), &self.surface)?;
-        write(format!("{}.incngraph", self.name), &self.graph)?;
+        write(format!("{}.incnbody", artifact_stem(&self.name)), &self.surface)?;
+        write(format!("{}.incngraph", artifact_stem(&self.name)), &self.graph)?;
         if let Some(rust_abi) = self.rust_abi {
-            write(format!("{}.rustabi", self.name), &rust_abi)?;
+            write(format!("{}.rustabi", artifact_stem(&self.name)), &rust_abi)?;
         }
-        write(format!("{}.native.json", self.name), &self.closure)?;
-        write(format!("{}.incnlib", self.name), self.manifest.as_bytes())
+        write(format!("{}.native.json", artifact_stem(&self.name)), &self.closure)?;
+        write(
+            format!("{}.incnlib", artifact_stem(&self.name)),
+            self.manifest.as_bytes(),
+        )
     }
 }
 
@@ -329,7 +333,8 @@ fn retain_feature_requirements(manifest: &mut LibraryManifest, modules: &[Parsed
 /// unit's own Body IR modules) projected onto the manifest's public identities; `<name>.incngraph`, the already-encoded
 /// graph from that same checking pass; `<name>.native.json`, the unit's native closure; an indexed `<name>.rustabi`
 /// when dependency-owned native facts are needed; and `<name>.incnlib` last,
-/// so its presence means the artifact set is complete.
+/// so its presence means the artifact set is complete. `<name>` is the shared artifact stem; the manifest retains
+/// the original semantic package name.
 pub fn prepare_loaf_publication(
     dir: &Path,
     mut manifest: LibraryManifest,

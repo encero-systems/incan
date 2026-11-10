@@ -1,6 +1,7 @@
 //! Demand loading behind an admitted, generation-bound inventory. Summaries contain only facts derived from the
 //! ordinary manifest reader; an unavailable summary takes that reader again rather than guessing at absent facts.
 
+use incan_loaf_names::artifact_stem;
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read;
@@ -90,7 +91,7 @@ impl IndexedLoaf {
 
     /// Admit a small inventory, or use full admission when its private proof is missing or stale.
     pub fn open(key: String, namespace: LoafNamespace, dir: PathBuf, name: &str) -> Result<Self, LoafIndexError> {
-        let path = dir.join(format!("{name}.incnlib"));
+        let path = dir.join(format!("{}.incnlib", artifact_stem(name)));
         if let Some(summary) = retained(&path)
             && summary.identity.name == name
         {

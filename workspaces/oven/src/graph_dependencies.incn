@@ -1,5 +1,6 @@
 """Prepare the native metadata Rust checking needs and check authored Incan units separately."""
 
+from rust::incan_loaf_names import artifact_stem, native_crate_name
 from rust::std::time import Instant
 from std.fs import Path
 from std.json import JsonValue
@@ -436,7 +437,7 @@ def compiled_directory(
         mut directory = candidate
         if let Some(fact) = viewed_fact(candidate)?:
             directory = fact
-        if directory.joinpath(f"{package}.incnlib").is_file() and directory.joinpath(f"{package}.incngraph").is_file():
+        if directory.joinpath(f"{artifact_stem(package)}.incnlib").is_file() and directory.joinpath(f"{artifact_stem(package)}.incngraph").is_file():
             verify_compiled_loaf(directory, package, version, features)?
             return Ok(Some(directory))
     return Ok(None)
@@ -451,15 +452,15 @@ def verify_compiled_loaf(directory: Path, package: str, version: str, features: 
     3. Its active features are the ones selected.
     """
     # 1. A graph beside a partial artifact set would let a consumer rely on a Loaf that cannot be linked.
-    for name in [f"lib{package.replace("-", "_")}.rlib", f"{package}.incnbody", f"{package}.native.json"]:
+    for name in [f"lib{native_crate_name(package)}.rlib", f"{artifact_stem(package)}.incnbody", f"{artifact_stem(package)}.native.json"]:
         if not directory.joinpath(name).is_file():
             return Err(f"{package}: incomplete compiled Loaf beside its graph")
     # 2. The Loaf is the package and version selected, and carries the native ABI cache it declares.
-    manifest = parse_json(read(directory.joinpath(f"{package}.incnlib"))?)?
+    manifest = parse_json(read(directory.joinpath(f"{artifact_stem(package)}.incnlib"))?)?
     if text(manifest, "name") != package or text(manifest, "version") != version:
         return Err(f"{package}: compiled Loaf identity differs from the selected dependency")
     declares_cache = text(nested(manifest, "rust_abi"), "cache_digest") != ""
-    if declares_cache and not directory.joinpath(f"{package}.rustabi").is_file():
+    if declares_cache and not directory.joinpath(f"{artifact_stem(package)}.rustabi").is_file():
         return Err(f"{package}: missing native ABI cache beside its manifest")
     # 3. The Loaf was built for the features this consumer selects, so its graph describes the code it will link.
     if sorted(active_features(manifest)?) != sorted(features):
@@ -514,7 +515,7 @@ def checked_units(
             match published:
                 Some(directory) =>
                     interfaces[package] = directory
-                    graph = directory.joinpath(f"{package}.incngraph")
+                    graph = directory.joinpath(f"{artifact_stem(package)}.incngraph")
                     root = Path(facet.project)
                     paths.append(GraphUnit(path=graph, root=root, package=package, version=declared.version))
                     continue

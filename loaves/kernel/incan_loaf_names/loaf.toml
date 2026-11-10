@@ -1,0 +1,11 @@
+[project]
+description = "Native and artifact names for admitted Loaf identities"
+license = "Apache-2.0"
+name = "incan_loaf_names"
+private = true
+version = "0.6.0-dev.8"
+
+[rust]
+edition = "2024"
+name = "incan_loaf_names"
+type = "lib"

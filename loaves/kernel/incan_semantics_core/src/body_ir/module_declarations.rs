@@ -201,24 +201,8 @@ impl LoafCallable {
     }
 }
 
-/// The crate a Loaf compiles to (DD-0007): its package name in lowercase, with every character other than an ASCII
-/// letter or digit spelled `_`, and a leading `_` when the name would start with a digit.
-pub fn loaf_crate_name(package: &str) -> String {
-    let mut name = package
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    if name.is_empty() || name.starts_with(|character: char| character.is_ascii_digit()) {
-        name.insert(0, '_');
-    }
-    name
-}
+/// The single native-name projection shared by publication, retained bodies and Oven.
+pub use incan_loaf_names::native_crate_name as loaf_crate_name;
 
 /// The compiled item a linked Loaf declares `canonical` as (DD-0007): `<crate>::<encoded identity>`, the item the Loaf
 /// exports at its crate root under the encoding of the declaration's canonical identity. `None` for an identity no

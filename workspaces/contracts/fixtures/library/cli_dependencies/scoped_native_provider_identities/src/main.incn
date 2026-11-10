@@ -1,0 +1,18 @@
+# behavior: scoped Incan providers retain distinct native identities under consumer aliases, including maximum-length names (#2889)
+# expect-stdout:
+#   11,22,33,44,55
+
+from pub::first import make as make_first
+from pub::second import make as make_second
+from pub::folded_left import make as make_folded_left
+from pub::folded_right import make as make_folded_right
+from pub::longest import make as make_longest
+
+
+def main() -> None:
+    first = make_first()
+    second = make_second()
+    folded_left = make_folded_left()
+    folded_right = make_folded_right()
+    longest = make_longest()
+    println(f"{first.value},{second.value},{folded_left.value},{folded_right.value},{longest.value}")
