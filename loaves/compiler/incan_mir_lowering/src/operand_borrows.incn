@@ -17,7 +17,7 @@ from pub::incan_mir_plan import (
 from bytes_plan import bytes_literal
 from layout_types import shared_receiver_type, mutable_receiver_type
 from text_ownership import drop_borrowed_text_temporaries
-from frozen_plan import literal_text
+from frozen_plan import clone_frozen_handle, literal_text
 from rust::incan_semantics_core::body_ir import (
     ArgumentElement as RustArgumentElement,
     Constant as RustConstant,
@@ -333,7 +333,8 @@ pub def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: Sou
                 builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
                 return Ok(read_place(reference, false, span))
             if place_type(builder.locals, place) == PlanType.FrozenStr:
-                owner = display_plan_operand(builder, read_place(place, false, span), span)?
+                handle = clone_frozen_handle(builder, place, span)?
+                owner = display_plan_operand(builder, handle, span)?
                 reference = temporary(builder, PlanType.StringRef, span)
                 builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
                 return Ok(read_place(reference, false, span))
@@ -364,14 +365,14 @@ def borrow_element_text(
     fact: &OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Borrow a materialized text element, adapting a static frozen wrapper as for a direct place; release the new owner after the call."""
+    """Borrow a materialized text element, adapting a frozen handle as for a direct place; release the new owner after the call."""
     match fact:
         OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable String borrow")
         OwnershipFact.Unknown => return Err("unsupported Body IR unknown String ownership")
         _ => pass
     operand = value_operand(builder, value, span)?
     if operand_type(builder, operand)? == PlanType.FrozenStr:
-        # Match direct frozen text: copy its static wrapper, then provide the owned text view this helper expects.
+        # Match direct frozen text: format its borrowed contents into the owned text view this helper expects.
         owner = display_plan_operand(builder, operand, span)?
         reference = temporary(builder, PlanType.StringRef, span)
         builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))

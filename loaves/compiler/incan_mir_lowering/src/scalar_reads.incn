@@ -6,7 +6,7 @@ from table_views import borrowed_at
 
 
 pub def scalar_storage_place(locals: &list[Local], reference_values: &list[int], source: Place) -> Result[Place, str]:
-    """Read a borrowed Copy scalar through its actual storage without allocating, cloning or consuming a reference value."""
+    """Reach borrowed scalar storage without allocating, cloning or consuming the surrounding reference value."""
     if source.projection != Projection.Whole:
         return Ok(source)
     for reference in reference_values:

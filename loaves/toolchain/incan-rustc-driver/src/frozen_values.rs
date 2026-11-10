@@ -3,12 +3,13 @@
 use crate::error::PlanError;
 use crate::plan::{Constant, FrozenValue, PlanType};
 use crate::types::native_type;
-use rustc_abi::{FieldIdx, Size, VariantIdx};
+use rustc_abi::{FieldIdx, Size, TagEncoding, VariantIdx, Variants};
 use rustc_index::IndexVec;
 use rustc_middle::mir::{
     self,
     interpret::{AllocId, AllocInit, Allocation, Pointer, Scalar, alloc_range},
 };
+use rustc_middle::ty::layout::LayoutCx;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 
 /// Name unsupported static layouts before they can produce invalid MIR or uninitialized pointer data.
@@ -19,7 +20,7 @@ fn invalid(reason: impl Into<String>) -> PlanError {
     }
 }
 
-/// Build the actual dependency-owned wrapper over a fully initialized immutable static slice.
+/// Build the dependency-owned static variant over a fully initialized immutable slice.
 pub fn construct<'tcx>(
     tcx: TyCtxt<'tcx>,
     ty: &PlanType,
@@ -45,7 +46,32 @@ pub fn construct<'tcx>(
     ))
 }
 
-/// Validate that linked metadata still describes a single static slice field; its element layout is authoritative.
+/// Return the static storage field from either the previous static-only carrier or the current static/shared carrier.
+///
+/// A compiler containing the new carrier must remain able to rebuild the standard primitives from the immediately
+/// previous installed generation. Both layouts have exactly one validated static field; only the new layout tags it as
+/// the `Static` enum variant.
+fn static_field<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    definition: ty::AdtDef<'tcx>,
+    args: ty::GenericArgsRef<'tcx>,
+) -> Result<Ty<'tcx>, PlanError> {
+    let static_variant = VariantIdx::from_usize(0);
+    let fields = if definition.is_struct() && definition.non_enum_variant().fields.len() == 1 {
+        &definition.non_enum_variant().fields
+    } else if definition.is_enum()
+        && definition.variants().len() == 2
+        && definition.variant(static_variant).name.as_str() == "Static"
+        && definition.variant(static_variant).fields.len() == 1
+    {
+        &definition.variant(static_variant).fields
+    } else {
+        return Err(invalid("carrier does not have one static storage field"));
+    };
+    Ok(fields[FieldIdx::from_usize(0)].ty(tcx, args).skip_normalization())
+}
+
+/// Validate that linked metadata still describes a static slice field; its element layout is authoritative.
 fn storage<'tcx>(
     tcx: TyCtxt<'tcx>,
     carrier: Ty<'tcx>,
@@ -53,12 +79,7 @@ fn storage<'tcx>(
     let ty::Adt(definition, args) = carrier.kind() else {
         return Err(invalid("carrier is not an ADT"));
     };
-    if !definition.is_struct() || definition.non_enum_variant().fields.len() != 1 {
-        return Err(invalid("carrier does not have one field"));
-    }
-    let field = definition.non_enum_variant().fields[FieldIdx::from_usize(0)]
-        .ty(tcx, *args)
-        .skip_normalization();
+    let field = static_field(tcx, *definition, *args)?;
     let ty::Ref(region, pointee, rustc_hir::Mutability::Not) = field.kind() else {
         return Err(invalid("field is not shared storage"));
     };
@@ -69,6 +90,43 @@ fn storage<'tcx>(
         return Err(invalid("slice lifetime is not static"));
     }
     Ok((*definition, *args, field, *element))
+}
+
+/// Initialize a tagged static variant when present and return the static field's payload offset.
+fn static_payload_offset<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    allocation: &mut Allocation,
+    offset: Size,
+    ty: Ty<'tcx>,
+    definition: ty::AdtDef<'tcx>,
+) -> Result<Size, PlanError> {
+    let layout = tcx
+        .layout_of(ty::TypingEnv::fully_monomorphized().as_query_input(ty))
+        .map_err(|error| invalid(format!("static variant layout: {error:?}")))?;
+    if definition.is_struct() {
+        return Ok(layout.fields.offset(0));
+    }
+    let static_variant = VariantIdx::from_usize(0);
+    let Variants::Multiple {
+        tag,
+        tag_encoding: TagEncoding::Direct,
+        tag_field,
+        ..
+    } = &layout.variants
+    else {
+        return Err(invalid("static variant is not directly tagged"));
+    };
+    let discriminant = definition.discriminant_for_variant(tcx, static_variant).val;
+    put(
+        tcx,
+        allocation,
+        offset + layout.fields.offset((*tag_field).into()),
+        tag.size(&tcx.data_layout),
+        Scalar::from_uint(discriminant, tag.size(&tcx.data_layout)),
+    )?;
+    let layout_context = LayoutCx::new(tcx, ty::TypingEnv::fully_monomorphized());
+    let variant = layout.for_variant(&layout_context, static_variant);
+    Ok(variant.fields.offset(0))
 }
 
 /// Allocate source-ordered scalar, pair, or nested frozen elements with target-derived stride and alignment.
@@ -129,21 +187,17 @@ fn write<'tcx>(
         (ty::Adt(definition, args), FrozenValue::Scalar(Constant::Text(value)))
             if native_type(tcx, &PlanType::FrozenStr)? == ty =>
         {
-            if !definition.is_struct() || definition.non_enum_variant().fields.len() != 1 {
-                return Err(invalid("frozen text wrapper layout"));
-            }
-            let field = definition.non_enum_variant().fields[FieldIdx::from_usize(0)]
-                .ty(tcx, *args)
-                .skip_normalization();
+            let field = static_field(tcx, *definition, *args)?;
             if !matches!(field.kind(), ty::Ref(region, inner, rustc_hir::Mutability::Not) if region.is_static() && inner.is_str())
             {
                 return Err(invalid("frozen text field is not static text"));
             }
+            let payload = static_payload_offset(tcx, allocation, offset, ty, *definition)?;
             let id = tcx.allocate_bytes_dedup(value.as_bytes(), mir::interpret::CTFE_ALLOC_SALT);
             fat_pointer(
                 tcx,
                 allocation,
-                offset + layout.fields.offset(0),
+                offset + payload,
                 id,
                 u64::try_from(value.len()).map_err(|_| invalid("frozen text length"))?,
             )
@@ -161,11 +215,12 @@ fn write<'tcx>(
             )
         }
         (ty::Adt(..), FrozenValue::Bytes(_)) if native_type(tcx, &PlanType::FrozenBytes)? == ty => {
-            let (_, _, field, element) = storage(tcx, ty)?;
+            let (definition, _, field, element) = storage(tcx, ty)?;
             if element != tcx.types.u8 {
                 return Err(invalid("frozen byte wrapper element"));
             }
-            write(tcx, allocation, offset + layout.fields.offset(0), field, value)
+            let payload = static_payload_offset(tcx, allocation, offset, ty, definition)?;
+            write(tcx, allocation, offset + payload, field, value)
         }
         (ty::Ref(region, inner, rustc_hir::Mutability::Not), FrozenValue::Bytes(values))
             if region.is_static() && matches!(inner.kind(), ty::Slice(element) if *element == tcx.types.u8) =>
@@ -185,9 +240,10 @@ fn write<'tcx>(
             )
         }
         (ty::Adt(..), FrozenValue::Collection(carrier, values)) if native_type(tcx, carrier)? == ty => {
-            let (_, _, _, element) = storage(tcx, ty)?;
+            let (definition, _, _, element) = storage(tcx, ty)?;
             let (id, count) = allocate(tcx, element, values)?;
-            fat_pointer(tcx, allocation, offset + layout.fields.offset(0), id, count)
+            let payload = static_payload_offset(tcx, allocation, offset, ty, definition)?;
+            fat_pointer(tcx, allocation, offset + payload, id, count)
         }
         _ => Err(invalid("literal does not match its checked storage type")),
     }

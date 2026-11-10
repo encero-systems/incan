@@ -508,8 +508,8 @@ Class, model, trait, enum, newtype, field, alias and module declarations accept 
 |---|---|---|---|---|---|---|
 | Str | `str` | `String` | Builtin UTF-8 string type. | RFC 000 | 0.1 | Stable |
 | Bytes | `bytes` |  | Builtin byte buffer type. | RFC 000 | 0.1 | Stable |
-| FrozenStr | `frozenstr` | `FrozenStr` | Immutable/const-friendly string type. | RFC 009 | 0.1 | Stable |
-| FrozenBytes | `frozenbytes` | `FrozenBytes` | Immutable/const-friendly bytes type. | RFC 009 | 0.1 | Stable |
+| FrozenStr | `frozenstr` | `FrozenStr` | Immutable string with static storage for constants and shared storage for values produced at run time. | RFC 009 | 0.1 | Stable |
+| FrozenBytes | `frozenbytes` | `FrozenBytes` | Immutable bytes with static storage for constants and shared storage for values produced at run time. | RFC 009 | 0.1 | Stable |
 | FString | `fstring` | `FString` | Formatted string result type. | RFC 000 | 0.1 | Stable |
 
 
@@ -544,9 +544,9 @@ Class, model, trait, enum, newtype, field, alias and module declarations accept 
 | Tuple | `Tuple` | `tuple` | Fixed-length heterogeneous tuple type. | RFC 000 | 0.1 | Stable |
 | Option | `Option` | `option` | Optional value type (`Some`/`None`). | RFC 000 | 0.1 | Stable |
 | Result | `Result` | `result` | Result type (`Ok`/`Err`). | RFC 000 | 0.1 | Stable |
-| FrozenList | `FrozenList` | `frozenlist` | Immutable/const-friendly list type. | RFC 009 | 0.1 | Stable |
-| FrozenDict | `FrozenDict` | `frozendict` | Immutable/const-friendly dict type. | RFC 009 | 0.1 | Stable |
-| FrozenSet | `FrozenSet` | `frozenset` | Immutable/const-friendly set type. | RFC 009 | 0.1 | Stable |
+| FrozenList | `FrozenList` | `frozenlist` | Immutable list with static storage for constants and shared storage for values produced at run time. | RFC 009 | 0.1 | Stable |
+| FrozenDict | `FrozenDict` | `frozendict` | Immutable dictionary with static storage for constants and shared storage for values produced at run time. | RFC 009 | 0.1 | Stable |
+| FrozenSet | `FrozenSet` | `frozenset` | Immutable set with static storage for constants and shared storage for values produced at run time. | RFC 009 | 0.1 | Stable |
 | Generator | `Generator` | `generator` | Lazy resumable producer type. | RFC 006 | 0.3 | Stable |
 
 ## Surface constructors

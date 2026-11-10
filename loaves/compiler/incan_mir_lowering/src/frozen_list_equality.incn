@@ -125,8 +125,8 @@ def compare_elements(mut builder: Builder, left: Place, right: Place, span: Sour
         return compare_lists(builder, left, right, span)
     output = temporary(builder, PlanType.Bool, span)
     if left_type in [PlanType.String, PlanType.FrozenStr] and right_type in [PlanType.String, PlanType.FrozenStr]:
-        first, first_type = text_argument(builder, left, left_type, span)
-        second, second_type = text_argument(builder, right, right_type, span)
+        first, first_type = text_argument(builder, left, left_type, span)?
+        second, second_type = text_argument(builder, right, right_type, span)?
         instantiated_external_call(
             builder,
             "incan_std_primitives::strings::str_eq",

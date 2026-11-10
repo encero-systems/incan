@@ -14,7 +14,7 @@ from pub::incan_mir_plan import (
     assign as plan_assign,
     place as plan_place,
 )
-from frozen_plan import literal_text
+from frozen_plan import clone_frozen_handle, literal_text
 from rust::incan_semantics_core::body_ir import (
     FormatPart as RustFormatPart,
     FormatStyle as RustFormatStyle,
@@ -416,15 +416,19 @@ def clone_display_place(
     type_parameter: bool,
 ) -> Result[Place, str]:
     """
-    Materialize borrowed text for display; native str slices, copyable decimal and frozen carriers keep their checked representation.
+    Materialize borrowed text for display; native str slices and copyable decimal carriers keep their checked representation.
 
     A scalar a type parameter's checked clone or borrow fact reads, once its instance or closed binding makes it
-    concrete, displays from a copy, in the type-parameter display style when the value's checked type is one.
+    concrete, displays in the type-parameter display style when the value's checked type is one. Frozen text clones
+    its shared handle before native formatting because its Arc-backed carrier is not bitwise Copy.
     """
     place = scalar_place(builder, value, span)?
     ty = place_type(builder.locals, place)
+    if ty == PlanType.FrozenStr:
+        handle = clone_frozen_handle(builder, place, span)?
+        return display_plan_value(builder, handle, span, type_parameter)
     if (
-        ty in [PlanType.Decimal, PlanType.FrozenStr, PlanType.StringRef, PlanType.StrRef, PlanType.Bool, PlanType.Unit]
+        ty in [PlanType.Decimal, PlanType.StringRef, PlanType.StrRef, PlanType.Bool, PlanType.Unit]
         or numeric_carrier(ty)
     ):
         return display_plan_value(builder, read_place(place, false, span), span, type_parameter)
