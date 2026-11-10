@@ -1,7 +1,7 @@
 ---
 id: DD-0015
 title: The compiler producer map
-status: Draft
+status: Accepted
 type: design-decision
 date: 2026-11-07
 review_target: v0.6
@@ -23,13 +23,22 @@ DD-0012 makes compiler results reusable records. DD-0013 requires a producer map
 
 ## Decision
 
-This record remains Draft while the linked design's open questions are reviewed.
-
 1. **The compiler owns producers; the engine asks for results.** Each record family has one authoritative producer per compiler generation. A producer enters the existing semantic operation. Unsupported work is explicit, never a silent whole-program fallback.
 2. **Contributions are independently reusable.** Visitors and passes contribute facts to a declaration's logical representation. Each contribution has an owning producer, its own value digest and tracked dependencies. Identity follows the compiler's checked declarations; documentation and source positions remain separate from semantic facts.
 3. **Prepared, tracked reads are the dependency authority.** The compiler establishes prerequisites before evaluating a contribution. Results and their read evidence publish atomically. The engine reuses validated results and processes changes in dependency rank order, stopping propagation when an output stays equal. Compiler-owned joint evaluations handle genuine semantic cycles.
 4. **Migration preserves one semantic implementation.** Replace whole-program projections one family at a time, using record-scoped entries into the existing checker, Body IR builder and lowering. A migrated family has no selectable projection fallback or parallel grammar authority.
 5. **Correctness and reuse both require evidence.** Compare warm results with a fresh computation and compare the new route with the existing compiler. The design defines the output-equivalence checks and exact evaluation counts that prove an edit recomputes only the required contributions.
+6. **Schemas and protocols stay in their existing homes.**
+    - Body IR, representation and instance values use the kernel's versioned executable representation, framed per executable owner. A second model of Body IR would be a second semantic model.
+    - Record activations (`Prepare`, `NeedPrerequisite`, `Evaluate`, `Produced`) travel in a new version of the worker protocol in `incan_worker_host`, the worker's one message family. `incan.engine/1` stays the client protocol, so no peer speaks two protocols.
+    - Incan-model record values move to Crumb at the first checker profile bump after Crumb ships in the toolchain, which leaves one encoding mechanism for them.
+7. **Records mode reads no legacy store.**
+    - Frozen standard and runtime records come from a one-time admission conversion per installed toolchain, through sealed-set admission. It is the only reader of Loaf artifacts in records mode, and it is deleted when Loaves ship records.
+    - Records mode never uses the process-global standard caches. They are deleted with the first engine when records mode becomes the default.
+8. **Each proof row belongs to the stage that delivers its input.**
+    - The toolchain row is measured as a producer-profile change.
+    - The Loaf-version and lowering-library edit rows belong to Loaf admission, which delivers version swaps and Rust units in a Loaf. This stage proves sibling reuse on Incan-only fixtures and the hello edit loop.
+    - One unit's codegraph answer is a bounded projection through RFC 166's `GraphRead` in this stage. The whole-export renderer and the MCP pages stay with the readers stage.
 
 ## Rationale and consequences
 
@@ -39,11 +48,11 @@ Native output remains a whole compiled unit in this stage. Per-function native r
 
 ## Non-goals
 
-New language semantics, a public compiler API, a new intermediate representation, parallel scheduling policy, or per-function native compilation. This record does not choose unresolved schema homes, protocol versions or delivery-stage boundaries.
+New language semantics, a public compiler API, a new intermediate representation, parallel scheduling policy, or per-function native compilation.
 
 ## Design and review
 
-The [producer-map design](../contributing/explanation/build_engine_architecture.md#producer-map-design-draft) owns the producer table, keys, schemas, ranks, preparation protocol, dependency indexes, migration plan, worked example and verification matrix. Its [open questions](../contributing/explanation/build_engine_architecture.md#open-design-questions) remain pending; the recommendations are not approvals.
+The [producer-map design](../contributing/explanation/build_engine_architecture.md#producer-map-design) owns the producer table, keys, schemas, ranks, preparation protocol, dependency indexes, migration plan, worked example and verification matrix. Its [settled design points](../contributing/explanation/build_engine_architecture.md#settled-design-points) give the reasoning behind decisions 6 to 8.
 
 ## Revisit condition
 
