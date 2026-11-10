@@ -16,15 +16,24 @@ pub(in crate::typechecker) fn direct_function_boundary(function: &FunctionDecl) 
     function.decorators.is_empty() && statically_bound_parameters(&function.params)
 }
 
-/// Concrete methods share the function frame boundary; generic binders and defaults preserve it, while the receiver
-/// remains a borrowed slot of its own checked with the method's receiver mode.
+/// Concrete methods share the function frame boundary; generic binders and defaults preserve it, while an instance
+/// receiver remains a borrowed slot of its own checked with the method's receiver mode. A sole builtin
+/// `@staticmethod` marker changes call syntax without wrapping the callable, so its receiver-free frame remains
+/// eligible; every executable decorator stays outside this boundary.
 pub(in crate::typechecker) fn direct_method_boundary(method: &MethodDecl) -> bool {
     method.body.is_some() && method_input_header(method)
 }
 
-/// Abstract trait slots declare the same input obligations as concrete methods, without claiming an executable body.
+/// Abstract trait slots and concrete methods declare the same input obligations without claiming an executable body.
+/// A sole builtin `@staticmethod` is metadata for receiver-free call syntax rather than an executable wrapper.
 pub(in crate::typechecker) fn method_input_header(method: &MethodDecl) -> bool {
-    method.decorators.is_empty() && statically_bound_parameters(&method.params)
+    let direct_decorators = method.decorators.is_empty()
+        || (method.decorators.len() == 1
+            && method.decorators.iter().all(|decorator| {
+                incan_lang::lang::decorators::from_segments(&decorator.node.path.segments)
+                    == Some(incan_lang::lang::decorators::DecoratorId::StaticMethod)
+            }));
+    direct_decorators && statically_bound_parameters(&method.params)
 }
 
 /// Every parameter has one statically known slot; omission through a default does not change that slot identity.

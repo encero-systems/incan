@@ -25,14 +25,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// string for a tuple/enum-variant positional field, mirroring [`Self::lower_tuple_unpack`]'s own tuple-element
     /// projection convention (`.0`/`.1` Rust tuple-field-access spelling) rather than inventing a second one.
     ///
-    /// The type a node is lowered against comes from two sources, and the checker's wins. `TypeChecker::check_pattern`
-    /// records the checked type of every pattern node at that node's span (#1245), so a constructor payload -- an
-    /// `Option`'s element, a user or imported enum variant's declared payload, a model field, or the borrow-wrapped
-    /// form of any of those -- is read back here rather than re-derived; this is the same fact `for` patterns
-    /// carry (#1125), and it is what a binding's [`bir::OwnershipFact`] follows from. `expected_ty` is the threaded
-    /// fallback for a node the checker recorded no type for: [`Self::lower_match`]'s scrutinee type for the root,
-    /// [`tuple_element_types`] for `Tuple` elements, [`result_type_parts`] for an intrinsic `Result` payload, and the
-    /// retained intrinsic `Option` carrier for `Some`'s single payload.
+    /// The type a node is lowered against comes from two sources, and the checker's wins except for an authenticated
+    /// carried reference: its physical carrier preserves the reference erased from the logical pattern type.
+    /// `TypeChecker::check_pattern` records the checked type of every pattern node at that node's span (#1245), so
+    /// a constructor payload -- an `Option`'s element, a user or imported enum variant's declared payload, a model
+    /// field, or the borrow-wrapped form of any of those -- is read back here rather than re-derived; this is the
+    /// same fact `for` patterns carry (#1125), and it is what a binding's [`bir::OwnershipFact`] follows from.
+    /// `expected_ty` is the threaded fallback for a node the checker recorded no type for: [`Self::lower_match`]'s
+    /// scrutinee type for the root, [`tuple_element_types`] for `Tuple` elements, [`result_type_parts`] for an
+    /// intrinsic `Result` payload, and the retained intrinsic `Option` carrier for `Some`'s single payload.
     /// Caller-open parts of a checked binding type take the retained scrutinee's matching payload type; fixed node
     /// types and declaration-owned parameters remain authoritative. A generic constructor's sub-patterns thread
     /// [`IncanType::Unknown`], because lowering has no payload resolution of its own and must not grow one that
@@ -54,7 +55,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // ---- Retain the checked node type, closing only caller-open parts from the retained scrutinee ----
         let checked_ty = self.resolve_ty(pattern.span);
         let settled_ty = self.fill_open_type_parts(&checked_ty, expected_ty);
-        let expected_ty = if matches!(checked_ty, IncanType::Unknown) {
+        let expected_ty = if (self.retained_pattern_storage && storage_names_reference(expected_ty))
+            || matches!(checked_ty, IncanType::Unknown)
+        {
             expected_ty
         } else {
             &settled_ty

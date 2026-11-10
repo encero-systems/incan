@@ -75,6 +75,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             scope,
             hir_span: hir_span(span),
         };
+        if let Some(value) = self.lower_callable_member_call(recv, name, &call, out) {
+            return value;
+        }
         if let Some(value) = self.lower_initial_method_forms(recv, name, &call, out) {
             return value;
         }
@@ -83,6 +86,30 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return value;
         }
         self.lower_bound_method_call(recv, name, &call, out)
+    }
+
+    /// Lower a checker-selected field or property call through its evaluated callable value.
+    ///
+    /// The synthetic field node uses the same checker-owned read span as typechecking, so its function signature,
+    /// canonical field identity and computed-property classification are retained independently of the complete
+    /// method-call node's result type. This is the executable half of read-then-call semantics for `value.name(args)`.
+    fn lower_callable_member_call(
+        &mut self,
+        recv: &ast::Spanned<ast::Expr>,
+        name: &str,
+        call: &CallLoweringSite<'_>,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        let identity = self.type_info.resolved_identity(call.span)?;
+        if !matches!(
+            identity.kind,
+            SemanticSourceTargetKind::Field | SemanticSourceTargetKind::Property
+        ) {
+            return None;
+        }
+        let member_span = crate::typechecker::callable_member_read_span(recv.span, call.span);
+        let member = ast::Spanned::new(ast::Expr::Field(Box::new(recv.clone()), name.to_string()), member_span);
+        Some(self.lower_evaluated_callable_call(&member, call.type_args, call.args, call.span, call.scope, out))
     }
 
     /// Lower checked foreign, bridge, enum and isinstance forms before open arguments are settled.
@@ -516,9 +543,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Invoke a checked callable expression through its evaluated value, retaining source evaluation order.
     ///
-    /// The expression's retained function signature owns argument binding. A call result or closure expression is an
-    /// owned value evaluated before its arguments. Reads of existing callable storage, explicit type applications,
-    /// rest parameters and open carriers remain named refusals; no declaration is selected by source spelling.
+    /// The expression's retained function signature owns argument binding. A call result, closure expression or
+    /// checker-selected member read is evaluated before its arguments. Explicit type applications, rest parameters
+    /// and open carriers remain named refusals; no declaration is selected by source spelling.
     pub(super) fn lower_evaluated_callable_call(
         &mut self,
         expression: &ast::Spanned<ast::Expr>,
@@ -529,10 +556,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
-        if !matches!(
-            expression.node,
-            ast::Expr::Call(..) | ast::Expr::MethodCall(..) | ast::Expr::Closure(..)
-        ) {
+        if !Self::is_evaluated_callable_expression(expression) {
             return self.unsupported_operand(
                 "callable expression without a retained owned evaluation".to_string(),
                 scope,
@@ -618,6 +642,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             false,
             out,
         )
+    }
+
+    /// Return whether a checked callable expression produces or reads one value that can be frozen before arguments.
+    /// Parentheses are transparent at every depth; no other expression form is admitted from syntax shape alone.
+    fn is_evaluated_callable_expression(expression: &ast::Spanned<ast::Expr>) -> bool {
+        match &expression.node {
+            ast::Expr::Call(..) | ast::Expr::MethodCall(..) | ast::Expr::Closure(..) | ast::Expr::Field(..) => true,
+            ast::Expr::Paren(inner) => Self::is_evaluated_callable_expression(inner),
+            _ => false,
+        }
     }
 
     /// Whether the member read at `span` is a computed property the checker resolved, rather than a stored field.

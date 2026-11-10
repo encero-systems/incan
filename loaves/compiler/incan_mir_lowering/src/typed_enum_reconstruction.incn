@@ -1,0 +1,124 @@
+"""Restore a checked enum variant by identity, sharing model field and failure semantics."""
+
+from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core::body_ir import BodyIrModule
+from pub::incan_mir_plan import (
+    FieldProjection, Operand, Place, PlanType, RvalueKind, SourceSpan, TerminatorKind,
+    assign as plan_assign,
+)
+from frame import Builder, temporary, place_type, read_place, appended_field, drop_owned, track_rvalue_moves
+from options import result_layout, propagate_result
+from typed_value_callbacks import callback_body, call_callback, parameter_types, referent
+from typed_value_constants import static_metadata, value_type
+from typed_shapes import shape, variant_info, payload_info
+from typed_shape_spelling import ordered_names
+from typed_field_reconstruction import empty_slot, restore_field, finish_fields, take_fields, return_error, drop_owners_except
+from calls import instantiated_external_call
+from text_plan import owned_literal
+from table_views import borrowed_at
+
+
+pub def restore_enum(
+    module: &BodyIrModule, mut builder: Builder, requested: RustType, stored: PlanType,
+    owner: int, source: Place, source_owner: PlanType, error: RustType, span: SourceSpan,
+) -> Result[Place, str]:
+    """Select only a declared identity; returned descriptive fields never select storage or payload types."""
+    declaration = borrowed_at(module.enum_declarations, owner)
+    begin = callback_body(module, builder, source_owner, "Source", error, "begin_variant", [])?
+    parameters = parameter_types(builder, begin)?
+    info_type = referent(parameters[1])
+    description = shape(module, builder, requested, info_type, true)?
+    info = static_metadata(builder, info_type, description, span)
+    outcome = call_callback(module, builder, begin, [source, info], span, [1])?
+    _result_owner, result = result_layout(builder, place_type(builder.locals, outcome))?
+    variant_type = result.variants[0].fields[0]
+    selected = temporary(builder, variant_type, span)
+    propagate_result(builder, outcome, selected, span)?
+    drop_owned(builder, info.local, span)
+    actual = metadata_field(builder, selected, "identity", span)?
+    output = temporary(builder, stored, span)
+    joined = builder.new_block(span)
+    owners = builder.owned
+    names = [str(variant.name) for variant in declaration.variants]
+    for index in ordered_names(names)?:
+        variant = borrowed_at(declaration.variants, index)
+        expected_value = variant_info(module, builder, names[index], variant.fields, variant_type)?
+        expected = static_metadata(builder, variant_type, expected_value, span)
+        expected_identity = metadata_field(builder, expected, "identity", span)?
+        same = identical_identity(builder, actual, expected_identity, span)?
+        drop_owned(builder, expected.local, span)
+        matched = builder.new_block(span)
+        following = builder.new_block(span)
+        builder.finish(TerminatorKind.SwitchBool(same, following, matched), span)
+        builder.current = matched
+        payloads = restore_payload(module, builder, variant.fields, source, source_owner, error, span)?
+        construction = RvalueKind.Enum(owner, index, payloads)
+        track_rvalue_moves(builder, construction)
+        builder.emit(plan_assign(output, construction, span))
+        builder.owned.append(output.local)
+        drop_owners_except(builder, owners + [output.local], span)
+        builder.finish(TerminatorKind.Goto(joined), span)
+        builder.current = following
+        builder.owned = owners
+    # Unknown identities never fall back to a name, ordinal, first alternative or guessed payload.
+    malformed = callback_body(module, builder, source_owner, "Source", error, "malformed", [])?
+    reason = owned_literal(builder, "source selected an undeclared enum variant identity", span)
+    failure = call_callback(module, builder, malformed, [source, reason], span, [1])?
+    return_error(builder, failure, span)?
+    builder.current = joined
+    builder.owned = owners + [output.local]
+    return Ok(output)
+
+
+def restore_payload(
+    module: &BodyIrModule, mut builder: Builder, types: list[RustType],
+    source: Place, source_owner: PlanType, error: RustType, span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Read declared payload fields in stable identity order, then move them in physical variant order."""
+    policy = callback_body(module, builder, source_owner, "Source", error, "collects", [])?
+    collects = call_callback(module, builder, policy, [source], span)?
+    first_error = empty_slot(module, builder, error, span)?
+    mut slots: list[Place] = []
+    for declared in types:
+        slots.append(empty_slot(module, builder, declared, span)?)
+    for index in ordered_names([str(slot) for slot in range(len(types))])?:
+        reader = callback_body(module, builder, source_owner, "Source", error, "field", [types[index].clone()])?
+        parameters = parameter_types(builder, reader)?
+        info_type = referent(parameters[1])
+        description = payload_info(module, builder, index, types[index], info_type)?
+        restore_field(module, builder, types[index], reader, info_type, description, None, slots[index],
+            source, source_owner, error, collects, first_error, span)?
+    finish_fields(module, builder, source, source_owner, error, collects, first_error, "end_variant", span)?
+    return take_fields(builder, slots, span)
+
+
+def metadata_field(builder: &Builder, value: Place, name: str, span: SourceSpan) -> Result[Place, str]:
+    """Project an actual declared metadata field; no hardcoded layout slot crosses this boundary."""
+    match place_type(builder.locals, value):
+        PlanType.Model(owner, _name) =>
+            declaration = borrowed_at(builder.nominals, owner)
+            for slot in range(len(declaration.fields)):
+                if declaration.fields[slot] == name:
+                    ty = value_type(builder, declaration.field_types[slot])?
+                    return appended_field(value, FieldProjection(slot=slot, ty=ty), span)
+        _ => pass
+    return Err("enum reconstruction metadata lacks the declared identity field")
+
+
+def identical_identity(mut builder: Builder, actual: Place, expected: Place, span: SourceSpan) -> Result[Operand, str]:
+    """Compare the complete frozen identity bytes through their existing borrowed equality contract."""
+    ty = place_type(builder.locals, actual)
+    if ty != place_type(builder.locals, expected):
+        return Err("enum variant identities have incompatible checked carriers")
+    if ty != PlanType.FrozenBytes:
+        return Err("enum variant identity is not a checked frozen byte carrier")
+    reference_type = PlanType.ScalarRef([ty])
+    first = temporary(builder, reference_type, span)
+    second = temporary(builder, reference_type, span)
+    builder.emit(plan_assign(first, RvalueKind.Borrow(actual), span))
+    builder.emit(plan_assign(second, RvalueKind.Borrow(expected), span))
+    references = [read_place(first, false, span), read_place(second, false, span)]
+    parameters = [reference_type, reference_type]
+    output = temporary(builder, PlanType.Bool, span)
+    instantiated_external_call(builder, "incan_native_runtime::equal_model", [ty], parameters, PlanType.Bool, references, output, span)?
+    return Ok(read_place(output, false, span))

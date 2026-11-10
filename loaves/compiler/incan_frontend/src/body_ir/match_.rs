@@ -34,17 +34,6 @@ impl PatternReadScope<'_> {
     }
 }
 
-/// The same constructor pattern with its one payload binding replaced by `_`, for an arm whose name is bound elsewhere.
-fn without_payload_binding(pattern: &ast::Spanned<ast::Pattern>) -> ast::Spanned<ast::Pattern> {
-    let mut pattern = pattern.clone();
-    if let ast::Pattern::Constructor(_, arguments) = &mut pattern.node
-        && let [ast::PatternArg::Positional(payload)] = arguments.as_mut_slice()
-    {
-        payload.node = ast::Pattern::Wildcard;
-    }
-    pattern
-}
-
 /// Whether storage of type `ty` can hold a reference at any depth; a type still open counts, since it may become one.
 fn storage_names_reference(ty: &IncanType) -> bool {
     match ty {

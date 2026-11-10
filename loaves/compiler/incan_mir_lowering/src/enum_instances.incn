@@ -4,7 +4,7 @@ from rust::incan_semantics_core import IncanType as RustType
 from rust::incan_semantics_core::body_ir import BodyIrModule, EnumDeclaration
 from nominal_instances import nominal_symbol
 from type_parameters import substitute
-from nominal_frames import declaration_storage
+from nominal_frames import declaration_storage, nominal_frames
 from table_views import borrowed_at
 
 
@@ -28,8 +28,10 @@ pub def specialized_enum_layouts(module: &BodyIrModule) -> Result[list[EnumDecla
     mut instances: list[EnumInstance] = []
     for ty in declaration_storage(module):
         collect_type(module, ty, instances, [])?
-    for body_position in range(len(module.bodies)):
-        body = borrowed_at(module.bodies, body_position)
+    frames, call_types = nominal_frames(module)?
+    for ty in call_types:
+        collect_type(module, ty, instances, [])?
+    for body in frames:
         for local in body.locals:
             _ = collect_type(module, local.ty, instances, [])?
         _ = collect_type(module, body.return_type, instances, [])?
@@ -88,8 +90,6 @@ def collect_type(
                     continue
                 if len(declaration.type_parameters) != len(arguments):
                     return Err(f"unsupported Body IR enum type argument arity on {base}")
-                if declaration.canonical.render_compact() in ancestors:
-                    return Err(f"unsupported Body IR recursive enum payload instantiation on {base}")
                 return retain_instance(declaration, arguments.clone(), instances, ancestors)
         RustType.Tuple(elements) =>
             for element in elements:
@@ -106,10 +106,12 @@ def retain_instance(
     mut instances: list[EnumInstance],
     ancestors: list[str],
 ) -> Result[None, str]:
-    """Deduplicate a layout by its canonical declaration and arguments, independently of a written alias."""
+    """Reuse a closed recursive layout before refusing a cycle that changes its actual type arguments."""
     for retained in instances:
         if retained.declaration.canonical == declaration.canonical and retained.arguments == arguments:
             return Ok(None)
+    if declaration.canonical.render_compact() in ancestors:
+        return Err(f"unsupported Body IR expanding recursive enum payload instantiation on {declaration.name}")
     instances.append(EnumInstance(declaration=declaration.clone(), arguments=arguments, ancestors=ancestors))
     return Ok(None)
 

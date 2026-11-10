@@ -158,6 +158,10 @@ pub def lower_function(
         builder.emit(plan_assign(plan_place(0, span), RvalueKind.Use(literal(Constant.Unit, span)), span))
         drop_all_owned(builder, span)
         builder.finish(TerminatorKind.Return, span)
+    # Generated typed callbacks may discover concrete carriers absent from the caller's written frame.
+    # Append their layouts before the next scheduled body can assign those slots to different types.
+    for index in range(len(intrinsics), len(builder.intrinsics)):
+        intrinsics.append(builder.intrinsics[index])
     # 3. Retain the completed frame and any producer or program entry wrappers.
     mut function = Function(
         name=selected_name,

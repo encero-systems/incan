@@ -361,7 +361,8 @@ pub def default_type(ty: PlanType) -> Result[None, str]:
         return Ok(None)
     match ty:
         PlanType.Bool => return Ok(None)
-        PlanType.String => return Ok(None)
+        PlanType.String | PlanType.FrozenStr => return Ok(None)
+        PlanType.FrozenCollection(_name, _elements) => return Ok(None)
         # Models, Option, Result, source enum and tuple values move out of the default's frame like any owned result.
         PlanType.Model(_index, _name) => return Ok(None)
         PlanType.Enum(_index, _name) => return Ok(None)

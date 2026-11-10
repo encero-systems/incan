@@ -712,6 +712,9 @@ pub(super) fn trait_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>
             })
             .collect(),
         derive_macro: None,
+        object_methods: crate::types::native_trait_object(tcx, def, &[])
+            .map(|object| inherent_methods(tcx, &crate::callees::type_inherent_impls(tcx, object), named))
+            .unwrap_or_default(),
     }
 }
 

@@ -156,27 +156,25 @@ impl BodyBuilder<'_, '_> {
         })())
     }
 
-    /// Bind the arm of the variant holding the view (`Ok` or `Some`, or `Err` for a view carried in the error) of a
-    /// match on a carried view's call to the call's substituted place, as `view = call()?` binds it. A pattern
-    /// binding follows the place it binds, so an exclusive view writes through it. Returns the identity to unbind
-    /// after the arm, or `None` when the arm binds an ordinary payload.
-    pub(super) fn bind_carried_arm_view(
+    /// Retain the explicit access obligation of a carried-reference pattern binding. Its ordinary pattern local
+    /// stores the actual reference; the checked source graph separately retains the original owner's lifetime.
+    pub(super) fn retain_carried_arm_binding(
         &mut self,
         pattern: &ast::Spanned<ast::Pattern>,
-        view: &(bir::Place, IncanInputAccess, usize),
-    ) -> Option<CanonicalSymbolId> {
-        let (place, access, payload) = view.clone();
-        let (name, span) = crate::typechecker::carried_view_binding(pattern, payload)?;
-        let identity = self.type_info.resolved_write_identity(span, name)?.clone();
+        access: IncanInputAccess,
+        payload: usize,
+    ) {
+        let Some((name, span)) = crate::typechecker::carried_view_binding(pattern, payload) else {
+            return;
+        };
+        let Some(identity) = self.type_info.resolved_write_identity(span, name).cloned() else {
+            return;
+        };
         self.input_local_bindings.push(bir::ExplicitInputBinding {
             declaration: hir_span(span),
-            identity: Some(identity.clone()),
+            identity: Some(identity),
             access,
         });
-        let writable = access == IncanInputAccess::Exclusive;
-        self.input_aliases
-            .insert(identity.clone(), LocalInputAlias { place, writable });
-        Some(identity)
     }
 
     /// Unpack a call that carries a view in one element of its tuple. The call's tuple is materialized once and every

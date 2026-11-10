@@ -508,6 +508,8 @@ impl TypeChecker {
     /// The caller supplies handles in collected-module closure order. Local declarations, imports, diagnostics and
     /// body facts are not touched; only the dependency layer under those local facts is replaced.
     pub fn install_dependency_interfaces(&mut self, interfaces: &[Arc<ModuleDependencyInterface>]) {
+        self.dependency_method_headers.clear();
+        self.type_info.declarations.imported_method_headers.clear();
         self.dependency_exports.clear();
         self.dependency_member_symbols.clear();
         self.dependency_member_type_aliases.clear();
@@ -532,6 +534,9 @@ impl TypeChecker {
         self.public_library_type_identities.clear();
         self.cached_pub_libraries.clear();
         for interface in interfaces {
+            for kind in interface.direct_member_symbols.values() {
+                self.retain_admitted_method_headers(kind);
+            }
             let name = interface.module_name.clone();
             self.dependency_exports
                 .insert(name.clone(), Arc::clone(&interface.exports));

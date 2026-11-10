@@ -463,7 +463,7 @@ pub fn rvalue<'tcx>(
     })
 }
 
-/// Convert a reference to a concrete value into a reference to the Rust trait object its destination holds. rustc's
+/// Convert a concrete reference or owned Box into the matching trait-object carrier. rustc's
 /// trait solver first proves the whole conversion, the principal trait and every auto trait such as `Send` included;
 /// the plan's request is never evidence that the value implements the object.
 fn trait_object_rvalue<'tcx>(
@@ -485,6 +485,18 @@ fn trait_object_rvalue<'tcx>(
     };
     if target != native_type(tcx, destination)? {
         return Err(refused());
+    }
+    // Distinct retained aliases can already describe the same Box/object carrier. Preserve that identity move.
+    if source == target {
+        return Ok(mir::Rvalue::Use(operand(tcx, sources, value)?, mir::WithRetag::Yes));
+    }
+    if let ty::Adt(source_owner, _) = source.kind() {
+        let ty::Adt(target_owner, arguments) = target.kind() else {
+            return Err(refused());
+        };
+        if !source_owner.is_box() || !target_owner.is_box() || !matches!(arguments.type_at(0).kind(), ty::Dynamic(..)) {
+            return Err(refused());
+        }
     }
     let coerce = tcx.lang_items().coerce_unsized_trait().ok_or_else(refused)?;
     let (infcx, environment) = tcx
