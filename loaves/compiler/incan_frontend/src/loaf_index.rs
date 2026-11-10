@@ -21,6 +21,7 @@ use incan_vocab::{KeywordActivation, KeywordRegistration, KeywordSpec};
 
 use crate::rust_abi_cache::{RustAbiCache, RustTypeAliasLookup, ShippedRustAbiCache};
 
+mod compiler_record_set;
 mod decoded_manifest;
 mod lazy_entry;
 mod manifest_input;
@@ -103,11 +104,31 @@ pub struct LoafArtifact {
 impl LoafArtifact {
     /// Read and validate the Loaf `name`, deriving its identity from the exact bytes decoded into the manifest.
     pub fn read(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
+        if compiler_record_set::configured() {
+            return Self::read_current(dir, name);
+        }
         retained::artifact(dir, name)
     }
 
     /// Read and validate one current generation; process-local reuse must observe every dependent file around it.
     fn read_current(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
+        if let Some((manifest, digest)) = compiler_record_set::read(dir, name)? {
+            let identity = LoafIdentity {
+                name: manifest.name.clone(),
+                version: manifest.version.clone(),
+                digest,
+                feature_projection: BTreeSet::new(),
+            };
+            let (rust_abi_cache, stale_rust_paths) = Self::read_rust_abi_cache(dir, name, &manifest)?;
+            return Ok(Self {
+                identity,
+                name: name.to_owned(),
+                dir: dir.to_path_buf(),
+                manifest,
+                rust_abi_cache,
+                stale_rust_paths,
+            });
+        }
         let _invocation =
             tracing::trace_span!(target: "incan::invocation", "incan_frontend::read_loaf_manifest", loaf = name)
                 .entered();
@@ -355,6 +376,14 @@ impl LoafIndex {
     /// Read an immutable Rust ABI index under current file-generation guards. The returned index owns no session or
     /// resolved source state; each compilation installs it into its own fresh lookup environment.
     pub fn read_rust_abi_cache(path: &Path) -> Result<Arc<RustAbiCache>, LoafIndexError> {
+        if compiler_record_set::configured() {
+            return RustAbiCache::open(path)
+                .map(Arc::new)
+                .map_err(|reason| LoafIndexError::Unreadable {
+                    path: path.to_owned(),
+                    reason,
+                });
+        }
         retained::abi(path).map_err(|reason| LoafIndexError::Unreadable {
             path: path.to_owned(),
             reason,

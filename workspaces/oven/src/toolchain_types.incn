@@ -2,6 +2,7 @@
 
 from std.json import JsonValue
 from native_closure_input import NativeClosureInput
+from compiler_record_admission import CompilerRecordPin
 
 
 pub model NativeCrate:
@@ -36,6 +37,8 @@ pub model Toolchain:
     pub c_compiler: str = ""
     # Explicit target facts for synthetic or cross-target toolchains; empty selects rustc's reported host.
     pub target: str = ""
+    # Frozen standard/runtime records are owned by this exact installed pin, never by a project view or unit.
+    pub compiler_records: Option[CompilerRecordPin] = None
     # A unit-record activation cannot retain the bulk compiler's decoded caches while idle (#2481, S3).
     pub retire_worker: bool = false
 
@@ -51,6 +54,7 @@ pub model Toolchain:
             registry_lock=self.registry_lock,
             c_compiler=self.c_compiler,
             target=self.target,
+            compiler_records=self.compiler_records,
         )
 
 
@@ -66,6 +70,7 @@ pub model InstalledCompiler:
     pub registry_lock: str
     pub c_compiler: str
     pub target: str
+    pub compiler_records: Option[CompilerRecordPin] = None
 
     pub def select(self) -> Toolchain:
         """Create fresh request-local state around this admitted compiler description."""
@@ -82,4 +87,5 @@ pub model InstalledCompiler:
             registry_lock=self.registry_lock,
             c_compiler=self.c_compiler,
             target=self.target,
+            compiler_records=self.compiler_records,
         )
