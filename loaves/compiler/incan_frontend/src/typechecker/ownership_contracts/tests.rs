@@ -8,6 +8,7 @@ mod explicit_calls;
 mod invocations_and_accesses;
 mod lazy_reader_control_flow;
 mod source_flow;
+mod trait_inputs;
 
 /// Project actual checked source so CFG tests cannot bypass canonical root/type lookup with hand-built facts.
 fn source_graph(source: &str) -> Result<Result<flow::Graph, super::source::Unavailable>, Box<dyn std::error::Error>> {

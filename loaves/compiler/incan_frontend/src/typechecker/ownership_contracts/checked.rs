@@ -244,6 +244,7 @@ impl TypeChecker {
     /// This uses the same canonical inventory as publication, including distinct overload declaration spans.
     pub(in crate::typechecker) fn collect_function_ownership_headers(&mut self, program: &Program) {
         self.collect_method_ownership_headers(program);
+        self.inherit_trait_input_contracts(program);
         for declaration in &program.declarations {
             let Declaration::Function(function) = &declaration.node else {
                 continue;
@@ -274,6 +275,29 @@ impl TypeChecker {
                     .declarations
                     .ownership_contracts
                     .insert(identity, contract);
+            }
+        }
+    }
+
+    /// Collect dependency method contracts while that module's canonical names and aliases are still in scope.
+    /// The exact member identity check excludes declarations omitted from the imported public interface.
+    pub(in crate::typechecker) fn collect_imported_method_ownership_headers(&mut self, program: &Program) {
+        let origin = self
+            .symbols
+            .member_declaration_identity("", SemanticSourceTargetKind::Method, Span::new(0, 0))
+            .origin;
+        self.type_info
+            .declarations
+            .ownership_contracts
+            .retain(|identity, _| identity.origin != origin);
+        self.collect_method_ownership_headers(program);
+        self.inherit_trait_input_contracts(program);
+        self.dependency_method_input_contracts
+            .retain(|identity, _| identity.origin != origin);
+        for (identity, contract) in &self.type_info.declarations.ownership_contracts {
+            if identity.origin == origin && identity.kind == SemanticSourceTargetKind::Method {
+                self.dependency_method_input_contracts
+                    .insert(identity.clone(), contract.clone());
             }
         }
     }
@@ -322,7 +346,7 @@ impl TypeChecker {
 
     /// Borrow the collected owner's inventories, then copy only the exact source method header needed by the
     /// signature checker. Inherited, aliased and same-spelled methods cannot replace the authored declaration.
-    fn collected_ownership_method(
+    pub(super) fn collected_ownership_method(
         &self,
         owner: &str,
         source: &Spanned<MethodDecl>,
@@ -339,9 +363,12 @@ impl TypeChecker {
         };
         let exact = |method: &&MethodInfo| {
             method.identity.as_ref().is_some_and(|identity| {
-                identity.kind == SemanticSourceTargetKind::Method
-                    && identity.declaration_name == source.node.name
-                    && identity.declaration_span == source.span
+                identity
+                    == &self.symbols.member_declaration_identity(
+                        &source.node.name,
+                        SemanticSourceTargetKind::Method,
+                        source.span,
+                    )
             })
         };
         let header = overloads

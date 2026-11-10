@@ -21,8 +21,9 @@ mod native_lifetimes;
 pub(super) mod projection;
 mod report;
 mod source;
+mod trait_inputs;
 
-pub(super) use admission::{direct_function_boundary, direct_method_boundary};
+pub(super) use admission::{direct_function_boundary, method_input_header};
 pub(crate) use builtins::carried_view_binding;
 pub(super) use source::{CallableSource, Unavailable};
 
