@@ -493,6 +493,7 @@ impl TypeChecker {
             .entered();
             self.refresh_dependency_member_symbols(dependencies, true);
         }
+        self.activate_selected_dependency_interfaces();
 
         // Then check the main program
         let _trace = tracing::trace_span!(
@@ -595,6 +596,7 @@ impl TypeChecker {
             .entered();
             self.refresh_dependency_member_symbols(dependencies, false);
         }
+        self.activate_selected_dependency_interfaces();
         let _trace = tracing::trace_span!(
             target: "incan::invocation",
             "incan_frontend::check_program",

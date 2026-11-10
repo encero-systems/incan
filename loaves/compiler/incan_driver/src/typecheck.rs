@@ -63,7 +63,7 @@ pub fn typecheck_modules(
     let mut diagnostics_out = Vec::new();
     let mut warnings_out = Vec::new();
     let mut type_infos = Vec::with_capacity(modules.len());
-    let mut dependency_interfaces = Vec::<Arc<ModuleDependencyInterface>>::with_capacity(modules.len());
+    let mut dependency_interfaces = vec![None::<Arc<ModuleDependencyInterface>>; modules.len()];
     let related_sources = modules
         .iter()
         .map(|module| {
@@ -99,6 +99,11 @@ pub fn typecheck_modules(
                 )
             })
             .collect();
+        let interfaces_for_module = dep_indexes
+            .iter()
+            .map(|dep_idx| dependency_interfaces[*dep_idx].as_ref().map(Arc::clone))
+            .collect::<Option<Vec<_>>>()
+            .unwrap_or_default();
         let _module_trace = tracing::trace_span!(
             target: "incan::invocation",
             "incan_driver::typecheck_module",
@@ -134,6 +139,7 @@ pub fn typecheck_modules(
             if let Some(policy) = own_standard_package {
                 checker.set_own_standard_package(policy);
             }
+            checker.select_dependency_interfaces(interfaces_for_module);
 
             // A standard package checks its complete source before publishing its public checked facade.
             let checked = if own_standard_package.is_some() {
@@ -180,7 +186,7 @@ pub fn typecheck_modules(
         match check_result {
             Ok((type_info, interface)) => {
                 type_infos.push(type_info);
-                dependency_interfaces.push(interface);
+                dependency_interfaces[idx] = Some(interface);
             }
             Err(errs) => diagnostics_out.extend(errs.into_iter().map(|error| CliDiagnostic {
                 file_path: module.file_path.to_string_lossy().to_string(),
@@ -192,7 +198,7 @@ pub fn typecheck_modules(
     }
 
     if diagnostics_out.is_empty() {
-        debug_assert_eq!(dependency_interfaces.len(), modules.len());
+        debug_assert!(dependency_interfaces.iter().all(Option::is_some));
         verify_checked_c_bindings(modules, unit, &mut type_infos, c_abi_plan, &mut diagnostics_out);
     }
 
