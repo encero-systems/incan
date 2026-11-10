@@ -1,0 +1,33 @@
+# behavior: plain trait implementations inherit borrowed input contracts without cloning retained Rust values
+# expect-stdout:
+#   8
+
+from rust::std::sync import Mutex
+
+trait Observer:
+    def observe[T](self, value: Borrowed[T]) -> None: ...
+
+class Ignore with Observer:
+    def observe[T](self, value: T) -> None:
+        pass
+
+trait Incrementer:
+    def increment(self, mut value: BorrowedMut[int]) -> None: ...
+
+class Increment with Incrementer:
+    def increment(self, mut value: int) -> None:
+        value += 1
+
+def through[T, O with Observer](observer: Borrowed[O], value: Borrowed[T]) -> None:
+    observer.observe(value)
+
+def main() -> None:
+    observer = Ignore()
+    lock = Mutex.new(7)
+    observer.observe(lock)
+    through(observer, lock)
+    assert not lock.is_poisoned()
+    mut value = 7
+    Increment().increment(value)
+    assert value == 8
+    println(value)
