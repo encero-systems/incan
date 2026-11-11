@@ -121,6 +121,23 @@ pub struct EncodedModuleRepresentation {
     pub module: BodyIrModule,
 }
 
+/// One executable owner's checked representation, framed under the same kernel-owned version as module surfaces.
+///
+/// Project records use this frame instead of defining a second Body IR schema. The module identity and logical source
+/// path retain the provenance that a whole-module container otherwise supplies, while [`Body`] remains the one
+/// semantic representation interpreted by checking, lowering and the native adapter.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EncodedOwnerRepresentation {
+    /// Encoded-shape version, checked before the owner is interpreted.
+    pub version: u32,
+    /// Canonical owning module of the executable declaration.
+    pub module: CompilerNodeId,
+    /// Project-relative logical source path that supplied this owner.
+    pub source: String,
+    /// The complete checked executable owner.
+    pub body: Body,
+}
+
 /// Why a representation could not be interpreted.
 ///
 /// Every variant names what was unusable rather than reporting a generic decode failure, because RFC 123 requires a
