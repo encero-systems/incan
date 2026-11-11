@@ -21,6 +21,7 @@ from oven_tests import (
     summarize,
     summary_document,
 )
+from verify_installation import VerificationPhase, verification_phase_plans
 
 const GIB: int = 1073741824
 def test_jobs_follow_the_configured_count_then_the_cores() -> Result[None, str]:
@@ -82,6 +83,23 @@ def test_an_oversized_reservation_runs_alone_and_zero_memory_bounds_nothing() ->
     assert admitted(reservations, [1, 2], [6 * GIB], 4, 4 * GIB) == []
     assert admitted(reservations, [0, 1, 2], [], 2, 0) == [0, 1]
     assert admitted(reservations, [0, 1, 2], [], 1, 64 * GIB) == [0]
+    return Ok(None)
+
+
+def test_verification_phases_reserve_their_complete_parallel_work() -> Result[None, str]:
+    """Concurrent gates reserve every requested facet or census worker and fixed project-scale phases."""
+    plans = verification_phase_plans(6)
+    assert [plan.phase for plan in plans] == [
+        VerificationPhase.RustFacets,
+        VerificationPhase.DriverIntegration,
+        VerificationPhase.Lsp,
+        VerificationPhase.Census,
+        VerificationPhase.Memory,
+    ]
+    assert [plan.reservation for plan in plans] == [12 * GIB, 6 * GIB, 2 * GIB, 36 * GIB, 6 * GIB]
+    assert admitted([plan.reservation for plan in plans], [0, 1, 2, 3, 4], [], 5, 0) == [0, 1, 2, 3, 4]
+    assert verification_phase_plans(0)[0].reservation == 2 * GIB
+    assert verification_phase_plans(0)[3].reservation == 6 * GIB
     return Ok(None)
 
 
