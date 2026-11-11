@@ -57,6 +57,7 @@ from rust_build import (
     invoke_rustc,
     library_arguments,
     linking,
+    linking_with_profile,
     materialized_arguments,
     native_artifacts,
     native_compiler_fingerprint,
@@ -69,6 +70,8 @@ from rust_binaries import compile_binary
 
 # The schema of the receipt a build leaves of the libraries it built.
 const RECEIPT_SCHEMA: str = "incan.rust-units/1"
+# Installed native support is produced once in release mode and is link-compatible with every consumer profile.
+const INSTALLED_SUPPORT_PROFILE: str = "release"
 
 
 pub def build_rust(request: RustBuild) -> Result[list[str], str]:
@@ -476,11 +479,11 @@ def installed_rust_library(
     toolchain: Toolchain,
 ) -> Result[Option[BuiltUnit], str]:
     """
-    Reuse an installed facet only after validating its source, features, compiler, environment and exact externs.
+    Reuse installed support only after validating its source, features, compiler, environment and exact externs.
 
-    1. Require one selected artifact with the requested source/domain/features/profile identity.
+    1. Require one selected artifact with the support producer's source/domain/features and release policy.
     2. Reconcile the producer's recorded dependencies and every completed output against its stamp.
-    3. Return that same artifact; stale installed support is an explicit refusal, never a second producer.
+    3. Return that same artifact to every consumer profile; stale support is an explicit refusal, never a second producer.
     """
     # 1. Direct callers may lack the prepared request's shared name index.
     mut artifacts = request.installed
@@ -491,15 +494,24 @@ def installed_rust_library(
     if len(artifacts[declared.crate_name]) != 1:
         return Err(f"installed native generation has no unique {declared.crate_name} artifact")
     artifact = Path(artifacts[declared.crate_name][0])
-    unit = artifact_context(facet, declared, request.profile)?
+    unit = artifact_context(facet, declared, INSTALLED_SUPPORT_PROFILE)?
     if not artifact.name().startswith(f"lib{declared.crate_name}-{unit}."):
         return Err(
-            f"installed native {declared.crate_name} does not match the selected source, domain, features and profile",
+            f"installed native {declared.crate_name} does not match the selected source, domain, features and support policy",
         )
     # 2. A filename selects a candidate; only the complete producer proof authorizes its reuse.
     directory = artifact.parent()
     reading = directory.lock_exclusive().map_err((error) => f"cannot lock {error.message()}")?
-    arguments = library_compile_arguments(facet, declared, directory, request, built, search, false)?
+    arguments = library_compile_arguments(
+        facet,
+        declared,
+        directory,
+        request,
+        built,
+        search,
+        false,
+        INSTALLED_SUPPORT_PROFILE,
+    )?
     environment = package_environment(facet.project, declared, declared.crate_name)
     key = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain).map_err(
         (error) => f"installed native {declared.crate_name} has no current producer proof: {error}",
@@ -551,23 +563,34 @@ pub def library_compile_arguments(
     built: Dict[str, BuiltUnit],
     search: list[str],
     iteration: bool = true,
+    producer_profile: str = "",
 ) -> Result[list[str], str]:
-    """Frame one facet's native command; immutable installed producers retain their qualification policy."""
-    unit = artifact_context(facet, declared, request.profile)?
+    """Frame one facet's native command, optionally using an installed producer's fixed profile policy."""
+    profile = selected_producer_profile(request.profile, producer_profile)
+    unit = artifact_context(facet, declared, profile)?
     dependencies = directory.joinpath("library.d")
     arguments = library_arguments(declared)
     mut metadata = "metadata=incan-unit"
     if iteration:
         context = fingerprint([unit, declared.package, declared.version])?
-        metadata = rust_metadata(request.profile, context)
+        metadata = rust_metadata(profile, context)
     outputs = ["--out-dir", directory.0, "-C", metadata, "-C", f"extra-filename=-{unit}"]
     return Ok(
-        arguments + outputs + ["--emit", f"link,dep-info={dependencies.0}"] + linking(facet, request, built, search)? + remap_arguments(
-            facet.project,
-            [],
-            Path(request.rustc).parent().parent().0,
-        )?,
+        arguments + outputs + ["--emit", f"link,dep-info={dependencies.0}"] + linking_with_profile(
+            facet,
+            request,
+            built,
+            search,
+            profile,
+        )? + remap_arguments(facet.project, [], Path(request.rustc).parent().parent().0)?,
     )
+
+
+def selected_producer_profile(requested: str, producer: str) -> str:
+    """Use an installed producer's policy when supplied, or the local consumer's requested profile otherwise."""
+    if producer != "":
+        return producer
+    return requested
 
 
 pub def rust_library_producer_key(

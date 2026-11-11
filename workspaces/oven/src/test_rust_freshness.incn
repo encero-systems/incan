@@ -178,6 +178,10 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     # The graph-wide preflight uses this same proof before any output directory or replacement producer exists.
     preflight = require_coherent_installed_producer(facet, declared, request, built, [])?
     assert preflight.reused and preflight.artifact == artifact.0
+    request.profile = "debug"
+    debug_consumer = require_coherent_installed_producer(facet, declared, request, built, [])?
+    assert debug_consumer.reused and debug_consumer.artifact == artifact.0
+    request.profile = "release"
     request.native_compiler = "different pinned native compiler"
     match require_coherent_installed_producer(facet, declared, request, built, []):
         Ok(_) =>
