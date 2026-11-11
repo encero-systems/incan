@@ -29,6 +29,8 @@ mod codegraph;
 mod command_diagnostics;
 mod command_format;
 mod comparison_bridges;
+#[cfg(unix)]
+mod compiler_record_service;
 mod compiler_records;
 mod coroutines;
 mod declarations;

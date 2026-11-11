@@ -30,7 +30,7 @@ DD-0012 makes compiler results reusable records. DD-0013 requires a producer map
 5. **Correctness and reuse both require evidence.** Compare warm results with a fresh computation and compare the new route with the existing compiler. The design defines the output-equivalence checks and exact evaluation counts that prove an edit recomputes only the required contributions.
 6. **Schemas and protocols stay in their existing homes.**
     - Body IR, representation and instance values use the kernel's versioned executable representation, framed per executable owner. A second model of Body IR would be a second semantic model.
-    - Record activations (`Prepare`, `NeedPrerequisite`, `Evaluate`, `Produced`) travel in a new version of the worker protocol in `incan_worker_host`, the worker's one message family. `incan.engine/1` stays the client protocol, so no peer speaks two protocols.
+    - Record activations travel as `Prepare`, `Prepared`, `NeedPrerequisite`, `Evaluate`, `Produced`, `SemanticRefusal` and `CompilerFault` in the worker protocol in `incan_worker_host`: `Prepare` accepts `Prepared`, `NeedPrerequisite`, `SemanticRefusal` or `CompilerFault`, while `Evaluate` accepts `Produced`, `SemanticRefusal` or `CompilerFault`; `incan.engine/1` stays the client protocol, so no peer speaks two protocols.
     - Incan-model record values move to Crumb at the first checker profile bump after Crumb ships in the toolchain, which leaves one encoding mechanism for them.
 7. **Records mode reads no legacy store.**
     - Frozen standard and runtime records come from a one-time admission conversion per installed toolchain, through sealed-set admission. It is the only reader of Loaf artifacts in records mode, and it is deleted when Loaves ship records.
