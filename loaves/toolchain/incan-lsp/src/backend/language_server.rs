@@ -111,17 +111,17 @@ impl LanguageServer for IncanLanguageServer {
         }
     }
 
-    /// Offer one reviewed trust command for each entry Oven named in this document's unattended stop.
+    /// Offer deterministic source-security edits and reviewed trust commands for compiler-owned diagnostics.
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
-        let requests_trust = params.context.diagnostics.iter().any(diagnostic_is_not_trusted);
-        if !requests_trust {
-            return Ok(None);
-        }
         let documents = self.documents.read().await;
         let Some(document) = documents.get(&params.text_document.uri) else {
             return Ok(None);
         };
-        let actions = document.trust_entries.iter().map(trust_code_action).collect::<Vec<_>>();
+        let mut actions =
+            source_security_code_actions(&params.text_document.uri, &document.source, &params.context.diagnostics);
+        if params.context.diagnostics.iter().any(diagnostic_is_not_trusted) {
+            actions.extend(document.trust_entries.iter().map(trust_code_action));
+        }
         if actions.is_empty() {
             Ok(None)
         } else {

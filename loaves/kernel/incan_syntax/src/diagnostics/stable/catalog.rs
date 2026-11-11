@@ -21,6 +21,41 @@ pub(super) const PARSER_SYNTAX: DiagnosticCatalogEntry = DiagnosticCatalogEntry 
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/syntax/"),
 };
 
+pub(super) const BIDIRECTIONAL_CONTROL_IN_SOURCE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-P0101",
+    title: "Bidirectional control in source",
+    severity: "error",
+    phase: "parse",
+    summary: "Source contains a Unicode bidirectional control that can make displayed text differ from compiled text.",
+    explanation: "Incan refuses every Unicode Bidi_Control character in authored source, including code, comments, strings, f-strings and docstrings. A string value that needs one uses a visible Unicode scalar escape instead.",
+    examples: &["label = \"\\u{200f}שלום\""],
+    common_causes: &[
+        "Text copied from a right-to-left document carried an invisible directional mark.",
+        "A comment or string contains an explicit embedding, override or isolate control.",
+    ],
+    fixes: &[
+        "Delete the control from code or a comment.",
+        "In a string value, replace it with the escape named by the diagnostic, such as `\\u{202e}`.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/source_security/"),
+};
+
+pub(super) const MALFORMED_UNICODE_SCALAR_ESCAPE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-P0102",
+    title: "Malformed Unicode scalar escape",
+    severity: "error",
+    phase: "parse",
+    summary: "A string's `\\u{...}` escape does not name one Unicode scalar value.",
+    explanation: "A Unicode scalar escape contains one to six hexadecimal digits between braces. Surrogates and values above U+10FFFF are not Unicode scalar values and are refused.",
+    examples: &["label = \"\\u{1f388}\""],
+    common_causes: &[
+        "The braces are empty or contain a non-hexadecimal character.",
+        "The number is a surrogate or exceeds U+10FFFF.",
+    ],
+    fixes: &["Write one to six hexadecimal digits naming a Unicode scalar, followed by `}`."],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/strings/"),
+};
+
 pub(super) const TYPECHECK: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0001",
     title: "Type checking error",
@@ -60,6 +95,22 @@ pub(super) const UNREACHABLE_CODE: DiagnosticCatalogEntry = DiagnosticCatalogEnt
         "Move the statements above the `return` if they were meant to run.",
     ],
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/functions/"),
+};
+
+pub(super) const CONFUSABLE_IDENTIFIER: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0136",
+    title: "Confusable identifiers in one scope",
+    severity: "warning",
+    phase: "typecheck",
+    summary: "Two different identifiers in one scope have the same Unicode Technical Standard #39 skeleton.",
+    explanation: "Incan identifiers stay ASCII, but ASCII names can still look alike, such as `admin` and `adrnin`, `I` and `l`, or `O` and `0`. The later declaration warns without stopping the build.",
+    examples: &["def adrnin() -> None:\n    pass\n\ndef admin() -> None:\n    pass"],
+    common_causes: &[
+        "A name was chosen with letters and digits that look alike in common fonts.",
+        "A copied identifier substituted a visually similar sequence such as `rn` for `m`.",
+    ],
+    fixes: &["Rename one of the two declarations so their spellings are visually distinct."],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/source_security/"),
 };
 
 pub(super) const CALLABLE_MARKER_NOT_SUPPORTED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
@@ -866,8 +917,11 @@ pub(super) const CATALOG: &[DiagnosticCatalogEntry] = &[
     COMPILE_TIME_CODE_NOT_TRUSTED,
     PRIVATE_CLASS_CONSTRUCTOR_FIELD,
     PARSER_SYNTAX,
+    BIDIRECTIONAL_CONTROL_IN_SOURCE,
+    MALFORMED_UNICODE_SCALAR_ESCAPE,
     TYPECHECK,
     UNREACHABLE_CODE,
+    CONFUSABLE_IDENTIFIER,
     SELF_MUTATION_REQUIRES_MUT_SELF,
     VALUE_WITHOUT_PRINTED_FORM,
     COLLECTION_ANNOTATION_REQUIRES_TYPE_ARGUMENTS,

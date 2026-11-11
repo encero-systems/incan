@@ -223,7 +223,10 @@ pub(super) fn checked_registry_value_json(value: &CheckedRegistryValue) -> Value
         CheckedRegistryValue::Int(value) => json!({ "kind": "int", "value": value }),
         CheckedRegistryValue::Float(value) => json!({ "kind": "float", "value": value }),
         CheckedRegistryValue::Bool(value) => json!({ "kind": "bool", "value": value }),
-        CheckedRegistryValue::String(value) => json!({ "kind": "string", "value": value }),
+        CheckedRegistryValue::String(value) => {
+            let visible = incan_frontend::source_security::escape_bidirectional_controls(value);
+            json!({ "kind": "string", "value": visible.as_ref() })
+        }
         CheckedRegistryValue::Bytes(value) => json!({ "kind": "bytes", "value": value }),
         CheckedRegistryValue::None => json!({ "kind": "none", "value": null }),
         CheckedRegistryValue::Type(value) => json!({ "kind": "type", "value": value }),
@@ -257,6 +260,25 @@ pub(super) fn checked_registry_value_json(value: &CheckedRegistryValue) -> Value
                 })).collect::<Vec<_>>(),
             },
         }),
+    }
+}
+
+/// Replace source controls before prose enters an inspection record or terminal-facing serialization.
+pub(super) fn visible_source_text(value: &str) -> String {
+    incan_frontend::source_security::escape_bidirectional_controls(value).into_owned()
+}
+
+#[cfg(test)]
+mod source_security_tests {
+    use super::{checked_registry_value_json, visible_source_text};
+    use incan_frontend::registry_metadata::CheckedRegistryValue;
+
+    /// Inspection values and prose expose visible escapes rather than raw bidirectional controls.
+    #[test]
+    fn inspection_text_escapes_bidirectional_controls() {
+        let rendered = checked_registry_value_json(&CheckedRegistryValue::String("left\u{202e}right".to_string()));
+        assert_eq!(rendered["value"], "left\\u{202e}right");
+        assert_eq!(visible_source_text("left\u{2067}right"), "left\\u{2067}right");
     }
 }
 

@@ -1,0 +1,6 @@
+# behavior: raw bidirectional controls are refused in comments while malformed Unicode scalar escapes have their own stable diagnostic (#2746).
+# expect-diagnostic: INCAN-P0101
+# expect-diagnostic: INCAN-P0102
+
+# forbidden ‮
+const MALFORMED: str = "\u{d800}"

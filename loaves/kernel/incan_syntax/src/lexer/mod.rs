@@ -22,6 +22,7 @@ pub use tokens::{FStringPart, Token, TokenKind, keyword_id};
 
 use crate::ast::Span;
 use crate::diagnostics::{CompileError, errors};
+use crate::source_security::bidirectional_control_name;
 use incan_lang::lang::operators::OperatorId;
 use incan_lang::lang::punctuation::PunctuationId;
 
@@ -196,14 +197,7 @@ impl<'a> Lexer<'a> {
 
         match c {
             // Comments
-            '#' => {
-                while let Some(c) = self.peek() {
-                    if c == '\n' {
-                        break;
-                    }
-                    self.advance();
-                }
-            }
+            '#' => self.scan_comment(),
 
             // Newlines
             '\n' => {
@@ -247,10 +241,35 @@ impl<'a> Lexer<'a> {
             // Identifiers and keywords
             _ if is_ident_start(c) => self.scan_identifier(start, c),
 
+            _ if bidirectional_control_name(c).is_some() => {
+                self.errors.push(errors::bidirectional_control_in_source(
+                    c,
+                    errors::BidirectionalControlContext::Code,
+                    Span::new(start, self.current_pos),
+                ));
+            }
+
             _ => {
                 self.errors
                     .push(errors::unexpected_character(c, Span::new(start, self.current_pos)));
             }
+        }
+    }
+
+    /// Consume one line comment while retaining source-security diagnostics for raw directional controls.
+    fn scan_comment(&mut self) {
+        while let Some(character) = self.peek() {
+            if character == '\n' {
+                break;
+            }
+            if bidirectional_control_name(character).is_some() {
+                self.errors.push(errors::bidirectional_control_in_source(
+                    character,
+                    errors::BidirectionalControlContext::Comment,
+                    Span::new(self.current_pos, self.current_pos + character.len_utf8()),
+                ));
+            }
+            self.advance();
         }
     }
 
@@ -784,6 +803,49 @@ mod tests {
         let tokens = lex_ok(r#""hello" 'world'"#);
         assert!(matches!(&tokens[0].kind, TokenKind::String(s) if s == "hello"));
         assert!(matches!(&tokens[1].kind, TokenKind::String(s) if s == "world"));
+    }
+
+    /// Bidirectional controls are refused in every lexical context and retain their exact character span.
+    #[test]
+    fn bidirectional_controls_are_refused_in_code_comments_and_strings() {
+        for source in [
+            "value = \u{202e}1",
+            "# hidden \u{2066}text",
+            "label = \"\u{200f}text\"",
+            "data = b\"\u{202d}\"",
+            "label = f\"{name \u{2068}}\"",
+        ] {
+            let errors = lex_err(source);
+            assert_eq!(errors.len(), 1, "source should have one control diagnostic: {source:?}");
+            assert_eq!(errors[0].stable_code(), Some("INCAN-P0101"));
+            assert_eq!(errors[0].span.end - errors[0].span.start, 3);
+        }
+    }
+
+    /// Unicode scalar escapes decode in ordinary strings and f-string literal parts without admitting raw controls.
+    #[test]
+    fn unicode_scalar_escapes_decode_in_text_literals() {
+        let tokens = lex_ok(r#""A\u{1f388}" f"\u{200f}{name}""#);
+        assert!(matches!(&tokens[0].kind, TokenKind::String(value) if value == "A🎈"));
+        assert!(matches!(
+            &tokens[1].kind,
+            TokenKind::FString(parts)
+                if matches!(&parts[0], FStringPart::Literal(value) if value == "\u{200f}")
+        ));
+    }
+
+    /// Malformed, surrogate and out-of-range Unicode scalar escapes share the dedicated refusal.
+    #[test]
+    fn malformed_unicode_scalar_escapes_are_refused() {
+        for source in [r#""\u{}""#, r#""\u{xyz}""#, r#""\u{d800}""#, r#""\u{110000}""#] {
+            let errors = lex_err(source);
+            assert_eq!(
+                errors.len(),
+                1,
+                "source should have one malformed-escape diagnostic: {source:?}"
+            );
+            assert_eq!(errors[0].stable_code(), Some("INCAN-P0102"));
+        }
     }
 
     #[test]

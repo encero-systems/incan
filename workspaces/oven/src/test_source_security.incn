@@ -1,0 +1,50 @@
+"""Native source-security intake contracts."""
+
+from scratch import scratch_directory
+from source_security import validate_native_project
+
+
+pub def test_native_source_security_refuses_controls_before_rust_or_c_compilation() -> Result[None, str]:
+    """Rust and C-family inputs report stable code, position, name and visible replacement without compiling."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    root.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    rust_source = root.joinpath("src").joinpath("lib.rs")
+    rust_source.write_bytes(b"pub \xe2\x80\xae").map_err(
+        (error) => error.message(),
+    )?
+    match validate_native_project(root.0):
+        Ok(_) => return Err("raw Rust control was admitted")
+        Err(error) =>
+            assert "INCAN-P0101" in error, error
+            assert "RIGHT-TO-LEFT OVERRIDE" in error, error
+            assert "lib.rs:1:5" in error, error
+            assert "\\u{202e}" in error, error
+    rust_source.unlink().map_err((error) => error.message())?
+    c = root.joinpath("src").joinpath("bridge.c")
+    c.write_bytes(b"//\xc3\xa9\xd8\x9c").map_err((error) => error.message())?
+    match validate_native_project(root.0):
+        Ok(_) => return Err("raw C control was admitted")
+        Err(error) =>
+            assert "ARABIC LETTER MARK" in error, error
+            assert "bridge.c:1:4" in error, error
+    return Ok(None)
+
+
+pub def test_native_source_security_accepts_visible_escapes_and_skips_outputs() -> Result[None, str]:
+    """Visible source escapes are ordinary ASCII, while generated output is outside authored-source admission."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    root.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    root.joinpath("src").joinpath("lib.rs").write_text(
+        "const MARK: &str = \"\\\\u{202e}\";\n",
+        "utf-8",
+        "strict",
+        None,
+    ).map_err((error) => error.message())?
+    root.joinpath("target").mkdir(true, true).map_err((error) => error.message())?
+    root.joinpath("target").joinpath("generated.rs").write_bytes(b"\xe2\x80\xae").map_err(
+        (error) => error.message(),
+    )?
+    validate_native_project(root.0)?
+    return Ok(None)

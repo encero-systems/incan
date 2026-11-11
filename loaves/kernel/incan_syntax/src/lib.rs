@@ -28,4 +28,5 @@ pub mod diagnostics;
 pub mod lexer;
 pub mod parser;
 pub mod scanners;
+pub mod source_security;
 pub mod token_helpers;

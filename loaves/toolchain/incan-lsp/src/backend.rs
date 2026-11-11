@@ -73,6 +73,7 @@ mod rust_hover;
 mod scoped_symbol_contexts;
 mod scoped_symbols;
 mod signature_help;
+mod source_security_actions;
 mod trust_command;
 
 use api_markdown::*;
@@ -84,6 +85,7 @@ use metadata_previews::*;
 use scoped_symbol_contexts::*;
 use scoped_symbols::*;
 use signature_help::*;
+use source_security_actions::*;
 use trust_command::*;
 
 const EMIT_CONTRACT_MODEL_COMMAND: &str = "incan.metadata.model.emit";
