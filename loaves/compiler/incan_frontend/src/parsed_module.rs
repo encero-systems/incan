@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use crate::ast::Program;
+use crate::diagnostics::SourcePositionIndex;
 
 /// A parsed module together with the source and location it came from.
 ///
@@ -21,6 +22,8 @@ pub struct ParsedModule {
     pub path_segments: Vec<String>,
     /// Absolute path to the module file, retained for diagnostics.
     pub file_path: PathBuf,
+    /// Line starts built once with the source and shared by diagnostic and codegraph projections.
+    pub source_positions: SourcePositionIndex,
     /// The source text, retained so a diagnostic can quote the span it points at.
     pub source: String,
     /// The parsed program.

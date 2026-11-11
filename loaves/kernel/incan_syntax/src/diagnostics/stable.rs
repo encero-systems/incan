@@ -112,6 +112,42 @@ pub struct DiagnosticPosition {
     pub offset: usize,
 }
 
+/// Reusable byte offsets of every source line start.
+///
+/// Building this index is linear in the source length. Each later position lookup selects its line with binary
+/// search and scans only that line's Unicode scalar values to produce the public one-based column.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourcePositionIndex {
+    line_starts: Vec<usize>,
+}
+
+impl SourcePositionIndex {
+    /// Index one source, retaining byte zero and every byte immediately after a newline.
+    pub fn new(source: &str) -> Self {
+        let mut line_starts = Vec::with_capacity(source.lines().count().saturating_add(1));
+        line_starts.push(0);
+        line_starts.extend(source.match_indices('\n').map(|(offset, _)| offset + 1));
+        Self { line_starts }
+    }
+
+    /// Convert one byte offset through this source's retained line starts.
+    pub fn position_for_offset(&self, source: &str, offset: usize) -> DiagnosticPosition {
+        let offset = offset.min(source.len());
+        let line_index = self.line_starts.partition_point(|line_start| *line_start <= offset) - 1;
+        let line_start = self.line_starts[line_index];
+        let column = source[line_start..]
+            .char_indices()
+            .take_while(|(relative, _)| line_start + relative < offset)
+            .count()
+            + 1;
+        DiagnosticPosition {
+            line: line_index + 1,
+            column,
+            offset,
+        }
+    }
+}
+
 /// Primary diagnostic span.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DiagnosticSpan {
@@ -223,6 +259,7 @@ pub fn stable_diagnostic(
     error: &CompileError,
     phase: DiagnosticPhase,
 ) -> StableDiagnostic {
+    let positions = SourcePositionIndex::new(source);
     let code = code_for_error(error, phase);
     let severity = match error.kind {
         ErrorKind::Error | ErrorKind::Syntax | ErrorKind::Type => "error",
@@ -235,7 +272,7 @@ pub fn stable_diagnostic(
         phase,
         origin: origin_for_phase(phase),
         message: visible_diagnostic_text(&error.message),
-        primary_span: diagnostic_span(file_name, source, error.span),
+        primary_span: diagnostic_span(file_name, source, &positions, error.span),
         notes: error.notes().iter().map(|note| visible_diagnostic_text(note)).collect(),
         hints: error.hints().iter().map(|hint| visible_diagnostic_text(hint)).collect(),
         expected: error.expected().map(str::to_owned),
@@ -244,7 +281,7 @@ pub fn stable_diagnostic(
             .related_spans()
             .iter()
             .map(|related| DiagnosticRelatedSpan {
-                span: diagnostic_span(file_name, source, related.span),
+                span: diagnostic_span(file_name, source, &positions, related.span),
                 label: visible_diagnostic_text(&related.label),
             })
             .collect(),
@@ -278,31 +315,17 @@ fn origin_for_phase(phase: DiagnosticPhase) -> DiagnosticOrigin {
 }
 
 /// Convert a compiler byte span into the public source-span projection.
-fn diagnostic_span(file_name: &str, source: &str, span: Span) -> DiagnosticSpan {
+fn diagnostic_span(file_name: &str, source: &str, positions: &SourcePositionIndex, span: Span) -> DiagnosticSpan {
     DiagnosticSpan {
         file: file_name.to_string(),
-        start: position_for_offset(source, span.start),
-        end: position_for_offset(source, span.end.max(span.start + 1)),
+        start: positions.position_for_offset(source, span.start),
+        end: positions.position_for_offset(source, span.end.max(span.start + 1)),
     }
 }
 
 /// Convert a byte offset into the 1-based line and column shape used by the stable diagnostic schema.
 pub fn position_for_offset(source: &str, offset: usize) -> DiagnosticPosition {
-    let offset = offset.min(source.len());
-    let mut line = 1usize;
-    let mut column = 1usize;
-    for (idx, ch) in source.char_indices() {
-        if idx >= offset {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-            column = 1;
-        } else {
-            column += 1;
-        }
-    }
-    DiagnosticPosition { line, column, offset }
+    SourcePositionIndex::new(source).position_for_offset(source, offset)
 }
 
 /// Return whether two source spans overlap after treating zero-width spans as one-byte spans.

@@ -3,6 +3,63 @@ use crate::diagnostics::{errors, lints};
 
 use super::*;
 
+/// One retained line-start table preserves byte-offset behavior at line boundaries and inside UTF-8 scalars.
+#[test]
+fn source_position_index_reuses_line_starts_for_binary_search() {
+    let source = "α\nbeta\nγ";
+    let positions = SourcePositionIndex::new(source);
+
+    assert_eq!(positions.line_starts, vec![0, 3, 8]);
+    assert_eq!(
+        positions.position_for_offset(source, 0),
+        DiagnosticPosition {
+            line: 1,
+            column: 1,
+            offset: 0
+        }
+    );
+    assert_eq!(
+        positions.position_for_offset(source, 1),
+        DiagnosticPosition {
+            line: 1,
+            column: 2,
+            offset: 1
+        }
+    );
+    assert_eq!(
+        positions.position_for_offset(source, 3),
+        DiagnosticPosition {
+            line: 2,
+            column: 1,
+            offset: 3
+        }
+    );
+    assert_eq!(
+        positions.position_for_offset(source, 6),
+        DiagnosticPosition {
+            line: 2,
+            column: 4,
+            offset: 6
+        }
+    );
+    assert_eq!(
+        positions.position_for_offset(source, 8),
+        DiagnosticPosition {
+            line: 3,
+            column: 1,
+            offset: 8
+        }
+    );
+    assert_eq!(
+        positions.position_for_offset(source, usize::MAX),
+        DiagnosticPosition {
+            line: 3,
+            column: 2,
+            offset: source.len(),
+        }
+    );
+}
+
 #[test]
 fn typecheck_phase_uses_import_span_for_import_diagnostics() {
     let program = Program {

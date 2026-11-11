@@ -175,10 +175,12 @@ impl<'analysis> CodegraphBuilder<'analysis> {
         match session.parse_source_for_collection(path, &source) {
             Ok(ast) => {
                 let file_id = self.ensure_file_record(path, &source, false);
+                let source_positions = diagnostics::SourcePositionIndex::new(&source);
                 let module = ParsedModule {
                     name: module_name_for_file(path),
                     path_segments: self.fallback_module_segments(path),
                     file_path: path.to_path_buf(),
+                    source_positions,
                     source,
                     ast,
                     gated_exports: Vec::new(),
@@ -230,7 +232,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
     ) {
         let module_id = module_id(module);
         if self.module_ids.insert(module_id.clone()) {
-            let module_span = source_span(&module.file_path, &module.source, Span::new(0, module.source.len()));
+            let module_span = source_span(module, Span::new(0, module.source.len()));
             self.records.push(CodegraphRecord::Module(CodegraphModuleRecord {
                 id: module_id.clone(),
                 language: CodegraphLanguage::Incan,

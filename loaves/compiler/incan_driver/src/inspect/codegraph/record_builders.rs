@@ -60,7 +60,7 @@ pub(super) fn import_record(
         bindings,
         alias: import.alias.clone(),
         visibility: visibility_spelling(import.visibility).to_string(),
-        span: Some(source_span(&module.file_path, &module.source, span)),
+        span: Some(source_span(module, span)),
         provenance,
         degraded,
     }
@@ -71,8 +71,7 @@ pub(super) fn containment_record(
     parent_id: &str,
     child_id: &str,
     kind: &str,
-    file_path: &Path,
-    source: &str,
+    module: &ParsedModule,
     span: Span,
     degraded: bool,
 ) -> CodegraphContainmentRecord {
@@ -82,7 +81,7 @@ pub(super) fn containment_record(
         parent_id: parent_id.to_string(),
         child_id: child_id.to_string(),
         kind: kind.to_string(),
-        span: Some(source_span(file_path, source, span)),
+        span: Some(source_span(module, span)),
         provenance: CodegraphProvenance::Syntax,
         degraded,
     }
@@ -110,7 +109,7 @@ pub(super) fn export_record(
         source_id: source_id.to_string(),
         canonical_identity: canonical_identity.clone(),
         stable_identity,
-        span: Some(source_span(&module.file_path, &module.source, span)),
+        span: Some(source_span(module, span)),
         provenance: if canonical_identity.is_some() {
             CodegraphProvenance::Checked
         } else {
@@ -575,15 +574,16 @@ pub(super) fn module_segments_for_file(path: &Path, base: &Path) -> Vec<String> 
 }
 
 /// Convert an AST byte span into the public codegraph source span shape.
-pub(super) fn source_span(path: &Path, source: &str, span: Span) -> CodegraphSourceSpan {
+pub(super) fn source_span(module: &ParsedModule, span: Span) -> CodegraphSourceSpan {
+    let source = &module.source;
     let start = span.start.min(source.len());
     let end = span.end.min(source.len()).max(start);
-    let start_position = incan_frontend::diagnostics::position_for_offset(source, start);
-    let end_position = incan_frontend::diagnostics::position_for_offset(source, end);
+    let start_position = module.source_positions.position_for_offset(source, start);
+    let end_position = module.source_positions.position_for_offset(source, end);
     let (start_line, start_column) = (start_position.line, start_position.column);
     let (end_line, end_column) = (end_position.line, end_position.column);
     CodegraphSourceSpan {
-        file: path_string(path),
+        file: path_string(&module.file_path),
         start,
         end,
         start_line,

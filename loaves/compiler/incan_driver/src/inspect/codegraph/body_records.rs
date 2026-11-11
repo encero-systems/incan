@@ -38,8 +38,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
             module_id,
             &import_id,
             "module_contains_import",
-            &module.file_path,
-            &module.source,
+            module,
             span,
             degraded,
         )));
