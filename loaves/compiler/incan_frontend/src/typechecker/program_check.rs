@@ -266,7 +266,7 @@ impl TypeChecker {
     /// Validate alias and reserved declaration spellings, then retain public names before signature collection.
     pub(super) fn prepare_program_declaration_names(&mut self, program: &Program) {
         self.validate_alias_declarations(program);
-        self.report_reserved_compiler_names(program);
+        self.report_source_name_diagnostics(program);
         self.current_module_public_declarations = program
             .declarations
             .iter()

@@ -6,6 +6,47 @@
 use crate::ast::Span;
 
 use crate::diagnostics::CompileError;
+use crate::source_security::{bidirectional_control_name, unicode_scalar_escape};
+
+/// Lexical context containing a refused bidirectional control.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BidirectionalControlContext {
+    /// Ordinary Incan code, including an f-string expression.
+    Code,
+    /// A line comment.
+    Comment,
+    /// A string, f-string literal part or docstring.
+    String,
+}
+
+/// Refuse a raw Unicode bidirectional control without rendering the control itself.
+pub fn bidirectional_control_in_source(
+    character: char,
+    context: BidirectionalControlContext,
+    span: Span,
+) -> CompileError {
+    let name = bidirectional_control_name(character).unwrap_or("BIDIRECTIONAL CONTROL");
+    let escape = unicode_scalar_escape(character);
+    let hint = match context {
+        BidirectionalControlContext::String => format!("Write `{escape}` to place this character in the string value"),
+        BidirectionalControlContext::Code => "Delete the bidirectional control from the code".to_string(),
+        BidirectionalControlContext::Comment => "Delete the bidirectional control from the comment".to_string(),
+    };
+    CompileError::syntax(
+        format!("Bidirectional control U+{:04X} {name} in source", u32::from(character)),
+        span,
+    )
+    .with_primary_label(format!("{escape} ({name})"))
+    .with_hint(hint)
+    .with_stable_code("INCAN-P0101")
+}
+
+/// Refuse one malformed `\u{...}` scalar escape at its complete authored spelling.
+pub fn malformed_unicode_scalar_escape(spelling: &str, reason: &str, span: Span) -> CompileError {
+    CompileError::syntax(format!("Malformed Unicode scalar escape `{spelling}`: {reason}"), span)
+        .with_hint("Write `\\u{` followed by one to six hexadecimal digits and `}`")
+        .with_stable_code("INCAN-P0102")
+}
 
 // -- Token-level -------------------------------------------------------------
 

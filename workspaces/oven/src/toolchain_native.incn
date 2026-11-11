@@ -17,6 +17,7 @@ from rust_registry import read_registry_units, selected_registry
 from rust_manifest import rust_facet
 from registry_units import RegistryUnits
 from rust_target import target_configuration
+from source_security import validate_native_sources
 from toolchain import NativeCrate, Toolchain, load_toolchain, rust_compiler, toolchain_file
 from unit import UnitDescription, UnitLoaf, dependency_source_roots, describe
 from unit_rust import add_extern, add_rust_root, prepare_linked
@@ -245,6 +246,7 @@ def installed_support(
     mut result: Dict[str, BuiltUnit] = {}
     if len(facets) == 0:
         return Ok(result)
+    validate_native_sources(facets)?
     request = prepared_build(
         RustBuild(
             project=facets[0].project,
@@ -344,6 +346,7 @@ def build_support(
     mut built_names: set[str] = set()
     mut directories: list[str] = []
     mut externs: list[NativeCrate] = []
+    validate_native_sources(facets)?
     for facet in facets:
         declared = rust_facet(facet.project)?
         unit = compile_library(facet, declared, output, request, built, directories)?

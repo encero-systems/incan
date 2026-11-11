@@ -1,4 +1,4 @@
-# behavior: str methods for case, contains, split, replace, Unicode scalar indexing and bounded slicing without unused suffix scans (#2851), prefix and suffix tests, join and += concatenation give their results
+# behavior: str methods for case, contains, split, replace, Unicode scalar escapes and indexing, bounded slicing without unused suffix scans (#2851), prefix and suffix tests, join and += concatenation give their results (#2746)
 # expect-stdout:
 #   HELLO WORLD hello world Hello World
 #   true false
@@ -71,6 +71,14 @@ def test_string_slice() -> None:
     assert unicode[::-1] == "Źe🙂éA"
 
 
+def test_unicode_scalar_escapes() -> None:
+    """Scalar escapes decode in ordinary strings, f-strings and docstrings without exposing raw source controls."""
+    control = "\u{202e}"
+    assert len(control) == 1
+    assert control == f"\u{202e}"
+    assert "left\u{1f642}right" == "left🙂right"
+
+
 def test_string_startswith_endswith() -> None:
     text: str = "hello.txt"
     starts: bool = text.startswith("hello")
@@ -98,6 +106,7 @@ def main() -> None:
     test_string_split()
     test_string_replace()
     test_string_slice()
+    test_unicode_scalar_escapes()
     test_string_startswith_endswith()
     test_string_join()
     test_string_concatenation()

@@ -53,12 +53,17 @@ Escape sequences:
 | `\r` | U+000D | 0x0D |
 | `\\` | `\` | 0x5C |
 | `\"` or `\'`, the literal's own quote | The quote | The quote's byte |
+| `\u{H}` through `\u{HHHHHH}` | The Unicode scalar whose value is the one to six hexadecimal digits | Not an escape |
 | `\0` | Not an escape | 0x00 |
 | `\xNN` | Not an escape | The byte with hexadecimal value `NN` |
 
-A backslash followed by any other character is not an escape: the value holds the backslash and the character.
+A Unicode scalar escape accepts uppercase or lowercase hexadecimal digits and must name a scalar from U+0000 through U+10FFFF other than the surrogate range U+D800 through U+DFFF. It is available in ordinary strings, f-string literal parts and docstrings. A malformed scalar escape is refused with `INCAN-P0102`.
+
+A backslash followed by any other character is not an escape: the value holds the backslash and the character. In particular, `\u` without an opening `{` is ordinary text.
 
 Refused (`INCAN-P0001`): a line break inside a `"…"` or `'…'` string, an f-string or a `bytes` literal; a literal without its closing quote; a non-ASCII character in a `bytes` literal; a `\x` in a `bytes` literal that is not followed by two hexadecimal digits; a `}` in an f-string that neither closes an `{expr}` nor is part of `}}`.
+
+See [Source security](source_security.md) for the controls that must be written with a visible scalar escape rather than copied literally into source.
 
 ## Indexing and slicing
 

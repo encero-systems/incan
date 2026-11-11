@@ -342,10 +342,11 @@ impl<'a> Parser<'a> {
     /// expected noise. Errors elsewhere must reach the user exactly as if the strict lexer had emitted them.
     fn retain_unclaimed_lex_errors(&mut self) {
         for lex_error in self.pending_lex_errors.drain(..) {
-            let is_expected_fragment_noise = self
-                .claimed_embedded_fragment_spans
-                .iter()
-                .any(|fragment_span| span_contains(*fragment_span, lex_error.span));
+            let is_expected_fragment_noise = lex_error.stable_code() != Some("INCAN-P0101")
+                && self
+                    .claimed_embedded_fragment_spans
+                    .iter()
+                    .any(|fragment_span| span_contains(*fragment_span, lex_error.span));
             if !is_expected_fragment_noise {
                 self.errors.push(lex_error);
             }
