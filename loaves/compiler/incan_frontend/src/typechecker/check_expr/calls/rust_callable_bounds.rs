@@ -286,6 +286,9 @@ impl TypeChecker {
         if depth > 24 || matches!(ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) {
             return false;
         }
+        if self.has_forwarded_auto_trait_evidence(ty, marker) {
+            return true;
+        }
         let native = match ty {
             ResolvedType::Int => ResolvedType::RustPath("i64".into()),
             ResolvedType::Float => ResolvedType::RustPath("f64".into()),
@@ -296,6 +299,17 @@ impl TypeChecker {
             }
             _ => self.rusttype_native_target(ty).unwrap_or_else(|| ty.clone()),
         };
+        if matches!(marker, "Send" | "Sync")
+            && let Some((base, definition, arguments, _)) = self.rust_identity_for_type(&native)
+            && arguments.len() == 1
+            && matches!(
+                definition.as_deref().unwrap_or(&base),
+                "std::sync::Arc" | "alloc::sync::Arc"
+            )
+        {
+            return self.capture_has_native_auto_trait(&arguments[0], "Send", depth + 1)
+                && self.capture_has_native_auto_trait(&arguments[0], "Sync", depth + 1);
+        }
         let Some(path) = self.rust_canonical_path_for_receiver_type(&native) else {
             return false;
         };
@@ -333,5 +347,29 @@ impl TypeChecker {
                 self.capture_has_native_auto_trait(&subject, required, depth + 1)
             })
         })
+    }
+
+    /// Reuse an admitted transparent rusttype's native proof after a Rust owner has projected the alias to storage.
+    /// The declaration check already proved the backing Rust carrier implements the marker; wrappers such as Arc
+    /// retain that carrier rather than its source spelling when their conditional auto-trait bounds are solved.
+    fn has_forwarded_auto_trait_evidence(&self, ty: &ResolvedType, marker: &str) -> bool {
+        self.type_info
+            .rust
+            .rusttype_forwarded_trait_adoptions
+            .iter()
+            .filter(|(_, trait_name)| {
+                trait_name == marker
+                    || trait_name
+                        .rsplit(['.', ':'])
+                        .find(|segment| !segment.is_empty())
+                        .is_some_and(|name| name == marker)
+            })
+            .any(|(name, _)| {
+                let source = ResolvedType::Named(name.clone());
+                source == *ty
+                    || self
+                        .rusttype_native_target(&source)
+                        .is_some_and(|target| self.rust_trait_carriers_match(&target, ty))
+            })
     }
 }

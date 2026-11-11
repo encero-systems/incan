@@ -54,7 +54,7 @@ from rust::std::path import Path, PathBuf
 from rust::std::process import Command, Output
 from rust::std::primitive import u64 as RustU64, u128 as RustU128
 from rust::std::rc import Rc
-from rust::std::sync import Mutex
+from rust::std::sync import Arc, Mutex
 from rust::std::string import String as RustString
 from rust::std::thread import spawn
 from rust::std::vec import Vec
@@ -142,9 +142,9 @@ def unsafe_rust_members() -> None:
 
 
 def captured_thread_callback() -> None:
-    """Name the captured non-Send value before a Rust thread can retain it."""
-    handle = Rc.new(3)
-    worker = spawn(() => Rc.strong_count(handle))
+    """Name the captured Arc whose inner Rc remains non-Send before a Rust thread can retain it."""
+    handle = Arc.new(Rc.new(3))
+    worker = spawn(() => Rc.strong_count(handle.as_ref()))
 
 
 def stored_native_callback() -> None:

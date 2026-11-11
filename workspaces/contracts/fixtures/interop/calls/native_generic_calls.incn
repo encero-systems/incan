@@ -45,6 +45,7 @@ from rust::std::ffi import CString
 from rust::std::hash import DefaultHasher, Hash, Hasher
 from rust::std::iter import Iterator as NativeIterator
 from rust::std::mem import size_of_val, swap
+from rust::std::marker import Send, Sync
 from rust::std::ops import Index
 from rust::std::path import Path
 from rust::std::process import Command, exit
@@ -87,6 +88,9 @@ model NestedGenericCache:
     """Hold a source-keyed native map behind nested synchronization constructors."""
 
     values: Arc[Mutex[HashMap[str, int]]]
+
+
+type SharedText = rusttype RustString with Send, Sync
 
 
 def render[T with (Display, ToString)](value: T) -> str:
@@ -198,6 +202,13 @@ def show_thread_capture() -> None:
     retained_worker = spawn(callback)
     match retained_worker.join():
         Ok(value) => println(value)
+        Err(_) =>
+            assert false
+    shared = Arc.new(SharedText.from("hello"))
+    retained = shared.clone()
+    shared_worker = spawn(() => retained.as_ref().len())
+    match shared_worker.join():
+        Ok(size) => assert size == 5
         Err(_) =>
             assert false
 
