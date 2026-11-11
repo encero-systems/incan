@@ -3,12 +3,15 @@
 //! Each source module is collected once into a sealed interface. Downstream checkers install those immutable
 //! interfaces directly; the deterministic snapshot remains the comparison oracle for the retained legacy fallback.
 
-use std::fmt::Debug;
-
 use super::*;
 
+mod stable_encoding;
+
+use serde::Serialize;
+use stable_encoding::stable_encode;
+
 /// Schema version for the complete dependency-interface snapshot compared by the shadow oracle.
-pub const MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION: u32 = 3;
+pub const MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION: u32 = 4;
 
 /// One provider's sealed dependency interface, built once from its successful local checker.
 ///
@@ -95,7 +98,7 @@ impl ModuleDependencyInterfaceSnapshot {
         for table in &self.tables {
             rendered.push_str(&format!("[{}] {}\n", table.name, table.entries.len()));
             for entry in &table.entries {
-                rendered.push_str(entry);
+                rendered.push_str(&hex::encode(entry));
                 rendered.push('\n');
             }
         }
@@ -109,7 +112,7 @@ pub struct DependencyInterfaceTableSnapshot {
     /// Stable table name used by mismatch diagnostics.
     pub name: &'static str,
     /// Complete key/value records, sorted unless the source table is intrinsically ordered.
-    pub entries: Vec<String>,
+    pub entries: Vec<Vec<u8>>,
 }
 
 /// Exact state contributed while one provider was collected inside its component builder.
@@ -161,7 +164,7 @@ impl TypeChecker {
                 &self.dependency_direct_member_type_aliases,
             ),
             nested_table("direct_member_identities", &self.dependency_direct_member_identities),
-            map_table("declaration_nominal_scopes", &self.declaration_nominal_scopes),
+            shared_map_table("declaration_nominal_scopes", &self.declaration_nominal_scopes),
             map_table("retained_nominal_carriers", &self.retained_nominal_carriers),
             map_table("declaration_callables", &self.declaration_callables),
             nested_table("member_reexports", &self.dependency_member_reexports),
@@ -186,9 +189,7 @@ impl TypeChecker {
                 entries: self
                     .symbols
                     .dependency_interface_symbols()
-                    .map(|(id, symbol, identity)| {
-                        format!("{id:08}|{}|{}", stable_debug(symbol), stable_debug(&identity))
-                    })
+                    .map(|(id, symbol, identity)| stable_encode(&(id, symbol, identity)))
                     .collect(),
             },
         ];
@@ -714,7 +715,7 @@ impl TypeChecker {
                 module_name,
                 &self.dependency_direct_member_identities,
             ),
-            filtered_map_table(
+            filtered_shared_map_table(
                 "declaration_nominal_scopes",
                 &self.declaration_nominal_scopes,
                 |identity| identity_owned_by(identity, &module_path),
@@ -760,9 +761,7 @@ impl TypeChecker {
                     .into_iter()
                     .flat_map(|rows| rows.iter())
                     .enumerate()
-                    .map(|(index, (symbol, identity))| {
-                        format!("{index:08}|{}|{}", stable_debug(symbol), stable_debug(&identity))
-                    })
+                    .map(|(index, (symbol, identity))| stable_encode(&(index, symbol, identity)))
                     .collect(),
             },
         ];
@@ -821,20 +820,20 @@ fn key_owned_by(key: &str, module_path: &[String]) -> bool {
 }
 
 /// Render one module's value from a module-keyed map.
-fn module_table<V: Debug>(
+fn module_table<V: Serialize>(
     name: &'static str,
     module_name: &str,
     values: &HashMap<String, V>,
 ) -> DependencyInterfaceTableSnapshot {
     let entries = values
         .get(module_name)
-        .map(|value| vec![format!("{module_name:?}|{}", stable_debug(value))])
+        .map(|value| vec![stable_encode(&(module_name, value))])
         .unwrap_or_default();
     DependencyInterfaceTableSnapshot { name, entries }
 }
 
 /// Render one module's inner member map in deterministic order.
-fn nested_module_table<V: Debug>(
+fn nested_module_table<V: Serialize>(
     name: &'static str,
     module_name: &str,
     values: &HashMap<String, HashMap<String, V>>,
@@ -843,14 +842,14 @@ fn nested_module_table<V: Debug>(
         .get(module_name)
         .into_iter()
         .flat_map(HashMap::iter)
-        .map(|(member, value)| format!("{member:?}|{}", stable_debug(value)))
+        .map(|(member, value)| stable_encode(&(member, value)))
         .collect::<Vec<_>>();
     entries.sort();
     DependencyInterfaceTableSnapshot { name, entries }
 }
 
 /// Render one module's immutable ordered projection.
-fn ordered_module_table<V: Debug>(
+fn ordered_module_table<V: Serialize>(
     name: &'static str,
     module_name: &str,
     values: &HashMap<String, Arc<[V]>>,
@@ -859,13 +858,13 @@ fn ordered_module_table<V: Debug>(
         .get(module_name)
         .into_iter()
         .flat_map(|members| members.iter().enumerate())
-        .map(|(index, value)| format!("{index:08}|{}", stable_debug(value)))
+        .map(|(index, value)| stable_encode(&(index, value)))
         .collect();
     DependencyInterfaceTableSnapshot { name, entries }
 }
 
 /// Render entries selected by provider-owned canonical identity.
-fn filtered_map_table<K: Debug, V: Debug>(
+fn filtered_map_table<K: Serialize, V: Serialize>(
     name: &'static str,
     values: &impl MapEntries<K, V>,
     include: impl Fn(&K) -> bool,
@@ -873,14 +872,42 @@ fn filtered_map_table<K: Debug, V: Debug>(
     let mut entries = values
         .entries()
         .filter(|(key, _)| include(key))
-        .map(|(key, value)| format!("{}|{}", stable_debug(key), stable_debug(value)))
+        .map(|(key, value)| stable_encode(&(key, value)))
+        .collect::<Vec<_>>();
+    entries.sort();
+    DependencyInterfaceTableSnapshot { name, entries }
+}
+
+/// Encode selected map values through their shared inner value rather than pointer identity.
+fn filtered_shared_map_table<K: Serialize, V: Serialize>(
+    name: &'static str,
+    values: &HashMap<K, Arc<V>>,
+    include: impl Fn(&K) -> bool,
+) -> DependencyInterfaceTableSnapshot {
+    let mut entries = values
+        .iter()
+        .filter(|(key, _)| include(key))
+        .map(|(key, value)| stable_encode(&(key, value.as_ref())))
+        .collect::<Vec<_>>();
+    entries.sort();
+    DependencyInterfaceTableSnapshot { name, entries }
+}
+
+/// Encode a complete map through each shared value's structural contents rather than pointer identity.
+fn shared_map_table<K: Serialize, V: Serialize>(
+    name: &'static str,
+    values: &HashMap<K, Arc<V>>,
+) -> DependencyInterfaceTableSnapshot {
+    let mut entries = values
+        .iter()
+        .map(|(key, value)| stable_encode(&(key, value.as_ref())))
         .collect::<Vec<_>>();
     entries.sort();
     DependencyInterfaceTableSnapshot { name, entries }
 }
 
 /// Render module-qualified metadata whose stable key starts with the provider's canonical source path.
-fn prefixed_map_table<V: Debug>(
+fn prefixed_map_table<V: Serialize>(
     name: &'static str,
     module_path: &[String],
     values: &HashMap<String, V>,
@@ -890,27 +917,27 @@ fn prefixed_map_table<V: Debug>(
     let mut entries = values
         .iter()
         .filter(|(key, _)| *key == &exact || key.starts_with(&prefix))
-        .map(|(key, value)| format!("{key:?}|{}", stable_debug(value)))
+        .map(|(key, value)| stable_encode(&(key, value)))
         .collect::<Vec<_>>();
     entries.sort();
     DependencyInterfaceTableSnapshot { name, entries }
 }
 
 /// Render a map into key-sorted records without relying on its randomized iteration order.
-fn map_table<K: Debug, V: Debug>(
+fn map_table<K: Serialize, V: Serialize>(
     name: &'static str,
     values: &impl MapEntries<K, V>,
 ) -> DependencyInterfaceTableSnapshot {
     let mut entries = values
         .entries()
-        .map(|(key, value)| format!("{}|{}", stable_debug(key), stable_debug(value)))
+        .map(|(key, value)| stable_encode(&(key, value)))
         .collect::<Vec<_>>();
     entries.sort();
     DependencyInterfaceTableSnapshot { name, entries }
 }
 
 /// Render a module-keyed map whose inner maps also need deterministic ordering.
-fn nested_table<V: Debug>(
+fn nested_table<V: Serialize>(
     name: &'static str,
     values: &HashMap<String, HashMap<String, V>>,
 ) -> DependencyInterfaceTableSnapshot {
@@ -919,7 +946,7 @@ fn nested_table<V: Debug>(
         .flat_map(|(module, members)| {
             members
                 .iter()
-                .map(move |(member, value)| format!("{module:?}|{member:?}|{}", stable_debug(value)))
+                .map(move |(member, value)| stable_encode(&(module, member, value)))
         })
         .collect::<Vec<_>>();
     entries.sort();
@@ -927,7 +954,7 @@ fn nested_table<V: Debug>(
 }
 
 /// Render module-keyed immutable slices while preserving each projection's declared order.
-fn ordered_nested_table<V: Debug>(
+fn ordered_nested_table<V: Serialize>(
     name: &'static str,
     values: &HashMap<String, Arc<[V]>>,
 ) -> DependencyInterfaceTableSnapshot {
@@ -937,131 +964,11 @@ fn ordered_nested_table<V: Debug>(
             members
                 .iter()
                 .enumerate()
-                .map(move |(index, value)| format!("{module:?}|{index:08}|{}", stable_debug(value)))
+                .map(move |(index, value)| stable_encode(&(module, index, value)))
         })
         .collect::<Vec<_>>();
     entries.sort();
     DependencyInterfaceTableSnapshot { name, entries }
-}
-
-/// Render a debug value with every brace-delimited map or record sorted recursively.
-///
-/// Rust's derived `Debug` preserves sequence order but emits `HashMap` entries in randomized iteration order. The
-/// snapshot oracle must distinguish semantic table changes from that process-local noise, including maps nested
-/// inside symbol records. Sorting brace-delimited top-level fields also canonicalizes derived struct output without
-/// disturbing tuple, list or source-declared sequence order.
-fn stable_debug(value: &impl Debug) -> String {
-    canonicalize_debug_chars(&format!("{value:?}").chars().collect::<Vec<_>>())
-}
-
-/// Canonicalize nested debug groups while preserving quoted strings and ordered delimiters.
-fn canonicalize_debug_chars(chars: &[char]) -> String {
-    let mut output = String::new();
-    let mut index = 0;
-    while index < chars.len() {
-        if chars[index] == '"' {
-            let end = quoted_end(chars, index);
-            output.extend(chars[index..end].iter().copied());
-            index = end;
-            continue;
-        }
-        let Some(close) = matching_delimiter(chars[index]) else {
-            output.push(chars[index]);
-            index += 1;
-            continue;
-        };
-        let end = group_end(chars, index, close);
-        output.push(chars[index]);
-        let inner = &chars[index + 1..end - 1];
-        if chars[index] == '{' {
-            let mut fields = top_level_fields(inner)
-                .into_iter()
-                .map(|field| canonicalize_debug_chars(field).trim().to_string())
-                .filter(|field| !field.is_empty())
-                .collect::<Vec<_>>();
-            fields.sort();
-            output.push_str(&fields.join(", "));
-        } else {
-            output.push_str(&canonicalize_debug_chars(inner));
-        }
-        output.push(close);
-        index = end;
-    }
-    output
-}
-
-/// Return the exclusive end of one quoted debug string, honoring backslash escapes.
-fn quoted_end(chars: &[char], start: usize) -> usize {
-    let mut index = start + 1;
-    let mut escaped = false;
-    while index < chars.len() {
-        if !escaped && chars[index] == '"' {
-            return index + 1;
-        }
-        escaped = !escaped && chars[index] == '\\';
-        if chars[index] != '\\' {
-            escaped = false;
-        }
-        index += 1;
-    }
-    chars.len()
-}
-
-/// Find the exclusive end of a balanced debug group.
-fn group_end(chars: &[char], start: usize, expected_close: char) -> usize {
-    let mut stack = vec![expected_close];
-    let mut index = start + 1;
-    while index < chars.len() {
-        if chars[index] == '"' {
-            index = quoted_end(chars, index);
-            continue;
-        }
-        if let Some(close) = matching_delimiter(chars[index]) {
-            stack.push(close);
-        } else if stack.last().is_some_and(|close| *close == chars[index]) {
-            stack.pop();
-            if stack.is_empty() {
-                return index + 1;
-            }
-        }
-        index += 1;
-    }
-    chars.len()
-}
-
-/// Split a brace-delimited debug record at commas outside nested groups and strings.
-fn top_level_fields(chars: &[char]) -> Vec<&[char]> {
-    let mut fields = Vec::new();
-    let mut stack = Vec::new();
-    let mut start = 0;
-    let mut index = 0;
-    while index < chars.len() {
-        if chars[index] == '"' {
-            index = quoted_end(chars, index);
-            continue;
-        }
-        if let Some(close) = matching_delimiter(chars[index]) {
-            stack.push(close);
-        } else if stack.last().is_some_and(|close| *close == chars[index]) {
-            stack.pop();
-        } else if chars[index] == ',' && stack.is_empty() {
-            fields.push(&chars[start..index]);
-            start = index + 1;
-        }
-        index += 1;
-    }
-    fields.push(&chars[start..]);
-    fields
-}
-
-/// Pair one opening debug delimiter with its close.
-fn matching_delimiter(open: char) -> Option<char> {
-    match open {
-        '{' => Some('}'),
-        '[' => Some(']'),
-        '(' => Some(')'),
-        _ => None,
-    }
 }
 
 /// Common read-only entry view for hash and ordered maps used by interface state.

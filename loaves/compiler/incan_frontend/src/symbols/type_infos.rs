@@ -3,7 +3,7 @@
 use super::*;
 
 /// Class information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ClassInfo {
     pub type_params: Vec<String>,
     pub extends: Option<String>,
@@ -38,7 +38,7 @@ pub struct ClassInfo {
 }
 
 /// Model information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ModelInfo {
     pub type_params: Vec<String>,
     pub traits: Vec<String>,
@@ -53,7 +53,7 @@ pub struct ModelInfo {
 }
 
 /// Newtype information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct NewtypeInfo {
     pub type_params: Vec<String>,
     pub is_rusttype: bool,
@@ -81,7 +81,7 @@ pub struct NewtypeInfo {
 }
 
 /// One resolved constrained primitive predicate on a newtype underlying type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct NewtypePrimitiveConstraint {
     pub key: TypeConstraintKey,
     pub value: i64,
@@ -89,7 +89,7 @@ pub struct NewtypePrimitiveConstraint {
 }
 
 /// Enum information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct EnumInfo {
     pub type_params: Vec<String>,
     /// Explicit traits adopted by this enum via `with`, using source-level trait names.
@@ -116,14 +116,14 @@ pub struct EnumInfo {
 }
 
 /// RFC 032 value enum metadata.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ValueEnumInfo {
     pub value_type: ValueEnumBacking,
     pub values: HashMap<String, ValueEnumValue>,
 }
 
 /// Backing primitive kind for a value enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum ValueEnumBacking {
     Str,
     Int,
@@ -148,7 +148,7 @@ impl ValueEnumBacking {
 }
 
 /// Literal value assigned to one value enum variant.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum ValueEnumValue {
     Str(String),
     Int(i64),
@@ -165,7 +165,7 @@ impl ValueEnumValue {
 }
 
 /// Trait information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct TraitInfo {
     pub type_params: Vec<String>,
     /// Direct supertraits from `with Trait, Other[T]` (RFC 042), after resolving type arguments.
@@ -188,7 +188,7 @@ pub struct TraitInfo {
 /// a module, so resolving those references is a checking concern; collection records what was written and where, and
 /// checking turns each into a symbol reference. Holding this capability never grants what it requires — that is the
 /// invariant the separate list exists to preserve.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct CapabilityInfo {
     /// Prose from the `description` clause, when the declaration supplied a string literal.
     pub description: Option<String>,
@@ -203,7 +203,7 @@ pub struct CapabilityInfo {
 ///
 /// The span is kept so a later diagnostic can point at the reference the author wrote rather than at the enclosing
 /// declaration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct CapabilityRequirement {
     /// Dotted path exactly as written, split into segments — `host.http.request` becomes three segments.
     pub path: Vec<String>,
@@ -212,14 +212,14 @@ pub struct CapabilityRequirement {
 }
 
 /// Module/import information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ModuleInfo {
     pub path: Vec<String>,
     pub is_python: bool,
 }
 
 /// Variant information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct VariantInfo {
     /// Canonical identity of the enum member declaration, when provenance is available.
     pub identity: Option<CanonicalSymbolId>,
@@ -228,7 +228,7 @@ pub struct VariantInfo {
 }
 
 /// Checked migration guidance for a declaration or member that used to be public.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
 pub struct MadePrivateInfo {
     pub since: Option<String>,
     pub retire_in: Option<String>,
@@ -300,7 +300,7 @@ fn made_private_reference(expr: &crate::ast::Expr) -> Option<String> {
 }
 
 /// Field information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct FieldInfo {
     /// Canonical identity of the source field declaration, when declaration provenance is available.
     pub identity: Option<CanonicalSymbolId>,
@@ -475,7 +475,7 @@ fn restore_qualified_surface_arguments(
 }
 
 /// Computed property information.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PropertyInfo {
     /// Canonical identity of the source property declaration, when declaration provenance is available.
     pub identity: Option<CanonicalSymbolId>,
@@ -487,7 +487,7 @@ pub struct PropertyInfo {
 }
 
 /// Method information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct MethodInfo {
     /// Canonical identity of the source method declaration, when declaration provenance is available.
     pub identity: Option<CanonicalSymbolId>,
@@ -517,7 +517,7 @@ pub struct MethodInfo {
 /// one that implements an adopted trait's method, takes the trait's visibility instead: public for a `pub` trait, and
 /// the trait's module for any other trait, which is the only module that can name it. A language hook is public by
 /// rule. A method alias keeps its target's scope.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum MethodScope {
     /// Callable only from methods of the declaring type.
     Type,
@@ -548,7 +548,7 @@ impl MethodScope {
 }
 
 /// Resolved type-parameter bound metadata preserved for export/import paths.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct TypeBoundInfo {
     pub name: String,
     pub source_name: Option<String>,
@@ -563,14 +563,14 @@ pub struct TypeBoundInfo {
 }
 
 /// One implementation-header type parameter retained from checked library metadata.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ImplementationTypeParamInfo {
     pub name: String,
     pub bounds: Vec<ImplementationTraitBoundInfo>,
 }
 
 /// One exact implementation requirement retained from checked library metadata.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ImplementationTraitBoundInfo {
     pub trait_path: String,
     pub type_args: Vec<ResolvedType>,
@@ -579,7 +579,7 @@ pub struct ImplementationTraitBoundInfo {
 }
 
 /// Origin classification for an implementation-only bound before IR lowering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum ImplementationTraitBoundOriginInfo {
     Standard,
     RustCapability,

@@ -216,7 +216,7 @@ pub struct LoopContext {
 }
 
 /// Resolved target for a source-level `type Alias = Target` declaration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct TypeAliasTarget {
     pub type_params: Vec<String>,
     pub target: ResolvedType,
@@ -322,7 +322,7 @@ impl ResolvedDependencyMember {
 }
 
 /// One source re-export link retained for canonical declaration lookup and cycle diagnostics.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub(super) struct DependencyMemberReexport {
     /// Module path written by the re-export.
     target_module: ImportPath,
@@ -357,7 +357,7 @@ pub(super) enum DependencyMemberResolutionFailure {
 /// Local aliases and provider-qualified internal signature spellings map to this value. Admitted artifacts compare
 /// by their exact selected instance and canonical declaration. Legacy metadata without canonical evidence retains
 /// its provider-local source path; a consumer route is used only by metadata-only compatibility adapters.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PublicLibraryTypeIdentity {
     dependency_key: String,
     source_path: Vec<String>,
@@ -481,7 +481,7 @@ struct AnnotationOwner {
 
 /// A callable's original type templates, retained before imports, receiver arguments, or partial application specialize
 /// them. Type-parameter positions never grant a declaration-owned nominal identity to a caller's substitution.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 struct DeclarationCallableTypes {
     /// Parameter templates in declaration order, including their source binding labels.
     params: Vec<CallableParam>,
@@ -1037,7 +1037,7 @@ struct NativeQueryState {
 /// Dependency map keys are compatibility lookup keys that join path segments with underscores. They cannot safely
 /// reconstruct a source identity because a legal segment can itself contain an underscore, so the owner path travels
 /// beside the definition rather than being recovered from the cache key.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DependencyRegistryDefinitions {
     /// Exact source module that declares the cached registry statics.
     owner_module_path: Vec<String>,

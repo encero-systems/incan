@@ -15,7 +15,7 @@ pub enum ScopeKind {
 }
 
 /// A symbol in the symbol table
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Symbol {
     pub name: String,
     pub kind: SymbolKind,
@@ -26,7 +26,7 @@ pub struct Symbol {
 /// How a `rust::...` import binding relates to Rust’s module/type namespace (RFC 041).
 ///
 /// Incan does not run the Rust type checker here; this classification is derived from import syntax only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum RustImportBindingKind {
     /// `import rust::crate_name` — binds the crate root as a namespace (not a concrete type).
     CrateRoot,
@@ -37,7 +37,7 @@ pub enum RustImportBindingKind {
 }
 
 /// Provenance for a symbol that refers into a Rust dependency via `rust::` (RFC 041).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct RustItemInfo {
     /// Crate name (first segment after `rust::` in the import source).
     pub crate_name: String,
@@ -46,11 +46,23 @@ pub struct RustItemInfo {
     pub path: String,
     pub binding: RustImportBindingKind,
     /// Optional extracted Rust semantic metadata (RFC 041), shared with the lookup store and imported aliases.
+    #[serde(serialize_with = "serialize_optional_rust_metadata")]
     pub metadata: Option<Arc<RustItemMetadata>>,
 }
 
+/// Serialize shared Rust metadata by value so the dependency-interface receipt does not require Serde's `rc` feature.
+fn serialize_optional_rust_metadata<S>(
+    metadata: &Option<Arc<RustItemMetadata>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serde::Serialize::serialize(&metadata.as_deref(), serializer)
+}
+
 /// Kind of symbol
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum SymbolKind {
     /// Variable/binding
     Variable(VariableInfo),
@@ -79,7 +91,7 @@ pub enum SymbolKind {
 }
 
 /// Variable information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct VariableInfo {
     pub ty: ResolvedType,
     pub is_mutable: bool,
@@ -87,7 +99,7 @@ pub struct VariableInfo {
 }
 
 /// Module static storage metadata.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct StaticInfo {
     pub ty: ResolvedType,
     pub is_public: bool,
@@ -96,7 +108,7 @@ pub struct StaticInfo {
 }
 
 /// Function information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct FunctionInfo {
     pub params: Vec<CallableParam>,
     pub return_type: ResolvedType,
@@ -111,7 +123,7 @@ pub struct FunctionInfo {
 }
 
 /// One top-level overload candidate.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct FunctionOverloadInfo {
     pub info: FunctionInfo,
     pub span: Span,
@@ -128,7 +140,7 @@ pub struct FunctionOverloadInfo {
 /// RFC 038 requires callable values to retain rest-parameter shape instead of collapsing to a flat list of types. The
 /// optional `name` lets explicit `Callable[...]` types keep unnamed fixed parameters while declarations and methods
 /// preserve names for keyword binding.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct CallableParam {
     pub name: Option<String>,
     pub ty: ResolvedType,
@@ -239,7 +251,7 @@ impl CallableParam {
 }
 
 /// Type information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum TypeInfo {
     Builtin,
     Class(ClassInfo),

@@ -33,7 +33,7 @@ pub struct StandardRegistryTypes {
 }
 
 /// Type and subject contract declared by one `Registry.define(...)` static.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct RegistryDefinitionInfo {
     pub key_type: ResolvedType,
     pub descriptor_type: ResolvedType,

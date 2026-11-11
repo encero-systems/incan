@@ -399,7 +399,7 @@ pub enum CheckedExportProjection {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum CheckedParamDefault {
     Int(i64),
     Float(f64),
@@ -424,13 +424,13 @@ pub enum CheckedParamDefault {
     Unsupported,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct CheckedParamDefaultArg {
     pub name: Option<String>,
     pub value: CheckedParamDefault,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct CheckedParamDefaultCallSignature {
     pub params: Vec<CallableParam>,
     pub return_type: ResolvedType,

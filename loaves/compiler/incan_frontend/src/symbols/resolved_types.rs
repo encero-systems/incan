@@ -105,7 +105,7 @@ pub(crate) fn resolved_type_contains_rust_path(ty: &ResolvedType) -> bool {
 }
 
 /// Resolved type (after type checking)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum ResolvedType {
     /// Internal Rust never type (`!`).
     ///
