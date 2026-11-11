@@ -9,6 +9,7 @@ from std.json import JsonValue, parse
 from bakery import find, fact_file
 from bakery_records import Fact
 from bakery_roots import register_root
+from compiler_body_values import encode_body_inventory, select_body_inventory
 from engine_epochs import record_text, load_epoch
 from features import FeatureRequest
 from files import json_text
@@ -24,6 +25,7 @@ from observation import FileMetadata, file_metadata
 from shared_link import development_link, linkage_key, library_witness, witness_current
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
+from pub::internal_models.checker_records import CHECKER_PROFILE
 
 const SCHEMA: str = "incan.engine.native-unit/1"
 
@@ -134,7 +136,9 @@ pub def obtain(
     binary = program_binary(ready)
     record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
     # 3. Exactly one existing producer owns claiming and publishing a native unit.
-    produced = obtain_executable(ready, toolchain, binary, compiled_key, true, Some(store), true)?
+    graph = snapshot(store).map_err((error) => error.message())?
+    selected_bodies = encode_body_inventory(select_body_inventory(graph, CHECKER_PROFILE)?)?
+    produced = obtain_executable(ready, toolchain, binary, compiled_key, true, Some(store), true, Some(selected_bodies))?
     if produced.code != 0:
         return Ok(
             ProgramOutcome(

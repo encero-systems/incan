@@ -33,6 +33,7 @@ from pub::internal_models import (
     ReadyWork,
     RecordRoot,
     decode_demand_page,
+    decode_graph_body_values,
     decode_prepared_inputs,
     decode_ready_work,
     encode_prepared_inputs,
@@ -40,11 +41,12 @@ from pub::internal_models import (
 )
 from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
-from compiler_body_values import publish_body_values, select_body_inventory, select_body_values
+from compiler_body_values import encode_body_inventory, publish_body_values, select_body_inventory, select_body_values
 
 
 pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[None, str]:
     """No selected snapshot can observe only part of a completed evaluation and its four witness kinds."""
+    assert len(decode_graph_body_values(encode_body_inventory([])?).map_err((error) => f"{error:?}")?) == 0
     before = store_snapshot(memory_root()).map_err((error) => error.message())?
     receipt = witnessed_receipt()
     published = publish_evaluation(
