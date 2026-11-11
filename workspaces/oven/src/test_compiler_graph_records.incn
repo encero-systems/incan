@@ -28,16 +28,16 @@ from pub::internal_models import (
     RankCertificate,
     ReadyWork,
     RecordRoot,
-)
-from compiler_graph_records import publish_evaluation
-from compiler_record_envelopes import (
-    RankedActivation,
-    RankedLocalSweep,
     decode_demand_page,
     decode_prepared_inputs,
     decode_ready_work,
     encode_prepared_inputs,
     encode_ready_work,
+)
+from compiler_graph_records import publish_evaluation
+from compiler_record_envelopes import (
+    RankedActivation,
+    RankedLocalSweep,
     persist_activation,
 )
 

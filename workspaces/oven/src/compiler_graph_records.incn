@@ -4,7 +4,7 @@ from std.encoding.hex import hexlify
 from std.json import JsonValue
 from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot, begin, commit, put
-from pub::internal_models import ProducerRank, ProducerStage
+from pub::internal_models import ProducerRank, ProducerStage, encode_read_receipt, stage_name
 from pub::internal_models.records import (
     ReadReceipt,
     ReadWitness,
@@ -15,10 +15,8 @@ from pub::internal_models.records import (
     encode_record_key,
 )
 from files import json_text
-from compiler_record_envelopes import stage_name
 
 const EVALUATION_SCHEMA: str = "incan.engine.evaluation/1"
-const RECEIPT_SCHEMA: str = "incan.engine.read-receipt/1"
 const EDGE_SCHEMA: str = "incan.engine.read-edge/1"
 
 
@@ -58,7 +56,7 @@ pub def publish_evaluation(
     value_key = encode_record_key(receipt.preparation.output)?
     value_digest = digest(value)
     edges = normalized_edges(receipt.witnesses)?
-    receipt_bytes = encode_receipt(receipt, edges)?
+    receipt_bytes = encode_read_receipt(receipt)?
     receipt_root = digest(receipt_bytes)
     receipt_key = "incan.engine.receipt\t" + receipt_root
     evaluation_key = evaluation_record_key(receipt.scope.profile, value_key)
@@ -123,22 +121,6 @@ def edge(kind: str, request: RecordRequest, evidence: str) -> Result[EdgeFact, s
     return Ok(EdgeFact(kind=kind, target=encode_record_key(request.key)?, request=request, evidence=evidence))
 
 
-def encode_receipt(receipt: ReadReceipt, edges: list[EdgeFact]) -> Result[bytes, str]:
-    """Encode the complete activation receipt whose digest the evaluation retains."""
-    document = JsonValue.object(
-        {"schema": JsonValue.string(RECEIPT_SCHEMA), "read_schema": JsonValue.string(receipt.schema), "snapshot": JsonValue.string(
-            receipt.scope.snapshot,
-        ), "profile": JsonValue.string(receipt.scope.profile), "output": JsonValue.string(
-            encode_record_key(receipt.preparation.output)?,
-        ), "rank_certificate": JsonValue.string(receipt.preparation.rank_certificate), "selector_witnesses": JsonValue.string(
-            receipt.preparation.selector_witnesses,
-        ), "operations": JsonValue.int(receipt.operations), "response_bytes": JsonValue.int(receipt.response_bytes), "witnesses": JsonValue.array(
-            [edge_document(edge) for edge in edges],
-        )},
-    )
-    return Ok(json_text(document)?.encode("utf-8"))
-
-
 def encode_evaluation(
     profile: str,
     output: str,
@@ -170,15 +152,6 @@ def encode_edge(reader: str, profile: str, edge: EdgeFact) -> Result[bytes, str]
         ), "evidence": JsonValue.string(edge.evidence)},
     )
     return Ok(json_text(document)?.encode("utf-8"))
-
-
-def edge_document(edge: EdgeFact) -> JsonValue:
-    """Encode the compiler-owned witness meaning retained by the engine-owned graph indexes."""
-    return JsonValue.object(
-        {"kind": JsonValue.string(edge.kind), "target": JsonValue.string(edge.target), "selection": selection_document(
-            edge.request,
-        ), "evidence": JsonValue.string(edge.evidence)},
-    )
 
 
 def selection_document(request: RecordRequest) -> JsonValue:

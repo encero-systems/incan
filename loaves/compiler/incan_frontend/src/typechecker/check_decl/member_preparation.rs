@@ -274,7 +274,7 @@ impl TypeChecker {
         let (restore, yield_context) = self.enter_prepared_callable(prepared.callable);
         if let Some(body) = &method.body {
             self.check_work.method_bodies += 1;
-            self.check_callable_body(
+            let _ = self.check_callable_body(
                 body,
                 method.is_async(),
                 span,

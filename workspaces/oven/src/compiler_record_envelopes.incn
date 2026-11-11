@@ -1,30 +1,21 @@
 """Engine-owned persistence and rank-order scheduling for compiler record-service activation envelopes."""
 
 from std.encoding.hex import hexlify
-from std.json import JsonValue, parse
 from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot, begin, commit, put
 from pub::internal_models import (
+    DEMAND_FAMILY,
+    PREPARED_FAMILY,
+    WORK_FAMILY,
     DemandPage,
-    InputSnapshot,
     PreparedInputs,
-    ProducerProfile,
     ProducerRank,
     ProducerStage,
-    RankCertificate,
     ReadyWork,
-    RecordRoot,
+    encode_demand_page,
+    encode_prepared_inputs,
+    encode_ready_work,
 )
-from pub::internal_models.records import MemberSelection, PayloadSelection, RecordKey, RecordRequest, RecordSelection
-from files import json_text
-from json_fields import required_items, required_text
-
-const DEMAND_SCHEMA: str = "incan.engine.demand-page/1"
-const PREPARED_SCHEMA: str = "incan.engine.prepared-inputs/1"
-const WORK_SCHEMA: str = "incan.engine.ready-work/1"
-const DEMAND_FAMILY: str = "incan.engine.demand-page"
-const PREPARED_FAMILY: str = "incan.engine.prepared-inputs"
-const WORK_FAMILY: str = "incan.engine.ready-work"
 
 
 pub model RankedActivation:
@@ -116,123 +107,6 @@ pub def persist_activation(
     )
 
 
-pub def encode_demand_page(value: DemandPage) -> Result[bytes, str]:
-    """Encode one bounded demand page without assigning producer meaning to its keys."""
-    document = JsonValue.object(
-        {"schema": JsonValue.string(DEMAND_SCHEMA), "keys": JsonValue.array([key_document(key) for key in value.keys])},
-    )
-    return Ok(json_text(document)?.encode("utf-8"))
-
-
-pub def decode_demand_page(encoded: bytes) -> Result[DemandPage, str]:
-    """Decode a complete demand page and reject another schema or malformed key."""
-    document = document(encoded, DEMAND_SCHEMA)?
-    mut keys: list[RecordKey] = []
-    for value in required_items(document, "keys")?:
-        keys.append(read_key(value)?)
-    return Ok(DemandPage(keys=keys))
-
-
-pub def encode_prepared_inputs(value: PreparedInputs) -> Result[bytes, str]:
-    """Encode one exact prepared envelope, including every bounded request and certified rank input."""
-    document = JsonValue.object(
-        {"schema": JsonValue.string(PREPARED_SCHEMA), "output": key_document(value.output), "snapshot": JsonValue.string(
-            value.snapshot.root.digest,
-        ), "profile": JsonValue.string(value.profile.identity.digest), "required_reads": JsonValue.array(
-            [request_document(request) for request in value.required_reads],
-        ), "rank_namespace": JsonValue.int(value.rank_certificate.rank.namespace), "rank_stage": JsonValue.string(
-            stage_name(value.rank_certificate.rank.stage),
-        ), "rank_dependency": JsonValue.int(value.rank_certificate.rank.dependency), "rank_evidence": JsonValue.string(
-            value.rank_certificate.evidence.digest,
-        ), "selector_witnesses": JsonValue.string(value.selector_witnesses.digest)},
-    )
-    return Ok(json_text(document)?.encode("utf-8"))
-
-
-pub def decode_prepared_inputs(encoded: bytes) -> Result[PreparedInputs, str]:
-    """Decode one exact prepared envelope without resolving or evaluating any requested record."""
-    value = document(encoded, PREPARED_SCHEMA)?
-    mut required_reads: list[RecordRequest] = []
-    for request in required_items(value, "required_reads")?:
-        required_reads.append(read_request(request)?)
-    return Ok(
-        PreparedInputs(
-            output=read_key(required(value, "output")?)?,
-            snapshot=InputSnapshot(root=RecordRoot(digest=required_text(value, "snapshot")?)),
-            profile=ProducerProfile(identity=RecordRoot(digest=required_text(value, "profile")?)),
-            required_reads=required_reads,
-            rank_certificate=RankCertificate(
-                rank=ProducerRank(
-                    namespace=required_int(value, "rank_namespace")?,
-                    stage=read_stage(required_text(value, "rank_stage")?)?,
-                    dependency=required_int(value, "rank_dependency")?,
-                ),
-                evidence=RecordRoot(digest=required_text(value, "rank_evidence")?),
-            ),
-            selector_witnesses=RecordRoot(digest=required_text(value, "selector_witnesses")?),
-        ),
-    )
-
-
-pub def encode_ready_work(value: ReadyWork) -> Result[bytes, str]:
-    """Encode one selected output, stage and exact producer profile for value evaluation."""
-    document = JsonValue.object(
-        {"schema": JsonValue.string(WORK_SCHEMA), "output": key_document(value.output), "stage": JsonValue.string(
-            stage_name(value.stage),
-        ), "profile": JsonValue.string(value.profile.identity.digest)},
-    )
-    return Ok(json_text(document)?.encode("utf-8"))
-
-
-pub def decode_ready_work(encoded: bytes) -> Result[ReadyWork, str]:
-    """Decode one ready-work root without accepting an unknown stage or empty profile binding."""
-    value = document(encoded, WORK_SCHEMA)?
-    return Ok(
-        ReadyWork(
-            output=read_key(required(value, "output")?)?,
-            stage=read_stage(required_text(value, "stage")?)?,
-            profile=ProducerProfile(identity=RecordRoot(digest=required_text(value, "profile")?)),
-        ),
-    )
-
-
-pub def envelope_key(family: str, root: str) -> Result[str, str]:
-    """Resolve one content root only inside its engine-owned envelope family."""
-    supported = family == DEMAND_FAMILY or family == PREPARED_FAMILY or family == WORK_FAMILY
-    if not supported or not valid_digest(root):
-        return Err("invalid compiler activation envelope root")
-    return Ok(rooted(family, root))
-
-
-pub def stage_name(stage: ProducerStage) -> str:
-    """Encode the closed producer-stage set independently of enum ordinals."""
-    match stage:
-        ProducerStage.Discover => return "discover"
-        ProducerStage.Signature => return "signature"
-        ProducerStage.Layout => return "layout"
-        ProducerStage.Default => return "default"
-        ProducerStage.CheckBody => return "check-body"
-        ProducerStage.BodyIr => return "body-ir"
-        ProducerStage.Instance => return "instance"
-        ProducerStage.PlanFunction => return "plan-function"
-        ProducerStage.NativeInterface => return "native-interface"
-
-
-def read_stage(value: str) -> Result[ProducerStage, str]:
-    """Decode the closed producer-stage spelling without silently widening the current profile."""
-    match value:
-        "discover" => return Ok(ProducerStage.Discover)
-        "signature" => return Ok(ProducerStage.Signature)
-        "layout" => return Ok(ProducerStage.Layout)
-        "default" => return Ok(ProducerStage.Default)
-        "check-body" => return Ok(ProducerStage.CheckBody)
-        "body-ir" => return Ok(ProducerStage.BodyIr)
-        "instance" => return Ok(ProducerStage.Instance)
-        "plan-function" => return Ok(ProducerStage.PlanFunction)
-        "native-interface" => return Ok(ProducerStage.NativeInterface)
-        _ => return Err("unknown compiler producer stage")
-
-
 def valid_activation(value: RankedActivation) -> bool:
     """Whether one local activation has one output, snapshot, profile and CheckBody rank authority."""
     return (
@@ -271,105 +145,6 @@ def stage_order(stage: ProducerStage) -> int:
         ProducerStage.NativeInterface => return 8
 
 
-def key_document(key: RecordKey) -> JsonValue:
-    """Encode every logical identity dimension without a store delimiter projection."""
-    return JsonValue.object(
-        {"family": JsonValue.string(key.family), "identity": JsonValue.string(key.identity), "identity_profile": JsonValue.string(
-            key.identity_profile,
-        ), "origin": JsonValue.string(key.origin), "facet": JsonValue.string(key.facet), "context": JsonValue.string(
-            key.context,
-        )},
-    )
-
-
-def read_key(value: JsonValue) -> Result[RecordKey, str]:
-    """Decode all logical identity dimensions and refuse empty authority fields."""
-    key = RecordKey(
-        family=required_text(value, "family")?,
-        identity=required_text(value, "identity")?,
-        identity_profile=required_text(value, "identity_profile")?,
-        origin=required_text(value, "origin")?,
-        facet=required_text(value, "facet")?,
-        context=required_text(value, "context")?,
-    )
-    if key.family == "" or key.identity == "" or key.identity_profile == "" or key.origin == "" or key.facet == "":
-        return Err("compiler record key authority fields must be nonempty")
-    return Ok(key)
-
-
-def request_document(request: RecordRequest) -> JsonValue:
-    """Encode a bounded record request and its exact field, payload or membership selection."""
-    mut fields: Dict[str, JsonValue] = {"key": key_document(request.key), "byte_limit": JsonValue.int(request.byte_limit)}
-    match request.selection:
-        RecordSelection.Field(name) =>
-            fields["selection"] = JsonValue.object({"kind": JsonValue.string("field"), "name": JsonValue.string(name)})
-        RecordSelection.Payload(payload) =>
-            fields["selection"] = JsonValue.object(
-                {"kind": JsonValue.string("payload"), "reference": JsonValue.string(payload.reference), "offset": JsonValue.int(
-                    payload.offset,
-                ), "length": JsonValue.int(payload.length)},
-            )
-        RecordSelection.Members(members) =>
-            fields["selection"] = JsonValue.object(
-                {"kind": JsonValue.string("members"), "selector": JsonValue.string(members.selector), "order": JsonValue.string(
-                    members.order,
-                ), "lower": JsonValue.string(members.lower), "upper": JsonValue.string(members.upper), "continuation": JsonValue.string(
-                    members.continuation,
-                )},
-            )
-    return JsonValue.object(fields)
-
-
-def read_request(value: JsonValue) -> Result[RecordRequest, str]:
-    """Decode one bounded request without accepting selector defaults or negative bounds."""
-    selection = required(value, "selection")?
-    kind = required_text(selection, "kind")?
-    selected = match kind:
-        "field" => RecordSelection.Field(required_text(selection, "name")?)
-        "payload" => RecordSelection.Payload(
-            PayloadSelection(
-                reference=required_text(selection, "reference")?,
-                offset=required_int(selection, "offset")?,
-                length=required_int(selection, "length")?,
-            ),
-        )
-        "members" => RecordSelection.Members(
-            MemberSelection(
-                selector=required_text(selection, "selector")?,
-                order=required_text(selection, "order")?,
-                lower=required_text(selection, "lower")?,
-                upper=required_text(selection, "upper")?,
-                continuation=required_text(selection, "continuation")?,
-            ),
-        )
-        _ => return Err("unknown compiler record selection")
-
-    byte_limit = required_int(value, "byte_limit")?
-    if byte_limit < 0:
-        return Err("compiler record byte limit must be nonnegative")
-    return Ok(RecordRequest(key=read_key(required(value, "key")?)?, selection=selected, byte_limit=byte_limit))
-
-
-def document(encoded: bytes, schema: str) -> Result[JsonValue, str]:
-    """Decode one UTF-8 JSON envelope and require its exact versioned schema."""
-    value = parse(encoded.decode().map_err((_) => "compiler activation envelope is not UTF-8")?).map_err(
-        (error) => error.message(),
-    )?
-    if required_text(value, "schema")? != schema:
-        return Err("unsupported compiler activation envelope schema")
-    return Ok(value)
-
-
-def required(value: JsonValue, key: str) -> Result[JsonValue, str]:
-    """Read one required JSON field without coercion."""
-    return value.require(key).map_err((error) => error.message())
-
-
-def required_int(value: JsonValue, key: str) -> Result[int, str]:
-    """Read one required JSON integer without coercion."""
-    return required(value, key)?.expect_int().map_err((error) => error.message())
-
-
 def rooted(family: str, root: str) -> str:
     """Join an engine family and content identity into one canonical store key."""
     return family + "\t" + root
@@ -378,13 +153,3 @@ def rooted(family: str, root: str) -> str:
 def digest(value: bytes) -> str:
     """Return one lowercase SHA-256 content root."""
     return hexlify(sha256.digest(value))
-
-
-def valid_digest(value: str) -> bool:
-    """Whether one root is a lowercase SHA-256 digest."""
-    if len(value) != 64:
-        return false
-    for character in value:
-        if character not in "0123456789abcdef":
-            return false
-    return true
