@@ -43,6 +43,7 @@ from native_type_identity import (
 from rust::std::collections import BTreeMap
 from rust::std::mem import drop
 from rust::std::sync import Arc
+from rust::std::marker import Send, Sync
 from nominal_instances import NominalInstance, specialize_nominals_with_instances
 from checked_json import lower_checked_deserialize
 from string_conversion import lower_string_conversions
@@ -70,6 +71,7 @@ from program_entries import (
     comparison_bridge_instances,
     loaf_exports,
     lower_ordinary_bodies,
+    lower_ordinary_bodies_serial,
     no_emitted_frames,
     selected_program_entries,
     validate_program_entry_selection,
@@ -78,7 +80,7 @@ from static_storage import lower_computed_statics
 from frame_instances import lower_instances, merge_externals
 
 
-pub type BodyIrModule = rusttype RustBodyIrModule:
+pub type BodyIrModule = rusttype RustBodyIrModule with Send, Sync:
     """The frontend-owned canonical module, borrowed without conversion or duplication."""
 
 
@@ -208,7 +210,7 @@ pub def unit_plan(
     )
 
 
-def program_context(
+pub def program_context(
     constructors: Arc[ConstructorIndex],
     module: &BodyIrModule,
     mut intrinsics: list[EnumDeclaration],
@@ -266,9 +268,10 @@ def lowered_plan(
         borrowed_at(modules, entry),
         empty_templates,
     )?
-    mut context = specialized_context
+    shared_source_context = Arc.new(source_context)
+    mut context = Arc.new(specialized_context)
     mut constructor_table, unions, initial_intrinsics = layout_tables(
-        context,
+        context.as_ref(),
         files[entry],
         source_files,
         package_versions,
@@ -282,7 +285,7 @@ def lowered_plan(
     mut instances: list[Instance] = []
     initial_program = initial_plan_roots(
         constructors,
-        context,
+        context.as_ref(),
         files[entry],
         intrinsics,
         nominal_instances,
@@ -302,6 +305,9 @@ def lowered_plan(
     mut retained_nominals = nominal_instances
     lower_ordinary_bodies(
         context,
+        shared_source_context,
+        source_files,
+        package_versions,
         program,
         list(owners),
         sources,
@@ -318,9 +324,10 @@ def lowered_plan(
         trace,
         scalar_products,
         scalar_bodies,
+        overflow_checks,
     )?
     mut statics = lower_computed_statics(
-        context,
+        context.as_ref(),
         program,
         unions,
         sources,
@@ -331,19 +338,19 @@ def lowered_plan(
         externals,
         instances,
     )?
-    requirements = selected_runtime_requirements(context, externals, functions)?
+    requirements = selected_runtime_requirements(context.as_ref(), externals, functions)?
     if len(requirements) != 0:
         return Ok(
             UnitPlanning.NeedsRuntime(
                 UnitContinuation(
-                    source_context=Arc.new(source_context),
+                    source_context=shared_source_context,
                     template_constructors=Arc.new(template_constructors),
                     owners=list(owners),
                     sources=sources,
                     files=files,
                     entry_owner=owners[entry],
                     entry_file=files[entry],
-                    context=Arc.new(context),
+                    context=context,
                     template_references=template_references,
                     constructors=constructors,
                     program=program,
@@ -366,9 +373,9 @@ def lowered_plan(
     return finish_unit_plan(
         Arc.new(template_constructors),
         constructors,
-        Arc.new(source_context),
+        shared_source_context,
         template_references,
-        Arc.new(context),
+        context,
         program,
         owners,
         sources,
@@ -929,7 +936,7 @@ def lower_plan_frames(
 ) -> Result[BodyPlanning, str]:
     """Lower ordinary frames, then retain request layouts and the nominal length for source restoration."""
     empty_scalar_bodies: BTreeMap[CompilerNodeId, str] = BTreeMap.new()
-    lower_ordinary_bodies(
+    lower_ordinary_bodies_serial(
         context,
         program,
         list(owners),
