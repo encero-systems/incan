@@ -275,6 +275,11 @@ pub def reference_cache_root(seed_home: Path) -> Path:
     return seed_home.joinpath("cache/release-reference")
 
 
+pub def release_rust_cache_root(seed_home: Path) -> Path:
+    """Keep the relocated pinned Rust cache inside the caller-owned seed home boundary."""
+    return seed_home.joinpath("cache/release-rust")
+
+
 pub def same_bytes(left: Path, right: Path) -> Result[bool, str]:
     """Compare complete file bytes without delegating to an external command."""
     if not left.is_file() or not right.is_file():
