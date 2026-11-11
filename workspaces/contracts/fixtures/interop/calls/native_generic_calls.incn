@@ -38,7 +38,7 @@
 """Retain generic instantiations, scalar and text loans, and a nonreturning native result in one case."""
 
 from rust::incan_std_primitives::strings import str_slice_byte_range
-from rust::std::collections import HashMap, VecDeque
+from rust::std::collections import BTreeMap, HashMap, VecDeque
 from rust::std::convert import identity
 from rust::std::fmt import Display
 from rust::std::ffi import CString
@@ -209,6 +209,18 @@ def show_thread_capture() -> None:
     shared_worker = spawn(() => retained.as_ref().len())
     match shared_worker.join():
         Ok(size) => assert size == 5
+        Err(_) =>
+            assert false
+    values = [1, 2, 3]
+    selected: Option[int] = Some(4)
+    mut tree: BTreeMap[str, int] = BTreeMap.new()
+    tree.insert("item", 5)
+    shared_tree = Arc.new(tree)
+    container_worker = spawn(
+        () => len(values) == 3 and selected == Some(4) and shared_tree.as_ref().len() == 1usize,
+    )
+    match container_worker.join():
+        Ok(valid) => assert valid
         Err(_) =>
             assert false
 
