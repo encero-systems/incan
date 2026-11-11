@@ -817,11 +817,21 @@ Baselines come from the baseline measurement of 2026-10-29 (#2481, bundle 0cb030
 
 | Proof | Kind | Baseline | Measured | Commit | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| Every override has a tracked input | Correctness | Untracked global `Plan` | | | |
-| Edited incremental output equals cold output and behavior | Correctness | Not covered | | | |
-| CGUs actually regenerated per edit | Efficiency | Whole native unit | | | |
+| Every override has a tracked input | Correctness | Untracked global `Plan` | Not met: `mir_built`, `type_of` and `fn_sig` read injected answers from the whole process-global plan | `0be358dd8` | Native override audit; diagnostic only |
+| Edited incremental output equals cold output and behavior | Correctness | Not covered | Released and source drivers produced a byte-identical hello binary from one retained input; edited versus cold remains unproved | `0be358dd8` | Retained-input native driver comparison; diagnostic only |
+| CGUs actually regenerated per edit | Efficiency | Whole native unit | Oven one-body edit: 16 of 16 CGUs executed; 1.855 s front end, 0.869 s aggregate codegen and 0.183 s link | `0be358dd8` | One-body native phase trace; diagnostic only |
 | Head-to-head rows: hello cold, unchanged, private-body edit, signature edit, two homes, unrelated packages ×1/×2/×4, demanded records ×1/×2/×4, graph and LSP, census, idle workers | Efficiency | Pinned integration tree under BE-28 | | | |
-| Observation overhead | Efficiency | At most 5% | | | |
+| Observation overhead | Efficiency | At most 5% | One hello sample showed no regression: 73.37 ms released versus 68.88 ms source native phases; qualification remains unrun | `0be358dd8` | Retained-input native driver comparison; diagnostic only |
+
+#### Native phase diagnostic at `0be358dd8` and the 100 ms path
+
+The one-body Oven edit measured at `0be358dd8` took 2.907 s across the stable native phases: 1.855 s in the rustc front end, 0.869 s in aggregate codegen and 0.183 s in the linker. The native collector reported 16 CGUs and `all_on_success` for every one. The trace does not assign rustc's aggregate LLVM duration to an individual CGU; it records each actual CGU's name, item count and size estimate separately. On hello, the same retained compiler-unit input and common output path produced byte-identical binaries under the released and instrumented source drivers. Its source-driver split was 19.24 ms front end, 5.87 ms codegen and 43.76 ms link.
+
+None of the three proposed shortcuts is currently a valid reuse. No CGU is proven unaffected because the injected `mir_built`, `type_of` and `fn_sig` answers have no tracked per-definition input. The linker reads all 16 regenerated objects, so its 183 ms is required by the observed inputs rather than repeated work whose equality has been established. The development executable also carries the profile-selected debug information; stripping or narrowing it would change the selected artifact contract and would contradict §5.5 rather than prove reuse. Rustc incremental therefore stays off.
+
+Before E2 to E5 land, the adapter can retain the stable phase/CGU evidence, keep a complete override inventory, and build the edited-versus-cold comparison harness. It cannot soundly reuse a native answer. E2 must assign stable definition and instance identities, fixed CGU membership and complete fingerprints to the affected record reach. S3 and ranked E2 must make each overridden query read the exact body, signature, layout, attribute, position/debug and native-interface records it consumes, with witnessed dependencies. E3 must supply exact external native identities and payload compatibility. E4 must clone a qualified immutable incremental seed into private scratch and schedule it with bounded lifecycle ownership. E5 supplies the private-body, signature, test, run, graph and LSP workloads that prove the reuse boundary outside a single executable.
+
+The path to 100 ms is consequently a proof sequence, not a flag change: replace the global plan lookup with the record-backed `PlanReader`; embed the complete per-definition or unit fingerprint in every overridden query's tracked input; hold CGU membership fixed; regenerate only the CGU reach selected by those inputs; and relink from the resulting object set. The 1.855 s front end must become tracked query reuse, and the 0.869 s aggregate codegen must become affected-CGU work. The current 183 ms Oven link already exceeds the target, so the final step also needs measured linker or executable-indirection work after unchanged objects exist. The E6 qualification then compares edited incremental output with a non-incremental cold build byte-for-byte where the platform is reproducible and by behavior where the artifact contract permits variants. Any missing tracked input disables reuse for that unit.
 
 ### E7 Default switch and removal
 
