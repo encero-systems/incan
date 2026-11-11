@@ -581,14 +581,16 @@ def unit_outputs(
     return Ok((library, programs))
 
 
-def publish_native_inputs(
+pub def publish_native_inputs(
     facet: LocalFacet,
     request: RustBuild,
     built: Dict[str, BuiltUnit],
     search: list[str],
     unit: BuiltUnit,
 ) -> Result[None, str]:
-    """Record selected dependencies and search directories, adding the library's own directory for consumers."""
+    """Record a new producer's selected inputs without rewriting an immutable reused producer."""
+    if unit.reused:
+        return Ok(None)
     bindings = facet_bindings(facet, built, request.registry)?
     mut externs: list[JsonValue] = []
     for binding in bindings:

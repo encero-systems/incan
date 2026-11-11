@@ -21,7 +21,7 @@ from oven_tests import (
     summarize,
     summary_document,
 )
-from verify_installation import VerificationPhase, verification_phase_plans
+from verify_installation import VerificationPhase, verification_phase_plans, verification_trace_environment
 
 const GIB: int = 1073741824
 def test_jobs_follow_the_configured_count_then_the_cores() -> Result[None, str]:
@@ -102,6 +102,11 @@ def test_verification_phases_reserve_their_complete_parallel_work() -> Result[No
     assert verification_phase_plans(0)[0].reservation == 4 * GIB
     assert verification_phase_plans(0)[1].reservation == 2 * GIB
     assert verification_phase_plans(0)[4].reservation == 6 * GIB
+    assert len(verification_trace_environment(Path("/evidence"), "census", false)) == 0
+    traces = verification_trace_environment(Path("/evidence"), "census", true)
+    assert traces["INCAN_TRACE_DIR"] == "/evidence/traces/census/compiler"
+    assert traces["INCAN_NATIVE_TIMING"] == "1"
+    assert len(traces) == 2
     return Ok(None)
 
 
@@ -246,6 +251,16 @@ def test_joined_log_keeps_invocation_order_whatever_the_schedule() -> Result[Non
     assert joined == "line 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\n"
     assert not run_all("/usr/bin/false", planned, 4, 0)?
     assert run_all_failures("/usr/bin/false", planned, 4, 0)? == [0, 1, 2, 3, 4, 5, 6]
+    environment_log = logs.joinpath("environment.log")
+    environment = Invocation(
+        arguments=["OVEN_TEST_PROBE"],
+        directory=root.0,
+        reservation=GIB,
+        log=environment_log,
+        environment={"OVEN_TEST_PROBE": "visible"},
+    )
+    assert run_all("/usr/bin/printenv", [environment], 1, 0)?
+    assert environment_log.read_text("utf-8", "strict").map_err((error) => error.message())? == "visible\n"
     return Ok(None)
 
 

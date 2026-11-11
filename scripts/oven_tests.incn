@@ -67,6 +67,8 @@ pub model Invocation:
     pub directory: str
     pub reservation: int
     pub log: Path
+    # Explicit additions to this invocation's inherited environment.
+    pub environment: Dict[str, str] = {}
     # Zero leaves the containing step's deadline in charge.
     pub timeout_seconds: int = 0
     # Runs by itself after the others, because it requires an installation that has stopped changing.
@@ -373,6 +375,8 @@ def start(oven: str, planned: Invocation) -> Result[Child, str]:
         command.arg(argument)
     if planned.directory != "":
         command.current_dir(planned.directory)
+    for name in sorted([name for name in planned.environment.keys()]):
+        command.env(name, planned.environment[name])
     command.stdin(Stdio.null())
     command.stdout(log)
     command.stderr(errors)

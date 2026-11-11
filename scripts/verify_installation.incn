@@ -136,8 +136,14 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
     mut invocations: list[Invocation] = []
     compiler = installation.home.joinpath("bin/incan")
     program = installation.root.joinpath("scripts/verify_installation.incn")
+    retain_traces = get_or("INCAN_VERIFY_TRACES", "") == "1"
     for plan in plans:
         name = verification_phase_name(plan.phase)
+        trace_environment = verification_trace_environment(installation.run, name, retain_traces)
+        if retain_traces:
+            Path(trace_environment["INCAN_TRACE_DIR"])
+                .mkdir(true, true)
+                .map_err((error) => error.message())?
         invocations.append(
             Invocation(
                 arguments=[
@@ -154,6 +160,7 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
                 directory=installation.root.0,
                 reservation=plan.reservation,
                 log=installation.run.joinpath(f"phase-{name}.log"),
+                environment=trace_environment,
                 timeout_seconds=installation.timeout_seconds * 20,
             ),
         )
@@ -178,6 +185,17 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
             .map_err((error) => error.message())?.strip(),
     )
     return Ok((report, suites))
+
+
+pub def verification_trace_environment(run: Path, phase: str, enabled: bool) -> Dict[str, str]:
+    """Select one process-safe phase-owned compiler trace directory when installed tracing is requested."""
+    if not enabled:
+        return {}
+    stem = run.joinpath("traces").joinpath(phase)
+    return {
+        "INCAN_TRACE_DIR": stem.joinpath("compiler").0,
+        "INCAN_NATIVE_TIMING": "1",
+    }
 
 
 pub def verification_phase_plans(jobs: int) -> list[VerificationPhasePlan]:
