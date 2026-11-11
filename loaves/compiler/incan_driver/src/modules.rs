@@ -122,6 +122,9 @@ pub fn library_source_seeds(
         if canonical == entry_path {
             continue;
         }
+        if is_test_module_source(&source_file) {
+            continue;
+        }
         let Some(path_segments) = logical_module_segments_from_file(&session.source_root, &source_file) else {
             continue;
         };
@@ -142,6 +145,17 @@ pub fn library_source_seeds(
         seeds.push((canonical, path_segments.join("_"), path_segments));
     }
     Ok(seeds)
+}
+
+/// Exclude conventionally named test modules from a library's authored publication set.
+///
+/// Project tests compile as separate test units and may import the published library. Publishing those test roots in
+/// the library would merge both sides of that boundary and make every test part of the shared native producer again.
+fn is_test_module_source(source_file: &Path) -> bool {
+    source_file
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem.starts_with("test_"))
 }
 
 /// Return whether a root `main.incn` or `lib.incn` is the package entrypoint not selected by this build.
