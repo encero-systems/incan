@@ -7,7 +7,7 @@
 | Module | Holds |
 | --- | --- |
 | `protocol` | The version-one compile request, reply and readiness documents: request construction and admission, reply encoding and completion validation, and readiness encoding and validation. Oven imports this module as the compile client. |
-| `record_protocol` | The version-two `Prepare`, `NeedPrerequisite`, `Evaluate` and `Produced` record-activation messages. The client engine protocol carries none of these bodies. |
+| `record_protocol` | The version-two `Prepare`, `Prepared`, `NeedPrerequisite`, `Evaluate`, `Produced`, `SemanticRefusal` and `CompilerFault` record-activation messages and their closed request/reply sets. The client engine protocol carries none of these bodies. |
 | `lifecycle` | The retirement policy, apart from any socket: idle period, footprint margin, outcomes. |
 | `endpoint` | The worker's socket file, its withdrawal, and what a departed caller ends. |
 | `host` | The listener, peer identity, one activation at a time, replies and retirement. |
