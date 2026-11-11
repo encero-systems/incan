@@ -109,3 +109,21 @@ pub from record_service import (
     SemanticRefusal,
     ValueReference,
 )
+pub from activation_envelopes import (
+    DEMAND_SCHEMA,
+    PREPARED_SCHEMA,
+    WORK_SCHEMA,
+    DEMAND_FAMILY,
+    PREPARED_FAMILY,
+    WORK_FAMILY,
+    encode_demand_page,
+    decode_demand_page,
+    encode_prepared_inputs,
+    decode_prepared_inputs,
+    encode_ready_work,
+    decode_ready_work,
+    envelope_key,
+    stage_name,
+)
+pub from checker_records import from_native_local_fields, encode_record
+pub from read_receipts import RECEIPT_SCHEMA, encode_read_receipt

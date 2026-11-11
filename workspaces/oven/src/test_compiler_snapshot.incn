@@ -3,8 +3,8 @@
 from rust::std::str import from_utf8
 from std.fs import Path
 from compiler_snapshot import stage_snapshot
-from pub::incan_platform.store import Lookup, begin, commit, fork, owned, put
-from pub::incan_worker_host.record_snapshot import SNAPSHOT_FORMAT_PROFILE, SnapshotFaultKind, resolve_snapshot
+from pub::incan_platform.store import Lookup, begin, commit, fork, get, owned, put
+from pub::incan_worker_host.record_snapshot import SNAPSHOT_FORMAT_PROFILE, SnapshotFaultKind, resolve_snapshot, staged_key
 from scratch import scratch_directory
 from store_path_conversion import snapshot
 
@@ -55,6 +55,20 @@ pub def test_snapshot_descriptors_are_staged_resolved_and_scoped_by_digest() -> 
         Err(fault) =>
             assert fault.kind == SnapshotFaultKind.MissingDescriptor
         Ok(_) => return Err("worker resolved a digest the bakery does not hold")
+
+    output_view = resolve_snapshot(home.0, staged.digest).map_err((fault) => fault.message())?
+    outputs = output_view
+        .stage_compiler_outputs(b"local-value", b"read-receipt", b"", b"evaluations=1")
+        .map_err((fault) => fault.message())?
+    assert get(outputs.snapshot, staged_key("value", outputs.value)).map_err((error) => error.message())? == Some(
+        b"local-value",
+    )
+    assert get(outputs.snapshot, staged_key("receipt", outputs.receipt)).map_err((error) => error.message())? == Some(
+        b"read-receipt",
+    )
+    assert get(outputs.snapshot, staged_key("counter", outputs.counter)).map_err((error) => error.message())? == Some(
+        b"evaluations=1",
+    )
 
     wrong = stage_snapshot(home, store, project, ["compiler.input"], "incan.compiler-records/wrong")?
     match resolve_snapshot(home.0, wrong.digest):

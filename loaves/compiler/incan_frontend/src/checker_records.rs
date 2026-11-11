@@ -15,12 +15,16 @@ pub fn verify_fixture(source: &str, name: &str, fields: Vec<Vec<String>>) -> Res
     crate::typechecker::body_check::records::verify_fixture(source, name, fields)
 }
 
-/// Return the actual pending local output before any settlement, then discard the source checker and writer.
-pub fn fixture_local_projection(source: &str, name: &str) -> Result<Vec<Vec<String>>, RecordAdapterFault> {
-    crate::typechecker::body_check::records::fixture_local_projection(source, name)
-}
-
-/// Compare a decoded pending local owner against an independent pre-settlement cold native baseline.
-pub fn verify_local_fixture(source: &str, name: &str, fields: Vec<Vec<String>>) -> Result<(), RecordAdapterFault> {
-    crate::typechecker::body_check::records::verify_local_fixture(source, name, fields)
+/// Enter one local producer from decoded declaration and environment values, then discard its private checker.
+///
+/// The adapter accepts no ambient [`crate::typechecker::TypeChecker`]. It collects only the supplied revision's
+/// declaration headers, installs the decoded records, enters the selected declaration's existing
+/// `BodyCheckScope`, and returns that one producer output before settlement.
+pub fn produce_local_record(
+    source: &str,
+    name: &str,
+    declaration: Vec<Vec<String>>,
+    environment: Vec<Vec<Vec<String>>>,
+) -> Result<Vec<Vec<String>>, RecordAdapterFault> {
+    crate::typechecker::body_check::records::produce_local_record(source, name, declaration, environment)
 }

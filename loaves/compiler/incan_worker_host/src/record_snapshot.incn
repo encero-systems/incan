@@ -6,7 +6,7 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from std.json import JsonValue, parse
 from std.primitives.hash import sha256
-from pub::incan_platform.store import Lookup, Snapshot, lease, lease_token, lookup, owned, read_manifest
+from pub::incan_platform.store import Lookup, Snapshot, begin, commit, lease, lease_token, lookup, owned, put, read_manifest
 from pub::incan_platform.store import read_store_identity, snapshot as store_snapshot
 from pub::incan_platform.store.disk import root as disk_root
 from pub::incan_platform.store.files import StoreError
@@ -67,6 +67,16 @@ pub model SnapshotHandle:
     pub format_profile: str
 
 
+pub model StagedCompilerOutputs:
+    """Content roots for one value, receipt, diagnostic page and counter page staged in one store generation."""
+
+    pub snapshot: Snapshot
+    pub value: str
+    pub receipt: str
+    pub diagnostic: str
+    pub counter: str
+
+
 pub class ResolvedSnapshot:
     """An exact pinned view whose reads enforce the descriptor's allowed-root invariant."""
 
@@ -87,6 +97,33 @@ pub class ResolvedSnapshot:
     pub def record_source(self, scope: ReadScope) -> StoreRecordSource:
         """Transfer this resolved snapshot and its allowed roots into the compiler's authenticated read boundary."""
         return StoreRecordSource.open(self.snapshot, scope, self.allowed_roots)
+
+    pub def stage_compiler_outputs(
+        self,
+        value: bytes,
+        receipt: bytes,
+        diagnostic: bytes,
+        counter: bytes,
+    ) -> Result[StagedCompilerOutputs, SnapshotFault]:
+        """Stage one activation's four immutable output pages atomically against its resolved bakery view."""
+        value_root = digest(value)
+        receipt_root = digest(receipt)
+        diagnostic_root = digest(diagnostic)
+        counter_root = digest(counter)
+        mut transaction = put(begin(self.snapshot), staged_key("value", value_root), value)
+        transaction = put(transaction, staged_key("receipt", receipt_root), receipt)
+        transaction = put(transaction, staged_key("diagnostic", diagnostic_root), diagnostic)
+        transaction = put(transaction, staged_key("counter", counter_root), counter)
+        published = commit(transaction).map_err((error) => store_fault(error))?
+        return Ok(
+            StagedCompilerOutputs(
+                snapshot=published,
+                value=value_root,
+                receipt=receipt_root,
+                diagnostic=diagnostic_root,
+                counter=counter_root,
+            ),
+        )
 
 
 pub def encode_store_view(binding: StoreView) -> Result[str, str]:
@@ -125,6 +162,16 @@ pub def snapshot_handle_digest(handle: SnapshotHandle) -> Result[str, str]:
 pub def snapshot_record_key(digest: str) -> str:
     """Return the engine-owned store key for one content-named descriptor."""
     return f"{SNAPSHOT_FAMILY}\t{digest}"
+
+
+pub def staged_key(kind: str, root: str) -> str:
+    """Return the worker staging key for one content-named output page."""
+    return f"incan.compiler.staged-{kind}\t{root}"
+
+
+def digest(value: bytes) -> str:
+    """Return one lowercase SHA-256 content identity for a staged output page."""
+    return hexlify(sha256.digest(value))
 
 
 pub def canonical_roots(roots: list[str]) -> Result[list[str], str]:

@@ -374,13 +374,14 @@ impl TypeChecker {
         func: &FunctionDecl,
         span: Span,
         prepared: PreparedFunctionCheck,
+        record_program: Option<&Program>,
     ) {
         let previous_function = std::mem::replace(&mut self.receiver_plan_inputs.current_function, prepared.function);
         let previous_raw_owner =
             std::mem::replace(&mut self.current_c_abi_raw_call_owner, prepared.c_abi_raw_call_owner);
         let (restore, yield_context) = self.enter_prepared_callable(prepared.callable);
         self.check_work.function_bodies += 1;
-        self.check_callable_body(
+        let local_index = self.check_callable_body(
             &func.body,
             func.is_async(),
             span,
@@ -390,6 +391,9 @@ impl TypeChecker {
         self.receiver_plan_inputs.current_function = previous_function;
         self.current_c_abi_raw_call_owner = previous_raw_owner;
         self.finish_prepared_callable(restore);
+        if let (Some(program), Some(index)) = (record_program, local_index) {
+            self.produce_local_record(program, span, index);
+        }
     }
 
     /// Preserve function decorator application after statement checking while retaining its facts and diagnostics

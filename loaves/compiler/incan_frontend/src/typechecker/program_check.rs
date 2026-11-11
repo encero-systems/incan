@@ -196,6 +196,8 @@ impl TypeChecker {
         self.checked_bodies.clear();
         self.checked_declarations.clear();
         self.produced_declaration_records.clear();
+        self.produced_local_records.clear();
+        self.selected_local_records.clear();
         self.callable_declaration_reuse.clear();
         self.refused_ownership_authorities.clear();
         self.diagnostic_owner_ranges.clear();
@@ -356,7 +358,7 @@ impl TypeChecker {
                     self.check_reused_function(program, function, decl.span);
                     self.visibility_point = VisibilityPoint::AfterDeclaration(decl.span);
                 } else {
-                    self.check_environment_declaration(decl);
+                    self.check_environment_record_declaration(program, decl);
                 }
             }
         }

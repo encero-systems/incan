@@ -10,14 +10,10 @@ from checker_records import (
     decode_record,
     semantic_digest,
     from_native_fields,
+    from_native_local_fields,
     native_fields,
 )
-from rust::incan_frontend::checker_records import (
-    fixture_projection,
-    verify_fixture,
-    fixture_local_projection,
-    verify_local_fixture,
-)
+from rust::incan_frontend::checker_records import fixture_projection, verify_fixture, produce_local_record
 
 
 pub def canonical_record_controls() -> Result[None, str]:
@@ -85,19 +81,19 @@ def codec_fault_controls(encoded: bytes, record: CheckedRecord) -> None:
 
 def local_record_controls(source: str, moved: str) -> Result[None, str]:
     """Pending local fields have their own stage and never masquerade as settled checked-body evidence."""
-    before = from_native_fields(fixture_local_projection(source, "main").map_err((error) => error.to_string())?).map_err(
-        (_) => "local projection",
-    )?
-    after = from_native_fields(fixture_local_projection(moved, "main").map_err((error) => error.to_string())?).map_err(
-        (_) => "moved local projection",
-    )?
+    declaration = fixture_projection(source, "main", true).map_err((error) => error.to_string())?
+    moved_declaration = fixture_projection(moved, "main", true).map_err((error) => error.to_string())?
+    before = from_native_local_fields(
+        produce_local_record(source, "main", declaration, []).map_err((error) => error.to_string())?,
+    ).map_err((_) => "local producer")?
+    after = from_native_local_fields(
+        produce_local_record(moved, "main", moved_declaration, []).map_err((error) => error.to_string())?,
+    ).map_err((_) => "moved local producer")?
     encoded = encode_record(before).map_err((_) => "local encode")?
     assert encoded == encode_record(after).map_err((_) => "moved local encode")?
     decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "local decode")?
     assert decoded.family == CheckedFamily.Local
-    verify_local_fixture(moved, "main", native_fields(decoded).map_err((_) => "local fields")?).map_err(
-        (error) => "local: " + error.to_string(),
-    )?
+    assert native_fields(decoded).map_err((_) => "local fields")? == native_fields(before).map_err((_) => "local fields")?
     println(f"canonical-record local fields={len(before.fields)} bytes={len(encoded)} stable=true")
     return Ok(None)
 
@@ -575,7 +571,25 @@ def input_record(rows: list[list[str]], owner: str) -> Result[CheckedRecord, str
 def invocation_evaluation_grammar(record: CheckedRecord) -> Result[None, str]:
     """Keep exact argument evaluation, source access, completion and final loan-use indices."""
     place = ["binding", "source", "0"]
-    prefix = ["1", "checked", "owner", "0", "1", "binding", "source", "true", "true", "true", "0", "0", "0", "0", "0", "0", "1"]
+    prefix = [
+        "1",
+        "checked",
+        "owner",
+        "0",
+        "1",
+        "binding",
+        "source",
+        "true",
+        "true",
+        "true",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "0",
+        "1",
+    ]
     argument = ["argument", "0", "0", "owned", "none", "some"] + place
     call = ["call", "callee", "none", "false", "none", "1"] + argument
     mut nodes = ["0", "5", "nothing", "1", "1", "owner", "nothing", "1", "2", "argument", "access"]
@@ -639,7 +653,24 @@ def invocation_receiver_grammar(record: CheckedRecord) -> Result[None, str]:
     values += ["binding", "source", "false", "false", "false", "binding", "receiver", "false", "false", "false"]
     values += ["2"] + receiver + ["shared", "false", "none", "receiver"]
     values += source + ["shared", "false", "none", "argument", "0", "0", "0", "0", "0", "1"]
-    values += ["call", "callee", "some", "0", "false", "none", "1", "0", "1", "argument", "0", "0", "shared", "some", "1", "some"] + source
+    values += [
+        "call",
+        "callee",
+        "some",
+        "0",
+        "false",
+        "none",
+        "1",
+        "0",
+        "1",
+        "argument",
+        "0",
+        "0",
+        "shared",
+        "some",
+        "1",
+        "some",
+    ] + source
     values += ["4", "6", "some", "5", "some", "1", "3", "some", "2", "7", "2", "8", "9", "0", "10"]
     values += ["nothing", "1", "1", "owner", "nothing", "1", "2", "receiver", "borrow", "0", "1", "3", "receiver"]
     values += ["nothing", "1", "4", "receiver", "nothing", "1", "5", "argument", "borrow", "1", "1", "6", "argument"]
