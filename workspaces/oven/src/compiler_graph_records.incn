@@ -3,7 +3,7 @@
 from std.encoding.hex import hexlify
 from std.json import JsonValue, parse
 from std.primitives.hash import sha256
-from pub::incan_platform.store import Snapshot, begin, commit, get, put
+from pub::incan_platform.store import Snapshot, begin, commit, get, keys, put
 from pub::internal_models import (
     ProducerRank,
     ProducerStage,
@@ -49,6 +49,14 @@ pub model ReusableEvaluation:
     pub receipt: ReadReceipt
 
 
+pub model ReusableRecord:
+    """One graph-admitted reusable value together with its complete logical record key."""
+
+    pub key: RecordKey
+    pub value: bytes
+    pub receipt: ReadReceipt
+
+
 model EdgeFact:
     """One compiler witness normalized once for the receipt and both graph directions."""
 
@@ -82,6 +90,7 @@ pub def publish_evaluation(
     mut transaction = put(begin(selected), value_key, value)
     transaction = put(transaction, receipt_key, receipt_bytes)
     transaction = put(transaction, evaluation_key, evaluation)
+    transaction = put(transaction, output_index_key(receipt.scope.profile, value_key), evaluation_key.encode("utf-8"))
     for index in range(len(edges)):
         edge = encode_edge(value_key, receipt.scope.profile, edges[index])?
         identity = digest(edge)
@@ -152,10 +161,50 @@ pub def reusable_evaluation(
     return Ok(Some(ReusableEvaluation(value=value, receipt=receipt)))
 
 
+pub def reusable_family_records(selected: Snapshot, family: str, profile: str) -> Result[list[ReusableRecord], str]:
+    """Select every witnessed value in one family/profile from the graph's engine-owned output index."""
+    if family == "" or profile == "" or "\t" in family or "\t" in profile:
+        return Err("reusable compiler family selection requires delimiter-free family and profile names")
+    prefix = "incan.engine.output\t" + profile + "\t"
+    mut records: list[ReusableRecord] = []
+    for indexed in keys(selected).map_err((error) => error.message())?:
+        if not indexed.startswith(prefix):
+            continue
+        key = decode_record_key(indexed[len(prefix):])?
+        if key.family != family:
+            continue
+        match reusable_evaluation(selected, key, profile)?:
+            Some(reused) => records.append(ReusableRecord(key=key, value=reused.value, receipt=reused.receipt))
+            None => pass
+    return Ok(records)
+
+
 pub def evaluation_record_key(profile: str, output: str) -> str:
     """Return the selected evaluation identity for one output under one exact producer profile."""
     identity = digest((profile + "\n" + output).encode("utf-8"))
     return "incan.engine.evaluation\t" + identity
+
+
+def output_index_key(profile: str, output: str) -> str:
+    """Name one profile's current logical output without duplicating its value or evaluation document."""
+    return "incan.engine.output\t" + profile + "\t" + output
+
+
+def decode_record_key(encoded: str) -> Result[RecordKey, str]:
+    """Decode the canonical six-field record key retained verbatim in the output index."""
+    fields = encoded.split("\t")
+    if len(fields) != 6:
+        return Err("compiler output index contains a malformed record key")
+    return Ok(
+        RecordKey(
+            family=fields[0],
+            identity_profile=fields[1],
+            origin=fields[2],
+            identity=fields[3],
+            facet=fields[4],
+            context=fields[5],
+        ),
+    )
 
 
 def normalized_edges(witnesses: list[ReadWitness]) -> Result[list[EdgeFact], str]:
