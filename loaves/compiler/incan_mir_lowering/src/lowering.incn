@@ -427,14 +427,14 @@ pub def resume_unit_plan(
     previous_model_count = len(models)
     previous_static_count = len(context.as_ref().static_declarations)
     refresh_entry_context(Arc.make_mut(context), borrowed_at(modules, entry))
-    additions = continuation_inputs(source_context.as_ref(), context.as_ref(), owners, modules, sources, files)?
+    additions = continuation_inputs(source_context.as_ref(), context.as_ref(), owners, modules, sources, files, entry)?
     if len(additions.modules) != 0:
         addition_source_files = source_file_index(additions.modules, additions.files)?
         added_source_context, _added_constructors, _added_owners, added_context, added_nominals, added_template_references = plan_contexts(
             additions.modules,
             additions.sources,
             additions.files,
-            0,
+            additions.entry,
             false,
             addition_source_files,
             package_versions,

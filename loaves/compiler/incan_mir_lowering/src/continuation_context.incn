@@ -7,11 +7,12 @@ from nominal_instances import NominalInstance
 
 
 pub model ContinuationInputs:
-    """The refreshed runtime modules that contribute at least one fact the retained contexts do not contain."""
+    """The refreshed entry and runtime modules that contribute facts the retained contexts do not contain."""
 
     pub modules: list[BodyIrModule]
     pub sources: list[str]
     pub files: list[str]
+    pub entry: int
 
 
 pub def refresh_entry_context(mut context: &mut BodyIrModule, entry: &BodyIrModule) -> None:
@@ -32,22 +33,44 @@ pub def continuation_inputs(
     modules: &list[BodyIrModule],
     sources: &list[str],
     files: &list[str],
+    entry: int,
 ) -> Result[ContinuationInputs, str]:
-    """Select only modules whose refreshed checked graph adds a module, declaration, or executable body."""
+    """Select changed modules and their entry, preserving the entry's invocation-only contracts in the reduced slice."""
     if len(modules) != len(sources) or len(modules) != len(files):
         return Err("invalid Body IR continuation source provenance")
-    mut additions: list[BodyIrModule] = []
-    mut addition_sources: list[str] = []
-    mut addition_files: list[str] = []
+    if entry < 0 or entry >= len(modules):
+        return Err("invalid Body IR continuation entry")
+    mut changed = false
     for position in range(len(modules)):
         module = borrowed_at(modules, position)
         owner = str(module.module_id.path())
-        if owners.contains(owner) and not adds_checked_facts(source_context, context, module):
+        if owner not in owners or adds_checked_facts(source_context, context, module):
+            changed = true
+            break
+    if not changed:
+        return Ok(ContinuationInputs(modules=[], sources=[], files=[], entry=0))
+    mut additions: list[BodyIrModule] = []
+    mut addition_sources: list[str] = []
+    mut addition_files: list[str] = []
+    mut addition_entry = 0
+    for position in range(len(modules)):
+        module = borrowed_at(modules, position)
+        owner = str(module.module_id.path())
+        if position != entry and owners.contains(owner) and not adds_checked_facts(source_context, context, module):
             continue
+        if position == entry:
+            addition_entry = len(additions)
         additions.append(module.clone())
         addition_sources.append(str(sources[position]))
         addition_files.append(str(files[position]))
-    return Ok(ContinuationInputs(modules=additions, sources=addition_sources, files=addition_files))
+    return Ok(
+        ContinuationInputs(
+            modules=additions,
+            sources=addition_sources,
+            files=addition_files,
+            entry=addition_entry,
+        ),
+    )
 
 
 pub def extend_continuation_context(
