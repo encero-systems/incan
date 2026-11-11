@@ -46,12 +46,38 @@ pub def canonical_record_controls() -> Result[None, str]:
         println(f"canonical-record declaration={declaration} fields={len(base.fields)} bytes={len(before)} stable=true")
         codec_fault_controls(before, base)
     local_record_controls(source, moved)?
+    projected_owner_controls()?
     edited_owner_controls()?
     diagnostic_record_controls()?
     default_record_controls()?
     final_value_controls()?
     ownership_record_controls()?
     input_protocol_controls()?
+    return Ok(None)
+
+
+def projected_owner_controls() -> Result[None, str]:
+    """An owner parses with module context while a called sibling enters only through its declaration record."""
+    header = "alias Count = int\n\n"
+    owner = "def first() -> Count:\n    return second()\n"
+    sibling = "def second() -> Count:\n    return 2\n"
+    complete = header + owner + "\n" + sibling
+    declaration = fixture_record(complete, "first", true).map_err((error) => error.to_string())?
+    environment = fixture_record(complete, "second", true).map_err((error) => error.to_string())?
+    local_rows = produce_local_record(header + owner, "first", declaration, [environment]).map_err(
+        (error) => error.to_string(),
+    )?
+    local = from_native_local_fields(local_rows).map_err((_) => "projected local producer")?
+    final_rows = produce_final_record(
+        header + owner,
+        "first",
+        native_fields(local).map_err((_) => "projected local fields")?,
+    ).map_err((error) => error.to_string())?
+    projected = from_native_final_fields(final_rows).map_err((_) => "projected final producer")?
+    direct = checked_fixture(complete, "first", false)?
+    assert encode_record(projected).map_err((_) => "projected final encode")? == encode_record(direct).map_err(
+        (_) => "direct projected final encode",
+    )?
     return Ok(None)
 
 
