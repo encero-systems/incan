@@ -1,6 +1,6 @@
 """Ranked compiler graph records publish their value, receipt and both edge directions atomically."""
 
-from pub::incan_platform.store import Snapshot, get, keys
+from pub::incan_platform.store import Snapshot, begin, commit, delete, get, keys, put
 from pub::incan_platform.store import snapshot as store_snapshot
 from pub::incan_platform.store.memory import root as memory_root
 from pub::internal_models.records import (
@@ -10,6 +10,8 @@ from pub::internal_models.records import (
     PayloadSelection,
     PreparationEvidence,
     ReadReceipt,
+    RecordRead,
+    RecordReads,
     ReadScope,
     ReadWitness,
     RecordKey,
@@ -17,6 +19,8 @@ from pub::internal_models.records import (
     RecordSelection,
     RevisionEvidence,
     READ_SCHEMA,
+    StoreRecordSource,
+    encode_record_key,
 )
 from pub::internal_models import (
     DemandPage,
@@ -34,12 +38,8 @@ from pub::internal_models import (
     encode_prepared_inputs,
     encode_ready_work,
 )
-from compiler_graph_records import publish_evaluation
-from compiler_record_envelopes import (
-    RankedActivation,
-    RankedCheckingSweep,
-    persist_activation,
-)
+from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
+from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
 
 
 pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[None, str]:
@@ -88,6 +88,78 @@ pub def test_local_envelopes_persist_and_sweep_in_rank_order() -> Result[None, s
     assert selected_identity(sweep.next()) == ""
     assert sweep.evaluation_count() == 3
     return Ok(None)
+
+
+pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() -> Result[None, str]:
+    """Present, deleted, absent and member witnesses admit unchanged values and reject each changed dependency."""
+    before = store_snapshot(memory_root()).map_err((error) => error.message())?
+    present = request("run43-present", RecordSelection.Field("value"))
+    deleted = request("run43-deleted", RecordSelection.Field("value"))
+    absent = request("run43-absent", RecordSelection.Field("value"))
+    members = request(
+        "run43-members",
+        RecordSelection.Members(
+            MemberSelection(selector="children", order="canonical", lower="", upper="", continuation=""),
+        ),
+    )
+    mut transaction = put(begin(before), encode_record_key(present.key)?, b"present")
+    transaction = delete(transaction, encode_record_key(deleted.key)?)
+    transaction = put(transaction, encode_record_key(members.key)? + "\tleft", b"member")
+    mut selected = commit(transaction).map_err((error) => error.message())?
+
+    present_value = publish_fixture(selected, "run43-present-output", present)?
+    deleted_value = publish_fixture(present_value.snapshot, "run43-deleted-output", deleted)?
+    absent_value = publish_fixture(deleted_value.snapshot, "run43-absent-output", absent)?
+    member_value = publish_fixture(absent_value.snapshot, "run43-member-output", members)?
+    selected = member_value.snapshot
+    for identity in ["run43-present-output", "run43-deleted-output", "run43-absent-output", "run43-member-output"]:
+        if reused_value(selected, identity)? != Some(("checked " + identity).encode("utf-8")):
+            return Err("unchanged evaluation did not reuse: " + identity)
+
+    unrelated = commit(put(begin(selected), "run43-unrelated", b"changed")).map_err((error) => error.message())?
+    for identity in ["run43-present-output", "run43-deleted-output", "run43-absent-output", "run43-member-output"]:
+        assert reused_value(unrelated, identity)? is not None
+
+    mut changed = put(begin(unrelated), encode_record_key(present.key)?, b"changed")
+    changed = put(changed, encode_record_key(deleted.key)?, b"present now")
+    changed = put(changed, encode_record_key(absent.key)?, b"present now")
+    changed = put(changed, encode_record_key(members.key)? + "\tright", b"member")
+    invalidated = commit(changed).map_err((error) => error.message())?
+    for identity in ["run43-present-output", "run43-deleted-output", "run43-absent-output", "run43-member-output"]:
+        if reused_value(invalidated, identity)? is not None:
+            return Err("changed dependency did not invalidate: " + identity)
+    return Ok(None)
+
+
+def publish_fixture(selected: Snapshot, identity: str, dependency: RecordRequest) -> Result[PublishedEvaluation, str]:
+    """Publish one evaluation whose sole dependency was read through the authenticated store source."""
+    output = key(identity)
+    scope = ReadScope(snapshot=selected.digest, profile="profile")
+    preparation = PreparationEvidence(
+        output=output,
+        rank_certificate="rank-certificate",
+        selector_witnesses="selector-witnesses",
+    )
+    source = StoreRecordSource.open(selected, scope, [encode_record_key(dependency.key)?])
+    mut reads = RecordReads.start(scope, preparation, [dependency])
+    match reads.read(source, dependency):
+        RecordRead.Failed(_) => return Err("fixture dependency read failed")
+        _ => pass
+    receipt = reads.finish().map_err((_) => "fixture dependency receipt failed")?
+    return publish_evaluation(
+        selected,
+        "claim-" + identity,
+        ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=3),
+        ("checked " + identity).encode("utf-8"),
+        receipt,
+    )
+
+
+def reused_value(selected: Snapshot, identity: str) -> Result[Option[bytes], str]:
+    """Read one fixture evaluation through the production witness-validation boundary."""
+    match reusable_evaluation(selected, key(identity), "profile")?:
+        Some(value) => return Ok(Some(value.value))
+        None => return Ok(None)
 
 
 def witnessed_receipt() -> ReadReceipt:

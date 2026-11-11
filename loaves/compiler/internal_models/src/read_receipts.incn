@@ -1,9 +1,25 @@
 """Canonical completed-read receipt bytes shared by compiler workers and the engine graph publisher."""
 
-from std.json import JsonValue
-from records import ReadReceipt, ReadWitness, RecordRequest, RecordSelection, encode_record_key
+from std.json import JsonValue, parse
+from record_scope import valid_request
+from records import (
+    AbsentFact,
+    DeletedFact,
+    MemberSelection,
+    PayloadSelection,
+    PreparationEvidence,
+    ReadReceipt,
+    ReadScope,
+    ReadWitness,
+    RecordKey,
+    RecordRequest,
+    RecordSelection,
+    RevisionEvidence,
+    READ_SCHEMA,
+    encode_record_key,
+)
 
-pub const RECEIPT_SCHEMA: str = "incan.engine.read-receipt/1"
+pub const RECEIPT_SCHEMA: str = "incan.engine.read-receipt/2"
 
 
 pub def encode_read_receipt(receipt: ReadReceipt) -> Result[bytes, str]:
@@ -23,6 +39,38 @@ pub def encode_read_receipt(receipt: ReadReceipt) -> Result[bytes, str]:
         )},
     )
     return Ok(document.to_json().map_err((error) => error.message())?.encode("utf-8"))
+
+
+pub def decode_read_receipt(encoded: bytes) -> Result[ReadReceipt, str]:
+    """Decode one completed receipt with every request bound to its exact byte budget and typed witness evidence."""
+    document = parse(encoded.decode().map_err((_) => "compiler read receipt is not UTF-8")?).map_err(
+        (error) => error.message(),
+    )?
+    if required_text(document, "schema")? != RECEIPT_SCHEMA or required_text(document, "read_schema")? != READ_SCHEMA:
+        return Err("unsupported compiler read receipt schema")
+    scope = ReadScope(snapshot=required_text(document, "snapshot")?, profile=required_text(document, "profile")?)
+    output = read_key(required_text(document, "output")?)?
+    mut witnesses: list[ReadWitness] = []
+    for value in required_items(document, "witnesses")?:
+        witnesses.append(read_witness(value, scope)?)
+    operations = required_int(document, "operations")?
+    response_bytes = required_int(document, "response_bytes")?
+    if scope.snapshot == "" or scope.profile == "" or operations < 0 or response_bytes < 0:
+        return Err("compiler read receipt has incomplete scope or counters")
+    return Ok(
+        ReadReceipt(
+            schema=READ_SCHEMA,
+            scope=scope,
+            preparation=PreparationEvidence(
+                output=output,
+                rank_certificate=required_text(document, "rank_certificate")?,
+                selector_witnesses=required_text(document, "selector_witnesses")?,
+            ),
+            witnesses=witnesses,
+            operations=operations,
+            response_bytes=response_bytes,
+        ),
+    )
 
 
 def witness_document(witness: ReadWitness) -> Result[JsonValue, str]:
@@ -55,20 +103,114 @@ def edge_document(kind: str, request: RecordRequest, evidence: str) -> Result[Js
 
 def selection_document(request: RecordRequest) -> JsonValue:
     """Encode the exact field, payload range or bounded member selector for receipt validation."""
+    mut fields: Dict[str, JsonValue] = {"byte_limit": JsonValue.int(request.byte_limit)}
     match request.selection:
         RecordSelection.Field(name) =>
-            return JsonValue.object({"kind": JsonValue.string("field"), "name": JsonValue.string(name)})
+            fields["kind"] = JsonValue.string("field")
+            fields["name"] = JsonValue.string(name)
         RecordSelection.Payload(payload) =>
-            return JsonValue.object(
-                {"kind": JsonValue.string("payload"), "reference": JsonValue.string(payload.reference), "offset": JsonValue.int(
-                    payload.offset,
-                ), "length": JsonValue.int(payload.length)},
-            )
+            fields["kind"] = JsonValue.string("payload")
+            fields["reference"] = JsonValue.string(payload.reference)
+            fields["offset"] = JsonValue.int(payload.offset)
+            fields["length"] = JsonValue.int(payload.length)
         RecordSelection.Members(members) =>
-            return JsonValue.object(
-                {"kind": JsonValue.string("members"), "selector": JsonValue.string(members.selector), "order": JsonValue.string(
-                    members.order,
-                ), "lower": JsonValue.string(members.lower), "upper": JsonValue.string(members.upper), "continuation": JsonValue.string(
-                    members.continuation,
-                )},
+            fields["kind"] = JsonValue.string("members")
+            fields["selector"] = JsonValue.string(members.selector)
+            fields["order"] = JsonValue.string(members.order)
+            fields["lower"] = JsonValue.string(members.lower)
+            fields["upper"] = JsonValue.string(members.upper)
+            fields["continuation"] = JsonValue.string(members.continuation)
+    return JsonValue.object(fields)
+
+
+def read_witness(value: JsonValue, scope: ReadScope) -> Result[ReadWitness, str]:
+    """Restore one typed witness without turning malformed evidence into a cache miss."""
+    request = read_request(required_text(value, "target")?, required(value, "selection")?)?
+    evidence = required_text(value, "evidence")?
+    match required_text(value, "kind")?:
+        "present" =>
+            parts = evidence.split("\n")
+            if len(parts) != 3:
+                return Err("present witness evidence is malformed")
+            return Ok(
+                ReadWitness.Found(
+                    RevisionEvidence(scope=scope, request=request, revision=parts[0], semantic_digest=parts[1]),
+                    parts[2],
+                ),
             )
+        "deleted" => return Ok(ReadWitness.Deleted(DeletedFact(scope=scope, request=request, revision=evidence)))
+        "absent" => return Ok(ReadWitness.Absent(AbsentFact(scope=scope, request=request, exclusion_digest=evidence)))
+        "members" =>
+            parts = evidence.split("\n")
+            if len(parts) != 2:
+                return Err("member witness evidence is malformed")
+            return Ok(ReadWitness.Members(scope, request, parts[0], parts[1]))
+        _ => return Err("unknown compiler read witness kind")
+
+
+def read_request(target: str, selection: JsonValue) -> Result[RecordRequest, str]:
+    """Decode the exact request retained by a witness, including its bounded response budget."""
+    kind = required_text(selection, "kind")?
+    selected = match kind:
+        "field" => RecordSelection.Field(required_text(selection, "name")?)
+        "payload" => RecordSelection.Payload(
+            PayloadSelection(
+                reference=required_text(selection, "reference")?,
+                offset=required_int(selection, "offset")?,
+                length=required_int(selection, "length")?,
+            ),
+        )
+        "members" => RecordSelection.Members(
+            MemberSelection(
+                selector=required_text(selection, "selector")?,
+                order=required_text(selection, "order")?,
+                lower=required_text(selection, "lower")?,
+                upper=required_text(selection, "upper")?,
+                continuation=required_text(selection, "continuation")?,
+            ),
+        )
+        _ => return Err("unknown compiler read selection")
+
+    byte_limit = required_int(selection, "byte_limit")?
+    request = RecordRequest(key=read_key(target)?, selection=selected, byte_limit=byte_limit)
+    if not valid_request(request):
+        return Err("compiler read witness has an invalid request")
+    return Ok(request)
+
+
+def read_key(encoded: str) -> Result[RecordKey, str]:
+    """Decode the one canonical key spelling shared by the store, receipts and graph indexes."""
+    fields = encoded.split("\t")
+    if len(fields) != 6:
+        return Err("compiler read witness has a malformed target key")
+    key = RecordKey(
+        family=fields[0],
+        identity_profile=fields[1],
+        origin=fields[2],
+        identity=fields[3],
+        facet=fields[4],
+        context=fields[5],
+    )
+    if key.family == "" or key.identity_profile == "" or key.origin == "" or key.identity == "" or key.facet == "":
+        return Err("compiler read witness target has incomplete authority")
+    return Ok(key)
+
+
+def required(value: JsonValue, key: str) -> Result[JsonValue, str]:
+    """Read one required receipt field without coercion."""
+    return value.require(key).map_err((error) => error.message())
+
+
+def required_text(value: JsonValue, key: str) -> Result[str, str]:
+    """Read one required receipt string without coercion."""
+    return required(value, key)?.expect_str().map_err((error) => error.message())
+
+
+def required_int(value: JsonValue, key: str) -> Result[int, str]:
+    """Read one required receipt integer without coercion."""
+    return required(value, key)?.expect_int().map_err((error) => error.message())
+
+
+def required_items(value: JsonValue, key: str) -> Result[list[JsonValue], str]:
+    """Read one required receipt array without coercion."""
+    return required(value, key)?.expect_array().map_err((error) => error.message())
