@@ -15,6 +15,7 @@ from registry_codec import Catalog, decode as decode_catalog, encode as encode_c
 from registry_units import RegistryUnit
 from retained_readings import INSTALLED_DIGEST, installed_digest, retain
 from observation import SETTLE_SECONDS, file_digest, now_seconds, observe
+from project_lock import toolchain_entry
 from scratch import scratch_directory
 from rust_registry import read_registry_units
 from rust_target import compiler_version, deployment_target
@@ -280,6 +281,8 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
     relocated_path = JsonValue.string("../../registry/" + relative)
     mut outside = published
     outside["artifact"] = relocated_path
+    outside["source"] = JsonValue.string("../../registry/source.loaf")
+    outside["dependencies"] = JsonValue.array([])
     outside_externs = JsonValue.object({required_text(item, "entry")?: JsonValue.object({"path": relocated_path})})
     outside_closure = scratch.joinpath("published/deep/closure.json")
     write(
@@ -295,6 +298,10 @@ def check_registry_completion(scratch: Path) -> Result[None, str]:
     selected = read_registry_units(outside_closure)?.units[0]
     assert selected.artifact == directory.joinpath(relative).0
     assert Path(selected.artifact).is_file()
+    assert selected.source_archive == source_archive.0
+    assert selected.registry == "loaves.pub"
+    locked = toolchain_entry(selected, [selected], [], {}, "aarch64-apple-darwin")?
+    assert locked.registry == "loaves.pub", f"lock registry: {locked.registry}"
     # 2. The exact typed page answers without a closure or completion JSON document.
     selection = completion_selection(rust_compiler(toolchain))?
     observed = observe(closure)?
