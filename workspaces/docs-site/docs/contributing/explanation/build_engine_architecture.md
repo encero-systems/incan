@@ -502,6 +502,8 @@ Each quotes the sentence that raised it, then gives the decision DD-0015 records
 
 8. **When do Incan-model record values move to Crumb?** RFC 168: "Crumb must be usable independently for encoded values, files, messages or compiler artifacts." The checker codec is a separate hand-written framing. **Decision:** no change in this slice. At the first checker profile bump after Crumb ships in the toolchain, checker, source and plan records encode with Crumb, leaving one encoding mechanism for Incan-model records.
 
+9. **What names the converted standard records to a worker?** DD-0015: "Frozen standard and runtime records come from a one-time admission conversion per installed toolchain, through sealed-set admission." It does not say how a worker activation finds that record set. **Decision:** the installed toolchain's own pin. `incan toolchain install` produces the sealed record set, and the pin records its root and digest. A worker reads the root from the pin of the toolchain it runs under, and refuses on a digest mismatch. The bakery view is for project build products, so it does not carry the toolchain's records. A new field in the unit description would state the same fact twice. Records mode never falls back to whole-manifest reads.
+
 
 #### Changes from the 2026-10-30 study
 
@@ -517,7 +519,7 @@ Each quotes the sentence that raised it, then gives the decision DD-0015 records
 - Doc and position records follow BE-34.
 - Vocabulary comes from `incan_lang`.
 - The cold oracle and exact counts are defined as computations, not intentions.
-- Design points 1 to 6 are new.
+- Design points 1 to 6 and 9 are new.
 
 ## Loaves and toolchain bundles
 
