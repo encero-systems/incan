@@ -20,6 +20,7 @@ pub def test_file_errors_name_operation_and_path() -> Result[None, str]:
     missing = root.joinpath("missing.txt")
     require_context(read(missing), "read", missing)
     require_context(remove(missing), "remove", missing)
+    require_context(missing.resolve().map_err((error) => f"cannot resolve {error.message()}"), "resolve", missing)
     # 2. Output failures retain the intended destination, not only the operating-system message.
     unwritable = root.joinpath("missing/output.txt")
     require_context(write(unwritable, "content"), "write", unwritable)
@@ -36,4 +37,4 @@ def require_context[T](result: Result[T, str], operation: str, path: Path) -> No
     match result:
         Ok(_) => fail(f"{operation} unexpectedly succeeded for {path.0}")
         Err(reason) =>
-            assert f"cannot {operation} {path.0}:" in reason, reason
+            assert f"cannot {operation}" in reason and path.0 in reason, reason

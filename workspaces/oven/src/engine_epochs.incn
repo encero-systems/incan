@@ -57,7 +57,7 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
         return Err(f"unit records do not implement `{submit.command}`")
     if submit.input_selection not in ["debug", "release"] or submit.options != "":
         return Err("unit records require a debug or release profile and no additional build options")
-    source = Path(submit.requested_roots).absolute().map_err((error) => error.message())?
+    source = Path(submit.requested_roots).absolute().map_err((error) => f"cannot make absolute {error.message()}")?
     if not source.0.endswith(".incn") or submit.view == "":
         return Err("unit records require one Incan program file and a project view")
     admitted = admitted_home()?

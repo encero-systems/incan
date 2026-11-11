@@ -67,7 +67,7 @@ pub def standard_packages(reader: ManifestReader = ManifestReader()) -> Result[l
     if get_or("INCAN_STDLIB", "") == "":
         _ = standard_library_dir()?
         mut directory = home()?.joinpath("toolchains").joinpath(TOOLCHAIN)
-        directory = directory.resolve().map_err((error) => error.message())?
+        directory = directory.resolve().map_err((error) => f"cannot resolve {error.message()}")?
         page = installation(directory)?
         return Ok([StandardPackage(name=manifest.intent.name, root=manifest.root) for manifest in page.manifests])
     directory = standard_library_dir()?
@@ -97,7 +97,7 @@ pub def standard_intents() -> Result[list[ProjectIntent], str]:
     if get_or("INCAN_STDLIB", "") == "":
         _ = standard_library_dir()?
         mut directory = home()?.joinpath("toolchains").joinpath(TOOLCHAIN)
-        directory = directory.resolve().map_err((error) => error.message())?
+        directory = directory.resolve().map_err((error) => f"cannot resolve {error.message()}")?
         return Ok([manifest.intent for manifest in installation(directory)?.manifests])
     reader = ManifestReader()
     mut intents: list[ProjectIntent] = []

@@ -35,7 +35,7 @@ pub def convert(driver: str, installed: Path, installation: Path) -> Result[Comp
     The compiler owns semantic decoding and the declaration-family split. Oven owns content admission and records only
     the resulting installed store root plus sealed-set digest. Scratch exports never become a selectable cache.
     """
-    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    temporary = TemporaryDirectory.try_new().map_err((error) => f"cannot create temporary directory {error.message()}")?
     converted = temporary.path().joinpath("converted")
     output = Command
         .new(driver)
@@ -62,7 +62,7 @@ pub def convert(driver: str, installed: Path, installation: Path) -> Result[Comp
         path = converted.joinpath(object)
         if file_digest(path)? != revision:
             return Err(f"compiler record `{key}` differs from revision {revision}")
-        view = write_value(view, key, path.read_bytes().map_err((error) => error.message())?)?
+        view = write_value(view, key, path.read_bytes().map_err((error) => f"cannot read {error.message()}")?)?
         records.append(Record(key=key, revision=revision, payloads=[], references=[]))
         receipt.append(f"{key}\t{revision}")
     profile = compiler_record_profile()
@@ -86,7 +86,11 @@ pub def convert(driver: str, installed: Path, installation: Path) -> Result[Comp
 
 pub def compiler_record_profile() -> Profile:
     """The exact identity, value schema and codec accepted for installed compiler records."""
-    return Profile(identity=COMPILER_RECORD_PROFILE, schema=COMPILER_RECORD_PROFILE, codec="incan.compiler-record-value/1")
+    return Profile(
+        identity=COMPILER_RECORD_PROFILE,
+        schema=COMPILER_RECORD_PROFILE,
+        codec="incan.compiler-record-value/1",
+    )
 
 
 def write_value(view: Snapshot, key: str, value: bytes) -> Result[Snapshot, str]:

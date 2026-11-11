@@ -35,9 +35,9 @@ pub def home() -> Result[Path, str]:
 
 def resolved_home(path: Path) -> Result[Path, str]:
     """Resolve existing ancestors without creating a home that a first installation has yet to populate."""
-    absolute = path.absolute().map_err((error) => error.message())?
+    absolute = path.absolute().map_err((error) => f"cannot make absolute {error.message()}")?
     if absolute.exists():
-        return absolute.resolve().map_err((error) => error.message())
+        return absolute.resolve().map_err((error) => f"cannot resolve {error.message()}")
     parent = resolved_home(absolute.parent())?
     return Ok(parent.joinpath(absolute.name()))
 
@@ -68,7 +68,7 @@ pub def select_bakery(requested: str, directory: Result[Path, str]) -> Result[Ba
     default; an invalid configuration is refused, never replaced by the default.
     """
     if requested != "":
-        path = Path(requested).absolute().map_err((error) => error.message())?
+        path = Path(requested).absolute().map_err((error) => f"cannot make absolute {error.message()}")?
         return Ok(BakeryLocation(path=path, source=BAKERY_OVERRIDE))
     policy = read_policy(policy_file(directory?))?
     return Ok(BakeryLocation(path=Path(policy.root), source=policy.root_source))

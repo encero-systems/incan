@@ -30,10 +30,10 @@ pub def capture(directory: Path, toolchain: Toolchain) -> Result[Captured, str]:
     loaves = directory.joinpath("loaves")
     if loaves.is_dir():
         directories[loaves.0] = observe(loaves)?.stamp
-        for package in loaves.iterdir().map_err((error) => error.message())?:
+        for package in loaves.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
             if package.is_dir():
                 directories[package.0] = observe(package)?.stamp
-                for profile in package.iterdir().map_err((error) => error.message())?:
+                for profile in package.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
                     if profile.is_dir():
                         directories[profile.0] = observe(profile)?.stamp
     for native in toolchain.externs:
@@ -43,7 +43,7 @@ pub def capture(directory: Path, toolchain: Toolchain) -> Result[Captured, str]:
     mut payloads: Dict[str, InstalledPayload] = {}
     # 2. Each record is parsed at admission, and its original generation remains an explicit witness.
     for path in sorted([path for path in directories.keys()]):
-        for entry in Path(path).iterdir().map_err((error) => error.message())?:
+        for entry in Path(path).iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
             if not selected(entry.name()) or not entry.is_file():
                 continue
             before = observe(entry)?.stamp
@@ -78,4 +78,10 @@ def selected(name: str) -> bool:
         return true
     if not name.endswith(".oven-unit"):
         return false
-    return ".rlib." in name or ".dylib." in name or ".so." in name or ".incnlib." in name or name == "vocab-worker.oven-unit"
+    return (
+        ".rlib." in name
+        or ".dylib." in name
+        or ".so." in name
+        or ".incnlib." in name
+        or name == "vocab-worker.oven-unit"
+    )

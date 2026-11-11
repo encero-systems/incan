@@ -21,7 +21,7 @@ pub def build_rust_tests(request: RustBuild) -> Result[list[str], str]:
     """
     mut prepared = prepared_build(request)?
     prepared.rust_facet_dependencies = true
-    root = Path(prepared.project).resolve().map_err((error) => error.message())?
+    root = Path(prepared.project).resolve().map_err((error) => f"cannot resolve {error.message()}")?
     prepared.project = root.0
     declared = rust_facet(root.0)?
     # 1. Harness dependencies retain their target domain; a procedural macro's production library is a host root.
@@ -125,7 +125,7 @@ def integration_sources(library: str) -> Result[list[Path], str]:
     if not directory.is_dir():
         return Ok([])
     mut paths: list[str] = []
-    for source in directory.iterdir().map_err((error) => error.message())?:
+    for source in directory.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
         if source.is_file() and source.name().endswith(".rs"):
             paths.append(source.0)
     return Ok([Path(path) for path in sorted(paths)])

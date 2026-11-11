@@ -76,7 +76,7 @@ pub def retain_catalog(
     digest = hexlify(sha256.digest(data))
     store = bakery()?
     # 2. Temporary transport state is private; only admitted immutable bytes enter the physical bakery.
-    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    temporary = TemporaryDirectory.try_new().map_err((error) => f"cannot create temporary directory {error.message()}")?
     source = temporary.path().joinpath("source")
     view = snapshot(source).map_err((error) => error.message())?
     staged = commit(put(begin(view), key, data)).map_err((error) => error.message())?

@@ -195,7 +195,7 @@ def fresh_certificate(store: Path, identity: str) -> Result[Path, str]:
     receipts.mkdir(true, true).map_err((error) => f"{receipts.0}: {error.message()}")?
     certificate = receipts.joinpath(f"{identity}.{id()}.certificate")
     if certificate.is_file():
-        certificate.unlink().map_err((error) => error.message())?
+        certificate.unlink().map_err((error) => f"cannot remove file {error.message()}")?
     return Ok(certificate)
 
 
@@ -278,7 +278,8 @@ def relative_outcome(outcome: Completion, root: str) -> Option[Completion]:
         Some(output) =>
             match relative_stream(outcome.error, root):
                 None => return None
-                Some(error) => return Some(Completion(code=outcome.code, exited=outcome.exited, output=output, error=error))
+                Some(error) =>
+                    return Some(Completion(code=outcome.code, exited=outcome.exited, output=output, error=error))
 
 
 def relocatable_root(root: str) -> bool:
@@ -352,9 +353,9 @@ def save_outcome(path: Path, identity: str, outcome: Completion) -> Result[None,
     """Publish the status and framed raw streams in one atomic file; replay never decodes or re-encodes their bytes."""
     header = f"{RECORD_SCHEMA}\n{identity}\n{outcome.code}:{len(outcome.output)}:{len(outcome.error)}\n"
     content = BytesIO(header.encode("utf-8"))
-    content.seek(0, 2).map_err((error) => error.message())?
-    content.write_bytes(outcome.output).map_err((error) => error.message())?
-    content.write_bytes(outcome.error).map_err((error) => error.message())?
+    content.seek(0, 2).map_err((error) => f"cannot seek {error.message()}")?
+    content.write_bytes(outcome.output).map_err((error) => f"cannot write {error.message()}")?
+    content.write_bytes(outcome.error).map_err((error) => f"cannot write {error.message()}")?
     return publish_binary(path, content.getvalue())
 
 
@@ -373,7 +374,7 @@ def load_outcome(store: Path, identity: str, root: str) -> Result[Option[Complet
 
 def read_outcome(path: Path, identity: str) -> Result[Option[Completion], str]:
     """Validate the bounded header, the status and both byte lengths before releasing either stream to the caller."""
-    content = path.read_bytes().map_err((error) => error.message())?
+    content = path.read_bytes().map_err((error) => f"cannot read {error.message()}")?
     prefix = f"{RECORD_SCHEMA}\n{identity}\n".encode("utf-8")
     if content[:len(prefix)] != prefix:
         return Ok(None)

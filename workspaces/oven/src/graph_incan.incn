@@ -59,7 +59,7 @@ pub def inspect_incan(
     4. Publish checked portable facts, or return an unretained export with its own diagnostic locations.
     """
     # 1. The unit is described against the toolchain, and links the interfaces its dependencies were checked into.
-    entry_source = source.resolve().map_err((error) => error.message())?
+    entry_source = source.resolve().map_err((error) => f"cannot resolve {error.message()}")?
     mut unit = describe(
         entry_source,
         profile,
@@ -230,7 +230,7 @@ def publish_export(
         remove(pending)?
     # 3. The graph the compiler wrote becomes the entry; an export with neither a graph nor a note is an error.
     if output.is_file():
-        publish_binary(entry, output.read_bytes().map_err((error) => error.message())?)?
+        publish_binary(entry, output.read_bytes().map_err((error) => f"cannot read {error.message()}")?)?
         remove(output)?
     elif not is_unchecked(entry):
         return Err(f"Incan graph export produced no graph for {package}")
