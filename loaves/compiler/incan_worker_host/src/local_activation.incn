@@ -14,6 +14,8 @@ pub model LocalActivationInputs:
     pub owner: str
     pub declaration: list[list[str]]
     pub environment: list[list[list[str]]]
+    pub environment_names: list[str]
+    pub environment_identities: list[str]
     pub receipt: ReadReceipt
 
 
@@ -41,6 +43,8 @@ pub def read_local_activation(activation: ResolvedCheckingActivation) -> Result[
     mut owner = ""
     mut declaration: Option[list[list[str]]] = None
     mut environment: list[list[list[str]]] = []
+    mut environment_names: list[str] = []
+    mut environment_identities: list[str] = []
     for request in prepared.required_reads:
         found = match reader.read(source, request):
             RecordRead.Found(value) => value.value
@@ -71,6 +75,8 @@ pub def read_local_activation(activation: ResolvedCheckingActivation) -> Result[
                 declaration = Some(fields)
             else:
                 environment.append(fields)
+                environment_names.append(request.key.facet)
+                environment_identities.append(request.key.identity)
         else:
             return Err("local activation prepared an unsupported input family")
     completed = reader.finish().map_err((_) => "local activation read receipt is incomplete")?
@@ -82,6 +88,8 @@ pub def read_local_activation(activation: ResolvedCheckingActivation) -> Result[
                     owner=owner,
                     declaration=declaration_value,
                     environment=environment,
+                    environment_names=environment_names,
+                    environment_identities=environment_identities,
                     receipt=completed,
                 ),
             )

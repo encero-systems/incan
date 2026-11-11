@@ -137,5 +137,6 @@ pub from checker_records import (
     decode_graph_body_values,
     encode_compiled_body_values,
     decode_compiled_body_values,
+    record_root,
 )
 pub from read_receipts import RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt

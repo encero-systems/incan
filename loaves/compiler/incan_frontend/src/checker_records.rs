@@ -82,7 +82,7 @@ pub fn produce_local_record(
     source: &str,
     name: &str,
     declaration: Vec<Vec<String>>,
-    environment: Vec<Vec<Vec<String>>>,
+    environment: Vec<(String, String, Vec<Vec<String>>)>,
 ) -> Result<Vec<Vec<String>>, RecordAdapterFault> {
     crate::typechecker::body_check::records::produce_local_record(source, name, declaration, environment)
 }
@@ -96,8 +96,9 @@ pub fn produce_final_record(
     source: &str,
     name: &str,
     local: Vec<Vec<String>>,
+    environment: Vec<(String, String, Vec<Vec<String>>)>,
 ) -> Result<Vec<Vec<String>>, RecordAdapterFault> {
-    crate::typechecker::body_check::records::produce_final_record(source, name, local)
+    crate::typechecker::body_check::records::produce_final_record(source, name, local, environment)
 }
 
 /// Collect already-produced records for top-level free functions after one successful program check.

@@ -48,11 +48,16 @@ fn evaluate_local(
     home: &str,
 ) -> Result<RecordMessage, String> {
     let inputs = incan_worker_host::read_local_activation(activation).map_err(|error| error.to_string())?;
+    let environment = environment_values(
+        inputs.environment,
+        inputs.environment_names,
+        inputs.environment_identities,
+    )?;
     let rows = incan_frontend::checker_records::produce_local_record(
         &inputs.source,
         &inputs.owner,
         inputs.declaration,
-        inputs.environment,
+        environment,
     )
     .map_err(|error| format!("local producer refused: {error:?}"))?;
     let record = internal_models::from_native_local_fields(&rows)
@@ -72,8 +77,14 @@ fn evaluate_final(
     home: &str,
 ) -> Result<RecordMessage, String> {
     let inputs = incan_worker_host::read_final_activation(activation).map_err(|error| error.to_string())?;
-    let rows = incan_frontend::checker_records::produce_final_record(&inputs.source, &inputs.owner, inputs.local)
-        .map_err(|error| format!("final producer refused: {error:?}"))?;
+    let environment = environment_values(
+        inputs.environment,
+        inputs.environment_names,
+        inputs.environment_identities,
+    )?;
+    let rows =
+        incan_frontend::checker_records::produce_final_record(&inputs.source, &inputs.owner, inputs.local, environment)
+            .map_err(|error| format!("final producer refused: {error:?}"))?;
     let record = internal_models::from_native_final_fields(&rows)
         .map_err(|error| format!("final record codec refused: {error:?}"))?;
     let encoded =
@@ -83,6 +94,23 @@ fn evaluate_final(
         incan_worker_host::stage_checking_result(home.to_owned(), snapshot, &encoded, inputs.receipt, &semantic)
             .map_err(|error| error.to_string())?;
     Ok(RecordMessage::Produced(produced))
+}
+
+/// Pair decoded declaration rows with the authenticated name and stable identity from their record keys.
+fn environment_values(
+    values: Vec<Vec<Vec<String>>>,
+    names: Vec<String>,
+    identities: Vec<String>,
+) -> Result<Vec<(String, String, Vec<Vec<String>>)>, String> {
+    if values.len() != names.len() || values.len() != identities.len() {
+        return Err("producer environment metadata is incomplete".to_owned());
+    }
+    Ok(values
+        .into_iter()
+        .zip(names)
+        .zip(identities)
+        .map(|((fields, name), identity)| (name, identity, fields))
+        .collect())
 }
 
 /// Convert one adapter refusal into the protocol's typed compiler-fault reply.

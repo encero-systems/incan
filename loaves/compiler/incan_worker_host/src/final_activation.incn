@@ -18,6 +18,9 @@ pub model FinalActivationInputs:
     pub source: str
     pub owner: str
     pub local: list[list[str]]
+    pub environment: list[list[list[str]]]
+    pub environment_names: list[str]
+    pub environment_identities: list[str]
     pub receipt: ReadReceipt
 
 
@@ -25,8 +28,8 @@ pub def read_final_activation(activation: ResolvedCheckingActivation) -> Result[
     """
     Construct the prepared reader and decode only one source and its matching local value.
 
-    No declaration environment, ambient checker or sibling local value is available to final settlement. Callee
-    effect values remain a future profile capability and therefore cannot enter this initial activation envelope.
+    Declaration records supply only the stable identities needed to rebind the selected local value. No ambient
+    checker or sibling local value is available to final settlement.
     """
     resolved = activation.snapshot
     ready = activation.ready
@@ -39,6 +42,9 @@ pub def read_final_activation(activation: ResolvedCheckingActivation) -> Result[
     mut owner_source: Option[str] = None
     mut owner = ""
     mut local: Option[list[list[str]]] = None
+    mut environment: list[list[list[str]]] = []
+    mut environment_names: list[str] = []
+    mut environment_identities: list[str] = []
     for request in prepared.required_reads:
         found = match reader.read(source, request):
             RecordRead.Found(value) => value.value
@@ -69,6 +75,15 @@ pub def read_final_activation(activation: ResolvedCheckingActivation) -> Result[
             if record.family != CheckedFamily.Local:
                 return Err("final activation requires a local-family input")
             local = Some(native_fields(record).map_err((_) => "final local fields are invalid")?)
+        elif request.key.family == "declaration" and request.key.context != "":
+            record = decode_record(found, CHECKER_PROFILE, request.key.identity, request.key.context).map_err(
+                (_) => "final declaration record is invalid",
+            )?
+            if record.family != CheckedFamily.Declaration:
+                return Err("final activation requires declaration-family environment values")
+            environment.append(native_fields(record).map_err((_) => "final declaration fields are invalid")?)
+            environment_names.append(request.key.facet)
+            environment_identities.append(request.key.identity)
         else:
             return Err("final activation prepared an unsupported input family")
     completed = reader.finish().map_err((_) => "final activation read receipt is incomplete")?
@@ -79,6 +94,9 @@ pub def read_final_activation(activation: ResolvedCheckingActivation) -> Result[
                     source=header_value + source_value,
                     owner=owner,
                     local=local_value,
+                    environment=environment,
+                    environment_names=environment_names,
+                    environment_identities=environment_identities,
                     receipt=completed,
                 ),
             )
