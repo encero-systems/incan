@@ -113,12 +113,16 @@ pub enum UnitPlanning:
     NeedsRuntime(UnitContinuation, list[RuntimeRequirement])
 
 
-def validate_project_module(module: &BodyIrModule, modules: &list[BodyIrModule]) -> Result[int, str]:
-    """Validate one module of a project, resolving its trait implementations against every module of the project."""
+def validate_project_module(
+    module: &BodyIrModule,
+    modules: &list[BodyIrModule],
+    retained: &BodyIrModule,
+) -> Result[int, str]:
+    """Validate one module, resolving trait implementations against its current slice and retained project authority."""
     count = validate_declarations_and_bodies(module, modules)?
     for implementation_position in range(len(module.trait_implementations)):
         implementation = borrowed_at(module.trait_implementations, implementation_position)
-        match validate_project_implementation(module, implementation, modules):
+        match validate_project_implementation(module, implementation, modules, retained):
             Ok(_valid) => pass
             Err(reason) =>
                 if has_open_trait_arguments(implementation):
@@ -256,6 +260,7 @@ def lowered_plan(
         trace,
         source_files,
         package_versions,
+        borrowed_at(modules, entry),
     )?
     mut context = specialized_context
     constructor_table, unions, initial_intrinsics = layout_tables(context, files[entry], source_files, package_versions)?
@@ -393,7 +398,7 @@ pub def resume_unit_plan(
     """Resume preserved ordinary frames against the exact runtime declaration closure the frontend resolved."""
     trace_key: str = "INCAN_TRACE_LOWERING"
     trace = native_environment(trace_key).is_some()
-    validate_plan_inputs(modules, sources, files, entry)?
+    validate_plan_inputs(modules, sources, files, entry, continuation.context.as_ref())?
     source_files = source_file_index(modules, files)?
     mut source_context = continuation.source_context
     mut template_constructors = continuation.template_constructors
@@ -433,6 +438,7 @@ pub def resume_unit_plan(
             false,
             addition_source_files,
             package_versions,
+            context.as_ref(),
         )?
         extend_continuation_context(
             Arc.make_mut(source_context),
@@ -1093,11 +1099,12 @@ pub def plan_contexts(
     trace: bool,
     source_files: &BTreeMap[str, str],
     package_versions: &BTreeMap[str, str],
+    validation_context: &BodyIrModule,
 ) -> Result[PlanContexts, str]:
-    """Validate project authority and retain compact templates beside one in-place-specialized execution context."""
+    """Validate against retained authority and prepare only the current slice's compact specialized contexts."""
     footprint_trace = native_environment("INCAN_TRACE_LOWERING_FOOTPRINT").is_some()
     trace_lowering(trace, "validate modules")
-    validate_plan_inputs(modules, sources, files, entry)?
+    validate_plan_inputs(modules, sources, files, entry, validation_context)?
     trace_lowering_footprint(footprint_trace, "validated modules")
     trace_lowering(trace, "project context")
     mut context, owners = project_context(modules, entry)?
@@ -1162,8 +1169,9 @@ def validate_plan_inputs(
     sources: &list[str],
     files: &list[str],
     entry: int,
+    retained: &BodyIrModule,
 ) -> Result[None, str]:
-    """Validate source provenance and checked project authority before indexing any module or layout table."""
+    """Validate source provenance and checked authority, including retained continuation facts, before indexing."""
     if len(modules) == 0 or entry < 0 or entry >= len(modules):
         return Err("invalid Body IR project entry")
     if len(sources) != len(modules) or len(files) != len(modules):
@@ -1172,7 +1180,7 @@ def validate_plan_inputs(
     _conversion_placement = validate_conversion_placement(modules, entry)?
     for module_position in range(len(modules)):
         module = borrowed_at(modules, module_position)
-        _ = validate_project_module(module, modules)?
+        _ = validate_project_module(module, modules, retained)?
     return Ok(None)
 
 

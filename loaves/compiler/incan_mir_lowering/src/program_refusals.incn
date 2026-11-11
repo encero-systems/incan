@@ -81,14 +81,10 @@ def body_refusals(
         false,
         source_files,
         package_versions,
+        borrowed_at(modules, entry),
     )?
     mut context = specialized_context
-    constructor_table, unions, initial_intrinsics = layout_tables(
-        context,
-        files[entry],
-        source_files,
-        package_versions,
-    )?
+    constructor_table, unions, initial_intrinsics = layout_tables(context, files[entry], source_files, package_versions)?
     constructors = Arc.new(constructor_table)
     mut intrinsics = initial_intrinsics
     mut models: list[ModelDeclaration] = []

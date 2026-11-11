@@ -158,6 +158,18 @@ def adds_checked_facts(source: &BodyIrModule, context: &BodyIrModule, module: &B
     for declaration in module.enum_declarations:
         if not has_enum(source.enum_declarations, declaration):
             return true
+    for declaration in module.fieldless_enum_declarations:
+        if declaration not in context.fieldless_enum_declarations:
+            return true
+    for declaration in module.value_enum_declarations:
+        if declaration not in context.value_enum_declarations:
+            return true
+    for declaration in module.trait_declarations:
+        if declaration not in context.trait_declarations:
+            return true
+    for implementation in module.trait_implementations:
+        if implementation not in context.trait_implementations:
+            return true
     for body in module.bodies:
         if not has_body(context, body):
             return true
