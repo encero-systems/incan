@@ -38,6 +38,7 @@ from release_support import (
     reference_cache_root,
     require_candidate_census,
     release_receipt,
+    release_rust_cache_root,
     run_step,
     shared_relocated_sysroot,
     tree_bytes,
@@ -656,7 +657,7 @@ def retain_seed_digests(run: ReleaseRun, seed: Path) -> Result[None, str]:
 def relocate_rust(run: ReleaseRun) -> Result[Path, str]:
     """Select a verified shared copy of the pinned sysroot at a second path with different file identities."""
     sysroot = Path(command_text("rustup", ["run", "1.98.0", "rustc", "--print", "sysroot"])?.strip())
-    cache = run.seed_home.parent().joinpath("release-rust-cache")
+    cache = release_rust_cache_root(run.seed_home)
     return shared_relocated_sysroot(sysroot, cache)
 
 
