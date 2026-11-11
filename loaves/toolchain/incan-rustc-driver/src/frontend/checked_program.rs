@@ -137,6 +137,11 @@ pub(super) fn checked_modules(
         .ok_or("entry module is missing")?;
     validate_module_declarations(&modules, &analysis).inspect_err(|_| receipt.deterministic())?;
     graph_body_output.publish()?;
+    let body_ir_inputs_invocation = tracing::trace_span!(
+        target: "incan::invocation",
+        "incan_rustc_driver::prepare_body_ir_inputs"
+    )
+    .entered();
     let manifest = match publication {
         Some(publication) => {
             let manifest = publication
@@ -153,11 +158,12 @@ pub(super) fn checked_modules(
         &requested,
     )
     .ok_or("unsupported Body IR string conversion contract identity")?;
-
-    // ---- Declarations the program reaches in its Loaves ----
     let checked_local = checked_local_identities(manifest.as_ref());
     let runtime_callable_bindings = runtime_declarations(&session, manifest.as_ref());
     let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
+    drop(body_ir_inputs_invocation);
+
+    // ---- Declarations the program reaches in its Loaves ----
     let mut package_versions = resolved.package_versions;
     package_versions.insert(unit.package.clone(), unit.version.clone());
     let reached_loaves = resolved.entries;
