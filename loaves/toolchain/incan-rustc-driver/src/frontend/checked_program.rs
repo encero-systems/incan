@@ -112,6 +112,8 @@ pub(super) fn checked_modules(
         .map_err(|error| error.to_string())?;
     let tests = crate::test_unit::collect(unit, &session)?;
     let package_identity = unit.package.as_str();
+    let source_package_identity =
+        (unit.kind != UnitKind::Test || session.loaves().entry(package_identity).is_none()).then_some(package_identity);
     let mut callable_products = callable_products::CallableProducts::prepare(unit, &modules, &mut session);
     let mut publication = library.then(|| PublicationFacts::new(package_identity));
     let analysis = {
@@ -139,7 +141,7 @@ pub(super) fn checked_modules(
         }
         None => None,
     };
-    let requested = required_loaf_identities(&modules, &analysis, package_identity)?;
+    let requested = required_loaf_identities(&modules, &analysis, source_package_identity)?;
     let string_conversion_contract = incan_frontend::body_ir::compilation_string_conversion_contract(
         modules.iter().map(|module| &module.ast),
         session.loaves(),
@@ -198,6 +200,7 @@ pub(super) fn checked_modules(
                 checked_local: checked_local.clone(),
                 package_versions,
                 package: package_identity.to_owned(),
+                source_package: source_package_identity.map(str::to_owned),
                 layout_modules: Vec::new(),
                 layout_modules_installed: false,
                 sources: sources[loaf_modules..].to_vec(),
@@ -217,7 +220,7 @@ pub(super) fn checked_modules(
         },
         session.loaves(),
         requested,
-        package_identity,
+        source_package_identity,
         &checked_local,
     )?;
     session.loaves().validate_demands().map_err(|error| error.to_string())?;
@@ -285,10 +288,10 @@ pub(super) fn complete_dependency_context(
     mut program: CheckedProgram,
     loaves: &LoafIndex,
     requested: BTreeSet<CanonicalSymbolId>,
-    package_identity: &str,
+    source_package_identity: Option<&str>,
     checked_local: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<CheckedProgram, String> {
-    complete_dependency_context_in_place(&mut program, loaves, requested, package_identity, checked_local)?;
+    complete_dependency_context_in_place(&mut program, loaves, requested, source_package_identity, checked_local)?;
     Ok(program)
 }
 
@@ -297,14 +300,15 @@ pub(super) fn complete_dependency_context_in_place(
     program: &mut CheckedProgram,
     loaves: &LoafIndex,
     mut requested: BTreeSet<CanonicalSymbolId>,
-    package_identity: &str,
+    source_package_identity: Option<&str>,
     checked_local: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<(), String> {
     let comparisons = incan_frontend::body_ir::required_comparison_defaults(&program.modules[program.own..])
         .into_iter()
-        .filter(
-            |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
-        )
+        .filter(|identity| {
+            matches!(&identity.origin, SymbolOrigin::Package { library, .. }
+                if source_package_identity.is_none_or(|package| library != package))
+        })
         .map(|identity| (identity, RootOrigin::ComparisonDefault));
     let adapters = incan_frontend::body_ir::required_primitive_adapters(loaves, &requested)
         .map_err(|error| error.to_string())?
@@ -570,8 +574,8 @@ pub(super) fn prepare_dependency_context(program: &mut CheckedProgram) -> Result
     let loaves = std::sync::Arc::clone(&program.dependencies.loaves);
     let requested = program.dependencies.requested.clone();
     let checked_local = program.dependencies.checked_local.clone();
-    let package = program.dependencies.package.clone();
-    complete_dependency_context_in_place(program, &loaves, requested, &package, &checked_local)?;
+    let source_package = program.dependencies.source_package.clone();
+    complete_dependency_context_in_place(program, &loaves, requested, source_package.as_deref(), &checked_local)?;
     loaves.validate_demands().map_err(|error| error.to_string())
 }
 

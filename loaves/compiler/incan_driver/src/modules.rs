@@ -239,7 +239,12 @@ fn collect_modules_detailed_from_seeds(
                     };
                     module_ref
                 }
-                SourceModuleImportResolution::Local(module_ref) => module_ref,
+                SourceModuleImportResolution::Local(module_ref) => {
+                    if test_uses_project_library(session) {
+                        continue;
+                    }
+                    module_ref
+                }
                 SourceModuleImportResolution::SelfImport {
                     module_ref,
                     import_path,
@@ -280,6 +285,18 @@ fn collect_modules_detailed_from_seeds(
     }
 
     Ok(topologically_sort_modules(modules, &dependency_edges)?)
+}
+
+/// Whether this test consumes its own package through the compiled Loaf that Oven supplied.
+///
+/// Such a test's plain project-module imports are resolved from that Loaf's manifest. Collecting the matching source
+/// files here would check and lower the project library again inside every test executable.
+fn test_uses_project_library(session: &CompilationSession) -> bool {
+    session.unit().kind == crate::unit::UnitKind::Test
+        && session
+            .loaves()
+            .entry(&session.unit().package)
+            .is_some_and(|entry| entry.artifact.name == session.unit().package)
 }
 
 /// The physical source module a standard package's own `std.<root>.…` import names, when the session is that

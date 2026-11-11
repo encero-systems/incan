@@ -145,6 +145,7 @@ impl TypeChecker {
             local_derive_facts: HashMap::new(),
             hash_key_inference: HashKeyInferenceState::default(),
             loaves: Arc::new(LoafIndex::default()),
+            project_library: None,
             not_prepared_loaves: HashSet::new(),
             standard_traits: HashMap::new(),
             transitive_pub_types: HashMap::new(),
@@ -185,6 +186,11 @@ impl TypeChecker {
     /// Set the compiled Loaves this program imports from: its dependencies and the standard packages (DD-0007).
     pub fn set_loaves(&mut self, loaves: Arc<LoafIndex>) {
         self.loaves = loaves;
+    }
+
+    /// Select the compiled project library whose public modules plain test imports resolve through.
+    pub fn set_project_library(&mut self, library: Option<String>) {
+        self.project_library = library;
     }
 
     /// Name dependency bindings whose manifests are unavailable because unattended preparation stopped before

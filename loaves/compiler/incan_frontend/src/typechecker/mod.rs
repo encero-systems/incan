@@ -902,6 +902,9 @@ pub struct TypeChecker {
     hash_key_inference: HashKeyInferenceState,
     /// The compiled Loaves this program imports from: its dependencies and the standard packages (DD-0007).
     pub loaves: Arc<LoafIndex>,
+    /// The current package's compiled library when a test unit links production declarations instead of collecting
+    /// their source modules again.
+    project_library: Option<String>,
     /// Dependency keys and package names whose artifacts unattended preparation could not safely prepare.
     not_prepared_loaves: HashSet<String>,
     /// Builtin traits' standard declarations by trait name, read once from the standard package owning each.

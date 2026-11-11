@@ -113,6 +113,9 @@ pub fn typecheck_modules(
         register_module_path_segments(&mut checker, modules);
         checker.set_loaves(Arc::clone(loaves));
         checker.set_dependency_interface_preparation_cache(dependency_preparations.clone());
+        if unit.kind == crate::unit::UnitKind::Test && loaves.entry(&unit.package).is_some() {
+            checker.set_project_library(Some(unit.package.clone()));
+        }
         checker.set_not_prepared_loaves(not_prepared.clone());
         if let Some(policy) = own_standard_package {
             checker.set_own_standard_package(policy);

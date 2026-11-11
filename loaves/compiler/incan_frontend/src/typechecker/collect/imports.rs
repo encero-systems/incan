@@ -121,6 +121,14 @@ impl TypeChecker {
             self.collect_loaf_module_import(&target, Some(&name), Some(stdlib::STDLIB_ROOT), span);
             return;
         }
+        if let Some(target) = self.project_loaf_import(path) {
+            self.collect_loaf_module_import(&target, Some(&name), path.segments.first().map(String::as_str), span);
+            return;
+        }
+        if let Some((target, item)) = self.project_loaf_item_import(path, alias) {
+            self.collect_loaf_from_imports(&target, &[item], span);
+            return;
+        }
         // Reject `import std.f64.consts` - unknown stdlib module; suggest `import rust::std::f64::consts`.
         if self.is_unknown_standard_module(path) {
             self.errors
@@ -253,6 +261,10 @@ impl TypeChecker {
             }
             return;
         }
+        if let Some(target) = self.project_loaf_import(module) {
+            self.collect_loaf_from_imports(&target, items, span);
+            return;
+        }
         if self.is_unknown_standard_module(module) {
             self.errors
                 .push(errors::unknown_stdlib_module(&module.segments.join("."), span));
@@ -272,6 +284,41 @@ impl TypeChecker {
             }
             self.define_from_import_placeholder(module, item, span);
         }
+    }
+
+    /// Resolve a plain module path from the current package's compiled project library, when it publishes that module.
+    fn project_loaf_import(&self, path: &ImportPath) -> Option<LoafImport> {
+        if path.is_absolute || path.parent_levels != 0 || Self::is_standard_path(path) {
+            return None;
+        }
+        let package = self.project_library.as_deref()?;
+        let entry = self.loaves.entry(package)?;
+        if entry.artifact.name != package
+            || !Self::manifest_public_module_exists(&entry.artifact.manifest, &path.segments)
+        {
+            return None;
+        }
+        Some(LoafImport {
+            key: package.to_string(),
+            module: path.segments.clone(),
+        })
+    }
+
+    /// Resolve `import module::item` from the current package's compiled project library.
+    fn project_loaf_item_import(&self, path: &ImportPath, alias: Option<&Ident>) -> Option<(LoafImport, ImportItem)> {
+        let (item, module) = path.segments.split_last()?;
+        let target = self.project_loaf_import(&ImportPath {
+            segments: module.to_vec(),
+            is_absolute: path.is_absolute,
+            parent_levels: path.parent_levels,
+        })?;
+        Some((
+            target,
+            ImportItem {
+                name: item.clone(),
+                alias: alias.cloned(),
+            },
+        ))
     }
 
     /// Bind `from parent import child` as the source submodule `parent.child` when that exact module exists.

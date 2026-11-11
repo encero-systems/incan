@@ -15,8 +15,8 @@ from storage_admission import take_decision
 from store_status import parse_status, status_command
 from features import FeatureRequest
 from home import dependency_artifact_dir
-from intake import read_project, source_root_of, ManifestReader
-from unit import describe, project_root_of
+from intake import library_source, read_project, source_root_of, ManifestReader
+from unit import UnitLoaf, describe, project_root_of
 from unit_rust import compile_incan_library, describe_native, toolchain_for
 from incan_units import check_unit, compile_unit, make_unit, program_binary, report_dependencies, run_program
 from unit_compiler import crate_name, run_compiler
@@ -512,24 +512,64 @@ def tested_project(options: Options) -> Result[i32, str]:
         for binary in build_rust_tests(rust_request(options)?)?:
             if run_rust_harness(Path(binary), Path(options.path))? != 0:
                 failed = true
+    library = project_test_library(options, len(sources) > 0)?
+    if library.code != 0:
+        failed = true
     for source in sources:
         mut selected = options
         selected.path = source.0
-        if tested_incan(selected)? != 0:
+        if library.code == 0 and tested_incan(selected, library.loaf)? != 0:
             failed = true
     if failed:
         return Ok(1)
     return Ok(0)
 
 
-def tested_incan(options: Options) -> Result[i32, str]:
+model ProjectTestLibrary:
+    """The project's compiled library binding, or no binding when the project has no Incan library."""
+
+    loaf: Option[UnitLoaf] = None
+    code: i32 = 0
+
+
+def project_test_library(
+    options: Options,
+    requested: bool = true,
+    project_root: str = "",
+) -> Result[ProjectTestLibrary, str]:
+    """
+    Build a project's Incan library once through the ordinary Loaf producer and return its test-unit binding.
+
+    A test-only project has no library binding. The library uses normal dependency activation, so test-environment
+    dependencies never enter its artifact; the test unit receives those separately through its own description.
+    """
+    if not requested:
+        return Ok(ProjectTestLibrary())
+    mut project = Path(options.path)
+    if project_root != "":
+        project = Path(project_root)
+    source = library_source(project, options.manifests)?
+    if not source.is_file():
+        return Ok(ProjectTestLibrary())
+    mut library = describe(source, options.profile, options.request, options.manifests)?
+    library.kind = "library"
+    directory = dependency_artifact_dir(library.project_root, library.package, library.profile)
+    output = directory.joinpath(f"lib{crate_name(library)}.rlib")
+    code = compile_unit(library, toolchain_for(library)?, output)?
+    if code != 0:
+        return Ok(ProjectTestLibrary(code=code))
+    loaf = UnitLoaf(
+        key=library.package,
+        name=library.package,
+        dir=directory.0,
+        standard=false,
+        source_root=Some(library.source_root),
+    )
+    return Ok(ProjectTestLibrary(loaf=Some(loaf)))
+
+
+def tested_incan(options: Options, project_library: Option[UnitLoaf] = None) -> Result[i32, str]:
     """Preserve owner-backed Incan test compilation and per-entry execution."""
-    match via_owner("test", options, Path(options.path)):
-        Some(reply) =>
-            if reply.exit != 0:
-                return Ok(status_code(reply.exit))
-            return run_collected(Path(reply.binary), Path(options.path).name())
-        None => pass
     mut unit = describe(
         Path(options.path),
         options.profile,
@@ -538,6 +578,21 @@ def tested_incan(options: Options) -> Result[i32, str]:
         purpose=ActivationPurpose.Test,
     )?
     unit.kind = "test"
+    mut selected_library = project_library
+    if selected_library is None and Path(unit.project_root).joinpath("loaf.toml").is_file():
+        prepared = project_test_library(options, project_root=unit.project_root)?
+        if prepared.code != 0:
+            return Ok(prepared.code)
+        selected_library = prepared.loaf
+    match selected_library:
+        Some(library) => unit.loaves.append(library)
+        None =>
+            match via_owner("test", options, Path(options.path)):
+                Some(reply) =>
+                    if reply.exit != 0:
+                        return Ok(status_code(reply.exit))
+                    return run_collected(Path(reply.binary), Path(options.path).name())
+                None => pass
     return run_tests(unit, toolchain_for(unit)?)
 
 

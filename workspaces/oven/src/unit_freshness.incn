@@ -330,13 +330,24 @@ def unit_files(unit: UnitDescription, mut project: Ledger) -> Result[list[str], 
     """
     root = Path(unit.project_root)
     mut paths = [unit.source]
-    paths = paths + project.sources(Path(unit.source_root), true)?
+    if not links_project_library(unit):
+        paths = paths + project.sources(Path(unit.source_root), true)?
     entry_directory = Path(unit.source).parent()
     if not unit.source.startswith(unit.source_root + "/"):
         paths = paths + project.sources(entry_directory, entry_directory.0 != unit.project_root)?
     for extra in unit.contract_models + unit.c_headers:
         paths.append(root.joinpath(extra).0)
     return Ok(unique(paths))
+
+
+def links_project_library(unit: UnitDescription) -> bool:
+    """Whether a test unit links its own package's compiled library instead of compiling the package sources."""
+    if unit.kind != "test":
+        return false
+    for loaf in unit.loaves:
+        if loaf.key == unit.package and loaf.name == unit.package and not loaf.standard:
+            return true
+    return false
 
 
 pub def fingerprint(inputs: list[str]) -> Result[str, str]:

@@ -87,13 +87,15 @@ pub fn checked_modules(
 }
 
 /// Project exact public package requirements reachable from accepted module facts, including private re-export calls.
-/// The current package's declarations compile from this unit and never resolve through a dependency artifact.
+/// A source-owned package's declarations compile from this unit and never resolve through a dependency artifact.
+/// A unit with no source-owned package, such as a project test linked to its compiled library, may request declarations
+/// from the unit's registry package through the ordinary Loaf boundary.
 /// Trait-wide default inventories are not execution roots: unused adaptor bodies must not instantiate for every
 /// adopter. Native comparison bridges add their selected slots from checked Body IR in `complete_dependency_context`.
 pub fn required_loaf_identities(
     modules: &[ParsedModule],
     analysis: &CompilationAnalysis,
-    package_identity: &str,
+    source_package_identity: Option<&str>,
 ) -> Result<BTreeSet<CanonicalSymbolId>, String> {
     let infos = modules
         .iter()
@@ -165,9 +167,10 @@ pub fn required_loaf_identities(
                 .copied()
                 .flat_map(incan_frontend::body_ir::registry_helper_identities),
         )
-        .filter(
-            |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
-        )
+        .filter(|identity| {
+            matches!(&identity.origin, SymbolOrigin::Package { library, .. }
+                if source_package_identity.is_none_or(|package| library != package))
+        })
         .collect();
     Ok(requested)
 }

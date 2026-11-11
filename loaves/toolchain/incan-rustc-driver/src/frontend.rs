@@ -114,7 +114,10 @@ struct RuntimeDependencyContext {
     checked_local: BTreeSet<CanonicalSymbolId>,
     /// Exact selected versions from the authenticated executable-resolution closure.
     package_versions: BTreeMap<String, String>,
+    /// Registry package named by the compiled unit, including a project test linked to that package's library.
     package: String,
+    /// Package whose declarations are authored by this source unit and therefore excluded from Loaf resolution.
+    source_package: Option<String>,
     /// Declaration-only runtime modules that stabilize lowering layouts without becoming dependency roots.
     layout_modules: Vec<BodyIrModule>,
     /// Whether `layout_modules` already occupy the active program's prepared prefix.
