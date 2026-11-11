@@ -544,6 +544,10 @@ pub struct TypeChecker {
     produced_local_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
     /// Producer-validated local records selected for this source revision without counting them as evaluations.
     selected_local_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    /// Final-family records emitted by direct settlement, before any module observer.
+    produced_final_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    /// Explicit capability refusals from direct final producers, retained for test and adapter reporting.
+    final_record_refusals: std::collections::BTreeMap<Span, canonical_nodes::NodeBindingError>,
     /// Producer-validated declaration records selected for the current source revision and consumed once by owner.
     callable_declaration_reuse: std::collections::BTreeMap<Span, body_check::records::Fields>,
     /// Callable bodies that produced a checked lazy result and therefore need retained-result ownership analysis.

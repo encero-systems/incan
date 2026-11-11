@@ -5,8 +5,8 @@ pub use crate::typechecker::canonical_nodes::NodeBindingError as RecordAdapterFa
 
 /// Return one fixture owner's field primitives and destroy its native checker before returning. `declaration`
 /// selects the independent declaration/default writer; false selects the settled statement owner.
-pub fn fixture_projection(source: &str, name: &str, declaration: bool) -> Result<Vec<Vec<String>>, RecordAdapterFault> {
-    crate::typechecker::body_check::records::fixture_projection(source, name, declaration)
+pub fn fixture_record(source: &str, name: &str, declaration: bool) -> Result<Vec<Vec<String>>, RecordAdapterFault> {
+    crate::typechecker::body_check::records::fixture_record(source, name, declaration)
 }
 
 /// Rebind canonical primitives through a new fixture revision and compare every native field with a separate cold
@@ -27,4 +27,17 @@ pub fn produce_local_record(
     environment: Vec<Vec<Vec<String>>>,
 ) -> Result<Vec<Vec<String>>, RecordAdapterFault> {
     crate::typechecker::body_check::records::produce_local_record(source, name, declaration, environment)
+}
+
+/// Enter one final producer from decoded local fields, settle that owner, and discard its private checker.
+///
+/// This adapter accepts no ambient [`crate::typechecker::TypeChecker`] and performs no body checking. It collects
+/// only current source coordinates and headers, restores one authenticated local value, enters the existing
+/// settlement operation and returns that owner's final fields.
+pub fn produce_final_record(
+    source: &str,
+    name: &str,
+    local: Vec<Vec<String>>,
+) -> Result<Vec<Vec<String>>, RecordAdapterFault> {
+    crate::typechecker::body_check::records::produce_final_record(source, name, local)
 }

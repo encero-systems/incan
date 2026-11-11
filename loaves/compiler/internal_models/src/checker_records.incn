@@ -258,6 +258,16 @@ pub def from_native_fields(rows: list[list[str]]) -> Result[CheckedRecord, Codec
 
 pub def from_native_local_fields(rows: list[list[str]]) -> Result[CheckedRecord, CodecFault]:
     """Assign the schema-owned pending family to native owner/root/profile metadata and canonical field primitives."""
+    return from_family_fields(rows, CheckedFamily.Local)
+
+
+pub def from_native_final_fields(rows: list[list[str]]) -> Result[CheckedRecord, CodecFault]:
+    """Assign the schema-owned settled family to native owner/root/profile metadata and canonical field primitives."""
+    return from_family_fields(rows, CheckedFamily.Final)
+
+
+def from_family_fields(rows: list[list[str]], family: CheckedFamily) -> Result[CheckedRecord, CodecFault]:
+    """Attach one schema-selected family to native owner/root/profile metadata and canonical field primitives."""
     if len(rows) == 0 or len(rows[0]) != 4 or rows[0][0] != "header":
         return Err(CodecFault.Malformed)
     header = rows[0]
@@ -266,7 +276,7 @@ pub def from_native_local_fields(rows: list[list[str]]) -> Result[CheckedRecord,
         if len(row) < 4:
             return Err(CodecFault.Malformed)
         fields.append(CanonicalField(family=row[0], node=row[1], selector=row[2], values=row[3:]))
-    record = CheckedRecord(profile=header[3], owner=header[1], root=header[2], family=CheckedFamily.Local, fields=fields)
+    record = CheckedRecord(profile=header[3], owner=header[1], root=header[2], family=family, fields=fields)
     validate(record)?
     return Ok(record)
 

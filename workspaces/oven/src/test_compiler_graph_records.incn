@@ -37,7 +37,7 @@ from pub::internal_models import (
 from compiler_graph_records import publish_evaluation
 from compiler_record_envelopes import (
     RankedActivation,
-    RankedLocalSweep,
+    RankedCheckingSweep,
     persist_activation,
 )
 
@@ -68,10 +68,11 @@ pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[No
 
 
 pub def test_local_envelopes_persist_and_sweep_in_rank_order() -> Result[None, str]:
-    """Persist the three compiler-owned activation roots and evaluate each local output once in certified order."""
+    """Persist the three compiler-owned activation roots and evaluate local/final outputs once in certified order."""
     before = store_snapshot(memory_root()).map_err((error) => error.message())?
-    first = activation("first", 1)
-    second = activation("second", 0)
+    first = activation("local", "first", 1)
+    second = activation("local", "second", 0)
+    final_record = activation("final", "first", 2)
     persisted = persist_activation(before, DemandPage(keys=[first.ready.output]), first.prepared, first.ready)?
     demand = decode_demand_page(required(before=persisted.snapshot, key=persisted.demand_key)?)?
     prepared = decode_prepared_inputs(required(before=persisted.snapshot, key=persisted.prepared_key)?)?
@@ -80,11 +81,12 @@ pub def test_local_envelopes_persist_and_sweep_in_rank_order() -> Result[None, s
     assert encode_prepared_inputs(prepared)? == encode_prepared_inputs(first.prepared)?
     assert encode_ready_work(ready)? == encode_ready_work(first.ready)?
 
-    mut sweep = RankedLocalSweep.schedule([first, second])?
+    mut sweep = RankedCheckingSweep.schedule([final_record, first, second])?
     assert selected_identity(sweep.next()) == "second"
     assert selected_identity(sweep.next()) == "first"
+    assert selected_family(sweep.next()) == "final"
     assert selected_identity(sweep.next()) == ""
-    assert sweep.evaluation_count() == 2
+    assert sweep.evaluation_count() == 3
     return Ok(None)
 
 
@@ -134,8 +136,13 @@ def request(identity: str, selection: RecordSelection) -> RecordRequest:
 
 def key(identity: str) -> RecordKey:
     """Create one compiler record key."""
+    return family_key("local", identity)
+
+
+def family_key(family: str, identity: str) -> RecordKey:
+    """Create one compiler record key in the selected checking family."""
     return RecordKey(
-        family="local",
+        family=family,
         identity_profile="identity/1",
         origin="package",
         identity=identity,
@@ -144,9 +151,9 @@ def key(identity: str) -> RecordKey:
     )
 
 
-def activation(identity: str, dependency: int) -> RankedActivation:
-    """Create one complete local activation with no environment reads."""
-    output = key(identity)
+def activation(family: str, identity: str, dependency: int) -> RankedActivation:
+    """Create one complete checking-family activation with no environment reads."""
+    output = family_key(family, identity)
     snapshot = InputSnapshot(root=RecordRoot(digest="snapshot"))
     profile = ProducerProfile(identity=RecordRoot(digest="profile"))
     prepared = PreparedInputs(
@@ -177,6 +184,13 @@ def selected_identity(activation: Option[RankedActivation]) -> str:
     """Read the selected output identity without requiring native equality for the complete activation model."""
     match activation:
         Some(value) => return value.ready.output.identity
+        None => return ""
+
+
+def selected_family(activation: Option[RankedActivation]) -> str:
+    """Read the selected output family without requiring native equality for the complete activation model."""
+    match activation:
+        Some(value) => return value.ready.output.family
         None => return ""
 
 

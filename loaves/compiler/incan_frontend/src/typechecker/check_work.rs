@@ -6,6 +6,8 @@
 /// second local check inside deferred settlement.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CheckWork {
+    /// Final-family records emitted by direct settlement producer entries.
+    pub final_record_evaluations: usize,
     /// Local-family records emitted by direct body-check producer entries.
     pub local_record_evaluations: usize,
     /// Named concrete callable local checks, counted independently from deferred settlement.

@@ -112,6 +112,7 @@ fn assert_checkers(
         "mutation-producer\tcomponents={}\tmembers={}\tchecks={}",
         comparable_work.mutation_components, comparable_work.mutation_member_visits, comparable_work.body_local_checks
     );
+    comparable_work.final_record_evaluations = 0;
     comparable_work.body_finalizations = 0;
     comparable_work.local_record_evaluations = 0;
     comparable_work.declaration_local_checks = 0;

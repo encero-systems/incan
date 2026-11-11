@@ -19,7 +19,7 @@ from pub::internal_models import (
 
 
 pub model RankedActivation:
-    """One local-family evaluation paired with the certified rank that orders it."""
+    """One checking-family evaluation paired with the certified rank that orders it."""
 
     pub ready: ReadyWork
     pub prepared: PreparedInputs
@@ -37,19 +37,19 @@ pub model PersistedActivation:
     pub work_key: str
 
 
-pub class RankedLocalSweep:
-    """A single-owner local-family frontier that yields every certified activation exactly once."""
+pub class RankedCheckingSweep:
+    """A single-owner local/final frontier that yields every certified activation exactly once."""
 
     pending: list[RankedActivation]
     evaluations: int = 0
 
     @staticmethod
-    pub def schedule(activations: list[RankedActivation]) -> Result[RankedLocalSweep, str]:
-        """Admit only complete CheckBody activations whose output, snapshot and profile bindings agree."""
+    pub def schedule(activations: list[RankedActivation]) -> Result[RankedCheckingSweep, str]:
+        """Admit only complete checking-family activations whose output, snapshot and profile bindings agree."""
         for activation in activations:
             if not valid_activation(activation):
-                return Err("ranked local sweep requires matching prepared CheckBody work")
-        return Ok(RankedLocalSweep(pending=activations))
+                return Err("ranked checking sweep requires matching prepared CheckBody work")
+        return Ok(RankedCheckingSweep(pending=activations))
 
     pub def next(mut self) -> Option[RankedActivation]:
         """Remove the earliest certified activation, preserving each other frontier item for a later call."""
@@ -108,9 +108,10 @@ pub def persist_activation(
 
 
 def valid_activation(value: RankedActivation) -> bool:
-    """Whether one local activation has one output, snapshot, profile and CheckBody rank authority."""
+    """Whether one local/final activation has one output, snapshot, profile and CheckBody rank authority."""
     return (
-        value.ready.stage == ProducerStage.CheckBody
+        (value.ready.output.family == "local" or value.ready.output.family == "final")
+        and value.ready.stage == ProducerStage.CheckBody
         and value.prepared.rank_certificate.rank.stage == ProducerStage.CheckBody
         and value.ready.output == value.prepared.output
         and value.ready.profile.identity.digest == value.prepared.profile.identity.digest
