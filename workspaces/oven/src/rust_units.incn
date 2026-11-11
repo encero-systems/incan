@@ -897,13 +897,21 @@ def provider_dependencies(
     request: RustBuild,
     built: Dict[str, BuiltUnit],
 ) -> Result[Dict[str, BuiltUnit], str]:
-    """An Incan provider consumes complete Loaf facades even when its outer Rust graph selects native facets."""
+    """
+    Give an Incan provider complete Loaf facades even when its outer Rust graph selects native facets.
+
+    The outer graph may already hold a facade for the direct dependency while retaining a Rust-only unit farther down
+    that dependency's closure. The provider therefore decides from its complete selected closure, not only its direct
+    edges; otherwise the transitive interface is described without the rlib and producer identity that implement it.
+    """
     if not request.rust_facet_dependencies:
         return Ok(built)
+    demand = LocalDemand(project=facet.project, domain=facet.domain, features=facet.features, defaults=false)
+    dependencies = local_facets(demand, target_configuration(request.rustc)?, request.substitutes, request.manifests)?
     mut needs_facade = false
-    for edge in facet.local:
-        if edge.key() in built and built[edge.key()].loaf == "":
-            if library_source(Path(edge.project), request.manifests)?.is_file():
+    for dependency in dependencies:
+        if dependency.key() in built and built[dependency.key()].loaf == "":
+            if library_source(Path(dependency.project), request.manifests)?.is_file():
                 needs_facade = true
     if not needs_facade:
         return Ok(built)
@@ -914,8 +922,6 @@ def provider_dependencies(
     provider.default_features = false
     provider.all_features = false
     provider.rust_facet_dependencies = false
-    demand = LocalDemand(project=facet.project, domain=facet.domain, features=facet.features, defaults=false)
-    dependencies = local_facets(demand, target_configuration(request.rustc)?, request.substitutes, request.manifests)?
     return build_dependencies(provider, dependencies, false)
 
 
