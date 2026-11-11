@@ -179,6 +179,25 @@ pub def reusable_family_records(selected: Snapshot, family: str, profile: str) -
     return Ok(records)
 
 
+pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[RecordKey], str]:
+    """Read the prior graph's reverse edges for changed records without entering any compiler or whole-program check."""
+    mut readers: Dict[str, RecordKey] = {}
+    selected_keys = keys(selected).map_err((error) => error.message())?
+    for target in changed:
+        prefix = "incan.engine.edge-in\t" + encode_record_key(target)? + "\t"
+        for indexed in selected_keys:
+            if not indexed.startswith(prefix):
+                continue
+            edge = parse(required_value(selected, indexed)?.decode().map_err((_) => "compiler graph edge is not UTF-8")?).map_err(
+                (error) => error.message(),
+            )?
+            if required_text(edge, "schema")? != EDGE_SCHEMA or required_text(edge, "profile")? != profile:
+                continue
+            reader = required_text(edge, "reader")?
+            readers[reader] = decode_record_key(reader)?
+    return Ok([readers[key] for key in sorted([item for item in readers.keys()])])
+
+
 pub def evaluation_record_key(profile: str, output: str) -> str:
     """Return the selected evaluation identity for one output under one exact producer profile."""
     identity = digest((profile + "\n" + output).encode("utf-8"))

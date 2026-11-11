@@ -7,6 +7,7 @@ from compiler_graph_records import (
     PublishedEvaluation,
     ReusableRecord,
     publish_evaluation,
+    readers_of,
     reusable_evaluation,
     reusable_family_records,
 )
@@ -76,6 +77,17 @@ pub def encode_body_inventory(records: list[SelectedBodyRecord]) -> Result[bytes
     for record in records:
         values.append(GraphBodyValue(identity=record.identity, local=record.local, final=record.final))
     return encode_graph_body_values(values).map_err((error) => f"selected body transport refused: {error:?}")
+
+
+pub def invalid_body_owners(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[str], str]:
+    """Select invalid local/final owners from reverse edges only, before any program check or producer activation."""
+    mut owners: set[str] = set()
+    for reader in readers_of(selected, changed, profile)?:
+        if reader.family != "local" and reader.family != "final":
+            continue
+        if reusable_evaluation(selected, reader, profile)? is None:
+            owners.add(reader.identity)
+    return Ok(sorted([owner for owner in owners]))
 
 
 pub def publish_body_values(
