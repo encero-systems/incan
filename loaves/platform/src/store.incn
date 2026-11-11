@@ -47,6 +47,7 @@ from crate.trace.schema import Operation
 from crate.ipc import session_id
 from crate.store.files import file_digest
 from crate.store.index import Entry, Location, build, entries as index_entries, find as index_find, insert
+from crate.store.index import search as index_search
 from crate.store.index import copied_index_bytes, page_path, page_reads, view_digest, staged_pages
 from crate.store.files import (
     StoreError,
@@ -83,6 +84,51 @@ pub enum Lookup:
     Found(MappedView)
     Deleted
     Absent
+
+
+pub model PresentBinding:
+    """Owned value bytes and the authenticated revision, semantic value and selected index-path identities."""
+
+    pub value: bytes
+    pub revision: str
+    pub semantic_digest: str
+    pub selection_digest: str
+
+
+pub model DeletedBinding:
+    """An exact tombstone and its immutable frame revision."""
+
+    pub revision: str
+
+
+pub model AbsentBinding:
+    """An authenticated exclusion for one exact key in the selected index root."""
+
+    pub exclusion_digest: str
+
+
+pub enum BindingLookup:
+    """The authenticated binding facts for one exact key, with owned bytes only for a present value."""
+
+    Present(PresentBinding)
+    Deleted(DeletedBinding)
+    Absent(AbsentBinding)
+
+
+pub model MemberBinding:
+    """One live member selected in canonical key order, retaining its immutable frame and semantic identities."""
+
+    pub key: str
+    pub revision: str
+    pub semantic_digest: str
+
+
+pub model MemberBindings:
+    """One bounded ordered member page and the authenticated digest of its exact selection context."""
+
+    pub members: list[MemberBinding]
+    pub membership_digest: str
+    pub continuation: str
 
 
 pub model ViewRoot:
@@ -350,6 +396,81 @@ pub def lookup(view: Snapshot, key: str) -> Result[Lookup, StoreError]:
         Some(location) =>
             counted["records"] = counted.get("records", 0) + 1
             return read_frame(view.root, key, location)
+
+
+pub def lookup_binding(view: Snapshot, key: str) -> Result[BindingLookup, StoreError]:
+    """Read one key with revision, semantic and authenticated search-path evidence from the selected snapshot."""
+    searched = index_search(view.root, view.index, key).map_err(index_failure)?
+    match searched.location:
+        None => return Ok(BindingLookup.Absent(AbsentBinding(exclusion_digest=searched.path_digest)))
+        Some(location) =>
+            revision = hexlify(location.digest)
+            match read_frame(view.root, key, location)?:
+                Lookup.Found(value) =>
+                    bytes = owned(value)
+                    return Ok(
+                        BindingLookup.Present(
+                            PresentBinding(
+                                value=bytes,
+                                revision=revision,
+                                semantic_digest=hexlify(sha256.digest(bytes)),
+                                selection_digest=searched.path_digest,
+                            ),
+                        ),
+                    )
+                Lookup.Deleted => return Ok(BindingLookup.Deleted(DeletedBinding(revision=revision)))
+                Lookup.Absent => return Err(failure("integrity", key, "an indexed frame disappeared during lookup"))
+
+
+pub def lookup_members(
+    view: Snapshot,
+    prefix: str,
+    lower: str,
+    upper: str,
+    continuation: str,
+    limit: int,
+) -> Result[MemberBindings, StoreError]:
+    """Read one bounded canonical page of live keys below `prefix`, with a digest bound to the selected index root."""
+    if limit <= 0:
+        return Err(failure("format", prefix, "member lookup limit must be positive"))
+    mut members: list[MemberBinding] = []
+    mut next = "end"
+    start = prefix + "\t"
+    for entry in index_entries(view.root, view.index).map_err(index_failure)?:
+        if not entry.key.startswith(start) or (lower != "" and entry.key < lower):
+            continue
+        if upper != "" and entry.key >= upper:
+            break
+        if continuation != "" and continuation != "end" and entry.key <= continuation:
+            continue
+        match entry.location:
+            None => pass
+            Some(location) =>
+                if location.tombstone:
+                    continue
+                if len(members) == limit:
+                    next = entry.key
+                    break
+                match read_frame(view.root, entry.key, location)?:
+                    Lookup.Found(value) =>
+                        bytes = owned(value)
+                        members.append(
+                            MemberBinding(
+                                key=entry.key,
+                                revision=hexlify(location.digest),
+                                semantic_digest=hexlify(sha256.digest(bytes)),
+                            ),
+                        )
+                    Lookup.Deleted => pass
+                    Lookup.Absent =>
+                        return Err(failure("integrity", entry.key, "an indexed member disappeared during lookup"))
+    mut evidence = [view.index, prefix, lower, upper, continuation, next]
+    for member in members:
+        evidence.append(member.key)
+        evidence.append(member.revision)
+        evidence.append(member.semantic_digest)
+    digest = hexlify(sha256.digest("\n".join(evidence).encode("utf-8")))
+    return Ok(MemberBindings(members=members, membership_digest=digest, continuation=next))
 
 
 pub def get(view: Snapshot, key: str) -> Result[Option[bytes], StoreError]:

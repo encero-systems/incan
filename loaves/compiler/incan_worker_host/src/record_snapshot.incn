@@ -10,6 +10,7 @@ from pub::incan_platform.store import Lookup, Snapshot, lease, lease_token, look
 from pub::incan_platform.store import read_store_identity, snapshot as store_snapshot
 from pub::incan_platform.store.disk import root as disk_root
 from pub::incan_platform.store.files import StoreError
+from pub::internal_models.records import ReadScope, StoreRecordSource
 
 pub const SNAPSHOT_FORMAT_PROFILE: str = "incan.compiler-records/1"
 pub const STORE_VIEW_SCHEMA: str = "incan.store-view/1"
@@ -82,6 +83,10 @@ pub class ResolvedSnapshot:
         if not allowed(self.allowed_roots, key):
             return Err(fault(SnapshotFaultKind.RootOutside, key))
         return lookup(self.snapshot, key).map_err((error) => store_fault(error))
+
+    pub def record_source(self, scope: ReadScope) -> StoreRecordSource:
+        """Transfer this resolved snapshot and its allowed roots into the compiler's authenticated read boundary."""
+        return StoreRecordSource.open(self.snapshot, scope, self.allowed_roots)
 
 
 pub def encode_store_view(binding: StoreView) -> Result[str, str]:

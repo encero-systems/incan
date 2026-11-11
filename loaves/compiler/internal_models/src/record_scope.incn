@@ -90,6 +90,26 @@ pub model AbsentFact:
 
 
 @derive(Eq)
+pub model DeletedFact:
+    """A witnessed tombstone for the exact request, retaining the immutable tombstone revision."""
+
+    pub scope: ReadScope
+    pub request: RecordRequest
+    pub revision: str
+
+
+@derive(Eq)
+pub model MemberFact:
+    """One bounded ordered member page and the authenticated digest and continuation of that exact selection."""
+
+    pub scope: ReadScope
+    pub request: RecordRequest
+    pub value: bytes
+    pub membership_digest: str
+    pub continuation: str
+
+
+@derive(Eq)
 pub enum ReadFault:
     """Infrastructure faults terminate the activation and cannot become source diagnostics or semantic absence."""
 
@@ -108,7 +128,9 @@ pub enum RecordRead:
     """Final selected value, witnessed semantic absence, or a typed infrastructure fault."""
 
     Found(SelectedFact)
+    Deleted(DeletedFact)
     Absent(AbsentFact)
+    Members(MemberFact)
     Failed(ReadFault)
 
 
@@ -116,7 +138,9 @@ pub enum ReadWitness:
     """Successful reads only: found and exclusion evidence preserve their different invalidation contracts."""
 
     Found(RevisionEvidence, str)
+    Deleted(DeletedFact)
     Absent(AbsentFact)
+    Members(ReadScope, RecordRequest, str, str)
 
 
 pub model ReadCounters:
@@ -194,6 +218,7 @@ pub class RecordReads:
         # 3. Count all returned bytes, including a reply whose binding is invalid.
         match result:
             RecordRead.Found(found) => self.response_bytes += len(found.value)
+            RecordRead.Members(found) => self.response_bytes += len(found.value)
             _ => pass
 
         # Bind the returned evidence before exposing the selected value.
@@ -204,7 +229,11 @@ pub class RecordReads:
             None => pass
         match result:
             RecordRead.Found(found) => self.witnesses.append(ReadWitness.Found(found.evidence, found.selection_digest))
+            RecordRead.Deleted(deleted) => self.witnesses.append(ReadWitness.Deleted(deleted))
             RecordRead.Absent(absent) => self.witnesses.append(ReadWitness.Absent(absent))
+            RecordRead.Members(found) => self.witnesses.append(
+                ReadWitness.Members(found.scope, found.request, found.membership_digest, found.continuation),
+            )
             RecordRead.Failed(fault) =>
                 self.fault = Some(fault)
                 return RecordRead.Failed(fault)
@@ -262,6 +291,12 @@ def validate_read(scope: ReadScope, request: RecordRequest, result: RecordRead) 
     """Check the complete response binding; the source's integrity proof is not reconstructed by this adapter."""
     match result:
         RecordRead.Failed(fault) => return Some(fault)
+        RecordRead.Deleted(deleted) =>
+            mismatch = binding_fault(scope, request, deleted.scope, deleted.request)
+            if mismatch != None:
+                return mismatch
+            if deleted.revision == "":
+                return Some(ReadFault.InvalidEvidence)
         RecordRead.Absent(absent) =>
             mismatch = binding_fault(scope, request, absent.scope, absent.request)
             if mismatch != None:
@@ -281,6 +316,15 @@ def validate_read(scope: ReadScope, request: RecordRequest, result: RecordRead) 
                     if len(found.value) != payload.length:
                         return Some(ReadFault.InvalidEvidence)
                 _ => pass
+        RecordRead.Members(found) =>
+            mismatch = binding_fault(scope, request, found.scope, found.request)
+            if mismatch != None:
+                return mismatch
+            match request.selection:
+                RecordSelection.Members(_) => pass
+                _ => return Some(ReadFault.SelectionMismatch)
+            if len(found.value) > request.byte_limit or found.membership_digest == "" or found.continuation == "":
+                return Some(ReadFault.InvalidEvidence)
     return None
 
 
