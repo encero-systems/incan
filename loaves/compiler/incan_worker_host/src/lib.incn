@@ -53,6 +53,7 @@ pub from endpoint import CallerWatch, abandon
 pub from host import (
     WorkerActivation,
     WorkerHost,
+    selected_home,
     start,
     next_request,
     next_activation,
