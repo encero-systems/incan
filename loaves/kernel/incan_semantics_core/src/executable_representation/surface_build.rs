@@ -41,6 +41,43 @@ pub fn build_surface(
     encode_surface(library, package_version, public, admitted, declarations)
 }
 
+/// Explain unresolved nominal references in the project-internal surface without changing public coverage.
+///
+/// The caller invokes this only for a same-package test artifact. Diagnostics are derived from the same checked
+/// candidates and publication audit as [`build_surface`], but they are process-local maintainer evidence rather than
+/// part of the encoded RFC 123 surface.
+pub fn internal_surface_admission_diagnostics(
+    modules: &[BodyIrModule],
+    library: &str,
+    public: &BTreeSet<CanonicalSymbolId>,
+) -> Vec<SurfaceAdmissionDiagnostic> {
+    let candidates = checked_candidates(modules, library, public);
+    let mut diagnostics = Vec::new();
+    for module in modules {
+        for nominal in &module.nominal_declarations {
+            if !candidates.contains(&nominal.canonical)
+                || !matches!(
+                    publication::project_nominal(nominal, module, library, &candidates),
+                    Err(CoverageReason::UnresolvedReference)
+                )
+            {
+                continue;
+            }
+            let Some((path, reference)) =
+                publication::diagnose_nominal_unresolved_reference(nominal, module, library, &candidates)
+            else {
+                continue;
+            };
+            diagnostics.push(SurfaceAdmissionDiagnostic {
+                declaration: nominal.canonical.clone(),
+                path,
+                reference,
+            });
+        }
+    }
+    diagnostics
+}
+
 /// Collect actual checked declarations and their members; eligibility never adds an importable export.
 pub(super) fn checked_candidates(
     modules: &[BodyIrModule],

@@ -46,7 +46,7 @@ use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::body_ir::NativeUnionDeclaration;
 use incan_semantics_core::executable_representation::{
-    EXECUTABLE_REPRESENTATION_VERSION, SurfaceReader, build_surface,
+    EXECUTABLE_REPRESENTATION_VERSION, SurfaceReader, build_surface, internal_surface_admission_diagnostics,
 };
 
 /// Encoded Loaf artifacts retained across native compilation without retaining checked modules or Body IR.
@@ -356,6 +356,17 @@ pub fn prepare_loaf_publication(
         .filter(|body| body.first_representation_gap().is_some())
         .filter_map(|body| body.canonical.clone())
         .collect::<BTreeSet<_>>();
+    if retain_private_roots && tracing::enabled!(target: "incan::invocation", tracing::Level::DEBUG) {
+        for diagnostic in internal_surface_admission_diagnostics(bodies, &name, &public) {
+            tracing::debug!(
+                target: "incan::invocation",
+                declaration = %diagnostic.declaration.render_compact(),
+                path = %diagnostic.path.join(" -> "),
+                reference = %diagnostic.reference,
+                "internal surface unresolved reference"
+            );
+        }
+    }
     let surface = build_surface(
         bodies,
         &name,

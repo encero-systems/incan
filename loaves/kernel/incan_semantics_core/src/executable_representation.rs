@@ -178,6 +178,21 @@ pub enum CoverageReason {
     NoExecutableDeclaration,
 }
 
+/// Maintainer-facing account of one unresolved reference in a project-internal executable surface.
+///
+/// This diagnostic is produced from checked Body IR while the internal surface is built and is never serialized into
+/// the RFC 123 public representation. Keeping it outside [`DeclarationCoverage`] lets same-package test builds name
+/// private declarations and their exact type paths without widening the public artifact's disclosure contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SurfaceAdmissionDiagnostic {
+    /// Exact checked declaration whose projection was refused.
+    pub declaration: CanonicalSymbolId,
+    /// Declaration-relative path to the reference, such as a model field's nested type argument.
+    pub path: Vec<String>,
+    /// Checked reference spelling or canonical identity that publication could not resolve.
+    pub reference: String,
+}
+
 /// One individually decodable execution declaration. Only public index entries are importable roots.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ExecutableDeclaration {

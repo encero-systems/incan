@@ -178,6 +178,38 @@ fn unresolved_named_fields_are_uncovered_and_synthesized_projections_remain_cove
     Ok(())
 }
 
+/// Internal admission diagnostics name the exact declaration, field path and nested unresolved type.
+#[test]
+fn internal_surface_diagnostic_names_nested_nominal_reference() -> Result<(), Box<dyn std::error::Error>> {
+    let mut owner = identity("Broken", 1);
+    owner.kind = SemanticSourceTargetKind::Model;
+    let field = owner.generated_member("values", SemanticSourceTargetKind::Field);
+    let mut declaration = generic_holder_declaration(owner.clone(), field.clone());
+    declaration.name = "Broken".into();
+    declaration.fields = vec!["values".into()];
+    declaration.field_types = vec![IncanType::Generic {
+        base: "List".into(),
+        args: vec![IncanType::Named("MissingCarrier".into())],
+    }];
+    declaration.type_parameters.clear();
+    declaration.type_parameter_count = 0;
+    let mut input = module(Vec::new());
+    input.nominal_declarations.push(declaration);
+    let diagnostics = internal_surface_admission_diagnostics(
+        std::slice::from_ref(&input),
+        "probe",
+        &BTreeSet::from([owner.clone(), field]),
+    );
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].declaration, owner);
+    assert_eq!(
+        diagnostics[0].path,
+        vec!["field `values`", "type", "generic `List` argument 0"]
+    );
+    assert_eq!(diagnostics[0].reference, "MissingCarrier");
+    Ok(())
+}
+
 #[test]
 fn public_membership_and_explicit_empty_body_coverage() -> Result<(), Box<dyn std::error::Error>> {
     let module = module(vec![body("public", 1), body("private_secret", 2)]);

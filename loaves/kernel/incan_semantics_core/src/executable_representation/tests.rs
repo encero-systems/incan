@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::{
     CoverageReason, DeclarationCoverage, EXECUTABLE_REPRESENTATION_VERSION, ExecutableDeclaration,
     ExecutableRepresentationError, MAX_SURFACE_INDEX_BYTES, OLDEST_SUPPORTED_VERSION, SurfaceIndex, SurfaceReader,
-    build_surface, decode_module, encode_module, publication, require_supported_version,
+    build_surface, decode_module, encode_module, internal_surface_admission_diagnostics, publication,
+    require_supported_version,
 };
 use crate::body_ir::{
     ArgumentBinding, Block, Body, BodyIrModule, CallableParam, CallableParamDefault, CallableTarget, Callee,

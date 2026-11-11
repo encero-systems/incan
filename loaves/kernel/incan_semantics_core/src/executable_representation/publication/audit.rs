@@ -3,6 +3,20 @@
 use super::*;
 use crate::{SemanticSourceTargetKind, SymbolNamespace};
 
+/// Extend a declaration-relative path with one generic base selection.
+fn generic_base_path(path: &[String], base: &str) -> Vec<String> {
+    let mut result = path.to_vec();
+    result.push(format!("generic `{base}`"));
+    result
+}
+
+/// Extend a declaration-relative path with one generic type argument.
+fn type_argument_path(path: &[String], base: &str, index: usize) -> Vec<String> {
+    let mut result = path.to_vec();
+    result.push(format!("generic `{base}` argument {index}"));
+    result
+}
+
 impl<'a> PublicationAudit<'a> {
     /// Preserve a checked fragment-local reflection binder without admitting it as a callable package dependency.
     /// Both identities are projected together only after the owning generic frame has authenticated their relation.
@@ -95,6 +109,7 @@ impl<'a> PublicationAudit<'a> {
             requirements: BTreeSet::new(),
             native_calls: Vec::new(),
             local_slots: BTreeSet::new(),
+            unresolved_reference: None,
         }
     }
 
@@ -108,7 +123,7 @@ impl<'a> PublicationAudit<'a> {
             };
         }
         if identity.scope_discriminant.is_some() {
-            return Err(CoverageReason::UnresolvedReference);
+            return Err(self.unresolved_type(&[], identity.render_compact()));
         }
         match &identity.origin {
             SymbolOrigin::Package { library, .. } => {
@@ -140,6 +155,11 @@ impl<'a> PublicationAudit<'a> {
     /// a source nominal declaration. References may cross the body boundary; lowering still rejects unsized values in
     /// owned frame storage.
     pub(super) fn ty(&mut self, ty: &IncanType) -> Result<(), CoverageReason> {
+        self.ty_at(ty, &[])
+    }
+
+    /// Audit one type while retaining its nested path for an internal-surface admission diagnostic.
+    fn ty_at(&mut self, ty: &IncanType, path: &[String]) -> Result<(), CoverageReason> {
         match ty {
             IncanType::NativePointer { .. } | IncanType::NativeCChar => Err(CoverageReason::UnsupportedConstruct),
             IncanType::SelfType if self.trait_self => Ok(()),
@@ -160,21 +180,21 @@ impl<'a> PublicationAudit<'a> {
                 if matches!(base.as_str(), "[]" | "Awaitable" | "$FrozenList" | "$FrozenSet") =>
             {
                 match args.as_slice() {
-                    [element] => self.ty(element),
-                    _ => Err(CoverageReason::UnresolvedReference),
+                    [element] => self.ty_at(element, &type_argument_path(path, base, 0)),
+                    _ => Err(self.unresolved_type(path, format!("{ty:?}"))),
                 }
             }
             // Native frozen storage keeps the checker's element carriers rather than applying the public frozen
             // surface's text conversion. Its internal constructor has no source declaration to demand.
             IncanType::Generic { base, args } if base == "$FrozenDict" => match args.as_slice() {
                 [key, value] => {
-                    self.ty(key)?;
-                    self.ty(value)
+                    self.ty_at(key, &type_argument_path(path, base, 0))?;
+                    self.ty_at(value, &type_argument_path(path, base, 1))
                 }
-                _ => Err(CoverageReason::UnresolvedReference),
+                _ => Err(self.unresolved_type(path, format!("{ty:?}"))),
             },
             IncanType::NativeTraitObject { path, .. } if crate::body_ir::rust_item_identity(path).is_some() => Ok(()),
-            IncanType::Named(name) => self.named_type(name),
+            IncanType::Named(name) => self.named_type(name, path),
             IncanType::Generic { base, args } => {
                 // Compiler collections have no declaration requirement; a generic nominal retains its checked base.
                 if incan_lang::lang::types::collections::from_str(base).is_none()
@@ -182,29 +202,35 @@ impl<'a> PublicationAudit<'a> {
                     && !(incan_lang::lang::traits::from_str(base) == Some(incan_lang::lang::traits::TraitId::Awaitable)
                         && args.len() == 1)
                 {
-                    self.named_type(base)?;
+                    self.named_type(base, &generic_base_path(path, base))?;
                 }
-                for arg in args {
-                    self.ty(arg)?;
+                for (index, arg) in args.iter().enumerate() {
+                    self.ty_at(arg, &type_argument_path(path, base, index))?;
                 }
                 Ok(())
             }
             IncanType::Tuple(items) => {
-                for item in items {
-                    self.ty(item)?;
+                for (index, item) in items.iter().enumerate() {
+                    let mut item_path = path.to_vec();
+                    item_path.push(format!("tuple item {index}"));
+                    self.ty_at(item, &item_path)?;
                 }
                 Ok(())
             }
             IncanType::Function { params, return_type } => {
-                for param in params {
-                    self.ty(&param.ty)?;
+                for (index, param) in params.iter().enumerate() {
+                    let mut parameter_path = path.to_vec();
+                    parameter_path.push(format!("function parameter {index}"));
+                    self.ty_at(&param.ty, &parameter_path)?;
                 }
-                self.ty(return_type)
+                let mut return_path = path.to_vec();
+                return_path.push("function return".to_owned());
+                self.ty_at(return_type, &return_path)
             }
             IncanType::Ref(inner)
             | IncanType::RefMut(inner)
             | IncanType::TypeToken(inner)
-            | IncanType::NativeArray { element: inner, .. } => self.ty(inner),
+            | IncanType::NativeArray { element: inner, .. } => self.ty_at(inner, path),
             IncanType::TypeVar(_)
             | IncanType::SelfType
             | IncanType::RustInteropPath(_)
@@ -212,26 +238,34 @@ impl<'a> PublicationAudit<'a> {
             | IncanType::Trait(_)
             | IncanType::Infer
             | IncanType::Unknown
-            | IncanType::Unsupported(_) => Err(CoverageReason::UnresolvedReference),
+            | IncanType::Unsupported(_) => Err(self.unresolved_type(path, format!("{ty:?}"))),
         }
     }
 
     /// Retain a named model or trait only when local declarations and checker bindings agree on its identity, or
     /// select an exact native identity already present in the executable storage inventory.
-    pub(super) fn named_type(&mut self, name: &str) -> Result<(), CoverageReason> {
+    fn named_type(&mut self, name: &str, path: &[String]) -> Result<(), CoverageReason> {
         let local = self.nominal_types.get(name);
         let checked = self.checked_nominal_types.get(name);
         if matches!((local, checked), (Some(local), Some(checked)) if local != checked) {
-            return Err(CoverageReason::UnresolvedReference);
+            return Err(self.unresolved_type(path, name));
         }
         let mut identity = checked
             .or(local)
             .or_else(|| self.native_types.get(name))
             .cloned()
-            .ok_or(CoverageReason::UnresolvedReference)?;
+            .ok_or_else(|| self.unresolved_type(path, name))?;
         self.identity(&mut identity, true)?;
         self.used_nominal_types.insert(name.to_owned(), identity);
         Ok(())
+    }
+
+    /// Record the first exact type reference refused by this audit while preserving the stable coverage reason.
+    fn unresolved_type(&mut self, path: &[String], reference: impl Into<String>) -> CoverageReason {
+        if self.unresolved_reference.is_none() {
+            self.unresolved_reference = Some((path.to_vec(), reference.into()));
+        }
+        CoverageReason::UnresolvedReference
     }
 
     /// Audit declaration-owned defaults, including nested closure parameters, and retain every referenced frame slot.

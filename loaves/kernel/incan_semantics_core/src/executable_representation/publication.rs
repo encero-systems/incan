@@ -433,6 +433,97 @@ pub(super) fn project_nominal(
     Ok((nominal, audit.requirements, callables))
 }
 
+/// Recover the exact checked type reference behind an unresolved nominal projection for internal diagnostics.
+///
+/// This repeats only the pure publication audit and returns no executable fragment. The ordinary projection remains
+/// the sole authority for admission; this helper explains its `UnresolvedReference` result without altering the
+/// stable public coverage reason or serializing private names.
+pub(super) fn diagnose_nominal_unresolved_reference(
+    source: &crate::body_ir::NominalDeclaration,
+    module: &BodyIrModule,
+    library: &str,
+    eligible: &BTreeSet<CanonicalSymbolId>,
+) -> Option<(Vec<String>, String)> {
+    let mut audit = PublicationAudit::new(module, library, eligible, &source.named_type_identities);
+    audit.type_parameters.extend(source.type_parameters.iter().cloned());
+    for (field, ty) in source.fields.iter().zip(&source.field_types) {
+        if audit.ty(ty).is_err() {
+            return take_unresolved_reference(&mut audit, vec![format!("field `{field}`"), "type".to_owned()]);
+        }
+    }
+    if let Some(defaults) = &source.field_default_body
+        && let Some(diagnostic) =
+            diagnose_body_unresolved_reference(defaults, module, library, eligible, vec!["field defaults".to_owned()])
+    {
+        return Some(diagnostic);
+    }
+    for binding in &source.method_partial_defaults {
+        if let Some(diagnostic) = diagnose_body_unresolved_reference(
+            &binding.frame,
+            module,
+            library,
+            eligible,
+            vec![format!("method defaults `{}`", binding.target.declaration_name)],
+        ) {
+            return Some(diagnostic);
+        }
+    }
+    None
+}
+
+/// Locate the first unresolved checked type or identity in one retained body without changing its projection.
+fn diagnose_body_unresolved_reference(
+    source: &Body,
+    module: &BodyIrModule,
+    library: &str,
+    eligible: &BTreeSet<CanonicalSymbolId>,
+    prefix: Vec<String>,
+) -> Option<(Vec<String>, String)> {
+    let mut audit = PublicationAudit::new(module, library, eligible, &source.named_type_identities);
+    audit.current_callable = source.canonical.clone();
+    audit.type_parameters.extend(source.type_parameters.iter().cloned());
+    if let Some(identity) = &source.canonical {
+        for owner in &module.nominal_declarations {
+            if encloses(&owner.canonical, identity) || owns_default_frame(owner, source) {
+                audit.type_parameters.extend(owner.type_parameters.iter().cloned());
+            }
+        }
+    }
+    if audit.ty(&source.return_type).is_err() {
+        let mut path = prefix.clone();
+        path.push("return type".to_owned());
+        return take_unresolved_reference(&mut audit, path);
+    }
+    for local in &source.locals {
+        if audit.ty(&local.ty).is_err() {
+            let mut path = prefix.clone();
+            path.push(format!("local {} type", local.id.index()));
+            return take_unresolved_reference(&mut audit, path);
+        }
+    }
+    if audit.parameters(&mut source.params.clone()).is_err() {
+        let mut path = prefix.clone();
+        path.push("parameters".to_owned());
+        return take_unresolved_reference(&mut audit, path);
+    }
+    if audit.statements(&mut source.block.stmts.clone()).is_err() {
+        let mut path = prefix;
+        path.push("statements".to_owned());
+        return take_unresolved_reference(&mut audit, path);
+    }
+    None
+}
+
+/// Prefix the nested type path retained by the audit and consume its one diagnostic.
+fn take_unresolved_reference(
+    audit: &mut PublicationAudit<'_>,
+    mut prefix: Vec<String>,
+) -> Option<(Vec<String>, String)> {
+    let (path, reference) = audit.unresolved_reference.take()?;
+    prefix.extend(path);
+    Some((prefix, reference))
+}
+
 /// Project a checked normal enum, retaining canonical variant addresses and auditing every payload type.
 pub(super) fn project_enum(
     source: &crate::body_ir::EnumDeclaration,
@@ -610,6 +701,8 @@ struct PublicationAudit<'a> {
     native_calls: Vec<(CanonicalSymbolId, Vec<IncanType>)>,
     /// Local storage referenced by retained parameter defaults, independent of implementation-only locals.
     local_slots: BTreeSet<crate::body_ir::LocalId>,
+    /// First unresolved checked type and its declaration-relative nested path; never serialized into a surface.
+    unresolved_reference: Option<(Vec<String>, String)>,
 }
 /// A decorated declaration retains all three runtime roles and one checked execution dependency set.
 pub(super) struct ProjectedDecoratedBody {
