@@ -88,6 +88,7 @@ from call_arguments import ordered_slot_operands
 from model_construction import model_field_operand
 from program_context import body_at
 from builtin_calls import lower_builtin
+from frozen_plan import frozen_handle_type
 from list_values import value_operand
 from list_methods import call_destination
 from carrier_operands import boundary_plan_operand
@@ -645,6 +646,7 @@ pub def lower_callable_result(
         result_type == PlanType.String
         or is_nominal_type(result_type)
         or is_owned_collection(result_type)
+        or frozen_handle_type(result_type)
         or owned_closure
         or is_future(result_type)
     ):

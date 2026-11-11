@@ -426,6 +426,9 @@ pub(super) fn operand(plan: &Plan, function: &Function, value: &Operand) -> Resu
     match &value.kind {
         OperandKind::Copy(value) => {
             let ty = place(plan, function, value)?;
+            if frozen_handle(&ty) {
+                return Err(frozen_copy_error(&function.name, &ty));
+            }
             if let Scalar::Model(index) = ty
                 && plan
                     .models
@@ -490,6 +493,23 @@ pub(super) fn operand(plan: &Plan, function: &Function, value: &Operand) -> Resu
             Constant::TypeToken(represented) => Scalar::TypeToken(represented.iter().map(scalar).collect()),
             Constant::Text(_) => Scalar::StrRef,
         }),
+    }
+}
+
+/// Frozen values keep source copy semantics through a native handle clone; copying the carrier bits can duplicate an
+/// owned shared-storage pointer and has caused rustc query failures before MIR validation could report the plan.
+fn frozen_handle(ty: &Scalar) -> bool {
+    matches!(
+        ty,
+        Scalar::FrozenStr | Scalar::FrozenBytes | Scalar::FrozenCollection(_, _)
+    )
+}
+
+/// Name the source declaration whose lowering retained an invalid bitwise copy of a frozen handle.
+pub(super) fn frozen_copy_error(function: &str, ty: &Scalar) -> PlanError {
+    PlanError::Invalid {
+        function: function.into(),
+        reason: format!("frozen handle {ty:?} must be cloned instead of copied"),
     }
 }
 

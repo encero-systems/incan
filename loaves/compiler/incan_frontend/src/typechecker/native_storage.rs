@@ -402,6 +402,15 @@ impl TypeChecker {
                 vec![ResolvedType::TypeVar("38".into()), ResolvedType::TypeVar("0".into())],
             );
         }
+        if base == RuntimeCarrier::FrozenStr.path() && arguments.is_empty() {
+            // A native producer returns the same frozen-text handle that source constants use. Keep that physical
+            // carrier instead of projecting the Rust item through source-facing `str` storage.
+            return ResolvedType::FrozenStr;
+        }
+        if base == RuntimeCarrier::FrozenBytes.path() && arguments.is_empty() {
+            // Runtime frozen bytes likewise retain their handle carrier; source `bytes` is an owned byte buffer.
+            return ResolvedType::FrozenBytes;
+        }
         if body_ir::rust_item_identity(&base).is_some()
             && let Some(incan_lang::interop::RustItemMetadata {
                 kind: incan_lang::interop::RustItemKind::Type(info),

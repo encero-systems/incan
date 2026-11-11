@@ -64,6 +64,7 @@ from model_construction import clone_nominal_operand
 from list_values import list_base_place, list_borrow, list_index_operand, value_operand
 from hashed_collections import cloned_collection
 from carrier_operands import bind_enum_fields, bind_payload_in_place, boundary_operand
+from frozen_plan import frozen_handle_type
 
 
 pub def lower_enum_match(
@@ -698,7 +699,7 @@ pub def join_branch_owners(
 
 def releases_only_memory(ty: PlanType) -> bool:
     """Report whether destroying an owner only releases storage, including a lazy generator's retained state."""
-    if ty == PlanType.String or is_owned_collection(ty):
+    if ty == PlanType.String or is_owned_collection(ty) or frozen_handle_type(ty):
         return true
     match ty:
         PlanType.Generator(_leaf, _depth) => return true
@@ -758,9 +759,6 @@ pub def enum_payload_read(
         OwnershipFact.Borrow => pass
         OwnershipFact.Move => pass
         _ => return Err("unsupported Body IR enum payload binding ownership")
-    # The canonical frozen wrapper's Clone is its Copy value; it owns no allocation or custom clone hook.
-    if place_type(builder.locals, place) == PlanType.FrozenStr:
-        return Ok(read_place(place, false, span))
     # A type parameter's payload binding is cloned by its checked fact, which is Rust's copy-valued Clone once the
     # instance makes the payload a concrete scalar.
     payload_type = place_type(builder.locals, place)

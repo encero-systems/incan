@@ -5,8 +5,8 @@ from rust::std::convert import Into as RustInto
 
 
 pub def format_frozen(value: RuntimeFrozen) -> str:
-    """Materialize owned text through the frozen carrier's canonical Display implementation."""
-    return str(value)
+    """Materialize owned text through the frozen carrier's shared string view without reentering this runtime facade."""
+    return RustInto.into(value.as_ref())
 
 
 pub def length_frozen_bytes(value: RuntimeFrozenBytes) -> int:

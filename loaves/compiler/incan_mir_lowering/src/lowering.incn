@@ -36,7 +36,7 @@ from rust::incan_semantics_core::body_ir import (
 from classes import body_module_identity, is_program_entry
 from project import project_context
 from body_index import body_index
-from program_context import ProgramContext
+from program_context import ProgramContext, runtime_shares_frozen_carriers
 from native_type_identity import ConstructorIndex, constructor_index_with_packages as index_constructors
 from rust::std::collections import BTreeMap
 from rust::std::sync import Arc
@@ -227,6 +227,7 @@ def program_context(
             enums=Arc.new(list(module.enum_declarations)),
             value_enums=Arc.new(list(module.value_enum_declarations)),
             decorated_bindings=Arc.new(list(module.decorated_bindings)),
+            shared_frozen_carriers=runtime_shares_frozen_carriers(module),
             overflow_checks=overflow_checks,
             observe_work=native_environment("INCAN_NATIVE_TIMING").is_some(),
         ),

@@ -1,4 +1,4 @@
-"""Frozen equality borrows the actual static wrappers and delegates to their PartialEq contract."""
+"""Frozen equality borrows the actual static-or-shared handles and delegates to their PartialEq contract."""
 
 from rust::incan_semantics_core::body_ir import (
     Operand as RustOperand,

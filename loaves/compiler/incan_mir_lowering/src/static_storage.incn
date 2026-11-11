@@ -69,6 +69,7 @@ from computed_statics import (
     static_owner,
 )
 from closures import callable_copy_type
+from frozen_plan import frozen_handle_type
 from lowering import BodyIrModule
 from checked_values import scalar_operand, target_read
 from assignments import lower_local_assignment
@@ -311,6 +312,9 @@ pub def read_static(
     initial = static_initial_operand(builder, statics.as_ref()[slot].initial, ty, span)?
     target = temporary(builder, ty, span)
     external_call(builder, read_cell, [PlanType.Int, ty], ty, [literal(Constant.Int(slot), span), initial], target, span)
+    if frozen_handle_type(ty):
+        builder.owned.append(target.local)
+        return Ok(read_place(target, true, span))
     if not is_owned_collection(ty):
         return Ok(read_place(target, ty == PlanType.String, span))
     builder.owned.append(target.local)
@@ -480,7 +484,7 @@ def load_computed_static(mut builder: Builder, slot: int, ty: PlanType, span: So
 
 pub def snapshot_owns(ty: PlanType) -> bool:
     """Whether a loaded static value owns resources its frame must drop, rather than being a plain copy."""
-    if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.FrozenStr:
+    if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit:
         return false
     return not callable_copy_type(ty)
 

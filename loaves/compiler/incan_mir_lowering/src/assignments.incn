@@ -366,20 +366,20 @@ def assign_stored_value(
         match value:
             RustRvalue.Use(operand) =>
                 converted = frozen_operand(builder, operand, span)?
-                builder.emit(plan_assign(target, RvalueKind.Use(converted), span))
+                replace_owned_destination(builder, target, RvalueKind.Use(converted), span)
                 return Ok(None)
             _ => return Err("unsupported Body IR nonliteral FrozenStr assignment")
     if place_type(builder.locals, target) == PlanType.FrozenBytes:
         match value:
             RustRvalue.Use(RustOperand.Constant(constant)) =>
                 converted = frozen_bytes_literal(builder, constant, span)?
-                builder.emit(plan_assign(target, RvalueKind.Use(converted), span))
+                replace_owned_destination(builder, target, RvalueKind.Use(converted), span)
                 return Ok(None)
             RustRvalue.Use(operand) =>
                 converted = scalar_operand(builder, operand, span)?
                 if operand_type(builder, converted)? != PlanType.FrozenBytes:
                     return Err("unsupported Body IR dynamic FrozenBytes assignment")
-                builder.emit(plan_assign(target, RvalueKind.Use(converted), span))
+                replace_owned_destination(builder, target, RvalueKind.Use(converted), span)
                 return Ok(None)
             _ => return Err("unsupported Body IR nonliteral FrozenBytes assignment")
     match value:

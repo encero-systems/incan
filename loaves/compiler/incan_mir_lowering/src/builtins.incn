@@ -5,6 +5,7 @@ from pub::incan_mir_plan import PlanType, Place, SourceSpan, Operand, ExternalFu
 from frame import Builder, terminate_call, external_call, value_type
 from collections import is_owned_collection
 from tuples import tuple_has_owners
+from frozen_plan import frozen_handle_type
 
 
 pub def scalar_builtin(builtin: BuiltinFnId, ty: PlanType) -> Option[tuple[str, PlanType]]:
@@ -43,7 +44,12 @@ pub def list_call(
         PlanType.Model(_index, _name) => builder.owned.append(destination.local)
         PlanType.Enum(_index, _name) => builder.owned.append(destination.local)
         _ =>
-            if result == PlanType.String or is_owned_collection(result) or tuple_has_owners(result):
+            if (
+                result == PlanType.String
+                or is_owned_collection(result)
+                or tuple_has_owners(result)
+                or frozen_handle_type(result)
+            ):
                 builder.owned.append(destination.local)
 
 
