@@ -11,6 +11,7 @@ language command by naming the `incan` command that runs it.
 
 from rust::std::env import args, current_exe
 from rust::std::os::unix::fs import symlink
+from home_paths import home
 from std.fs import Path
 
 pub const OVEN: str = "oven"
@@ -73,27 +74,46 @@ def spelled(command: str, arguments: list[str]) -> str:
 
 pub def expose_entry_points() -> Result[Path, str]:
     """
-    Expose the running program as both `oven` and `incan` in its directory, and return that directory.
+    Expose the running program as both `oven` and `incan` in the home's `bin` directory, and return that directory.
 
-    A missing entry point becomes a symbolic link to the running program. An entry point that already is this program
-    is kept; any other file of that name is refused, never replaced.
+    The canonical `incan` entry point is a self-contained copy of a program invoked outside the home. `oven` is a
+    symbolic link to that copy. An entry point that already is this program is kept; any other file of that name is
+    refused, never replaced.
     """
     executable = Path(str(current_exe().map_err((error) => f"cannot locate the running Oven: {error}")?.display()))
-    directory = executable.parent()
-    for surface in [OVEN, INCAN]:
-        name = str(surface)
-        entry = directory.joinpath(name)
-        if name == executable.name():
-            continue
-        if entry.exists() or entry.is_symlink():
-            mut same = false
-            match entry.samefile(executable.0):
-                Ok(matches) => same = matches
-                Err(_) => pass
-            if not same:
-                return Err(f"{entry.0} exists and is not this Oven; remove it to expose the `{name}` entry point")
-            continue
-        match symlink(executable.name(), entry.0):
-            Err(error) => return Err(f"cannot expose `{name}` at {entry.0}: {error}")
+    directory = home()?.joinpath("bin")
+    directory
+        .mkdir(true, true)
+        .map_err((error) => f"cannot create entry-point directory {directory.0}: {error.message()}")?
+    installed = directory.joinpath(INCAN)
+    if not installed.exists() and not installed.is_symlink():
+        executable
+            .copy(installed, true, true)
+            .map_err(
+                (error) => f"cannot copy running Oven {executable.0} to entry point {installed.0}: {error.message()}",
+            )?
+    elif not same_program(installed, executable):
+        return Err(f"{installed.0} exists and is not this Oven; remove it to expose the `{INCAN}` entry point")
+    entry = directory.joinpath(OVEN)
+    if entry.exists() or entry.is_symlink():
+        if not same_program(entry, installed):
+            return Err(f"{entry.0} exists and is not this Oven; remove it to expose the `{OVEN}` entry point")
+    else:
+        match symlink(INCAN, entry.0):
+            Err(error) => return Err(f"cannot expose `{OVEN}` at {entry.0}: {error}")
             Ok(_) => pass
     return Ok(directory)
+
+
+def same_program(entry: Path, executable: Path) -> bool:
+    """Whether an entry names the executable itself or an equal installed copy of it."""
+    match entry.samefile(executable.0):
+        Ok(true) => return true
+        Ok(false) => pass
+        Err(_) => return false
+    match entry.read_bytes():
+        Err(_) => return false
+        Ok(installed) =>
+            match executable.read_bytes():
+                Err(_) => return false
+                Ok(running) => return installed == running
