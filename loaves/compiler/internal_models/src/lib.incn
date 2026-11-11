@@ -129,14 +129,16 @@ pub from checker_records import (
     GraphBodyValue,
     GraphBodyFields,
     CompiledBodyValue,
+    CompiledBodyFallback,
+    CompiledBodyOutputs,
     from_native_fields,
     from_native_final_fields,
     from_native_local_fields,
     encode_record,
     encode_graph_body_values,
     decode_graph_body_values,
-    encode_compiled_body_values,
-    decode_compiled_body_values,
+    encode_compiled_body_outputs,
+    decode_compiled_body_outputs,
     record_root,
 )
 pub from read_receipts import RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt

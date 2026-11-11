@@ -19,11 +19,20 @@ struct PendingBodyValue {
     final_value: Vec<u8>,
 }
 
+/// One checked owner excluded from record reuse while retaining the reason for the full-source path.
+struct PendingBodyFallback {
+    module: String,
+    name: String,
+    identity: String,
+    reason: String,
+}
+
 /// Invocation-local collector for the optional graph-publication sidecar.
 pub(super) struct GraphBodyOutput {
     path: Option<PathBuf>,
     project_root: PathBuf,
     values: Vec<PendingBodyValue>,
+    fallbacks: Vec<PendingBodyFallback>,
     error: Option<String>,
 }
 
@@ -34,6 +43,7 @@ impl GraphBodyOutput {
             path,
             project_root,
             values: Vec::new(),
+            fallbacks: Vec::new(),
             error: None,
         }
     }
@@ -49,38 +59,32 @@ impl GraphBodyOutput {
         }
     }
 
-    /// Capture one module while keeping the analysis callback's infallible observer contract.
+    /// Capture one project-owned module while keeping dependency modules as inputs rather than publication owners.
+    ///
+    /// Analysis visits authored modules and dependency modules together. Only paths beneath `project_root` belong to
+    /// this publication; a dependency's checked bodies remain authenticated dependency facts and must never make a
+    /// successful project build fail.
     fn capture(&mut self, module: &ParsedModule, checker: &TypeChecker) -> Result<(), String> {
-        let module_path = module
-            .file_path
-            .strip_prefix(&self.project_root)
-            .map_err(|_| "checked graph output module is outside the project root")?
-            .to_string_lossy()
-            .into_owned();
+        let Ok(module_path) = module.file_path.strip_prefix(&self.project_root) else {
+            return Ok(());
+        };
+        let module_path = module_path.to_string_lossy().into_owned();
         for fields in incan_frontend::checker_records::checked_owner_record_fields(&module.ast, checker) {
             let identity = header_identity(&fields.local)?;
-            let declaration = internal_models::from_native_fields(&fields.declaration)
-                .and_then(internal_models::encode_record)
-                .map_err(|error| format!("declaration record output refused: {error:?}"))?;
-            let local = internal_models::from_native_local_fields(&fields.local)
-                .and_then(internal_models::encode_record)
-                .map_err(|error| format!("local record output refused: {error:?}"))?;
-            let final_value = internal_models::from_native_final_fields(&fields.final_value)
-                .and_then(internal_models::encode_record)
-                .map_err(|error| format!("final record output refused: {error:?}"))?;
-            self.values.push(PendingBodyValue {
-                module: module_path.clone(),
-                name: fields.name,
-                identity,
-                declaration,
-                local,
-                final_value,
-            });
+            match encoded_body_value(&module_path, &identity, &fields) {
+                Ok(value) => self.values.push(value),
+                Err(reason) => self.fallbacks.push(PendingBodyFallback {
+                    module: module_path.clone(),
+                    name: fields.name,
+                    identity,
+                    reason,
+                }),
+            }
         }
         Ok(())
     }
 
-    /// Encode every collected triple through the shared Incan schema and atomically publish the sidecar.
+    /// Encode every eligible triple and explicit fallback through the shared schema, then atomically publish it.
     pub(super) fn publish(mut self) -> Result<(), String> {
         let Some(path) = self.path else {
             return Ok(());
@@ -89,6 +93,8 @@ impl GraphBodyOutput {
             return Err(error);
         }
         self.values
+            .sort_by(|left, right| (&left.module, &left.identity).cmp(&(&right.module, &right.identity)));
+        self.fallbacks
             .sort_by(|left, right| (&left.module, &left.identity).cmp(&(&right.module, &right.identity)));
         let values: Vec<internal_models::CompiledBodyValue> = self
             .values
@@ -102,10 +108,46 @@ impl GraphBodyOutput {
                 r#final: value.final_value,
             })
             .collect();
-        let encoded = internal_models::encode_compiled_body_values(&values)
+        let fallbacks: Vec<internal_models::CompiledBodyFallback> = self
+            .fallbacks
+            .into_iter()
+            .map(|fallback| internal_models::CompiledBodyFallback {
+                module: fallback.module,
+                name: fallback.name,
+                identity: fallback.identity,
+                reason: fallback.reason,
+            })
+            .collect();
+        let outputs = internal_models::CompiledBodyOutputs { values, fallbacks };
+        let encoded = internal_models::encode_compiled_body_outputs(outputs)
             .map_err(|error| format!("compiled graph output refused: {error:?}"))?;
         publish(&path, &encoded)
     }
+}
+
+/// Convert one compiler-produced owner independently so a codec limitation cannot refuse its successful build.
+fn encoded_body_value(
+    module: &str,
+    identity: &str,
+    fields: &incan_frontend::checker_records::CheckedOwnerRecordFields,
+) -> Result<PendingBodyValue, String> {
+    let declaration = internal_models::from_native_fields(&fields.declaration)
+        .and_then(internal_models::encode_record)
+        .map_err(|error| format!("declaration record output refused: {error:?}"))?;
+    let local = internal_models::from_native_local_fields(&fields.local)
+        .and_then(internal_models::encode_record)
+        .map_err(|error| format!("local record output refused: {error:?}"))?;
+    let final_value = internal_models::from_native_final_fields(&fields.final_value)
+        .and_then(internal_models::encode_record)
+        .map_err(|error| format!("final record output refused: {error:?}"))?;
+    Ok(PendingBodyValue {
+        module: module.to_owned(),
+        name: fields.name.clone(),
+        identity: identity.to_owned(),
+        declaration,
+        local,
+        final_value,
+    })
 }
 
 /// Read the stable owner identity from the native field header without interpreting any semantic field.
