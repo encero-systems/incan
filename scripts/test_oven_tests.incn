@@ -20,6 +20,7 @@ from oven_tests import (
     shared_memory,
     summarize,
     summary_document,
+    oven_test_state_root,
 )
 from verify_installation import VerificationPhase, verification_phase_plans, verification_trace_environment
 
@@ -215,6 +216,8 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
         loaf_a.0,
         loaf_a.0,
     ]
+    assert oven_test_state_root(root, "").0 == root.joinpath(".agents/state/release-oven-tests").0
+    assert oven_test_state_root(root, "/outside/oven-tests").0 == "/outside/oven-tests"
     assert [item.reservation for item in planned] == [4 * GIB, 4 * GIB, 6 * GIB, 6 * GIB, 4 * GIB, 4 * GIB, 4 * GIB]
     assert [item.alone for item in planned] == [false, false, false, false, false, false, false]
     assert oven_a.joinpath("src/test_beta.incn").is_file()

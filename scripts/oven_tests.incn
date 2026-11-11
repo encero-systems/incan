@@ -25,6 +25,7 @@ from rust::std::rc import Rc
 from rust::std::string import String as RustString
 from rust::std::thread import available_parallelism, sleep
 from rust::std::time import Duration, Instant
+from std.environ import get_or
 from std.fs import Path
 from std.regex import Regex
 from check_support import read, repository_root, write_stderr
@@ -210,7 +211,9 @@ pub def invocations(root: Path, _evidence: Path, logs: Path) -> Result[list[Invo
 
 def isolated_oven_project(root: Path, evidence: Path, position: int, source: Path) -> Result[tuple[Path, Path], str]:
     """Copy the Oven project for one source so its target generations cannot withdraw another test's live views."""
-    checkout = root.joinpath(".agents/state/release-oven-tests").joinpath(evidence.name()).joinpath(str(position))
+    checkout = oven_test_state_root(root, get_or("OVEN_TEST_STATE_ROOT", "")).joinpath(evidence.name()).joinpath(
+        str(position),
+    )
     project = checkout.joinpath("workspaces/oven")
     project.mkdir(true, true).map_err((error) => error.message())?
     _ = root.joinpath("workspaces/oven/loaf.toml").copy(project.joinpath("loaf.toml"), true, false).map_err(
@@ -227,6 +230,13 @@ def isolated_oven_project(root: Path, evidence: Path, position: int, source: Pat
     )?
     checkout.joinpath("loaves").symlink_to(root.joinpath("loaves")).map_err((error) => error.message())?
     return Ok((project, project.joinpath("src").joinpath(source.name())))
+
+
+pub def oven_test_state_root(root: Path, configured: str) -> Path:
+    """Select caller-owned Oven test scratch when configured, preserving the checkout-local default otherwise."""
+    if configured != "":
+        return Path(configured)
+    return root.joinpath(".agents/state/release-oven-tests")
 
 
 def invocation(
