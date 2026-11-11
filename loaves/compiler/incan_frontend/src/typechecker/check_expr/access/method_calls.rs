@@ -1,6 +1,7 @@
 //! Method call checking entry points, receiver mutation checks, and builtin method argument expectations.
 
 use super::*;
+use crate::typechecker::check_expr::calls::DirectCallSite;
 use crate::typechecker::undetermined_type_params::{OpenConstruction, written_arguments, written_expression};
 
 impl TypeChecker {
@@ -613,6 +614,10 @@ impl TypeChecker {
         }
         self.check_method_receiver_use(&call, &base_ty);
 
+        if let Some(result) = self.check_instance_value_member_call(&call, &base_ty, receiver_surface) {
+            return result;
+        }
+
         if let Some(result) = self.check_registry_method_call(&call, &base_ty) {
             return result;
         }
@@ -691,5 +696,78 @@ impl TypeChecker {
         }
 
         self.check_method_fallback(&call, &base_ty, &arg_types)
+    }
+
+    /// Read and invoke an instance field or property before source-method resolution.
+    ///
+    /// RFC 120 gives stored fields, properties and receiver-bearing methods one instance namespace. Once declaration
+    /// collection has selected a field-like binding, `receiver.member(args)` therefore means the same evaluated
+    /// callable-value operation as `(receiver.member)(args)`: visibility, callable input modes and result inference
+    /// all come from the selected member value, never from a same-spelled method fallback.
+    fn check_instance_value_member_call(
+        &mut self,
+        call: &MethodCallSite<'_>,
+        base_ty: &ResolvedType,
+        receiver_surface: MemberBindingSurface,
+    ) -> Option<ResolvedType> {
+        if receiver_surface != MemberBindingSurface::Instance
+            || !self.instance_value_member_exists(base_ty, call.method)
+        {
+            return None;
+        }
+        if !call.type_args.is_empty() {
+            self.errors
+                .push(errors::explicit_call_site_type_args_not_supported(call.span));
+        }
+        let member_span = crate::typechecker::callable_member_read_span(call.base.span, call.span);
+        let callee_ty = self.check_nominal_field(call.base, base_ty, call.method, member_span);
+        self.record_expr_type(member_span, callee_ty.clone());
+        if let Some(identity) = self.type_info.resolved_identity(member_span).cloned() {
+            self.type_info.record_resolved_identity(call.span, identity);
+        }
+        let callee = Spanned::new(
+            Expr::Field(Box::new(call.base.clone()), call.method.to_string()),
+            member_span,
+        );
+        let direct = DirectCallSite {
+            callee: &callee,
+            type_args: call.type_args,
+            args: call.args,
+            span: call.span,
+            expected_return_ty: call.expected_return_ty,
+        };
+        Some(self.check_value_call_with_type(&direct, callee_ty, true))
+    }
+
+    /// Return whether the selected nominal instance surface contains a stored field or computed property spelling.
+    /// Field aliases participate only where ordinary field reads admit them; rejected duplicate declarations never
+    /// enter these collected maps, so this lookup preserves the source-ordered first-wins decision.
+    fn instance_value_member_exists(&self, ty: &ResolvedType, member: &str) -> bool {
+        let mut ty = ty;
+        while let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = ty {
+            ty = inner;
+        }
+        let owned;
+        if matches!(ty, ResolvedType::SelfType)
+            && let Some(owner) = self.current_method_owner_type()
+        {
+            owned = owner;
+            ty = &owned;
+        }
+        let name = match ty {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
+            _ => return false,
+        };
+        match self.lookup_semantic_type_info(name) {
+            Some(TypeInfo::Model(info)) => {
+                self.resolve_field_info(&info.fields, member, true, false).is_some()
+                    || info.properties.contains_key(member)
+            }
+            Some(TypeInfo::Class(info)) => {
+                self.resolve_field_info(&info.fields, member, false, true).is_some()
+                    || info.properties.contains_key(member)
+            }
+            _ => false,
+        }
     }
 }
