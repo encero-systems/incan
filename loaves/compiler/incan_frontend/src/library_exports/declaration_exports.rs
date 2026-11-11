@@ -129,6 +129,12 @@ pub(super) fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> 
         traits: sorted_vec(traits.to_vec()),
         trait_adoptions: checked_trait_adoption_closure(trait_adoptions, owner_type_params, checker),
         derives: sorted_vec(derives.to_vec()),
+        has_registered_validation: checker
+            .type_info
+            .declarations
+            .registered_model_checks
+            .get(&model.name)
+            .is_some_and(|checks| !checks.is_empty()),
         fields: map_fields(fields, field_order, &defaults, None, None, &[], checker)?,
         properties: map_public_properties(properties, checker),
         methods: map_method_overloads_with_defaults(method_overloads, &model.methods, checker),

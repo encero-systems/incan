@@ -19,8 +19,8 @@ use super::{
     ParamExport, ParamKindExport, PartialExport, RUST_ABI_SCHEMA_VERSION,
 };
 use crate::api_metadata::{
-    ApiDeclaration, ApiProjectedFunction, CHECKED_API_METADATA_SCHEMA_VERSION, resolve_api_alias_target,
-    validate_checked_api_public_namespaces,
+    ApiDeclaration, ApiProjectedFunction, CHECKED_API_METADATA_SCHEMA_VERSION,
+    MINIMUM_CHECKED_API_METADATA_SCHEMA_VERSION, resolve_api_alias_target, validate_checked_api_public_namespaces,
 };
 use crate::contract_metadata::CONTRACT_METADATA_SCHEMA_VERSION;
 use crate::registry_metadata::CHECKED_REGISTRY_METADATA_SCHEMA_VERSION;

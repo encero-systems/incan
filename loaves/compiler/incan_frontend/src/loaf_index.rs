@@ -621,6 +621,19 @@ impl LoafIndex {
         self.entry(key).map(|entry| entry.artifact.manifest.as_ref())
     }
 
+    /// Return the manifest whose declared package identity matches `name`, independently of its local dependency key.
+    ///
+    /// Canonical identities carry package names, while the index is keyed by the importing manifest's dependency
+    /// aliases. Semantic consumers must not assume those two spellings are equal.
+    pub fn package_manifest(&self, name: &str) -> Option<&LibraryManifest> {
+        self.entries
+            .values()
+            .filter(|entry| entry.summary.identity.name == name)
+            .filter_map(|entry| entry.demand().ok())
+            .map(|entry| entry.artifact.manifest.as_ref())
+            .find(|manifest| manifest.name == name)
+    }
+
     /// Rust item metadata for `canonical_path`: a Loaf's shipped manifest ABI first (in key order), then the linked
     /// crates' ABI caches, then facts read at check time. A standard Loaf's shipped facts do not answer for a crate the
     /// unit declares. Each item is decoded once and then shared.

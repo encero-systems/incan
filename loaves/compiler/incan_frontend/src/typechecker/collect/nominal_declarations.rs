@@ -109,6 +109,7 @@ impl TypeChecker {
                 traits: model.traits.iter().map(|t| t.node.name.clone()).collect(),
                 trait_adoptions,
                 derives,
+                has_registered_validation: false,
                 fields,
                 field_order,
                 properties,

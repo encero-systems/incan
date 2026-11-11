@@ -113,6 +113,7 @@ pub def test_nominal_and_callable_adapters_keep_witnesses_defaults_and_frame() -
                 required_fields=[0],
             ),
         ),
+        registered_validation=[],
         method_partial_defaults=[],
         display_method=None,
         newtype_deserialize=NewtypeDeserialize.Unselected,

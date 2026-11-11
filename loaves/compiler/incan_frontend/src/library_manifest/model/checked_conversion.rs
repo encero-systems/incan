@@ -506,6 +506,7 @@ pub(super) fn model_export_from_checked(package_name: &str, export: &CheckedMode
         traits: export.traits.clone(),
         trait_adoptions: export.trait_adoptions.iter().map(type_bound_from_checked).collect(),
         derives: export.derives.clone(),
+        has_registered_validation: export.has_registered_validation,
         fields: export
             .fields
             .iter()

@@ -61,6 +61,7 @@ pub(super) fn methods(
             return_type: callable.return_type,
             is_async: callable.is_async,
             has_body: checked.has_body,
+            construction_safe: Some(checker.callable_is_construction_safe(&method.node.name, method.span)),
             made_private: checked.made_private.as_ref().map(Into::into),
         });
     }
@@ -135,6 +136,7 @@ fn method_without_source_body(
         return_type,
         is_async: checked.is_async,
         has_body: checked.has_body,
+        construction_safe: None,
         made_private: checked.made_private.as_ref().map(Into::into),
     }
 }

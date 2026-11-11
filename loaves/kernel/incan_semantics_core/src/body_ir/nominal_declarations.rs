@@ -135,6 +135,19 @@ pub struct ValidatedConstructor {
     pub required_fields: Vec<usize>,
 }
 
+/// One compiler-checked RFC 122 final-validation obligation in deterministic execution order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RegisteredValidation {
+    /// Exact retained method body selected by the source registration.
+    pub callable: CanonicalSymbolId,
+    /// Exact canonical field inspected by a field check; absent for a whole-model check.
+    pub target_field: Option<CanonicalSymbolId>,
+    /// Concrete typed failure returned by the check.
+    pub error_type: IncanType,
+    /// Source decorator span retained for diagnostics and package evidence.
+    pub registration_span: HirSourceSpan,
+}
+
 /// The exact local declaration and canonical field layout for one direct-executable model, class, or raw newtype.
 ///
 /// The record belongs to its declaring module and excludes enums. Nominal owners retain ordered type parameters for
@@ -219,6 +232,10 @@ pub struct NominalDeclaration {
     /// derive validation. A consumer must match the exact constructor identity before executing this fact.
     #[serde(default)]
     pub validated_constructor: Option<ValidatedConstructor>,
+    /// Ordered registered field and whole-model checks. Field order is canonical declaration order; whole-model
+    /// checks follow in source declaration order.
+    #[serde(default)]
+    pub registered_validation: Vec<RegisteredValidation>,
     /// Declaration-owned frames of the owner's method partials, one per partial binding, each selected at a call only
     /// together with its exact target method identity.
     #[serde(default)]
@@ -320,6 +337,7 @@ pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
         has_field_defaults: false,
         field_default_body: None,
         validated_constructor: None,
+        registered_validation: Vec::new(),
         method_partial_defaults: Vec::new(),
         display_method: None,
         newtype_deserialize: NewtypeDeserialize::Unselected,
@@ -372,6 +390,7 @@ pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Opti
         has_field_defaults: false,
         field_default_body: None,
         validated_constructor: None,
+        registered_validation: Vec::new(),
         method_partial_defaults: Vec::new(),
         display_method: None,
         newtype_deserialize: NewtypeDeserialize::Unselected,
