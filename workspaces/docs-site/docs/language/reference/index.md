@@ -21,7 +21,7 @@ For step-by-step learning and patterns, see [Tutorials](../tutorials/book/index.
 - [File I/O](file_io.md): the `std.fs` file and path surface
 - [Imports and modules](imports_and_modules.md): import forms, module paths, bindings, exports and re-exports, package namespaces, and Rust crate imports
 - [Static storage](static_storage.md): `static`, `pub static`, initialization rules, and live shared module state
-- [Frozen collections](frozen_collections.md): the `FrozenList`, `FrozenSet` and `FrozenDict` types a `const` holds, and their reads
+- [Frozen collections](frozen_collections.md): the immutable `FrozenList`, `FrozenSet` and `FrozenDict` values held by constants or produced by library operations, and their reads
 - [Match patterns](match_patterns.md): the patterns of `match`, `if let`, and `while let`, and when the arms of a `match` cover its subject
 - [Project lifecycle](project_lifecycle.md): project roots, `loaf.toml` metadata, version bumps, and named environments
 - [Reflection](reflection.md): reflection helpers of models and classes
