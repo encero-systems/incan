@@ -2,16 +2,19 @@
 
 from rust::std::process import Command, exit
 from rust::std::string import String as RustString
+from rust::std::time import Instant
 from std.environ import args, get_or
 from std.fs import Path
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
 from check_support import repository_root, write_stderr
+from oven_tests import Invocation, host_memory, run_all_failures, shared_memory
 from release_support import (
     FAMILIES,
     BaselineReport,
     TOOLCHAIN_DIRECTORY,
     Step,
+    append_timing,
     baseline_summary,
     check_baseline,
     counts_json,
@@ -21,6 +24,9 @@ from release_support import (
     run_step,
     write_json,
 )
+
+const GIB: int = 1073741824
+const FACET_RESERVATION_BYTES: int = 2 * GIB
 
 
 pub model Installation:
@@ -67,26 +73,42 @@ pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, st
     installation = prepare(output, jobs, timeout_seconds)?
 
     # 1. Installed records may name only this installation and never a builder path.
+    mut phase_started = Instant.now()
     audit_relocation(installation.home, [get_or("INCAN_BUILDER_HOME", ""), get_or("INCAN_BUILDER_SOURCE", "")])?
+    retain_phase_timing(installation, "relocation", phase_started)?
 
     # 2. A checkout runner proves the installed compiler can read the current source contracts.
+    phase_started = Instant.now()
     runner = build_runner(installation)?
+    retain_phase_timing(installation, "runner-build", phase_started)?
 
     # 3. Unit and Rust-facet tests exercise release-owned native surfaces outside the census.
+    phase_started = Instant.now()
     run_oven_tests(installation)?
+    retain_phase_timing(installation, "oven-tests", phase_started)?
+    phase_started = Instant.now()
     suites = run_rust_facets(installation)?
+    retain_phase_timing(installation, "rust-facets", phase_started)?
 
     # 4. Direct driver contracts run from Incan programs against this fresh installation.
+    phase_started = Instant.now()
     run_driver_integration(installation)?
+    retain_phase_timing(installation, "driver-integration", phase_started)?
 
     # 5. Graph verification is never allowed to skip because no language server was selected.
+    phase_started = Instant.now()
     verify_lsp(installation, runner)?
+    retain_phase_timing(installation, "lsp", phase_started)?
 
     # 6. Every family runs once under one budget and the committed PASS baseline is a lower bound.
+    phase_started = Instant.now()
     report = run_contracts(installation, runner)?
+    retain_phase_timing(installation, "census", phase_started)?
 
     # 7. The installed context records the release's one cold run per command.
+    phase_started = Instant.now()
     measure_memory(installation)?
+    retain_phase_timing(installation, "memory", phase_started)?
 
     # 8. The caller receives one durable evidence directory even on hosts with shared temporary storage.
     summary = baseline_summary(report) + f"; {suites} Rust facet suites\n"
@@ -96,6 +118,11 @@ pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, st
         .map_err((error) => error.message())?
     println(summary.strip())
     return Ok(installation.run)
+
+
+def retain_phase_timing(installation: Installation, phase: str, started: Instant) -> Result[None, str]:
+    """Append one installed-verification phase's wall duration to the retained evidence."""
+    return append_timing(installation.run.joinpath("phase-timings.tsv"), phase, started.elapsed().as_secs_f64())
 
 
 pub def audit_relocation(home: Path, builder_paths: list[str]) -> Result[None, str]:
@@ -258,8 +285,8 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
     """
     output = installation.run.joinpath("rust-tests")
     output.mkdir(true, true).map_err((error) => error.message())?
-    mut suites = 0
-    mut failed: list[str] = []
+    mut planned: list[Invocation] = []
+    mut projects: list[str] = []
     manifests = sorted(
         [path.0 for path in installation.root.joinpath("loaves").rglob("loaf.toml").map_err((error) => error.message())?],
     )
@@ -268,27 +295,30 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
         text = manifest.read_text("utf-8", "strict").map_err((error) => error.message())?
         if not owns_rust_facet(text):
             continue
-        suites += 1
         project = manifest.parent()
         relative = project.0[len(installation.root.0) + 1:]
         label = relative.replace("/", "-")
-        code = run_step(
-            command_step(
-                installation,
-                f"rust-facet-{label}",
-                installation.oven.0,
-                ["test", project.0, "--profile", "release"],
-                installation.root,
-                output.joinpath(f"{label}.log"),
+        projects.append(relative)
+        planned.append(
+            Invocation(
+                arguments=["test", project.0, "--profile", "release"],
+                directory=installation.root.0,
+                reservation=FACET_RESERVATION_BYTES,
+                log=output.joinpath(f"{label}.log"),
+                timeout_seconds=installation.timeout_seconds,
             ),
-        )?
-        if code != 0:
-            failed.append(relative)
-    if suites == 0:
+        )
+    if len(planned) == 0:
         return Err("no Rust facets found")
+    failed = run_all_failures(
+        installation.oven.0,
+        planned,
+        installation.jobs,
+        shared_memory(host_memory()),
+    )?
     if len(failed) > 0:
-        return Err("Rust facet test failures: " + ", ".join(failed))
-    return Ok(suites)
+        return Err("Rust facet test failures: " + ", ".join([projects[index] for index in failed]))
+    return Ok(len(projects))
 
 
 def run_driver_integration(installation: Installation) -> Result[None, str]:

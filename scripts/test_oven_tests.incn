@@ -16,6 +16,7 @@ from oven_tests import (
     log_name,
     parse_options,
     run_all,
+    run_all_failures,
     shared_memory,
     summarize,
     summary_document,
@@ -158,31 +159,44 @@ def test_log_names_sort_in_invocation_order() -> Result[None, str]:
 
 
 def test_invocations_follow_the_declared_order_and_package_ownership() -> Result[None, str]:
-    """Oven units run first, then every Loaf test from its owning Loaf, with compiler-scale reservations."""
+    """Private Oven projects run first, then every Loaf test from its owner, with compiler-scale reservations."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path()
     fixture(root)?
     evidence = root.joinpath("evidence")
     logs = evidence.joinpath("oven-tests")
     planned = invocations(root, evidence, logs)?
-    oven = root.joinpath("workspaces/oven")
+    oven_a = root.joinpath(".agents/state/release-oven-tests/evidence/0/workspaces/oven")
+    oven_b = root.joinpath(".agents/state/release-oven-tests/evidence/1/workspaces/oven")
     models = root.joinpath("loaves/compiler/internal_models")
     lowering = root.joinpath("loaves/compiler/lowering")
     loaf_a = root.joinpath("loaves/group_b/loaf_a")
     loaf_b = root.joinpath("loaves/group_a/loaf_b")
     assert [item.arguments for item in planned] == [
-        ["test", oven.joinpath("src/test_alpha.incn").0],
-        ["test", oven.joinpath("src/test_beta.incn").0],
+        ["test", oven_a.joinpath("src/test_alpha.incn").0],
+        ["test", oven_b.joinpath("src/test_beta.incn").0],
         ["test", models.joinpath("tests/test_record_scope.incn").0, "--profile", "release"],
         ["test", lowering.joinpath("tests/test_three.incn").0, "--profile", "release"],
         ["test", loaf_b.joinpath("tests/test_one.incn").0, "--profile", "release"],
         ["test", loaf_a.joinpath("tests/test_one.incn").0, "--profile", "release"],
         ["test", loaf_a.joinpath("tests/test_two.incn").0, "--profile", "release"],
     ]
-    assert [item.directory for item in planned] == [oven.0, oven.0, models.0, lowering.0, loaf_b.0, loaf_a.0, loaf_a.0]
+    assert [item.directory for item in planned] == [
+        oven_a.0,
+        oven_b.0,
+        models.0,
+        lowering.0,
+        loaf_b.0,
+        loaf_a.0,
+        loaf_a.0,
+    ]
     assert [item.reservation for item in planned] == [4 * GIB, 4 * GIB, 6 * GIB, 6 * GIB, 4 * GIB, 4 * GIB, 4 * GIB]
-    assert [item.serial for item in planned] == [true, true, false, false, false, false, false]
     assert [item.alone for item in planned] == [false, false, false, false, false, false, false]
+    assert oven_a.joinpath("src/test_beta.incn").is_file()
+    assert oven_b.joinpath("src/test_alpha.incn").is_file()
+    assert oven_a.joinpath("tests/fixture.txt").is_file()
+    assert oven_a.parent().parent().joinpath("workbench/app/loaf.toml").is_file()
+    assert oven_a.parent().parent().joinpath("loaves").is_symlink()
     assert planned[2].log.0 == logs.joinpath("002-test_record_scope.log").0
     return Ok(None)
 
@@ -211,14 +225,18 @@ def test_joined_log_keeps_invocation_order_whatever_the_schedule() -> Result[Non
     joined = join_logs(planned, root.joinpath("joined.log"))?
     assert joined == "line 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\n"
     assert not run_all("/usr/bin/false", planned, 4, 0)?
+    assert run_all_failures("/usr/bin/false", planned, 4, 0)? == [0, 1, 2, 3, 4, 5, 6]
     return Ok(None)
 
 
 def fixture(root: Path) -> Result[None, str]:
     """A checkout with Oven units, Loaf tests, hidden and excluded entries, and the record contract sources."""
+    write(root, "workspaces/oven/loaf.toml", "[project]\nname = \"oven\"\nversion = \"0.1.0\"\n")?
     write(root, "workspaces/oven/src/test_beta.incn", "")?
     write(root, "workspaces/oven/src/test_alpha.incn", "")?
     write(root, "workspaces/oven/src/main.incn", "")?
+    write(root, "workspaces/oven/tests/fixture.txt", "fixture")?
+    write(root, "workbench/app/loaf.toml", "[project]\nname = \"workbench\"\nversion = \"0.1.0\"\n")?
     write(root, "workspaces/oven/src/test_note.md", "")?
     write(root, "loaves/group_b/loaf_a/tests/test_two.incn", "")?
     write(root, "loaves/group_b/loaf_a/tests/test_one.incn", "")?
