@@ -256,6 +256,31 @@ pub def from_native_fields(rows: list[list[str]]) -> Result[CheckedRecord, Codec
     return Ok(record)
 
 
+pub def from_native_local_fields(rows: list[list[str]]) -> Result[CheckedRecord, CodecFault]:
+    """Assign the schema-owned pending family to native owner/root/profile metadata and canonical field primitives."""
+    return from_family_fields(rows, CheckedFamily.Local)
+
+
+pub def from_native_final_fields(rows: list[list[str]]) -> Result[CheckedRecord, CodecFault]:
+    """Assign the schema-owned settled family to native owner/root/profile metadata and canonical field primitives."""
+    return from_family_fields(rows, CheckedFamily.Final)
+
+
+def from_family_fields(rows: list[list[str]], family: CheckedFamily) -> Result[CheckedRecord, CodecFault]:
+    """Attach one schema-selected family to native owner/root/profile metadata and canonical field primitives."""
+    if len(rows) == 0 or len(rows[0]) != 4 or rows[0][0] != "header":
+        return Err(CodecFault.Malformed)
+    header = rows[0]
+    mut fields: list[CanonicalField] = []
+    for row in rows[1:]:
+        if len(row) < 4:
+            return Err(CodecFault.Malformed)
+        fields.append(CanonicalField(family=row[0], node=row[1], selector=row[2], values=row[3:]))
+    record = CheckedRecord(profile=header[3], owner=header[1], root=header[2], family=family, fields=fields)
+    validate(record)?
+    return Ok(record)
+
+
 pub def native_fields(record: CheckedRecord) -> Result[list[list[str]], CodecFault]:
     """Project decoded canonical fields for the narrow rebinding adapter, retaining every field and ordered value."""
     validate(record)?
@@ -655,7 +680,12 @@ class InputFields:
                 closure_nodes.append(self.number()?)
         return Ok(closure_nodes)
 
-    def invocations(mut self, loans: int, receiver_dependencies: bool, result_requirements: bool) -> Result[list[int], CodecFault]:
+    def invocations(
+        mut self,
+        loans: int,
+        receiver_dependencies: bool,
+        result_requirements: bool,
+    ) -> Result[list[int], CodecFault]:
         """Retain invocation inputs and collect the graph nodes that their evaluations reference."""
         mut invocation_nodes: list[int] = []
         invocations = self.count()?
@@ -693,7 +723,12 @@ class InputFields:
                 invocation_nodes.append(self.number()?)
         return Ok(invocation_nodes)
 
-    pub def graph(mut self, strict_indices: bool, receiver_dependencies: bool, result_requirements: bool) -> Result[None, CodecFault]:
+    pub def graph(
+        mut self,
+        strict_indices: bool,
+        receiver_dependencies: bool,
+        result_requirements: bool,
+    ) -> Result[None, CodecFault]:
         """Retain every permission, dependency, invocation and edge under the selected input-flow schema."""
         self.strict_indices = strict_indices
         self.handle()?

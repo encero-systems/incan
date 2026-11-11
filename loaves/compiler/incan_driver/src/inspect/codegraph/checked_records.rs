@@ -97,7 +97,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 canonical_identity,
                 canonical_owner: None,
                 stable_identity,
-                span: Some(source_span(&module.file_path, &module.source, span)),
+                span: Some(source_span(module, span)),
                 provenance,
                 degraded,
             }));
@@ -167,8 +167,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
         for declaration in declarations {
             let declaration_span = declaration.capability.declaration_span;
             let span = Some(source_span(
-                &module.file_path,
-                &module.source,
+                module,
                 Span::new(declaration_span.start, declaration_span.end),
             ));
             self.records
@@ -179,7 +178,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                     capability_identity: codegraph_canonical_identity(&declaration.capability),
                     name: declaration.capability.declaration_name.clone(),
                     public: declaration.is_public,
-                    description: declaration.description.clone(),
+                    description: declaration.description.as_deref().map(visible_source_text),
                     scope: declaration
                         .scope
                         .iter()
@@ -220,15 +219,10 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 subject_kind: checked_registry_subject_kind(entry.subject_kind).to_string(),
                 subject_identity: entry.subject_identity.clone(),
                 registration_span: source_span(
-                    &module.file_path,
-                    &module.source,
+                    module,
                     Span::new(entry.registration_anchor.start, entry.registration_anchor.end),
                 ),
-                subject_span: source_span(
-                    &module.file_path,
-                    &module.source,
-                    Span::new(entry.subject_anchor.start, entry.subject_anchor.end),
-                ),
+                subject_span: source_span(module, Span::new(entry.subject_anchor.start, entry.subject_anchor.end)),
                 provenance: CodegraphProvenance::Checked,
                 reexport_paths: Vec::new(),
                 degraded: false,
@@ -287,7 +281,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 symbols: descriptor.symbols.iter().map(c_binding_symbol_record).collect(),
                 enums: descriptor.enums.iter().map(c_binding_enum_record).collect(),
                 structs: descriptor.structs.iter().map(c_binding_struct_record).collect(),
-                span: source_span(&module.file_path, &module.source, descriptor.span),
+                span: source_span(module, descriptor.span),
                 provenance: CodegraphProvenance::Checked,
                 degraded: false,
             }));
@@ -295,8 +289,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 module_id,
                 &binding_id,
                 "module_contains_c_binding",
-                &module.file_path,
-                &module.source,
+                module,
                 descriptor.span,
                 false,
             )));
@@ -344,7 +337,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                     binding: raw_call.binding.clone(),
                     symbol: raw_call.symbol.clone(),
                     unsafe_acknowledged: true,
-                    span: source_span(&module.file_path, &module.source, raw_call.span),
+                    span: source_span(module, raw_call.span),
                     provenance: CodegraphProvenance::Checked,
                     degraded: false,
                 }));
@@ -402,7 +395,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                     bridge_declaration_id,
                     call_id: self.call_record_id_at_span(module_id, facade.call_span),
                     raw_call_ids,
-                    span: source_span(&module.file_path, &module.source, facade.call_span),
+                    span: source_span(module, facade.call_span),
                     provenance: CodegraphProvenance::Checked,
                     degraded: false,
                 }));
@@ -449,7 +442,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                             stable_identity: wire_stable_identity.clone(),
                             semantic_digest: lowered.and_then(|facts| facts.semantic_digest.clone()),
                             doc_digest: lowered.and_then(|facts| facts.doc_digest.clone()),
-                            span: Some(source_span(&module.file_path, &module.source, declaration.span)),
+                            span: Some(source_span(module, declaration.span)),
                             provenance: provenance_for_identity(canonical_identity.as_ref()),
                             degraded,
                         }));
@@ -457,8 +450,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                         module_id,
                         &declaration_id,
                         "module_contains_declaration",
-                        &module.file_path,
-                        &module.source,
+                        module,
                         declaration.span,
                         degraded,
                     )));

@@ -1,0 +1,156 @@
+"""Engine-owned persistence and rank-order scheduling for compiler record-service activation envelopes."""
+
+from std.encoding.hex import hexlify
+from std.primitives.hash import sha256
+from pub::incan_platform.store import Snapshot, begin, commit, put
+from pub::internal_models import (
+    DEMAND_FAMILY,
+    PREPARED_FAMILY,
+    WORK_FAMILY,
+    DemandPage,
+    PreparedInputs,
+    ProducerRank,
+    ProducerStage,
+    ReadyWork,
+    encode_demand_page,
+    encode_prepared_inputs,
+    encode_ready_work,
+)
+
+
+pub model RankedActivation:
+    """One checking-family evaluation paired with the certified rank that orders it."""
+
+    pub ready: ReadyWork
+    pub prepared: PreparedInputs
+
+
+pub model PersistedActivation:
+    """The immutable store generation and content-named roots for one complete worker activation."""
+
+    pub snapshot: Snapshot
+    pub demand_root: str
+    pub prepared_root: str
+    pub work_root: str
+    pub demand_key: str
+    pub prepared_key: str
+    pub work_key: str
+
+
+pub class RankedCheckingSweep:
+    """A single-owner local/final frontier that yields every certified activation exactly once."""
+
+    pending: list[RankedActivation]
+    evaluations: int = 0
+
+    @staticmethod
+    pub def schedule(activations: list[RankedActivation]) -> Result[RankedCheckingSweep, str]:
+        """Admit only complete checking-family activations whose output, snapshot and profile bindings agree."""
+        for activation in activations:
+            if not valid_activation(activation):
+                return Err("ranked checking sweep requires matching prepared CheckBody work")
+        return Ok(RankedCheckingSweep(pending=activations))
+
+    pub def next(mut self) -> Option[RankedActivation]:
+        """Remove the earliest certified activation, preserving each other frontier item for a later call."""
+        if len(self.pending) == 0:
+            return None
+        mut earliest = self.pending[0]
+        mut remaining: list[RankedActivation] = []
+        for candidate in self.pending[1:]:
+            if earlier(candidate.prepared.rank_certificate.rank, earliest.prepared.rank_certificate.rank):
+                remaining.append(earliest)
+                earliest = candidate
+            else:
+                remaining.append(candidate)
+        self.pending = remaining
+        self.evaluations += 1
+        return Some(earliest)
+
+    pub def evaluation_count(self) -> int:
+        """Return the number of activations removed from this sweep, excluding queued and reused records."""
+        return self.evaluations
+
+
+pub def persist_activation(
+    selected: Snapshot,
+    demand: DemandPage,
+    prepared: PreparedInputs,
+    ready: ReadyWork,
+) -> Result[PersistedActivation, str]:
+    """Persist DemandPage, PreparedInputs and ReadyWork in one generation under their canonical content roots."""
+    demand_bytes = encode_demand_page(demand)?
+    prepared_bytes = encode_prepared_inputs(prepared)?
+    work_bytes = encode_ready_work(ready)?
+    demand_root = digest(demand_bytes)
+    prepared_root = digest(prepared_bytes)
+    work_root = digest(work_bytes)
+    demand_key = rooted(DEMAND_FAMILY, demand_root)
+    prepared_key = rooted(PREPARED_FAMILY, prepared_root)
+    work_key = rooted(WORK_FAMILY, work_root)
+    transaction = put(
+        put(put(begin(selected), demand_key, demand_bytes), prepared_key, prepared_bytes),
+        work_key,
+        work_bytes,
+    )
+    published = commit(transaction).map_err((error) => error.message())?
+    return Ok(
+        PersistedActivation(
+            snapshot=published,
+            demand_root=demand_root,
+            prepared_root=prepared_root,
+            work_root=work_root,
+            demand_key=demand_key,
+            prepared_key=prepared_key,
+            work_key=work_key,
+        ),
+    )
+
+
+def valid_activation(value: RankedActivation) -> bool:
+    """Whether one local/final activation has one output, snapshot, profile and CheckBody rank authority."""
+    return (
+        (value.ready.output.family == "local" or value.ready.output.family == "final")
+        and value.ready.stage == ProducerStage.CheckBody
+        and value.prepared.rank_certificate.rank.stage == ProducerStage.CheckBody
+        and value.ready.output == value.prepared.output
+        and value.ready.profile.identity.digest == value.prepared.profile.identity.digest
+        and value.prepared.snapshot.root.digest != ""
+        and value.prepared.rank_certificate.evidence.digest != ""
+        and value.prepared.selector_witnesses.digest != ""
+        and value.prepared.rank_certificate.rank.namespace >= 0
+        and value.prepared.rank_certificate.rank.dependency >= 0
+    )
+
+
+def earlier(left: ProducerRank, right: ProducerRank) -> bool:
+    """Compare the certified namespace, stage and dependency tuple used by the scheduler frontier."""
+    if left.namespace != right.namespace:
+        return left.namespace < right.namespace
+    if stage_order(left.stage) != stage_order(right.stage):
+        return stage_order(left.stage) < stage_order(right.stage)
+    return left.dependency < right.dependency
+
+
+def stage_order(stage: ProducerStage) -> int:
+    """Map stages to the producer table order only for the in-memory frontier."""
+    match stage:
+        ProducerStage.Discover => return 0
+        ProducerStage.Signature => return 1
+        ProducerStage.Layout => return 2
+        ProducerStage.Default => return 3
+        ProducerStage.CheckBody => return 4
+        ProducerStage.BodyIr => return 5
+        ProducerStage.Instance => return 6
+        ProducerStage.PlanFunction => return 7
+        ProducerStage.NativeInterface => return 8
+
+
+def rooted(family: str, root: str) -> str:
+    """Join an engine family and content identity into one canonical store key."""
+    return family + "\t" + root
+
+
+def digest(value: bytes) -> str:
+    """Return one lowercase SHA-256 content root."""
+    return hexlify(sha256.digest(value))

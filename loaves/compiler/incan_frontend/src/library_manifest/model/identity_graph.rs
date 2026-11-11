@@ -151,24 +151,16 @@ impl LibraryIdentityGraph {
     /// Multiple distinct identities are ambiguous and therefore produce no aggregate identity. Overload consumers
     /// use [`Self::function_identities_for_public_name`] instead.
     pub fn canonical_for_public_name(&self, name: &str) -> Option<CanonicalSymbolId> {
-        let mut candidates = self
-            .exports
-            .iter()
-            .filter(|entry| entry.public_path.len() == 2 && entry.public_name == name)
-            .filter_map(|entry| entry.canonical.as_ref()?.hydrate());
-        let first = candidates.next()?;
-        candidates.all(|candidate| candidate == first).then_some(first)
+        unique_canonical_identity(
+            self.exports
+                .iter()
+                .filter(|entry| entry.public_path.len() == 2 && entry.public_name == name),
+        )
     }
 
     /// Return the one canonical identity published at one exact package-visible path.
     pub fn canonical_for_public_path(&self, public_path: &[String]) -> Option<CanonicalSymbolId> {
-        let mut candidates = self
-            .exports
-            .iter()
-            .filter(|entry| entry.public_path == public_path)
-            .filter_map(|entry| entry.canonical.as_ref()?.hydrate());
-        let first = candidates.next()?;
-        candidates.all(|candidate| candidate == first).then_some(first)
+        unique_canonical_identity(self.exports.iter().filter(|entry| entry.public_path == public_path))
     }
 
     /// Retain identities from the declaration source the checked namespace selected. A module's own member can
@@ -237,11 +229,22 @@ impl LibraryIdentityGraph {
                     && entry
                         .canonical
                         .as_ref()
-                        .and_then(CanonicalIdentityExport::hydrate)
-                        .is_some_and(|candidate| candidate == *canonical)
+                        .is_some_and(|candidate| candidate.represents(canonical))
             })
             .map(|entry| entry.source_path.as_slice())
     }
+}
+
+/// Return one unambiguous canonical export while hydrating only the identity that escapes the graph.
+fn unique_canonical_identity<'a>(entries: impl Iterator<Item = &'a ExportIdentity>) -> Option<CanonicalSymbolId> {
+    let mut candidates = entries
+        .filter_map(|entry| entry.canonical.as_ref())
+        .filter(|identity| identity.can_hydrate());
+    let first = candidates.next()?;
+    candidates
+        .all(|candidate| candidate == first)
+        .then(|| first.hydrate())
+        .flatten()
 }
 
 /// Return the legacy identity graph schema version when deserializing manifests that predate the field.
@@ -356,6 +359,47 @@ impl CanonicalIdentityExport {
             )
             .with_expansion(self.declaration_span.expansion),
         })
+    }
+
+    /// Return whether this wire identity can reconstruct a compiler identity on the current target.
+    fn can_hydrate(&self) -> bool {
+        !matches!(
+            SemanticSourceTargetKind::from_kind_str(&self.kind),
+            SemanticSourceTargetKind::Other(_)
+        ) && usize::try_from(self.declaration_span.start).is_ok()
+            && usize::try_from(self.declaration_span.end).is_ok()
+    }
+
+    /// Compare with a hydrated compiler identity without cloning the wire identity's strings or paths.
+    pub(crate) fn represents(&self, identity: &CanonicalSymbolId) -> bool {
+        let Ok(start) = u64::try_from(identity.declaration_span.start) else {
+            return false;
+        };
+        let Ok(end) = u64::try_from(identity.declaration_span.end) else {
+            return false;
+        };
+        let origin_matches = match (&self.origin, &identity.origin) {
+            (
+                CanonicalIdentityOriginExport::Package { library, module_path },
+                SymbolOrigin::Package {
+                    library: candidate_library,
+                    module_path: candidate_path,
+                },
+            ) => library == candidate_library && module_path == candidate_path,
+            (CanonicalIdentityOriginExport::RustCrate { path }, SymbolOrigin::RustCrate(candidate)) => {
+                path == candidate
+            }
+            (CanonicalIdentityOriginExport::Builtin, SymbolOrigin::Builtin) => true,
+            _ => false,
+        };
+        SymbolNamespace::from(self.namespace) == identity.namespace
+            && origin_matches
+            && self.declaration_name == identity.declaration_name
+            && self.kind == identity.kind.as_str()
+            && self.declaration_span.start == start
+            && self.declaration_span.end == end
+            && self.declaration_span.expansion == identity.declaration_span.expansion
+            && identity.scope_discriminant.is_none()
     }
 }
 
@@ -510,5 +554,49 @@ impl LibraryRustAbi {
     /// proofs.
     pub fn get(&self, canonical_path: &str) -> Option<&RustItemMetadata> {
         self.items.iter().find(|item| item.canonical_path == canonical_path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Graph lookups compare retained identities without changing ambiguity or direct-source selection.
+    #[test]
+    fn graph_queries_preserve_canonical_identity_contracts() -> Result<(), &'static str> {
+        let identity = CanonicalSymbolId::module_declaration(
+            vec!["records".to_string()],
+            "load",
+            SemanticSourceTargetKind::Function,
+            HirSourceSpan::new(4, 12),
+        );
+        let canonical =
+            CanonicalIdentityExport::from_canonical("pkg", &identity).ok_or("canonical identity missing")?;
+        let public_path = vec!["pkg".to_string(), "load".to_string()];
+        let direct = ExportIdentity {
+            public_name: "load".to_string(),
+            public_path: public_path.clone(),
+            source_path: vec!["records".to_string(), "load".to_string()],
+            kind: ExportIdentityKind::Function,
+            projection: ExportIdentityProjection::Direct,
+            canonical: Some(canonical.clone()),
+        };
+        let graph = LibraryIdentityGraph {
+            schema_version: LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+            exports: vec![direct],
+        };
+        let hydrated = canonical.hydrate().ok_or("canonical identity did not hydrate")?;
+
+        assert!(canonical.represents(&hydrated));
+        assert_eq!(graph.canonical_for_public_path(&public_path), Some(hydrated.clone()));
+        assert_eq!(
+            graph.declaration_source_path(&hydrated),
+            Some(["records".to_string(), "load".to_string()].as_slice())
+        );
+
+        let mut scoped = hydrated;
+        scoped.scope_discriminant = Some(incan_semantics_core::ScopeDiscriminant(1));
+        assert!(!canonical.represents(&scoped));
+        Ok(())
     }
 }

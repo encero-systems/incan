@@ -1,4 +1,4 @@
-# behavior: adapters compute their results; rejected validated newtype sums retain their hook's cause (RFC 088)
+# behavior: adapters compute their results; numeric-newtype sums keep the 0.5 int and float matrix; rejected validated sums retain their hook's cause (RFC 088, #2914)
 # expect-stdout:
 #   2
 #   3
@@ -6,6 +6,10 @@
 #   15
 #   15
 #   3
+#   3
+#   6
+#   3.75
+#   3.75
 #   3
 
 """Observe adapter results and require the original hook cause when newtype sum reconstruction fails."""
@@ -32,6 +36,9 @@ def add(acc: int, n: int) -> int:
 type Money = newtype int
 
 
+type Amount = newtype float
+
+
 type PositiveInt = newtype int:
     """Reject nonpositive totals when a sum reconstructs its item type."""
 
@@ -40,6 +47,16 @@ type PositiveInt = newtype int:
         if n <= 0:
             return Err(ValidationError("positive int must be greater than zero"))
         return Ok(PositiveInt(n))
+
+
+type PositiveCount = newtype int:
+    """Reject nonpositive historical totals while retaining the accepted positive sum."""
+
+    def from_underlying(value: int) -> Result[PositiveCount, ValidationError]:
+        """Construct a positive count from its summed integer payload."""
+        if value <= 0:
+            return Err(ValidationError("positive count required"))
+        return Ok(PositiveCount(value))
 
 
 def sum_money(items: list[Money]) -> Money:
@@ -88,5 +105,14 @@ def main() -> None:
     println(total)
     println(total_money.0)
     println(total_positive.0)
-    # 2. A zero total cannot silently bypass the validated item type's constructor.
+    # 2. Preserve the complete 0.5 numeric-newtype sum matrix.
+    historical_ints = [1, 2, 3]
+    historical_floats = [1.25, 2.5]
+    historical_amounts = [Amount(1.25), Amount(2.5)]
+    historical_counts = [PositiveCount(1), PositiveCount(2)]
+    println(historical_ints.iter().sum())
+    println(historical_floats.iter().sum())
+    println(historical_amounts.iter().sum().0)
+    println(historical_counts.iter().sum().0)
+    # 3. A zero total cannot silently bypass the validated item type's constructor.
     check_sum_failure()

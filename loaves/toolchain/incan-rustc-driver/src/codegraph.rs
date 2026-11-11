@@ -102,8 +102,8 @@ pub fn read(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         Some(document) => serde_json::from_str::<BTreeMap<String, Vec<String>>>(document)?,
         None => BTreeMap::new(),
     };
-    let graph =
-        incan_codegraph::artifact::GraphArtifact::decode(&std::fs::read(path)?).map_err(|error| error.to_string())?;
+    let bytes = std::fs::read(path).map_err(|error| format!("cannot read codegraph {path}: {error}"))?;
+    let graph = incan_codegraph::artifact::GraphArtifact::decode(&bytes).map_err(|error| error.to_string())?;
     use std::io::Write;
     let mut output = std::io::BufWriter::new(std::io::stdout().lock());
     let records = if group == "origins" {

@@ -7,12 +7,7 @@ from files import make_directory, read
 from home import home
 from graph_exports import export_file, exported
 from invocation_identity import invocation_facts
-from rust_freshness import (
-    dependency_arguments,
-    dependency_inputs,
-    library_key,
-    relocate_dependencies,
-)
+from rust_freshness import dependency_arguments, dependency_inputs, library_key, relocate_dependencies
 from toolchain import Toolchain, rust_compiler
 from unit_freshness import Key, fingerprint
 
@@ -84,13 +79,13 @@ pub def discover(
 
 pub def portable_dependencies(project: Path, dependencies: Path) -> Result[bool, str]:
     """External source locations have no declared portable binding, so their graph is produced without retention."""
-    root = project.resolve().map_err((error) => error.message())?
+    root = project.resolve().map_err((error) => f"cannot resolve {error.message()}")?
     paths, _ = dependency_inputs(read(dependencies)?)?
     for path in paths:
         mut selected = Path(path)
         if not path.startswith("/"):
             selected = project.joinpath(path)
-        canonical = selected.resolve().map_err((error) => error.message())?
+        canonical = selected.resolve().map_err((error) => f"cannot resolve {error.message()}")?
         if not canonical.0.startswith(root.0 + "/"):
             return Ok(false)
     return Ok(true)
@@ -106,8 +101,14 @@ pub def observed_key(
 ) -> Result[Key, str]:
     """Use the native producer's existing identity boundary for source, invocation, externs and observed environment."""
     return library_key(
-        project, observations_directory(project)?, directory.joinpath("inputs.d"), arguments, environment, [],
-        toolchain, compiler,
+        project,
+        observations_directory(project)?,
+        directory.joinpath("inputs.d"),
+        arguments,
+        environment,
+        [],
+        toolchain,
+        compiler,
     )
 
 

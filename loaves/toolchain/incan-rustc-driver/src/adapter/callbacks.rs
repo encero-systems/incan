@@ -287,6 +287,8 @@ impl rustc_driver::Callbacks for Callbacks {
             };
         }
         self.timing.mark("dynamic_library_snapshot");
+        crate::native_timing::record_front_end(self.rustc_started.elapsed());
+        self.codegen_started = Some(std::time::Instant::now());
         rustc_driver::Compilation::Continue
     }
 }

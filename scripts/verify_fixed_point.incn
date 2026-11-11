@@ -2,7 +2,15 @@
 
 from rust::std::time import Instant
 from std.fs import Path
-from native_build import NativeContext, build_runtime, build_source_interfaces, build_standard_packages, build_tool
+from native_build import (
+    NativeContext,
+    StandardGeneration,
+    build_runtime,
+    build_source_interfaces,
+    build_standard_packages,
+    build_tool,
+    standard_profiles,
+)
 from release_support import TOOLCHAIN_DIRECTORY, append_timing, digest, same_bytes
 from relink_driver import Relink, run as relink
 
@@ -100,11 +108,13 @@ def rebuild_generation(context: NativeContext, evidence: Path, builder: Path, ge
         stdlib=context.stdlib,
         evidence=evidence,
         timings=context.timings,
+        jobs=context.jobs,
+        memory=context.memory,
         timeout_seconds=context.timeout_seconds,
     )
     interfaces = build_source_interfaces(successor, helper, f"{generation}-")?
     _ = build_runtime(successor, helper, Some(interfaces), true, f"{generation}-")?
-    build_standard_packages(successor, helper, f"{generation}-")?
+    build_standard_packages(successor, helper, f"{generation}-", standard_profiles(StandardGeneration.Candidate))?
     _ = build_tool(successor, "oven", true, f"{generation}-oven")?
     _ = build_tool(successor, "contracts", true, f"{generation}-runner")?
     return Ok(None)

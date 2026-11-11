@@ -12,9 +12,12 @@ pub enum RecordMessageKind(str):
     """The one closed worker record-message family."""
 
     Prepare = "prepare"
+    Prepared = "prepared"
     NeedPrerequisite = "need-prerequisite"
     Evaluate = "evaluate"
     Produced = "produced"
+    SemanticRefusal = "semantic-refusal"
+    CompilerFault = "compiler-fault"
 
 
 @derive(Eq)
@@ -25,6 +28,13 @@ pub model Prepare:
     pub snapshot: str
     pub demand_root: str
     pub producer_profile: str
+
+
+@derive(Eq)
+pub model Prepared:
+    """The immutable prepared-input envelope the engine may schedule for evaluation."""
+
+    pub prepared_root: str
 
 
 @derive(Eq)
@@ -57,13 +67,75 @@ pub model Produced:
 
 
 @derive(Eq)
+pub model SemanticRefusal:
+    """Compiler-owned diagnostics and the complete read evidence supporting the refusal."""
+
+    pub diagnostic_root: str
+    pub witness_root: str
+
+
+@derive(Eq)
+pub model CompilerFault:
+    """A typed compiler-service fault staged under one immutable root."""
+
+    pub fault_root: str
+
+
+@derive(Eq)
 pub enum RecordMessage:
     """Every request and reply body of the version-two worker record protocol."""
 
     Prepare(Prepare)
+    Prepared(Prepared)
     NeedPrerequisite(NeedPrerequisite)
     Evaluate(Evaluate)
     Produced(Produced)
+    SemanticRefusal(SemanticRefusal)
+    CompilerFault(CompilerFault)
+
+
+pub enum RecordAdmission:
+    """Whether one received frame is a valid version-two request for this worker."""
+
+    Admitted(RecordMessage)
+    NotRecordProtocol
+    Incompatible
+    ProtocolFault
+
+
+pub def admit_record(payload: bytes, generation: str) -> RecordAdmission:
+    """Admit only Prepare or Evaluate for this generation; replies sent as requests are protocol faults."""
+    text = RustString.from_utf8(payload)
+    match text:
+        Err(_) => return RecordAdmission.NotRecordProtocol
+        Ok(encoded) =>
+            parsed = parse(str(encoded))
+            match parsed:
+                Err(_) => return RecordAdmission.NotRecordProtocol
+                Ok(document) =>
+                    match document.get("schema"):
+                        None => return RecordAdmission.NotRecordProtocol
+                        Some(value) =>
+                            match value.as_str():
+                                Some(schema) =>
+                                    if schema != RECORD_SCHEMA:
+                                        return RecordAdmission.NotRecordProtocol
+                                None => return RecordAdmission.NotRecordProtocol
+                    match document.get("generation"):
+                        None => return RecordAdmission.Incompatible
+                        Some(value) =>
+                            match value.as_str():
+                                Some(found) =>
+                                    if found != generation:
+                                        return RecordAdmission.Incompatible
+                                None => return RecordAdmission.Incompatible
+    match decode_record_message(payload, generation):
+        Err(_) => return RecordAdmission.ProtocolFault
+        Ok(message) =>
+            match message:
+                RecordMessage.Prepare(_) => return RecordAdmission.Admitted(message)
+                RecordMessage.Evaluate(_) => return RecordAdmission.Admitted(message)
+                _ => return RecordAdmission.ProtocolFault
 
 
 pub def encode_record_message(message: RecordMessage, generation: str) -> bytes:
@@ -78,6 +150,9 @@ pub def encode_record_message(message: RecordMessage, generation: str) -> bytes:
             fields["snapshot"] = JsonValue.string(value.snapshot)
             fields["demand_root"] = JsonValue.string(value.demand_root)
             fields["producer_profile"] = JsonValue.string(value.producer_profile)
+        RecordMessage.Prepared(value) =>
+            fields["kind"] = JsonValue.string(RecordMessageKind.Prepared.value())
+            fields["prepared_root"] = JsonValue.string(value.prepared_root)
         RecordMessage.NeedPrerequisite(value) =>
             fields["kind"] = JsonValue.string(RecordMessageKind.NeedPrerequisite.value())
             fields["keys_root"] = JsonValue.string(value.keys_root)
@@ -95,6 +170,13 @@ pub def encode_record_message(message: RecordMessage, generation: str) -> bytes:
             fields["witness_root"] = JsonValue.string(value.witness_root)
             fields["diagnostic_root"] = JsonValue.string(value.diagnostic_root)
             fields["counter_root"] = JsonValue.string(value.counter_root)
+        RecordMessage.SemanticRefusal(value) =>
+            fields["kind"] = JsonValue.string(RecordMessageKind.SemanticRefusal.value())
+            fields["diagnostic_root"] = JsonValue.string(value.diagnostic_root)
+            fields["witness_root"] = JsonValue.string(value.witness_root)
+        RecordMessage.CompilerFault(value) =>
+            fields["kind"] = JsonValue.string(RecordMessageKind.CompilerFault.value())
+            fields["fault_root"] = JsonValue.string(value.fault_root)
     match JsonValue.object(fields).to_json():
         Ok(encoded) => return encoded.encode("utf-8")
         Err(_) => return "{}".encode("utf-8")
@@ -116,6 +198,12 @@ pub def decode_record_message(payload: bytes, generation: str) -> Result[RecordM
                         demand_root=required_text(document, "demand_root")?,
                         producer_profile=required_text(document, "producer_profile")?,
                     ),
+                ),
+            )
+        Some(RecordMessageKind.Prepared) =>
+            return Ok(
+                RecordMessage.Prepared(
+                    Prepared(prepared_root=required_text(document, "prepared_root")?),
                 ),
             )
         Some(RecordMessageKind.NeedPrerequisite) =>
@@ -150,7 +238,45 @@ pub def decode_record_message(payload: bytes, generation: str) -> Result[RecordM
                     ),
                 ),
             )
+        Some(RecordMessageKind.SemanticRefusal) =>
+            return Ok(
+                RecordMessage.SemanticRefusal(
+                    SemanticRefusal(
+                        diagnostic_root=required_text(document, "diagnostic_root")?,
+                        witness_root=required_text(document, "witness_root")?,
+                    ),
+                ),
+            )
+        Some(RecordMessageKind.CompilerFault) =>
+            return Ok(
+                RecordMessage.CompilerFault(
+                    CompilerFault(fault_root=required_text(document, "fault_root")?),
+                ),
+            )
         None => return Err("unknown compiler worker record message")
+
+
+pub def accept_record_reply(request: RecordMessage, reply: RecordMessage) -> Result[RecordMessage, str]:
+    """Accept only the closed reply set of the exact request; every other pairing is a protocol fault."""
+    mut accepted = false
+    match request:
+        RecordMessage.Prepare(_) =>
+            match reply:
+                RecordMessage.Prepared(_) => accepted = true
+                RecordMessage.NeedPrerequisite(_) => accepted = true
+                RecordMessage.SemanticRefusal(_) => accepted = true
+                RecordMessage.CompilerFault(_) => accepted = true
+                _ => pass
+        RecordMessage.Evaluate(_) =>
+            match reply:
+                RecordMessage.Produced(_) => accepted = true
+                RecordMessage.SemanticRefusal(_) => accepted = true
+                RecordMessage.CompilerFault(_) => accepted = true
+                _ => pass
+        _ => pass
+    if not accepted:
+        return Err("compiler worker record reply does not match its request")
+    return Ok(reply)
 
 
 def required_text(document: JsonValue, name: str) -> Result[str, str]:

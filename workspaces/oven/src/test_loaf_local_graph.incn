@@ -4,7 +4,7 @@ from std.fs import Path
 from std.testing import fail
 from intake import ManifestReader, read_project
 from loaf_local_graph import LocalDemand, LocalFacet, catalog, local_facets, local_facet_session
-from rust_activation import CfgSnapshot, DependencyDomain, TargetConfiguration
+from rust_activation import ActivationPurpose, CfgSnapshot, DependencyDomain, TargetConfiguration
 from registry_units import RegistryDemand, RegistrySelection, RegistryUnit, RegistryUnits
 from toolchain_native import retain_support_facet
 
@@ -185,7 +185,7 @@ pub def test_local_graph_normal_selection_excludes_test_environment() -> Result[
         assert not facet.project.endswith("/leaf")
         assert not facet.project.endswith("/support")
     mut testing = root(false)?
-    testing.environment = "test"
+    testing.purpose = ActivationPurpose.Test
     selected = session.facets(testing)?
     assert len(selected) == 5
     for facet in selected:

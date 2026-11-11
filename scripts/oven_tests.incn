@@ -1,5 +1,5 @@
 """
-Run installed CI's Oven test step through an installed Oven, with independent projects tested concurrently.
+Run installed CI's Oven test step through an installed Oven, with isolated projects tested concurrently.
 
 Run `incan run scripts/oven_tests.incn -- OVEN EVIDENCE [--jobs N] [--memory GIB]` from a checkout. OVEN is the
 installed command; EVIDENCE is the run's evidence directory. The step runs, one source per invocation so a source can
@@ -7,15 +7,13 @@ be excluded on its own:
 
 1. `OVEN test` for every `workspaces/oven/src/test_*.incn`, from `workspaces/oven`.
 2. `OVEN test --profile release` for every `loaves/*/*/tests/test_*.incn`, from its Loaf.
-3. The record-scope contract, in an isolated project under `EVIDENCE/checker-records`.
 
 Each invocation writes its own log under `EVIDENCE/oven-tests/`. `oven-tests.log` joins them in the order above, so
 it does not depend on scheduling. The passing ids must equal `workspaces/contracts/oven-tests.txt`.
 
-At most N independent-project invocations run at once: `--jobs N`, else the core count. Each invocation also reserves
-memory, and one starts only while the reservations fit the memory they share: `--memory GIB`, else physical memory
-less a headroom. Test sources from the Oven project run serially because they share its mutable project output; their
-executables have distinct final paths, but preparing several generations concurrently can withdraw an in-flight view.
+At most N invocations run at once: `--jobs N`, else the core count. Each invocation also reserves memory, and one starts
+only while the reservations fit the memory they share: `--memory GIB`, else physical memory less a headroom. Every Oven
+source receives a private project copy under `.agents/state`, so concurrent generations never share mutable output.
 """
 
 from rust::std::cell import RefCell
@@ -26,15 +24,16 @@ from rust::std::process import Child, Command, Stdio, exit
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
 from rust::std::thread import available_parallelism, sleep
-from rust::std::time import Duration
+from rust::std::time import Duration, Instant
+from std.environ import get_or
 from std.fs import Path
 from std.regex import Regex
 from check_support import read, repository_root, write_stderr
 
 const GIB: int = 1073741824
 # What one invocation reserves. Peaks measured one invocation at a time, as the summed RSS of its processes and the
-# resident owner: Oven units 3.0 to 3.8 GiB, compiler Loaf tests up to 4.2 GiB, and the record-scope project 5.7 GiB,
-# in which the frontend's native-facts driver alone took 5.5 to 6.2 GiB. Compiler-Loaf work reserves lowering scale.
+# resident owner: Oven units 3.0 to 3.8 GiB and compiler Loaf tests up to 5.7 GiB. Compiler-Loaf work reserves lowering
+# scale.
 pub const PROJECT_RESERVATION_BYTES: int = 4 * GIB
 pub const LOWERING_RESERVATION_BYTES: int = 6 * GIB
 # Physical memory no reservation takes: the operating system's share and this program's own.
@@ -44,8 +43,6 @@ const FAILED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ (FAILED|XPAS
 # These read the installed toolchain and require it unchanged, which another invocation's first use of a native crate can
 # break, so they run after the others have finished.
 const NEEDS_SETTLED_INSTALLATION: FrozenList[str] = ["test_engine_protocol.incn"]
-const RECORD_SOURCES: FrozenList[str] = ["checker_records", "record_scope", "records", "record_service"]
-const RECORD_TESTS: FrozenList[str] = ["canonical_record_controls", "test_record_scope"]
 const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--memory GIB]"
 # The step reports failures under the installed-verification program's name.
 const REPORTER: str = "verify-installation"
@@ -71,8 +68,10 @@ pub model Invocation:
     pub directory: str
     pub reservation: int
     pub log: Path
-    # Runs serially with other invocations from the same mutable project.
-    pub serial: bool = false
+    # Explicit additions to this invocation's inherited environment.
+    pub environment: Dict[str, str] = {}
+    # Zero leaves the containing step's deadline in charge.
+    pub timeout_seconds: int = 0
     # Runs by itself after the others, because it requires an installation that has stopped changing.
     pub alone: bool = false
 
@@ -87,9 +86,12 @@ pub model Summary:
 
 
 model Running:
-    """One started invocation and the memory it reserved."""
+    """One started invocation, its planned position and the memory it reserved."""
 
+    position: int
     reservation: int
+    timeout_seconds: int
+    started: Instant
     child: Rc[RefCell[Child]]
 
 
@@ -174,15 +176,9 @@ def run(options: Options) -> Result[str, str]:
     logs = options.evidence.joinpath("oven-tests")
     logs.mkdir(true, true).map_err((error) => error.message())?
     planned = invocations(root, options.evidence, logs)?
-    ran = run_all(
-        options.oven,
-        [item for item in planned if not item.serial and not item.alone],
-        options.jobs,
-        options.memory,
-    )?
-    ran_serial = run_all(options.oven, [item for item in planned if item.serial], 1, options.memory)?
+    ran = run_all(options.oven, [item for item in planned if not item.alone], options.jobs, options.memory)?
     ran_alone = run_all(options.oven, [item for item in planned if item.alone], 1, options.memory)?
-    succeeded = ran and ran_serial and ran_alone
+    succeeded = ran and ran_alone
     log = options.evidence.joinpath("oven-tests.log")
     joined = join_logs(planned, log)?
     expected = read(root.joinpath("workspaces/contracts/oven-tests.txt"))?
@@ -190,7 +186,7 @@ def run(options: Options) -> Result[str, str]:
     return report(options.evidence, summary, succeeded)
 
 
-pub def invocations(root: Path, evidence: Path, logs: Path) -> Result[list[Invocation], str]:
+pub def invocations(root: Path, _evidence: Path, logs: Path) -> Result[list[Invocation], str]:
     """The step's invocations in their fixed order, each with its memory reservation and its own numbered log."""
     mut planned: list[Invocation] = []
     oven = root.joinpath("workspaces/oven")
@@ -200,23 +196,47 @@ pub def invocations(root: Path, evidence: Path, logs: Path) -> Result[list[Invoc
     for source in sources:
         if not source.is_file():
             return Err("Oven test sources are absent")
-        unit = ["test", source.0]
+        project, isolated_source = isolated_oven_project(root, _evidence, len(planned), source)?
+        unit = ["test", isolated_source.0]
         alone = source.name() in NEEDS_SETTLED_INSTALLATION
-        planned.append(invocation(unit, oven.0, PROJECT_RESERVATION_BYTES, logs, len(planned), source, not alone, alone))
+        planned.append(invocation(unit, project.0, PROJECT_RESERVATION_BYTES, logs, len(planned), source, alone))
     compiler = root.joinpath("loaves/compiler").0 + "/"
-    excluded = root.joinpath("loaves/compiler/internal_models/tests").0 + "/"
     for source in loaf_tests(root.joinpath("loaves"))?:
-        # The record contracts' canonical controls need the frontend's native adapter, which their manifest omits.
-        if source.0.startswith(excluded):
-            continue
         # Compiler Loaves link native support, which an installed bundle ships for the release profile only.
         loaf = source.parent().parent()
         arguments = ["test", source.0, "--profile", "release"]
         planned.append(invocation(arguments, loaf.0, reservation_of(source, compiler), logs, len(planned), source))
-    contract = checker_records(root, evidence.joinpath("checker-records"))?
-    contract_test = ["test", contract.0, "--profile", "release"]
-    planned.append(invocation(contract_test, "", LOWERING_RESERVATION_BYTES, logs, len(planned), contract))
     return Ok(planned)
+
+
+def isolated_oven_project(root: Path, evidence: Path, position: int, source: Path) -> Result[tuple[Path, Path], str]:
+    """Copy the Oven project for one source so its target generations cannot withdraw another test's live views."""
+    checkout = oven_test_state_root(root, get_or("OVEN_TEST_STATE_ROOT", "")).joinpath(evidence.name()).joinpath(
+        str(position),
+    )
+    project = checkout.joinpath("workspaces/oven")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    _ = root.joinpath("workspaces/oven/loaf.toml").copy(project.joinpath("loaf.toml"), true, false).map_err(
+        (error) => error.message(),
+    )?
+    _ = root.joinpath("workspaces/oven/src").copy(project.joinpath("src"), true, false).map_err(
+        (error) => error.message(),
+    )?
+    _ = root.joinpath("workspaces/oven/tests").copy(project.joinpath("tests"), true, false).map_err(
+        (error) => error.message(),
+    )?
+    _ = root.joinpath("workbench").copy(checkout.joinpath("workbench"), true, false).map_err(
+        (error) => error.message(),
+    )?
+    checkout.joinpath("loaves").symlink_to(root.joinpath("loaves")).map_err((error) => error.message())?
+    return Ok((project, project.joinpath("src").joinpath(source.name())))
+
+
+pub def oven_test_state_root(root: Path, configured: str) -> Path:
+    """Select caller-owned Oven test scratch when configured, preserving the checkout-local default otherwise."""
+    if configured != "":
+        return Path(configured)
+    return root.joinpath(".agents/state/release-oven-tests")
 
 
 def invocation(
@@ -226,7 +246,6 @@ def invocation(
     logs: Path,
     position: int,
     source: Path,
-    serial: bool = false,
     alone: bool = false,
 ) -> Invocation:
     """One invocation whose log name orders it by its position."""
@@ -236,7 +255,6 @@ def invocation(
         directory=directory,
         reservation=reservation,
         log=log,
-        serial=serial,
         alone=alone,
     )
 
@@ -293,61 +311,48 @@ def sorted_paths(paths: list[Path]) -> list[Path]:
     return [Path(spelling) for spelling in sorted([path.0 for path in paths])]
 
 
-def checker_records(root: Path, evidence: Path) -> Result[Path, str]:
-    """
-    Prepare the record-scope contract with the canonical codec and its test-only native adapter dependency, and return
-    its test source. The project must be new, so a reused evidence directory never mixes two runs.
-    """
-    evidence.mkdir(true, true).map_err((error) => error.message())?
-    project = evidence.joinpath("project")
-    project.mkdir(false, false).map_err((error) => f"{project.0}: {error.message()}")?
-    source = project.joinpath("src")
-    source.mkdir(false, false).map_err((error) => error.message())?
-    # These are generated build inputs copied from their sole authored home, not a second contract implementation.
-    models = root.joinpath("loaves/compiler/internal_models")
-    for name in RECORD_SOURCES:
-        copy(models.joinpath(f"src/{name}.incn"), source.joinpath(f"{name}.incn"))?
-    for name in RECORD_TESTS:
-        copy(models.joinpath(f"tests/{name}.incn"), source.joinpath(f"{name}.incn"))?
-    frontend = root.joinpath("loaves/compiler/incan_frontend").0
-    mut manifest = "[project]\nname = \"checker_record_contract_test\"\nversion = \"0.1.0\"\nprivate = true\n"
-    manifest += "[project.scripts]\ncontract = \"src/test_record_scope.incn\"\n"
-    manifest += f"[dependencies]\nincan_frontend = {{ loaf = \"incan_frontend\", path = \"{frontend}\" }}\n"
-    project.joinpath("loaf.toml").write_text(manifest, "utf-8", "strict", None).map_err((error) => error.message())?
-    # File-based Incan tests currently omit envs.test; this isolated manifest keeps the native adapter out of
-    # production.
-    return Ok(source.joinpath("test_record_scope.incn"))
-
-
-def copy(source: Path, destination: Path) -> Result[None, str]:
-    """Copy one authored source without its metadata."""
-    _ = source.copy(destination, true, false).map_err((error) => f"{source.0}: {error.message()}")?
-    return Ok(None)
-
-
 pub def run_all(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[bool, str]:
     """Run every invocation, at most `jobs` at once within `memory`, and report whether all of them succeeded."""
+    return Ok(len(run_all_failures(oven, planned, jobs, memory)?) == 0)
+
+
+pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[list[int], str]:
+    """Run every invocation within the count and memory budgets and return failed positions in planned order."""
     reservations = [item.reservation for item in planned]
     mut waiting = [index for index in range(len(planned))]
     mut active: list[Running] = []
-    mut succeeded = true
+    mut failed: list[int] = []
     while len(waiting) > 0 or len(active) > 0:
         chosen = admitted(reservations, waiting, [item.reservation for item in active], jobs, memory)
         for index in chosen:
             child = start(oven, planned[index])?
-            active.append(Running(reservation=reservations[index], child=Rc.new(RefCell.new(child))))
+            active.append(
+                Running(
+                    position=index,
+                    reservation=reservations[index],
+                    timeout_seconds=planned[index].timeout_seconds,
+                    started=Instant.now(),
+                    child=Rc.new(RefCell.new(child)),
+                ),
+            )
         waiting = [index for index in waiting if index not in chosen]
         mut running: list[Running] = []
         for item in active:
             match item.child.borrow_mut().try_wait().map_err((error) => str(error))?:
                 Some(status) =>
                     if not status.success():
-                        succeeded = false
-                None => running.append(item)
+                        failed.append(item.position)
+                None =>
+                    if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
+                        _ = item.child.borrow_mut().kill()
+                        _ = item.child.borrow_mut().wait()
+                        failed.append(item.position)
+                    else:
+                        running.append(item)
         if len(running) == len(active):
             sleep(Duration.from_millis(20))
         active = running
-    return Ok(succeeded)
+    return Ok(sorted(failed))
 
 
 pub def admitted(reservations: list[int], waiting: list[int], held: list[int], jobs: int, memory: int) -> list[int]:
@@ -380,6 +385,8 @@ def start(oven: str, planned: Invocation) -> Result[Child, str]:
         command.arg(argument)
     if planned.directory != "":
         command.current_dir(planned.directory)
+    for name in sorted([name for name in planned.environment.keys()]):
+        command.env(name, planned.environment[name])
     command.stdin(Stdio.null())
     command.stdout(log)
     command.stderr(errors)
@@ -470,7 +477,7 @@ def host_cores() -> int:
         Err(_) => return 1
 
 
-def host_memory() -> int:
+pub def host_memory() -> int:
     """Physical memory in bytes from `sysctl` or `/proc/meminfo`; zero when neither says."""
     match Command.new("/usr/sbin/sysctl").arg("-n").arg("hw.memsize").stderr(Stdio.null()).output():
         Ok(found) =>

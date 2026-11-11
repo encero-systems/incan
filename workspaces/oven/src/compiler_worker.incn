@@ -18,6 +18,13 @@ from pub::incan_platform.ipc import Connection, Listener, listen
 from files import discard_file
 from home import owners_dir
 from pub::incan_worker_host.protocol import SCHEMA, completion, ready, request_document, retired
+from pub::incan_worker_host.record_protocol import (
+    RECORD_SCHEMA,
+    RecordMessage,
+    accept_record_reply,
+    decode_record_message,
+    encode_record_message,
+)
 from observation import trace, trace_boundary
 from owner_client import status_code
 from owner_endpoint import Endpoint, attach, bindable, prepare_directory, socket_prefix
@@ -109,6 +116,27 @@ pub def captured_resident(toolchain: Toolchain, arguments: list[str]) -> Result[
                     return Err(reason)
 
 
+pub def activate_record(toolchain: Toolchain, request: RecordMessage) -> Result[RecordMessage, str]:
+    """
+    Run one compiler record activation through the selected generation's worker and require its closed reply set.
+
+    A record activation has no legacy process fallback: once selected, transport loss or a cross-request reply is a
+    protocol fault. Immutable roots in the message name the engine-owned staged values; no compiler heap crosses it.
+    """
+    connecting = begin()
+    found_connection = connection_for(toolchain)
+    record(Operation.WorkerConnect, toolchain.driver, connecting)
+    connected_socket, generation, _slot = found_connection?
+    mut connected = connected_socket
+    clock = begin()
+    connected.send(encode_record_message(request, generation))?
+    payload = connected.receive()?
+    reply = decode_record_message(payload, generation)?
+    accepted = accept_record_reply(request, reply)?
+    record(Operation.DriverRequest, RECORD_SCHEMA, clock)
+    return Ok(accepted)
+
+
 def capture_for(toolchain: Toolchain) -> Result[Toolchain, str]:
     """The original owner sinks, or private request-local sinks for a foreground native compilation."""
     if toolchain.console != "":
@@ -147,7 +175,7 @@ def collected(path: Path) -> Result[bytes, str]:
     """The exact bytes a request wrote to one console sink, which is then withdrawn; an absent sink holds none."""
     if not path.is_file():
         return Ok(b"")
-    contents = path.read_bytes().map_err((error) => error.message())?
+    contents = path.read_bytes().map_err((error) => f"cannot read {error.message()}")?
     discard_file(path)
     return Ok(contents)
 
@@ -236,14 +264,16 @@ def take_slot(directory: Path, generation: str) -> Result[tuple[int, FileLock], 
             Some(lock) => return Ok((slot, lock))
             None => pass
     own = int(id()) % size
-    lock = Path(slot_endpoint(directory, generation, own)?.lock).lock_exclusive().map_err((error) => error.message())?
+    lock = Path(slot_endpoint(directory, generation, own)?.lock)
+        .lock_exclusive()
+        .map_err((error) => f"cannot lock {error.message()}")?
     return Ok((own, lock))
 
 
 def try_slot(directory: Path, generation: str, slot: int) -> Result[Option[FileLock], str]:
     """The lock of one slot when nobody holds it."""
     path = Path(slot_endpoint(directory, generation, slot)?.lock)
-    return path.try_lock_exclusive().map_err((error) => error.message())
+    return path.try_lock_exclusive().map_err((error) => f"cannot try to lock {error.message()}")
 
 
 def slot_connection(toolchain: Toolchain, endpoint: Endpoint) -> Result[Connection, str]:
@@ -329,7 +359,7 @@ pub def generation_for(compiler: str) -> Result[str, str]:
     A resident owner may retain this digest only while it watches all compiler inputs and its environment remains
     unchanged. Every other caller derives it for the request; source, checking and compilation are never retained.
     """
-    return Ok(fingerprint([SCHEMA, compiler] + environment()?)?[0:16])
+    return Ok(fingerprint([SCHEMA, RECORD_SCHEMA, compiler] + environment()?)?[0:16])
 
 
 def environment() -> Result[list[str], str]:

@@ -6,7 +6,7 @@
 use incan_semantics_core::CanonicalSymbolId;
 use incan_semantics_core::stable_identity::StableDeclarationId;
 
-use crate::ast::{Declaration, Span, Spanned};
+use crate::ast::{Declaration, Program, Span, Spanned};
 use crate::symbols::{Symbol, SymbolTable};
 use std::collections::BTreeSet;
 
@@ -116,6 +116,18 @@ impl TypeChecker {
     pub(super) fn check_environment_declaration(&mut self, declaration: &Spanned<Declaration>) {
         self.visibility_point = VisibilityPoint::BeforeDeclaration(declaration.span);
         self.check_declaration(declaration);
+        self.visibility_point = VisibilityPoint::AfterDeclaration(declaration.span);
+    }
+
+    /// Check one source-order declaration while giving a top-level function's local producer the immutable program
+    /// view that owns its canonical nodes. Other declaration kinds keep the ordinary dispatcher unchanged.
+    pub(super) fn check_environment_record_declaration(
+        &mut self,
+        program: &Program,
+        declaration: &Spanned<Declaration>,
+    ) {
+        self.visibility_point = VisibilityPoint::BeforeDeclaration(declaration.span);
+        self.check_record_declaration(program, declaration);
         self.visibility_point = VisibilityPoint::AfterDeclaration(declaration.span);
     }
 }

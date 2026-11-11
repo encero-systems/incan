@@ -17,7 +17,7 @@ use std::fs::{File, Metadata};
 use std::io::{Read, Seek, SeekFrom};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -275,12 +275,13 @@ impl RustAbiCache {
     pub fn open(path: &Path) -> Result<Self, String> {
         let file =
             File::open(path).map_err(|error| format!("cannot read the ABI cache {}: {error}", path.display()))?;
-        Self::from_file(file).map_err(|error| format!("{}: {error}", path.display()))
+        Self::from_file(path.to_path_buf(), file)
     }
 
     /// Admit one file generation after validating its header, sections and every declared block range.
-    fn from_file(mut file: File) -> Result<Self, String> {
-        let stamp = FileStamp::observe(&file).map_err(|error| error.to_string())?;
+    fn from_file(path: PathBuf, mut file: File) -> Result<Self, String> {
+        let stamp = FileStamp::observe(&file)
+            .map_err(|error| format!("cannot inspect ABI cache {}: {error}", path.display()))?;
         let total = usize::try_from(stamp.length).map_err(|_| malformed_cache())?;
         let mut header = [0; HEADER_LENGTH];
         file.read_exact(&mut header).map_err(|_| malformed_cache())?;
@@ -296,12 +297,18 @@ impl RustAbiCache {
             sections.push(unpack(&encoded, raw)?);
         }
         let sections = Sections::decode(&sections, at, total)?;
-        if FileStamp::observe(&file).map_err(|error| error.to_string())? != stamp {
-            return Err("Rust ABI cache changed while reading its index".into());
+        if FileStamp::observe(&file).map_err(|error| format!("cannot inspect ABI cache {}: {error}", path.display()))?
+            != stamp
+        {
+            return Err(format!(
+                "cannot read ABI cache {}: file changed while reading its index",
+                path.display()
+            ));
         }
         Ok(Self::new(
             sections,
             Payload::File {
+                path,
                 file: Mutex::new(file),
                 stamp,
             },
@@ -574,7 +581,11 @@ enum Payload {
     /// In-memory clients retain their original allocation.
     Bytes(Vec<u8>),
     /// File readers keep the opened inode and serialize seeks, never reopening a potentially replaced path.
-    File { file: Mutex<File>, stamp: FileStamp },
+    File {
+        path: PathBuf,
+        file: Mutex<File>,
+        stamp: FileStamp,
+    },
 }
 
 impl Payload {
@@ -586,25 +597,32 @@ impl Payload {
                 .and_then(|end| bytes.get(offset..end))
                 .map(<[u8]>::to_vec)
                 .ok_or_else(malformed_cache),
-            Self::File { file, stamp } => {
+            Self::File { path, file, stamp } => {
                 let mut file = file
                     .lock()
                     .map_err(|_| "Rust ABI cache handle is poisoned".to_owned())?;
-                Self::require_stamp(&file, stamp)?;
+                Self::require_stamp(&file, stamp, path)?;
                 let start = u64::try_from(offset).map_err(|_| malformed_cache())?;
-                file.seek(SeekFrom::Start(start)).map_err(|error| error.to_string())?;
+                file.seek(SeekFrom::Start(start))
+                    .map_err(|error| format!("cannot seek ABI cache {}: {error}", path.display()))?;
                 let mut bytes = vec![0; length];
-                file.read_exact(&mut bytes).map_err(|error| error.to_string())?;
-                Self::require_stamp(&file, stamp)?;
+                file.read_exact(&mut bytes)
+                    .map_err(|error| format!("cannot read ABI cache {}: {error}", path.display()))?;
+                Self::require_stamp(&file, stamp, path)?;
                 Ok(bytes)
             }
         }
     }
 
     /// Refuse a read from a cache file that changed since its sections were read.
-    fn require_stamp(file: &File, stamp: &FileStamp) -> Result<(), String> {
-        if FileStamp::observe(file).map_err(|error| error.to_string())? != *stamp {
-            return Err("Rust ABI cache changed while reading a record".to_owned());
+    fn require_stamp(file: &File, stamp: &FileStamp, path: &Path) -> Result<(), String> {
+        if FileStamp::observe(file).map_err(|error| format!("cannot inspect ABI cache {}: {error}", path.display()))?
+            != *stamp
+        {
+            return Err(format!(
+                "cannot read ABI cache {}: file changed while reading a record",
+                path.display()
+            ));
         }
         Ok(())
     }
@@ -763,6 +781,16 @@ mod tests {
         let cache = RustAbiCache::open(&path)?;
         for probe in ["demo::module_0000", "demo::module_2999", "demo::module_0001"] {
             assert_eq!(cache.get(probe)?, items.get(probe).cloned());
+        }
+        let changed_cache = RustAbiCache::open(&path)?;
+        std::fs::write(&path, b"changed")
+            .map_err(|error| format!("cannot replace test ABI cache {}: {error}", path.display()))?;
+        let changed = changed_cache
+            .get("demo::module_0000")
+            .err()
+            .ok_or_else(|| "a changed file-backed cache was accepted".to_owned())?;
+        if !changed.contains("read") || !changed.contains(&path.display().to_string()) {
+            return Err(format!("changed ABI cache error lacks operation or path: {changed}"));
         }
         std::fs::remove_dir_all(&directory).map_err(|error| error.to_string())?;
         Ok(())

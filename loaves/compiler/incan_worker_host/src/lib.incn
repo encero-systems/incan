@@ -20,12 +20,51 @@ pub from record_protocol import (
     RecordMessage,
     RecordMessageKind,
     Prepare,
+    Prepared,
     NeedPrerequisite,
     Evaluate,
     Produced,
+    SemanticRefusal,
+    CompilerFault,
+    RecordAdmission,
+    admit_record,
+    accept_record_reply,
     encode_record_message,
     decode_record_message,
 )
 pub from lifecycle import ActivationOutcome
+pub from record_snapshot import (
+    SNAPSHOT_FORMAT_PROFILE,
+    SnapshotFaultKind,
+    SnapshotFault,
+    StoreView,
+    SnapshotHandle,
+    StagedCompilerOutputs,
+    ResolvedSnapshot,
+    encode_store_view,
+    encode_snapshot_handle,
+    snapshot_handle_digest,
+    snapshot_record_key,
+    canonical_roots,
+    resolve_snapshot,
+)
+pub from checked_activation import ResolvedCheckingActivation, resolve_checking_activation, stage_checking_result
+pub from local_activation import (
+    LocalActivationInputs,
+    read_local_activation,
+    resolve_local_activation,
+    stage_local_result,
+)
+pub from final_activation import FinalActivationInputs, read_final_activation
 pub from endpoint import CallerWatch, abandon
-pub from host import WorkerHost, start, next_request, complete, caller_watch
+pub from host import (
+    WorkerActivation,
+    WorkerHost,
+    selected_home,
+    start,
+    next_request,
+    next_activation,
+    complete,
+    complete_record,
+    caller_watch,
+)

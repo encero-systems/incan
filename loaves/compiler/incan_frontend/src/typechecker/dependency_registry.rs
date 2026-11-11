@@ -13,7 +13,7 @@ impl TypeChecker {
         let adoptions = self
             .dependency_direct_member_symbols
             .values()
-            .flat_map(HashMap::values)
+            .flat_map(|members| members.values())
             .filter_map(|kind| match kind {
                 SymbolKind::Type(TypeInfo::Model(info)) => Some(info.trait_adoptions.as_slice()),
                 SymbolKind::Type(TypeInfo::Class(info)) => Some(info.trait_adoptions.as_slice()),

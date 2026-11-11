@@ -34,7 +34,7 @@ pub def relocate_payload(path: Path, admission: PayloadAdmission) -> Result[None
     if observe(path)?.stamp != admission.observation:
         return Err(f"{path.0}: payload changed while publishing installation")
     destination = imported_record(path)?
-    destination.parent().mkdir(true, true).map_err((error) => error.message())?
+    destination.parent().mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
     return publish_record(
         destination,
         path,
@@ -179,7 +179,7 @@ pub def import_payload(path: Path, identity: str, expected_payload: str = "") ->
         return Err(f"{path.0}: imported payload digest disagrees")
     # 3. Locations and file generations belong to the local admission evidence only.
     destination = imported_record(path)?
-    destination.parent().mkdir(true, true).map_err((error) => error.message())?
+    destination.parent().mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
     return publish_record(destination, path, identity, payload, before, origins)
 
 

@@ -317,10 +317,10 @@ pub def sole_library(unit: RegistryUnit) -> Result[str, str]:
     if unit.artifact != "":
         return Ok(unit.artifact)
     mut artifacts: list[str] = []
-    for candidate in Path(unit.directory).iterdir().map_err((error) => error.message())?:
+    for candidate in Path(unit.directory).iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
         name = candidate.name()
         if name.startswith("lib") and is_rust_library(name):
-            artifacts.append(candidate.resolve().map_err((error) => error.message())?.0)
+            artifacts.append(candidate.resolve().map_err((error) => f"cannot resolve {error.message()}")?.0)
     if len(artifacts) != 1:
         return Err(
             f"the compiled unit of {unit.loaf} {unit.version} has {len(artifacts)} libraries in {unit.directory}; expected exactly one",

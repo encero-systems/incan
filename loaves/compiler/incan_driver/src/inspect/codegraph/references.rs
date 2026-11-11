@@ -82,7 +82,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
             canonical_identity: canonical_identity.as_ref().map(codegraph_canonical_identity),
             stable_identity,
             canonical_owner: canonical_owner.as_ref().map(codegraph_canonical_identity),
-            span: Some(source_span(&module.file_path, &module.source, span)),
+            span: Some(source_span(module, span)),
             provenance,
             degraded,
         }));
@@ -91,8 +91,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 owner_id,
                 &id,
                 "declaration_contains_reference",
-                &module.file_path,
-                &module.source,
+                module,
                 span,
                 degraded,
             )));
@@ -202,7 +201,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
             canonical_identity: canonical_identity.as_ref().map(codegraph_canonical_identity),
             stable_identity,
             canonical_owner: canonical_owner.as_ref().map(codegraph_canonical_identity),
-            span: Some(source_span(&module.file_path, &module.source, span)),
+            span: Some(source_span(module, span)),
             provenance,
             degraded,
         }));
@@ -211,8 +210,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 owner_id,
                 &id,
                 "declaration_contains_call",
-                &module.file_path,
-                &module.source,
+                module,
                 span,
                 degraded,
             )));

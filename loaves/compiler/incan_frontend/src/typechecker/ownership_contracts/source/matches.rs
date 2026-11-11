@@ -92,8 +92,8 @@ impl Builder<'_> {
         super::super::builtins::carrier_construction(&self.checker.type_info, value)
     }
 
-    /// A builtin carrier wraps one payload in fresh storage. Like a model field, the payload is fresh or Copy until
-    /// constructed values gain checked transfer materialization; a call's result is fresh storage as well.
+    /// A builtin carrier wraps one payload in fresh storage. Consuming evaluation records a checked move for an
+    /// `Owned` place, while the source graph rejects a move through borrowed or otherwise nontransferable storage.
     pub(super) fn carrier_construction(
         &mut self,
         arguments: &[CallArg],
@@ -106,13 +106,7 @@ impl Builder<'_> {
                 reason: "carrier construction needs one positional payload".into(),
             });
         };
-        if !self.fresh_or_copy_field(payload) && !matches!(payload.node, Expr::Call(..) | Expr::MethodCall(..)) {
-            return Err(Unavailable {
-                span: payload.span,
-                reason: "non-Copy carrier payload needs checked ownership transfer materialization".into(),
-            });
-        }
-        self.expression(payload, incoming, false)
+        self.expression(payload, incoming, true)
     }
 
     /// A statement `match` evaluates its scrutinee once. Every arm starts from that evaluation and binds its payload

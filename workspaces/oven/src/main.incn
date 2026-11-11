@@ -20,9 +20,10 @@ from unit import describe, project_root_of
 from unit_rust import compile_incan_library, describe_native, toolchain_for
 from incan_units import check_unit, compile_unit, make_unit, program_binary, report_dependencies, run_program
 from unit_compiler import crate_name, run_compiler
-from rust_units import build_rust
+from rust_units import build_rust, scheduled_unit
 from rust_build import RustBuild
 from rust_registry import read_registry_units
+from rust_activation import ActivationPurpose
 from rust_manifest import rust_facet
 from rust_testing import build_rust_tests
 from project_lock import ensure_project_lock, lock_project, parse_lock_command
@@ -94,6 +95,9 @@ def command_line() -> None:
         fail(f"{surface}: a command is required", 2)
     command = arguments[1]
     rest = arguments[2:]
+    if command == "__rust-unit":
+        scheduled_unit_command(rest)
+        return
     # 2. A command of the other surface runs nowhere; help never prepares a unit or starts a server.
     match misplaced(surface, command, rest):
         Some(reason) => fail(reason, 2)
@@ -225,6 +229,20 @@ def require_no_arguments(command: str, arguments: list[str]) -> None:
         None => pass
     if len(arguments) > 0:
         syntax_error(command, f"unexpected argument `{arguments[0]}`")
+
+
+def scheduled_unit_command(arguments: list[str]) -> None:
+    """Run one parent-admitted Rust facet without exposing the scheduler protocol as a public command."""
+    if len(arguments) < 4:
+        fail("oven internal Rust unit request is incomplete", 2)
+    facet = arguments[0]
+    inputs = Path(arguments[1])
+    output = Path(arguments[2])
+    match parse_options(arguments[3:]):
+        Err(reason) => fail(f"oven internal Rust unit request: {reason}", 2)
+        Ok(options) => finish("internal Rust unit", rust_request(options).and_then(
+            (request) => scheduled_unit(request, facet, inputs, output),
+        ))
 
 
 def explain(arguments: list[str]) -> None:
@@ -512,7 +530,13 @@ def tested_incan(options: Options) -> Result[i32, str]:
                 return Ok(status_code(reply.exit))
             return run_collected(Path(reply.binary), Path(options.path).name())
         None => pass
-    mut unit = describe(Path(options.path), options.profile, options.request, options.manifests)?
+    mut unit = describe(
+        Path(options.path),
+        options.profile,
+        options.request,
+        options.manifests,
+        purpose=ActivationPurpose.Test,
+    )?
     unit.kind = "test"
     return run_tests(unit, toolchain_for(unit)?)
 
@@ -711,6 +735,7 @@ def rust_request(options: Options) -> Result[RustBuild, str]:
         all_features=options.request.all_features,
         substitutes=options.substitutes,
         rust_facet_dependencies=true,
+        schedule_rust_units=true,
         incan_compiler=Some(compile_incan_library),
         toolchain_search=toolchain.search,
         toolchain=Some(toolchain),

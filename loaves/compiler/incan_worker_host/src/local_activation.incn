@@ -1,0 +1,94 @@
+"""Resolve one local-family activation into decoded source, declaration and immutable environment inputs."""
+
+from pub::internal_models import prepared_reader
+from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, decode_record, native_fields
+from pub::internal_models.records import ReadReceipt, ReadScope, RecordRead
+from checked_activation import ResolvedCheckingActivation, resolve_checking_activation, stage_checking_result
+from record_protocol import Evaluate, Produced
+
+
+pub model LocalActivationInputs:
+    """Decoded values passed to the frontend's single-owner local entry, plus their completed read receipt."""
+
+    pub source: str
+    pub owner: str
+    pub declaration: list[list[str]]
+    pub environment: list[list[list[str]]]
+    pub receipt: ReadReceipt
+
+
+pub def resolve_local_activation(home: str, evaluation: Evaluate) -> Result[LocalActivationInputs, str]:
+    """Resolve and decode one Evaluate message's work/preparation roots before opening its scoped store reader."""
+    return read_local_activation(resolve_checking_activation(home, evaluation)?)
+
+
+pub def read_local_activation(activation: ResolvedCheckingActivation) -> Result[LocalActivationInputs, str]:
+    """
+    Construct the prepared reader and store source from one activation, then decode only its declared inputs.
+
+    Exactly one source and one matching declaration are required. Other declaration values form the immutable
+    environment; no checker, cache or whole-program value is available at this boundary.
+    """
+    resolved = activation.snapshot
+    ready = activation.ready
+    prepared = activation.prepared
+    snapshot = prepared.snapshot
+    mut reader = prepared_reader(ready, snapshot, prepared).map_err((_) => "invalid local activation preparation")?
+    scope = ReadScope(snapshot=snapshot.root.digest, profile=ready.profile.identity.digest)
+    source = resolved.record_source(scope)
+    mut source_text: Option[str] = None
+    mut owner = ""
+    mut declaration: Option[list[list[str]]] = None
+    mut environment: list[list[list[str]]] = []
+    for request in prepared.required_reads:
+        found = match reader.read(source, request):
+            RecordRead.Found(value) => value.value
+            RecordRead.Deleted(_) => return Err("local activation input was deleted")
+            RecordRead.Absent(_) => return Err("local activation input is absent")
+            RecordRead.Members(_) => return Err("local activation input cannot be a member page")
+            RecordRead.Failed(_) => return Err("local activation record read failed")
+
+        if request.key.family == "source" and request.key.context == "local":
+            if source_text is not None or request.key.facet == "":
+                return Err("local activation requires one named source input")
+            source_text = Some(found.decode().map_err((_) => "local source record is not UTF-8")?)
+            owner = request.key.facet
+        elif request.key.family == "declaration" and request.key.context != "":
+            record = decode_record(found, CHECKER_PROFILE, request.key.identity, request.key.context).map_err(
+                (_) => "local declaration record is invalid",
+            )?
+            if record.family != CheckedFamily.Declaration:
+                return Err("local activation requires declaration-family environment values")
+            fields = native_fields(record).map_err((_) => "local declaration fields are invalid")?
+            if request.key.identity == ready.output.identity:
+                if declaration is not None:
+                    return Err("local activation has more than one own declaration")
+                declaration = Some(fields)
+            else:
+                environment.append(fields)
+        else:
+            return Err("local activation prepared an unsupported input family")
+    completed = reader.finish().map_err((_) => "local activation read receipt is incomplete")?
+    match (source_text, declaration):
+        (Some(source_value), Some(declaration_value)) =>
+            return Ok(
+                LocalActivationInputs(
+                    source=source_value,
+                    owner=owner,
+                    declaration=declaration_value,
+                    environment=environment,
+                    receipt=completed,
+                ),
+            )
+        _ => return Err("local activation is missing source or declaration input")
+
+
+pub def stage_local_result(
+    home: str,
+    snapshot: str,
+    value: bytes,
+    receipt: ReadReceipt,
+    semantic: str,
+) -> Result[Produced, str]:
+    """Stage one produced value and its canonical evidence pages, then return only their content roots."""
+    return stage_checking_result(home, snapshot, value, receipt, semantic)

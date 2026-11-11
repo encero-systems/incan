@@ -15,18 +15,26 @@ impl TypeChecker {
         let mut member_type_aliases = HashMap::new();
         let mut member_projections = HashMap::new();
         if let Some(direct_symbols) = self.dependency_direct_member_symbols.get(module_name) {
-            member_symbols.extend(direct_symbols.clone());
+            member_symbols.extend(direct_symbols.iter().map(|(name, kind)| (name.clone(), kind.clone())));
         } else {
             self.cache_dependency_direct_member_symbols(module_name, module_ast, public_only);
             if let Some(direct_symbols) = self.dependency_direct_member_symbols.get(module_name) {
-                member_symbols.extend(direct_symbols.clone());
+                member_symbols.extend(direct_symbols.iter().map(|(name, kind)| (name.clone(), kind.clone())));
             }
         }
         if let Some(direct_projections) = self.dependency_direct_member_partial_projections.get(module_name) {
-            member_projections.extend(direct_projections.clone());
+            member_projections.extend(
+                direct_projections
+                    .iter()
+                    .map(|(name, projection)| (name.clone(), projection.clone())),
+            );
         }
         if let Some(direct_aliases) = self.dependency_direct_member_type_aliases.get(module_name) {
-            member_type_aliases.extend(direct_aliases.clone());
+            member_type_aliases.extend(
+                direct_aliases
+                    .iter()
+                    .map(|(name, target)| (name.clone(), target.clone())),
+            );
         }
         let mut reexports = HashMap::new();
         // A facade's own relative imports resolve against the facade's module, not the consumer's. Resolving them
@@ -98,13 +106,13 @@ impl TypeChecker {
             }
         }
         self.dependency_member_reexports
-            .insert(module_name.to_string(), reexports);
+            .insert(module_name.to_string(), Arc::new(reexports));
         self.dependency_member_symbols
-            .insert(module_name.to_string(), member_symbols);
+            .insert(module_name.to_string(), Arc::new(member_symbols));
         self.dependency_member_type_aliases
-            .insert(module_name.to_string(), member_type_aliases);
+            .insert(module_name.to_string(), Arc::new(member_type_aliases));
         self.dependency_member_partial_projections
-            .insert(module_name.to_string(), member_projections);
+            .insert(module_name.to_string(), Arc::new(member_projections));
     }
 
     /// Resolve a re-exported member from another source module or from the Loaf that owns the re-exported module.
@@ -242,13 +250,13 @@ impl TypeChecker {
             }
         }
         self.dependency_direct_member_symbols
-            .insert(module_name.to_string(), direct_symbols);
+            .insert(module_name.to_string(), Arc::new(direct_symbols));
         self.dependency_direct_member_type_aliases
-            .insert(module_name.to_string(), direct_type_aliases);
+            .insert(module_name.to_string(), Arc::new(direct_type_aliases));
         self.dependency_direct_member_identities
-            .insert(module_name.to_string(), direct_identities);
+            .insert(module_name.to_string(), Arc::new(direct_identities));
         self.dependency_direct_member_partial_projections
-            .insert(module_name.to_string(), direct_projections);
+            .insert(module_name.to_string(), Arc::new(direct_projections));
     }
 
     /// Restore the pre-body function view that dependency import collection publishes.

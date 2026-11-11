@@ -33,6 +33,7 @@ from cli_help import render, unknown_option
 from jec import begin, record
 from installation_check import verify_installed_runtime
 from surfaces import expose_entry_points
+from compiler_record_admission import convert
 
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
@@ -95,11 +96,11 @@ pub def pack_toolchain(output: Path) -> Result[None, str]:
     directory = toolchain_directory()?
     # 1. The stage lies beside the installation, on the same filesystem, and is named by this process.
     stage = directory.parent().joinpath(f".pack-{id()}")
-    create_dir(f"{stage.0}").map_err((error) => str(error))?
+    create_dir(f"{stage.0}").map_err((error) => f"cannot create toolchain packing directory {stage.0}: {error}")?
     # 2. Packing is attempted whole, and its outcome is held until the stage is gone.
     result = pack_staged(toolchain, directory, stage, output)
     # 3. The stage never outlives the command; if packing failed too, its failure is the one reported.
-    cleanup = remove_dir_all(stage.0).map_err((error) => str(error))
+    cleanup = remove_dir_all(stage.0).map_err((error) => f"cannot remove toolchain packing directory {stage.0}: {error}")
     result?
     return cleanup
 
@@ -148,7 +149,10 @@ def stage_c_toolchain(toolchain: Toolchain, stage: Path) -> Result[list[Tuple[st
     """
     mut fields: list[Tuple[str, str]] = []
     if toolchain.c_compiler != "":
-        compiler = Path(toolchain.c_compiler).resolve().map_err((error) => error.message())?
+        compiler_path = Path(toolchain.c_compiler)
+        compiler = compiler_path
+            .resolve()
+            .map_err((error) => f"cannot resolve C compiler {compiler_path.0}: {error.message()}")?
         link_file(compiler, stage.joinpath("c/clang/bin/clang"))?
         resources = compiler.parent().parent().joinpath("lib").joinpath("clang")
         link_file(resources, stage.joinpath("c/clang/lib/clang"))?
@@ -208,13 +212,20 @@ def archive(stage: Path, output: Path) -> Result[None, str]:
     """
     # 1. The archive's directory exists, and its path is absolute for the message that reports it.
     make_directory(output.parent())?
-    absolute = output.parent().resolve().map_err((error) => error.message())?.joinpath(output.name())
+    parent = output.parent()
+    absolute = parent
+        .resolve()
+        .map_err((error) => f"cannot resolve toolchain archive directory {parent.0}: {error.message()}")?.joinpath(
+        output.name(),
+    )
     # 2. Nothing is written at `output` until the archive is complete, and its name chooses the compression.
     pending = absolute.parent().joinpath(f".{absolute.name()}.pending-{id()}")
     arguments = tar_arguments(output, pending, stage)?
     run_command("tar", arguments + ["."])?
     # 3. The complete archive replaces any earlier one in a single step.
-    rename(pending.0, f"{absolute.0}").map_err((error) => str(error))?
+    rename(pending.0, f"{absolute.0}").map_err(
+        (error) => f"cannot publish toolchain archive {pending.0} at {absolute.0}: {error}",
+    )?
     println(f"packed {TOOLCHAIN}: {absolute.0}")
     return Ok(None)
 
@@ -394,13 +405,21 @@ pub def stage_loaves(source: Path, stage: Path) -> Result[None, str]:
     """
     if not source.is_dir():
         return Err(f"no standard Loaves at {source.0}")
-    for package in source.iterdir().map_err((error) => error.message())?:
-        for profile in package.iterdir().map_err((error) => error.message())?:
+    for package in source.iterdir().map_err((error) => f"cannot list standard Loaves at {source.0}: {error.message()}")?:
+        for profile in (
+            package
+                .iterdir()
+                .map_err((error) => f"cannot list standard Loaf profiles at {package.0}: {error.message()}")?
+        ):
             if ".previous." in profile.name():
                 return Err(f"stale standard generation cannot be packed: {profile.0}")
             if not profile.is_dir() or profile.name() not in PACKED_PROFILES:
                 continue
-            for artifact in profile.iterdir().map_err((error) => error.message())?:
+            for artifact in (
+                profile
+                    .iterdir()
+                    .map_err((error) => f"cannot list standard Loaf artifacts at {profile.0}: {error.message()}")?
+            ):
                 name = artifact.name()
                 if (
                     not artifact.is_file()
@@ -426,7 +445,9 @@ def stage_standard_sources(stage: Path) -> Result[None, str]:
 
 def stage_source_tree(source: Path, destination: Path) -> Result[None, str]:
     """Link a package's authored files into the stage, leaving out build output and hidden entries."""
-    for entry in source.iterdir().map_err((error) => error.message())?:
+    for entry in (
+        source.iterdir().map_err((error) => f"cannot list standard source directory {source.0}: {error.message()}")?
+    ):
         name = entry.name()
         if name.startswith(".") or name == "target":
             continue
@@ -516,7 +537,9 @@ def stage_directory(source: Path, stage: Path) -> Result[str, str]:
 
     Keep registry entry identities and hash-qualified native crate names; snapshot unqualified Loaf profiles separately.
     """
-    canonical = source.resolve().map_err((error) => error.message())?
+    canonical = source
+        .resolve()
+        .map_err((error) => f"cannot resolve toolchain artifact directory {source.0}: {error.message()}")?
     if canonical.parent().parent().name() == "loaves":
         return stage_profile(canonical, stage)
     mut relative = "native/" + canonical.name()
@@ -534,7 +557,9 @@ def stage_native_directory(source: Path, destination: Path, stage: Path, prefix:
     documents it restates, and expressing each native document from the directory, as a Loaf's is.
     """
     make_directory(destination)?
-    for entry in source.iterdir().map_err((error) => error.message())?:
+    for entry in (
+        source.iterdir().map_err((error) => f"cannot list native artifact directory {source.0}: {error.message()}")?
+    ):
         name = entry.name()
         if name in OBSERVATION_CACHES or name.endswith(RESTATED_RECORD_SUFFIX):
             continue
@@ -554,7 +579,9 @@ def stage_profile(source: Path, stage: Path) -> Result[str, str]:
     while the installed standard Loaf's rewritten metadata stays in `loaves/`.
     """
     mut names: list[str] = []
-    for file in source.iterdir().map_err((error) => error.message())?:
+    for file in (
+        source.iterdir().map_err((error) => f"cannot list standard profile directory {source.0}: {error.message()}")?
+    ):
         if file.is_file() and is_native_library(file.name()):
             names.append(file.name())
     mut listed: list[str] = []
@@ -586,13 +613,17 @@ def link_file(source: Path, destination: Path) -> Result[None, str]:
     """Deduplicate equal named artifacts and use staging links that tar dereferences without retaining builder paths."""
     if source.name().endswith(".oven-unit"):
         return stage_publication(source, destination)
-    absolute = source.resolve().map_err((error) => error.message())?
+    absolute = source
+        .resolve()
+        .map_err((error) => f"cannot resolve staged toolchain input {source.0}: {error.message()}")?
     if destination.is_file():
         if file_digest(absolute)? != file_digest(destination)?:
             return Err(f"conflicting toolchain artifacts at {destination.0}")
         return Ok(None)
     make_directory(destination.parent())?
-    symlink(absolute.0, destination.0).map_err((error) => str(error))?
+    symlink(absolute.0, destination.0).map_err(
+        (error) => f"cannot link staged toolchain input {absolute.0} at {destination.0}: {error}",
+    )?
     return Ok(None)
 
 
@@ -663,7 +694,7 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
     # 2. The stage is verified and published, and removed whatever the outcome.
     result = install_staged(archive, stage, target)
     if stage.is_dir():
-        remove_dir_all(stage.0).map_err((error) => str(error))?
+        remove_dir_all(stage.0).map_err((error) => f"cannot remove installation staging directory {stage.0}: {error}")?
     result?
     # 3. One installed program answers to both command surfaces.
     directory = expose_entry_points()?
@@ -679,8 +710,8 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     2. Unpack it.
     3. It is a toolchain of this Oven, and its manifest paths are portable.
     4. Every artifact the manifest names is present.
-    5. Bind the machine's sysroot, and prove the driver's identity against it.
-    6. Publish the installation.
+    5. Bind the machine's sysroot, prove the driver's identity, and admit this installation's compiler records.
+    6. Re-admit the completed pin and publish the installation.
     """
     # 1. Nothing in the archive can land outside the stage or plant the machine's sysroot link.
     mut clock = begin()
@@ -698,15 +729,14 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     )?
     record(Operation.ArchiveUnpack, archive.0, clock)
     # 3. The archive is a toolchain of this Oven, and every path its manifest names stays inside the toolchain.
-    document = read_json(stage.joinpath("toolchain.json"))?
+    mut document = read_json(stage.joinpath("toolchain.json"))?
     name = required_text(document, "name")?
     if name != TOOLCHAIN:
         return Err(f"archive toolchain {name} does not match this Oven's {TOOLCHAIN}")
     validate_paths(document)?
     # 4. Every artifact and directory the manifest names is in the archive, so the installation is complete.
     clock = begin()
-    toolchain, admission = prepare_installation(stage)?
-    record(Operation.ToolchainAdmission, stage.0, clock)
+    toolchain, _initial_admission = prepare_installation(stage)?
     verify_contents(toolchain)?
     # 5. The machine's Rust installation is linked in, and the driver proves it is the compiler it was built against.
     sysroot = local_sysroot()?
@@ -717,7 +747,13 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     run_command(toolchain.driver, ["--identity", toolchain.sysroot]).map_err(
         (error) => f"cannot verify compiler {toolchain.driver} against Rust sysroot {toolchain.sysroot}: {error}",
     )?
-    # 6. Only a verified toolchain replaces the installed one.
+    pin = convert(toolchain.driver, stage, stage)?
+    document = read_json(stage.joinpath("toolchain.json"))?
+    document = replaced(document, "compiler_records", pin.to_json())?
+    write_json(stage.joinpath("toolchain.json"), document)?
+    # 6. The completed pin and its new store are admitted together; only that verified generation is published.
+    _completed, admission = prepare_installation(stage)?
+    record(Operation.ToolchainAdmission, stage.0, clock)
     publish_install(stage, target, admission)?
     println(f"installed {TOOLCHAIN}: {target.0}")
     return Ok(None)
@@ -835,33 +871,38 @@ def publish_install(stage: Path, target: Path, admission: InstallationAdmission)
     """
     # 1. With nothing installed yet, the stage simply becomes the installation.
     if not target.is_dir():
-        rename(stage.0, target.0).map_err((error) => str(error))?
+        rename(stage.0, target.0).map_err((error) => f"cannot publish staged toolchain {stage.0} at {target.0}: {error}")?
         match prepare_published(target, admission):
             Ok(_) => return Ok(None)
             Err(error) =>
                 rename(target.0, stage.0).map_err(
-                    (failed) => f"{error}; cannot return failed installation to staging: {failed}",
+                    (failed) => f"{error}; cannot return failed installation {target.0} to {stage.0}: {failed}",
                 )?
                 return Err(error)
     # 2. The previous installation is moved aside, not deleted, until the new one is in place.
     previous = target.parent().joinpath(f".previous-{TOOLCHAIN}-{id()}")
     if previous.exists():
         return Err(f"previous installation backup already exists: {previous.0}")
-    rename(f"{target.0}", f"{previous.0}").map_err((error) => str(error))?
+    rename(f"{target.0}", f"{previous.0}").map_err(
+        (error) => f"cannot move installed toolchain {target.0} to backup {previous.0}: {error}",
+    )?
     # 3. If the stage cannot be moved into place, the previous installation is put back.
     match rename(stage.0, f"{target.0}"):
         Ok(_) => pass
-        Err(error) => return Err(restored_after(f"{error}", previous, target))
+        Err(error) =>
+            return Err(
+                restored_after(f"cannot publish staged toolchain {stage.0} at {target.0}: {error}", previous, target),
+            )
     # 4. A failed preparation preserves the previous installation, just as a failed rename does.
     match prepare_published(target, admission):
         Ok(_) => pass
         Err(error) =>
             rename(target.0, stage.0).map_err(
-                (failed) => f"{error}; cannot return failed installation to staging: {failed}",
+                (failed) => f"{error}; cannot return failed installation {target.0} to {stage.0}: {failed}",
             )?
             return Err(restored_after(error, previous, target))
     # 5. Only a fully prepared installation makes the previous one disposable.
-    remove_dir_all(previous.0).map_err((error) => str(error))?
+    remove_dir_all(previous.0).map_err((error) => f"cannot remove previous toolchain installation {previous.0}: {error}")?
     return Ok(None)
 
 
@@ -878,5 +919,6 @@ def prepare_published(target: Path, admission: InstallationAdmission) -> Result[
 def restored_after(failure: str, previous: Path, target: Path) -> str:
     """Put the previous installation back after a failed install, and say how that went."""
     match rename(previous.0, target.0):
-        Err(rollback) => return f"installation failed: {failure}; restoring previous installation failed: {rollback}"
+        Err(rollback) =>
+            return f"installation failed: {failure}; cannot restore previous installation {previous.0} at {target.0}: {rollback}"
         Ok(_) => return f"installation failed; previous installation restored: {failure}"

@@ -5,7 +5,11 @@ use super::*;
 /// Check the parameter-local convention and all nodes in one function. Exact scalar inputs borrow caller
 /// storage; return types keep their separate lifetime and representation gate. Validated future boxing frames also
 /// admit the exact native inputs whose loans their constructor lifetime retains.
-pub(super) fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> {
+pub(super) fn validate_function(
+    plan: &Plan,
+    function: &Function,
+    borrowed_aliases: &BorrowedAliasInventory,
+) -> Result<(), PlanError> {
     span(&function.span)?;
     let outputs = match carried_output(plan, function) {
         Some(carrier) => crate::declarations::standard_carrier(carrier).1,
@@ -14,7 +18,7 @@ pub(super) fn validate_function(plan: &Plan, function: &Function) -> Result<(), 
     if outputs
         .iter()
         .chain(function.parameters.iter().map(|parameter| &parameter.ty))
-        .any(|ty| borrowed_alias_in_source_type(plan, ty, &mut BTreeSet::new()))
+        .any(|ty| borrowed_aliases.type_holds_borrow(plan, ty))
         && function.signature_lifetimes.is_empty()
     {
         return Err(invalid(

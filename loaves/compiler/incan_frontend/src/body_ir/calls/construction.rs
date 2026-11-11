@@ -127,12 +127,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         })
     }
 
-    /// Retain an applied factory owner from the checked construction result, independently of method type arguments.
+    /// Retain an applied factory owner from the checker's exact factory fact or direct construction result.
     ///
-    /// A selected static factory returning its own generic nominal carries that owner's arguments on the associated
-    /// call. A wrapper result, ordinary function, absent factory selection or mismatched nominal cannot supply them.
-    /// This consumes existing checked facts only, comparing retained declaration identities after carrier projection;
-    /// the legacy inference tables remain unchanged.
+    /// Expected-type specialization can close a static factory whose source result wraps its owner, so Body IR first
+    /// consumes the dedicated checked owner fact. Legacy direct construction remains as a fallback for factories whose
+    /// result is the owner itself. Ordinary functions, absent factory selection and mismatched nominals supply no
+    /// owner; this reads checked facts only and leaves legacy inference unchanged.
     pub(super) fn checked_nominal_factory_owner(
         &self,
         callee_span: ast::Span,
@@ -140,6 +140,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> Option<IncanType> {
         self.checked_nominal_factory_declaration(callee_span, call_span)?;
         let owner = self.type_info.resolved_identity(callee_span)?;
+        if let Some(factory_owner) = self
+            .type_info
+            .calls
+            .body_ir_factory_owner_types
+            .get(&call_span)
+            .map(|ty| self.checked_type(ty))
+            && let IncanType::Generic { base, .. } = &factory_owner
+            && parameter_types::retained_nominal_identity(base, self.type_info) == Some(owner)
+        {
+            return Some(factory_owner);
+        }
         let result = self.resolve_ty(call_span);
         match &result {
             IncanType::Generic { base, .. }

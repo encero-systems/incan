@@ -1,4 +1,4 @@
-"""Reading, writing and removing the files Oven keeps, reporting every failure as the system's message in plain text."""
+"""Read, write and remove Oven files while retaining the operation and path in every failure."""
 
 from rust::std::fs import File, OpenOptions
 from std.fs import Path
@@ -9,9 +9,9 @@ from frozen_inputs import read as frozen_document
 
 
 pub def read(path: Path) -> Result[str, str]:
-    """A file as strict UTF-8 text."""
+    """Read a file as strict UTF-8 text, naming the source when reading fails."""
     clock = begin()
-    result = path.read_text("utf-8", "strict").map_err((error) => error.message())
+    result = path.read_text("utf-8", "strict").map_err((error) => f"cannot read {path.0}: {error.message()}")
     if clock is not None:
         match result:
             Ok(content) => record(Operation.FileRead, path.0, clock, text_size(content, clock))
@@ -20,8 +20,10 @@ pub def read(path: Path) -> Result[str, str]:
 
 
 pub def write(path: Path, text: str) -> Result[None, str]:
-    """Create or replace a file with strict UTF-8 text; its directory must exist."""
-    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+    """Create or replace a strict UTF-8 file, naming the destination when writing fails."""
+    return path
+        .write_text(text, "utf-8", "strict", None)
+        .map_err((error) => f"cannot write {path.0}: {error.message()}")
 
 
 pub def open_stream(path: str) -> Result[File, str]:
@@ -33,8 +35,8 @@ pub def open_stream(path: str) -> Result[File, str]:
 
 
 pub def remove(path: Path) -> Result[None, str]:
-    """Remove a file."""
-    return path.unlink().map_err((error) => error.message())
+    """Remove a file, naming it when removal fails."""
+    return path.unlink().map_err((error) => f"cannot remove {path.0}: {error.message()}")
 
 
 pub def discard_file(path: Path) -> None:
@@ -43,17 +45,17 @@ pub def discard_file(path: Path) -> None:
 
 
 pub def make_directory(path: Path) -> Result[None, str]:
-    """Create a directory and its missing parents; one that exists is left as it is."""
-    return path.mkdir(true, true).map_err((error) => error.message())
+    """Create a directory and its missing parents, naming the destination when creation fails."""
+    return path.mkdir(true, true).map_err((error) => f"cannot create directory {path.0}: {error.message()}")
 
 
 pub def read_json(path: Path) -> Result[JsonValue, str]:
     """A JSON document from a file; a failure names the file."""
     if let Some(document) = frozen_document(path)?:
         return Ok(document)
-    text = read(path).map_err((error) => f"{path.0}: {error}")?
+    text = read(path)?
     clock = begin()
-    result = parse(text).map_err((error) => f"{path.0}: {error.message()}")
+    result = parse(text).map_err((error) => f"cannot parse JSON document {path.0}: {error.message()}")
     record(Operation.JsonDecode, path.0, clock, text_size(text, clock))
     return result
 

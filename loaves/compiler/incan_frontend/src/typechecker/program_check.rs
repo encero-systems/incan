@@ -196,6 +196,10 @@ impl TypeChecker {
         self.checked_bodies.clear();
         self.checked_declarations.clear();
         self.produced_declaration_records.clear();
+        self.produced_local_records.clear();
+        self.selected_local_records.clear();
+        self.produced_final_records.clear();
+        self.final_record_refusals.clear();
         self.callable_declaration_reuse.clear();
         self.refused_ownership_authorities.clear();
         self.diagnostic_owner_ranges.clear();
@@ -217,6 +221,7 @@ impl TypeChecker {
         self.const_eval_state.clear();
         self.const_eval_cache.clear();
         self.type_info = TypeCheckInfo::default();
+        self.view_type_cache.get_mut().clear();
         if preserve_dependency_semantics {
             self.type_info
                 .declarations
@@ -265,7 +270,7 @@ impl TypeChecker {
     /// Validate alias and reserved declaration spellings, then retain public names before signature collection.
     pub(super) fn prepare_program_declaration_names(&mut self, program: &Program) {
         self.validate_alias_declarations(program);
-        self.report_reserved_compiler_names(program);
+        self.report_source_name_diagnostics(program);
         self.current_module_public_declarations = program
             .declarations
             .iter()
@@ -355,7 +360,7 @@ impl TypeChecker {
                     self.check_reused_function(program, function, decl.span);
                     self.visibility_point = VisibilityPoint::AfterDeclaration(decl.span);
                 } else {
-                    self.check_environment_declaration(decl);
+                    self.check_environment_record_declaration(program, decl);
                 }
             }
         }

@@ -3,6 +3,22 @@
 use super::*;
 
 impl TypeChecker {
+    /// Dispatch one declaration while routing a top-level function through its direct local-record producer. The
+    /// ordinary declaration dispatcher remains the authority for every other declaration kind.
+    pub(in crate::typechecker) fn check_record_declaration(
+        &mut self,
+        program: &Program,
+        declaration: &Spanned<Declaration>,
+    ) {
+        let Declaration::Function(function) = &declaration.node else {
+            self.check_declaration(declaration);
+            return;
+        };
+        self.record_check_work("declaration", "top_level", declaration.span);
+        self.validate_protected_type_param_bindings(&function.type_params, declaration.span);
+        self.check_record_function(program, function, declaration.span);
+    }
+
     // ========================================================================
     // Second pass: check declarations
     // ========================================================================

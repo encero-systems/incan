@@ -10,3 +10,4 @@ incan_loaf_names = { loaf = "incan_loaf_names", path = "../../loaves/kernel/inca
 toml = { loaf = "crates-io/toml", version = "0.9", default-features = true }
 incan_platform = { path = "../../loaves/platform" }
 incan_worker_host = { path = "../../loaves/compiler/incan_worker_host" }
+internal_models = { path = "../../loaves/compiler/internal_models" }

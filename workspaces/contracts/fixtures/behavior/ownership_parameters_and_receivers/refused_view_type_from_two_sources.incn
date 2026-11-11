@@ -1,0 +1,22 @@
+# behavior: constructing one view value from two independent borrowed sources is refused because the value can carry only one source dependency (#2892)
+# expect-diagnostic: INCAN-T0124
+
+
+class Reader:
+    pub values: list[int]
+
+
+class Selection:
+    pub left: Borrowed[Reader]
+    pub right: Borrowed[Reader]
+
+
+def select(left: Borrowed[Reader], right: Borrowed[Reader]) -> Selection from left:
+    return Selection(left=left, right=right)
+
+
+def main() -> None:
+    left = Reader(values=[1])
+    right = Reader(values=[2])
+    selection = select(left, right)
+    println(selection.left.values[0] + selection.right.values[0])

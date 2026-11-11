@@ -228,7 +228,7 @@ def handshake_refused(state: ServiceState, hello: Hello, uid: u32) -> bool:
 
 
 def check_worker_retirement() -> Result[None, str]:
-    """A one-activation compiler retires without joining its caller monitor's polling timeout."""
+    """A one-activation compiler retires, and a body edit reads frozen compiler records instead of whole manifests."""
     scratch = scratch_directory()?
     root = scratch.path()
     project = root.joinpath("project")
@@ -254,9 +254,37 @@ def check_worker_retirement() -> Result[None, str]:
         .env("INCAN_JEC_TRACE", jec.0)
         .env("INCAN_ENGINE_RUN", "host-clock-proof")
         .env("INCAN_ENGINE_REQUEST", "worker-order")
+        .env("INCAN_TRACE_DIR", observations.0)
         .output()
         .map_err((error) => str(error))?
-    assert outcome.status.success() and outcome.stdout == b"hello\x0a" and outcome.stderr == b""
+    if not outcome.status.success() or outcome.stdout != b"hello\x0a" or outcome.stderr != b"":
+        return Err(f"initial records run: status={outcome.status.code()} stdout_bytes={len(outcome.stdout)} stderr_bytes={len(outcome.stderr)}")
+    initial_manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest")
+    initial_record_reads = invocation_count(observations, "incan_frontend::read_compiler_records")
+    write(source, "def main() -> None:\n    println(\"hullo\")\n")?
+    edited = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", root.joinpath("store").0)
+        .env("INCAN_NATIVE_TIMING", "1")
+        .env("OVEN_TRACE", trace.0)
+        .env("INCAN_ENGINE_TRACE", observations.0)
+        .env("INCAN_JEC_TRACE", jec.0)
+        .env("INCAN_ENGINE_RUN", "host-clock-proof")
+        .env("INCAN_ENGINE_REQUEST", "worker-order-edited")
+        .env("INCAN_TRACE_DIR", observations.0)
+        .output()
+        .map_err((error) => str(error))?
+    if not edited.status.success() or edited.stdout != b"hullo\x0a" or edited.stderr != b"":
+        return Err(f"edited records run: status={edited.status.code()} stdout_bytes={len(edited.stdout)} stderr_bytes={len(edited.stderr)}")
+    manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest") - initial_manifest_reads
+    if manifest_reads != 0:
+        return Err(f"one-body edit reopened {manifest_reads} whole Loaf manifests")
+    record_reads = invocation_count(observations, "incan_frontend::read_compiler_records") - initial_record_reads
+    if record_reads > 6:
+        return Err(f"one-body edit reconstructed {record_reads} compiler-record groups")
     # Stop this test's disposable engine before the temporary directory leaves scope.
     store = root.joinpath("store")
     mut identity = service_identity(store)?
@@ -275,20 +303,86 @@ def check_worker_retirement() -> Result[None, str]:
     waits = len([line for line in lines if "worker_observer_joined" in line])
     detached = len([line for line in lines if "worker_observer_detached" in line])
     releases = len([line for line in lines if "worker_heap_released" in line])
-    assert waits == 0 and detached == 1 and releases == 0, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
+    # The edited request has its own owner generation, so both one-activation worker monitors detach independently.
+    assert waits == 0 and detached == 2 and releases == 0, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
     released_requests = [line for line in lines if "engine request released:" in line]
-    assert len(released_requests) == 1, "request teardown did not release its payload verification observations"
+    assert len(released_requests) == 2, "request teardown did not release its payload verification observations"
     assert "captures=0 verification=0" in released_requests[0]
     check_worker_clock(observations)?
     return Ok(None)
 
 
+def invocation_count(directory: Path, function: str) -> int:
+    """Count completed compiler invocation-span starts with the exact instrumented function name."""
+    mut count = 0
+    match directory.iterdir():
+        Err(_) => return count
+        Ok(entries) =>
+            for entry in entries:
+                if not entry.is_file():
+                    continue
+                match entry.read_text("utf-8", "strict"):
+                    Err(_) => continue
+                    Ok(text) =>
+                        for line in text.split("\n"):
+                            if line == "":
+                                continue
+                            match parse(line):
+                                Err(_) => continue
+                                Ok(document) =>
+                                    if json_text_is(document, "kind", "begin") and json_text_is(
+                                        document,
+                                        "function",
+                                        function,
+                                    ):
+                                        count += 1
+    return count
+
+
+def json_text_is(document: JsonValue, key: str, expected: str) -> bool:
+    """Whether one optional JSON field is text equal to `expected`, without comparing carrier values."""
+    match document.get(key):
+        None => return false
+        Some(value) =>
+            match value.as_str():
+                None => return false
+                Some(found) => return found == expected
+
+
+model InstallationReadCounts:
+    """Installation selections and completed engine requests grouped by their emitting process."""
+
+    reused: int = 0
+    service_requests: Dict[str, int] = {}
+    page_selections: Dict[str, int] = {}
+    reuse_processes: list[str] = []
+
+    def observe(mut self, event: JsonValue, category: str) -> Result[None, str]:
+        """Count one service request or installation-page selection from the compatibility trace."""
+        process = str(trace_number(event, "process")?)
+        if category == "engine_unit":
+            self.service_requests[process] = self.service_requests.get(process, 0) + 1
+        if category == "installation_page" or category == "installation_page_reuse":
+            self.page_selections[process] = self.page_selections.get(process, 0) + 1
+        if category == "installation_page_reuse":
+            self.reused += 1
+            self.reuse_processes.append(process)
+        return Ok(None)
+
+    def check(self) -> None:
+        """Require one selection per request while the shared service reuses its decoded first-request page."""
+        assert self.reused == 1, f"two service requests reused their process page {self.reused} times instead of once"
+        process = self.reuse_processes[0]
+        assert self.service_requests.get(process, 0) == 2, "the page reuse did not span the two service requests"
+        assert self.page_selections.get(process, 0) == 2, "a service request selected its installation page more than once"
+
+
 def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
-    """A new work bakery imports the installed page without reopening its original frozen documents."""
+    """Each service request selects the installed page without reopening its original frozen documents."""
     prefix = toolchain_directory()?.resolve().map_err((error) => error.message())?.0 + "/"
     mut events = 0
     mut reads = 0
-    mut reused = 0
+    mut counts = InstallationReadCounts()
     for file in directory.iterdir().map_err((error) => error.message())?:
         for line in file.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
             if line == "":
@@ -296,14 +390,13 @@ def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
             event = parse(line).map_err((error) => error.message())?
             events += 1
             category = trace_text(event, "category")?
-            if category == "installation_page_reuse":
-                reused += 1
+            counts.observe(event, category)?
             if category == "file_read":
                 reads += 1
                 input = trace_text(event, "input")?
                 assert not input.startswith(prefix), f"new work bakery reopened frozen input {input}"
     assert events > 0 and reads > 0, "the cold invocation must record its actual file reads"
-    assert reused == 0, "one request repeated its installation page selection"
+    counts.check()
     return Ok(None)
 
 
@@ -316,7 +409,7 @@ def check_worker_clock(directory: Path) -> Result[None, str]:
             if line == "":
                 continue
             row = parse(line).map_err((error) => error.message())?
-            if trace_text(row, "operation")? != "driver_request":
+            if not json_text_is(row, "operation", "driver_request"):
                 continue
             assert trace_text(row, "clock")? == "host-monotonic-raw"
             assert trace_text(row, "run")? == "host-clock-proof"

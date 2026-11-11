@@ -4,6 +4,7 @@
 #   const SECOND: str = '''hello'''
 #   const THIRD: str = "hello"
 #   const FOURTH: str = """hello"""
+#   const CONTROL: str = "\u{202e}"
 #
 #
 #   def message(text: str = """héllo""") -> str:
@@ -42,6 +43,7 @@ const FIRST:str='hello'
 const SECOND:str='''hello'''
 const THIRD:str="hello"
 const FOURTH:str="""hello"""
+const CONTROL:str="\u{202e}"
 def message(text:str="""héllo""")->str:
     """Preserve text spelling in defaults and assignments."""
     value='''

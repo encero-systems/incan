@@ -1,0 +1,173 @@
+"""Store-backed compiler record reads over one pinned, allowed-root snapshot."""
+
+from std.encoding.hex import hexlify
+from std.primitives.hash import sha256
+from pub::incan_platform.store import BindingLookup, Snapshot, lookup_binding, lookup_members
+from record_scope import (
+    AbsentFact,
+    DeletedFact,
+    MemberFact,
+    RecordKey,
+    RecordRead,
+    RecordRequest,
+    RecordSelection,
+    RecordSource,
+    ReadFault,
+    ReadScope,
+    RevisionEvidence,
+    SelectedFact,
+)
+
+
+pub class StoreRecordSource with RecordSource:
+    """Authenticate compiler reads against one exact store view and its staged family-root envelope."""
+
+    snapshot: Snapshot
+    scope: ReadScope
+    allowed_roots: list[str]
+
+    @staticmethod
+    pub def open(snapshot: Snapshot, scope: ReadScope, allowed_roots: list[str]) -> StoreRecordSource:
+        """Retain the leased snapshot, activation identity and allowed record families for one worker activation."""
+        return StoreRecordSource(snapshot=snapshot, scope=scope, allowed_roots=allowed_roots)
+
+    def read(self, scope: ReadScope, request: RecordRequest) -> RecordRead:
+        """Read exactly one field, payload range or bounded member page and return its authenticated evidence."""
+        if scope.snapshot != self.scope.snapshot:
+            return RecordRead.Failed(ReadFault.SnapshotMismatch)
+        if scope.profile != self.scope.profile:
+            return RecordRead.Failed(ReadFault.ProfileMismatch)
+        key = match encode_record_key(request.key):
+            Ok(encoded) => encoded
+            Err(_) => return RecordRead.Failed(ReadFault.InvalidEvidence)
+
+        if not allowed(self.allowed_roots, key):
+            return RecordRead.Failed(ReadFault.OutsidePreparation)
+        match request.selection:
+            RecordSelection.Members(selection) =>
+                return members_read(
+                    self.snapshot,
+                    scope,
+                    request,
+                    key,
+                    selection.selector,
+                    selection.order,
+                    selection.lower,
+                    selection.upper,
+                    selection.continuation,
+                )
+            _ => pass
+        match lookup_binding(self.snapshot, key):
+            Err(_) => return RecordRead.Failed(ReadFault.DamagedRecord)
+            Ok(BindingLookup.Deleted(deleted)) =>
+                return RecordRead.Deleted(DeletedFact(scope=scope, request=request, revision=deleted.revision))
+            Ok(BindingLookup.Absent(absent)) =>
+                return RecordRead.Absent(
+                    AbsentFact(scope=scope, request=request, exclusion_digest=absent.exclusion_digest),
+                )
+            Ok(BindingLookup.Present(present)) =>
+                match selected_bytes(present.value, request):
+                    None => return RecordRead.Failed(ReadFault.InvalidEvidence)
+                    Some(value) =>
+                        digest = hexlify(
+                            sha256.digest(
+                                (
+                                    present.selection_digest + "\n" + selection_name(request) + "\n" + hexlify(
+                                        sha256.digest(value),
+                                    )
+                                ).encode("utf-8"),
+                            ),
+                        )
+                        evidence = RevisionEvidence(
+                            scope=scope,
+                            request=request,
+                            revision=present.revision,
+                            semantic_digest=present.semantic_digest,
+                        )
+                        return RecordRead.Found(SelectedFact(evidence=evidence, value=value, selection_digest=digest))
+
+
+pub def encode_record_key(key: RecordKey) -> Result[str, str]:
+    """Encode the full compiler identity once for store keys and in-memory indexes, refusing delimiters."""
+    fields = [key.family, key.identity_profile, key.origin, key.identity, key.facet, key.context]
+    for field in fields:
+        if "\t" in field or "\n" in field or "\r" in field:
+            return Err("compiler record key fields cannot contain store delimiters")
+    return Ok("\t".join(fields))
+
+
+def allowed(roots: list[str], key: str) -> bool:
+    """Whether the exact canonical key is inside one staged family or subfamily root."""
+    for root in roots:
+        if key == root or key.startswith(root + "\t"):
+            return true
+    return false
+
+
+def selected_bytes(value: bytes, request: RecordRequest) -> Option[bytes]:
+    """Select a complete field answer or one exact bounded payload range without interpreting family schemas."""
+    match request.selection:
+        RecordSelection.Field(_) => return Some(value)
+        RecordSelection.Payload(payload) =>
+            if payload.offset < 0 or payload.length < 0 or payload.offset + payload.length > len(value):
+                return None
+            return Some(value[payload.offset:payload.offset + payload.length])
+        RecordSelection.Members(_) => return None
+
+
+def selection_name(request: RecordRequest) -> str:
+    """Bind selected bytes to the complete selector spelling retained independently in the request evidence."""
+    match request.selection:
+        RecordSelection.Field(name) => return "field\t" + name
+        RecordSelection.Payload(payload) => return f"payload\t{payload.reference}\t{payload.offset}\t{payload.length}"
+        RecordSelection.Members(members) =>
+            return f"members\t{members.selector}\t{members.order}\t{members.lower}\t{members.upper}\t{members.continuation}"
+
+
+def members_read(
+    snapshot: Snapshot,
+    scope: ReadScope,
+    request: RecordRequest,
+    key: str,
+    selector: str,
+    order: str,
+    lower: str,
+    upper: str,
+    continuation: str,
+) -> RecordRead:
+    """
+    Read a canonical bounded member page and retain its semantic selection independently of the store's index root.
+
+    The platform authenticates the lookup under the selected snapshot. The compiler witness hashes only the selected
+    names, bounds and continuation so an unrelated store write does not invalidate an unchanged dependency.
+    """
+    if order != "canonical":
+        return RecordRead.Failed(ReadFault.SelectionMismatch)
+    match lookup_members(snapshot, key, lower, upper, continuation, request.byte_limit):
+        Err(_) => return RecordRead.Failed(ReadFault.DamagedRecord)
+        Ok(found) =>
+            mut names: list[str] = []
+            prefix = key + "\t"
+            for member in found.members:
+                names.append(member.key[len(prefix):])
+            value = "\n".join(names).encode("utf-8")
+            if len(value) > request.byte_limit:
+                return RecordRead.Failed(ReadFault.InvalidEvidence)
+            digest = hexlify(
+                sha256.digest(
+                    (
+                        selector + "\n" + order + "\n" + lower + "\n" + upper + "\n" + found.continuation + "\n" + hexlify(
+                            sha256.digest(value),
+                        )
+                    ).encode("utf-8"),
+                ),
+            )
+            return RecordRead.Members(
+                MemberFact(
+                    scope=scope,
+                    request=request,
+                    value=value,
+                    membership_digest=digest,
+                    continuation=found.continuation,
+                ),
+            )

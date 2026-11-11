@@ -118,6 +118,8 @@ pub model RustBuild:
     pub installed: Dict[str, list[str]] = {}
     # Rust implementations consume native facets; Incan consumers require complete public Loaf facades.
     pub rust_facet_dependencies: bool = false
+    # Public Oven/Incan command surfaces may delegate ready dependency units to isolated worker processes.
+    pub schedule_rust_units: bool = false
     # Unasked inspection and editor preparation may execute compile-time code only when trust evidence covers it.
     pub unattended: bool = false
     # Stable trust evidence keyed by selected Loaf package identity.
@@ -165,7 +167,7 @@ pub def native_artifacts(externs: list[NativeCrate]) -> Dict[str, list[str]]:
 
 pub def native_compiler_fingerprint(rustc: str) -> Result[str, str]:
     """Identify the actual pinned compiler and SDK by content after resolving the installation's sysroot alias."""
-    compiler = Path(rustc).resolve().map_err((error) => error.message())?
+    compiler = Path(rustc).resolve().map_err((error) => f"cannot resolve {error.message()}")?
     libraries = toolchain_libraries(compiler.0)?
     version = libraries.environment["INCAN_DRIVER_RUSTC_IDENTITY"]
     return fingerprint(
@@ -192,8 +194,19 @@ pub def linking(
     built: Dict[str, BuiltUnit],
     search: list[str],
 ) -> Result[list[str], str]:
+    """Link one unit with the consumer's requested code-generation profile."""
+    return linking_with_profile(facet, request, built, search, request.profile)
+
+
+pub def linking_with_profile(
+    facet: LocalFacet,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    search: list[str],
+    profile: str,
+) -> Result[list[str], str]:
     """
-    The arguments that link a unit.
+    The arguments that link a unit under an explicit producer profile.
 
     1. Its features, as `--cfg`.
     2. The search directories: the registry's and the toolchain's, then those of the libraries built for the graph.
@@ -216,7 +229,7 @@ pub def linking(
     # 3. Each edge names its library exactly, local edges first, so no library is chosen by scanning a directory.
     arguments = arguments + local_externs(facet, built)? + registry_externs(facet, request)?
     # 4. Both unit languages read their flags from one profile table.
-    arguments = arguments + rust_arguments(request.profile)
+    arguments = arguments + rust_arguments(profile)
     return Ok(arguments)
 
 

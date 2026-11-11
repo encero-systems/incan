@@ -1,7 +1,9 @@
 """Shared release and installed-verification contracts, evidence models, and process execution."""
 
+from rust::std::cell import RefCell
 from rust::std::fs import File
-from rust::std::process import Command, ExitStatus, Stdio
+from rust::std::process import Child, Command, ExitStatus, Stdio
+from rust::std::rc import Rc
 from rust::std::thread import sleep
 from rust::std::time import Duration, Instant
 from std.encoding.hex import hexlify
@@ -86,6 +88,24 @@ pub model Step:
     pub directory: Option[Path]
     pub log: Path
     pub timeout_seconds: int
+
+
+pub model ReservedStep:
+    """One child process and the bytes its complete process tree reserves while running."""
+
+    pub child: Step
+    pub reservation: int
+
+
+model RunningStep:
+    """One active reserved child and the evidence needed to time and stop it."""
+
+    position: int
+    name: str
+    reservation: int
+    timeout_seconds: int
+    started: Instant
+    child: Rc[RefCell[Child]]
 
 
 pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, str]:
@@ -255,6 +275,45 @@ pub def digest(path: Path) -> Result[str, str]:
     return Ok(hexlify(file_digest(path, "sha256").map_err((error) => error.message())?))
 
 
+pub def reference_cache_identity(
+    seed_oven: Path,
+    seed_lsp: Path,
+    seed_manifest: Path,
+    contracts_tree: str,
+) -> Result[str, str]:
+    """Hash every seed bundle component and the committed contract tree that determine reference outcomes."""
+    mut hasher = sha256.new()
+    for value in [digest(seed_oven)?, digest(seed_lsp)?, digest(seed_manifest)?, contracts_tree]:
+        encoded = value.encode("utf-8")
+        hasher.update(f"{len(encoded)}:".encode("utf-8"))
+        hasher.update(encoded)
+    return Ok(hexlify(hasher.finalize_bytes()))
+
+
+pub def reference_cache_root(seed_home: Path) -> Path:
+    """Keep reusable reference evidence inside the caller-owned seed home cache boundary."""
+    return seed_home.joinpath("cache/release-reference")
+
+
+pub def store_reference_log(log: Path, cached: Path) -> Result[None, str]:
+    """Move one complete census log into its cache entry, then clone it back for the release receipt."""
+    cached.parent().mkdir(true, true).map_err((error) => error.message())?
+    _ = log.move(cached).map_err((error) => error.message())?
+    _ = cached.copy(log, true, true).map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def reuse_reference_log(cached: Path, log: Path) -> Result[None, str]:
+    """Clone one validated cached census log into the release evidence directory."""
+    _ = cached.copy(log, true, true).map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def release_rust_cache_root(seed_home: Path) -> Path:
+    """Keep the relocated pinned Rust cache inside the caller-owned seed home boundary."""
+    return seed_home.joinpath("cache/release-rust")
+
+
 pub def same_bytes(left: Path, right: Path) -> Result[bool, str]:
     """Compare complete file bytes without delegating to an external command."""
     if not left.is_file() or not right.is_file():
@@ -407,6 +466,99 @@ pub def run_step(step: Step) -> Result[int, str]:
                     _ = child.wait()
                     return Err(f"{step.name} timed out after {step.timeout_seconds}s; log: {step.log.0}")
                 sleep(Duration.from_millis(20))
+
+
+pub def run_reserved_steps(
+    planned: list[ReservedStep],
+    jobs: int,
+    memory: int,
+    timings: Path,
+) -> Result[list[int], str]:
+    """
+    Run every child within count and memory budgets, retain each wall duration, and return failed positions.
+
+    A reservation larger than the available memory still runs when it is the only active child. Unknown memory, encoded
+    as zero, leaves the positive job count as the bound. Every child keeps its own file-backed output through `Step`.
+    """
+    reservations = [item.reservation for item in planned]
+    mut waiting = [index for index in range(len(planned))]
+    mut active: list[RunningStep] = []
+    mut failed: list[int] = []
+    while len(waiting) > 0 or len(active) > 0:
+        chosen = reserved_admitted(reservations, waiting, [item.reservation for item in active], jobs, memory)
+        for index in chosen:
+            child = start_step(planned[index].child)?
+            active.append(
+                RunningStep(
+                    position=index,
+                    name=planned[index].child.name,
+                    reservation=reservations[index],
+                    timeout_seconds=planned[index].child.timeout_seconds,
+                    started=Instant.now(),
+                    child=Rc.new(RefCell.new(child)),
+                ),
+            )
+        waiting = [index for index in waiting if index not in chosen]
+        mut running: list[RunningStep] = []
+        for item in active:
+            match item.child.borrow_mut().try_wait().map_err((error) => f"cannot wait for {item.name}: {error}")?:
+                Some(status) =>
+                    append_timing(timings, item.name, item.started.elapsed().as_secs_f64())?
+                    if not status.success():
+                        failed.append(item.position)
+                None =>
+                    if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
+                        _ = item.child.borrow_mut().kill()
+                        _ = item.child.borrow_mut().wait()
+                        append_timing(timings, item.name, item.started.elapsed().as_secs_f64())?
+                        failed.append(item.position)
+                    else:
+                        running.append(item)
+        if len(running) == len(active):
+            sleep(Duration.from_millis(20))
+        active = running
+    return Ok(sorted(failed))
+
+
+pub def reserved_admitted(
+    reservations: list[int],
+    waiting: list[int],
+    held: list[int],
+    jobs: int,
+    memory: int,
+) -> list[int]:
+    """Select waiting children that fit beside held reservations without exceeding count or memory budgets."""
+    mut count = len(held)
+    mut reserved = 0
+    for reservation in held:
+        reserved += reservation
+    mut chosen: list[int] = []
+    for index in waiting:
+        if count >= jobs:
+            break
+        if count == 0 or memory == 0 or reserved + reservations[index] <= memory:
+            chosen.append(index)
+            count += 1
+            reserved += reservations[index]
+    return chosen
+
+
+def start_step(step: Step) -> Result[Child, str]:
+    """Start one fully described step with its stdout and stderr sharing the durable step log."""
+    step.log.parent().mkdir(true, true).map_err((error) => error.message())?
+    log = File.create(step.log.0).map_err((error) => f"{step.log.0}: {error}")?
+    errors = log.try_clone().map_err((error) => str(error))?
+    mut command = Command.new(step.executable)
+    for argument in step.arguments:
+        command.arg(argument)
+    for key in sorted([key for key in step.environment.keys()]):
+        command.env(key, step.environment[key])
+    for key in step.remove_environment:
+        command.env_remove(key)
+    if let Some(directory) = step.directory:
+        command.current_dir(directory.0)
+    command.stdin(Stdio.null()).stdout(log).stderr(errors)
+    return command.spawn().map_err((error) => f"cannot start {step.name}: {error}")
 
 
 pub def require_step(step: Step) -> Result[None, str]:

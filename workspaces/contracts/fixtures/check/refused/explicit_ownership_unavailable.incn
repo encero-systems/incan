@@ -1,8 +1,13 @@
-# behavior: A result whose tuple holds more than one borrowed element is refused for execution; the one `from` clause names the source of a single view. A source decorator that replaces a callable is also refused because the explicit input contract does not define whether it belongs to the declaration or its replacement (#2500).
+# behavior: A result whose tuple holds more than one borrowed element is refused for execution; the one `from` clause names the source of a single view. A borrowed generic argument cannot be moved into an owned `Err` payload. A source decorator that replaces a callable is also refused because the explicit input contract does not define whether it belongs to the declaration or its replacement (#2500, #2939).
 # expect-diagnostic: INCAN-T0123
+# expect-diagnostic: INCAN-T0126
 
 def inspect(value: Borrowed[str]) -> tuple[Borrowed[str], Borrowed[str]] from value:
     return (value, value)
+
+
+def borrowed_error[E](error: Borrowed[E]) -> Result[None, E]:
+    return Err(error)
 
 
 def preserve[F]() -> (F) -> F:

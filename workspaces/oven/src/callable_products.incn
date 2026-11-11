@@ -135,20 +135,23 @@ def closure_inputs(loaf: UnitLoaf, unit: UnitDescription) -> Result[list[str], s
 
 def binding_identity(native: NativeCrate, unit: UnitDescription) -> Result[str, str]:
     """Use semantic Loaf identity only for its exact admitted rlib; Rust imports retain exact native identity."""
-    path = Path(native.path).resolve().map_err((error) => error.message())?
+    path = Path(native.path).resolve().map_err((error) => f"cannot resolve {error.message()}")?
     if native.name not in unit.rust_crates:
         for loaf in unit.loaves:
             expected = Path(loaf.dir).joinpath(f"lib{loaf.name.replace("-", "_")}.rlib")
-            if expected.is_file() and expected.resolve().map_err((error) => error.message())?.0 == path.0:
+            if (
+                expected.is_file()
+                and expected.resolve().map_err((error) => f"cannot resolve {error.message()}")?.0 == path.0
+            ):
                 return Ok(f"loaf:{native.name}:{loaf.name}")
     return fingerprint([native.name, path.0, artifact_identity(path)?])
 
 
 def search_identity(path: Path, unit: UnitDescription) -> Result[str, str]:
     """Normalize authenticated Loaf directories; native_search_inputs witnesses other directories' native files."""
-    selected = path.resolve().map_err((error) => error.message())?
+    selected = path.resolve().map_err((error) => f"cannot resolve {error.message()}")?
     for loaf in unit.loaves:
-        if Path(loaf.dir).resolve().map_err((error) => error.message())?.0 == selected.0:
+        if Path(loaf.dir).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0 == selected.0:
             return Ok(f"loaf:{loaf.name}")
     return Ok(selected.0)
 
@@ -158,16 +161,16 @@ def located(directory: Path, path: str) -> Result[Path, str]:
     mut selected = Path(path)
     if not path.startswith("/"):
         selected = directory.joinpath(path)
-    return selected.resolve().map_err((error) => error.message())
+    return selected.resolve().map_err((error) => f"cannot resolve {error.message()}")
 
 
 def native_search_inputs(unit: UnitDescription, toolchain: Toolchain) -> Result[list[str], str]:
     """Witness transitive native artifacts, including in-place rewrites that leave directory metadata unchanged."""
     mut ledger = load_ledger(unit_ledger(unit.project_root, "checked-native"), SETTLE_SECONDS, "")
-    providers = [Path(loaf.dir).resolve().map_err((error) => error.message())?.0 for loaf in unit.loaves]
+    providers = [Path(loaf.dir).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0 for loaf in unit.loaves]
     mut inputs: list[str] = []
     directories = unique(
-        [Path(path).resolve().map_err((error) => error.message())?.0 for path in unit.search + toolchain.search],
+        [Path(path).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0 for path in unit.search + toolchain.search],
     )
     for path in directories:
         directory = Path(path)

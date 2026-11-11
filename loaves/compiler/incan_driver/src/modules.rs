@@ -267,10 +267,12 @@ fn collect_modules_detailed_from_seeds(
             dependency_edges.entry(file_key.clone()).or_default().insert(dep_key);
         }
 
+        let source_positions = diagnostics::SourcePositionIndex::new(&source);
         modules.push(ParsedModule {
             name: module_name,
             path_segments,
             file_path: PathBuf::from(&file_path),
+            source_positions,
             source,
             ast,
             gated_exports,

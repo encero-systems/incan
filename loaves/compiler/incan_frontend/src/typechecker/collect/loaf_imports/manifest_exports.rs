@@ -256,7 +256,10 @@ impl TypeChecker {
             .exports
             .iter()
             .find(|identity| {
-                identity.canonical.as_ref().and_then(|value| value.hydrate()).as_ref() == Some(canonical)
+                identity
+                    .canonical
+                    .as_ref()
+                    .is_some_and(|value| value.represents(canonical))
             })?;
         let declaration = Self::api_declaration_for_target_path(&manifest, &identity.source_path)?;
         let mut kind = self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration)?;
@@ -288,7 +291,10 @@ impl TypeChecker {
             .iter()
             .find(|identity| {
                 identity.kind == crate::library_manifest::ExportIdentityKind::Trait
-                    && identity.canonical.as_ref().and_then(|value| value.hydrate()).as_ref() == Some(canonical)
+                    && identity
+                        .canonical
+                        .as_ref()
+                        .is_some_and(|value| value.represents(canonical))
             })?;
         let kind = if identity.public_path.len() == 2 {
             manifest

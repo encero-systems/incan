@@ -56,6 +56,7 @@ struct BodyInput {
     source: String,
     reads: Vec<ReadGuard>,
     declaration: Vec<Vec<String>>,
+    local: Vec<Vec<String>>,
 }
 
 /// One complete positive lookup and the exact source headers that produced its previously accepted signatures.
@@ -80,6 +81,7 @@ struct BodyProduct {
     source: String,
     reads: Vec<ReadGuard>,
     declaration: Vec<Vec<String>>,
+    local: Vec<Vec<String>>,
     contexts: Vec<(CanonicalSymbolId, CanonicalSymbolId, u32)>,
     body: Body,
 }
@@ -348,6 +350,10 @@ impl CallableBodyInputs {
                 source: source_slice(source, declaration.span)?.to_owned(),
                 reads: capture_reads(reads, &checked_reads, &headers)?,
                 declaration: record.clone(),
+                local: checker
+                    .available_local_record(declaration.span)
+                    .cloned()
+                    .unwrap_or_default(),
             });
         }
 
@@ -407,6 +413,7 @@ impl CallableBodyInputs {
             source,
             reads,
             declaration,
+            local,
         } in self.declarations
         {
             let mut body = bodies
@@ -429,6 +436,7 @@ impl CallableBodyInputs {
                 source,
                 reads,
                 declaration,
+                local,
                 contexts,
                 body,
             });
@@ -521,6 +529,9 @@ impl ValidatedCallableBodies {
                 continue;
             }
             checker.retain_declaration_record(declaration.span, entry.declaration.clone());
+            if !entry.local.is_empty() {
+                checker.retain_local_record(declaration.span, entry.local.clone());
+            }
             let Some(entry) = self.bodies.get(&declaration.span) else {
                 continue;
             };

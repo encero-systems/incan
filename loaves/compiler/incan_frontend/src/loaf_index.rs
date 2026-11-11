@@ -21,6 +21,7 @@ use incan_vocab::{KeywordActivation, KeywordRegistration, KeywordSpec};
 
 use crate::rust_abi_cache::{RustAbiCache, RustTypeAliasLookup, ShippedRustAbiCache};
 
+mod compiler_record_set;
 mod decoded_manifest;
 mod lazy_entry;
 mod manifest_input;
@@ -103,11 +104,31 @@ pub struct LoafArtifact {
 impl LoafArtifact {
     /// Read and validate the Loaf `name`, deriving its identity from the exact bytes decoded into the manifest.
     pub fn read(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
+        if compiler_record_set::configured() {
+            return Self::read_current(dir, name);
+        }
         retained::artifact(dir, name)
     }
 
     /// Read and validate one current generation; process-local reuse must observe every dependent file around it.
     fn read_current(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
+        if let Some((manifest, digest)) = compiler_record_set::read(dir, name)? {
+            let identity = LoafIdentity {
+                name: manifest.name.clone(),
+                version: manifest.version.clone(),
+                digest,
+                feature_projection: BTreeSet::new(),
+            };
+            let (rust_abi_cache, stale_rust_paths) = Self::read_rust_abi_cache(dir, name, &manifest)?;
+            return Ok(Self {
+                identity,
+                name: name.to_owned(),
+                dir: dir.to_path_buf(),
+                manifest,
+                rust_abi_cache,
+                stale_rust_paths,
+            });
+        }
         let _invocation =
             tracing::trace_span!(target: "incan::invocation", "incan_frontend::read_loaf_manifest", loaf = name)
                 .entered();
@@ -355,6 +376,14 @@ impl LoafIndex {
     /// Read an immutable Rust ABI index under current file-generation guards. The returned index owns no session or
     /// resolved source state; each compilation installs it into its own fresh lookup environment.
     pub fn read_rust_abi_cache(path: &Path) -> Result<Arc<RustAbiCache>, LoafIndexError> {
+        if compiler_record_set::configured() {
+            return RustAbiCache::open(path)
+                .map(Arc::new)
+                .map_err(|reason| LoafIndexError::Unreadable {
+                    path: path.to_owned(),
+                    reason,
+                });
+        }
         retained::abi(path).map_err(|reason| LoafIndexError::Unreadable {
             path: path.to_owned(),
             reason,
@@ -441,6 +470,14 @@ impl LoafIndex {
         self.entries
             .iter()
             .map(|(key, entry)| (key.as_str(), &entry.summary.identity))
+    }
+
+    /// Admitted identities and their namespace ownership without decoding complete manifests. Consumers that need
+    /// only graph or report headers must use this inventory view instead of demanding semantic declarations.
+    pub fn admitted_identities(&self) -> impl Iterator<Item = (&str, &LoafIdentity, &LoafNamespace)> {
+        self.entries
+            .iter()
+            .map(|(key, entry)| (key.as_str(), &entry.summary.identity, &entry.namespace))
     }
 
     /// Whether a compiler-pinned standard package owns a canonical package identity.
@@ -582,7 +619,7 @@ impl LoafIndex {
                         .identity_graph
                         .exports
                         .iter()
-                        .any(|export| export.canonical.as_ref().and_then(|id| id.hydrate()).as_ref() == Some(canonical))
+                        .any(|export| export.canonical.as_ref().is_some_and(|id| id.represents(canonical)))
             })?;
         Some(entry)
     }
@@ -597,7 +634,7 @@ impl LoafIndex {
             .identity_graph
             .exports
             .iter()
-            .filter(|export| export.canonical.as_ref().and_then(|id| id.hydrate()).as_ref() == Some(canonical))
+            .filter(|export| export.canonical.as_ref().is_some_and(|id| id.represents(canonical)))
             .filter(|export| {
                 matches!(
                     export.kind,
@@ -818,9 +855,11 @@ fn normalize_keyword_registration(key: &str, registration: &KeywordRegistration)
 
 #[cfg(test)]
 mod scoped_name_tests {
-    use super::LoafArtifact;
+    use super::{LoafArtifact, LoafIdentity, LoafIndex, LoafNamespace};
     use crate::library_manifest::LibraryManifest;
+    use crate::loaf_index::lazy_entry::IndexedLoaf;
     use incan_loaf_names::artifact_stem;
+    use std::collections::BTreeSet;
 
     /// The ordinary retained reader opens encoded filenames while retaining the exact scoped semantic owner.
     #[test]
@@ -846,6 +885,39 @@ mod scoped_name_tests {
                 );
             }
         }
+        Ok(())
+    }
+
+    /// Header-only consumers observe admitted identity records without demanding declaration manifests.
+    #[test]
+    fn admitted_identities_keep_manifests_lazy() -> Result<(), Box<dyn std::error::Error>> {
+        let key = "catalog";
+        let identity = LoafIdentity {
+            name: "alpha/catalog".to_owned(),
+            version: "1.0.0".to_owned(),
+            digest: "admitted-digest".to_owned(),
+            feature_projection: BTreeSet::new(),
+        };
+        let indexed = IndexedLoaf::summary_only(
+            key.to_owned(),
+            LoafNamespace::Dependency { key: key.to_owned() },
+            identity.clone(),
+        );
+        let observation = indexed.clone();
+        let mut index = LoafIndex::default();
+        index.entries.insert(key.to_owned(), indexed);
+
+        let entries = index.admitted_identities().collect::<Vec<_>>();
+
+        assert_eq!(entries.len(), 1);
+        let (observed_key, observed_identity, observed_namespace) = entries
+            .first()
+            .copied()
+            .ok_or("the admitted identity projection is empty")?;
+        assert_eq!(observed_key, key);
+        assert_eq!(observed_identity, &identity);
+        assert_eq!(observed_namespace, &LoafNamespace::Dependency { key: key.to_owned() });
+        assert!(!observation.was_demanded());
         Ok(())
     }
 }

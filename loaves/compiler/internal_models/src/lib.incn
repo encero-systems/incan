@@ -36,13 +36,7 @@ pub from checked_types import (
     CheckedType,
     valid_checked_type,
 )
-pub from body_ir_values import (
-    CompilerBlock,
-    CompilerCallee,
-    CompilerRvalue,
-    CompilerStatement,
-    CompilerStatementKind,
-)
+pub from body_ir_values import CompilerBlock, CompilerCallee, CompilerRvalue, CompilerStatement, CompilerStatementKind
 pub from body_ir_declarations import (
     BODY_IR_ADAPTER_PROFILE,
     BODY_IR_ADAPTER_SOURCE,
@@ -77,7 +71,9 @@ pub from records import (
     RecordRequest,
     RevisionEvidence,
     SelectedFact,
+    DeletedFact,
     AbsentFact,
+    MemberFact,
     ReadFault,
     RecordRead,
     ReadWitness,
@@ -87,6 +83,8 @@ pub from records import (
     ReadCounters,
     PreparationEvidence,
     READ_SCHEMA,
+    StoreRecordSource,
+    encode_record_key,
 )
 pub from record_service import (
     RECORD_SERVICE_SCHEMA,
@@ -111,3 +109,21 @@ pub from record_service import (
     SemanticRefusal,
     ValueReference,
 )
+pub from activation_envelopes import (
+    DEMAND_SCHEMA,
+    PREPARED_SCHEMA,
+    WORK_SCHEMA,
+    DEMAND_FAMILY,
+    PREPARED_FAMILY,
+    WORK_FAMILY,
+    encode_demand_page,
+    decode_demand_page,
+    encode_prepared_inputs,
+    decode_prepared_inputs,
+    encode_ready_work,
+    decode_ready_work,
+    envelope_key,
+    stage_name,
+)
+pub from checker_records import from_native_final_fields, from_native_local_fields, encode_record
+pub from read_receipts import RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt

@@ -1,0 +1,325 @@
+"""Atomic ranked-graph publication for compiler values, completed receipts and their forward and reverse edges."""
+
+from std.encoding.hex import hexlify
+from std.json import JsonValue, parse
+from std.primitives.hash import sha256
+from pub::incan_platform.store import Snapshot, begin, commit, get, put
+from pub::internal_models import (
+    ProducerRank,
+    ProducerStage,
+    RECEIPT_SCHEMA,
+    StoreRecordSource,
+    decode_read_receipt,
+    encode_read_receipt,
+    stage_name,
+)
+from pub::internal_models.records import (
+    ReadReceipt,
+    ReadScope,
+    ReadWitness,
+    RecordRead,
+    READ_SCHEMA,
+    RecordKey,
+    RecordRequest,
+    RecordSelection,
+    encode_record_key,
+)
+from files import json_text
+
+const EVALUATION_SCHEMA: str = "incan.engine.evaluation/1"
+const EDGE_SCHEMA: str = "incan.engine.read-edge/2"
+
+
+pub model PublishedEvaluation:
+    """The one selected generation and identities installed by a completed evaluation transaction."""
+
+    pub snapshot: Snapshot
+    pub value_key: str
+    pub value_digest: str
+    pub receipt_key: str
+    pub receipt_root: str
+    pub evaluation_key: str
+    pub edge_count: int
+
+
+pub model ReusableEvaluation:
+    """One persisted compiler value admitted only after every recorded dependency still validates."""
+
+    pub value: bytes
+    pub receipt: ReadReceipt
+
+
+model EdgeFact:
+    """One compiler witness normalized once for the receipt and both graph directions."""
+
+    kind: str
+    target: str
+    request: RecordRequest
+    evidence: str
+
+
+pub def publish_evaluation(
+    selected: Snapshot,
+    claim_key: str,
+    rank: ProducerRank,
+    value: bytes,
+    receipt: ReadReceipt,
+) -> Result[PublishedEvaluation, str]:
+    """Publish a value, evaluation, completed receipt and both edge directions in one store transaction."""
+    if claim_key == "" or receipt.scope.profile == "" or receipt.schema != READ_SCHEMA:
+        return Err("a completed evaluation requires a claim, profile and read-receipt schema")
+    if rank.namespace < 0 or rank.dependency < 0:
+        return Err("a completed evaluation requires a nonnegative certified rank")
+    value_key = encode_record_key(receipt.preparation.output)?
+    value_digest = digest(value)
+    edges = normalized_edges(receipt.witnesses)?
+    receipt_bytes = encode_read_receipt(receipt)?
+    receipt_root = digest(receipt_bytes)
+    receipt_key = "incan.engine.receipt\t" + receipt_root
+    evaluation_key = evaluation_record_key(receipt.scope.profile, value_key)
+    evaluation = encode_evaluation(receipt.scope.profile, value_key, claim_key, value_digest, receipt_root, rank)?
+
+    mut transaction = put(begin(selected), value_key, value)
+    transaction = put(transaction, receipt_key, receipt_bytes)
+    transaction = put(transaction, evaluation_key, evaluation)
+    for index in range(len(edges)):
+        edge = encode_edge(value_key, receipt.scope.profile, edges[index])?
+        identity = digest(edge)
+        transaction = put(transaction, f"incan.engine.edge-out\t{evaluation_key}\t{index}", edge)
+        transaction = put(
+            transaction,
+            f"incan.engine.edge-in\t{edges[index].target}\t{edges[index].kind}\t{identity}",
+            edge,
+        )
+    published = commit(transaction).map_err((error) => error.message())?
+    return Ok(
+        PublishedEvaluation(
+            snapshot=published,
+            value_key=value_key,
+            value_digest=value_digest,
+            receipt_key=receipt_key,
+            receipt_root=receipt_root,
+            evaluation_key=evaluation_key,
+            edge_count=len(edges),
+        ),
+    )
+
+
+pub def reusable_evaluation(
+    selected: Snapshot,
+    output: RecordKey,
+    profile: str,
+) -> Result[Option[ReusableEvaluation], str]:
+    """
+    Read one selected evaluation and admit its value only while every recorded dependency still witnesses the input.
+
+    Absence is an ordinary miss. Malformed or incomplete graph state is damage and fails closed rather than silently
+    recomputing through a second authority.
+    """
+    if profile == "":
+        return Err("a reusable compiler evaluation requires a producer profile")
+    value_key = encode_record_key(output)?
+    evaluation_key = evaluation_record_key(profile, value_key)
+    encoded = match get(selected, evaluation_key).map_err((error) => error.message())?:
+        Some(value) => value
+        None => return Ok(None)
+
+    evaluation = evaluation_document(encoded)?
+    if (
+        required_text(evaluation, "outcome")? != "produced"
+        or required_text(evaluation, "profile")? != profile
+        or required_text(evaluation, "output")? != value_key
+    ):
+        return Err("selected compiler evaluation has mismatched authority")
+    receipt_root = required_digest(evaluation, "receipt_root")?
+    value_digest = required_digest(evaluation, "value_digest")?
+    receipt_bytes = required_value(selected, "incan.engine.receipt\t" + receipt_root)?
+    if digest(receipt_bytes) != receipt_root:
+        return Err("selected compiler receipt differs from its content root")
+    receipt_document = parse(receipt_bytes.decode().map_err((_) => "selected compiler receipt is not UTF-8")?).map_err(
+        (error) => error.message(),
+    )?
+    if required_text(receipt_document, "schema")? != RECEIPT_SCHEMA:
+        return Ok(None)
+    receipt = decode_read_receipt(receipt_bytes)?
+    if receipt.scope.profile != profile or encode_record_key(receipt.preparation.output)? != value_key:
+        return Err("selected compiler receipt does not describe its evaluation")
+    value = required_value(selected, value_key)?
+    if digest(value) != value_digest:
+        return Err("selected compiler value differs from its evaluation digest")
+    if not witnesses_validate(selected, receipt)?:
+        return Ok(None)
+    return Ok(Some(ReusableEvaluation(value=value, receipt=receipt)))
+
+
+pub def evaluation_record_key(profile: str, output: str) -> str:
+    """Return the selected evaluation identity for one output under one exact producer profile."""
+    identity = digest((profile + "\n" + output).encode("utf-8"))
+    return "incan.engine.evaluation\t" + identity
+
+
+def normalized_edges(witnesses: list[ReadWitness]) -> Result[list[EdgeFact], str]:
+    """Normalize each successful read once so forward and reverse indexes cannot disagree."""
+    mut edges: list[EdgeFact] = []
+    for witness in witnesses:
+        match witness:
+            ReadWitness.Found(found, selection_digest) =>
+                edges.append(
+                    edge(
+                        "present",
+                        found.request,
+                        found.revision + "\n" + found.semantic_digest + "\n" + selection_digest,
+                    )?,
+                )
+            ReadWitness.Deleted(deleted) => edges.append(edge("deleted", deleted.request, deleted.revision)?)
+            ReadWitness.Absent(absent) => edges.append(edge("absent", absent.request, absent.exclusion_digest)?)
+            ReadWitness.Members(_, request, membership_digest, continuation) =>
+                edges.append(edge("members", request, membership_digest + "\n" + continuation)?)
+    return Ok(edges)
+
+
+def edge(kind: str, request: RecordRequest, evidence: str) -> Result[EdgeFact, str]:
+    """Bind one typed witness to the exact canonical target key and nonempty evidence."""
+    if evidence == "":
+        return Err("a graph edge requires witness evidence")
+    return Ok(EdgeFact(kind=kind, target=encode_record_key(request.key)?, request=request, evidence=evidence))
+
+
+def encode_evaluation(
+    profile: str,
+    output: str,
+    claim_key: str,
+    value_digest: str,
+    receipt_root: str,
+    rank: ProducerRank,
+) -> Result[bytes, str]:
+    """Encode the selected produced outcome and its rank without duplicating receipt witnesses."""
+    document = JsonValue.object(
+        {"schema": JsonValue.string(EVALUATION_SCHEMA), "outcome": JsonValue.string("produced"), "profile": JsonValue.string(
+            profile,
+        ), "output": JsonValue.string(output), "claim_key": JsonValue.string(claim_key), "value_digest": JsonValue.string(
+            value_digest,
+        ), "receipt_root": JsonValue.string(receipt_root), "rank_namespace": JsonValue.int(rank.namespace), "rank_stage": JsonValue.string(
+            stage_name(rank.stage),
+        ), "rank_dependency": JsonValue.int(rank.dependency)},
+    )
+    return Ok(json_text(document)?.encode("utf-8"))
+
+
+def encode_edge(reader: str, profile: str, edge: EdgeFact) -> Result[bytes, str]:
+    """Encode one edge value shared byte-for-byte by its outgoing and incoming indexes."""
+    document = JsonValue.object(
+        {"schema": JsonValue.string(EDGE_SCHEMA), "reader": JsonValue.string(reader), "profile": JsonValue.string(
+            profile,
+        ), "kind": JsonValue.string(edge.kind), "target": JsonValue.string(edge.target), "selection": selection_document(
+            edge.request,
+        ), "evidence": JsonValue.string(edge.evidence)},
+    )
+    return Ok(json_text(document)?.encode("utf-8"))
+
+
+def selection_document(request: RecordRequest) -> JsonValue:
+    """Encode the exact field, payload range or bounded member selector for edge validation."""
+    mut fields: Dict[str, JsonValue] = {"byte_limit": JsonValue.int(request.byte_limit)}
+    match request.selection:
+        RecordSelection.Field(name) =>
+            fields["kind"] = JsonValue.string("field")
+            fields["name"] = JsonValue.string(name)
+        RecordSelection.Payload(payload) =>
+            fields["kind"] = JsonValue.string("payload")
+            fields["reference"] = JsonValue.string(payload.reference)
+            fields["offset"] = JsonValue.int(payload.offset)
+            fields["length"] = JsonValue.int(payload.length)
+        RecordSelection.Members(members) =>
+            fields["kind"] = JsonValue.string("members")
+            fields["selector"] = JsonValue.string(members.selector)
+            fields["order"] = JsonValue.string(members.order)
+            fields["lower"] = JsonValue.string(members.lower)
+            fields["upper"] = JsonValue.string(members.upper)
+            fields["continuation"] = JsonValue.string(members.continuation)
+    return JsonValue.object(fields)
+
+
+def witnesses_validate(selected: Snapshot, receipt: ReadReceipt) -> Result[bool, str]:
+    """Re-read every dependency through the store-backed source and compare only its specified invalidation meaning."""
+    scope = ReadScope(snapshot=selected.digest, profile=receipt.scope.profile)
+    mut roots: list[str] = []
+    for witness in receipt.witnesses:
+        roots.append(encode_record_key(witness_request(witness).key)?)
+    source = StoreRecordSource.open(selected, scope, roots)
+    for witness in receipt.witnesses:
+        request = witness_request(witness)
+        current = source.read(scope, request)
+        match witness:
+            ReadWitness.Found(expected, _) =>
+                match current:
+                    RecordRead.Found(found) =>
+                        if found.evidence.semantic_digest != expected.semantic_digest:
+                            return Ok(false)
+                    RecordRead.Failed(_) => return Err("compiler evaluation witness could not be validated")
+                    _ => return Ok(false)
+            ReadWitness.Deleted(_) =>
+                match current:
+                    RecordRead.Deleted(_) | RecordRead.Absent(_) => pass
+                    RecordRead.Failed(_) => return Err("compiler evaluation witness could not be validated")
+                    _ => return Ok(false)
+            ReadWitness.Absent(_) =>
+                match current:
+                    RecordRead.Absent(_) => pass
+                    RecordRead.Failed(_) => return Err("compiler evaluation witness could not be validated")
+                    _ => return Ok(false)
+            ReadWitness.Members(_, _, membership, continuation) =>
+                match current:
+                    RecordRead.Members(found) =>
+                        if found.membership_digest != membership or found.continuation != continuation:
+                            return Ok(false)
+                    RecordRead.Failed(_) => return Err("compiler evaluation witness could not be validated")
+                    _ => return Ok(false)
+    return Ok(true)
+
+
+def witness_request(witness: ReadWitness) -> RecordRequest:
+    """Return the exact request retained by one typed witness."""
+    match witness:
+        ReadWitness.Found(found, _) => return found.request
+        ReadWitness.Deleted(deleted) => return deleted.request
+        ReadWitness.Absent(absent) => return absent.request
+        ReadWitness.Members(_, request, _, _) => return request
+
+
+def evaluation_document(encoded: bytes) -> Result[JsonValue, str]:
+    """Decode one evaluation document and require its exact engine-owned schema."""
+    document = parse(encoded.decode().map_err((_) => "compiler evaluation is not UTF-8")?).map_err(
+        (error) => error.message(),
+    )?
+    if required_text(document, "schema")? != EVALUATION_SCHEMA:
+        return Err("unsupported compiler evaluation schema")
+    return Ok(document)
+
+
+def required_value(selected: Snapshot, key: str) -> Result[bytes, str]:
+    """Read one graph-owned value whose absence makes the selected evaluation incomplete."""
+    match get(selected, key).map_err((error) => error.message())?:
+        Some(value) => return Ok(value)
+        None => return Err("selected compiler evaluation is incomplete")
+
+
+def required_text(value: JsonValue, key: str) -> Result[str, str]:
+    """Read one required evaluation string without coercion."""
+    return value.require(key).map_err((error) => error.message())?.expect_str().map_err((error) => error.message())
+
+
+def required_digest(value: JsonValue, key: str) -> Result[str, str]:
+    """Read one required lowercase SHA-256 digest."""
+    selected = required_text(value, key)?
+    if len(selected) != 64:
+        return Err("compiler evaluation has an invalid content digest")
+    for character in selected:
+        if character not in "0123456789abcdef":
+            return Err("compiler evaluation has an invalid content digest")
+    return Ok(selected)
+
+
+def digest(value: bytes) -> str:
+    """Return one lowercase content identity."""
+    return hexlify(sha256.digest(value))

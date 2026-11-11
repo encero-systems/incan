@@ -2,16 +2,26 @@
 
 from rust::std::process import Command, exit
 from rust::std::string import String as RustString
+from rust::std::time import Instant
 from std.environ import args, get_or
 from std.fs import Path
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
 from check_support import repository_root, write_stderr
+from oven_tests import (
+    LOWERING_RESERVATION_BYTES,
+    PROJECT_RESERVATION_BYTES as OVEN_PROJECT_RESERVATION_BYTES,
+    Invocation,
+    host_memory,
+    run_all_failures,
+    shared_memory,
+)
 from release_support import (
     FAMILIES,
     BaselineReport,
     TOOLCHAIN_DIRECTORY,
     Step,
+    append_timing,
     baseline_summary,
     check_baseline,
     counts_json,
@@ -21,6 +31,28 @@ from release_support import (
     run_step,
     write_json,
 )
+
+const GIB: int = 1073741824
+const FACET_RESERVATION_BYTES: int = 2 * GIB
+const SMALL_PROJECT_RESERVATION_BYTES: int = 2 * GIB
+
+
+pub enum VerificationPhase(str):
+    """Independent installed-verification gates with stable child-process spellings."""
+
+    Oven = "oven"
+    RustFacets = "rust-facets"
+    DriverIntegration = "driver-integration"
+    Lsp = "lsp"
+    Census = "census"
+    Memory = "memory"
+
+
+pub model VerificationPhasePlan:
+    """One independently executable verification phase and its whole-process memory reservation."""
+
+    pub phase: VerificationPhase
+    pub reservation: int
 
 
 pub model Installation:
@@ -39,6 +71,12 @@ pub model Installation:
 def main() -> None:
     """Verify the selected installation, reporting option refusals as status 2 and gate failures as status 1."""
     arguments = args().unwrap_or([])
+    if len(arguments) > 1 and arguments[1] == "--phase":
+        match run_phase(arguments[2:]):
+            Ok(_) => exit(0)
+            Err(message) =>
+                write_stderr(message + "\n")
+                exit(1)
     match parse_verification_options(arguments[1:]):
         Ok(options) =>
             match verify(options.output, options.jobs, options.timeout_seconds):
@@ -53,42 +91,31 @@ def main() -> None:
 
 pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, str]:
     """
-    Verify an installed toolchain in eight steps.
+    Verify an installed toolchain in four steps.
 
     1. Audit installation paths and select only shipped standard packages.
     2. Build this checkout's contract runner with the installed compiler.
-    3. Run the complete Oven test inventory and every production Rust-facet suite.
-    4. Exercise direct-driver identity and minimal runtime-closure integration.
-    5. Require the installed LSP contract independently.
-    6. Run all eight contract families and preserve every committed PASS key.
-    7. Record one cold process-tree footprint run for each release measurement command.
-    8. Retain checksums, complete logs, counts, and a stable summary.
+    3. Concurrently run Oven, every Rust facet, direct-driver integration, LSP, census, and cold memory gates.
+    4. Preserve every committed PASS key and all per-phase evidence.
     """
     installation = prepare(output, jobs, timeout_seconds)?
 
     # 1. Installed records may name only this installation and never a builder path.
+    mut phase_started = Instant.now()
     audit_relocation(installation.home, [get_or("INCAN_BUILDER_HOME", ""), get_or("INCAN_BUILDER_SOURCE", "")])?
+    retain_phase_timing(installation, "relocation", phase_started)?
 
     # 2. A checkout runner proves the installed compiler can read the current source contracts.
+    phase_started = Instant.now()
     runner = build_runner(installation)?
+    retain_phase_timing(installation, "runner-build", phase_started)?
 
-    # 3. Unit and Rust-facet tests exercise release-owned native surfaces outside the census.
-    run_oven_tests(installation)?
-    suites = run_rust_facets(installation)?
+    # 3. Independent projects and scratch roots share only the content-addressed installed home.
+    phase_started = Instant.now()
+    report, suites = run_concurrent_gates(installation, runner)?
+    retain_phase_timing(installation, "concurrent-gates", phase_started)?
 
-    # 4. Direct driver contracts run from Incan programs against this fresh installation.
-    run_driver_integration(installation)?
-
-    # 5. Graph verification is never allowed to skip because no language server was selected.
-    verify_lsp(installation, runner)?
-
-    # 6. Every family runs once under one budget and the committed PASS baseline is a lower bound.
-    report = run_contracts(installation, runner)?
-
-    # 7. The installed context records the release's one cold run per command.
-    measure_memory(installation)?
-
-    # 8. The caller receives one durable evidence directory even on hosts with shared temporary storage.
+    # 4. The caller receives one durable evidence directory even on hosts with shared temporary storage.
     summary = baseline_summary(report) + f"; {suites} Rust facet suites\n"
     installation.run
         .joinpath("summary.txt")
@@ -96,6 +123,201 @@ pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, st
         .map_err((error) => error.message())?
     println(summary.strip())
     return Ok(installation.run)
+
+
+def retain_phase_timing(installation: Installation, phase: str, started: Instant) -> Result[None, str]:
+    """Append one installed-verification phase's wall duration to the retained evidence."""
+    return append_timing(installation.run.joinpath("phase-timings.tsv"), phase, started.elapsed().as_secs_f64())
+
+
+def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tuple[BaselineReport, int], str]:
+    """Run independent installed gates under one host-memory budget and recover their typed results."""
+    plans = verification_phase_plans(installation.jobs)
+    mut invocations: list[Invocation] = []
+    compiler = installation.home.joinpath("bin/incan")
+    program = installation.root.joinpath("scripts/verify_installation.incn")
+    retain_traces = get_or("INCAN_VERIFY_TRACES", "") == "1"
+    for plan in plans:
+        name = verification_phase_name(plan.phase)
+        trace_environment = verification_trace_environment(installation.run, name, retain_traces)
+        if retain_traces:
+            Path(trace_environment["INCAN_TRACE_DIR"])
+                .mkdir(true, true)
+                .map_err((error) => error.message())?
+        invocations.append(
+            Invocation(
+                arguments=[
+                    "run",
+                    program.0,
+                    "--",
+                    "--phase",
+                    name,
+                    installation.run.0,
+                    runner.0,
+                    str(installation.jobs),
+                    str(installation.timeout_seconds),
+                ],
+                directory=installation.root.0,
+                reservation=plan.reservation,
+                log=installation.run.joinpath(f"phase-{name}.log"),
+                environment=trace_environment,
+                timeout_seconds=installation.timeout_seconds * 20,
+            ),
+        )
+    memory = shared_memory(host_memory())
+    failed = run_all_failures(compiler.0, invocations, len(invocations), memory)?
+    if len(failed) > 0:
+        return Err(
+            "installed verification phase failures: " + ", ".join(
+                [verification_phase_name(plans[index].phase) for index in failed],
+            ),
+        )
+    for plan in plans:
+        name = verification_phase_name(plan.phase)
+        timing = installation.run.joinpath(f"phase-timing-{name}.txt")
+        seconds = float(timing.read_text("utf-8", "strict").map_err((error) => error.message())?.strip())
+        append_timing(installation.run.joinpath("phase-timings.tsv"), name, seconds)?
+    report = installed_contract_report(installation)?
+    suites = int(
+        installation.run
+            .joinpath("rust-facet-count.txt")
+            .read_text("utf-8", "strict")
+            .map_err((error) => error.message())?.strip(),
+    )
+    return Ok((report, suites))
+
+
+pub def verification_trace_environment(run: Path, phase: str, enabled: bool) -> Dict[str, str]:
+    """Select one process-safe phase-owned compiler trace directory when installed tracing is requested."""
+    if not enabled:
+        return {}
+    stem = run.joinpath("traces").joinpath(phase)
+    return {
+        "INCAN_TRACE_DIR": stem.joinpath("compiler").0,
+        "INCAN_NATIVE_TIMING": "1",
+    }
+
+
+pub def verification_phase_plans(jobs: int) -> list[VerificationPhasePlan]:
+    """Plan independent gates with their aggregate lowering-scale or project-scale memory reservations."""
+    workers = verification_workers(jobs)
+    return [
+        VerificationPhasePlan(phase=VerificationPhase.Oven, reservation=workers * OVEN_PROJECT_RESERVATION_BYTES),
+        VerificationPhasePlan(phase=VerificationPhase.RustFacets, reservation=workers * FACET_RESERVATION_BYTES),
+        VerificationPhasePlan(phase=VerificationPhase.DriverIntegration, reservation=LOWERING_RESERVATION_BYTES),
+        VerificationPhasePlan(phase=VerificationPhase.Lsp, reservation=SMALL_PROJECT_RESERVATION_BYTES),
+        VerificationPhasePlan(phase=VerificationPhase.Census, reservation=workers * LOWERING_RESERVATION_BYTES),
+        VerificationPhasePlan(phase=VerificationPhase.Memory, reservation=LOWERING_RESERVATION_BYTES),
+    ]
+
+
+def verification_workers(jobs: int) -> int:
+    """Normalize an external worker count without retaining an alias to its caller-owned place."""
+    if jobs < 1:
+        return 1
+    return jobs
+
+
+def verification_phase_name(phase: VerificationPhase) -> str:
+    """Map the closed phase enum to its stable child-process spelling without cross-module method dispatch."""
+    match phase:
+        VerificationPhase.Oven => return "oven"
+        VerificationPhase.RustFacets => return "rust-facets"
+        VerificationPhase.DriverIntegration => return "driver-integration"
+        VerificationPhase.Lsp => return "lsp"
+        VerificationPhase.Census => return "census"
+        VerificationPhase.Memory => return "memory"
+
+
+def run_phase(arguments: list[str]) -> Result[None, str]:
+    """Run one internal installed-verification phase in the existing evidence directory."""
+    if len(arguments) != 5:
+        return Err("internal verification phase needs NAME RUN RUNNER JOBS TIMEOUT")
+    phase = parse_verification_phase(arguments[0])?
+    run = Path(arguments[1]).resolve().map_err((error) => error.message())?
+    runner = Path(arguments[2])
+    jobs = phase_positive(arguments[3], "jobs")?
+    timeout_seconds = phase_positive(arguments[4], "timeout")?
+    installation = phase_installation(run, jobs, timeout_seconds)?
+    started = Instant.now()
+    match phase:
+        VerificationPhase.Oven => run_oven_tests(installation)?
+        VerificationPhase.RustFacets =>
+            suites = run_rust_facets(installation)?
+            installation.run
+                .joinpath("rust-facet-count.txt")
+                .write_text(str(suites) + "\n", "utf-8", "strict", None)
+                .map_err((error) => error.message())?
+        VerificationPhase.DriverIntegration => run_driver_integration(installation)?
+        VerificationPhase.Lsp => verify_lsp(installation, runner)?
+        VerificationPhase.Census => _ = run_contracts(installation, runner)?
+        VerificationPhase.Memory => measure_memory(installation)?
+    installation.run
+        .joinpath(f"phase-timing-{verification_phase_name(phase)}.txt")
+        .write_text(str(started.elapsed().as_secs_f64()) + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    return Ok(None)
+
+
+def parse_verification_phase(text: str) -> Result[VerificationPhase, str]:
+    """Parse only the five internal verification phase spellings."""
+    match text:
+        "oven" => return Ok(VerificationPhase.Oven)
+        "rust-facets" => return Ok(VerificationPhase.RustFacets)
+        "driver-integration" => return Ok(VerificationPhase.DriverIntegration)
+        "lsp" => return Ok(VerificationPhase.Lsp)
+        "census" => return Ok(VerificationPhase.Census)
+        "memory" => return Ok(VerificationPhase.Memory)
+        _ => return Err(f"unknown verification phase `{text}`")
+
+
+def phase_positive(text: str, name: str) -> Result[int, str]:
+    """Parse one positive internal phase count without accepting signs or whitespace."""
+    if text == "":
+        return Err(f"phase {name} must be positive")
+    for character in text:
+        if character not in "0123456789":
+            return Err(f"phase {name} must be positive")
+    value = int(text)
+    if value < 1:
+        return Err(f"phase {name} must be positive")
+    return Ok(value)
+
+
+def phase_installation(run: Path, jobs: int, timeout_seconds: int) -> Result[Installation, str]:
+    """Reconstruct immutable installed paths for a child phase without creating another evidence run."""
+    root = repository_root()?
+    home_text = get_or("INCAN_HOME", "")
+    if home_text == "":
+        return Err("INCAN_HOME must select the installed release")
+    home = Path(home_text).resolve().map_err((error) => error.message())?
+    oven = home.joinpath("bin/incan")
+    lsp = Path(get_or("INCAN_LSP", home.joinpath("bin/incan-lsp").0))
+    if not oven.is_file() or not lsp.is_file():
+        return Err("the installed Oven and language server are required")
+    stdlib = run.joinpath("selected-stdlib.txt").read_text("utf-8", "strict").map_err((error) => error.message())?
+    return Ok(
+        Installation(
+            root=root,
+            home=home,
+            oven=oven,
+            lsp=lsp,
+            stdlib=stdlib,
+            run=run,
+            jobs=jobs,
+            timeout_seconds=timeout_seconds,
+        ),
+    )
+
+
+def installed_contract_report(installation: Installation) -> Result[BaselineReport, str]:
+    """Read and validate the census retained by the completed concurrent child phase."""
+    baseline = installation.root.joinpath("workspaces/contracts/pass-baseline.txt")
+    log = installation.run.joinpath("contracts.log")
+    return check_baseline(
+        baseline.read_text("utf-8", "strict").map_err((error) => error.message())?,
+        log.read_text("utf-8", "strict").map_err((error) => error.message())?,
+    )
 
 
 pub def audit_relocation(home: Path, builder_paths: list[str]) -> Result[None, str]:
@@ -155,6 +377,10 @@ def prepare(output: Path, jobs: int, timeout_seconds: int) -> Result[Installatio
     temporary = TemporaryDirectory.try_new_with("run.", "", Some(output)).map_err((error) => error.message())?
     run = temporary.persist().map_err((error) => error.message())?
     standard = select_standard_sources(root, home, run)?
+    run
+        .joinpath("selected-stdlib.txt")
+        .write_text(standard, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
     retain_input_digests(run, oven, lsp)?
     return Ok(
         Installation(
@@ -258,8 +484,8 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
     """
     output = installation.run.joinpath("rust-tests")
     output.mkdir(true, true).map_err((error) => error.message())?
-    mut suites = 0
-    mut failed: list[str] = []
+    mut planned: list[Invocation] = []
+    mut projects: list[str] = []
     manifests = sorted(
         [path.0 for path in installation.root.joinpath("loaves").rglob("loaf.toml").map_err((error) => error.message())?],
     )
@@ -268,27 +494,25 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
         text = manifest.read_text("utf-8", "strict").map_err((error) => error.message())?
         if not owns_rust_facet(text):
             continue
-        suites += 1
         project = manifest.parent()
         relative = project.0[len(installation.root.0) + 1:]
         label = relative.replace("/", "-")
-        code = run_step(
-            command_step(
-                installation,
-                f"rust-facet-{label}",
-                installation.oven.0,
-                ["test", project.0, "--profile", "release"],
-                installation.root,
-                output.joinpath(f"{label}.log"),
+        projects.append(relative)
+        planned.append(
+            Invocation(
+                arguments=["test", project.0, "--profile", "release"],
+                directory=installation.root.0,
+                reservation=FACET_RESERVATION_BYTES,
+                log=output.joinpath(f"{label}.log"),
+                timeout_seconds=installation.timeout_seconds,
             ),
-        )?
-        if code != 0:
-            failed.append(relative)
-    if suites == 0:
+        )
+    if len(planned) == 0:
         return Err("no Rust facets found")
+    failed = run_all_failures(installation.oven.0, planned, installation.jobs, shared_memory(host_memory()))?
     if len(failed) > 0:
-        return Err("Rust facet test failures: " + ", ".join(failed))
-    return Ok(suites)
+        return Err("Rust facet test failures: " + ", ".join([projects[index] for index in failed]))
+    return Ok(len(projects))
 
 
 def run_driver_integration(installation: Installation) -> Result[None, str]:
@@ -464,17 +688,13 @@ def run_contracts(installation: Installation, runner: Path) -> Result[BaselineRe
         Step(
             name="contracts",
             executable=runner.0,
-            arguments=[
-                installation.oven.0,
-                installation.root.joinpath("workspaces/contracts/fixtures").0,
-                "--scratch",
-                installation.run.joinpath("scratch").0,
-                "--jobs",
-                str(installation.jobs),
-                "--timeout",
-                str(installation.timeout_seconds),
-                "--isolated",
-            ] + [family for family in FAMILIES],
+            arguments=census_arguments(
+                installation.oven,
+                installation.root.joinpath("workspaces/contracts/fixtures"),
+                installation.run.joinpath("scratch"),
+                installation.jobs,
+                installation.timeout_seconds,
+            ),
             environment=environment,
             remove_environment=["RUSTC_BOOTSTRAP"],
             directory=Some(installation.root),
@@ -491,6 +711,21 @@ def run_contracts(installation: Installation, runner: Path) -> Result[BaselineRe
     )?
     write_json(installation.run.joinpath("counts.json"), counts_json(report.counts))?
     return Ok(report)
+
+
+pub def census_arguments(oven: Path, fixtures: Path, scratch: Path, jobs: int, timeout_seconds: int) -> list[str]:
+    """Select every contract family with shared compilation while retaining the release's worker and timeout budgets."""
+    return [
+        oven.0,
+        fixtures.0,
+        "--scratch",
+        scratch.0,
+        "--jobs",
+        str(jobs),
+        "--timeout",
+        str(timeout_seconds),
+        "--serial-families",
+    ] + [family for family in FAMILIES]
 
 
 def measure_memory(installation: Installation) -> Result[None, str]:

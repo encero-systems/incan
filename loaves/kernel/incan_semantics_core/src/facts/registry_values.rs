@@ -3,7 +3,7 @@
 use super::*;
 
 /// Compiler-recognized registry subject category.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
 pub enum SemanticRegistrySubjectKind {
     Function,
     Method,
@@ -30,7 +30,7 @@ impl fmt::Display for SemanticRegistrySubjectKind {
 }
 
 /// A source-level value that the compiler can snapshot without evaluating user code.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
 pub enum SemanticRegistryValue {
     Int(i64),
     Float(String),

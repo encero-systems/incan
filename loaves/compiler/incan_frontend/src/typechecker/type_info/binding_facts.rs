@@ -3,7 +3,7 @@
 use super::*;
 
 /// Source-level partial projection metadata preserved after collection.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PartialProjectionInfo {
     /// Source name of the partial declaration visible in the current module.
     pub name: String,
@@ -16,14 +16,14 @@ pub struct PartialProjectionInfo {
 }
 
 /// One preset keyword/value pair from a partial declaration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PartialProjectionPreset {
     pub name: String,
     pub value: Spanned<Expr>,
 }
 
 /// Target kinds that matter to downstream partial projection consumers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum PartialProjectionTargetKind {
     Function,
     ModelConstructor,

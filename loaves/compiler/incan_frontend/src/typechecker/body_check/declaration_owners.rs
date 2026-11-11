@@ -9,7 +9,24 @@ impl TypeChecker {
         let index = self.body_checks.len();
         let prepared =
             self.check_declaration_owner(span, |checker| checker.prepare_function_declaration(function, span));
-        self.check_prepared_function(function, span, prepared);
+        self.check_prepared_function(function, span, prepared, None);
+        self.complete_function_declaration(function, span, index);
+        #[cfg(test)]
+        self.observe_body_local(span);
+    }
+
+    /// Enter one top-level function through the local-family producer. Declaration validation still owns its output;
+    /// the statement producer receives the immutable program view used to bind only this owner's record fields.
+    pub(in crate::typechecker) fn check_record_function(
+        &mut self,
+        program: &Program,
+        function: &FunctionDecl,
+        span: Span,
+    ) {
+        let index = self.body_checks.len();
+        let prepared =
+            self.check_declaration_owner(span, |checker| checker.prepare_function_declaration(function, span));
+        self.check_prepared_function(function, span, prepared, Some(program));
         self.complete_function_declaration(function, span, index);
         #[cfg(test)]
         self.observe_body_local(span);
@@ -38,7 +55,7 @@ impl TypeChecker {
             return;
         }
         let prepared = self.prepare_reused_function_body(function, span, &binding);
-        self.check_prepared_function(function, span, prepared);
+        self.check_prepared_function(function, span, prepared, Some(program));
         #[cfg(test)]
         self.observe_body_local(span);
     }
@@ -120,7 +137,7 @@ impl TypeChecker {
         span: Span,
         context: YieldContext,
         ownership_source: CallableSource<'_>,
-    ) {
+    ) -> Option<usize> {
         #[cfg(test)]
         if !self.legacy_body_checking {
             assert!(
@@ -136,7 +153,7 @@ impl TypeChecker {
             self.check_callable_body_in_frame(body, is_async, context);
             self.record_explicit_input_flow(ownership_source, span);
             self.record_mutation_flow(span);
-            return;
+            return None;
         }
         let scope = BodyCheckScope::enter(self);
         self.retain_callable_input_bindings(ownership_source);
@@ -145,7 +162,9 @@ impl TypeChecker {
         self.record_mutation_flow(span);
         let mut local = scope.finish(self);
         local.owner = span;
+        let index = self.body_checks.len();
         self.body_checks.push(BodyCheckInput::Local(local));
+        Some(index)
     }
 
     /// Check one computed property's statements in its own writer, preserving its original synchronous block rules.
@@ -267,7 +286,23 @@ impl TypeChecker {
                     self.produced_declaration_records.insert(owner, fields);
                 }
             } else {
+                let owner = checked.owner();
                 self.checked_bodies.push(checked);
+                let produced = self
+                    .checked_bodies
+                    .last()
+                    .ok_or(crate::typechecker::canonical_nodes::NodeBindingError::MissingOwner)
+                    .and_then(|view| records::produce_final(self, program, owner, view));
+                match produced {
+                    Ok(fields) => {
+                        self.produced_final_records.insert(owner, fields);
+                        self.check_work.final_record_evaluations += 1;
+                    }
+                    Err(error) => {
+                        tracing::debug!(target: "incan::invocation", ?owner, ?error, "final record production refused");
+                        self.final_record_refusals.insert(owner, error);
+                    }
+                }
             }
         }
         render_decisions(mutation, &mut self.errors, true);

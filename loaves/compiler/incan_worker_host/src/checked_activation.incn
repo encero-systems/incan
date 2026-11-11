@@ -1,0 +1,71 @@
+"""Resolve shared checking-family activation envelopes and stage their canonical outputs."""
+
+from pub::incan_platform.store import Lookup, owned
+from pub::internal_models import (
+    PREPARED_FAMILY,
+    WORK_FAMILY,
+    PreparedInputs,
+    ReadyWork,
+    decode_prepared_inputs,
+    decode_ready_work,
+    encode_read_receipt,
+    envelope_key,
+)
+from pub::internal_models.records import ReadReceipt
+from record_protocol import Evaluate, Produced
+from record_snapshot import ResolvedSnapshot, resolve_snapshot
+
+
+pub model ResolvedCheckingActivation:
+    """Decoded engine envelopes and the selected store view shared by checking-family readers."""
+
+    pub snapshot: ResolvedSnapshot
+    pub ready: ReadyWork
+    pub prepared: PreparedInputs
+
+
+pub def resolve_checking_activation(home: str, evaluation: Evaluate) -> Result[ResolvedCheckingActivation, str]:
+    """Resolve and decode one Evaluate message's work and preparation roots exactly once."""
+    if evaluation.reservation == "" or evaluation.cancellation_generation < 0:
+        return Err("checking evaluation requires a reservation and cancellation generation")
+    resolved = resolve_snapshot(home, evaluation.snapshot).map_err((error) => error.message())?
+    ready_lookup = resolved.read(envelope_key(WORK_FAMILY, evaluation.work_root)?).map_err((error) => error.message())?
+    ready = decode_ready_work(required(ready_lookup)?)?
+    prepared_lookup = resolved
+        .read(envelope_key(PREPARED_FAMILY, evaluation.prepared_root)?)
+        .map_err((error) => error.message())?
+    prepared = decode_prepared_inputs(required(prepared_lookup)?)?
+    return Ok(ResolvedCheckingActivation(snapshot=resolved, ready=ready, prepared=prepared))
+
+
+pub def stage_checking_result(
+    home: str,
+    snapshot: str,
+    value: bytes,
+    receipt: ReadReceipt,
+    semantic: str,
+) -> Result[Produced, str]:
+    """Stage one checking-family value and its canonical evidence pages, then return only their content roots."""
+    receipt_bytes = encode_read_receipt(receipt)?
+    diagnostic = b""
+    counter = f"evaluations=1\nsemantic={semantic}".encode("utf-8")
+    resolved = resolve_snapshot(home, snapshot).map_err((error) => error.message())?
+    roots = resolved
+        .stage_compiler_outputs(value, receipt_bytes, diagnostic, counter)
+        .map_err((error) => error.message())?
+    return Ok(
+        Produced(
+            staged_root=roots.value,
+            witness_root=roots.receipt,
+            diagnostic_root=roots.diagnostic,
+            counter_root=roots.counter,
+        ),
+    )
+
+
+def required(value: Lookup) -> Result[bytes, str]:
+    """Read one required activation envelope as owned bytes before the resolved snapshot moves into record reads."""
+    match value:
+        Lookup.Found(found) => return Ok(owned(found))
+        Lookup.Deleted => return Err("compiler activation envelope was deleted")
+        Lookup.Absent => return Err("compiler activation envelope is absent")

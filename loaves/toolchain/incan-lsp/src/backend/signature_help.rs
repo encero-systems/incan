@@ -34,7 +34,7 @@ pub(super) fn format_function_signature(func: &incan_frontend::ast::FunctionDecl
         }
     }
 
-    sig
+    incan_syntax::source_security::escape_bidirectional_controls(&sig).into_owned()
 }
 
 /// Format a module-level partial declaration for hover, completion detail, and document symbols.
@@ -51,12 +51,13 @@ pub(super) fn format_partial_decl_signature(partial: &incan_frontend::ast::Parti
         })
         .collect::<Vec<_>>()
         .join(", ");
-    format!(
+    let signature = format!(
         "{} = partial {}({})",
         partial.name,
         partial.target.segments.join("."),
         args
-    )
+    );
+    incan_syntax::source_security::escape_bidirectional_controls(&signature).into_owned()
 }
 
 /// Format one AST parameter with the same local default-expression display used by hover, completion, and signature
@@ -74,11 +75,12 @@ pub(super) fn format_local_param(param: &Spanned<Param>, source: &str) -> String
         .as_ref()
         .map(|default| format!(" = {}", source_snippet(source, default.span).unwrap_or("...")))
         .unwrap_or_default();
-    format!(
+    let parameter = format!(
         "{prefix}{mutability}{}: {}{default}",
         param.node.name,
         format_type(&param.node.ty.node)
-    )
+    );
+    incan_syntax::source_security::escape_bidirectional_controls(&parameter).into_owned()
 }
 
 /// Return a trimmed source slice for a known parser span.

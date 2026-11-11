@@ -17,6 +17,7 @@ from rust_registry import read_registry_units, selected_registry
 from rust_manifest import rust_facet
 from registry_units import RegistryUnits
 from rust_target import target_configuration
+from source_security import validate_native_sources
 from toolchain import NativeCrate, Toolchain, load_toolchain, rust_compiler, toolchain_file
 from unit import UnitDescription, UnitLoaf, dependency_source_roots, describe
 from unit_rust import add_extern, add_rust_root, prepare_linked
@@ -41,7 +42,7 @@ def main() -> Result[None, str]:
     if len(arguments) != 2 and len(arguments) != 4:
         return Err("usage: toolchain_native REPOSITORY [PACKAGE|runtime PROFILE]")
     # 2. Both modes use the same selected source tree and native generation.
-    repository = Path(arguments[1]).resolve().map_err((error) => error.message())?
+    repository = Path(arguments[1]).resolve().map_err((error) => f"cannot resolve {error.message()}")?
     # 3. Describing source never rebuilds dependencies beneath an installed runtime.
     if len(arguments) == 4:
         toolchain = load_toolchain()?
@@ -105,8 +106,8 @@ def publish_support(repository: Path) -> Result[None, str]:
     """
     # 1. Re-read publication only after the generation lock excludes another support producer.
     generation = home()?.joinpath("native-support")
-    generation.mkdir(true, true).map_err((error) => error.message())?
-    publishing = generation.lock_exclusive().map_err((error) => error.message())?
+    generation.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
+    publishing = generation.lock_exclusive().map_err((error) => f"cannot lock {error.message()}")?
     toolchain = load_toolchain()?
     require_fresh_generation(toolchain)?
     rustc = rust_compiler(toolchain)
@@ -201,7 +202,9 @@ def prepared_source_unit(
         return prepare_linked(unit, selected)
     admitted = get_or("SELFBUILD_ADMITTED_STDLIB", "")
     if admitted != "":
-        allowed = Path(admitted).read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n")
+        allowed = Path(admitted).read_text("utf-8", "strict").map_err((error) => f"cannot read {error.message()}")?.split(
+            "\n",
+        )
         unit.loaves = [loaf for loaf in unit.loaves if not loaf.standard or loaf.name in allowed]
     return prepare_linked(unit, toolchain)
 
@@ -245,6 +248,7 @@ def installed_support(
     mut result: Dict[str, BuiltUnit] = {}
     if len(facets) == 0:
         return Ok(result)
+    validate_native_sources(facets)?
     request = prepared_build(
         RustBuild(
             project=facets[0].project,
@@ -275,9 +279,13 @@ def installed_support(
 
 def require_fresh_generation(toolchain: Toolchain) -> Result[None, str]:
     """Refuse support replacement once its generation is published, including before runtime bootstrap begins."""
-    support = home()?.resolve().map_err((error) => error.message())?.joinpath("native-support").0
+    support = home()?.resolve().map_err((error) => f"cannot resolve {error.message()}")?.joinpath("native-support").0
     for native in toolchain.externs:
-        directory = Path(native.path).parent().parent().resolve().map_err((error) => error.message())?.0
+        directory = Path(native.path)
+            .parent()
+            .parent()
+            .resolve()
+            .map_err((error) => f"cannot resolve {error.message()}")?.0
         if directory == support:
             return Err("native support production cannot replace an installed support generation")
         if native.name == "incan_native_runtime" or native.name.startswith("incan_stdlib_"):
@@ -344,6 +352,7 @@ def build_support(
     mut built_names: set[str] = set()
     mut directories: list[str] = []
     mut externs: list[NativeCrate] = []
+    validate_native_sources(facets)?
     for facet in facets:
         declared = rust_facet(facet.project)?
         unit = compile_library(facet, declared, output, request, built, directories)?

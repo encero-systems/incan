@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use super::super::canonical_nodes::{NodeBindingError, SemanticNodeAnchor, SemanticNodeBindings};
 use super::super::diagnostic_values::DiagnosticPositions;
-use super::{BodyLocal, CheckedBodyView, LocalOwnerKind, TypeChecker};
+use super::{BodyCheckInput, BodyLocal, CheckedBodyView, LocalOwnerKind, TypeChecker};
 use crate::ast::{Program, Span};
 
 use incan_semantics_core::stable_identity::StableDeclarationId;
@@ -30,10 +30,82 @@ pub(crate) use projections::*;
 /// The native boundary carries only field primitives. The Incan schema owns their versioned encoding.
 pub(crate) type Fields = Vec<Vec<String>>;
 
+/// Emit one pending record from the direct body-check boundary. The native adapter carries only owner/root/profile
+/// metadata and canonical field primitives; the Incan schema assigns and validates the closed family tag.
+fn produce_local(
+    checker: &TypeChecker,
+    program: &Program,
+    owner: Span,
+    local: &BodyLocal,
+) -> Result<Fields, NodeBindingError> {
+    let positions = Positions::for_local(checker, program, owner, local)?;
+    let mut fields = local_fields(&positions, local)?;
+    fields.push(vec!["status".into(), String::new(), "pending".into(), "true".into()]);
+    fields.sort();
+    fields.insert(
+        0,
+        vec![
+            "header".into(),
+            positions.nodes.owner().render_compact(),
+            positions.nodes.root().to_owned(),
+            "incan.checker-free-functions/10".into(),
+        ],
+    );
+    Ok(fields)
+}
+
 impl TypeChecker {
+    /// Publish the local record emitted by one just-completed callable producer. The index is returned by that exact
+    /// invocation, so this boundary never searches the settled body inventory or observes a sibling owner.
+    pub(in crate::typechecker) fn produce_local_record(&mut self, program: &Program, owner: Span, index: usize) {
+        let produced = {
+            let Some(BodyCheckInput::Local(local)) = self.body_checks.get(index) else {
+                tracing::debug!(target: "incan::invocation", ?owner, index, "local record output is missing");
+                return;
+            };
+            produce_local(self, program, owner, local)
+        };
+        match produced {
+            Ok(fields) => {
+                self.produced_local_records.insert(owner, fields);
+                self.check_work.local_record_evaluations += 1;
+            }
+            Err(error) => {
+                tracing::debug!(target: "incan::invocation", ?owner, ?error, "local record production refused");
+            }
+        }
+    }
+
     /// Borrow the declaration record emitted by this activation's declaration producer.
     pub(crate) fn produced_declaration_record(&self, owner: Span) -> Option<&Fields> {
         self.produced_declaration_records.get(&owner)
+    }
+
+    /// Borrow the local record emitted directly by this activation's body-check producer.
+    pub(crate) fn produced_local_record(&self, owner: Span) -> Option<&Fields> {
+        self.produced_local_records.get(&owner)
+    }
+
+    /// Borrow either the value evaluated in this activation or an independently validated selected predecessor.
+    pub(crate) fn available_local_record(&self, owner: Span) -> Option<&Fields> {
+        self.produced_local_records
+            .get(&owner)
+            .or_else(|| self.selected_local_records.get(&owner))
+    }
+
+    /// Retain one selected local value for republishing without treating selection as producer execution.
+    pub(crate) fn retain_local_record(&mut self, owner: Span, fields: Fields) {
+        self.selected_local_records.insert(owner, fields);
+    }
+
+    /// Borrow the final record emitted directly by this activation's settlement producer.
+    pub(crate) fn produced_final_record(&self, owner: Span) -> Option<&Fields> {
+        self.produced_final_records.get(&owner)
+    }
+
+    /// Clone the explicit refusal returned by this activation's direct final producer.
+    pub(crate) fn final_record_refusal(&self, owner: Span) -> Option<NodeBindingError> {
+        self.final_record_refusals.get(&owner).cloned()
     }
 
     /// Retain one producer-validated declaration record until its source-order owner consumes it.
@@ -57,9 +129,7 @@ impl TypeChecker {
             return Ok(false);
         };
         let positions = Positions::new(self, program, owner, true)?;
-        let NativeOwner::Settled(restored) = restore(&positions, program, owner, &fields)? else {
-            return Err(NodeBindingError::MissingNode);
-        };
+        let restored = restore(&positions, program, owner, &fields)?;
         let binding = restored.binding.ok_or(NodeBindingError::MissingOwner)?;
         if self.declaration_view().function(owner) != Some(&binding)
             || restored.defaults != default_writers(program, owner)?
@@ -141,34 +211,86 @@ impl Positions {
         // Declaration records are restored before the function scope is entered. Mint the current activation's
         // parameter handles from the symbol table's next scope index so stored nested identities bind without
         // running annotation/default checking or creating the scope early.
-        let declaration_bindings = if declaration {
-            program
-                .declarations
-                .iter()
-                .find(|declaration| declaration.span == owner)
-                .and_then(|declaration| match &declaration.node {
-                    crate::ast::Declaration::Function(function) => Some(function),
-                    _ => None,
-                })
-                .into_iter()
-                .flat_map(|function| &function.params)
-                .map(|parameter| CanonicalSymbolId {
-                    namespace: SymbolNamespace::OrdinaryLexical,
-                    origin: checker.symbols.declaration_origin(),
-                    declaration_name: parameter.node.name.clone(),
-                    kind: SemanticSourceTargetKind::Parameter,
-                    scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
-                    declaration_span: parameter.span.into(),
-                })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
+        let declaration_bindings = program
+            .declarations
+            .iter()
+            .find(|declaration| declaration.span == owner)
+            .and_then(|declaration| match &declaration.node {
+                crate::ast::Declaration::Function(function) => Some(function),
+                _ => None,
+            })
+            .into_iter()
+            .flat_map(|function| &function.params)
+            .map(|parameter| {
+                (0..checker.symbols.all_symbols().len())
+                    .filter_map(|index| checker.symbols.identity_of(index))
+                    .find(|canonical| {
+                        canonical.kind == SemanticSourceTargetKind::Parameter
+                            && canonical.origin == checker.symbols.declaration_origin()
+                            && canonical.declaration_span == parameter.span.into()
+                    })
+                    .cloned()
+                    .unwrap_or_else(|| CanonicalSymbolId {
+                        namespace: SymbolNamespace::OrdinaryLexical,
+                        origin: checker.symbols.declaration_origin(),
+                        declaration_name: parameter.node.name.clone(),
+                        kind: SemanticSourceTargetKind::Parameter,
+                        scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
+                        declaration_span: parameter.span.into(),
+                    })
+            })
+            .collect::<Vec<_>>();
         // Real checked locals, when present, replace the pre-scope parameter handles under the same stable key.
         for (canonical, stable) in nodes.binding_identities(declaration_bindings.iter().chain(nested).chain(raw))? {
             identities.insert(stable.render_compact(), canonical);
         }
         Ok(Self { nodes, identities })
+    }
+
+    /// Bind one fresh local output's lexical identities without publishing it into the checker's pending queue.
+    fn for_local(
+        checker: &TypeChecker,
+        program: &Program,
+        owner: Span,
+        local: &BodyLocal,
+    ) -> Result<Self, NodeBindingError> {
+        let mut positions = Self::new(checker, program, owner, false)?;
+        for (canonical, stable) in positions.nodes.binding_identities(local.nested.values())? {
+            positions.identities.insert(stable.render_compact(), canonical);
+        }
+        Ok(positions)
+    }
+
+    /// Bind opaque nested identities from one authenticated local value to this revision's structural declaration
+    /// nodes. Module declarations and parameters retain their ordinary collected identities; only body-local
+    /// declarations receive activation-private handles, which are mapped back to their persisted stable identities.
+    fn for_decoded_local(
+        checker: &TypeChecker,
+        program: &Program,
+        owner: Span,
+        fields: &Fields,
+    ) -> Result<Self, NodeBindingError> {
+        let mut positions = Self::new(checker, program, owner, false)?;
+        for row in fields {
+            if row.len() != 4 || row[0] != "binding" || row[2] != "declaration" {
+                continue;
+            }
+            let span = positions.span(&row[1])?;
+            let canonical = CanonicalSymbolId {
+                namespace: SymbolNamespace::OrdinaryLexical,
+                origin: checker.symbols.declaration_origin(),
+                declaration_name: row[3].clone(),
+                kind: SemanticSourceTargetKind::Local,
+                scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
+                declaration_span: span.into(),
+            };
+            if positions.identities.insert(row[3].clone(), canonical).is_some() {
+                return Err(NodeBindingError::InvalidField(
+                    "duplicate nested declaration identity".into(),
+                ));
+            }
+        }
+        Ok(positions)
     }
 
     /// Only a checked declaration or an explicitly admitted builtin can become a persistent reference.
@@ -209,7 +331,7 @@ fn restore(
     program: &Program,
     owner: Span,
     fields: &[Vec<String>],
-) -> Result<NativeOwner, NodeBindingError> {
+) -> Result<RestoredOwner, NodeBindingError> {
     let header = fields
         .first()
         .filter(|header| header.len() == 5)
@@ -225,7 +347,7 @@ fn restore(
     }
     let kind = match header[3].as_str() {
         "declaration" => LocalOwnerKind::Declaration,
-        "final" | "local" => LocalOwnerKind::Body,
+        "final" => LocalOwnerKind::Body,
         _ => return Err(NodeBindingError::Unsupported("record stage")),
     };
     let mut rebound = Rebinding {
@@ -264,6 +386,57 @@ fn restore(
     rebound.finish(&header[3])
 }
 
+/// Rebuild one pending local producer value for its settlement activation. The value carries no finalized status,
+/// diagnostics or types; those remain owned by the settlement operation entered after this function returns.
+fn restore_pending(positions: &Positions, owner: Span, fields: &Fields) -> Result<BodyLocal, NodeBindingError> {
+    let header = fields
+        .first()
+        .filter(|header| header.len() == 5)
+        .ok_or(NodeBindingError::MissingOwner)?;
+    if header[0] != "header"
+        || header[1] != positions.nodes.owner().render_compact()
+        || header[2] != positions.nodes.root()
+        || header[3] != "local"
+        || header[4] != "incan.checker-free-functions/10"
+    {
+        return Err(NodeBindingError::Unsupported("local record header"));
+    }
+    let mut local = BodyLocal {
+        owner,
+        kind: LocalOwnerKind::Body,
+        ..BodyLocal::default()
+    };
+    let mut previous: Option<&[String]> = None;
+    let mut pending = false;
+    for row in &fields[1..] {
+        if row.len() < 4 || previous.is_some_and(|previous| previous[..3] >= row[..3]) {
+            return Err(NodeBindingError::InvalidField(
+                "canonical ordering or field width".into(),
+            ));
+        }
+        previous = Some(row);
+        if row.len() == 4 && row[0] == "status" && row[1].is_empty() && row[2] == "pending" && row[3] == "true" {
+            if pending {
+                return Err(NodeBindingError::InvalidField("duplicate pending status".into()));
+            }
+            pending = true;
+            continue;
+        }
+        restore_local(positions, &mut local, row).map_err(|error| {
+            if error == NodeBindingError::MissingNode {
+                NodeBindingError::InvalidField(format!("family={} node={} selector={}", row[0], row[1], row[2]))
+            } else {
+                error
+            }
+        })?;
+    }
+    if !pending {
+        return Err(NodeBindingError::InvalidField("missing pending status".into()));
+    }
+    local.mutation.restore_flow_graphs(&mut local.protocols);
+    Ok(local)
+}
+
 /// Rebinding owns decoded native scratch only for this activation; persistent bytes and source lifetimes stay outside.
 #[derive(Default)]
 struct Rebinding {
@@ -288,15 +461,6 @@ impl Rebinding {
         row: &[String],
     ) -> Result<(), NodeBindingError> {
         match row[0].as_str() {
-            "status"
-                if header[3] == "local"
-                    && row[1].is_empty()
-                    && row[2] == "pending"
-                    && row.len() == 4
-                    && row[3] == "true" =>
-            {
-                self.status = Some(true)
-            }
             "status" if row[1].is_empty() && row[2] == "refused" && row.len() == 4 => {
                 self.status = Some(row[3].parse::<bool>().map_err(|_| NodeBindingError::MissingNode)?)
             }
@@ -304,7 +468,7 @@ impl Rebinding {
                 self.mutation.bodies.insert(positions.canonical(&row[2])?);
             }
             "mutation" => mutation::restore(positions, &mut self.mutation, row)?,
-            "ownership" if row[2] == "contract" && header[3] != "local" => {
+            "ownership" if row[2] == "contract" => {
                 if self.ownership.is_some() || row[1] != positions.nodes.anchor(self.local.owner)?.path {
                     return Err(NodeBindingError::MissingNode);
                 }
@@ -317,14 +481,9 @@ impl Rebinding {
                     return Err(NodeBindingError::MissingNode);
                 }
             }
-            "final-type" if header[3] != "local" => self.final_type(positions, row)?,
-            "native-call"
-                if header[3] != "local"
-                    && row[1].is_empty()
-                    && row[2] == "empty"
-                    && row.len() == 4
-                    && row[3] == "true" => {}
-            "diagnostic" if header[3] != "local" => self.diagnostic(program, positions, row)?,
+            "final-type" => self.final_type(positions, row)?,
+            "native-call" if row[1].is_empty() && row[2] == "empty" && row.len() == 4 && row[3] == "true" => {}
+            "diagnostic" => self.diagnostic(program, positions, row)?,
             _ => restore_local(positions, &mut self.local, row)?,
         }
         Ok(())
@@ -394,23 +553,11 @@ impl Rebinding {
         Ok(())
     }
 
-    /// Finish as either a pending local value or an independently settled owner; no local fact is promoted by decoding.
-    fn finish(mut self, stage: &str) -> Result<NativeOwner, NodeBindingError> {
+    /// Finish one independently settled owner; pending producer values are never decoded by this adapter.
+    fn finish(mut self, stage: &str) -> Result<RestoredOwner, NodeBindingError> {
         self.local.mutation =
             super::super::ownership_contracts::mutation::MutationLocal::from_record_projection(self.mutation);
         self.local.mutation.restore_flow_graphs(&mut self.local.protocols);
-        if stage == "local" {
-            if self.status != Some(true)
-                || !self.diagnostics.is_empty()
-                || !self.warnings.is_empty()
-                || self.binding.is_some()
-                || self.ownership.is_some()
-                || !self.defaults.is_empty()
-            {
-                return Err(NodeBindingError::MissingNode);
-            }
-            return Ok(NativeOwner::Local(self.local));
-        }
         let diagnostics = ordered_diagnostics(self.diagnostics, "error")?;
         let warnings = ordered_diagnostics(self.warnings, "warning")?;
         let view = CheckedBodyView {
@@ -425,13 +572,13 @@ impl Rebinding {
         if self.status != Some(view.is_refused()) || (stage == "declaration") != self.binding.is_some() {
             return Err(NodeBindingError::MissingNode);
         }
-        Ok(NativeOwner::Settled(RestoredOwner {
+        Ok(RestoredOwner {
             view,
             binding: self.binding,
             defaults: self.defaults,
             final_types: self.final_types,
             ownership: self.ownership,
-        }))
+        })
     }
 }
 
@@ -679,31 +826,6 @@ struct RestoredOwner {
     defaults: BTreeMap<Span, (Span, String)>,
     final_types: FinalTypes,
     ownership: Option<crate::ownership_metadata::CheckedOwnershipContract>,
-}
-
-/// Pending local values are never presented as settled checked bodies, even in the test sink.
-enum NativeOwner {
-    Local(BodyLocal),
-    Settled(RestoredOwner),
-}
-
-/// Run only existing declaration and statement operations, stopping before settlement. This is a fixture baseline,
-/// never a production per-record checking entry or a mechanism for filling missing record fields.
-fn local_fixture(source: &str, name: &str) -> Result<(Program, TypeChecker, Span), NodeBindingError> {
-    let tokens = crate::lexer::lex(source).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
-    let program = crate::parser::parse(&tokens).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
-    let owner = program.declarations.iter().find(|declaration| matches!(&declaration.node, crate::ast::Declaration::Function(function) if function.name == name)).map(|declaration| declaration.span).ok_or(NodeBindingError::MissingOwner)?;
-    let mut checker = TypeChecker::new();
-    checker.reset_program_check(&program, false);
-    checker.collect_program_check_declarations(&program);
-    checker.record_program_header_facts();
-    checker.record_source_declaration_identities(&program);
-    checker.visibility_point = super::super::VisibilityPoint::Collected;
-    checker.prepare_program_body_facts();
-    for declaration in &program.declarations {
-        checker.check_environment_declaration(declaration);
-    }
-    Ok((program, checker, owner))
 }
 
 /// Selected final module refinements for one body's own expression/reference domains. These are distinct from the

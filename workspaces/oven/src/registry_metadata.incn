@@ -105,7 +105,7 @@ pub def bound_entries(units: list[RegistryUnit], paths: list[str]) -> Result[lis
     rustc = rust_compiler(load_toolchain()?)
     mut result: list[str] = []
     for path in paths:
-        physical = Path(path).resolve().map_err((error) => error.message())?.0
+        physical = Path(path).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0
         mut entry = ""
         if physical in artifacts:
             entry = artifacts[physical]

@@ -30,6 +30,13 @@ from lifecycle import (
     lifecycle,
 )
 from protocol import Admission, CompileRequest, MISMATCH, Reply, admit, encode_ready, encode_reply
+from record_protocol import (
+    RecordAdmission,
+    RecordMessage,
+    accept_record_reply,
+    admit_record,
+    encode_record_message,
+)
 
 # The seconds a connected caller has to send its request, and to take the reply.
 const READ_SECONDS: u64 = 5
@@ -68,16 +75,25 @@ pub enum Phase:
     Ended
 
 
+pub enum WorkerActivation:
+    """One admitted compile command or record request, never both protocols for one activation."""
+
+    Compile(CompileRequest)
+    Record(RecordMessage)
+
+
 pub class WorkerHost:
     """One worker's socket, its policy state and the activation it is running, if any."""
 
     pub generation: str
     pub phase: Phase
+    home: str
     socket: SocketFile
     listener: Listener
     owner: u32
     policy: Lifecycle
     active: Option[Connection] = None
+    active_record: Option[RecordMessage] = None
     retire_after: bool = false
     observer: Option[Emitter] = None
     activation_clock: Option[Clock] = None
@@ -85,6 +101,7 @@ pub class WorkerHost:
     @staticmethod
     pub def serving(
         generation: str,
+        home: str,
         socket: SocketFile,
         listener: Listener,
         owner: u32,
@@ -95,6 +112,7 @@ pub class WorkerHost:
         return WorkerHost(
             generation=generation,
             phase=Phase.Serving,
+            home=home,
             socket=socket,
             listener=listener,
             owner=owner,
@@ -102,7 +120,11 @@ pub class WorkerHost:
             observer=observer,
         )
 
-    pub def next(mut self) -> Option[CompileRequest]:
+    pub def selected_home(self) -> str:
+        """Return the explicit home this resident worker was started to serve."""
+        return self.home
+
+    pub def next(mut self) -> Option[WorkerActivation]:
         """
         The next request for the compiler entry, or `None` once the worker has retired.
 
@@ -124,9 +146,28 @@ pub class WorkerHost:
         return None
 
     pub def complete(mut self, outcome: ActivationOutcome, footprint: int) -> None:
-        """Answer the open activation, if there is one."""
-        if self.active is not None:
-            self.settle(outcome, footprint)
+        """Answer an open compile activation; using this completion for a record request is a protocol fault."""
+        if self.active is None:
+            return
+        if self.active_record is not None:
+            self.protocol_fault()
+            return
+        self.settle(outcome, footprint)
+
+    pub def complete_record(mut self, reply: RecordMessage, footprint: int) -> None:
+        """Answer one record request only with a member of that request's closed reply set."""
+        if self.active is None:
+            return
+        match self.active_record:
+            None =>
+                self.protocol_fault()
+                return
+            Some(request) =>
+                match accept_record_reply(request, reply):
+                    Err(_) =>
+                        self.protocol_fault()
+                        return
+                    Ok(accepted) => self.settle_record(accepted, footprint)
 
     def settle(mut self, outcome: ActivationOutcome, footprint: int) -> None:
         """
@@ -144,6 +185,30 @@ pub class WorkerHost:
             Some(caller) => self.answer(caller, settled.reply)
             None => pass
         self.active = None
+        self.active_record = None
+
+    def settle_record(mut self, reply: RecordMessage, footprint: int) -> None:
+        """Apply ordinary worker lifetime policy, then send the already validated typed record reply."""
+        self.finish_observation()
+        settled = self.policy.settle(ActivationOutcome.Exited(0), footprint)
+        match settled.retirement:
+            Some(reason) => self.retire(reason)
+            None => pass
+        match self.active:
+            Some(caller) => self.answer_record(caller, reply)
+            None => pass
+        self.active = None
+        self.active_record = None
+
+    pub def protocol_fault(mut self) -> None:
+        """End the unsafe worker and close its caller without inventing a reply from another request's set."""
+        self.finish_observation()
+        self.retire(Retirement.Unsafe)
+        match self.active:
+            Some(caller) => hang_up(caller)
+            None => pass
+        self.active = None
+        self.active_record = None
 
     def finish_observation(mut self) -> None:
         """Flush one activation before its reply, so the caller's request span encloses the worker record."""
@@ -195,7 +260,7 @@ pub class WorkerHost:
                 Err(_) => return None
         return None
 
-    def receive(mut self, connection: Connection) -> Option[CompileRequest]:
+    def receive(mut self, connection: Connection) -> Option[WorkerActivation]:
         """
         The request one caller sends, admitted, or `None` when the caller was refused or answered.
 
@@ -217,21 +282,38 @@ pub class WorkerHost:
                 self.answer(caller, Reply.Refused(reason))
                 return None
             Ok(payload) =>
-                match admit(payload, self.generation):
-                    Admission.Refused(reason) =>
-                        self.answer(caller, Reply.Refused(reason))
-                        return None
-                    Admission.Incompatible =>
-                        # 3. The socket is withdrawn before the refusal, so its caller starts a fresh worker.
-                        self.retire(Retirement.Incompatible)
-                        self.answer(caller, Reply.Refused(MISMATCH))
-                        return None
-                    Admission.Admitted(request) =>
-                        # 4. The caller stays connected until its activation is answered.
+                match admit_record(payload, self.generation):
+                    RecordAdmission.Admitted(request) =>
+                        # 4. A record activation retains its exact request until the host validates the reply.
                         self.activation_clock = trace_begin(self.observer is not None)
                         self.active = Some(caller)
-                        self.retire_after = request.retire_after
-                        return Some(request)
+                        self.active_record = Some(request)
+                        self.retire_after = false
+                        return Some(WorkerActivation.Record(request))
+                    RecordAdmission.Incompatible =>
+                        self.retire(Retirement.Incompatible)
+                        hang_up(caller)
+                        return None
+                    RecordAdmission.ProtocolFault =>
+                        self.retire(Retirement.Unsafe)
+                        hang_up(caller)
+                        return None
+                    RecordAdmission.NotRecordProtocol =>
+                        match admit(payload, self.generation):
+                            Admission.Refused(reason) =>
+                                self.answer(caller, Reply.Refused(reason))
+                                return None
+                            Admission.Incompatible =>
+                                # 3. The socket is withdrawn before the refusal, so its caller starts a fresh worker.
+                                self.retire(Retirement.Incompatible)
+                                self.answer(caller, Reply.Refused(MISMATCH))
+                                return None
+                            Admission.Admitted(request) =>
+                                # 4. The caller stays connected until its activation is answered.
+                                self.activation_clock = trace_begin(self.observer is not None)
+                                self.active = Some(caller)
+                                self.retire_after = request.retire_after
+                                return Some(WorkerActivation.Compile(request))
 
     def served_peer(self, caller: Connection) -> bool:
         """Whether the OS reports the caller as the user this worker serves."""
@@ -243,6 +325,12 @@ pub class WorkerHost:
         """Send one reply, marked retired once the socket is withdrawn, then close the connection."""
         mut answered = caller
         delivered(answered.send(encode_reply(reply, self.phase != Phase.Serving)))
+        hang_up(answered)
+
+    def answer_record(mut self, caller: Connection, reply: RecordMessage) -> None:
+        """Send one typed record reply and close its activation; lifecycle never adds fields to this schema."""
+        mut answered = caller
+        delivered(answered.send(encode_record_message(reply, self.generation)))
         hang_up(answered)
 
     def retire(mut self, reason: Retirement) -> None:
@@ -286,6 +374,11 @@ pub def start(arguments: list[str], baseline: int) -> Result[WorkerHost, str]:
     )
 
 
+pub def selected_home(host: WorkerHost) -> str:
+    """Expose the resident worker's explicit home to its native executable entry."""
+    return host.selected_home()
+
+
 pub def host_for(settings: HostSettings) -> Result[WorkerHost, str]:
     """
     A listening worker host.
@@ -298,6 +391,7 @@ pub def host_for(settings: HostSettings) -> Result[WorkerHost, str]:
     bound = socket_file(settings.socket, settings.home)?
     host = WorkerHost.serving(
         settings.generation,
+        settings.home,
         socket=bound,
         listener=listener,
         owner=served_owner(bound.uid, settings.owner),
@@ -321,6 +415,16 @@ def served_owner(socket_owner: u32, selected: Option[u32]) -> u32:
 
 pub def next_request(mut host: WorkerHost) -> Option[CompileRequest]:
     """The next request for the compiler entry to run, or `None` once the worker has retired and should exit."""
+    match host.next():
+        Some(WorkerActivation.Compile(request)) => return Some(request)
+        Some(WorkerActivation.Record(_)) =>
+            host.protocol_fault()
+            return None
+        None => return None
+
+
+pub def next_activation(mut host: WorkerHost) -> Option[WorkerActivation]:
+    """The next compile or record activation for the compiler entry, or `None` once the worker retires."""
     return host.next()
 
 
@@ -330,6 +434,11 @@ pub def complete(mut host: WorkerHost, outcome: ActivationOutcome, footprint: in
     (negative when unknown), and apply the lifecycle.
     """
     host.complete(outcome, footprint)
+
+
+pub def complete_record(mut host: WorkerHost, reply: RecordMessage, footprint: int) -> None:
+    """Validate and answer the open record activation, applying the worker's ordinary lifetime policy."""
+    host.complete_record(reply, footprint)
 
 
 pub def caller_watch(mut host: WorkerHost) -> Option[CallerWatch]:

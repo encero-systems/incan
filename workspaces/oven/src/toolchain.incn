@@ -32,6 +32,7 @@ from home_paths import TOOLCHAIN, home, toolchain_directory as selected_toolchai
 from observation import observe
 from json_fields import array, field, strings, text_field, required_items, required_text
 from native_closure_input import NativeClosureInput
+from compiler_record_admission import CompilerRecordPin
 pub from toolchain_types import NativeCrate, Toolchain
 from unit_publication import (
     PayloadAdmission,
@@ -96,7 +97,7 @@ pub def load_toolchain() -> Result[Toolchain, str]:
     """
     mut directory = toolchain_directory()?
     if directory.is_dir():
-        directory = directory.resolve().map_err((error) => error.message())?
+        directory = directory.resolve().map_err((error) => f"cannot resolve {error.message()}")?
     return load_toolchain_at(directory)
 
 
@@ -229,10 +230,10 @@ def admit_toolchain(document: JsonValue, directory: Path) -> Result[list[Path], 
     loaves = directory.joinpath("loaves")
     if not loaves.is_dir():
         return Ok([paths[name] for name in sorted([name for name in paths.keys()])])
-    for package in loaves.iterdir().map_err((error) => error.message())?:
+    for package in loaves.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
         if not package.is_dir():
             continue
-        for profile in package.iterdir().map_err((error) => error.message())?:
+        for profile in package.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
             if profile.is_dir():
                 for artifact in admit_provider(profile)?:
                     paths[artifact.0] = artifact
@@ -242,7 +243,7 @@ def admit_toolchain(document: JsonValue, directory: Path) -> Result[list[Path], 
 def admit_provider(directory: Path) -> Result[list[Path], str]:
     """Admit every transported payload with a producer record before a consumer names its identity."""
     mut paths: list[Path] = []
-    for record in directory.iterdir().map_err((error) => error.message())?:
+    for record in directory.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
         if record.is_file() and record.name().endswith(".oven-unit"):
             path = Path(record.0[:-10])
             import_publication(path)?
@@ -325,8 +326,21 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             native_closures=NativeClosureInput(),
             registry_lock=optional_path(document, "registry_lock", directory)?,
             c_compiler=optional_path(document, "c_compiler", directory)?,
+            compiler_records=optional_compiler_records(document, directory)?,
         ),
     )
+
+
+def optional_compiler_records(document: JsonValue, directory: Path) -> Result[Option[CompilerRecordPin], list[str]]:
+    """Locate the installed compiler-record store and retain its exact sealed-set digest from this pin."""
+    match document.get("compiler_records"):
+        None => return Ok(None)
+        Some(value) =>
+            root = text_field(value, "root", ["compiler_records"])?
+            digest = text_field(value, "digest", ["compiler_records"])?
+            if root == "" or digest == "":
+                return Err(["compiler_records"])
+            return Ok(Some(CompilerRecordPin(root=located(directory, root), digest=digest)))
 
 
 def optional_path(document: JsonValue, key: str, directory: Path) -> Result[str, list[str]]:

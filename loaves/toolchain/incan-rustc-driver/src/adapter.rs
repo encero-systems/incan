@@ -67,6 +67,8 @@ struct Callbacks {
     development: bool,
     loaded: Vec<(PathBuf, String)>,
     timing: crate::native_timing::Timing,
+    rustc_started: std::time::Instant,
+    codegen_started: Option<std::time::Instant>,
     /// A program has no consumers of its item paths, so its callables may live in per-file modules. A library's paths
     /// are published, and a test harness selects each test by its module path.
     partition: bool,
@@ -174,11 +176,13 @@ pub fn compile(
         development: shared_store.is_some(),
         loaded: Vec::new(),
         timing,
+        rustc_started: std::time::Instant::now(),
+        codegen_started: None,
         partition: kind == UnitKind::Program,
     };
     let capture = crate::native_timing::Capture::begin();
     let result = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks));
-    drop(capture);
+    capture.finish(callbacks.codegen_started.map(|started| started.elapsed()));
     callbacks.timing.mark("rustc_codegen_link_teardown");
     *PLAN.lock().map_err(|_| DriverError::State)? = None;
     if let Some(error) = FAILURE.lock().map_err(|_| DriverError::State)?.take() {

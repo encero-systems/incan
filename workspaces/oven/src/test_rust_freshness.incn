@@ -13,6 +13,7 @@ from rust_freshness import reconciled_rust_key
 from rust_units import (
     compile_rust_library,
     library_compile_arguments,
+    publish_native_inputs,
     require_coherent_installed_producer,
     rust_library_graph_key,
     rust_library_producer_key,
@@ -178,6 +179,10 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     # The graph-wide preflight uses this same proof before any output directory or replacement producer exists.
     preflight = require_coherent_installed_producer(facet, declared, request, built, [])?
     assert preflight.reused and preflight.artifact == artifact.0
+    request.profile = "debug"
+    debug_consumer = require_coherent_installed_producer(facet, declared, request, built, [])?
+    assert debug_consumer.reused and debug_consumer.artifact == artifact.0
+    request.profile = "release"
     request.native_compiler = "different pinned native compiler"
     match require_coherent_installed_producer(facet, declared, request, built, []):
         Ok(_) =>
@@ -191,6 +196,10 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     retained = compile_rust_library(facet, declared, output, request, built, [])?
     assert retained.reused and retained.artifact == artifact.0
     assert not output.is_dir()
+    closure = installed.joinpath("native.json")
+    write(closure, "immutable installed closure")?
+    publish_native_inputs(facet, request, built, [], retained)?
+    assert read(closure)? == "immutable installed closure"
     verify_relocated_rust_producer(facet, declared, output, request, built, artifact)?
     verify_installed_graph_refresh(facet, declared, output, request, built, artifact, graph, dependencies, included)?
     # 3. Each proof dimension independently prevents reuse.

@@ -63,7 +63,7 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     # 1. The compiler owns whole-unit production; the engine holds no semantic closure after this activation.
     run = hexlify(pending.request)
     directory = store.joinpath("engine/console")
-    directory.mkdir(true, true).map_err((error) => error.message())?
+    directory.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
     producing = begin()
     produced = obtain(
         store,

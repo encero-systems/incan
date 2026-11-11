@@ -1,0 +1,40 @@
+"""File-operation diagnostics retain the attempted operation and exact path."""
+
+from files import make_directory, read, remove, write
+from scratch import scratch_directory
+from std.fs import Path
+from std.testing import fail
+
+
+pub def test_file_errors_name_operation_and_path() -> Result[None, str]:
+    """
+    Check the shared file boundary.
+
+    1. Read and remove a missing file.
+    2. Write below a missing parent.
+    3. Create a directory below a file.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    # 1. Missing-input failures identify what was attempted and where.
+    missing = root.joinpath("missing.txt")
+    require_context(read(missing), "read", missing)
+    require_context(remove(missing), "remove", missing)
+    require_context(missing.resolve().map_err((error) => f"cannot resolve {error.message()}"), "resolve", missing)
+    # 2. Output failures retain the intended destination, not only the operating-system message.
+    unwritable = root.joinpath("missing/output.txt")
+    require_context(write(unwritable, "content"), "write", unwritable)
+    # 3. Directory creation distinguishes the directory from its blocking parent file.
+    blocker = root.joinpath("blocker")
+    write(blocker, "file")?
+    directory = blocker.joinpath("child")
+    require_context(make_directory(directory), "create directory", directory)
+    return Ok(None)
+
+
+def require_context[T](result: Result[T, str], operation: str, path: Path) -> None:
+    """Require a refused file operation to identify its operation and exact path."""
+    match result:
+        Ok(_) => fail(f"{operation} unexpectedly succeeded for {path.0}")
+        Err(reason) =>
+            assert f"cannot {operation}" in reason and path.0 in reason, reason

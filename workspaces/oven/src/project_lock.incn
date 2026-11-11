@@ -94,10 +94,10 @@ pub def ensure_project_lock(
 def root_project(path: Path) -> Result[Option[Path], str]:
     """Resolve only the command's root project; dependency roots are never consulted for their own locks."""
     if path.is_dir() and path.joinpath("loaf.toml").is_file():
-        return Ok(Some(path.resolve().map_err((error) => error.message())?))
+        return Ok(Some(path.resolve().map_err((error) => f"cannot resolve {error.message()}")?))
     match project_root_of(path):
         None => return Ok(None)
-        Some(root) => return Ok(Some(root.resolve().map_err((error) => error.message())?))
+        Some(root) => return Ok(Some(root.resolve().map_err((error) => f"cannot resolve {error.message()}")?))
 
 
 def reconcile(
@@ -286,7 +286,7 @@ def local_entry(
     )
 
 
-def toolchain_entry(
+pub def toolchain_entry(
     unit: RegistryUnit,
     units: list[RegistryUnit],
     facets: list[LocalFacet],
@@ -311,6 +311,7 @@ def toolchain_entry(
             name=unit.loaf,
             version=unit.version,
             origin="toolchain",
+            registry=unit.registry,
             entry=unit.entry,
             dependencies=dependencies,
             features=[

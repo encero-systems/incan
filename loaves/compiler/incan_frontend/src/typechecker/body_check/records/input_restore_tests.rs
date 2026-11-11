@@ -1,6 +1,6 @@
 //! Native restoration independently authenticates the retained invalid-graph fault.
 
-use super::super::{BodyLocal, Positions, fixture, project_final};
+use super::super::{BodyLocal, Positions, fixture};
 use super::{InputFlow, Reader, restore};
 
 /// A graph with an invalid entry restores only as its exact recomputed refusal, never as successful analysis.
@@ -9,7 +9,10 @@ fn invalid_graph_restore_requires_the_exact_analysis_fault() -> Result<(), Box<d
     let source = "def together(left: Borrowed[int], right: Borrowed[int]) -> bool:\n    return left == right\n";
     let (program, checker, owner) = fixture(source, "together")?;
     let positions = Positions::new(&checker, &program, owner, false)?;
-    let fields = project_final(&checker, &program, owner)?;
+    let fields = checker
+        .produced_final_record(owner)
+        .cloned()
+        .ok_or("missing final record")?;
     let checked = fields
         .into_iter()
         .find(|row| row.first().is_some_and(|family| family == "input-flow"))
@@ -65,7 +68,10 @@ fn owned_initializer_restore_requires_the_exact_source_event() -> Result<(), Box
     let source = "def keep(value: Owned[int]) -> int:\n    retained: Owned[int] = value\n    return retained\n";
     let (program, checker, owner) = fixture(source, "keep")?;
     let positions = Positions::new(&checker, &program, owner, false)?;
-    let fields = project_final(&checker, &program, owner)?;
+    let fields = checker
+        .produced_final_record(owner)
+        .cloned()
+        .ok_or("missing final record")?;
     let checked = fields
         .into_iter()
         .find(|row| row.first().is_some_and(|family| family == "input-flow"))
@@ -122,7 +128,10 @@ fn operation_dependency_restore_requires_its_exact_analysis_fault() -> Result<()
         "def observe(value: Borrowed[str]) -> int:\n    let view: Borrowed[str] = value\n    return len(view)\n";
     let (program, checker, owner) = fixture(source, "observe")?;
     let positions = Positions::new(&checker, &program, owner, false)?;
-    let fields = project_final(&checker, &program, owner)?;
+    let fields = checker
+        .produced_final_record(owner)
+        .cloned()
+        .ok_or("missing final record")?;
     let checked = fields
         .into_iter()
         .find(|row| row.first().is_some_and(|family| family == "input-flow"))
@@ -329,7 +338,10 @@ fn parameter_requirements_preserve_conflicts_and_identity() -> Result<(), Box<dy
         "def add(value: int) -> int:\n    return value\ndef use(value: Borrowed[int]) -> int:\n    return add(value)\n";
     let (program, checker, owner) = fixture(source, "use")?;
     let positions = Positions::new(&checker, &program, owner, false)?;
-    let fields = project_final(&checker, &program, owner)?;
+    let fields = checker
+        .produced_final_record(owner)
+        .cloned()
+        .ok_or("missing final record")?;
     let row = fields
         .iter()
         .find(|row| row.get(2).is_some_and(|selector| selector == "parameter-requirement"))
@@ -402,9 +414,7 @@ fn result_requirement_types_roundtrip_without_widening_record_owners() -> Result
     let (program, checker, owner) = fixture(source, "forward")?;
     assert!(matches!(
         Positions::new(&checker, &program, owner, false),
-        Err(NodeBindingError::Unsupported(
-            "modified, generic, or generated owner"
-        ))
+        Err(NodeBindingError::Unsupported("modified, generic, or generated owner"))
     ));
     Ok(())
 }

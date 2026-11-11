@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use incan_lang::lang::surface::iterator_methods::{self, IteratorMethodId};
 use incan_lang::lang::types::ownership::OwnershipMode;
-use incan_semantics_core::{HirSourceSpan, IncanInputAccess};
+use incan_semantics_core::{HirSourceSpan, IncanInputAccess, SemanticSourceTargetKind};
 
 use super::{CheckedInputBody, flow};
 use crate::ast::{
@@ -440,6 +440,20 @@ impl SourceAccesses<'_, '_> {
             };
             return self.access(expression.span, &place, through, access);
         }
+        if self
+            .proof
+            .facts
+            .resolved_identity(expression.span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+        {
+            for argument in arguments {
+                let CallArg::Positional(value) = argument else {
+                    return Err("source access needs positional enum payloads");
+                };
+                self.expression(value, false)?;
+            }
+            return Ok(());
+        }
         let invocation = self
             .proof
             .graph
@@ -510,11 +524,12 @@ impl SourceAccesses<'_, '_> {
         if let Some(invocation) = self.proof.graph.invocations.get(&expression.span) {
             return self.invocation_arguments(invocation, arguments);
         }
+        let carrier = super::super::builtins::carrier_constructor(self.proof.facts, callee).is_some();
         for argument in arguments {
             let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
                 return Err("source access needs fixed call arguments");
             };
-            self.expression(value, false)?;
+            self.expression(value, carrier)?;
         }
         Ok(())
     }

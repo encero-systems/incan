@@ -3,21 +3,38 @@
 from std.fs import Path
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
+from native_build import (
+    LOWERING_RESERVATION_BYTES,
+    PROJECT_RESERVATION_BYTES,
+    STANDARD_RESERVATION_BYTES,
+    StandardGeneration,
+    StandardProfile,
+    standard_build_waves,
+    standard_profiles,
+)
 from release_support import (
+    FAMILIES,
     BaselineReport,
     Counts,
     append_bytes,
     check_baseline,
     parse_release_options,
     parse_verification_options,
+    reference_cache_identity,
+    reference_cache_root,
+    reuse_reference_log,
     release_receipt,
+    release_rust_cache_root,
+    reserved_admitted,
     require_candidate_census,
     same_bytes,
     shared_relocated_sysroot,
+    store_reference_log,
     tree_bytes,
     tree_digest,
     verification_program,
 )
+from verify_installation import census_arguments
 
 const SHA: str = "0123456789abcdef0123456789abcdef01234567"
 const COMPLETE_LOG: str = """PASS behavior/a/a
@@ -30,6 +47,41 @@ PASS format/a/a
 PASS graph/a/a
 total: 8 passed, 0 failed, 0 pending
 """
+
+
+def test_release_build_admission_uses_declared_lowering_project_and_standard_memory() -> Result[None, str]:
+    """Lowering reserves 6 GiB while project and standard work reserve 2 GiB under one shared budget."""
+    gib = 1073741824
+    assert LOWERING_RESERVATION_BYTES == 6 * gib
+    assert PROJECT_RESERVATION_BYTES == 2 * gib
+    assert STANDARD_RESERVATION_BYTES == 2 * gib
+    reservations = [LOWERING_RESERVATION_BYTES, PROJECT_RESERVATION_BYTES, STANDARD_RESERVATION_BYTES]
+    assert reserved_admitted(reservations, [0, 1, 2], [], 3, 10 * gib) == [0, 1, 2]
+    assert reserved_admitted(reservations, [1, 2], [LOWERING_RESERVATION_BYTES], 3, 8 * gib) == [1]
+    waves = standard_build_waves()
+    assert "vocab" not in waves[0]
+    assert "system" in waves[0]
+    assert waves[1] == ["codecs", "compression", "data"]
+    assert waves[2] == ["vocab"]
+    assert waves[3] == ["interop"]
+    return Ok(None)
+
+
+def test_release_census_shares_compilation_without_dropping_a_family() -> Result[None, str]:
+    """The installed census keeps every family while leaving shared compilation enabled across its 1,491 cases."""
+    arguments = census_arguments(Path("oven"), Path("fixtures"), Path("scratch"), 4, 120)
+    assert "--isolated" not in arguments
+    assert arguments[0:8] == ["oven", "fixtures", "--scratch", "scratch", "--jobs", "4", "--timeout", "120"]
+    assert arguments[8] == "--serial-families"
+    assert arguments[9:] == [family for family in FAMILIES]
+    return Ok(None)
+
+
+def test_release_profiles_keep_seed_consumption_and_candidate_shipping_distinct() -> Result[None, str]:
+    """The seed generation needs release providers; the candidate ships release and debug providers."""
+    assert standard_profiles(StandardGeneration.SourceClosure) == [StandardProfile.Release]
+    assert standard_profiles(StandardGeneration.Candidate) == [StandardProfile.Release, StandardProfile.Debug]
+    return Ok(None)
 
 
 def test_release_arguments_keep_fixed_point_and_process_budgets_explicit() -> Result[None, str]:
@@ -147,6 +199,41 @@ def test_byte_comparison_reads_complete_content() -> Result[None, str]:
     return Ok(None)
 
 
+def test_reference_cache_identity_covers_seed_bundle_and_committed_contract_tree() -> Result[None, str]:
+    """Changing any seed component or the committed contract tree yields a distinct reference cache key."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    oven = temporary.path().joinpath("incan")
+    lsp = temporary.path().joinpath("incan-lsp")
+    manifest = temporary.path().joinpath("toolchain.json")
+    oven.write_bytes(b"oven-a").map_err((error) => error.message())?
+    lsp.write_bytes(b"lsp-a").map_err((error) => error.message())?
+    manifest.write_bytes(b"manifest-a").map_err((error) => error.message())?
+    original = reference_cache_identity(oven, lsp, manifest, "tree-a")?
+    assert reference_cache_root(temporary.path()).0 == temporary.path().joinpath("cache/release-reference").0
+    assert release_rust_cache_root(temporary.path()).0 == temporary.path().joinpath("cache/release-rust").0
+    assert reference_cache_identity(oven, lsp, manifest, "tree-b")? != original
+    lsp.write_bytes(b"lsp-b").map_err((error) => error.message())?
+    assert reference_cache_identity(oven, lsp, manifest, "tree-a")? != original
+    return Ok(None)
+
+
+def test_reference_cache_store_moves_then_reuses_complete_evidence() -> Result[None, str]:
+    """Cache publication retains the release log, and reuse materializes the same complete bytes."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    log = temporary.path().joinpath("release/reference-contracts.log")
+    cached = temporary.path().joinpath("cache/key/contracts.log")
+    reused = temporary.path().joinpath("next/reference-contracts.log")
+    log.parent().mkdir(true, true).map_err((error) => error.message())?
+    reused.parent().mkdir(true, true).map_err((error) => error.message())?
+    log.write_text(COMPLETE_LOG, "utf-8", "strict", None).map_err((error) => error.message())?
+    store_reference_log(log, cached)?
+    assert log.read_text("utf-8", "strict").map_err((error) => error.message())? == COMPLETE_LOG
+    assert cached.read_text("utf-8", "strict").map_err((error) => error.message())? == COMPLETE_LOG
+    reuse_reference_log(cached, reused)?
+    assert reused.read_text("utf-8", "strict").map_err((error) => error.message())? == COMPLETE_LOG
+    return Ok(None)
+
+
 def test_tree_measurement_walks_regular_files_once_and_records_bytes() -> Result[None, str]:
     """Tree evidence measures bytes, hashes content, and reuses only a verified read-only relocated copy."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
@@ -192,7 +279,6 @@ def test_tree_measurement_walks_regular_files_once_and_records_bytes() -> Result
         .joinpath("update-hashes/tree")
         .write_text("pinned\n", "utf-8", "strict", None)
         .map_err((error) => error.message())?
-
     make_tree_writable(cache)?
     cached.write_bytes(b"changed").map_err((error) => error.message())?
     match shared_relocated_sysroot(tree, cache):

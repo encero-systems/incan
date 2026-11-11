@@ -3,12 +3,35 @@
 //! Each source module is collected once into a sealed interface. Downstream checkers install those immutable
 //! interfaces directly; the deterministic snapshot remains the comparison oracle for the retained legacy fallback.
 
-use std::fmt::Debug;
-
 use super::*;
 
+mod stable_encoding;
+
+use serde::Serialize;
+use stable_encoding::stable_encode;
+
 /// Schema version for the complete dependency-interface snapshot compared by the shadow oracle.
-pub const MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION: u32 = 3;
+pub const MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION: u32 = 4;
+
+/// Build-scoped immutable preparations shared by the fresh checkers of one collected module graph.
+///
+/// The cache contains only manifest-derived dependency facts. It never stores local declarations, lexical imports,
+/// diagnostics produced by a source module, or a merged source dependency closure.
+#[derive(Clone, Debug, Default)]
+pub struct DependencyInterfacePreparationCache {
+    pub(super) foreign_remappings: Arc<std::sync::Mutex<HashMap<String, Arc<PreparedForeignRemapping>>>>,
+}
+
+/// One compiled Loaf's prepared foreign nominal remapping and the effects its installation replays.
+#[derive(Clone, Debug)]
+pub(super) struct PreparedForeignRemapping {
+    pub(super) remapping: Arc<HashMap<String, String>>,
+    pub(super) replacing_identities: Arc<HashMap<String, PublicLibraryTypeIdentity>>,
+    pub(super) preserving_identities: Arc<HashMap<String, PublicLibraryTypeIdentity>>,
+    pub(super) appending_types: Arc<HashMap<String, Vec<TypeInfo>>>,
+    pub(super) preserving_types: Arc<HashMap<String, Vec<TypeInfo>>>,
+    pub(super) errors: Arc<[crate::diagnostics::CompileError]>,
+}
 
 /// One provider's sealed dependency interface, built once from its successful local checker.
 ///
@@ -95,7 +118,7 @@ impl ModuleDependencyInterfaceSnapshot {
         for table in &self.tables {
             rendered.push_str(&format!("[{}] {}\n", table.name, table.entries.len()));
             for entry in &table.entries {
-                rendered.push_str(entry);
+                rendered.push_str(&hex::encode(entry));
                 rendered.push('\n');
             }
         }
@@ -109,7 +132,7 @@ pub struct DependencyInterfaceTableSnapshot {
     /// Stable table name used by mismatch diagnostics.
     pub name: &'static str,
     /// Complete key/value records, sorted unless the source table is intrinsically ordered.
-    pub entries: Vec<String>,
+    pub entries: Vec<Vec<u8>>,
 }
 
 /// Exact state contributed while one provider was collected inside its component builder.
@@ -120,6 +143,11 @@ struct ProviderCollectionReceipt {
 }
 
 impl TypeChecker {
+    /// Share one build's immutable compiled-dependency preparations with this fresh checker.
+    pub fn set_dependency_interface_preparation_cache(&mut self, cache: DependencyInterfacePreparationCache) {
+        self.dependency_interface_preparation_cache = cache;
+    }
+
     /// Select the immutable provider handles that form the next module's exact dependency closure.
     pub fn select_dependency_interfaces(&mut self, interfaces: Vec<Arc<ModuleDependencyInterface>>) {
         self.selected_dependency_interfaces = interfaces;
@@ -161,7 +189,7 @@ impl TypeChecker {
                 &self.dependency_direct_member_type_aliases,
             ),
             nested_table("direct_member_identities", &self.dependency_direct_member_identities),
-            map_table("declaration_nominal_scopes", &self.declaration_nominal_scopes),
+            shared_map_table("declaration_nominal_scopes", &self.declaration_nominal_scopes),
             map_table("retained_nominal_carriers", &self.retained_nominal_carriers),
             map_table("declaration_callables", &self.declaration_callables),
             nested_table("member_reexports", &self.dependency_member_reexports),
@@ -186,9 +214,7 @@ impl TypeChecker {
                 entries: self
                     .symbols
                     .dependency_interface_symbols()
-                    .map(|(id, symbol, identity)| {
-                        format!("{id:08}|{}|{}", stable_debug(symbol), stable_debug(&identity))
-                    })
+                    .map(|(id, symbol, identity)| stable_encode(&(id, symbol, identity)))
                     .collect(),
             },
         ];
@@ -389,18 +415,16 @@ impl TypeChecker {
             module_path: module_path.clone(),
             public_only,
             exports,
-            member_symbols: Arc::new(
-                self.dependency_member_symbols
-                    .get(module_name)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
-            member_type_aliases: Arc::new(
-                self.dependency_member_type_aliases
-                    .get(module_name)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
+            member_symbols: self
+                .dependency_member_symbols
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
+            member_type_aliases: self
+                .dependency_member_type_aliases
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
             registry_definitions: self.dependency_registry_definitions.get(module_name).cloned(),
             registry_consts: Arc::new(
                 self.dependency_registry_consts
@@ -409,20 +433,18 @@ impl TypeChecker {
                     .map(|(identity, value)| (identity.clone(), value.clone()))
                     .collect(),
             ),
-            member_partial_projections: Arc::new(
-                self.dependency_member_partial_projections
-                    .get(module_name)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
-            direct_member_symbols: Arc::new(direct_member_symbols),
-            direct_member_type_aliases: Arc::new(
-                self.dependency_direct_member_type_aliases
-                    .get(module_name)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
-            direct_member_identities: Arc::new(direct_member_identities),
+            member_partial_projections: self
+                .dependency_member_partial_projections
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
+            direct_member_symbols,
+            direct_member_type_aliases: self
+                .dependency_direct_member_type_aliases
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
+            direct_member_identities,
             declaration_nominal_scopes: Arc::new(
                 self.declaration_nominal_scopes
                     .iter()
@@ -444,24 +466,21 @@ impl TypeChecker {
                     .map(|(identity, callable)| (identity.clone(), callable.clone()))
                     .collect(),
             ),
-            member_reexports: Arc::new(
-                self.dependency_member_reexports
-                    .get(module_name)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
-            body_ir_pub_reexports: Arc::new(
-                self.body_ir_dependency_pub_reexports
-                    .get(module_name)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
-            direct_member_partial_projections: Arc::new(
-                self.dependency_direct_member_partial_projections
-                    .get(module_name)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
+            member_reexports: self
+                .dependency_member_reexports
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
+            body_ir_pub_reexports: self
+                .body_ir_dependency_pub_reexports
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
+            direct_member_partial_projections: self
+                .dependency_direct_member_partial_projections
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
             derivable_modules: Arc::new(
                 self.dependency_derivable_modules
                     .iter()
@@ -508,6 +527,20 @@ impl TypeChecker {
     /// The caller supplies handles in collected-module closure order. Local declarations, imports, diagnostics and
     /// body facts are not touched; only the dependency layer under those local facts is replaced.
     pub fn install_dependency_interfaces(&mut self, interfaces: &[Arc<ModuleDependencyInterface>]) {
+        let _trace = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::install_dependency_interface_tables",
+            interfaces = interfaces.len(),
+        )
+        .entered();
+        self.clear_dependency_interface_tables();
+        for interface in interfaces {
+            self.install_dependency_interface(interface);
+        }
+    }
+
+    /// Clear only the dependency-owned tables replaced by an exact interface selection.
+    fn clear_dependency_interface_tables(&mut self) {
         self.dependency_exports.clear();
         self.dependency_member_symbols.clear();
         self.dependency_member_type_aliases.clear();
@@ -531,104 +564,106 @@ impl TypeChecker {
         self.transitive_pub_traits.clear();
         self.public_library_type_identities.clear();
         self.cached_pub_libraries.clear();
-        for interface in interfaces {
-            let name = interface.module_name.clone();
-            self.dependency_exports
-                .insert(name.clone(), Arc::clone(&interface.exports));
-            self.dependency_member_symbols
-                .insert(name.clone(), interface.member_symbols.as_ref().clone());
-            self.dependency_member_type_aliases
-                .insert(name.clone(), interface.member_type_aliases.as_ref().clone());
-            if let Some(definitions) = &interface.registry_definitions {
-                self.dependency_registry_definitions
-                    .insert(name.clone(), definitions.clone());
-            }
-            self.dependency_registry_consts.extend(
-                interface
-                    .registry_consts
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone())),
-            );
-            self.dependency_member_partial_projections
-                .insert(name.clone(), interface.member_partial_projections.as_ref().clone());
-            self.dependency_direct_member_symbols
-                .insert(name.clone(), interface.direct_member_symbols.as_ref().clone());
-            self.dependency_direct_member_type_aliases
-                .insert(name.clone(), interface.direct_member_type_aliases.as_ref().clone());
-            self.dependency_direct_member_identities
-                .insert(name.clone(), interface.direct_member_identities.as_ref().clone());
-            self.declaration_nominal_scopes.extend(
-                interface
-                    .declaration_nominal_scopes
-                    .iter()
-                    .map(|(key, value)| (key.clone(), Arc::clone(value))),
-            );
-            self.retained_nominal_carriers.extend(
-                interface
-                    .retained_nominal_carriers
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone())),
-            );
-            self.declaration_callables.extend(
-                interface
-                    .declaration_callables
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone())),
-            );
-            self.dependency_member_reexports
-                .insert(name.clone(), interface.member_reexports.as_ref().clone());
-            self.body_ir_dependency_pub_reexports
-                .insert(name.clone(), interface.body_ir_pub_reexports.as_ref().clone());
-            self.dependency_module_path_segments
-                .insert(name.clone(), interface.module_path.clone());
-            self.dependency_direct_member_partial_projections
-                .insert(name, interface.direct_member_partial_projections.as_ref().clone());
-            self.dependency_derivable_modules.extend(
-                interface
-                    .derivable_modules
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone())),
-            );
-            self.dependency_derivable_trait_identities.extend(
-                interface
-                    .derivable_trait_identities
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone())),
-            );
-            self.dependency_module_traits.extend(
-                interface
-                    .module_traits
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone())),
-            );
-            self.dependency_trait_rust_derive_paths.extend(
-                interface
-                    .trait_rust_derive_paths
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone())),
-            );
-            for (name, values) in interface.transitive_public_types.iter() {
-                self.transitive_pub_types
-                    .entry(name.clone())
-                    .or_default()
-                    .extend(values.iter().cloned());
-            }
-            for (name, values) in interface.transitive_public_traits.iter() {
-                self.transitive_pub_traits
-                    .entry(name.clone())
-                    .or_default()
-                    .extend(values.iter().cloned());
-            }
-            for library in interface.compiled_libraries.iter() {
-                self.install_compiled_library_semantics(library);
-            }
-            self.public_library_type_identities.extend(
-                interface
-                    .public_library_type_identities
-                    .iter()
-                    .map(|(name, identity)| (name.clone(), identity.clone())),
-            );
+    }
+
+    /// Install one sealed provider while preserving the selected closure's stable order.
+    fn install_dependency_interface(&mut self, interface: &ModuleDependencyInterface) {
+        let name = interface.module_name.clone();
+        self.dependency_exports
+            .insert(name.clone(), Arc::clone(&interface.exports));
+        self.dependency_member_symbols
+            .insert(name.clone(), Arc::clone(&interface.member_symbols));
+        self.dependency_member_type_aliases
+            .insert(name.clone(), Arc::clone(&interface.member_type_aliases));
+        if let Some(definitions) = &interface.registry_definitions {
+            self.dependency_registry_definitions
+                .insert(name.clone(), definitions.clone());
         }
+        self.dependency_registry_consts.extend(
+            interface
+                .registry_consts
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        self.dependency_member_partial_projections
+            .insert(name.clone(), Arc::clone(&interface.member_partial_projections));
+        self.dependency_direct_member_symbols
+            .insert(name.clone(), Arc::clone(&interface.direct_member_symbols));
+        self.dependency_direct_member_type_aliases
+            .insert(name.clone(), Arc::clone(&interface.direct_member_type_aliases));
+        self.dependency_direct_member_identities
+            .insert(name.clone(), Arc::clone(&interface.direct_member_identities));
+        self.declaration_nominal_scopes.extend(
+            interface
+                .declaration_nominal_scopes
+                .iter()
+                .map(|(key, value)| (key.clone(), Arc::clone(value))),
+        );
+        self.retained_nominal_carriers.extend(
+            interface
+                .retained_nominal_carriers
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        self.declaration_callables.extend(
+            interface
+                .declaration_callables
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        self.dependency_member_reexports
+            .insert(name.clone(), Arc::clone(&interface.member_reexports));
+        self.body_ir_dependency_pub_reexports
+            .insert(name.clone(), Arc::clone(&interface.body_ir_pub_reexports));
+        self.dependency_module_path_segments
+            .insert(name.clone(), interface.module_path.clone());
+        self.dependency_direct_member_partial_projections
+            .insert(name, Arc::clone(&interface.direct_member_partial_projections));
+        self.dependency_derivable_modules.extend(
+            interface
+                .derivable_modules
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        self.dependency_derivable_trait_identities.extend(
+            interface
+                .derivable_trait_identities
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        self.dependency_module_traits.extend(
+            interface
+                .module_traits
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        self.dependency_trait_rust_derive_paths.extend(
+            interface
+                .trait_rust_derive_paths
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        for (name, values) in interface.transitive_public_types.iter() {
+            self.transitive_pub_types
+                .entry(name.clone())
+                .or_default()
+                .extend(values.iter().cloned());
+        }
+        for (name, values) in interface.transitive_public_traits.iter() {
+            self.transitive_pub_traits
+                .entry(name.clone())
+                .or_default()
+                .extend(values.iter().cloned());
+        }
+        for library in interface.compiled_libraries.iter() {
+            self.install_compiled_library_semantics(library);
+        }
+        self.public_library_type_identities.extend(
+            interface
+                .public_library_type_identities
+                .iter()
+                .map(|(name, identity)| (name.clone(), identity.clone())),
+        );
     }
 
     /// Rebuild one compiled Loaf's checker-local semantic cache from its already-indexed immutable manifest.
@@ -649,6 +684,12 @@ impl TypeChecker {
     /// the historical arena even though ordinary lookup resolves through immutable module-keyed tables.
     pub fn install_dependency_interfaces_directly(&mut self, interfaces: &[Arc<ModuleDependencyInterface>]) {
         self.install_dependency_interfaces(interfaces);
+        let _trace = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::install_dependency_interface_symbols",
+            interfaces = interfaces.len(),
+        )
+        .entered();
         for interface in interfaces {
             self.symbols.begin_dependency_interface_bindings();
             for (symbol, identity) in interface.symbol_rows.iter() {
@@ -714,7 +755,7 @@ impl TypeChecker {
                 module_name,
                 &self.dependency_direct_member_identities,
             ),
-            filtered_map_table(
+            filtered_shared_map_table(
                 "declaration_nominal_scopes",
                 &self.declaration_nominal_scopes,
                 |identity| identity_owned_by(identity, &module_path),
@@ -760,9 +801,7 @@ impl TypeChecker {
                     .into_iter()
                     .flat_map(|rows| rows.iter())
                     .enumerate()
-                    .map(|(index, (symbol, identity))| {
-                        format!("{index:08}|{}|{}", stable_debug(symbol), stable_debug(&identity))
-                    })
+                    .map(|(index, (symbol, identity))| stable_encode(&(index, symbol, identity)))
                     .collect(),
             },
         ];
@@ -821,36 +860,36 @@ fn key_owned_by(key: &str, module_path: &[String]) -> bool {
 }
 
 /// Render one module's value from a module-keyed map.
-fn module_table<V: Debug>(
+fn module_table<V: Serialize>(
     name: &'static str,
     module_name: &str,
     values: &HashMap<String, V>,
 ) -> DependencyInterfaceTableSnapshot {
     let entries = values
         .get(module_name)
-        .map(|value| vec![format!("{module_name:?}|{}", stable_debug(value))])
+        .map(|value| vec![stable_encode(&(module_name, value))])
         .unwrap_or_default();
     DependencyInterfaceTableSnapshot { name, entries }
 }
 
 /// Render one module's inner member map in deterministic order.
-fn nested_module_table<V: Debug>(
+fn nested_module_table<V: Serialize>(
     name: &'static str,
     module_name: &str,
-    values: &HashMap<String, HashMap<String, V>>,
+    values: &HashMap<String, Arc<HashMap<String, V>>>,
 ) -> DependencyInterfaceTableSnapshot {
     let mut entries = values
         .get(module_name)
         .into_iter()
-        .flat_map(HashMap::iter)
-        .map(|(member, value)| format!("{member:?}|{}", stable_debug(value)))
+        .flat_map(|members| members.iter())
+        .map(|(member, value)| stable_encode(&(member, value)))
         .collect::<Vec<_>>();
     entries.sort();
     DependencyInterfaceTableSnapshot { name, entries }
 }
 
 /// Render one module's immutable ordered projection.
-fn ordered_module_table<V: Debug>(
+fn ordered_module_table<V: Serialize>(
     name: &'static str,
     module_name: &str,
     values: &HashMap<String, Arc<[V]>>,
@@ -859,13 +898,13 @@ fn ordered_module_table<V: Debug>(
         .get(module_name)
         .into_iter()
         .flat_map(|members| members.iter().enumerate())
-        .map(|(index, value)| format!("{index:08}|{}", stable_debug(value)))
+        .map(|(index, value)| stable_encode(&(index, value)))
         .collect();
     DependencyInterfaceTableSnapshot { name, entries }
 }
 
 /// Render entries selected by provider-owned canonical identity.
-fn filtered_map_table<K: Debug, V: Debug>(
+fn filtered_map_table<K: Serialize, V: Serialize>(
     name: &'static str,
     values: &impl MapEntries<K, V>,
     include: impl Fn(&K) -> bool,
@@ -873,14 +912,42 @@ fn filtered_map_table<K: Debug, V: Debug>(
     let mut entries = values
         .entries()
         .filter(|(key, _)| include(key))
-        .map(|(key, value)| format!("{}|{}", stable_debug(key), stable_debug(value)))
+        .map(|(key, value)| stable_encode(&(key, value)))
+        .collect::<Vec<_>>();
+    entries.sort();
+    DependencyInterfaceTableSnapshot { name, entries }
+}
+
+/// Encode selected map values through their shared inner value rather than pointer identity.
+fn filtered_shared_map_table<K: Serialize, V: Serialize>(
+    name: &'static str,
+    values: &HashMap<K, Arc<V>>,
+    include: impl Fn(&K) -> bool,
+) -> DependencyInterfaceTableSnapshot {
+    let mut entries = values
+        .iter()
+        .filter(|(key, _)| include(key))
+        .map(|(key, value)| stable_encode(&(key, value.as_ref())))
+        .collect::<Vec<_>>();
+    entries.sort();
+    DependencyInterfaceTableSnapshot { name, entries }
+}
+
+/// Encode a complete map through each shared value's structural contents rather than pointer identity.
+fn shared_map_table<K: Serialize, V: Serialize>(
+    name: &'static str,
+    values: &HashMap<K, Arc<V>>,
+) -> DependencyInterfaceTableSnapshot {
+    let mut entries = values
+        .iter()
+        .map(|(key, value)| stable_encode(&(key, value.as_ref())))
         .collect::<Vec<_>>();
     entries.sort();
     DependencyInterfaceTableSnapshot { name, entries }
 }
 
 /// Render module-qualified metadata whose stable key starts with the provider's canonical source path.
-fn prefixed_map_table<V: Debug>(
+fn prefixed_map_table<V: Serialize>(
     name: &'static str,
     module_path: &[String],
     values: &HashMap<String, V>,
@@ -890,36 +957,36 @@ fn prefixed_map_table<V: Debug>(
     let mut entries = values
         .iter()
         .filter(|(key, _)| *key == &exact || key.starts_with(&prefix))
-        .map(|(key, value)| format!("{key:?}|{}", stable_debug(value)))
+        .map(|(key, value)| stable_encode(&(key, value)))
         .collect::<Vec<_>>();
     entries.sort();
     DependencyInterfaceTableSnapshot { name, entries }
 }
 
 /// Render a map into key-sorted records without relying on its randomized iteration order.
-fn map_table<K: Debug, V: Debug>(
+fn map_table<K: Serialize, V: Serialize>(
     name: &'static str,
     values: &impl MapEntries<K, V>,
 ) -> DependencyInterfaceTableSnapshot {
     let mut entries = values
         .entries()
-        .map(|(key, value)| format!("{}|{}", stable_debug(key), stable_debug(value)))
+        .map(|(key, value)| stable_encode(&(key, value)))
         .collect::<Vec<_>>();
     entries.sort();
     DependencyInterfaceTableSnapshot { name, entries }
 }
 
 /// Render a module-keyed map whose inner maps also need deterministic ordering.
-fn nested_table<V: Debug>(
+fn nested_table<V: Serialize>(
     name: &'static str,
-    values: &HashMap<String, HashMap<String, V>>,
+    values: &HashMap<String, Arc<HashMap<String, V>>>,
 ) -> DependencyInterfaceTableSnapshot {
     let mut entries = values
         .iter()
         .flat_map(|(module, members)| {
             members
                 .iter()
-                .map(move |(member, value)| format!("{module:?}|{member:?}|{}", stable_debug(value)))
+                .map(move |(member, value)| stable_encode(&(module, member, value)))
         })
         .collect::<Vec<_>>();
     entries.sort();
@@ -927,7 +994,7 @@ fn nested_table<V: Debug>(
 }
 
 /// Render module-keyed immutable slices while preserving each projection's declared order.
-fn ordered_nested_table<V: Debug>(
+fn ordered_nested_table<V: Serialize>(
     name: &'static str,
     values: &HashMap<String, Arc<[V]>>,
 ) -> DependencyInterfaceTableSnapshot {
@@ -937,131 +1004,11 @@ fn ordered_nested_table<V: Debug>(
             members
                 .iter()
                 .enumerate()
-                .map(move |(index, value)| format!("{module:?}|{index:08}|{}", stable_debug(value)))
+                .map(move |(index, value)| stable_encode(&(module, index, value)))
         })
         .collect::<Vec<_>>();
     entries.sort();
     DependencyInterfaceTableSnapshot { name, entries }
-}
-
-/// Render a debug value with every brace-delimited map or record sorted recursively.
-///
-/// Rust's derived `Debug` preserves sequence order but emits `HashMap` entries in randomized iteration order. The
-/// snapshot oracle must distinguish semantic table changes from that process-local noise, including maps nested
-/// inside symbol records. Sorting brace-delimited top-level fields also canonicalizes derived struct output without
-/// disturbing tuple, list or source-declared sequence order.
-fn stable_debug(value: &impl Debug) -> String {
-    canonicalize_debug_chars(&format!("{value:?}").chars().collect::<Vec<_>>())
-}
-
-/// Canonicalize nested debug groups while preserving quoted strings and ordered delimiters.
-fn canonicalize_debug_chars(chars: &[char]) -> String {
-    let mut output = String::new();
-    let mut index = 0;
-    while index < chars.len() {
-        if chars[index] == '"' {
-            let end = quoted_end(chars, index);
-            output.extend(chars[index..end].iter().copied());
-            index = end;
-            continue;
-        }
-        let Some(close) = matching_delimiter(chars[index]) else {
-            output.push(chars[index]);
-            index += 1;
-            continue;
-        };
-        let end = group_end(chars, index, close);
-        output.push(chars[index]);
-        let inner = &chars[index + 1..end - 1];
-        if chars[index] == '{' {
-            let mut fields = top_level_fields(inner)
-                .into_iter()
-                .map(|field| canonicalize_debug_chars(field).trim().to_string())
-                .filter(|field| !field.is_empty())
-                .collect::<Vec<_>>();
-            fields.sort();
-            output.push_str(&fields.join(", "));
-        } else {
-            output.push_str(&canonicalize_debug_chars(inner));
-        }
-        output.push(close);
-        index = end;
-    }
-    output
-}
-
-/// Return the exclusive end of one quoted debug string, honoring backslash escapes.
-fn quoted_end(chars: &[char], start: usize) -> usize {
-    let mut index = start + 1;
-    let mut escaped = false;
-    while index < chars.len() {
-        if !escaped && chars[index] == '"' {
-            return index + 1;
-        }
-        escaped = !escaped && chars[index] == '\\';
-        if chars[index] != '\\' {
-            escaped = false;
-        }
-        index += 1;
-    }
-    chars.len()
-}
-
-/// Find the exclusive end of a balanced debug group.
-fn group_end(chars: &[char], start: usize, expected_close: char) -> usize {
-    let mut stack = vec![expected_close];
-    let mut index = start + 1;
-    while index < chars.len() {
-        if chars[index] == '"' {
-            index = quoted_end(chars, index);
-            continue;
-        }
-        if let Some(close) = matching_delimiter(chars[index]) {
-            stack.push(close);
-        } else if stack.last().is_some_and(|close| *close == chars[index]) {
-            stack.pop();
-            if stack.is_empty() {
-                return index + 1;
-            }
-        }
-        index += 1;
-    }
-    chars.len()
-}
-
-/// Split a brace-delimited debug record at commas outside nested groups and strings.
-fn top_level_fields(chars: &[char]) -> Vec<&[char]> {
-    let mut fields = Vec::new();
-    let mut stack = Vec::new();
-    let mut start = 0;
-    let mut index = 0;
-    while index < chars.len() {
-        if chars[index] == '"' {
-            index = quoted_end(chars, index);
-            continue;
-        }
-        if let Some(close) = matching_delimiter(chars[index]) {
-            stack.push(close);
-        } else if stack.last().is_some_and(|close| *close == chars[index]) {
-            stack.pop();
-        } else if chars[index] == ',' && stack.is_empty() {
-            fields.push(&chars[start..index]);
-            start = index + 1;
-        }
-        index += 1;
-    }
-    fields.push(&chars[start..]);
-    fields
-}
-
-/// Pair one opening debug delimiter with its close.
-fn matching_delimiter(open: char) -> Option<char> {
-    match open {
-        '{' => Some('}'),
-        '[' => Some(']'),
-        '(' => Some(')'),
-        _ => None,
-    }
 }
 
 /// Common read-only entry view for hash and ordered maps used by interface state.

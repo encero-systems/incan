@@ -8,6 +8,7 @@ The disk placement keeps this layout under its store root; the memory placement 
 format bytes without naming host paths:
 
 - `FORMAT`: the format this store is written in; a store in another format is refused, never read as empty.
+- `STORE_ID`: the persistent physical bakery identity; moving its locator does not change the store.
 - `CURRENT`: the committed generation and the digest of its manifest; replaced by rename, never edited.
 - `RETAINED`: collection's generation boundary and exact historical view leases; expired descriptors cannot reopen.
 - `snapshots/<generation>.<digest>.manifest`: one generation's parent, transaction, segment inventory, and the index
@@ -43,8 +44,10 @@ from std.primitives.hex import hexlify
 from std.primitives.locking import LockGuard
 from std.primitives.views import MappedView
 from crate.trace.schema import Operation
+from crate.ipc import session_id
 from crate.store.files import file_digest
 from crate.store.index import Entry, Location, build, entries as index_entries, find as index_find, insert
+from crate.store.index import search as index_search
 from crate.store.index import copied_index_bytes, page_path, page_reads, view_digest, staged_pages
 from crate.store.files import (
     StoreError,
@@ -67,6 +70,7 @@ from crate.store.path import StorePath as Path
 
 const FORMAT: str = "incan.segment-store/3"
 const MANIFEST_SCHEMA: str = "incan.segment-manifest/3"
+const STORE_ID_LENGTH: int = 32
 pub const HOME_VIEW: str = "home"
 pub const EXPECT_ANY: int = 0
 pub const EXPECT_ABSENT: int = 1
@@ -80,6 +84,51 @@ pub enum Lookup:
     Found(MappedView)
     Deleted
     Absent
+
+
+pub model PresentBinding:
+    """Owned value bytes and the authenticated revision, semantic value and selected index-path identities."""
+
+    pub value: bytes
+    pub revision: str
+    pub semantic_digest: str
+    pub selection_digest: str
+
+
+pub model DeletedBinding:
+    """An exact tombstone and its immutable frame revision."""
+
+    pub revision: str
+
+
+pub model AbsentBinding:
+    """An authenticated exclusion for one exact key in the selected index root."""
+
+    pub exclusion_digest: str
+
+
+pub enum BindingLookup:
+    """The authenticated binding facts for one exact key, with owned bytes only for a present value."""
+
+    Present(PresentBinding)
+    Deleted(DeletedBinding)
+    Absent(AbsentBinding)
+
+
+pub model MemberBinding:
+    """One live member selected in canonical key order, retaining its immutable frame and semantic identities."""
+
+    pub key: str
+    pub revision: str
+    pub semantic_digest: str
+
+
+pub model MemberBindings:
+    """One bounded ordered member page and the authenticated digest of its exact selection context."""
+
+    pub members: list[MemberBinding]
+    pub membership_digest: str
+    pub continuation: str
 
 
 pub model ViewRoot:
@@ -138,6 +187,37 @@ pub model ReadCounts:
 
 # Reads this process made, for measuring what a compile reads; nothing is cached by them.
 static counted: dict[str, int] = {}
+
+
+pub def store_identity(root: Path) -> Result[str, StoreError]:
+    """Return the physical store's persistent identity, provisioning it once under the store lifecycle lock."""
+    ensure_directory(root)?
+    ensure_directory(root.joinpath("locks"))?
+    identity = root.joinpath("STORE_ID")
+    held = root.joinpath("locks/store-id").store_lock_exclusive().map_err((error) => io_failure(identity, error))?
+    match read_store_identity(root):
+        Ok(found) => return Ok(found)
+        Err(error) =>
+            if identity.exists():
+                return Err(error)
+    generated = hexlify(session_id().map_err((detail) => failure("io", identity.value, detail))?)
+    place_synced(identity, (generated + "\n").encode("utf-8"))?
+    sync_directory(root)?
+    return Ok(generated)
+
+
+pub def read_store_identity(root: Path) -> Result[str, StoreError]:
+    """Read an already-provisioned physical store identity without creating or selecting another store."""
+    identity = root.joinpath("STORE_ID")
+    if not identity.is_file():
+        return Err(failure("format", identity.value, "physical store has no persistent identity"))
+    value = identity.store_read_text("utf-8", "strict").map_err((error) => io_failure(identity, error))?.strip()
+    if len(value) != STORE_ID_LENGTH:
+        return Err(failure("format", identity.value, "malformed physical store identity"))
+    for character in value:
+        if character not in "0123456789abcdef":
+            return Err(failure("format", identity.value, "malformed physical store identity"))
+    return Ok(value)
 
 
 pub def read_counts() -> ReadCounts:
@@ -316,6 +396,81 @@ pub def lookup(view: Snapshot, key: str) -> Result[Lookup, StoreError]:
         Some(location) =>
             counted["records"] = counted.get("records", 0) + 1
             return read_frame(view.root, key, location)
+
+
+pub def lookup_binding(view: Snapshot, key: str) -> Result[BindingLookup, StoreError]:
+    """Read one key with revision, semantic and authenticated search-path evidence from the selected snapshot."""
+    searched = index_search(view.root, view.index, key).map_err(index_failure)?
+    match searched.location:
+        None => return Ok(BindingLookup.Absent(AbsentBinding(exclusion_digest=searched.path_digest)))
+        Some(location) =>
+            revision = hexlify(location.digest)
+            match read_frame(view.root, key, location)?:
+                Lookup.Found(value) =>
+                    bytes = owned(value)
+                    return Ok(
+                        BindingLookup.Present(
+                            PresentBinding(
+                                value=bytes,
+                                revision=revision,
+                                semantic_digest=hexlify(sha256.digest(bytes)),
+                                selection_digest=searched.path_digest,
+                            ),
+                        ),
+                    )
+                Lookup.Deleted => return Ok(BindingLookup.Deleted(DeletedBinding(revision=revision)))
+                Lookup.Absent => return Err(failure("integrity", key, "an indexed frame disappeared during lookup"))
+
+
+pub def lookup_members(
+    view: Snapshot,
+    prefix: str,
+    lower: str,
+    upper: str,
+    continuation: str,
+    limit: int,
+) -> Result[MemberBindings, StoreError]:
+    """Read one bounded canonical page of live keys below `prefix`, with a digest bound to the selected index root."""
+    if limit <= 0:
+        return Err(failure("format", prefix, "member lookup limit must be positive"))
+    mut members: list[MemberBinding] = []
+    mut next = "end"
+    start = prefix + "\t"
+    for entry in index_entries(view.root, view.index).map_err(index_failure)?:
+        if not entry.key.startswith(start) or (lower != "" and entry.key < lower):
+            continue
+        if upper != "" and entry.key >= upper:
+            break
+        if continuation != "" and continuation != "end" and entry.key <= continuation:
+            continue
+        match entry.location:
+            None => pass
+            Some(location) =>
+                if location.tombstone:
+                    continue
+                if len(members) == limit:
+                    next = entry.key
+                    break
+                match read_frame(view.root, entry.key, location)?:
+                    Lookup.Found(value) =>
+                        bytes = owned(value)
+                        members.append(
+                            MemberBinding(
+                                key=entry.key,
+                                revision=hexlify(location.digest),
+                                semantic_digest=hexlify(sha256.digest(bytes)),
+                            ),
+                        )
+                    Lookup.Deleted => pass
+                    Lookup.Absent =>
+                        return Err(failure("integrity", entry.key, "an indexed member disappeared during lookup"))
+    mut evidence = [view.index, prefix, lower, upper, continuation, next]
+    for member in members:
+        evidence.append(member.key)
+        evidence.append(member.revision)
+        evidence.append(member.semantic_digest)
+    digest = hexlify(sha256.digest("\n".join(evidence).encode("utf-8")))
+    return Ok(MemberBindings(members=members, membership_digest=digest, continuation=next))
 
 
 pub def get(view: Snapshot, key: str) -> Result[Option[bytes], StoreError]:

@@ -93,7 +93,7 @@ pub struct ExportedTypeLikeDoc {
     pub docstring: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum ExportedSymbol {
     Type(String),
     Trait(String),

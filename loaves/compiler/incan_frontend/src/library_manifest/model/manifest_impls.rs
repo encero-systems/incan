@@ -3,6 +3,22 @@
 use super::*;
 
 impl LibraryManifest {
+    /// Encode one independently addressed compiler-record value through the generation-bound compact transport.
+    ///
+    /// Installation first validates the complete ordinary manifest with this compiler. The sealed record profile then
+    /// uses this self-describing encoding for each declaration or metadata value separately; it never combines them
+    /// into a selectable whole-manifest cache.
+    pub fn encode_compiler_record_value<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, LibraryManifestError> {
+        retained::encode_value(value).map_err(LibraryManifestError::Serialize)
+    }
+
+    /// Decode one authenticated compiler-record value into the family selected by its sealed record identity.
+    pub(crate) fn decode_compiler_record_value<T: serde::de::DeserializeOwned>(
+        content: &[u8],
+    ) -> Result<T, LibraryManifestError> {
+        retained::decode_value(content).map_err(LibraryManifestError::Parse)
+    }
+
     /// Encode already admitted facts for a private generation-bound cache, preserving the public JSON contract.
     pub(crate) fn encode_retained(&self) -> Result<Vec<u8>, String> {
         super::retained::encode(self)
@@ -80,6 +96,19 @@ impl LibraryManifest {
     /// however far the shape has moved. See #1339.
     pub fn from_json_str(content: &str) -> Result<Self, LibraryManifestError> {
         Self::require_supported_manifest_format(content)?;
+        Self::decode_validated_json(content)
+    }
+
+    /// Decode records produced and sealed by this exact compiler generation.
+    ///
+    /// The compiler-record profile is already the format gate, so this path avoids scanning the assembled document
+    /// once for its format and a second time for its typed fields. Semantic manifest validation remains unchanged.
+    pub(crate) fn from_compiler_record_json(content: &str) -> Result<Self, LibraryManifestError> {
+        Self::decode_validated_json(content)
+    }
+
+    /// Decode and validate one manifest after the caller has applied its transport-specific format gate.
+    fn decode_validated_json(content: &str) -> Result<Self, LibraryManifestError> {
         let raw: RawLibraryManifest = {
             let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_frontend::decode_manifest_json", bytes = content.len()).entered();
             serde_json::from_str(content).map_err(|err| LibraryManifestError::Parse(err.to_string()))?

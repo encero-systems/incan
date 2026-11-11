@@ -1,0 +1,275 @@
+"""Ranked compiler graph records publish their value, receipt and both edge directions atomically."""
+
+from pub::incan_platform.store import Snapshot, begin, commit, delete, get, keys, put
+from pub::incan_platform.store import snapshot as store_snapshot
+from pub::incan_platform.store.memory import root as memory_root
+from pub::internal_models.records import (
+    AbsentFact,
+    DeletedFact,
+    MemberSelection,
+    PayloadSelection,
+    PreparationEvidence,
+    ReadReceipt,
+    RecordRead,
+    RecordReads,
+    ReadScope,
+    ReadWitness,
+    RecordKey,
+    RecordRequest,
+    RecordSelection,
+    RevisionEvidence,
+    READ_SCHEMA,
+    StoreRecordSource,
+    encode_record_key,
+)
+from pub::internal_models import (
+    DemandPage,
+    InputSnapshot,
+    PreparedInputs,
+    ProducerProfile,
+    ProducerRank,
+    ProducerStage,
+    RankCertificate,
+    ReadyWork,
+    RecordRoot,
+    decode_demand_page,
+    decode_prepared_inputs,
+    decode_ready_work,
+    encode_prepared_inputs,
+    encode_ready_work,
+)
+from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
+from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
+
+
+pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[None, str]:
+    """No selected snapshot can observe only part of a completed evaluation and its four witness kinds."""
+    before = store_snapshot(memory_root()).map_err((error) => error.message())?
+    receipt = witnessed_receipt()
+    published = publish_evaluation(
+        before,
+        "claim",
+        ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=3),
+        b"checked local",
+        receipt,
+    )?
+    assert published.snapshot.generation == before.generation + 1
+    assert get(before, published.value_key).map_err((error) => error.message())? is None
+    assert get(before, published.receipt_key).map_err((error) => error.message())? is None
+    assert get(before, published.evaluation_key).map_err((error) => error.message())? is None
+    assert get(published.snapshot, published.value_key).map_err((error) => error.message())? == Some(b"checked local")
+    assert get(published.snapshot, published.receipt_key).map_err((error) => error.message())? is not None
+    assert get(published.snapshot, published.evaluation_key).map_err((error) => error.message())? is not None
+    selected = keys(published.snapshot).map_err((error) => error.message())?
+    assert count_prefix(selected, "incan.engine.edge-out\t") == 4
+    assert count_prefix(selected, "incan.engine.edge-in\t") == 4
+    assert published.edge_count == 4
+    return Ok(None)
+
+
+pub def test_local_envelopes_persist_and_sweep_in_rank_order() -> Result[None, str]:
+    """Persist the three compiler-owned activation roots and evaluate local/final outputs once in certified order."""
+    before = store_snapshot(memory_root()).map_err((error) => error.message())?
+    first = activation("local", "first", 1)
+    second = activation("local", "second", 0)
+    final_record = activation("final", "first", 2)
+    persisted = persist_activation(before, DemandPage(keys=[first.ready.output]), first.prepared, first.ready)?
+    demand = decode_demand_page(required(before=persisted.snapshot, key=persisted.demand_key)?)?
+    prepared = decode_prepared_inputs(required(before=persisted.snapshot, key=persisted.prepared_key)?)?
+    ready = decode_ready_work(required(before=persisted.snapshot, key=persisted.work_key)?)?
+    assert demand.keys == [first.ready.output]
+    assert encode_prepared_inputs(prepared)? == encode_prepared_inputs(first.prepared)?
+    assert encode_ready_work(ready)? == encode_ready_work(first.ready)?
+
+    mut sweep = RankedCheckingSweep.schedule([final_record, first, second])?
+    assert selected_identity(sweep.next()) == "second"
+    assert selected_identity(sweep.next()) == "first"
+    assert selected_family(sweep.next()) == "final"
+    assert selected_identity(sweep.next()) == ""
+    assert sweep.evaluation_count() == 3
+    return Ok(None)
+
+
+pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() -> Result[None, str]:
+    """Present, deleted, absent and member witnesses admit unchanged values and reject each changed dependency."""
+    before = store_snapshot(memory_root()).map_err((error) => error.message())?
+    present = request("run43-present", RecordSelection.Field("value"))
+    deleted = request("run43-deleted", RecordSelection.Field("value"))
+    absent = request("run43-absent", RecordSelection.Field("value"))
+    members = request(
+        "run43-members",
+        RecordSelection.Members(
+            MemberSelection(selector="children", order="canonical", lower="", upper="", continuation=""),
+        ),
+    )
+    mut transaction = put(begin(before), encode_record_key(present.key)?, b"present")
+    transaction = delete(transaction, encode_record_key(deleted.key)?)
+    transaction = put(transaction, encode_record_key(members.key)? + "\tleft", b"member")
+    mut selected = commit(transaction).map_err((error) => error.message())?
+
+    present_value = publish_fixture(selected, "run43-present-output", present)?
+    deleted_value = publish_fixture(present_value.snapshot, "run43-deleted-output", deleted)?
+    absent_value = publish_fixture(deleted_value.snapshot, "run43-absent-output", absent)?
+    member_value = publish_fixture(absent_value.snapshot, "run43-member-output", members)?
+    selected = member_value.snapshot
+    for identity in ["run43-present-output", "run43-deleted-output", "run43-absent-output", "run43-member-output"]:
+        if reused_value(selected, identity)? != Some(("checked " + identity).encode("utf-8")):
+            return Err("unchanged evaluation did not reuse: " + identity)
+
+    unrelated = commit(put(begin(selected), "run43-unrelated", b"changed")).map_err((error) => error.message())?
+    for identity in ["run43-present-output", "run43-deleted-output", "run43-absent-output", "run43-member-output"]:
+        assert reused_value(unrelated, identity)? is not None
+
+    mut changed = put(begin(unrelated), encode_record_key(present.key)?, b"changed")
+    changed = put(changed, encode_record_key(deleted.key)?, b"present now")
+    changed = put(changed, encode_record_key(absent.key)?, b"present now")
+    changed = put(changed, encode_record_key(members.key)? + "\tright", b"member")
+    invalidated = commit(changed).map_err((error) => error.message())?
+    for identity in ["run43-present-output", "run43-deleted-output", "run43-absent-output", "run43-member-output"]:
+        if reused_value(invalidated, identity)? is not None:
+            return Err("changed dependency did not invalidate: " + identity)
+    return Ok(None)
+
+
+def publish_fixture(selected: Snapshot, identity: str, dependency: RecordRequest) -> Result[PublishedEvaluation, str]:
+    """Publish one evaluation whose sole dependency was read through the authenticated store source."""
+    output = key(identity)
+    scope = ReadScope(snapshot=selected.digest, profile="profile")
+    preparation = PreparationEvidence(
+        output=output,
+        rank_certificate="rank-certificate",
+        selector_witnesses="selector-witnesses",
+    )
+    source = StoreRecordSource.open(selected, scope, [encode_record_key(dependency.key)?])
+    mut reads = RecordReads.start(scope, preparation, [dependency])
+    match reads.read(source, dependency):
+        RecordRead.Failed(_) => return Err("fixture dependency read failed")
+        _ => pass
+    receipt = reads.finish().map_err((_) => "fixture dependency receipt failed")?
+    return publish_evaluation(
+        selected,
+        "claim-" + identity,
+        ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=3),
+        ("checked " + identity).encode("utf-8"),
+        receipt,
+    )
+
+
+def reused_value(selected: Snapshot, identity: str) -> Result[Option[bytes], str]:
+    """Read one fixture evaluation through the production witness-validation boundary."""
+    match reusable_evaluation(selected, key(identity), "profile")?:
+        Some(value) => return Ok(Some(value.value))
+        None => return Ok(None)
+
+
+def witnessed_receipt() -> ReadReceipt:
+    """Build one complete receipt containing present, deleted, absent and member witnesses."""
+    scope = ReadScope(snapshot="snapshot", profile="profile")
+    present = request("present", RecordSelection.Payload(PayloadSelection(reference="payload", offset=0, length=2)))
+    deleted = request("deleted", RecordSelection.Field("value"))
+    absent = request("absent", RecordSelection.Field("value"))
+    members = request(
+        "members",
+        RecordSelection.Members(
+            MemberSelection(selector="children", order="canonical", lower="", upper="", continuation=""),
+        ),
+    )
+    return ReadReceipt(
+        schema=READ_SCHEMA,
+        scope=scope,
+        preparation=PreparationEvidence(
+            output=key("output"),
+            rank_certificate="rank-certificate",
+            selector_witnesses="selector-witnesses",
+        ),
+        witnesses=[
+            ReadWitness.Found(
+                RevisionEvidence(
+                    scope=scope,
+                    request=present,
+                    revision="present-revision",
+                    semantic_digest="value-digest",
+                ),
+                "selection-digest",
+            ),
+            ReadWitness.Deleted(DeletedFact(scope=scope, request=deleted, revision="tombstone-revision")),
+            ReadWitness.Absent(AbsentFact(scope=scope, request=absent, exclusion_digest="exclusion-digest")),
+            ReadWitness.Members(scope, members, "membership-digest", "end"),
+        ],
+        operations=4,
+        response_bytes=2,
+    )
+
+
+def request(identity: str, selection: RecordSelection) -> RecordRequest:
+    """Create one exact prepared request."""
+    return RecordRequest(key=key(identity), selection=selection)
+
+
+def key(identity: str) -> RecordKey:
+    """Create one compiler record key."""
+    return family_key("local", identity)
+
+
+def family_key(family: str, identity: str) -> RecordKey:
+    """Create one compiler record key in the selected checking family."""
+    return RecordKey(
+        family=family,
+        identity_profile="identity/1",
+        origin="package",
+        identity=identity,
+        facet="checked",
+        context="",
+    )
+
+
+def activation(family: str, identity: str, dependency: int) -> RankedActivation:
+    """Create one complete checking-family activation with no environment reads."""
+    output = family_key(family, identity)
+    snapshot = InputSnapshot(root=RecordRoot(digest="snapshot"))
+    profile = ProducerProfile(identity=RecordRoot(digest="profile"))
+    prepared = PreparedInputs(
+        output=output,
+        snapshot=snapshot,
+        profile=profile,
+        required_reads=[],
+        rank_certificate=RankCertificate(
+            rank=ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=dependency),
+            evidence=RecordRoot(digest=f"rank-{dependency}"),
+        ),
+        selector_witnesses=RecordRoot(digest=f"selectors-{dependency}"),
+    )
+    return RankedActivation(
+        ready=ReadyWork(output=output, stage=ProducerStage.CheckBody, profile=profile),
+        prepared=prepared,
+    )
+
+
+def required(before: Snapshot, key: str) -> Result[bytes, str]:
+    """Read one persisted envelope required by the test."""
+    match get(before, key).map_err((error) => error.message())?:
+        Some(value) => return Ok(value)
+        None => return Err(f"missing persisted envelope {key}")
+
+
+def selected_identity(activation: Option[RankedActivation]) -> str:
+    """Read the selected output identity without requiring native equality for the complete activation model."""
+    match activation:
+        Some(value) => return value.ready.output.identity
+        None => return ""
+
+
+def selected_family(activation: Option[RankedActivation]) -> str:
+    """Read the selected output family without requiring native equality for the complete activation model."""
+    match activation:
+        Some(value) => return value.ready.output.family
+        None => return ""
+
+
+def count_prefix(values: list[str], prefix: str) -> int:
+    """Count selected store keys in one engine-owned graph family."""
+    mut count = 0
+    for value in values:
+        if value.startswith(prefix):
+            count += 1
+    return count

@@ -16,22 +16,15 @@ from oven_tests import (
     log_name,
     parse_options,
     run_all,
+    run_all_failures,
     shared_memory,
     summarize,
     summary_document,
+    oven_test_state_root,
 )
+from verify_installation import VerificationPhase, verification_phase_plans, verification_trace_environment
 
 const GIB: int = 1073741824
-const RECORD_FILES: FrozenList[str] = [
-    "src/checker_records.incn",
-    "src/record_scope.incn",
-    "src/records.incn",
-    "src/record_service.incn",
-    "tests/canonical_record_controls.incn",
-    "tests/test_record_scope.incn",
-]
-
-
 def test_jobs_follow_the_configured_count_then_the_cores() -> Result[None, str]:
     """A positive configured count wins; otherwise the cores decide, and at least one runs."""
     assert default_jobs("3", 18) == 3
@@ -91,6 +84,30 @@ def test_an_oversized_reservation_runs_alone_and_zero_memory_bounds_nothing() ->
     assert admitted(reservations, [1, 2], [6 * GIB], 4, 4 * GIB) == []
     assert admitted(reservations, [0, 1, 2], [], 2, 0) == [0, 1]
     assert admitted(reservations, [0, 1, 2], [], 1, 64 * GIB) == [0]
+    return Ok(None)
+
+
+def test_verification_phases_reserve_their_complete_parallel_work() -> Result[None, str]:
+    """Concurrent gates reserve every requested facet or census worker and fixed project-scale phases."""
+    plans = verification_phase_plans(6)
+    assert [plan.phase for plan in plans] == [
+        VerificationPhase.Oven,
+        VerificationPhase.RustFacets,
+        VerificationPhase.DriverIntegration,
+        VerificationPhase.Lsp,
+        VerificationPhase.Census,
+        VerificationPhase.Memory,
+    ]
+    assert [plan.reservation for plan in plans] == [24 * GIB, 12 * GIB, 6 * GIB, 2 * GIB, 36 * GIB, 6 * GIB]
+    assert admitted([plan.reservation for plan in plans], [0, 1, 2, 3, 4, 5], [], 6, 0) == [0, 1, 2, 3, 4, 5]
+    assert verification_phase_plans(0)[0].reservation == 4 * GIB
+    assert verification_phase_plans(0)[1].reservation == 2 * GIB
+    assert verification_phase_plans(0)[4].reservation == 6 * GIB
+    assert len(verification_trace_environment(Path("/evidence"), "census", false)) == 0
+    traces = verification_trace_environment(Path("/evidence"), "census", true)
+    assert traces["INCAN_TRACE_DIR"] == "/evidence/traces/census/compiler"
+    assert traces["INCAN_NATIVE_TIMING"] == "1"
+    assert len(traces) == 2
     return Ok(None)
 
 
@@ -167,61 +184,48 @@ def test_log_names_sort_in_invocation_order() -> Result[None, str]:
     return Ok(None)
 
 
-def test_invocations_follow_the_former_order_and_exclusions() -> Result[None, str]:
-    """Oven units first, then Loaf tests from their Loaf, then the isolated record contract."""
+def test_invocations_follow_the_declared_order_and_package_ownership() -> Result[None, str]:
+    """Private Oven projects run first, then every Loaf test from its owner, with compiler-scale reservations."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path()
     fixture(root)?
     evidence = root.joinpath("evidence")
     logs = evidence.joinpath("oven-tests")
     planned = invocations(root, evidence, logs)?
-    oven = root.joinpath("workspaces/oven")
+    oven_a = root.joinpath(".agents/state/release-oven-tests/evidence/0/workspaces/oven")
+    oven_b = root.joinpath(".agents/state/release-oven-tests/evidence/1/workspaces/oven")
+    models = root.joinpath("loaves/compiler/internal_models")
     lowering = root.joinpath("loaves/compiler/lowering")
     loaf_a = root.joinpath("loaves/group_b/loaf_a")
     loaf_b = root.joinpath("loaves/group_a/loaf_b")
-    contract = evidence.joinpath("checker-records/project/src/test_record_scope.incn")
     assert [item.arguments for item in planned] == [
-        ["test", oven.joinpath("src/test_alpha.incn").0],
-        ["test", oven.joinpath("src/test_beta.incn").0],
+        ["test", oven_a.joinpath("src/test_alpha.incn").0],
+        ["test", oven_b.joinpath("src/test_beta.incn").0],
+        ["test", models.joinpath("tests/test_record_scope.incn").0, "--profile", "release"],
         ["test", lowering.joinpath("tests/test_three.incn").0, "--profile", "release"],
         ["test", loaf_b.joinpath("tests/test_one.incn").0, "--profile", "release"],
         ["test", loaf_a.joinpath("tests/test_one.incn").0, "--profile", "release"],
         ["test", loaf_a.joinpath("tests/test_two.incn").0, "--profile", "release"],
-        ["test", contract.0, "--profile", "release"],
     ]
-    assert [item.directory for item in planned] == [oven.0, oven.0, lowering.0, loaf_b.0, loaf_a.0, loaf_a.0, ""]
-    assert [item.reservation for item in planned] == [4 * GIB, 4 * GIB, 6 * GIB, 4 * GIB, 4 * GIB, 4 * GIB, 6 * GIB]
-    assert [item.serial for item in planned] == [true, true, false, false, false, false, false]
+    assert [item.directory for item in planned] == [
+        oven_a.0,
+        oven_b.0,
+        models.0,
+        lowering.0,
+        loaf_b.0,
+        loaf_a.0,
+        loaf_a.0,
+    ]
+    assert oven_test_state_root(root, "").0 == root.joinpath(".agents/state/release-oven-tests").0
+    assert oven_test_state_root(root, "/outside/oven-tests").0 == "/outside/oven-tests"
+    assert [item.reservation for item in planned] == [4 * GIB, 4 * GIB, 6 * GIB, 6 * GIB, 4 * GIB, 4 * GIB, 4 * GIB]
     assert [item.alone for item in planned] == [false, false, false, false, false, false, false]
-    assert planned[6].log.0 == logs.joinpath("006-test_record_scope.log").0
-    return Ok(None)
-
-
-def test_record_contract_project_copies_its_sources_and_names_the_adapter() -> Result[None, str]:
-    """The isolated project holds the six copied sources and a manifest that adds the frontend."""
-    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
-    root = temporary.path()
-    fixture(root)?
-    evidence = root.joinpath("evidence")
-    _ = invocations(root, evidence, evidence.joinpath("oven-tests"))?
-    project = evidence.joinpath("checker-records/project")
-    for name in RECORD_FILES:
-        copied = project.joinpath("src").joinpath(Path(name).name())
-        assert copied.read_text("utf-8", "strict").map_err((error) => error.message())? == f"# {name}\n"
-    frontend = root.joinpath("loaves/compiler/incan_frontend").0
-    manifest = project.joinpath("loaf.toml").read_text("utf-8", "strict").map_err((error) => error.message())?
-    expected = [
-        "[project]",
-        "name = \"checker_record_contract_test\"",
-        "version = \"0.1.0\"",
-        "private = true",
-        "[project.scripts]",
-        "contract = \"src/test_record_scope.incn\"",
-        "[dependencies]",
-        f"incan_frontend = {{ loaf = \"incan_frontend\", path = \"{frontend}\" }}",
-    ]
-    assert manifest == "\n".join(expected) + "\n"
-    assert refusal(invocations(root, evidence, evidence.joinpath("oven-tests"))) != ""
+    assert oven_a.joinpath("src/test_beta.incn").is_file()
+    assert oven_b.joinpath("src/test_alpha.incn").is_file()
+    assert oven_a.joinpath("tests/fixture.txt").is_file()
+    assert oven_a.parent().parent().joinpath("workbench/app/loaf.toml").is_file()
+    assert oven_a.parent().parent().joinpath("loaves").is_symlink()
+    assert planned[2].log.0 == logs.joinpath("002-test_record_scope.log").0
     return Ok(None)
 
 
@@ -249,14 +253,28 @@ def test_joined_log_keeps_invocation_order_whatever_the_schedule() -> Result[Non
     joined = join_logs(planned, root.joinpath("joined.log"))?
     assert joined == "line 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\n"
     assert not run_all("/usr/bin/false", planned, 4, 0)?
+    assert run_all_failures("/usr/bin/false", planned, 4, 0)? == [0, 1, 2, 3, 4, 5, 6]
+    environment_log = logs.joinpath("environment.log")
+    environment = Invocation(
+        arguments=["OVEN_TEST_PROBE"],
+        directory=root.0,
+        reservation=GIB,
+        log=environment_log,
+        environment={"OVEN_TEST_PROBE": "visible"},
+    )
+    assert run_all("/usr/bin/printenv", [environment], 1, 0)?
+    assert environment_log.read_text("utf-8", "strict").map_err((error) => error.message())? == "visible\n"
     return Ok(None)
 
 
 def fixture(root: Path) -> Result[None, str]:
     """A checkout with Oven units, Loaf tests, hidden and excluded entries, and the record contract sources."""
+    write(root, "workspaces/oven/loaf.toml", "[project]\nname = \"oven\"\nversion = \"0.1.0\"\n")?
     write(root, "workspaces/oven/src/test_beta.incn", "")?
     write(root, "workspaces/oven/src/test_alpha.incn", "")?
     write(root, "workspaces/oven/src/main.incn", "")?
+    write(root, "workspaces/oven/tests/fixture.txt", "fixture")?
+    write(root, "workbench/app/loaf.toml", "[project]\nname = \"workbench\"\nversion = \"0.1.0\"\n")?
     write(root, "workspaces/oven/src/test_note.md", "")?
     write(root, "loaves/group_b/loaf_a/tests/test_two.incn", "")?
     write(root, "loaves/group_b/loaf_a/tests/test_one.incn", "")?
@@ -265,10 +283,9 @@ def fixture(root: Path) -> Result[None, str]:
     write(root, "loaves/group_a/loaf_b/tests/test_one.incn", "")?
     write(root, "loaves/group_a/.hidden/tests/test_one.incn", "")?
     write(root, "loaves/group_a/loaf_c/src/test_source.incn", "")?
-    write(root, "loaves/compiler/incan_frontend/loaf.toml", "")?
+    write(root, "loaves/compiler/internal_models/tests/canonical_record_controls.incn", "")?
+    write(root, "loaves/compiler/internal_models/tests/test_record_scope.incn", "")?
     write(root, "loaves/compiler/lowering/tests/test_three.incn", "")?
-    for name in RECORD_FILES:
-        write(root, f"loaves/compiler/internal_models/{name}", f"# {name}\n")?
     return Ok(None)
 
 

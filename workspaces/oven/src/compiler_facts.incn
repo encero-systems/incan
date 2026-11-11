@@ -58,7 +58,7 @@ pub def admit_fact(path: Path) -> Result[None, str]:
 def record_fact(path: Path, digest: str, observation: str) -> Result[None, str]:
     """Publish admission evidence at the fact's current physical location."""
     location = fact_record(path)?
-    location.parent().mkdir(true, true).map_err((error) => error.message())?
+    location.parent().mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
     record = JsonValue.object(
         {"digest": JsonValue.string(digest), "observation": JsonValue.string(observation), "provenance": JsonValue.string(
             path.0,
@@ -80,6 +80,6 @@ pub def fact_identity(path: Path) -> Result[str, str]:
 
 def fact_record(path: Path) -> Result[Path, str]:
     """Locate admission evidence by physical provenance, outside the fact's content identity."""
-    physical = path.resolve().map_err((error) => error.message())?
+    physical = path.resolve().map_err((error) => f"cannot resolve {error.message()}")?
     address = hexlify(sha256.digest(physical.0.encode("utf-8")))
     return Ok(home()?.joinpath("cache/compiler-facts").joinpath(f"{address}.json"))

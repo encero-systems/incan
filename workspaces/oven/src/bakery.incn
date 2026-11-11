@@ -297,7 +297,7 @@ def stored_file(staged: Path, relative: str, digest: str) -> Result[FactFile, st
 def staged_files(directory: Path, prefix: str) -> Result[list[str], str]:
     """Every regular file under `directory`, as sorted paths relative to the staging root."""
     mut files: list[str] = []
-    for entry in directory.iterdir().map_err((error) => error.message())?:
+    for entry in directory.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
         mut relative = entry.name()
         if prefix != "":
             relative = f"{prefix}/{entry.name()}"
@@ -506,7 +506,7 @@ pub def forget_view(directory: Path) -> Result[None, str]:
     """Remove only a directory's fact selection before an unbaked producer replaces its local outputs."""
     marker = directory.joinpath(VIEW_RECORD)
     if marker.is_file():
-        marker.unlink().map_err((error) => error.message())?
+        marker.unlink().map_err((error) => f"cannot remove file {error.message()}")?
     return Ok(None)
 
 
@@ -527,7 +527,7 @@ pub def library_directory(store: Path, directory: Path) -> Result[Path, str]:
     marker = directory.joinpath(VIEW_RECORD)
     if not marker.is_file():
         return Ok(directory)
-    canonical = store.resolve().map_err((error) => error.message())?
+    canonical = store.resolve().map_err((error) => f"cannot resolve {error.message()}")?
     fact = library_fact(canonical, read_json(marker)?)?
     return bind_library(canonical, fact)
 
@@ -578,16 +578,16 @@ def bind_library(store: Path, fact: Fact) -> Result[Path, str]:
         elif file.program:
             # A worker's resolved executable must remain inside the library's verified artifact root.
             if target.is_symlink():
-                target.unlink().map_err((error) => error.message())?
+                target.unlink().map_err((error) => f"cannot remove file {error.message()}")?
             view_file(store, file, target)?
         elif target.is_symlink():
-            resolved = target.resolve().map_err((error) => error.message())?
+            resolved = target.resolve().map_err((error) => f"cannot resolve {error.message()}")?
             if resolved.0 != source.0:
                 return Err(f"{target.0}: library binding names another payload")
         elif target.exists():
             return Err(f"{target.0}: library binding is not a payload link")
         else:
-            target.symlink_to(source).map_err((error) => error.message())?
+            target.symlink_to(source).map_err((error) => f"cannot create symbolic link {error.message()}")?
     if not selected.joinpath(VIEW_RECORD).is_file():
         marker = JsonValue.object(
             {"identity": JsonValue.string(fact.identity), "layout": JsonValue.string(layout), "fact": JsonValue.string(
@@ -808,7 +808,7 @@ pub def repair_derived(
     # 2. The owner supplied complete replacement bytes, independently of damaged storage.
     for relative in staged_files(staged, "")?:
         source = staged.joinpath(relative)
-        digest = hexlify(file_digest(source, "sha256").map_err((error) => error.message())?)
+        digest = hexlify(file_digest(source, "sha256").map_err((error) => f"cannot hash file {error.message()}")?)
         quarantine_payload(store, digest).map_err(store_failure)?
     # 3. Record publication uses the same transaction path as an ordinary bake.
     forget_verified()
