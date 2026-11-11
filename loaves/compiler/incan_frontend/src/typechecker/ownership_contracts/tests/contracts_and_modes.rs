@@ -48,15 +48,17 @@ fn explicit_bodies_propagate_construct_and_match_results() -> Result<(), Box<dyn
         "{:?}",
         refused.errors
     );
-    // Moving a stored owner into a carrier waits for constructed values' transfer materialization, as models do.
-    let staged = checked("def wrap(text: Owned[str]) -> Option[str]:\n    return Some(text)\n")?;
+    // A carrier consumes an owned payload through the same checked move as an explicit owned call argument.
+    let accepted = checked("def wrap(text: Owned[str]) -> Option[str]:\n    return Some(text)\n")?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    let refused = checked("def wrap(text: Borrowed[str]) -> Option[str]:\n    return Some(text)\n")?;
     assert!(
-        staged
+        refused
             .errors
             .iter()
-            .any(|error| error.stable_code() == Some("INCAN-T0123")),
+            .any(|error| error.stable_code() == Some("INCAN-T0126")),
         "{:?}",
-        staged.errors
+        refused.errors
     );
     Ok(())
 }

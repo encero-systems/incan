@@ -1,4 +1,4 @@
-# behavior: explicit bodies propagate with `?`, construct results and match on them; an owner still held when `?` propagates or when an arm skips its transfer is dropped by its frame, and repeating both paths leaves the heap as it found it (#2500).
+# behavior: explicit bodies propagate with `?`, move generic owned errors into `Err`, construct results and match on them; an owner still held when `?` propagates or when an arm skips its transfer is dropped by its frame, and repeating both paths leaves the heap as it found it (#2500, #2939).
 # expect-stdout:
 #   5
 #   empty
@@ -12,6 +12,7 @@
 #   5
 #   7
 #   generic
+#   kept failure
 
 """Propagate, construct and match results in explicit bodies, and measure what the error paths leave behind."""
 
@@ -80,6 +81,14 @@ def identity[T](value: Owned[T]) -> T:
     return value
 
 
+def fail[E](error: Owned[E]) -> Result[None, E]:
+    return Err(error)
+
+
+def forward[E](error: Owned[E]) -> Result[None, E]:
+    return fail(error)
+
+
 def repeated_paths() -> None:
     """
     Run each error path a thousand times: `?` propagating past a second owner, and a match arm skipping its transfer.
@@ -120,3 +129,6 @@ def main() -> None:
     println(add(value + 2))
     println(add(value + 2, 4))
     println(identity("generic"))
+    match forward("kept failure"):
+        Err(error) => println(error)
+        Ok(_) => assert false
