@@ -1,7 +1,7 @@
 """Select and publish paired local/final body values through the compiler evaluation graph."""
 
 from pub::incan_platform.store import Snapshot
-from pub::internal_models import ProducerRank
+from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values
 from pub::internal_models.records import ReadReceipt, RecordKey
 from compiler_graph_records import (
     PublishedEvaluation,
@@ -68,6 +68,14 @@ pub def select_body_inventory(selected: Snapshot, profile: str) -> Result[list[S
                 )
             None => pass
     return Ok(selected_records)
+
+
+pub def encode_body_inventory(records: list[SelectedBodyRecord]) -> Result[bytes, str]:
+    """Encode graph-admitted pairs for the separate native checker transport in their canonical selected order."""
+    mut values: list[GraphBodyValue] = []
+    for record in records:
+        values.append(GraphBodyValue(identity=record.identity, local=record.local, final=record.final))
+    return encode_graph_body_values(values).map_err((error) => f"selected body transport refused: {error:?}")
 
 
 pub def publish_body_values(

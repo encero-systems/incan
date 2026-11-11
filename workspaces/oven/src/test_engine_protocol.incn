@@ -472,8 +472,10 @@ def check_collection_before_selection() -> Result[None, str]:
             Some(captured.epoch),
             "collection-proof",
         )?
-        assert produced.code == 0
-        assert produced.evaluations == 1 - turn and produced.native_bakes == 1 - turn
+        if produced.code != 0:
+            console = root.joinpath("console.err").read_text("utf-8", "strict").map_err((error) => error.message())?
+            return Err(f"turn {turn} refused with code {produced.code}: {console}")
+        assert produced.evaluations == 1 - turn and produced.native_bakes == 1 - turn, f"turn {turn}: {produced.evaluations} evaluations, {produced.native_bakes} native bakes"
         mut group: list[Transaction] = []
         if let Some(transaction) = captured.transaction:
             group.append(transaction)
@@ -486,10 +488,10 @@ def check_collection_before_selection() -> Result[None, str]:
             None => return Err("native publication had no unit")
             Some(unit) =>
                 selected = select_program(store, view, unit, handle)?
-                assert selected_program(selected.snapshot, handle)? == Some(unit)
+                assert selected_program(selected.snapshot, handle)? == Some(unit), f"turn {turn} lost its selected program"
                 ran = Command.new(unit.binary).output().map_err((error) => str(error))?
-                assert ran.status.success() and ran.stdout == b"hello\x0a"
-        assert committed.generation > 0
+                assert ran.status.success() and ran.stdout == b"hello\x0a", f"turn {turn} selected an unusable program"
+        assert committed.generation > 0, f"turn {turn} committed no store generation"
     return Ok(None)
 
 
