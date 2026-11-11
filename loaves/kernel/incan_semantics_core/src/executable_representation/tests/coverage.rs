@@ -210,6 +210,43 @@ fn internal_surface_diagnostic_names_nested_nominal_reference() -> Result<(), Bo
     Ok(())
 }
 
+/// Internal diagnostics identify the exact native signature absent from a declaration-owned default.
+#[test]
+fn internal_surface_diagnostic_names_missing_native_default_selection() -> Result<(), Box<dyn std::error::Error>> {
+    let mut owner = identity("Holder", 2);
+    owner.kind = SemanticSourceTargetKind::Model;
+    owner.declaration_span = HirSourceSpan::new(200, 499);
+    let field = owner.generated_member("value", SemanticSourceTargetKind::Field);
+    let native =
+        crate::body_ir::rust_item_identity("std::cell::RefCell::new").ok_or("native callable identity unavailable")?;
+    let mut defaults = body("Holder", 2);
+    defaults.type_parameters.clear();
+    defaults.canonical = Some(owner.clone());
+    defaults.block.stmts.push(call(native.clone()));
+    let mut nominal = generic_holder_declaration(owner.clone(), field.clone());
+    nominal.has_field_defaults = true;
+    nominal.field_default_body = Some(Box::new(defaults));
+    let mut input = module(Vec::new());
+    input.nominal_declarations.push(nominal);
+
+    let diagnostics = internal_surface_admission_diagnostics(
+        std::slice::from_ref(&input),
+        "probe",
+        &BTreeSet::from([owner.clone(), field]),
+    );
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].declaration, owner);
+    assert_eq!(
+        diagnostics[0].path,
+        vec!["field defaults", "statements", "native call selection"]
+    );
+    assert_eq!(
+        diagnostics[0].reference,
+        format!("{} with native type arguments []", native.render_compact())
+    );
+    Ok(())
+}
+
 #[test]
 fn public_membership_and_explicit_empty_body_coverage() -> Result<(), Box<dyn std::error::Error>> {
     let module = module(vec![body("public", 1), body("private_secret", 2)]);

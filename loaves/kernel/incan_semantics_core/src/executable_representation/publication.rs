@@ -245,6 +245,22 @@ fn selected_native_calls(
     Ok(callables)
 }
 
+/// Name the first checked native selection absent from the module's callable inventory.
+///
+/// Identity and native type arguments jointly select one retained Rust signature. Reporting both prevents a same-path
+/// generic instantiation from being mistaken for the unresolved reference.
+fn unresolved_native_call_reference(
+    selections: &[(CanonicalSymbolId, Vec<IncanType>)],
+    native_callables: &[crate::body_ir::LoafCallable],
+) -> Option<String> {
+    selections.iter().find_map(|(identity, arguments)| {
+        (!native_callables.iter().any(|callable| {
+            callable.canonical == *identity && callable.native_type_arguments.as_slice() == arguments.as_slice()
+        }))
+        .then(|| format!("{} with native type arguments {arguments:?}", identity.render_compact()))
+    })
+}
+
 /// Bind a declaration's physical fragment address to the already-published canonical owner and span.
 pub(super) fn declaration_id(identity: &CanonicalSymbolId) -> Result<CompilerNodeId, CoverageReason> {
     let module = canonical_module_identity(identity).ok_or(CoverageReason::UnresolvedReference)?;
@@ -501,15 +517,36 @@ fn diagnose_body_unresolved_reference(
             return take_unresolved_reference(&mut audit, path);
         }
     }
-    if audit.parameters(&mut source.params.clone()).is_err() {
-        let mut path = prefix.clone();
-        path.push("parameters".to_owned());
-        return take_unresolved_reference(&mut audit, path);
+    for parameter in &source.params {
+        let mut parameter = parameter.clone();
+        let first_native_call = audit.native_calls.len();
+        if audit.parameters(std::slice::from_mut(&mut parameter)).is_err() {
+            let mut path = prefix.clone();
+            path.push(format!("parameter `{}` default", parameter.name));
+            return take_unresolved_reference(&mut audit, path);
+        }
+        if let Some(reference) =
+            unresolved_native_call_reference(&audit.native_calls[first_native_call..], &module.loaf_callables)
+        {
+            let mut path = prefix.clone();
+            path.push(format!("parameter `{}` default", parameter.name));
+            path.push("native call selection".to_owned());
+            return Some((path, reference));
+        }
     }
+    let first_native_call = audit.native_calls.len();
     if audit.statements(&mut source.block.stmts.clone()).is_err() {
         let mut path = prefix;
         path.push("statements".to_owned());
         return take_unresolved_reference(&mut audit, path);
+    }
+    if let Some(reference) =
+        unresolved_native_call_reference(&audit.native_calls[first_native_call..], &module.loaf_callables)
+    {
+        let mut path = prefix;
+        path.push("statements".to_owned());
+        path.push("native call selection".to_owned());
+        return Some((path, reference));
     }
     None
 }
