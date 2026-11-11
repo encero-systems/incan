@@ -36,13 +36,7 @@ pub from checked_types import (
     CheckedType,
     valid_checked_type,
 )
-pub from body_ir_values import (
-    CompilerBlock,
-    CompilerCallee,
-    CompilerRvalue,
-    CompilerStatement,
-    CompilerStatementKind,
-)
+pub from body_ir_values import CompilerBlock, CompilerCallee, CompilerRvalue, CompilerStatement, CompilerStatementKind
 pub from body_ir_declarations import (
     BODY_IR_ADAPTER_PROFILE,
     BODY_IR_ADAPTER_SOURCE,
@@ -77,7 +71,9 @@ pub from records import (
     RecordRequest,
     RevisionEvidence,
     SelectedFact,
+    DeletedFact,
     AbsentFact,
+    MemberFact,
     ReadFault,
     RecordRead,
     ReadWitness,
@@ -87,6 +83,8 @@ pub from records import (
     ReadCounters,
     PreparationEvidence,
     READ_SCHEMA,
+    StoreRecordSource,
+    encode_record_key,
 )
 pub from record_service import (
     RECORD_SERVICE_SCHEMA,

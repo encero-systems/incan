@@ -56,6 +56,13 @@ pub model IndexError:
     pub detail: str
 
 
+pub model SearchResult:
+    """One exact index answer and the digest of its authenticated root-to-leaf search path."""
+
+    pub location: Option[Location]
+    pub path_digest: str
+
+
 model Span:
     """Where one entry of a mapped page lies: its key's offset and length, and the offset of the field after it."""
 
@@ -100,21 +107,33 @@ pub def find(root: Path, top: str, key: str) -> Result[Option[Location], IndexEr
 
     Each page on the path is read in place; only the keys compared and the one location found are copied out.
     """
+    return Ok(search(root, top, key)?.location)
+
+
+pub def search(root: Path, top: str, key: str) -> Result[SearchResult, IndexError]:
+    """Find one location and bind the answer to every authenticated page examined on its search path."""
     if top == "":
-        return Ok(None)
+        return Ok(SearchResult(location=None, path_digest=search_digest([], key)))
     mut name = top
+    mut names: list[str] = []
     loop:
+        names.append(name)
         path = page_path(root, name)
         page = mapped_page(path, name)?
         if page.level == 0:
             match leaf_span(page, key).map_err((detail) => malformed(path, detail))?:
-                None => return Ok(None)
+                None => return Ok(SearchResult(location=None, path_digest=search_digest(names, key)))
                 Some(span) =>
                     found = location_at(page.view, span).map_err((detail) => malformed(path, detail))?
-                    return Ok(Some(found))
+                    return Ok(SearchResult(location=Some(found), path_digest=search_digest(names, key)))
         match covering_span(page, key).map_err((detail) => malformed(path, detail))?:
-            None => return Ok(None)
+            None => return Ok(SearchResult(location=None, path_digest=search_digest(names, key)))
             Some(span) => name = child_at(page.view, span).map_err((detail) => malformed(path, detail))?
+
+
+def search_digest(path: list[str], key: str) -> str:
+    """Digest the content-named page path and exact searched key as reusable inclusion or exclusion evidence."""
+    return hexlify(sha256.digest(("\n".join(path) + "\n" + key).encode("utf-8")))
 
 
 def leaf_span(page: Layout, key: str) -> Result[Option[Span], str]:
