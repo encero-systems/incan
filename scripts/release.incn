@@ -34,6 +34,8 @@ from release_support import (
     digest,
     log_tail,
     parse_release_options,
+    reference_cache_identity,
+    reference_cache_root,
     require_candidate_census,
     release_receipt,
     run_step,
@@ -372,8 +374,32 @@ def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str
 
 
 def reference_census(run: ReleaseRun) -> Result[Path, str]:
-    """Measure the released seed against the same committed fixture tree before judging candidate outcomes."""
+    """Reuse or measure the released seed against the same content-identified committed contract tree."""
     project = run.paths.source.joinpath("workspaces/contracts")
+    log = run.paths.output.joinpath("reference-contracts.log")
+    contracts_tree = command_text(
+        "git",
+        ["-C", run.paths.source.0, "rev-parse", "HEAD:workspaces/contracts"],
+    )?.strip()
+    identity = reference_cache_identity(
+        run.seed_oven,
+        run.seed_lsp,
+        run.seed_home.joinpath(f"{TOOLCHAIN_DIRECTORY}/toolchain.json"),
+        contracts_tree,
+    )?
+    cached = reference_cache_root(run.seed_home).joinpath(identity).joinpath("contracts.log")
+    cache_started = Instant.now()
+    if cached.is_file():
+        match census_results(cached):
+            Ok(_) =>
+                _ = cached.copy(log, true, true).map_err((error) => error.message())?
+                append_timing(
+                    run.paths.output.joinpath("timings.tsv"),
+                    "reference-cache-hit",
+                    cache_started.elapsed().as_secs_f64(),
+                )?
+                return Ok(log)
+            Err(_) => pass
     require_release_step(
         run,
         release_step(
@@ -386,7 +412,6 @@ def reference_census(run: ReleaseRun) -> Result[Path, str]:
         ),
     )?
     runner = project.joinpath("target/incan/release/bin/contracts")
-    log = run.paths.output.joinpath("reference-contracts.log")
     mut environment = build_environment(run, run.seed_home, run.seed_oven)
     environment["INCAN_LSP"] = run.seed_lsp.0
     code = timed_release_step(
@@ -395,6 +420,14 @@ def reference_census(run: ReleaseRun) -> Result[Path, str]:
     )?
     if code > 1:
         return Err(f"reference runner exited {code}")
+    _ = census_results(log)?
+    cached.parent().mkdir(true, true).map_err((error) => error.message())?
+    _ = log.copy(cached, true, true).map_err((error) => error.message())?
+    append_timing(
+        run.paths.output.joinpath("timings.tsv"),
+        "reference-cache-store",
+        cache_started.elapsed().as_secs_f64(),
+    )?
     return Ok(log)
 
 

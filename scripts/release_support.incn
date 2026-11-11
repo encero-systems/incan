@@ -255,6 +255,26 @@ pub def digest(path: Path) -> Result[str, str]:
     return Ok(hexlify(file_digest(path, "sha256").map_err((error) => error.message())?))
 
 
+pub def reference_cache_identity(
+    seed_oven: Path,
+    seed_lsp: Path,
+    seed_manifest: Path,
+    contracts_tree: str,
+) -> Result[str, str]:
+    """Hash every seed bundle component and the committed contract tree that determine reference outcomes."""
+    mut hasher = sha256.new()
+    for value in [digest(seed_oven)?, digest(seed_lsp)?, digest(seed_manifest)?, contracts_tree]:
+        encoded = value.encode("utf-8")
+        hasher.update(f"{len(encoded)}:".encode("utf-8"))
+        hasher.update(encoded)
+    return Ok(hexlify(hasher.finalize_bytes()))
+
+
+pub def reference_cache_root(seed_home: Path) -> Path:
+    """Keep reusable reference evidence inside the caller-owned seed home cache boundary."""
+    return seed_home.joinpath("cache/release-reference")
+
+
 pub def same_bytes(left: Path, right: Path) -> Result[bool, str]:
     """Compare complete file bytes without delegating to an external command."""
     if not left.is_file() or not right.is_file():
