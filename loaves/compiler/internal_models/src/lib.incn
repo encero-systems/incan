@@ -126,4 +126,13 @@ pub from activation_envelopes import (
     stage_name,
 )
 pub from checker_records import from_native_final_fields, from_native_local_fields, encode_record
+pub from library_facts import (
+    LIBRARY_FACT_SCHEMA,
+    FUNCTION_FACT_SCHEMA,
+    LibraryFactKind,
+    LibraryFact,
+    FunctionFact,
+    encode_library_fact,
+    decode_library_fact,
+)
 pub from read_receipts import RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt

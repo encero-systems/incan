@@ -1,6 +1,7 @@
 """Source-origin controls for Incan-owned compiler facts."""
 
 from compiler_records import HirSourceSpan, valid_hir_source_span
+from library_facts import LIBRARY_FACT_SCHEMA, LibraryFact, LibraryFactKind, decode_library_fact, encode_library_fact
 
 
 pub def test_source_facts() -> None:
@@ -12,3 +13,25 @@ pub def test_source_facts() -> None:
     assert valid_hir_source_span(generated)
     assert generated != moved
     assert not valid_hir_source_span(invalid)
+
+
+pub def test_library_fact_crumb_round_trip() -> Result[None, str]:
+    """The Incan-owned library record preserves every summary fact through Crumb bytes."""
+    expected = LibraryFact(
+        schema=LIBRARY_FACT_SCHEMA,
+        kind=LibraryFactKind.Library.value(),
+        name="std-primitives",
+        version="0.6.0-dev.8",
+        incan_version="0.6.0-dev.8",
+        manifest_format=5,
+        manifest_digest="0000000000000000000000000000000000000000000000000000000000000000",
+        vocabulary=true,
+        provider_operations=false,
+        native_unions=true,
+        rust_paths=["std::string::String", "std::vec::Vec"],
+        rust_abi_declared=true,
+    )
+    encoded = encode_library_fact(expected)?
+    assert encoded[0:4] == b"CRMB"
+    assert decode_library_fact(encoded)? == expected
+    return Ok(None)

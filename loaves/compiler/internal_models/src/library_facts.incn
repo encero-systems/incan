@@ -1,0 +1,268 @@
+"""Incan-owned Crumb records for compiled-library facts."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.descriptions import Description, DescriptionMode
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.row_reader import read_rows
+from std.primitives.crumb.row_writer import write_rows
+from std.primitives.crumb.types import AbsentPolicy
+from std.primitives.crumb.values import IntegerValue, Metadata, MetadataEntry, Value, ValueField
+from std.primitives.reflection import FieldInfo
+from std.primitives.text import copy_frozen_bytes
+from std.primitives.views import MappedFile
+
+
+pub const LIBRARY_FACT_SCHEMA: str = "incan.library-fact/1"
+pub const FUNCTION_FACT_SCHEMA: str = "incan.function-fact/1"
+
+
+pub enum LibraryFactKind(str):
+    """Closed declaration families admitted by the library-facts contract."""
+
+    Library = "library"
+    Alias = "alias"
+    Partial = "partial"
+    Model = "model"
+    Class = "class"
+    Function = "function"
+    Trait = "trait"
+    Enum = "enum"
+    TypeAlias = "type-alias"
+    Newtype = "newtype"
+    Const = "const"
+    Static = "static"
+    MadePrivateType = "made-private-type"
+    SoftKeyword = "soft-keyword"
+    Vocabulary = "vocabulary"
+    ContractMetadata = "contract-metadata"
+    RustAbi = "rust-abi"
+
+
+@derive(Eq)
+pub model LibraryFact:
+    """The one library-level fact required before selecting declaration records."""
+
+    pub schema: str
+    pub kind: str
+    pub name: str
+    pub version: str
+    pub incan_version: str
+    pub manifest_format: int
+    pub manifest_digest: str
+    pub vocabulary: bool
+    pub provider_operations: bool
+    pub native_unions: bool
+    pub rust_paths: list[str]
+    pub rust_abi_declared: bool
+
+
+@derive(Eq)
+pub model FunctionFact:
+    """A flattened checked function signature whose nested type graph remains typed Crumb data."""
+
+    pub schema: str
+    pub kind: str
+    pub stable_identity: str
+    pub name: str
+    pub emitted_name: Option[str]
+    pub type_parameter_names: list[str]
+    pub type_parameter_bound_offsets: list[int]
+    pub bound_names: list[str]
+    pub bound_source_names: list[Option[str]]
+    pub bound_module_paths: list[list[str]]
+    pub bound_type_argument_offsets: list[int]
+    pub bound_type_argument_roots: list[int]
+    pub bound_inferred: list[bool]
+    pub parameter_names: list[str]
+    pub parameter_type_roots: list[int]
+    pub parameter_surface_types: list[Option[str]]
+    pub parameter_kinds: list[str]
+    pub parameter_has_default: list[bool]
+    pub parameter_is_mut: list[bool]
+    pub type_tags: list[str]
+    pub type_names: list[str]
+    pub type_child_offsets: list[int]
+    pub type_children: list[int]
+    pub return_type_root: int
+    pub is_async: bool
+
+
+pub def encode_library_fact(fact: LibraryFact) -> Result[bytes, str]:
+    """Encode one library fact as an independently readable typed Crumb row."""
+    values = [
+        Value.Text(fact.schema),
+        Value.Text(fact.kind),
+        Value.Text(fact.name),
+        Value.Text(fact.version),
+        Value.Text(fact.incan_version),
+        signed(fact.manifest_format),
+        Value.Text(fact.manifest_digest),
+        Value.Boolean(fact.vocabulary),
+        Value.Boolean(fact.provider_operations),
+        Value.Boolean(fact.native_unions),
+        texts(fact.rust_paths),
+        Value.Boolean(fact.rust_abi_declared),
+    ]
+    return encode_record(LibraryFact.__fields__(), b"libfac\x00", "incan.LibraryFact", values)
+
+
+pub def decode_library_fact(data: bytes) -> Result[LibraryFact, str]:
+    """Decode and validate one library fact without accepting another record kind or schema."""
+    values = decode_record(data, LibraryFact.__fields__(), b"libfac\x00", "incan.LibraryFact")?
+    fact = LibraryFact(
+        schema=text(values[0])?,
+        kind=text(values[1])?,
+        name=text(values[2])?,
+        version=text(values[3])?,
+        incan_version=text(values[4])?,
+        manifest_format=integer(values[5])?,
+        manifest_digest=text(values[6])?,
+        vocabulary=boolean(values[7])?,
+        provider_operations=boolean(values[8])?,
+        native_unions=boolean(values[9])?,
+        rust_paths=text_list(values[10])?,
+        rust_abi_declared=boolean(values[11])?,
+    )
+    if fact.schema != LIBRARY_FACT_SCHEMA or fact.kind != LibraryFactKind.Library.value():
+        return Err("library fact kind or schema mismatch")
+    return Ok(fact)
+
+
+def encode_record(fields: FrozenList[FieldInfo], key: bytes, path: str, values: list[Value]) -> Result[bytes, str]:
+    """Bind one value per declared field and write a self-described Crumb row."""
+    if len(fields) != len(values):
+        return Err("library fact field/value count mismatch")
+    mut stored: list[ValueField] = []
+    for index in range(len(fields)):
+        stored.append(
+            ValueField(
+                identity=copy_frozen_bytes(fields[index].identity),
+                canonical=fields[index].canonical,
+                absent=AbsentPolicy.Required,
+                value=values[index],
+            ),
+        )
+    mut budget = fact_budget()?
+    registry = KindRegistry.create([], budget).map_err((error) => error.message())?
+    return write_rows(
+        [description(fields, key, path)?],
+        [RowRecord(key=key, value=Value.Record(stored))],
+        registry,
+        false,
+        budget,
+    ).map_err((error) => error.message())
+
+
+def decode_record(data: bytes, fields: FrozenList[FieldInfo], key: bytes, path: str) -> Result[list[Value], str]:
+    """Admit one complete Crumb row and return values in declaration order by field identity."""
+    owner = MappedFile.owned(data)?
+    view = match owner.view(0, owner.len()):
+        Some(value) => value
+        None => return Err("library fact view refused")
+    mut budget = fact_budget()?
+    registry = KindRegistry.create([], budget).map_err((error) => error.message())?
+    rows = read_rows(view, [description(fields, key, path)?], registry, false, budget).map_err(
+        (error) => error.message(),
+    )?
+    if rows.len() != 1:
+        return Err("library fact requires exactly one record")
+    record = rows.read_record(0, budget).map_err((error) => error.message())?
+    if record.key != key:
+        return Err("library fact record identity mismatch")
+    match record.value:
+        Value.Record(stored) => return ordered_values(stored, fields)
+        _ => return Err("library fact root is not a record")
+
+
+def description(fields: FrozenList[FieldInfo], key: bytes, path: str) -> Result[Description, str]:
+    """Build the complete Crumb description from compiler-owned field identities and stored selectors."""
+    mut members: list[Metadata] = []
+    for field in fields:
+        stored_type = match field.stored_type:
+            Some(value) => str(value)
+            None => return Err(f"library fact field `{field.name}` has no stored type")
+        members.append(
+            Metadata.Map(
+                [
+                    MetadataEntry(key="id", value=Metadata.Binary(copy_frozen_bytes(field.identity))),
+                    MetadataEntry(key="name", value=Metadata.Text(str(field.name))),
+                    MetadataEntry(key="type", value=Metadata.Text(stored_type)),
+                    MetadataEntry(key="canonical", value=Metadata.Boolean(field.canonical)),
+                    MetadataEntry(key="absent", value=Metadata.Text("required")),
+                    MetadataEntry(key="properties", value=Metadata.Map([])),
+                ],
+            ),
+        )
+    complete = Metadata.Map(
+        [
+            MetadataEntry(key="kind", value=Metadata.Text("Record")),
+            MetadataEntry(key="nominal", value=Metadata.Binary(key)),
+            MetadataEntry(key="path", value=Metadata.Text(path)),
+            MetadataEntry(key="properties", value=Metadata.Map([])),
+            MetadataEntry(key="fields", value=Metadata.List(members)),
+        ],
+    )
+    return Ok(Description(metadata=complete, mode=DescriptionMode.Inline))
+
+
+def ordered_values(stored: list[ValueField], fields: FrozenList[FieldInfo]) -> Result[list[Value], str]:
+    """Select every declared value by stable field identity rather than physical record order."""
+    mut values: list[Value] = []
+    for field in fields:
+        identity = copy_frozen_bytes(field.identity)
+        mut found: Option[Value] = None
+        for candidate in stored:
+            if candidate.identity == identity:
+                found = Some(candidate.value)
+        match found:
+            Some(value) => values.append(value)
+            None => return Err(f"library fact field `{field.name}` is absent")
+    return Ok(values)
+
+
+def fact_budget() -> Result[Budget, str]:
+    """Use one bounded allowance large enough for individual compiler facts, never an unbounded decoder."""
+    return Budget.create(bytes=16777216, elements=1048576, depth=128).map_err((error) => error.message())
+
+
+def signed(value: int) -> Value:
+    """Retain an Incan integer in Crumb's explicit signed carrier."""
+    return Value.Integer(IntegerValue.Signed(value))
+
+
+def texts(values: list[str]) -> Value:
+    """Convert owned text values into a typed Crumb list."""
+    return Value.List([Value.Text(value) for value in values])
+
+
+def text(value: Value) -> Result[str, str]:
+    """Require an owned text cell."""
+    match value:
+        Value.Text(content) => return Ok(content)
+        _ => return Err("library fact field is not text")
+
+
+def integer(value: Value) -> Result[int, str]:
+    """Require a signed integer cell."""
+    match value:
+        Value.Integer(IntegerValue.Signed(content)) => return Ok(int(content))
+        _ => return Err("library fact field is not a signed integer")
+
+
+def boolean(value: Value) -> Result[bool, str]:
+    """Require a boolean cell."""
+    match value:
+        Value.Boolean(content) => return Ok(content)
+        _ => return Err("library fact field is not boolean")
+
+
+def text_list(value: Value) -> Result[list[str], str]:
+    """Require a list whose every cell is owned text."""
+    match value:
+        Value.List(items) =>
+            mut result: list[str] = []
+            for item in items:
+                result.append(text(item)?)
+            return Ok(result)
+        _ => return Err("library fact field is not a text list")
