@@ -11,15 +11,17 @@ from check_support import repository_root, write_stderr
 from native_build import (
     NativeContext,
     StandardGeneration,
+    StandardProfile,
     build_runtime,
+    build_shipped_tools_with_standard_profile,
     build_source_interfaces,
+    build_source_tools,
     build_standard_packages,
-    build_support_tool,
-    build_tool,
     publish_support,
     require_unique_runtime_root,
     standard_profiles,
 )
+from oven_tests import host_memory, shared_memory
 from release_support import (
     FAMILIES,
     TOOLCHAIN_DIRECTORY,
@@ -297,9 +299,8 @@ def apply_release_trust(source: Path, toolchain: Path) -> Result[None, str]:
 def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
     """Build the conductor and fresh support/runtime/standard source closure with the released seed."""
     seed_context = native_context(run, run.seed_oven, run.seed_home)
-    conductor = build_tool(seed_context, "oven", false, "conductor-build")?
+    conductor, helper = build_source_tools(seed_context, run.seed_home)?
     context = native_context(run, conductor, run.paths.home)
-    helper = build_support_tool(context, run.seed_home)?
     withdraw_seed_providers(run)?
     publish_support(context, helper)?
     interfaces_started = Instant.now()
@@ -342,24 +343,19 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
     )?
     _ = build_runtime(context, helper, Some(interfaces), true)?
     require_unique_runtime_root(context)?
-    build_standard_packages(
-        context,
-        helper,
-        "candidate-",
-        standard_profiles(StandardGeneration.Candidate),
-    )?
+    build_standard_packages(context, helper, "candidate-", [StandardProfile.Release])?
     return Ok(Candidate(context=context, oven=candidate.oven, lsp=candidate.lsp))
 
 
 def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
     """Build the shipped tools, copy the bundle tools, and pack the installed candidate toolchain."""
-    oven = build_tool(candidate.context, "oven", true, "oven-build")?
+    helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
+    tools = build_shipped_tools_with_standard_profile(candidate.context, helper, "candidate-", StandardProfile.Debug)?
     bundle_oven = run.paths.bundle.joinpath("incan")
-    _ = oven.copy(bundle_oven, true, true).map_err((error) => error.message())?
+    _ = tools.oven.copy(bundle_oven, true, true).map_err((error) => error.message())?
     context = native_context(run, bundle_oven, run.paths.home)
-    lsp = build_tool(context, "lsp", false, "lsp-build")?
     bundle_lsp = run.paths.bundle.joinpath("incan-lsp")
-    _ = lsp.copy(bundle_lsp, true, true).map_err((error) => error.message())?
+    _ = tools.lsp.copy(bundle_lsp, true, true).map_err((error) => error.message())?
     require_release_step(
         run,
         release_step(
@@ -378,10 +374,7 @@ def reference_census(run: ReleaseRun) -> Result[Path, str]:
     """Reuse or measure the released seed against the same content-identified committed contract tree."""
     project = run.paths.source.joinpath("workspaces/contracts")
     log = run.paths.output.joinpath("reference-contracts.log")
-    contracts_tree = command_text(
-        "git",
-        ["-C", run.paths.source.0, "rev-parse", "HEAD:workspaces/contracts"],
-    )?.strip()
+    contracts_tree = command_text("git", ["-C", run.paths.source.0, "rev-parse", "HEAD:workspaces/contracts"])?.strip()
     identity = reference_cache_identity(
         run.seed_oven,
         run.seed_lsp,
@@ -597,6 +590,8 @@ def native_context(run: ReleaseRun, builder: Path, home: Path) -> NativeContext:
         stdlib=run.paths.source.joinpath("loaves/stdlib").0,
         evidence=run.paths.output,
         timings=run.paths.output.joinpath("timings.tsv"),
+        jobs=run.options.jobs,
+        memory=shared_memory(host_memory()),
         timeout_seconds=run.options.timeout_seconds,
     )
 

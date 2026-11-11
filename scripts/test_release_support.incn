@@ -3,7 +3,15 @@
 from std.fs import Path
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
-from native_build import StandardGeneration, StandardProfile, standard_profiles
+from native_build import (
+    LOWERING_RESERVATION_BYTES,
+    PROJECT_RESERVATION_BYTES,
+    STANDARD_RESERVATION_BYTES,
+    StandardGeneration,
+    StandardProfile,
+    standard_build_waves,
+    standard_profiles,
+)
 from release_support import (
     BaselineReport,
     Counts,
@@ -15,6 +23,7 @@ from release_support import (
     reference_cache_root,
     release_receipt,
     release_rust_cache_root,
+    reserved_admitted,
     require_candidate_census,
     same_bytes,
     shared_relocated_sysroot,
@@ -34,6 +43,24 @@ PASS format/a/a
 PASS graph/a/a
 total: 8 passed, 0 failed, 0 pending
 """
+
+
+def test_release_build_admission_uses_declared_lowering_project_and_standard_memory() -> Result[None, str]:
+    """Lowering reserves 6 GiB while project and standard work reserve 2 GiB under one shared budget."""
+    gib = 1073741824
+    assert LOWERING_RESERVATION_BYTES == 6 * gib
+    assert PROJECT_RESERVATION_BYTES == 2 * gib
+    assert STANDARD_RESERVATION_BYTES == 2 * gib
+    reservations = [LOWERING_RESERVATION_BYTES, PROJECT_RESERVATION_BYTES, STANDARD_RESERVATION_BYTES]
+    assert reserved_admitted(reservations, [0, 1, 2], [], 3, 10 * gib) == [0, 1, 2]
+    assert reserved_admitted(reservations, [1, 2], [LOWERING_RESERVATION_BYTES], 3, 8 * gib) == [1]
+    waves = standard_build_waves()
+    assert "vocab" not in waves[0]
+    assert "system" in waves[0]
+    assert waves[1] == ["codecs", "compression", "data"]
+    assert waves[2] == ["vocab"]
+    assert waves[3] == ["interop"]
+    return Ok(None)
 
 
 def test_release_profiles_keep_seed_consumption_and_candidate_shipping_distinct() -> Result[None, str]:
@@ -221,7 +248,6 @@ def test_tree_measurement_walks_regular_files_once_and_records_bytes() -> Result
         .joinpath("update-hashes/tree")
         .write_text("pinned\n", "utf-8", "strict", None)
         .map_err((error) => error.message())?
-
     make_tree_writable(cache)?
     cached.write_bytes(b"changed").map_err((error) => error.message())?
     match shared_relocated_sysroot(tree, cache):

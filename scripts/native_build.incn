@@ -9,14 +9,20 @@ from std.tempfile import TemporaryDirectory
 from release_support import (
     STANDARD_PACKAGES,
     TOOLCHAIN_DIRECTORY,
+    ReservedStep,
     Step,
     append_timing,
     digest,
     log_tail,
+    run_reserved_steps,
     run_step,
     same_bytes,
 )
 
+const GIB: int = 1073741824
+pub const LOWERING_RESERVATION_BYTES: int = 6 * GIB
+pub const PROJECT_RESERVATION_BYTES: int = 2 * GIB
+pub const STANDARD_RESERVATION_BYTES: int = 2 * GIB
 const SUPPORT_PROGRAM: str = "workspaces/oven/src/toolchain_native.incn"
 const RUNTIME_NAME: str = "incan_native_runtime"
 const RUNTIME_PROJECT: str = "loaves/compiler/incan_native_runtime"
@@ -32,7 +38,39 @@ pub model NativeContext:
     pub stdlib: str
     pub evidence: Path
     pub timings: Path
+    pub jobs: int
+    pub memory: int
     pub timeout_seconds: int
+
+
+pub model ShippedTools:
+    """The completed Oven and language-server executables selected for the release bundle."""
+
+    pub oven: Path
+    pub lsp: Path
+
+
+model NativeBuildPlan:
+    """One native child plus the output and stable destination published only after it succeeds."""
+
+    name: str
+    output: Path
+    destination: Path
+    child: Step
+    reservation: int
+
+
+model PreparedStandardPackage:
+    """One identified standard unit whose temporary outputs remain private until compilation and publication succeed."""
+
+    package: str
+    name: str
+    profile: str
+    unit: Path
+    staged: Path
+    parent: Path
+    temporary: TemporaryDirectory
+    child: Step
 
 
 pub enum StandardProfile(str):
@@ -57,29 +95,18 @@ pub def standard_profiles(generation: StandardGeneration) -> list[StandardProfil
 
 
 pub def build_support_tool(context: NativeContext, builder_home: Path) -> Result[Path, str]:
-    """Build and install the Incan native-description helper before any source runtime provider exists."""
-    output = context.repo.joinpath("workspaces/oven/target/incan/release/bin/oven")
-    log = context.evidence.joinpath("support-tool-build.log")
-    mut environment = common_environment(context)
-    environment["INCAN_HOME"] = builder_home.0
-    require_native_step(
-        context,
-        step(
-            context,
-            "support-tool-build",
-            context.builder,
-            ["build", context.repo.joinpath(SUPPORT_PROGRAM).0, "--profile", "release"],
-            environment,
-            context.repo,
-            log,
-        ),
-    )?
-    if not output.is_file():
-        return Err(f"support tool build produced no executable: {output.0}")
-    destination = context.lane.joinpath("out/native-builds/toolchain-native")
-    destination.parent().mkdir(true, true).map_err((error) => error.message())?
-    replace_copy(output, destination)?
-    return Ok(destination)
+    """Build and install the isolated Incan native-description helper before source providers exist."""
+    plan = support_build_plan(context, builder_home)?
+    run_build_plans(context, [plan])?
+    return complete_build_plan(plan)
+
+
+pub def build_source_tools(context: NativeContext, builder_home: Path) -> Result[tuple[Path, Path], str]:
+    """Build the conductor and isolated support helper concurrently through the released seed."""
+    conductor = tool_build_plan(context, "oven", false, "conductor-build")?
+    helper = support_build_plan(context, builder_home)?
+    run_build_plans(context, [conductor, helper])?
+    return Ok((complete_build_plan(conductor)?, complete_build_plan(helper)?))
 
 
 pub def publish_support(context: NativeContext, helper: Path) -> Result[None, str]:
@@ -150,15 +177,16 @@ pub def build_standard_packages(
     phase_prefix: str,
     profiles: list[StandardProfile],
 ) -> Result[None, str]:
-    """Compile each standard package in dependency order for the explicitly consumed native profiles."""
+    """Build each profile in dependency-ready waves while compiling independent standard packages concurrently."""
     standards = context.evidence.joinpath(f"{phase_prefix}standards")
     standards.mkdir(true, true).map_err((error) => error.message())?
     for selected in profiles:
         profile = standard_profile_name(selected)
         admitted = standards.joinpath(f"{profile}-admitted.txt")
         admitted.write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
-        for package in STANDARD_PACKAGES:
-            build_standard_package(context, helper, package, profile, admitted, phase_prefix)?
+        build_standard_package(context, helper, STANDARD_PACKAGES[0], profile, admitted, phase_prefix)?
+        for wave in standard_build_waves():
+            build_standard_wave(context, helper, wave, profile, admitted, phase_prefix)?
     return Ok(None)
 
 
@@ -169,35 +197,55 @@ def standard_profile_name(profile: StandardProfile) -> str:
         StandardProfile.Debug => return "debug"
 
 
+pub def standard_build_waves() -> list[list[str]]:
+    """Admit only packages whose source-level standard-library providers were published by earlier waves."""
+    return [
+        ["testing", "async", "system", "web", "observability"],
+        ["codecs", "compression", "data"],
+        ["vocab"],
+        ["interop"],
+    ]
+
+
 pub def build_tool(context: NativeContext, name: str, rebuild: bool, phase: str) -> Result[Path, str]:
     """Build and atomically install Oven, the contract runner, or the language server."""
-    project, output, destination = tool_paths(context, name)?
-    if rebuild:
-        stamp = Path(f"{output.0}.oven-inputs")
-        if stamp.is_file():
-            stamp.unlink().map_err((error) => error.message())?
-    mut environment = common_environment(context)
-    environment["OVEN_TRACE"] = "-"
-    require_native_step(
-        context,
-        step(
-            context,
-            phase,
-            context.builder,
-            ["build", project.0, "--profile", "release"],
-            environment,
-            context.repo,
-            context.evidence.joinpath(f"{phase}.log"),
-        ),
-    )?
-    if not output.is_file():
-        return Err(f"native build did not publish {output.0}")
-    destination.parent().mkdir(true, true).map_err((error) => error.message())?
-    replace_copy(output, destination)?
-    if name == "lsp":
-        adjacent = destination.parent().joinpath("incan")
-        replace_symlink(Path("../oven-bin/incan"), adjacent)?
-    return Ok(destination)
+    plan = tool_build_plan(context, name, rebuild, phase)?
+    run_build_plans(context, [plan])?
+    return complete_build_plan(plan)
+
+
+pub def build_shipped_tools_with_standard_profile(
+    context: NativeContext,
+    helper: Path,
+    phase_prefix: str,
+    profile: StandardProfile,
+) -> Result[ShippedTools, str]:
+    """Overlap Oven and LSP production with independent standard compilation, then publish every successful output."""
+    selected = standard_profile_name(profile)
+    standards = context.evidence.joinpath(f"{phase_prefix}standards")
+    standards.mkdir(true, true).map_err((error) => error.message())?
+    admitted = standards.joinpath(f"{selected}-admitted.txt")
+    admitted.write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+    build_standard_package(context, helper, STANDARD_PACKAGES[0], selected, admitted, phase_prefix)?
+
+    waves = standard_build_waves()
+    mut packages: list[PreparedStandardPackage] = []
+    for package in waves[0]:
+        packages.append(prepare_standard_package(context, helper, package, selected, admitted, phase_prefix)?)
+    oven = tool_build_plan(context, "oven", true, "oven-build")?
+    lsp = tool_build_plan(context, "lsp", false, "lsp-build")?
+    mut planned = [ReservedStep(child=package.child, reservation=STANDARD_RESERVATION_BYTES) for package in packages]
+    planned.append(ReservedStep(child=oven.child, reservation=oven.reservation))
+    planned.append(ReservedStep(child=lsp.child, reservation=lsp.reservation))
+    require_reserved_success(context, planned)?
+
+    for package in packages:
+        complete_standard_package(context, helper, package, admitted)?
+    for index in range(1, len(waves)):
+        build_standard_wave(context, helper, waves[index], selected, admitted, phase_prefix)?
+    completed_oven = complete_build_plan(oven)?
+    completed_lsp = complete_build_plan(lsp)?
+    return Ok(ShippedTools(oven=completed_oven, lsp=completed_lsp))
 
 
 pub def require_unique_runtime_root(context: NativeContext) -> Result[None, str]:
@@ -387,6 +435,20 @@ def build_standard_package(
     phase_prefix: str,
 ) -> Result[None, str]:
     """Describe, compile, publish, and atomically select one standard package profile."""
+    prepared = prepare_standard_package(context, helper, package, profile, admitted, phase_prefix)?
+    require_native_step(context, prepared.child)?
+    return complete_standard_package(context, helper, prepared, admitted)
+
+
+def prepare_standard_package(
+    context: NativeContext,
+    helper: Path,
+    package: str,
+    profile: str,
+    admitted: Path,
+    phase_prefix: str,
+) -> Result[PreparedStandardPackage, str]:
+    """Describe and identify one standard unit in a private directory without publishing partial outputs."""
     project = context.repo.joinpath(f"loaves/stdlib/{package}")
     if not project.joinpath("loaf.toml").is_file():
         return Err(f"unknown standard package: {package}")
@@ -410,14 +472,86 @@ def build_standard_package(
     )?
     write_json(unit, prepared)?
     identify(context, helper, unit, false, f"std-{package}-{profile}-identify")?
-    compile_library(context, driver, sysroot, unit, name, staged, f"{phase_prefix}std-{package}-{profile}")?
-    publish(context, helper, unit, staged, false, f"std-{package}-{profile}-publish")?
-    output = parent.joinpath(profile)
-    replace_directory(temporary, output)?
-    if profile == "release":
-        replace_symlink(Path("release"), parent.joinpath("debug"))?
-    append_line(admitted, name)?
+    phase = f"{phase_prefix}std-{package}-{profile}"
+    return Ok(
+        PreparedStandardPackage(
+            package=package,
+            name=name,
+            profile=profile,
+            unit=unit,
+            staged=staged,
+            parent=parent,
+            temporary=temporary,
+            child=compile_library_step(context, driver, sysroot, unit, name, staged, phase)?,
+        ),
+    )
+
+
+def complete_standard_package(
+    context: NativeContext,
+    helper: Path,
+    package: PreparedStandardPackage,
+    admitted: Path,
+) -> Result[None, str]:
+    """Publish and select one fully compiled standard unit, then admit it for dependent descriptions."""
+    publish(context, helper, package.unit, package.staged, false, f"std-{package.package}-{package.profile}-publish")?
+    output = package.parent.joinpath(package.profile)
+    replace_directory(package.temporary, output)?
+    if package.profile == "release":
+        replace_symlink(Path("release"), package.parent.joinpath("debug"))?
+    append_line(admitted, package.name)?
     return Ok(None)
+
+
+def build_standard_wave(
+    context: NativeContext,
+    helper: Path,
+    packages: list[str],
+    profile: str,
+    admitted: Path,
+    phase_prefix: str,
+) -> Result[None, str]:
+    """Describe, compile, and publish one dependency-ready wave before dependent package descriptions begin."""
+    mut prepared: list[PreparedStandardPackage] = []
+    for package in packages:
+        prepared.append(prepare_standard_package(context, helper, package, profile, admitted, phase_prefix)?)
+    run_standard_compiles(context, prepared)?
+    for package in prepared:
+        complete_standard_package(context, helper, package, admitted)?
+    return Ok(None)
+
+
+def run_standard_compiles(context: NativeContext, packages: list[PreparedStandardPackage]) -> Result[None, str]:
+    """Compile independent standard units together under the release's count and memory reservations."""
+    planned = [ReservedStep(child=package.child, reservation=STANDARD_RESERVATION_BYTES) for package in packages]
+    return require_reserved_success(context, planned)
+
+
+def compile_library_step(
+    context: NativeContext,
+    driver: Path,
+    sysroot: Path,
+    unit: Path,
+    name: str,
+    output: Path,
+    phase: str,
+) -> Result[Step, str]:
+    """Describe one native library compiler child without starting it, so independent units may share a scheduler."""
+    arguments_file = Path(f"{unit.0}.arguments")
+    flags = lines(arguments_file.read_text("utf-8", "strict").map_err((error) => error.message())?)
+    arguments = ["--unit", unit.0, name, output.joinpath(f"lib{name}.rlib").0, sysroot.0, "--library"] + flags
+    return Ok(
+        Step(
+            name=phase,
+            executable=driver.0,
+            arguments=arguments,
+            environment=common_environment(context),
+            remove_environment=["RUSTC_BOOTSTRAP"],
+            directory=Some(context.repo),
+            log=context.evidence.joinpath(f"{phase}.log"),
+            timeout_seconds=context.timeout_seconds,
+        ),
+    )
 
 
 def compile_library(
@@ -430,22 +564,7 @@ def compile_library(
     phase: str,
 ) -> Result[None, str]:
     """Compile one prepared unit through the candidate driver with its exact emitted native arguments."""
-    arguments_file = Path(f"{unit.0}.arguments")
-    flags = lines(arguments_file.read_text("utf-8", "strict").map_err((error) => error.message())?)
-    arguments = ["--unit", unit.0, name, output.joinpath(f"lib{name}.rlib").0, sysroot.0, "--library"] + flags
-    return require_native_step(
-        context,
-        Step(
-            name=phase,
-            executable=driver.0,
-            arguments=arguments,
-            environment=common_environment(context),
-            remove_environment=["RUSTC_BOOTSTRAP"],
-            directory=Some(context.repo),
-            log=context.evidence.joinpath(f"{phase}.log"),
-            timeout_seconds=context.timeout_seconds,
-        ),
-    )
+    return require_native_step(context, compile_library_step(context, driver, sysroot, unit, name, output, phase)?)
 
 
 def identify(context: NativeContext, helper: Path, unit: Path, metadata_only: bool, phase: str) -> Result[None, str]:
@@ -566,6 +685,106 @@ def step(
         log=log,
         timeout_seconds=context.timeout_seconds,
     )
+
+
+def tool_build_plan(context: NativeContext, name: str, rebuild: bool, phase: str) -> Result[NativeBuildPlan, str]:
+    """Plan one project-scale tool build whose executable is copied only after successful completion."""
+    project, output, destination = tool_paths(context, name)?
+    if rebuild:
+        stamp = Path(f"{output.0}.oven-inputs")
+        if stamp.is_file():
+            stamp.unlink().map_err((error) => error.message())?
+    mut environment = common_environment(context)
+    environment["OVEN_TRACE"] = "-"
+    return Ok(
+        NativeBuildPlan(
+            name=name,
+            output=output,
+            destination=destination,
+            child=step(
+                context,
+                phase,
+                context.builder,
+                ["build", project.0, "--profile", "release"],
+                environment,
+                context.repo,
+                context.evidence.joinpath(f"{phase}.log"),
+            ),
+            reservation=PROJECT_RESERVATION_BYTES,
+        ),
+    )
+
+
+def support_build_plan(context: NativeContext, builder_home: Path) -> Result[NativeBuildPlan, str]:
+    """Plan the support helper in a private Oven project so it may build beside the release conductor."""
+    project = prepare_support_project(context)?
+    output = project.joinpath("target/incan/release/bin/oven")
+    mut environment = common_environment(context)
+    environment["INCAN_HOME"] = builder_home.0
+    return Ok(
+        NativeBuildPlan(
+            name="support",
+            output=output,
+            destination=context.lane.joinpath("out/native-builds/toolchain-native"),
+            child=step(
+                context,
+                "support-tool-build",
+                context.builder,
+                ["build", project.joinpath("src/toolchain_native.incn").0, "--profile", "release"],
+                environment,
+                project,
+                context.evidence.joinpath("support-tool-build.log"),
+            ),
+            reservation=PROJECT_RESERVATION_BYTES,
+        ),
+    )
+
+
+def prepare_support_project(context: NativeContext) -> Result[Path, str]:
+    """Copy Oven sources into a release-owned root while sharing only immutable Loaf source inputs."""
+    root = context.lane.joinpath("support-build")
+    project = root.joinpath("workspaces/oven")
+    project.mkdir(true, true).map_err((error) => error.message())?
+    _ = context.repo
+        .joinpath("workspaces/oven/loaf.toml")
+        .copy(project.joinpath("loaf.toml"), true, false)
+        .map_err((error) => error.message())?
+    _ = context.repo
+        .joinpath("workspaces/oven/src")
+        .copy(project.joinpath("src"), true, false)
+        .map_err((error) => error.message())?
+    root.joinpath("loaves").symlink_to(context.repo.joinpath("loaves")).map_err((error) => error.message())?
+    return Ok(project)
+
+
+def run_build_plans(context: NativeContext, plans: list[NativeBuildPlan]) -> Result[None, str]:
+    """Run project build plans together under the release's process and host-memory budgets."""
+    planned = [ReservedStep(child=plan.child, reservation=plan.reservation) for plan in plans]
+    return require_reserved_success(context, planned)
+
+
+def require_reserved_success(context: NativeContext, planned: list[ReservedStep]) -> Result[None, str]:
+    """Require every reserved child to pass and include each failing log tail in the refusal."""
+    failed = run_reserved_steps(planned, context.jobs, context.memory, context.timings)?
+    if len(failed) == 0:
+        return Ok(None)
+    mut details: list[str] = []
+    for index in failed:
+        details.append(
+            f"{planned[index].child.name}: {planned[index].child.log.0}\n{log_tail(planned[index].child.log)}",
+        )
+    return Err("native build failures:\n" + "\n".join(details))
+
+
+def complete_build_plan(plan: NativeBuildPlan) -> Result[Path, str]:
+    """Atomically copy one successful native build to its stable lane destination."""
+    if not plan.output.is_file():
+        return Err(f"{plan.name} build produced no executable: {plan.output.0}")
+    plan.destination.parent().mkdir(true, true).map_err((error) => error.message())?
+    replace_copy(plan.output, plan.destination)?
+    if plan.name == "lsp":
+        replace_symlink(Path("../oven-bin/incan"), plan.destination.parent().joinpath("incan"))?
+    return Ok(plan.destination)
 
 
 def tool_paths(context: NativeContext, name: str) -> Result[tuple[Path, Path, Path], str]:
