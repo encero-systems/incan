@@ -196,8 +196,12 @@ def ordinary_product_inputs(
                     return Some(scalar_inputs(input, name, span, overflow_checks, str(witness)))
 
 
-pub def validate_program_entry_selection(modules: &list[BodyIrModule], entry: int) -> Result[None, str]:
-    """Apply standalone entry naming in each selected body's original module, before project symbols are joined."""
+pub def validate_program_entry_selection(
+    modules: &list[BodyIrModule],
+    entry: int,
+    retained: &BodyIrModule,
+) -> Result[None, str]:
+    """Apply standalone entry naming against the current modules or their already validated retained bodies."""
     for identity in modules[entry].program_entrypoints:
         mut found = false
         mut owner = ""
@@ -211,6 +215,8 @@ pub def validate_program_entry_selection(modules: &list[BodyIrModule], entry: in
             found = validate_selected_entry_body(module, identity)?
             break
         if not found:
+            found = validate_retained_entry_body(retained, identity)?
+        if not found:
             return Err("selected program entry has no owning module body")
     return Ok(None)
 
@@ -221,6 +227,17 @@ def validate_selected_entry_body(module: &BodyIrModule, identity: &RustCanonical
         body = borrowed_at(module.bodies, body_position)
         if body.canonical == Some(identity.clone()):
             if function_name(module, body) != "main":
+                return Err("selected program entry is not a standalone main")
+            return Ok(true)
+    return Ok(false)
+
+
+def validate_retained_entry_body(context: &BodyIrModule, identity: &RustCanonicalSymbolId) -> Result[bool, str]:
+    """Validate an unchanged selected entry whose owning module body lives only in continuation authority."""
+    for body_position in range(len(context.bodies)):
+        body = borrowed_at(context.bodies, body_position)
+        if body.canonical == Some(identity.clone()):
+            if str(body.name) != "main":
                 return Err("selected program entry is not a standalone main")
             return Ok(true)
     return Ok(false)

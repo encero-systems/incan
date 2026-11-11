@@ -23,15 +23,17 @@ pub model ConstructorIndex:
     """
     Declaration positions for one nominal inventory, without copied declaration facts.
 
-    `owners` and `generic_owners` keep the first match by carrier key. `named` keeps every position by declaration
-    name in table order, since a carrier key can differ from the name. `source_files` and `package_versions` retain the
-    authenticated project inputs needed when a checked trait identity becomes an authored Plan fact.
+    `owners` and `generic_owners` keep the first match by carrier key. `generic_arities` retains template validation
+    after concrete layout specialization removes the source declaration rows. `named` keeps every position by
+    declaration name in table order, since a carrier key can differ from the name. `source_files` and
+    `package_versions` retain the authenticated project inputs needed when a checked trait identity becomes a Plan fact.
     `validated_constructors` admits generated Validate calls without rescanning every declaration at every call site.
     `count` is the inventory length indexed so far.
     """
 
     pub owners: dict[str, int]
     pub generic_owners: dict[str, int]
+    pub generic_arities: dict[str, int]
     pub named: BTreeMap[str, list[int]]
     pub source_files: BTreeMap[str, str]
     pub package_versions: BTreeMap[str, str]
@@ -50,6 +52,7 @@ pub def constructor_index(declarations: list[NominalDeclaration]) -> Constructor
         ConstructorIndex(
             owners={},
             generic_owners={},
+            generic_arities={},
             named=named,
             source_files=files,
             package_versions=versions,
@@ -86,13 +89,53 @@ pub def extend_constructor_index(
         base = declaration.template_carrier_name()
         if constructors.owners.get(base) == None:
             constructors.owners[base] = position
-        if declaration.type_parameter_count != 0 and constructors.generic_owners.get(base) == None:
-            constructors.generic_owners[base] = position
+        if declaration.type_parameter_count != 0:
+            if constructors.generic_owners.get(base) == None:
+                constructors.generic_owners[base] = position
+            if constructors.generic_arities.get(base) == None:
+                constructors.generic_arities[base] = int(declaration.type_parameter_count)
         constructors.named.entry(str(declaration.name)).or_insert([]).push(position)
         match declaration.validated_constructor:
             Some(contract) => _ = constructors.validated_constructors.insert(contract.constructor.clone())
             None => pass
     constructors.count = len(declarations)
+
+
+pub def extend_generic_constructor_arities(
+    mut constructors: &mut ConstructorIndex,
+    templates: &ConstructorIndex,
+) -> None:
+    """Retain source-template arities beside specialized layout positions without copying invalid template indices."""
+    for base in templates.generic_arities:
+        if constructors.generic_arities.get(base) == None:
+            match templates.generic_arities.get(base):
+                Some(arity) => constructors.generic_arities[base] = int(arity.clone())
+                None => pass
+
+
+pub def with_generic_constructor_arities(
+    mut constructors: ConstructorIndex,
+    templates: &ConstructorIndex,
+) -> ConstructorIndex:
+    """Return layout constructors carrying compact source-template arities without copying template positions."""
+    for base in templates.generic_arities:
+        if constructors.generic_arities.get(base) == None:
+            match templates.generic_arities.get(base):
+                Some(arity) => constructors.generic_arities[base] = int(arity.clone())
+                None => pass
+    return constructors
+
+
+pub def extend_constructor_authority(
+    mut constructors: &mut ConstructorIndex,
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
+) -> None:
+    """Add authenticated module provenance and package selections discovered with resolved runtime declarations."""
+    for module, file in source_files:
+        constructors.source_files.insert(module, file)
+    for package, version in package_versions:
+        constructors.package_versions.insert(package, version)
 
 
 pub def named_positions(constructors: &ConstructorIndex, name: str) -> list[int]:

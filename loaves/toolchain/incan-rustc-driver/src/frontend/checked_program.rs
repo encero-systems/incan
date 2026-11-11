@@ -370,7 +370,8 @@ pub(super) fn complete_dependency_context_in_place(
 pub(super) fn satisfy_runtime_requirements(
     program: &mut CheckedProgram,
     requirements: Vec<RuntimeRequirement>,
-) -> Result<(), String> {
+) -> Result<Vec<usize>, String> {
+    let previous = runtime_module_generations(&program.modules)?;
     let mut next = program.dependencies.requested.clone();
     for requirement in &requirements {
         if !next.insert(requirement.canonical.clone()) {
@@ -411,7 +412,53 @@ pub(super) fn satisfy_runtime_requirements(
         );
     }
     context.requested = next;
-    prepare_dependency_context(program)
+    prepare_dependency_context(program)?;
+    changed_runtime_module_indices(program, &previous)
+}
+
+/// Record the compact monotonic tables that dependency reconstruction can extend between lowering attempts.
+fn runtime_module_generations(modules: &[BodyIrModule]) -> Result<BTreeMap<String, [usize; 11]>, String> {
+    let mut generations = BTreeMap::new();
+    for module in modules {
+        let owner = module.module_id.path().to_owned();
+        let generation = [
+            module.bodies.len(),
+            module.nominal_declarations.len(),
+            module.enum_declarations.len(),
+            module.fieldless_enum_declarations.len(),
+            module.value_enum_declarations.len(),
+            module.trait_declarations.len(),
+            module.trait_implementations.len(),
+            module.static_declarations.len(),
+            module.decorated_bindings.len(),
+            module.loaf_callables.len(),
+            module.native_union_declarations.len(),
+        ];
+        if generations.insert(owner.clone(), generation).is_some() {
+            return Err(format!("duplicate Body IR module owner `{owner}`"));
+        }
+    }
+    Ok(generations)
+}
+
+/// Select only modules whose monotonic checked tables grew, plus the entry whose compact linkage facts are refreshed.
+fn changed_runtime_module_indices(
+    program: &CheckedProgram,
+    previous: &BTreeMap<String, [usize; 11]>,
+) -> Result<Vec<usize>, String> {
+    let current = runtime_module_generations(&program.modules)?;
+    let mut selected = Vec::new();
+    for (index, module) in program.modules.iter().enumerate() {
+        let owner = module.module_id.path();
+        if previous.get(owner) != current.get(owner) {
+            selected.push(index);
+        }
+    }
+    if !selected.contains(&program.entry) {
+        selected.push(program.entry);
+        selected.sort_unstable();
+    }
+    Ok(selected)
 }
 
 /// Retain layout-authoritative runtime declarations without claiming that the unit selected their operations.
