@@ -13,8 +13,8 @@ from observation import file_digest
 from sealed_set import Profile, Record, SetSpec, admit, export_set
 from store_path_conversion import snapshot
 
-pub const COMPILER_RECORD_PROFILE: str = "incan.compiler-records/2"
-const EXPORT_SCHEMA: str = "incan.compiler-record-export/2"
+pub const COMPILER_RECORD_PROFILE: str = "incan.compiler-records/3"
+const EXPORT_SCHEMA: str = "incan.compiler-record-export/3"
 
 
 pub model CompilerRecordPin:
@@ -89,7 +89,7 @@ pub def compiler_record_profile() -> Profile:
     return Profile(
         identity=COMPILER_RECORD_PROFILE,
         schema=COMPILER_RECORD_PROFILE,
-        codec="incan.compiler-record-value/1",
+        codec="incan.library-facts-hybrid/1",
     )
 
 

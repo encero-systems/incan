@@ -9,15 +9,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, FunctionExport, LibraryContractMetadata, LibraryExports,
-    LibraryManifest, LibraryRustAbi, MadePrivateTypeExport, ModelExport, NewtypeExport, PartialExport,
-    SoftKeywordActivation, SoftKeywordExports, StaticExport, TraitExport, TypeAliasExport, VocabExports,
+    LibraryManifest, LibraryRustAbi, MadePrivateTypeExport, ModelExport, NewtypeExport, ParamExport, ParamKindExport,
+    PartialExport, SoftKeywordActivation, SoftKeywordExports, StaticExport, TraitExport, TypeAliasExport,
+    TypeBoundExport, TypeParamExport, TypeRef, VocabExports,
 };
 
 use super::lazy_entry::Summary;
@@ -26,8 +26,8 @@ use super::{LoafIdentity, LoafIndexError};
 const ROOT_ENV: &str = "INCAN_COMPILER_RECORD_ROOT";
 const DIGEST_ENV: &str = "INCAN_COMPILER_RECORD_DIGEST";
 const SET_FORMAT: &str = "incan.sealed-set/2";
-const RECORD_PROFILE: &str = "incan.compiler-records/2";
-const RECORD_CODEC: &str = "incan.compiler-record-value/1";
+const RECORD_PROFILE: &str = "incan.compiler-records/3";
+const RECORD_CODEC: &str = "incan.library-facts-hybrid/1";
 const RECORD_ORIGIN: &str = "installed-toolchain";
 
 static INSTALLED: OnceLock<Result<Option<RecordSet>, String>> = OnceLock::new();
@@ -51,7 +51,6 @@ struct RecordSet {
 }
 
 /// Metadata retained separately from declarations so the original Loaf identity survives conversion.
-#[derive(Deserialize)]
 struct Metadata {
     name: String,
     version: String,
@@ -62,7 +61,7 @@ struct Metadata {
     provider_operations: bool,
     native_unions: bool,
     rust_paths: BTreeSet<String>,
-    rust_abi_cache_declared: bool,
+    rust_abi_declared: bool,
 }
 
 /// Read only the small, authenticated inventory record used to index an installed Loaf lazily.
@@ -74,7 +73,7 @@ pub(super) fn summary(dir: &Path, name: &str) -> Result<Option<Summary>, LoafInd
         .file_name()
         .and_then(|value| value.to_str())
         .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
-    let prefix = format!("loaf/{profile}/{name}/metadata/");
+    let prefix = format!("loaf/{profile}/{name}/library/");
     let entries = set
         .entries
         .iter()
@@ -101,10 +100,11 @@ pub(super) fn summary(dir: &Path, name: &str) -> Result<Option<Summary>, LoafInd
             ),
         ));
     }
-    let metadata: Metadata = LibraryManifest::decode_compiler_record_value(
+    let metadata = decode_library_record(
         &read_value(&set.root, &entry.value).map_err(|reason| unreadable(dir, name, reason))?,
-    )
-    .map_err(|error| unreadable(dir, name, format!("invalid compiler-record metadata: {error}")))?;
+        dir,
+        name,
+    )?;
     if metadata.name != name {
         return Err(unreadable(
             dir,
@@ -124,8 +124,8 @@ pub(super) fn summary(dir: &Path, name: &str) -> Result<Option<Summary>, LoafInd
         provider_operations: metadata.provider_operations,
         native_unions: metadata.native_unions,
         rust_paths: metadata.rust_paths,
-        rust_abi_cache_declared: metadata.rust_abi_cache_declared,
-        rust_abi_cache: metadata.rust_abi_cache_declared,
+        rust_abi_cache_declared: metadata.rust_abi_declared,
+        rust_abi_cache: metadata.rust_abi_declared,
     }))
 }
 
@@ -174,17 +174,17 @@ pub(super) fn read(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest
         validate_payload_directory(&set.root).map_err(|reason| unreadable(dir, name, reason))?;
         let opened = selected
             .into_iter()
-            .map(|(family, index, entry)| {
+            .map(|(family, index, identity, entry)| {
                 open_value(&set.root, &entry.value)
-                    .map(|bytes| (family, index, entry, bytes))
+                    .map(|bytes| (family, index, identity, entry, bytes))
                     .map_err(|reason| unreadable(dir, name, reason))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let bytes = opened.iter().map(|(_, _, _, value)| value.len()).sum::<usize>();
+        let bytes = opened.iter().map(|(_, _, _, _, value)| value.len()).sum::<usize>();
         tracing::trace!(target: "incan::invocation", phase = "open", loaf = name, records, bytes);
         opened
     };
-    let bytes = opened.iter().map(|(_, _, _, value)| value.len()).sum::<usize>();
+    let bytes = opened.iter().map(|(_, _, _, _, value)| value.len()).sum::<usize>();
     let verified = {
         let _verification = tracing::trace_span!(
             target: "incan::invocation",
@@ -196,7 +196,7 @@ pub(super) fn read(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest
         .entered();
         let verified = opened
             .into_iter()
-            .map(|(family, index, entry, bytes)| {
+            .map(|(family, index, identity, entry, bytes)| {
                 if entry.revision != entry.value {
                     return Err(unreadable(
                         dir,
@@ -207,7 +207,7 @@ pub(super) fn read(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest
                         ),
                     ));
                 }
-                Ok((family, index, bytes))
+                Ok((family, index, identity, bytes))
             })
             .collect::<Result<Vec<_>, _>>()?;
         tracing::trace!(target: "incan::invocation", phase = "verification", loaf = name, records, bytes);
@@ -248,7 +248,7 @@ fn select_records<'a>(
     prefix: &str,
     dir: &Path,
     name: &str,
-) -> Result<Vec<(&'a str, usize, &'a RecordEntry)>, LoafIndexError> {
+) -> Result<Vec<(&'a str, usize, &'a str, &'a RecordEntry)>, LoafIndexError> {
     let _selection = tracing::trace_span!(
         target: "incan::invocation",
         "incan_frontend::classify_compiler_record_group",
@@ -275,26 +275,26 @@ fn select_records<'a>(
                 .parse::<usize>()
                 .map_err(|error| unreadable(dir, name, format!("malformed compiler-record index: {error}")))?;
             valid_digest(name_digest).map_err(|reason| unreadable(dir, name, reason))?;
-            Ok((*family, index, entry))
+            Ok((*family, index, *name_digest, entry))
         })
         .collect()
 }
 
 /// Independently addressed values grouped by the family and ordinal already validated from their record identities.
-type RecordFamilies<'a> = BTreeMap<&'a str, Vec<(usize, Vec<u8>)>>;
+type RecordFamilies<'a> = BTreeMap<&'a str, Vec<(usize, &'a str, Vec<u8>)>>;
 
 /// Order one authenticated group by its selected family identities without decoding its values.
 fn materialize<'a>(
-    records: Vec<(&'a str, usize, Vec<u8>)>,
+    records: Vec<(&'a str, usize, &'a str, Vec<u8>)>,
     dir: &Path,
     name: &str,
 ) -> Result<RecordFamilies<'a>, LoafIndexError> {
     let mut families: RecordFamilies<'a> = BTreeMap::new();
-    for (family, index, value) in records {
-        families.entry(family).or_default().push((index, value));
+    for (family, index, identity, value) in records {
+        families.entry(family).or_default().push((index, identity, value));
     }
     for values in families.values_mut() {
-        values.sort_by_key(|(index, _)| *index);
+        values.sort_by_key(|(index, _, _)| *index);
         if values.windows(2).any(|pair| pair[0].0 == pair[1].0) {
             return Err(unreadable(
                 dir,
@@ -312,7 +312,7 @@ fn decode_manifest(
     dir: &Path,
     name: &str,
 ) -> Result<(LibraryManifest, String), LoafIndexError> {
-    let metadata: Metadata = decode_single(&mut families, "metadata", name, dir)?;
+    let metadata = decode_library_record(&single_value(&mut families, "library", name, dir)?, dir, name)?;
     if metadata.name != name {
         return Err(unreadable(
             dir,
@@ -335,7 +335,7 @@ fn decode_manifest(
             partials: decode_values::<PartialExport>(&mut families, "partial", name, dir)?,
             models: decode_values::<ModelExport>(&mut families, "model", name, dir)?,
             classes: decode_values::<ClassExport>(&mut families, "class", name, dir)?,
-            functions: decode_values::<FunctionExport>(&mut families, "function", name, dir)?,
+            functions: decode_function_values(&mut families, name, dir)?,
             traits: decode_values::<TraitExport>(&mut families, "trait", name, dir)?,
             enums: decode_values::<EnumExport>(&mut families, "enum", name, dir)?,
             type_aliases: decode_values::<TypeAliasExport>(&mut families, "type-alias", name, dir)?,
@@ -483,8 +483,197 @@ fn values(families: &mut RecordFamilies<'_>, family: &str) -> Vec<Vec<u8>> {
         .remove(family)
         .unwrap_or_default()
         .into_iter()
-        .map(|(_, value)| value)
+        .map(|(_, _, value)| value)
         .collect()
+}
+
+/// Decode the required library record through the Incan-owned Crumb codec.
+fn decode_library_record(value: &[u8], dir: &Path, name: &str) -> Result<Metadata, LoafIndexError> {
+    let owned = value.to_vec();
+    let fact = internal_models::decode_library_fact(&owned)
+        .map_err(|error| unreadable(dir, name, format!("invalid compiler-record library fact: {error}")))?;
+    let manifest_format = u32::try_from(fact.manifest_format)
+        .map_err(|error| unreadable(dir, name, format!("invalid library manifest format: {error}")))?;
+    Ok(Metadata {
+        name: fact.name,
+        version: fact.version,
+        incan_version: fact.incan_version,
+        manifest_format,
+        manifest_digest: fact.manifest_digest,
+        vocabulary: fact.vocabulary,
+        provider_operations: fact.provider_operations,
+        native_unions: fact.native_unions,
+        rust_paths: fact.rust_paths.into_iter().collect(),
+        rust_abi_declared: fact.rust_abi_declared,
+    })
+}
+
+/// Decode every ordered function record through Crumb and reconstruct the existing frontend carrier.
+fn decode_function_values(
+    families: &mut RecordFamilies<'_>,
+    name: &str,
+    dir: &Path,
+) -> Result<Vec<FunctionExport>, LoafIndexError> {
+    families
+        .remove("function")
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(_, identity_digest, value)| {
+            let fact = internal_models::decode_function_fact(&value)
+                .map_err(|error| unreadable(dir, name, format!("invalid compiler-record function fact: {error}")))?;
+            let actual = format!("{:x}", Sha256::digest(fact.stable_identity.as_bytes()));
+            if actual != identity_digest {
+                return Err(unreadable(
+                    dir,
+                    name,
+                    format!("function fact `{}` differs from its record identity", fact.name),
+                ));
+            }
+            function_from_fact(fact).map_err(|reason| unreadable(dir, name, reason))
+        })
+        .collect()
+}
+
+/// Reconstruct one existing manifest function carrier from the validated flattened fact columns.
+fn function_from_fact(fact: internal_models::FunctionFact) -> Result<FunctionExport, String> {
+    let mut type_params = Vec::with_capacity(fact.type_parameter_names.len());
+    for index in 0..fact.type_parameter_names.len() {
+        let start = fact_index(fact.type_parameter_bound_offsets[index], "type-parameter bound offset")?;
+        let end = fact_index(
+            fact.type_parameter_bound_offsets[index + 1],
+            "type-parameter bound offset",
+        )?;
+        let mut bounds = Vec::with_capacity(end - start);
+        for bound in start..end {
+            let argument_start = fact_index(fact.bound_type_argument_offsets[bound], "bound argument offset")?;
+            let argument_end = fact_index(fact.bound_type_argument_offsets[bound + 1], "bound argument offset")?;
+            let mut type_args = Vec::with_capacity(argument_end - argument_start);
+            for argument in argument_start..argument_end {
+                type_args.push(type_from_fact(
+                    &fact,
+                    fact.bound_type_argument_roots[argument],
+                    &mut Vec::new(),
+                )?);
+            }
+            bounds.push(TypeBoundExport {
+                name: fact.bound_names[bound].clone(),
+                source_name: fact.bound_source_names[bound].clone(),
+                module_path: (!fact.bound_module_paths[bound].is_empty())
+                    .then(|| fact.bound_module_paths[bound].clone()),
+                type_args,
+                implementation_type_params: Vec::new(),
+                inferred: fact.bound_inferred[bound],
+            });
+        }
+        type_params.push(TypeParamExport {
+            name: fact.type_parameter_names[index].clone(),
+            bounds,
+        });
+    }
+    let mut params = Vec::with_capacity(fact.parameter_names.len());
+    for index in 0..fact.parameter_names.len() {
+        params.push(ParamExport {
+            name: fact.parameter_names[index].clone(),
+            ty: type_from_fact(&fact, fact.parameter_type_roots[index], &mut Vec::new())?,
+            surface_type_name: fact.parameter_surface_types[index].clone(),
+            kind: parameter_kind_from_fact(&fact.parameter_kinds[index])?,
+            has_default: fact.parameter_has_default[index],
+            is_mut: fact.parameter_is_mut[index],
+            default: None,
+        });
+    }
+    Ok(FunctionExport {
+        ownership: None,
+        name: fact.name.clone(),
+        emitted_name: fact.emitted_name.clone(),
+        type_params,
+        params,
+        return_type: type_from_fact(&fact, fact.return_type_root, &mut Vec::new())?,
+        is_async: fact.is_async,
+    })
+}
+
+/// Rebuild one supported type node while refusing cycles or malformed child arity.
+fn type_from_fact(
+    fact: &internal_models::FunctionFact,
+    raw_index: i64,
+    active: &mut Vec<usize>,
+) -> Result<TypeRef, String> {
+    let index = fact_index(raw_index, "type node")?;
+    if index >= fact.type_tags.len() || active.contains(&index) {
+        return Err("function fact type graph contains an invalid or cyclic node".to_owned());
+    }
+    active.push(index);
+    let start = fact_index(fact.type_child_offsets[index], "type-child offset")?;
+    let end = fact_index(fact.type_child_offsets[index + 1], "type-child offset")?;
+    let children = fact.type_children[start..end]
+        .iter()
+        .map(|child| type_from_fact(fact, *child, active))
+        .collect::<Result<Vec<_>, _>>()?;
+    active.pop();
+    type_node(&fact.type_tags[index], &fact.type_names[index], children)
+}
+
+/// Bind the closed first-slice type tag to the existing manifest type carrier.
+fn type_node(tag: &str, name: &str, mut children: Vec<TypeRef>) -> Result<TypeRef, String> {
+    let single = |label: &str, values: &mut Vec<TypeRef>| {
+        if values.len() != 1 {
+            return Err(format!("function fact `{label}` type requires one child"));
+        }
+        values
+            .pop()
+            .ok_or_else(|| format!("function fact `{label}` type child is absent"))
+    };
+    match tag {
+        "named" => Ok(TypeRef::Named {
+            name: name.to_owned(),
+            origin: None,
+        }),
+        "applied" => Ok(TypeRef::Applied {
+            name: name.to_owned(),
+            args: children,
+            origin: None,
+        }),
+        "function" => {
+            let return_type = children
+                .pop()
+                .ok_or_else(|| "function fact callable type has no return child".to_owned())?;
+            Ok(TypeRef::Function {
+                params: children,
+                return_type: Box::new(return_type),
+            })
+        }
+        "type-token" => Ok(TypeRef::TypeToken {
+            inner: Box::new(single(tag, &mut children)?),
+        }),
+        "tuple" => Ok(TypeRef::Tuple { elements: children }),
+        "type-param" => Ok(TypeRef::TypeParam { name: name.to_owned() }),
+        "self" if children.is_empty() => Ok(TypeRef::SelfType),
+        "ref" => Ok(TypeRef::Ref {
+            inner: Box::new(single(tag, &mut children)?),
+        }),
+        "rust-path" if children.is_empty() => Ok(TypeRef::RustPath { path: name.to_owned() }),
+        "unknown" if children.is_empty() => Ok(TypeRef::Unknown),
+        "mut-param" => Ok(TypeRef::MutParam {
+            inner: Box::new(single(tag, &mut children)?),
+        }),
+        _ => Err(format!("unsupported function fact type tag `{tag}`")),
+    }
+}
+
+/// Parse the closed callable parameter-kind spelling stored by the fact model.
+fn parameter_kind_from_fact(value: &str) -> Result<ParamKindExport, String> {
+    match value {
+        "normal" => Ok(ParamKindExport::Normal),
+        "rest_positional" => Ok(ParamKindExport::RestPositional),
+        "rest_keyword" => Ok(ParamKindExport::RestKeyword),
+        _ => Err(format!("unsupported function fact parameter kind `{value}`")),
+    }
+}
+
+/// Convert one nonnegative Incan integer index into the host collection index without truncation.
+fn fact_index(value: i64, label: &str) -> Result<usize, String> {
+    usize::try_from(value).map_err(|error| format!("invalid function fact {label}: {error}"))
 }
 
 /// Decode every ordered value of one repeatable family through the profile's exact compact codec.
