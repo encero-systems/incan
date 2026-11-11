@@ -25,16 +25,22 @@ pub(crate) fn fixture_record(source: &str, name: &str, declaration: bool) -> Res
 /// fields and compare every native field. The cold checker supplies expected values only, never reconstructed ones.
 pub(crate) fn verify_fixture(source: &str, name: &str, mut fields: Fields) -> Result<Vec<String>, NodeBindingError> {
     let (program, checker, owner) = fixture(source, name)?;
-    let declaration = fields
-        .first()
-        .is_some_and(|header| header.get(3).is_some_and(|role| role == "declaration"));
-    if !declaration {
-        let header = fields.first_mut().ok_or(NodeBindingError::MissingOwner)?;
-        if header.len() != 4 || header[0] != "header" {
-            return Err(NodeBindingError::MissingOwner);
-        }
-        header.insert(3, "final".into());
+    let header = fields.first_mut().ok_or(NodeBindingError::MissingOwner)?;
+    if header.is_empty() || header[0] != "header" {
+        return Err(NodeBindingError::MissingOwner);
     }
+    let declaration = if header.len() == 5 {
+        match header[3].as_str() {
+            "declaration" => true,
+            "final" => false,
+            _ => return Err(NodeBindingError::Unsupported("record stage")),
+        }
+    } else if header.len() == 4 {
+        header.insert(3, "final".into());
+        false
+    } else {
+        return Err(NodeBindingError::MissingOwner);
+    };
     let expected = if declaration {
         checker.checked_declaration(owner)
     } else {
