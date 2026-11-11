@@ -11,6 +11,7 @@ pub model BodyIndex:
     """Share immutable candidate positions across ordinary, instantiated, and lifted frames; duplicates retain source order."""
 
     pub entries: Arc[BTreeMap[CanonicalSymbolId, list[int]]]
+    pub count: int
 
     pub def candidates(self, identity: CanonicalSymbolId) -> list[int]:
         """Return only the selected identity's positions, leaving ambiguity and receiver admission to each caller."""
@@ -42,10 +43,23 @@ pub def body_index(module: &BodyIrModule) -> BodyIndex:
             Some(identity) => entries.entry(identity.clone()).or_insert([]).push(index)
             None => pass
         index += 1
-    return BodyIndex(entries=Arc.new(entries))
+    return BodyIndex(entries=Arc.new(entries), count=len(module.bodies))
+
+
+pub def extend_body_index(mut index: BodyIndex, module: &BodyIrModule) -> Result[None, str]:
+    """Index bodies appended since the retained context generation without revisiting earlier executable frames."""
+    if index.count > len(module.bodies):
+        return Err("invalid Body IR body index generation")
+    for position in range(index.count, len(module.bodies)):
+        body = borrowed_at(module.bodies, position)
+        match body.canonical:
+            Some(identity) => Arc.make_mut(index.entries).entry(identity.clone()).or_insert([]).push(position)
+            None => pass
+    index.count = len(module.bodies)
+    return Ok(None)
 
 
 pub def empty_body_index() -> BodyIndex:
     """Provide an empty lookup for synthetic external-only frames that cannot select source bodies."""
     entries: BTreeMap[CanonicalSymbolId, list[int]] = BTreeMap.new()
-    return BodyIndex(entries=Arc.new(entries))
+    return BodyIndex(entries=Arc.new(entries), count=0)

@@ -77,6 +77,17 @@ pub def collect_unions(module: &BodyIrModule) -> list[RustType]:
     return unions
 
 
+pub def extend_unions(mut unions: list[RustType], module: &BodyIrModule) -> None:
+    """Append union shapes introduced by resolved runtime facts while preserving every existing native slot."""
+    mut retained: BTreeSet[RustType] = BTreeSet.new()
+    for ty in unions:
+        retained.insert(ty.clone())
+    for ty in collect_unions(module):
+        if not retained.contains(ty):
+            retained.insert(ty.clone())
+            unions.append(ty.clone())
+
+
 pub def union_index(unions: list[RustType]) -> Arc[BTreeSet[RustType]]:
     """Index exact checked types once, independently of the list order that fixes native union slots."""
     mut retained: BTreeSet[RustType] = BTreeSet.new()
@@ -374,12 +385,7 @@ pub def lower_union_declaration(
             span=plan_span(file=file, line=1, column=1),
             source_type=str(ty),
             semantic_key=Some(
-                authored_plan_checked_type(
-                    ty,
-                    file,
-                    constructors.source_files,
-                    constructors.package_versions,
-                )?,
+                authored_plan_checked_type(ty, file, constructors.source_files, constructors.package_versions)?,
             ),
             member_debug=member_debug,
             closure_items=closure_items,
@@ -549,10 +555,10 @@ pub def union_test_slots(
     variants = intrinsics[owner - len(enums)].variants
     for slot in range(len(variants)):
         payload = variants[slot].fields
-        same_string_identity = member in [PlanType.String, PlanType.FrozenStr] and payload in [
-            [PlanType.String],
-            [PlanType.FrozenStr],
-        ]
+        same_string_identity = (
+            member in [PlanType.String, PlanType.FrozenStr]
+            and payload in [[PlanType.String], [PlanType.FrozenStr]]
+        )
         if payload == [member] or same_string_identity:
             slots.append(slot)
     return Ok(slots)

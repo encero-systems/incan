@@ -95,6 +95,18 @@ pub def extend_constructor_index(
     constructors.count = len(declarations)
 
 
+pub def extend_constructor_authority(
+    mut constructors: &mut ConstructorIndex,
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
+) -> None:
+    """Add authenticated module provenance and package selections discovered with resolved runtime declarations."""
+    for module, file in source_files:
+        constructors.source_files.insert(module, file)
+    for package, version in package_versions:
+        constructors.package_versions.insert(package, version)
+
+
 pub def named_positions(constructors: &ConstructorIndex, name: str) -> list[int]:
     """Every indexed position whose declaration has this name, in table order."""
     mut positions: list[int] = []

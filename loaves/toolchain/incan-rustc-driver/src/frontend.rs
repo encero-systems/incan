@@ -149,6 +149,14 @@ struct CheckedProgram {
     tests: Vec<crate::test_unit::CollectedTest>,
 }
 
+/// The changed checked-module slice passed across the Incan boundary for one lowering continuation.
+struct LoweringRetryInputs {
+    modules: Vec<BodyIrModule>,
+    sources: Vec<String>,
+    files: Vec<String>,
+    entry: usize,
+}
+
 /// Exact caller-declared native libraries and their dependency search directories.
 pub(crate) struct Dependencies {
     /// The native libraries the unit links, as `--extern CRATE=RLIB` pairs.
@@ -498,39 +506,58 @@ fn lower_compilation_plan(
         prepare_runtime_layouts(program, layout_requirements)?;
     }
     let mut continuation = None;
+    let mut retry_indices: Option<Vec<usize>> = None;
     loop {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
-        let inputs = SourceInputs {
-            scalar_products: native_products.clone(),
-            scalar_bodies: program.cacheable_bodies.clone(),
-            sources: program.sources.clone(),
-            files: program.files.clone(),
-            tests: program.tests.iter().map(|test| test.name.clone()).collect(),
-            package_versions: program.dependencies.package_versions.clone(),
-            overflow_checks,
-        };
         let mut attempt_unions = Vec::new();
         let planning = match continuation.take() {
-            Some(preserved) => resume_unit_plan(
-                preserved,
-                &program.modules,
-                inputs,
-                program.entry.try_into()?,
-                &kind_name,
-                &mut attempt_unions,
-            ),
-            None => unit_plan(
-                &program.modules,
-                inputs,
-                program.entry.try_into()?,
-                &kind_name,
-                &mut attempt_unions,
-            ),
+            Some(preserved) => {
+                let selected = retry_indices
+                    .take()
+                    .ok_or("lowering continuation has no resolved module delta")?;
+                let retry = lowering_retry_inputs(program, &selected)?;
+                let inputs = SourceInputs {
+                    scalar_products: None,
+                    scalar_bodies: Vec::new(),
+                    sources: retry.sources,
+                    files: retry.files,
+                    tests: program.tests.iter().map(|test| test.name.clone()).collect(),
+                    package_versions: program.dependencies.package_versions.clone(),
+                    overflow_checks,
+                };
+                resume_unit_plan(
+                    preserved,
+                    &retry.modules,
+                    // #3022: remove this borrow when an owned model field can transfer through the Incan wrapper.
+                    &inputs,
+                    retry.entry.try_into()?,
+                    &kind_name,
+                    &mut attempt_unions,
+                )
+            }
+            None => {
+                let inputs = SourceInputs {
+                    scalar_products: native_products.clone(),
+                    scalar_bodies: program.cacheable_bodies.clone(),
+                    sources: program.sources.clone(),
+                    files: program.files.clone(),
+                    tests: program.tests.iter().map(|test| test.name.clone()).collect(),
+                    package_versions: program.dependencies.package_versions.clone(),
+                    overflow_checks,
+                };
+                unit_plan(
+                    &program.modules,
+                    inputs,
+                    program.entry.try_into()?,
+                    &kind_name,
+                    &mut attempt_unions,
+                )
+            }
         }
         .inspect_err(|_| receipt.deterministic())?;
         match planning {
             UnitPlanning::NeedsRuntime(preserved, requirements) => {
-                satisfy_runtime_requirements(program, requirements)?;
+                retry_indices = Some(satisfy_runtime_requirements(program, requirements)?);
                 continuation = Some(preserved);
             }
             UnitPlanning::Complete(Some(plan)) => {
@@ -543,6 +570,46 @@ fn lower_compilation_plan(
     report_missing_entrypoint(source)?;
     receipt.deterministic();
     Err(SourceFailure::MissingEntrypoint.into())
+}
+
+/// Copy only the changed runtime modules and aligned provenance into one continuation boundary value.
+fn lowering_retry_inputs(program: &CheckedProgram, selected: &[usize]) -> Result<LoweringRetryInputs, String> {
+    let mut modules = Vec::with_capacity(selected.len());
+    let mut sources = Vec::with_capacity(selected.len());
+    let mut files = Vec::with_capacity(selected.len());
+    let mut entry = None;
+    for (retry_index, &program_index) in selected.iter().enumerate() {
+        modules.push(
+            program
+                .modules
+                .get(program_index)
+                .ok_or("lowering continuation selected a missing Body IR module")?
+                .clone(),
+        );
+        sources.push(
+            program
+                .sources
+                .get(program_index)
+                .ok_or("lowering continuation selected missing source provenance")?
+                .clone(),
+        );
+        files.push(
+            program
+                .files
+                .get(program_index)
+                .ok_or("lowering continuation selected missing file provenance")?
+                .clone(),
+        );
+        if program_index == program.entry {
+            entry = Some(retry_index);
+        }
+    }
+    Ok(LoweringRetryInputs {
+        modules,
+        sources,
+        files,
+        entry: entry.ok_or("lowering continuation omitted the entry module")?,
+    })
 }
 
 /// Lower authored modules from their checked facts and the canonical provider catalog. Dependency bodies already
@@ -598,7 +665,9 @@ fn census_complete(
             &kind_name,
         );
         match outcome {
-            RefusalPlanning::NeedsRuntime(requirements) => satisfy_runtime_requirements(program, requirements)?,
+            RefusalPlanning::NeedsRuntime(requirements) => {
+                let _ = satisfy_runtime_requirements(program, requirements)?;
+            }
             RefusalPlanning::Complete(refusals) => break refusals,
         }
     };

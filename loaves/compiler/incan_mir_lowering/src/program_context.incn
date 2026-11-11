@@ -3,7 +3,7 @@
 from rust::std::sync import Arc
 from rust::std::env import var_os
 from pub::incan_mir_plan import CalleeKind
-from body_index import BodyIndex, empty_body_index
+from body_index import BodyIndex, empty_body_index, extend_body_index
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     StaticDeclaration,
@@ -95,4 +95,36 @@ pub def retain_nominal_tables(mut program: ProgramContext, module: &BodyIrModule
     for position in range(retained, current):
         Arc.make_mut(program.nominals).push(borrowed_at(module.nominal_declarations, position).clone())
     extend_constructor_index(Arc.make_mut(program.constructors), module.nominal_declarations)
+    return Ok(None)
+
+
+pub def extend_program_context(
+    mut program: ProgramContext,
+    module: &BodyIrModule,
+    constructors: Arc[ConstructorIndex],
+    unions: &list[RustType],
+) -> Result[None, str]:
+    """Extend retained program lookup/storage generations after runtime resolution without rebuilding dispatch roots."""
+    if (
+        len(program.statics.as_ref()) > len(module.static_declarations)
+        or len(program.nominals.as_ref()) > len(module.nominal_declarations)
+        or len(program.enums.as_ref()) > len(module.enum_declarations)
+        or len(program.value_enums.as_ref()) > len(module.value_enum_declarations)
+        or len(program.decorated_bindings.as_ref()) > len(module.decorated_bindings)
+    ):
+        return Err("invalid Body IR program context generation")
+    extend_body_index(program.body_indices, module)?
+    for position in range(len(program.statics.as_ref()), len(module.static_declarations)):
+        Arc.make_mut(program.statics).push(borrowed_at(module.static_declarations, position).clone())
+    for position in range(len(program.nominals.as_ref()), len(module.nominal_declarations)):
+        Arc.make_mut(program.nominals).push(borrowed_at(module.nominal_declarations, position).clone())
+    for position in range(len(program.enums.as_ref()), len(module.enum_declarations)):
+        Arc.make_mut(program.enums).push(borrowed_at(module.enum_declarations, position).clone())
+    for position in range(len(program.value_enums.as_ref()), len(module.value_enum_declarations)):
+        Arc.make_mut(program.value_enums).push(borrowed_at(module.value_enum_declarations, position).clone())
+    for position in range(len(program.decorated_bindings.as_ref()), len(module.decorated_bindings)):
+        Arc.make_mut(program.decorated_bindings).push(borrowed_at(module.decorated_bindings, position).clone())
+    for ty in unions:
+        _ = Arc.make_mut(program.union_types).insert(ty.clone())
+    program.constructors = constructors
     return Ok(None)
