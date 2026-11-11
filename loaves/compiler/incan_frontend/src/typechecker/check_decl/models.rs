@@ -190,6 +190,10 @@ impl TypeChecker {
             refuse(self, "a registered check must be synchronous");
             return;
         }
+        let Some(callable) = binding.identity.clone() else {
+            refuse(self, "the registered check has no canonical callable identity");
+            return;
+        };
         let (Some(ok), Some(error_type)) = (
             binding.return_type.result_ok_type(),
             binding.return_type.result_err_type(),
@@ -251,16 +255,20 @@ impl TypeChecker {
                     refuse(self, "the check parameter type must exactly match the final field type");
                     return;
                 }
+                let access = crate::ownership_metadata::direct_input_access(
+                    self.type_info.declarations.ownership_contracts.get(&callable),
+                    0,
+                );
+                if access != Ok(incan_semantics_core::IncanInputAccess::Shared) {
+                    refuse(self, "the check parameter must use immutable shared access to the final field value");
+                    return;
+                }
                 Some(identity)
             }
             _ => {
                 refuse(self, "use bare @validate or one positional field name");
                 return;
             }
-        };
-        let Some(callable) = binding.identity else {
-            refuse(self, "the registered check has no canonical callable identity");
-            return;
         };
         self.type_info
             .declarations
