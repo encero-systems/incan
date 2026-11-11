@@ -5,6 +5,7 @@ description = "The compiler worker host: versioned compile and record protocols 
 
 [dependencies]
 incan_platform = { path = "../../platform" }
+internal_models = { path = "../internal_models" }
 
 [build]
 rust-edition = "2024"
