@@ -1,7 +1,6 @@
 """Concrete nominal layouts selected from checked Body IR types, retaining source declaration identities."""
 
 from type_parameters import close_result_requirements
-
 from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind, SymbolOrigin
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
@@ -141,7 +140,7 @@ pub def specialize_nominals_with_instances(
                 collect_nominal_type(constructors, module, field, instances, [])?
     for declaration in module.static_declarations:
         collect_nominal_type(constructors, module, declaration.ty, instances, [])?
-    for body in nominal_frames(module)?:
+    for body in nominal_frames(constructors, module)?:
         if owner_template(constructors, module, body)? == None and closed_arguments([body.return_type.clone()]):
             retain_selected_members(body, selected)
         for local in body.locals:

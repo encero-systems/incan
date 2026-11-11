@@ -25,7 +25,7 @@ from rust::std::collections import BTreeMap, VecDeque
 from symbols import type_component
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
 from table_views import borrowed_at
-from native_type_identity import OWNED_CALLABLE_STORAGE
+from native_type_identity import ConstructorIndex, OWNED_CALLABLE_STORAGE
 
 # The refusal for a placeholder no binder of the instantiated frame closes; callers that may leave owner placeholders
 # open recognize their skip by this prefix.
@@ -139,6 +139,30 @@ pub def static_type_arguments(module: &BodyIrModule, target: &NamedCallableTarge
     # 1. Validate and retain the receiver's owner arguments.
     mut arguments = static_owner_arguments(module, target)?
     # 2. Append the method's checked arguments in declaration order.
+    for argument in target.type_args:
+        arguments.append(argument.clone())
+    return Ok(arguments)
+
+
+pub def indexed_static_type_arguments(
+    constructors: &ConstructorIndex,
+    target: &NamedCallableTarget,
+) -> Result[list[RustType], str]:
+    """Close an associated call from compact template arity authority after source declarations leave execution context."""
+    mut arguments: list[RustType] = []
+    match target.receiver_type:
+        Some(ty) =>
+            match ty:
+                RustType.Generic(base=base, args=owner_arguments) =>
+                    match constructors.generic_arities.get(str(base)):
+                        Some(arity) =>
+                            if int(arity.clone()) != len(owner_arguments):
+                                return Err(f"unsupported Body IR static owner type argument arity on {base}")
+                        None => return Err(f"unsupported Body IR static receiver {base}")
+                    for argument in owner_arguments:
+                        arguments.append(argument.clone())
+                _ => pass
+        None => pass
     for argument in target.type_args:
         arguments.append(argument.clone())
     return Ok(arguments)
@@ -281,7 +305,11 @@ pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots
     return Ok(result)
 
 
-pub def close_result_requirements(mut body: &mut Body, names: list[str], arguments: list[RustType]) -> Result[None, str]:
+pub def close_result_requirements(
+    mut body: &mut Body,
+    names: list[str],
+    arguments: list[RustType],
+) -> Result[None, str]:
     """Close result obligations with the same declared binders as the frame, retaining their original call anchors."""
     match body.checked_input_profile:
         Some(profile) =>

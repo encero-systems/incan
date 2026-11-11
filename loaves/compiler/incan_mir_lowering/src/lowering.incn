@@ -37,6 +37,8 @@ from native_type_identity import (
     constructor_index_with_packages as index_constructors,
     extend_constructor_index,
     extend_constructor_authority,
+    extend_generic_constructor_arities,
+    with_generic_constructor_arities,
 )
 from rust::std::collections import BTreeMap
 from rust::std::mem import drop
@@ -252,6 +254,7 @@ def lowered_plan(
     trace = native_environment(trace_key).is_some()
     # 1. Validate the checked inputs and prepare their shared layouts.
     source_files = source_file_index(modules, files)?
+    empty_templates = index_constructors([], source_files, package_versions)
     source_context, template_constructors, owners, specialized_context, nominal_instances, template_references = plan_contexts(
         modules,
         sources,
@@ -261,10 +264,16 @@ def lowered_plan(
         source_files,
         package_versions,
         borrowed_at(modules, entry),
+        empty_templates,
     )?
     mut context = specialized_context
-    constructor_table, unions, initial_intrinsics = layout_tables(context, files[entry], source_files, package_versions)?
-    constructors = Arc.new(constructor_table)
+    mut constructor_table, unions, initial_intrinsics = layout_tables(
+        context,
+        files[entry],
+        source_files,
+        package_versions,
+    )?
+    constructors = Arc.new(with_generic_constructor_arities(constructor_table, template_constructors))
     mut intrinsics = initial_intrinsics
     mut models: list[ModelDeclaration] = []
     mut enums: list[EnumDeclaration] = []
@@ -439,6 +448,7 @@ pub def resume_unit_plan(
             addition_source_files,
             package_versions,
             context.as_ref(),
+            template_constructors.as_ref(),
         )?
         extend_continuation_context(
             Arc.make_mut(source_context),
@@ -457,6 +467,7 @@ pub def resume_unit_plan(
         )?
     extend_constructor_authority(Arc.make_mut(template_constructors), source_files, package_versions)
     extend_constructor_index(Arc.make_mut(constructors), context.as_ref().nominal_declarations)
+    extend_generic_constructor_arities(Arc.make_mut(constructors), template_constructors.as_ref())
     extend_constructor_authority(Arc.make_mut(constructors), source_files, package_versions)
     extend_unions(unions, context.as_ref())
     intrinsics = intrinsic_declarations(constructors.as_ref(), context.as_ref(), entry_file, intrinsics)?
@@ -1100,6 +1111,7 @@ pub def plan_contexts(
     source_files: &BTreeMap[str, str],
     package_versions: &BTreeMap[str, str],
     validation_context: &BodyIrModule,
+    retained_templates: &ConstructorIndex,
 ) -> Result[PlanContexts, str]:
     """Validate against retained authority and prepare only the current slice's compact specialized contexts."""
     footprint_trace = native_environment("INCAN_TRACE_LOWERING_FOOTPRINT").is_some()
@@ -1114,7 +1126,10 @@ pub def plan_contexts(
     mut source_context = BodyIrModule.declarations_only(str(context.module_id.path()))
     source_context.nominal_declarations = list(context.nominal_declarations)
     source_context.enum_declarations = list(context.enum_declarations)
-    constructors = index_constructors(source_context.nominal_declarations, source_files, package_versions)
+    constructors = with_generic_constructor_arities(
+        index_constructors(source_context.nominal_declarations, source_files, package_versions),
+        retained_templates,
+    )
     template_references = referenced_templates(context)
     trace_lowering_footprint(footprint_trace, "retained source templates")
     # A closed enum payload can name a nominal instance no frame uses, and a closed nominal field or method frame can
@@ -1176,7 +1191,7 @@ def validate_plan_inputs(
         return Err("invalid Body IR project entry")
     if len(sources) != len(modules) or len(files) != len(modules):
         return Err("invalid Body IR project source provenance")
-    _selected_entries = validate_program_entry_selection(modules, entry)?
+    _selected_entries = validate_program_entry_selection(modules, entry, retained)?
     _conversion_placement = validate_conversion_placement(modules, entry)?
     for module_position in range(len(modules)):
         module = borrowed_at(modules, module_position)

@@ -25,7 +25,7 @@ from native_type_identity import ConstructorIndex
 from ranges import range_value_local
 from layout_types import native_source_type
 from symbols import symbol_component, type_component
-pub from type_parameters import static_type_arguments
+pub from type_parameters import indexed_static_type_arguments, static_type_arguments
 
 
 pub def parameter_local_index(body: &Body, index: int) -> int:

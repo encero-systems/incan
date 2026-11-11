@@ -36,7 +36,7 @@ from rust::incan_semantics_core::body_ir import (
     PlaceOperand as RustPlaceOperand,
     ValidatedConstructor as RustValidatedConstructor,
 )
-from classes import frame_type, function_name, static_type_arguments
+from classes import frame_type, function_name, indexed_static_type_arguments
 from string_conversion import string_conversion_callee
 from traits import (
     associated_body_index,
@@ -513,7 +513,7 @@ def lower_type_parameter_call(
         builder.type_parameters,
         builder.type_arguments,
     )?
-    closed = checked_type_arguments(builder, static_type_arguments(module, target)?)?
+    closed = checked_type_arguments(builder, indexed_static_type_arguments(builder.constructors, target)?)?
     typed_body = instantiate(body, closed, [])?
     owned = owned_callable_slots(builder, body, typed_body, arguments, target.binding, 0)?
     mut concrete_body = typed_body

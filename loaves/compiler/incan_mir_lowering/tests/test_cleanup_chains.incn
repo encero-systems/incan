@@ -2,8 +2,7 @@
 
 from rust::std::collections import BTreeMap, BTreeSet
 from rust::std::sync import Arc
-from rust::incan_semantics_core import CanonicalSymbolId
-from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core import CanonicalSymbolId, IncanType as RustType
 from rust::incan_semantics_core::body_ir import (
     StaticDeclaration,
     NominalDeclaration,
@@ -44,6 +43,7 @@ def empty_program_context() -> ProgramContext:
     constructors = ConstructorIndex(
         owners={},
         generic_owners={},
+        generic_arities={},
         named=named,
         source_files=files,
         package_versions=versions,
@@ -132,7 +132,8 @@ pub def test_cleanup_chains_share_predecessor_tails() -> Result[None, str]:
                 assert place.projection == Projection.Whole
                 assert action == Unwind.Terminate
                 current = target
-            _ => assert false
+            _ =>
+                assert false
     assert builder.blocks[current].terminator.kind == TerminatorKind.UnwindResume
 
     builder.locals.append(
@@ -151,12 +152,14 @@ pub def test_cleanup_chains_share_predecessor_tails() -> Result[None, str]:
             assert place.projection == Projection.Field(2, PlanType.String)
             assert action == Unwind.Terminate
             current = target
-        _ => assert false
+        _ =>
+            assert false
     match builder.blocks[current].terminator.kind:
         TerminatorKind.Drop(place, target, action) =>
             assert place.local == 9
             assert place.projection == Projection.Field(0, PlanType.String)
             assert action == Unwind.Terminate
             assert target == final_root
-        _ => assert false
+        _ =>
+            assert false
     return Ok(None)
