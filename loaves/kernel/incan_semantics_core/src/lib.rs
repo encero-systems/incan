@@ -86,6 +86,8 @@ pub enum DecoratorFeature {
     Derive,
     StaticMethod,
     ClassMethod,
+    /// Registered final field or model validation check.
+    Validate,
     NoImplicitCoercion,
     Requires,
     Describe,
@@ -391,6 +393,7 @@ pub fn decorator_feature_from_id(id: DecoratorId) -> DecoratorFeature {
         DecoratorId::Derive => DecoratorFeature::Derive,
         DecoratorId::StaticMethod => DecoratorFeature::StaticMethod,
         DecoratorId::ClassMethod => DecoratorFeature::ClassMethod,
+        DecoratorId::Validate => DecoratorFeature::Validate,
         DecoratorId::NoImplicitCoercion => DecoratorFeature::NoImplicitCoercion,
         DecoratorId::Requires => DecoratorFeature::Requires,
         DecoratorId::Describe => DecoratorFeature::Describe,

@@ -255,6 +255,7 @@ mod tests {
             traits: Vec::new(),
             trait_adoptions: Vec::new(),
             derives: Vec::new(),
+            has_registered_validation: false,
             fields: vec![
                 field("visible", Some(visible), MemberVisibilityExport::Public),
                 field("secret", Some(private), MemberVisibilityExport::Private),

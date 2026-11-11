@@ -223,6 +223,7 @@ fn nominal(type_info: &TypeCheckInfo, name: &str) -> Option<bir::NominalDeclarat
         has_field_defaults: false,
         field_default_body: None,
         validated_constructor: None,
+        registered_validation: Vec::new(),
         method_partial_defaults: Vec::new(),
         display_method: None,
         newtype_deserialize: bir::NewtypeDeserialize::Unselected,

@@ -102,6 +102,15 @@ pub model CompilerValidatedConstructor:
     pub required_fields: list[int]
 
 
+pub model CompilerRegisteredValidation:
+    """One checked final field or whole-model validation obligation in deterministic execution order."""
+
+    pub callable: CanonicalSymbolId
+    pub target_field: Option[CanonicalSymbolId]
+    pub error_type: CheckedType
+    pub registration_span: HirSourceSpan
+
+
 pub model CompilerBody:
     """
     A complete selected Body contract with all 24 live fields and explicit dispositions for the three skipped facts.
@@ -137,7 +146,7 @@ pub model CompilerBody:
 
 
 pub model CompilerNominalDeclaration:
-    """All 29 live NominalDeclaration fields, including validation, adoption and owned-callable facts."""
+    """All 30 live NominalDeclaration fields, including validation, adoption and owned-callable facts."""
 
     pub trait_adoptions: list[CompilerTraitAdoption]
     pub native_item: str
@@ -159,6 +168,7 @@ pub model CompilerNominalDeclaration:
     pub has_field_defaults: bool
     pub field_default_body: list[CompilerBody]
     pub validated_constructor: Option[CompilerValidatedConstructor]
+    pub registered_validation: list[CompilerRegisteredValidation]
     pub method_partial_defaults: list[MethodPartialDefaults]
     pub display_method: Option[CanonicalSymbolId]
     pub newtype_deserialize: NewtypeDeserialize
@@ -257,6 +267,12 @@ pub def valid_nominal_declaration(declaration: CompilerNominalDeclaration) -> bo
                     return false
                 previous = slot
         None => pass
+    for check in declaration.registered_validation:
+        match check.target_field:
+            Some(field) =>
+                if field not in declaration.field_identities:
+                    return false
+            None => pass
     for adoption in declaration.trait_adoptions:
         if adoption.adopter != declaration.canonical:
             return false

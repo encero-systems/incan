@@ -158,7 +158,7 @@ impl TypeChecker {
         name: &str,
         bindings: &std::collections::HashMap<String, ResolvedType>,
     ) -> ResolvedType {
-        match self.lookup_type_info(name) {
+        let value = match self.lookup_type_info(name) {
             Some(TypeInfo::Model(model)) if !model.type_params.is_empty() => ResolvedType::Generic(
                 name.to_string(),
                 model
@@ -192,6 +192,20 @@ impl TypeChecker {
                     .collect(),
             ),
             _ => ResolvedType::Named(name.to_string()),
+        };
+        if self
+            .type_info
+            .declarations
+            .registered_model_checks
+            .get(name)
+            .is_some_and(|checks| !checks.is_empty())
+            || self
+                .lookup_type_info(name)
+                .is_some_and(|info| matches!(info, TypeInfo::Model(model) if model.has_registered_validation))
+        {
+            result_ty(value, ResolvedType::Named("ValidationError".to_owned()))
+        } else {
+            value
         }
     }
 

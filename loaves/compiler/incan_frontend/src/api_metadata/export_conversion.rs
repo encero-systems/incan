@@ -77,6 +77,7 @@ pub fn model_export_from_api(model: &ApiModel) -> ModelExport {
         traits: model.traits.clone(),
         trait_adoptions: model.trait_adoptions.clone(),
         derives: model.derives.clone(),
+        has_registered_validation: model.has_registered_validation,
         fields: model.fields.clone(),
         properties: model.properties.iter().map(property_export_from_api).collect(),
         methods: model.methods.iter().map(method_export_from_api).collect(),

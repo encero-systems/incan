@@ -387,6 +387,7 @@ impl TypeChecker {
     /// Resolve final destination and artifact demands, retain warnings, and publish only after fatal diagnostics are
     /// absent. Publication's own demands are validated again before the checked result is accepted.
     pub(super) fn finish_program_check(&mut self, program: &Program) -> Result<(), Vec<CompileError>> {
+        self.validate_registered_model_check_safety();
         if self.loaves.keys().next().is_some() {
             for (name, identity) in &self.public_library_type_identities {
                 if identity.selected_provider.is_none()

@@ -133,6 +133,7 @@ fn append_nominal_replay_shapes(
                 traits: value.traits.clone(),
                 trait_adoptions: bounds(&value.trait_adoptions),
                 derives: value.derives.clone(),
+                has_registered_validation: value.has_registered_validation,
                 fields: fields(&value.fields)?,
                 properties: properties(&value.properties),
                 methods: methods(&value.methods)?,

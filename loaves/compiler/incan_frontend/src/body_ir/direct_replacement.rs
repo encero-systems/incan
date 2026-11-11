@@ -198,9 +198,10 @@ pub fn has_direct_replacement_properties(
 /// ([`has_direct_replacement_method_partials`]) and computed properties getter bodies
 /// ([`has_direct_replacement_properties`]). Without checked facts, methods may carry only builtin static and class
 /// method markers. Checked nongeneric models also admit proven method replacement chains, retaining their original
-/// callables and initialized bindings. Checked method descriptions with complete literal materialization retain their
-/// once-only registrations inside a sole source-local registry static's initializer; every other registration profile
-/// remains refused.
+/// callables and initialized bindings. A checked final-validation registration retains the exact method identity in
+/// the model's ordered validation plan; decorator spelling alone grants no admission. Checked method descriptions
+/// with complete literal materialization retain their once-only registrations inside a sole source-local registry
+/// static's initializer; every other registration profile remains refused.
 pub(super) fn has_direct_replacement_model_shape(model: &ast::ModelDecl, type_info: Option<&TypeCheckInfo>) -> bool {
     has_direct_replacement_method_partials(
         &model.type_params,
@@ -214,8 +215,26 @@ pub(super) fn has_direct_replacement_model_shape(model: &ast::ModelDecl, type_in
                     && type_info.is_some_and(|info| {
                         decorated_bindings::supports_method(&method.node, &model.name, info)
                             || registry_descriptions::supports_method(&method.node, &model.name, info)
+                            || supports_registered_validation(method.span, &model.name, info)
                     })
         })
+}
+
+/// Admit one decorated model method only when checking retained its exact canonical callable as a final validation.
+fn supports_registered_validation(span: ast::Span, owner: &str, type_info: &TypeCheckInfo) -> bool {
+    let Some(callable) = type_info
+        .declarations
+        .method_bindings_by_span
+        .get(&span)
+        .and_then(|binding| binding.identity.as_ref())
+    else {
+        return false;
+    };
+    type_info
+        .declarations
+        .registered_model_checks
+        .get(owner)
+        .is_some_and(|checks| checks.iter().any(|check| &check.callable == callable))
 }
 
 /// Admit only the bare builtin derive decorator whose complete native trait selection Body IR retains.

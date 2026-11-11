@@ -139,6 +139,7 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
                 })
                 .collect::<Option<Vec<_>>>()?;
             let validated_constructor = validated_constructor(&declaration.node, &canonical, type_info);
+            let registered_validation = registered_validation(name, &field_identities, type_info)?;
             let retained = bir::NominalDeclaration {
                 record_package_identity: if matches!(&declaration.node, ast::Declaration::Model(_)) {
                     type_info.declarations.record_package_identity.clone()
@@ -198,6 +199,7 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
                 has_field_defaults: fields.iter().any(|field| field.node.default.is_some()),
                 field_default_body: None,
                 validated_constructor,
+                registered_validation,
                 method_partial_defaults: Vec::new(),
                 display_method: checked_display_method(&declaration.node, type_info),
                 derives: nominal_derives(name, class_layout.is_some(), type_info)?,
@@ -211,6 +213,44 @@ pub(in crate::body_ir) fn collect_local_nominal_declarations(
             retain_inherited_layout(retained, type_info)
         })
         .collect()
+}
+
+/// Project checked final-validation registrations in their executable order: canonical field order first, then
+/// whole-model declaration order. Every field target must match the retained physical layout exactly.
+fn registered_validation(
+    owner: &str,
+    fields: &[CanonicalSymbolId],
+    type_info: &TypeCheckInfo,
+) -> Option<Vec<bir::RegisteredValidation>> {
+    let checks = type_info
+        .declarations
+        .registered_model_checks
+        .get(owner)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let mut ordered = checks
+        .iter()
+        .enumerate()
+        .map(|(order, check)| {
+            let field = match &check.target_field {
+                Some(target) => Some(fields.iter().position(|field| field == target)?),
+                None => None,
+            };
+            Some((field, order, check))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    ordered.sort_by_key(|(field, order, _)| (field.is_none(), field.unwrap_or(usize::MAX), *order));
+    Some(
+        ordered
+            .into_iter()
+            .map(|(_, _, check)| bir::RegisteredValidation {
+                callable: check.callable.clone(),
+                target_field: check.target_field.clone(),
+                error_type: semantic_type_from_resolved(&check.error_type),
+                registration_span: check.registration_span,
+            })
+            .collect(),
+    )
 }
 
 /// Retain the exact generated constructor and source validator selected by a checked `Validate` model.
@@ -501,6 +541,7 @@ pub(super) fn collect_plain_newtype(
         has_field_defaults: false,
         field_default_body: None,
         validated_constructor: None,
+        registered_validation: Vec::new(),
         method_partial_defaults: Vec::new(),
         display_method: None,
         newtype_deserialize,

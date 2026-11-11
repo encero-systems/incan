@@ -287,11 +287,21 @@ fn candidate_parameters(modules: &[bir::BodyIrModule]) -> HashSet<Candidate> {
             .flat_map(|declaration| &declaration.method_partial_defaults)
             .map(|partial| partial.target.clone())
             .collect::<HashSet<_>>();
+        let registered_validation = module
+            .nominal_declarations
+            .iter()
+            .flat_map(|declaration| &declaration.registered_validation)
+            .map(|check| check.callable.clone())
+            .collect::<HashSet<_>>();
         for (body_index, body) in module.bodies.iter().enumerate() {
             let eligible = body.type_parameters.is_empty()
                 && !body.is_async
                 && !body.is_generator()
-                && body.native_attributes.is_empty()
+                && (body.native_attributes.is_empty()
+                    || body
+                        .canonical
+                        .as_ref()
+                        .is_some_and(|identity| registered_validation.contains(identity)))
                 && body.canonical.as_ref().is_none_or(|identity| {
                     !trait_implementations.contains(identity) && !method_partial_targets.contains(identity)
                 })

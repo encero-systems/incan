@@ -56,9 +56,15 @@ pub use public_namespaces::*;
 
 /// Schema version of checked API metadata packages and modules.
 ///
-/// Version 2 adds the `mut` marker: `is_mut` on a callable parameter and the `MutParam` type reference inside a
-/// function type (#1790).
-pub const CHECKED_API_METADATA_SCHEMA_VERSION: u32 = 2;
+/// Version 3 adds inferred construction-safety summaries for exported authored callables. Older metadata remains
+/// unverified rather than being treated as safe.
+pub const CHECKED_API_METADATA_SCHEMA_VERSION: u32 = 3;
+
+/// Oldest checked API metadata schema that this compiler can decode.
+///
+/// Version 2 lacks construction-safety summaries. Consumers may still use its ordinary API surface, but must treat
+/// every callable from it as unverified for a construction-safe root.
+pub const MINIMUM_CHECKED_API_METADATA_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CheckedApiMetadataPackage {
@@ -176,6 +182,9 @@ pub struct ApiFunction {
     pub params: Vec<ParamExport>,
     pub return_type: TypeRef,
     pub is_async: bool,
+    /// Inferred deterministic, effect-free construction eligibility; absent metadata is unverified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub construction_safe: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -191,6 +200,8 @@ pub struct ApiModel {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trait_adoptions: Vec<TypeBoundExport>,
     pub derives: Vec<String>,
+    #[serde(default)]
+    pub has_registered_validation: bool,
     pub fields: Vec<FieldExport>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub properties: Vec<ApiProperty>,
@@ -389,6 +400,9 @@ pub struct ApiMethod {
     pub return_type: TypeRef,
     pub is_async: bool,
     pub has_body: bool,
+    /// Inferred deterministic, effect-free construction eligibility; absent metadata is unverified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub construction_safe: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub made_private: Option<crate::library_manifest::MadePrivateExport>,
 }

@@ -43,6 +43,9 @@ impl BodyIrModule {
         if !Self::validated_constructor_is_well_formed(declaration) {
             return false;
         }
+        if !Self::registered_validation_is_well_formed(declaration) {
+            return false;
+        }
         if !declaration.native_item.is_empty()
             && crate::body_ir::native_nominal_item(&declaration.canonical)
                 .or_else(|| crate::body_ir::loaf_item_path(&declaration.canonical))
@@ -180,7 +183,31 @@ impl BodyIrModule {
             && contract.required_fields.windows(2).all(|pair| pair[0] < pair[1])
     }
 
-    /// Require each retained reflection record to name its selected physical field in the same order.
+    /// Require each registered check to name one enclosed method and, when field-scoped, one exact stored field.
+    /// Duplicate callable/target pairs are malformed because registration order is an execution contract rather
+    /// than permission to invoke the same obligation twice. Error types are audited separately during publication.
+    fn registered_validation_is_well_formed(declaration: &NominalDeclaration) -> bool {
+        declaration
+            .registered_validation
+            .iter()
+            .enumerate()
+            .all(|(index, check)| {
+                check.callable.namespace == SymbolNamespace::Member
+                    && check.callable.kind == SemanticSourceTargetKind::Method
+                    && check.callable.origin == declaration.canonical.origin
+                    && declares_member(&declaration.canonical, &check.callable)
+                    && check
+                        .target_field
+                        .as_ref()
+                        .is_none_or(|field| declaration.field_identities.contains(field))
+                    && !declaration.registered_validation[..index]
+                        .iter()
+                        .any(|earlier| earlier.callable == check.callable && earlier.target_field == check.target_field)
+            })
+    }
+
+    /// Validate complete stored metadata or a legacy visible projection against exact physical slots. Only complete
+    /// metadata can later authorize generated typed-value hooks; accepting the old projection preserves inspection.
     pub(super) fn nominal_reflection_metadata_matches_fields(declaration: &NominalDeclaration) -> bool {
         let Some(metadata) = &declaration.reflection_metadata else {
             return true;

@@ -360,6 +360,9 @@ impl TypeChecker {
             );
         }
         if explicit_arity_ok && self.errors.len() == errors_before_call {
+            if let Some(identity) = callee_identity.clone() {
+                self.type_info.record_resolved_identity(call_span, identity);
+            }
             self.retain_body_ir_parameter_requirements(&resolved_params, args, callee_identity.as_ref());
             let templates =
                 self.contextual_parameter_templates(&resolved_params, callee_identity.as_ref(), &info.params);

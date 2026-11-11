@@ -229,6 +229,9 @@ pub const RFC_114: RfcId = "RFC 114";
 /// RFC 116 — typed C ABI interop.
 pub const RFC_116: RfcId = "RFC 116";
 
+/// RFC 122 — canonical model construction and final validation.
+pub const RFC_122: RfcId = "RFC 122";
+
 /// RFC 150 — compiler-visible lifecycle and migration diagnostics.
 pub const RFC_150: RfcId = "RFC 150";
 
@@ -381,6 +384,8 @@ impl RFC {
     pub const _114: RfcId = RFC_114;
     /// RFC 116 — typed C ABI interop.
     pub const _116: RfcId = RFC_116;
+    /// RFC 122 — canonical model construction and final validation.
+    pub const _122: RfcId = RFC_122;
     /// RFC 150 — compiler-visible lifecycle and migration diagnostics.
     pub const _150: RfcId = RFC_150;
     /// RFC 171 — retire legacy Rust interop facades and declare testing markers through checked metadata.

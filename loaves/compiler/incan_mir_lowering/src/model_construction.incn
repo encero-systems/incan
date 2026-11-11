@@ -205,7 +205,7 @@ def range_value(
     return range_aggregate(expected, fields, types)
 
 
-def model_field_operands(
+pub def model_field_operands(
     mut builder: Builder,
     index: int,
     elements: &list[RustArgumentElement],
@@ -273,7 +273,7 @@ def model_field_boundary(
             return Err(f"{reason}; constructing {declaration.name}.{declaration.fields[slot]} as {field_type:?}")
 
 
-def boxed_operand(mut builder: Builder, value: Operand, referent: PlanType, span: SourceSpan) -> Operand:
+pub def boxed_operand(mut builder: Builder, value: Operand, referent: PlanType, span: SourceSpan) -> Operand:
     """Move a checked field value onto the heap for a boxed class field, as `Box::new` does."""
     path = "std::boxed::Box::new"
     boxed = PlanType.Boxed([referent])

@@ -44,6 +44,9 @@ pub struct ModelInfo {
     pub traits: Vec<String>,
     pub trait_adoptions: Vec<TypeBoundInfo>,
     pub derives: Vec<String>,
+    /// Whether canonical construction must return `Result[Self, ValidationError]` because the model publishes at
+    /// least one compiler-checked final-validation obligation.
+    pub has_registered_validation: bool,
     pub fields: HashMap<String, FieldInfo>,
     pub field_order: Vec<String>,
     pub properties: HashMap<String, PropertyInfo>,

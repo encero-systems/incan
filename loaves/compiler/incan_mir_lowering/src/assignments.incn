@@ -81,6 +81,7 @@ from result_carriers import (
     retained_reference_value,
 )
 from explicit_arguments import reference_contract
+from registered_validation import lower_registered_model_construction
 
 
 pub def lower_assignment(
@@ -383,6 +384,16 @@ def assign_stored_value(
                 return Ok(None)
             _ => return Err("unsupported Body IR nonliteral FrozenBytes assignment")
     match value:
+        RustRvalue.Aggregate(RustAggregateKind.Constructor(constructor), elements) =>
+            if lower_registered_model_construction(
+                module,
+                builder,
+                constructor,
+                elements,
+                destination=target,
+                span=span,
+            )?:
+                return Ok(None)
         RustRvalue.ResultVariant(variant) => return lower_result_construction(builder, target, variant, span)
         RustRvalue.Aggregate(RustAggregateKind.OptionSome, elements) =>
             return lower_option_construction(builder, target, elements, span)

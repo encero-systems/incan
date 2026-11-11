@@ -1,0 +1,239 @@
+"""Authenticated source callback dispatch for compiler-generated typed-value operations."""
+
+from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId, SymbolOrigin, IncanInputAccess, SemanticSourceTargetKind
+from rust::incan_semantics_core::body_ir import BodyIrModule, Body, LoafCallable, MethodTarget, ArgumentBinding, OwnershipFact, LocalOrigin
+from pub::incan_mir_plan import PlanType, Place, Operand, SourceSpan, CalleeKind, Projection
+from frame import Builder, place_type, temporary, read_place, terminate_call, dereferenced_place
+from explicit_arguments import reference_contract, explicit_place_argument
+from traits import owner_method_identity, owner_method_index, is_lazy_method_body
+from program_context import body_at
+from table_views import borrowed_at
+from type_parameters import instantiate, request_instance
+from classes import frame_type, function_name
+from call_arguments import call_parameter_type
+from layout_types import native_source_type
+from numerics import numeric_carrier
+from options import retain_body_carriers
+from builtin_calls import coerce_numeric_operand
+
+
+pub def primitive_member(identity: CanonicalSymbolId, name: str) -> bool:
+    """Require the primitive reflection declaration identity, never an alias or a same-spelled user method."""
+    if identity.declaration_name != name:
+        return false
+    match identity.origin:
+        SymbolOrigin.Package(library=library, module_path=path) =>
+            return library == "incan_stdlib_primitives" and path == ["primitives", "reflection"]
+        _ => return false
+
+
+pub def referent(ty: PlanType) -> PlanType:
+    """Unwrap one checked loan without changing the underlying carrier or its owner index."""
+    match reference_contract(ty):
+        Ok((value, _writable)) => return value
+        Err(_not_reference) => return ty
+
+
+pub def callback_body(
+    module: &BodyIrModule, mut builder: Builder, owner: PlanType,
+    protocol_name: str, error: RustType, name: str, arguments: list[RustType],
+) -> Result[Body, str]:
+    """Select a checked adopted slot and queue its ordinary source body with exact method arguments."""
+    mut slot: Option[CanonicalSymbolId] = None
+    match owner:
+        PlanType.Model(index, _name) =>
+            for adoption in borrowed_at(builder.nominals, index).trait_adoptions:
+                if not primitive_member(adoption.trait_identity, protocol_name) or adoption.arguments != [error]:
+                    continue
+                match adoption.methods:
+                    None => return Err("typed-value callback adoption lacks checked method slots")
+                    Some(methods) =>
+                        for method in methods:
+                            if method.declaration_name == name:
+                                match slot:
+                                    Some(previous) =>
+                                        if previous != method:
+                                            return Err("typed-value callback has ambiguous owning slots")
+                                    None => slot = Some(method.clone())
+        _ => return Err("typed-value callback requires a concrete checked source adopter")
+    if slot == None:
+        return Err(f"typed-value callback lacks {protocol_name}.{name} adoption")
+    # This target exists only for the shared implementation selector. It is not an unchecked source call.
+    selected = MethodTarget(
+        name=name, intrinsic_carrier=None, operation=None, loaf_trait=None,
+        trait_arguments=Some([error]), canonical=slot, type_args=arguments,
+        native_trait_delegation=None, binding=ArgumentBinding.UnresolvedPositional,
+    )
+    index = owner_method_index(module, selected, owner, builder)?
+    body = body_at(module.bodies, index)
+    if len(body.type_parameters) != 0:
+        typed = instantiate(body, arguments, [])?
+        request_instance(builder.instances, body, arguments, [], false)
+        return Ok(typed)
+    if len(arguments) != 0:
+        return Err("typed-value callback supplies arguments to a nongeneric method")
+    if is_lazy_method_body(module, body):
+        request_instance(builder.instances, body, [], [], false)
+    return Ok(body.clone())
+
+
+pub def error_message_body(module: &BodyIrModule, mut builder: Builder, owner: PlanType) -> Result[Body, str]:
+    """Select one concrete Error adopter's checked `message` implementation without requiring native Display."""
+    target = error_message_target(module, builder, owner)?
+    index = owner_method_index(module, target, owner, builder)?
+    body = body_at(module.bodies, index)
+    if len(body.type_parameters) != 0:
+        return Err("registered validation Error.message must be closed")
+    return Ok(body.clone())
+
+
+pub def error_message_callable(
+    module: &BodyIrModule, mut builder: Builder, owner: PlanType,
+) -> Result[Option[LoafCallable], str]:
+    """Select an imported compiled Error.message frame when its source body is intentionally absent."""
+    target = error_message_target(module, builder, owner)?
+    identity = owner_method_identity(module, target, owner)?
+    mut selected = -1
+    for position in range(len(module.loaf_callables)):
+        if module.loaf_callables[position].canonical != identity:
+            continue
+        if selected >= 0:
+            return Err("invalid Body IR registered validation with multiple compiled Error.message callables")
+        selected = position
+    if selected < 0:
+        return Ok(None)
+    return Ok(Some(module.loaf_callables[selected].clone()))
+
+
+def error_message_target(module: &BodyIrModule, mut builder: Builder, owner: PlanType) -> Result[MethodTarget, str]:
+    """Authenticate Error.message's trait slot before selecting either its body or compiled callable."""
+    mut slot: Option[CanonicalSymbolId] = None
+    match owner:
+        PlanType.Model(index, _name) =>
+            for adoption in borrowed_at(builder.nominals, index).trait_adoptions:
+                if not error_trait(adoption.trait_identity):
+                    continue
+                match adoption.methods:
+                    None => return Err("registered validation Error adoption lacks checked method slots")
+                    Some(methods) =>
+                        for method in methods:
+                            if method.declaration_name != "message":
+                                continue
+                            match slot:
+                                Some(previous) =>
+                                    if previous != method:
+                                        return Err("registered validation Error adoption has ambiguous message slots")
+                                None => slot = Some(method.clone())
+        _ => return Err("registered validation requires a concrete Error adopter")
+    match slot:
+        None => return Err("registered validation Error adoption lacks message")
+        Some(method) => return Ok(
+            MethodTarget(
+                name="message", intrinsic_carrier=None, operation=None, loaf_trait=None,
+                trait_arguments=Some([]), canonical=Some(method), type_args=[],
+                native_trait_delegation=None, binding=ArgumentBinding.UnresolvedPositional,
+            ),
+        )
+
+
+def error_trait(identity: CanonicalSymbolId) -> bool:
+    """Authenticate the canonical primitive Error trait rather than a same-spelled user declaration."""
+    if identity.declaration_name != "Error" or identity.kind != SemanticSourceTargetKind.Trait:
+        return false
+    match identity.origin:
+        SymbolOrigin.Package(library=library, module_path=path) =>
+            return library == "incan_stdlib_primitives" and path == ["primitives", "errors"]
+        _ => return false
+
+
+pub def parameter_types(mut builder: Builder, body: Body) -> Result[list[PlanType], str]:
+    """Use each callback slot's checked ABI, retaining a method receiver's already projected frame type."""
+    if len(body.params) == 0 or len(body.locals) == 0:
+        return Err("typed-value callback has no parameters")
+    mut result: list[PlanType] = []
+    for parameter in body.params:
+        local = int(parameter.local.index())
+        if local < 0 or local >= len(body.locals):
+            return Err("typed-value callback parameter has no frame local")
+        match body.locals[local].origin:
+            LocalOrigin.Receiver(mutable=_mutable) =>
+                result.append(
+                    frame_type(builder.constructors, builder.nominals, builder.enums, body.locals[local], builder.intrinsics)?,
+                )
+            _ => result.append(call_parameter_type(builder, body, parameter)?)
+    return Ok(result)
+
+
+pub def borrow_argument(
+    mut builder: Builder, source: Place, expected: PlanType, span: SourceSpan,
+) -> Result[Operand, str]:
+    """Pass a fresh loan or a Copy scalar; never clone a stored field to satisfy callback dispatch."""
+    match reference_contract(expected):
+        Ok((_value, writable)) =>
+            if writable:
+                return explicit_place_argument(builder, source, OwnershipFact.MutBorrow, expected, IncanInputAccess.Exclusive, span)
+            return explicit_place_argument(builder, source, OwnershipFact.Borrow, expected, IncanInputAccess.Shared, span)
+        Err(_not_reference) => pass
+    value = value_place(builder, source, span)?
+    actual_value = place_type(builder.locals, value)
+    if numeric_carrier(actual_value) and numeric_carrier(expected):
+        return coerce_numeric_operand(builder, read_place(value, false, span), expected, span)
+    if actual_value == expected and actual_value in [PlanType.Bool, PlanType.Unit, PlanType.FrozenStr]:
+        return Ok(read_place(value, false, span))
+    return Err(f"typed-value callback requires ownership of a borrowed field: {actual_value:?} -> {expected:?}")
+
+
+pub def call_callback(
+    module: &BodyIrModule, mut builder: Builder, body: Body, values: list[Place], span: SourceSpan,
+    owned_slots: list[int] = [],
+) -> Result[Place, str]:
+    """Use ordinary callback ABI slots; only explicit fresh metadata/value owners may transfer ownership."""
+    retain_body_carriers(builder.program.constructors.as_ref(), module, builder.intrinsics, body, builder.file)?
+    expected = parameter_types(builder, body)?
+    if len(expected) != len(values):
+        return Err("typed-value callback argument arity differs from its checked body")
+    mut operands: list[Operand] = []
+    for index in range(len(values)):
+        source = values[index]
+        actual = place_type(builder.locals, source)
+        if index in owned_slots and actual == expected[index]:
+            if source.projection != Projection.Whole or source.local not in builder.owned:
+                return Err("typed-value callback ownership requires a fresh tracked whole value")
+            operands.append(read_place(source, true, span))
+        else:
+            operands.append(borrow_argument(builder, source, expected[index], span)?)
+    output_type = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        body.return_type,
+        builder.intrinsics,
+    )?
+    output = temporary(builder, output_type, span)
+    terminate_call(builder, CalleeKind.Planned(function_name(module, body)), operands, output, span)
+    builder.owned.append(output.local)
+    return Ok(output)
+
+
+def value_place(builder: &Builder, source: Place, span: SourceSpan) -> Result[Place, str]:
+    """Select the borrowed referent without replacing or copying the source place binding."""
+    match reference_contract(place_type(builder.locals, source)):
+        Ok((held, _writable)) => return dereferenced_place(source, held, span)
+        Err(_not_reference) => return Ok(source)
+
+
+pub def protocol_method(module: &BodyIrModule, identity: CanonicalSymbolId, protocol: str, name: str) -> bool:
+    """Authenticate a generated operation against its exact owning primitive trait declaration."""
+    if identity.kind != SemanticSourceTargetKind.Method or not primitive_member(identity, name):
+        return false
+    for declaration in module.trait_declarations:
+        if declaration.kind != SemanticSourceTargetKind.Trait or not primitive_member(declaration, protocol):
+            continue
+        if (
+            declaration.origin == identity.origin
+            and declaration.declaration_span.start <= identity.declaration_span.start
+            and identity.declaration_span.end <= declaration.declaration_span.end
+        ):
+            return true
+    return false
