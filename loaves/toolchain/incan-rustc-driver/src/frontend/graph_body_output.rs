@@ -89,6 +89,11 @@ impl GraphBodyOutput {
         let Some(path) = self.path else {
             return Ok(());
         };
+        let _invocation = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_rustc_driver::publish_graph_body_output"
+        )
+        .entered();
         if let Some(error) = self.error {
             return Err(error);
         }

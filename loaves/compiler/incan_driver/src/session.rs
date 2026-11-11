@@ -235,6 +235,11 @@ impl CompilationSession {
     /// refused. Without a source, an uncovered path keeps no facts and its uses refuse where checked. Manifest
     /// inventory determines coverage before the caches and source are consulted.
     pub fn resolve_rust_facts(&mut self, modules: &[ParsedModule]) -> CliResult<()> {
+        let _invocation = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_driver::resolve_rust_facts"
+        )
+        .entered();
         let Some(source) = self.rust_facts_source.clone() else {
             return Ok(());
         };
