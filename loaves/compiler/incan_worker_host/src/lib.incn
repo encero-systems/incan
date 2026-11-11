@@ -33,6 +33,20 @@ pub from record_protocol import (
     decode_record_message,
 )
 pub from lifecycle import ActivationOutcome
+pub from record_snapshot import (
+    SNAPSHOT_FORMAT_PROFILE,
+    SnapshotFaultKind,
+    SnapshotFault,
+    StoreView,
+    SnapshotHandle,
+    ResolvedSnapshot,
+    encode_store_view,
+    encode_snapshot_handle,
+    snapshot_handle_digest,
+    snapshot_record_key,
+    canonical_roots,
+    resolve_snapshot,
+)
 pub from endpoint import CallerWatch, abandon
 pub from host import (
     WorkerActivation,
