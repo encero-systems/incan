@@ -279,6 +279,7 @@ variant_decl = IDENT field_meta? variant_payload? variant_value? ;
 - `retire_in` must not change behavior. Once the package's version reaches it, a lint must suggest removing the lifecycle facts and must keep the earlier name, because RFC 165 derives the field's identity from it.
 - Checked metadata must preserve every rename fact, so that API diffs, generated documentation, RFC 106's graph and RFC 165's stored records can use them. RFC 173 exposes the same checked field, variant and declaration rename facts through its public shape carriers; codecs must not inspect compiler-private records to obtain them.
 - A rename must not change a wire name or make a decoder accept the old one. Wire names follow `alias` and `as`.
+- A positional enum payload (RFC 137) carries no metadata, so it has no rename: its name is its position, as RFC 173 states. A payload converted from positional to named keeps its identity by giving its position as its earlier name, as in `Finished(path [renamed_from="0"]: str, size [renamed_from="1"]: int)`.
 
 ### Safe metadata values
 
