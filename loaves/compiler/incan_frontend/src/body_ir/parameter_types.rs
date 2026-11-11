@@ -369,11 +369,7 @@ pub(super) fn retained_type_identities(
         }
     }
     for storage in facts.rust.storage_types.values() {
-        if let IncanType::Named(name) = storage
-            && let Some(identity) = bir::rust_item_identity(name)
-        {
-            identities.entry(name.clone()).or_insert(identity);
-        }
+        retain_rust_storage_identities(storage, &mut identities);
     }
     for call in facts.rust.checked_calls.values().chain(
         facts
@@ -389,6 +385,56 @@ pub(super) fn retained_type_identities(
         }
     }
     identities
+}
+
+/// Retain every exact Rust item path nested in checker-frozen storage without granting an identity to source names.
+/// Publication audits generic native layouts recursively, so their outer and inner item paths must survive together.
+fn retain_rust_storage_identities(
+    storage: &IncanType,
+    identities: &mut std::collections::BTreeMap<String, super::CanonicalSymbolId>,
+) {
+    let mut retain = |path: &str| {
+        if let Some(identity) = bir::rust_item_identity(path) {
+            identities.entry(path.to_owned()).or_insert(identity);
+        }
+    };
+    match storage {
+        IncanType::Named(path) | IncanType::RustInteropPath(path) => retain(path),
+        IncanType::Generic { base, args } => {
+            retain(base);
+            for argument in args {
+                retain_rust_storage_identities(argument, identities);
+            }
+        }
+        IncanType::Tuple(items) => {
+            for item in items {
+                retain_rust_storage_identities(item, identities);
+            }
+        }
+        IncanType::Function { params, return_type } => {
+            for parameter in params {
+                retain_rust_storage_identities(&parameter.ty, identities);
+            }
+            retain_rust_storage_identities(return_type, identities);
+        }
+        IncanType::TypeToken(inner)
+        | IncanType::Ref(inner)
+        | IncanType::RefMut(inner)
+        | IncanType::NativeArray { element: inner, .. }
+        | IncanType::NativePointer { pointee: inner, .. } => retain_rust_storage_identities(inner, identities),
+        IncanType::NativeTraitObject { path, .. } => retain(path),
+        IncanType::Never
+        | IncanType::Primitive(_)
+        | IncanType::Decimal { .. }
+        | IncanType::TypeVar(_)
+        | IncanType::SelfType
+        | IncanType::NativeBuiltin(_)
+        | IncanType::Unsupported(_)
+        | IncanType::Infer
+        | IncanType::Unknown
+        | IncanType::NativeCChar
+        | IncanType::Trait(_) => {}
+    }
 }
 
 /// Read the checker-retained owner of a source binding or carrier key without decoding or rebuilding a name.
@@ -546,5 +592,37 @@ impl BodyBuilder<'_, '_> {
                 .iter()
                 .any(|derive| derives::from_str(derive) == Some(DeriveId::Clone))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_native_storage_retains_every_rust_owner() {
+        let mut facts = TypeCheckInfo::default();
+        facts.rust.storage_types.insert(
+            IncanType::Primitive(super::super::IncanPrimitiveType::Int),
+            IncanType::Generic {
+                base: "std::rc::Rc".to_owned(),
+                args: vec![IncanType::Generic {
+                    base: "std::cell::RefCell".to_owned(),
+                    args: vec![IncanType::Named("PrivateState".to_owned())],
+                }],
+            },
+        );
+
+        let identities = retained_type_identities(&facts);
+
+        assert_eq!(
+            identities.get("std::rc::Rc"),
+            bir::rust_item_identity("std::rc::Rc").as_ref()
+        );
+        assert_eq!(
+            identities.get("std::cell::RefCell"),
+            bir::rust_item_identity("std::cell::RefCell").as_ref()
+        );
+        assert!(!identities.contains_key("PrivateState"));
     }
 }
