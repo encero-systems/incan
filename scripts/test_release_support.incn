@@ -22,12 +22,14 @@ from release_support import (
     parse_verification_options,
     reference_cache_identity,
     reference_cache_root,
+    reuse_reference_log,
     release_receipt,
     release_rust_cache_root,
     reserved_admitted,
     require_candidate_census,
     same_bytes,
     shared_relocated_sysroot,
+    store_reference_log,
     tree_bytes,
     tree_digest,
     verification_program,
@@ -212,6 +214,23 @@ def test_reference_cache_identity_covers_seed_bundle_and_committed_contract_tree
     assert reference_cache_identity(oven, lsp, manifest, "tree-b")? != original
     lsp.write_bytes(b"lsp-b").map_err((error) => error.message())?
     assert reference_cache_identity(oven, lsp, manifest, "tree-a")? != original
+    return Ok(None)
+
+
+def test_reference_cache_store_moves_then_reuses_complete_evidence() -> Result[None, str]:
+    """Cache publication retains the release log, and reuse materializes the same complete bytes."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    log = temporary.path().joinpath("release/reference-contracts.log")
+    cached = temporary.path().joinpath("cache/key/contracts.log")
+    reused = temporary.path().joinpath("next/reference-contracts.log")
+    log.parent().mkdir(true, true).map_err((error) => error.message())?
+    reused.parent().mkdir(true, true).map_err((error) => error.message())?
+    log.write_text(COMPLETE_LOG, "utf-8", "strict", None).map_err((error) => error.message())?
+    store_reference_log(log, cached)?
+    assert log.read_text("utf-8", "strict").map_err((error) => error.message())? == COMPLETE_LOG
+    assert cached.read_text("utf-8", "strict").map_err((error) => error.message())? == COMPLETE_LOG
+    reuse_reference_log(cached, reused)?
+    assert reused.read_text("utf-8", "strict").map_err((error) => error.message())? == COMPLETE_LOG
     return Ok(None)
 
 

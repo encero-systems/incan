@@ -295,6 +295,20 @@ pub def reference_cache_root(seed_home: Path) -> Path:
     return seed_home.joinpath("cache/release-reference")
 
 
+pub def store_reference_log(log: Path, cached: Path) -> Result[None, str]:
+    """Move one complete census log into its cache entry, then clone it back for the release receipt."""
+    cached.parent().mkdir(true, true).map_err((error) => error.message())?
+    _ = log.move(cached).map_err((error) => error.message())?
+    _ = cached.copy(log, true, true).map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def reuse_reference_log(cached: Path, log: Path) -> Result[None, str]:
+    """Clone one validated cached census log into the release evidence directory."""
+    _ = cached.copy(log, true, true).map_err((error) => error.message())?
+    return Ok(None)
+
+
 pub def release_rust_cache_root(seed_home: Path) -> Path:
     """Keep the relocated pinned Rust cache inside the caller-owned seed home boundary."""
     return seed_home.joinpath("cache/release-rust")

@@ -38,11 +38,13 @@ from release_support import (
     parse_release_options,
     reference_cache_identity,
     reference_cache_root,
+    reuse_reference_log,
     require_candidate_census,
     release_receipt,
     release_rust_cache_root,
     run_step,
     shared_relocated_sysroot,
+    store_reference_log,
     tree_bytes,
     verification_program,
     write_json,
@@ -382,11 +384,11 @@ def reference_census(run: ReleaseRun) -> Result[Path, str]:
         contracts_tree,
     )?
     cached = reference_cache_root(run.seed_home).joinpath(identity).joinpath("contracts.log")
-    cache_started = Instant.now()
     if cached.is_file():
+        cache_started = Instant.now()
         match census_results(cached):
             Ok(_) =>
-                _ = cached.copy(log, true, true).map_err((error) => error.message())?
+                reuse_reference_log(cached, log)?
                 append_timing(
                     run.paths.output.joinpath("timings.tsv"),
                     "reference-cache-hit",
@@ -415,8 +417,8 @@ def reference_census(run: ReleaseRun) -> Result[Path, str]:
     if code > 1:
         return Err(f"reference runner exited {code}")
     _ = census_results(log)?
-    cached.parent().mkdir(true, true).map_err((error) => error.message())?
-    _ = log.copy(cached, true, true).map_err((error) => error.message())?
+    cache_started = Instant.now()
+    store_reference_log(log, cached)?
     append_timing(
         run.paths.output.joinpath("timings.tsv"),
         "reference-cache-store",
