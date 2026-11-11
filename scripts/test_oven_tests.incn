@@ -90,16 +90,18 @@ def test_verification_phases_reserve_their_complete_parallel_work() -> Result[No
     """Concurrent gates reserve every requested facet or census worker and fixed project-scale phases."""
     plans = verification_phase_plans(6)
     assert [plan.phase for plan in plans] == [
+        VerificationPhase.Oven,
         VerificationPhase.RustFacets,
         VerificationPhase.DriverIntegration,
         VerificationPhase.Lsp,
         VerificationPhase.Census,
         VerificationPhase.Memory,
     ]
-    assert [plan.reservation for plan in plans] == [12 * GIB, 6 * GIB, 2 * GIB, 36 * GIB, 6 * GIB]
-    assert admitted([plan.reservation for plan in plans], [0, 1, 2, 3, 4], [], 5, 0) == [0, 1, 2, 3, 4]
-    assert verification_phase_plans(0)[0].reservation == 2 * GIB
-    assert verification_phase_plans(0)[3].reservation == 6 * GIB
+    assert [plan.reservation for plan in plans] == [24 * GIB, 12 * GIB, 6 * GIB, 2 * GIB, 36 * GIB, 6 * GIB]
+    assert admitted([plan.reservation for plan in plans], [0, 1, 2, 3, 4, 5], [], 6, 0) == [0, 1, 2, 3, 4, 5]
+    assert verification_phase_plans(0)[0].reservation == 4 * GIB
+    assert verification_phase_plans(0)[1].reservation == 2 * GIB
+    assert verification_phase_plans(0)[4].reservation == 6 * GIB
     return Ok(None)
 
 
