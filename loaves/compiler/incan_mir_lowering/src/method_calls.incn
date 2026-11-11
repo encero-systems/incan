@@ -43,6 +43,7 @@ from decls import library_item
 from iterator_methods import standard_protocol as standard_iterator_protocol
 from element_borrows import element_method_owner, element_method_receiver
 from reflection import lower_reflection
+from typed_walks import lower_generated_walk
 from value_enums import value_method_owner, enum_message_layout
 from frame import place_type, Builder, temporary, drop_all_owned, terminate_call, read_place
 from async_ import construct_future
@@ -123,6 +124,8 @@ def lower_checked_method_call(
             )
     if len(arguments) == 0:
         return Err("invalid Body IR Method missing receiver")
+    if lower_generated_walk(module, builder, target, arguments, destination, span)?:
+        return Ok(None)
     if lower_global_method(module, builder, target, arguments, destination, span)?:
         return Ok(None)
     if lower_reflection(builder, target, arguments, destination, span)?:

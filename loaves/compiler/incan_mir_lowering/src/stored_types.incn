@@ -58,7 +58,7 @@ def type_selector(
         _ => return None
 
 
-def primitive_selector(primitive: Primitive) -> Option[str]:
+pub def primitive_selector(primitive: Primitive) -> Option[str]:
     """Map the checked builtin vocabulary, refusing target-dependent integer widths."""
     match primitive:
         Primitive.Bool => return Some("boolean")
@@ -212,6 +212,20 @@ def declared_selector(
     unwrapping: list[str],
 ) -> Option[str]:
     """Hash only the producer namespace and canonical declaration path, then append closed type selectors."""
+    match declaration_identity(identity, package):
+        None => return None
+        Some(identity_bytes) =>
+            selector = kind + "@" + hexlify(identity_bytes)
+            match selectors(module, constructors, arguments, unwrapping):
+                None => return None
+                Some(names) =>
+                    if len(names) == 0:
+                        return Some(selector)
+                    return Some(selector + "<" + ",".join(names) + ">")
+
+
+pub def declaration_identity(identity: CanonicalSymbolId, package: Option[RecordPackageIdentity]) -> Option[bytes]:
+    """Share the exact namespace hash between textual selectors and framed closed identities."""
     match package:
         None => return None
         Some(namespace) =>
@@ -229,11 +243,4 @@ def declared_selector(
             for component in [str(namespace.registry_id), str(namespace.scoped_name), ".".join(path)]:
                 hasher.update(component.encode("utf-8"))
                 hasher.update(b"\x00")
-            digest = hexlify(hasher.finalize_bytes())
-            selector = kind + "@" + digest[:12]
-            match selectors(module, constructors, arguments, unwrapping):
-                None => return None
-                Some(names) =>
-                    if len(names) == 0:
-                        return Some(selector)
-                    return Some(selector + "<" + ",".join(names) + ">")
+            return Some(hasher.finalize_bytes()[:6])

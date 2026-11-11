@@ -215,10 +215,19 @@ impl BodyIrModule {
         let Some(slots) = &declaration.reflection_fields else {
             return false;
         };
-        slots.len() == metadata.len()
-            && slots.iter().zip(metadata).all(|(slot, record)| {
-                declaration.fields.get(*slot) == Some(&record.name)
-                    && record.position == *slot
+        let complete = metadata.len() == declaration.fields.len()
+            && metadata
+                .iter()
+                .enumerate()
+                .all(|(slot, record)| record.position == slot);
+        let visible = slots.len() == metadata.len()
+            && slots
+                .iter()
+                .zip(metadata)
+                .all(|(slot, record)| record.position == *slot);
+        (complete || visible)
+            && metadata.iter().all(|record| {
+                declaration.fields.get(record.position) == Some(&record.name)
                     && (!record.default_is_empty || record.has_default)
                     && (record.renamed_from_lifecycle.is_none() || !record.renamed_from.is_empty())
                     && Self::reflection_record_identity_is_well_formed(record)

@@ -53,6 +53,16 @@ def collect_member_statement(body: &Body, kind: &StatementKind, mut selected: li
                 Callee.Method(target) =>
                     if len(arguments) > 0:
                         collect_member_target(body, target, arguments[0], selected)
+                Callee.Function(callable) =>
+                    match callable:
+                        CallableTarget.Named(target) =>
+                            match target.canonical:
+                                Some(identity) =>
+                                    match target.receiver_type:
+                                        Some(receiver) => retain_member(identity, receiver, selected)
+                                        None => pass
+                                None => pass
+                        _ => pass
                 _ => pass
         StatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
             collect_member_block(body, then_body, selected)
@@ -66,6 +76,14 @@ def collect_member_statement(body: &Body, kind: &StatementKind, mut selected: li
                 collect_member_block(body, arm.body, selected)
         StatementKind.Assign(place=_place, rvalue=value) => collect_member_value(body, value, selected)
         _ => pass
+
+
+def retain_member(identity: RustCanonicalSymbolId, receiver: RustType, mut selected: list[SelectedMember]) -> None:
+    """Retain a checked associated owner even when no value or local of that type is constructed."""
+    for retained in selected:
+        if retained.identity == identity and retained.receiver == receiver:
+            return
+    selected.append(SelectedMember(identity=identity.clone(), receiver=receiver.clone()))
 
 
 def collect_member_value(body: &Body, value: &Rvalue, mut selected: list[SelectedMember]) -> None:
@@ -141,13 +159,14 @@ model ScheduledFrames:
 
     pending: VecDeque[ScheduledFrame]
     seen: BTreeSet[tuple[RustCanonicalSymbolId, list[RustType]]]
+    layout_types: list[RustType]
 
 
 def scheduled_frames() -> ScheduledFrames:
     """Start a layout queue independently of the completed frame inventory returned to the caller."""
     pending: VecDeque[ScheduledFrame] = VecDeque.new()
     seen: BTreeSet[tuple[RustCanonicalSymbolId, list[RustType]]] = BTreeSet.new()
-    return ScheduledFrames(pending=pending, seen=seen)
+    return ScheduledFrames(pending=pending, seen=seen, layout_types=[])
 
 
 pub def declaration_storage(module: &BodyIrModule) -> list[RustType]:
@@ -166,7 +185,7 @@ pub def declaration_storage(module: &BodyIrModule) -> list[RustType]:
     return types
 
 
-pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
+pub def nominal_frames(module: &BodyIrModule) -> Result[tuple[list[Body], list[RustType]], str]:
     """Collect source, static and closed callable frames for layout discovery without granting execution."""
     mut frames: list[Body] = []
     mut pending = scheduled_frames()
@@ -203,7 +222,7 @@ pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
                     ancestry,
                 )?
             None => return Err("unsupported Body IR nominal frame without canonical identity")
-    return Ok(frames)
+    return Ok((frames, pending.layout_types))
 
 
 def owner_dependent(body: &Body) -> bool:
@@ -252,6 +271,9 @@ def schedule_statement(
                 Callee.Function(callable) =>
                     match callable:
                         CallableTarget.Named(target) =>
+                            match target.receiver_type:
+                                Some(receiver) => retain_closed_layout(receiver, names, arguments, pending)
+                                None => pass
                             call_types = static_type_arguments(module, target)?
                             schedule_call(module, target.canonical, call_types, names, arguments, pending, ancestors)?
                         _ => pass
@@ -321,6 +343,15 @@ def schedule_arm(
     return Ok(None)
 
 
+def retain_closed_layout(ty: RustType, names: list[str], arguments: list[RustType], mut pending: ScheduledFrames) -> None:
+    """Keep a type-only receiver while its generic binding context is available; open templates grant no layout."""
+    match substitute(ty, names, arguments):
+        Ok(closed) =>
+            if closed_type(closed) and closed not in pending.layout_types:
+                pending.layout_types.append(closed.clone())
+        Err(_reason) => pass
+
+
 def schedule_call(
     module: &BodyIrModule,
     canonical: &Option[RustCanonicalSymbolId],
@@ -330,9 +361,19 @@ def schedule_call(
     mut pending: ScheduledFrames,
     ancestors: list[str],
 ) -> Result[None, str]:
-    """Queue a unique closed source call; unresolved binders and recursive ancestry contribute no layout."""
+    """Retain closed type-only arguments before queuing a source body; generated calls may have no body yet."""
     if len(type_args) == 0:
         return Ok(None)
+    mut closed: list[RustType] = []
+    for argument in type_args:
+        match substitute(argument, names, arguments):
+            Ok(value) => closed.append(value.clone())
+            Err(_error) => return Ok(None)
+    if not closed_arguments(closed):
+        return Ok(None)
+    for ty in closed:
+        if ty not in pending.layout_types:
+            pending.layout_types.append(ty.clone())
     match canonical:
         None => return Ok(None)
         Some(identity) =>
@@ -348,13 +389,6 @@ def schedule_call(
                 None => return Ok(None)
                 Some(body) =>
                     if len(body.type_parameters) == 0 or len(body.type_parameters) != len(type_args):
-                        return Ok(None)
-                    mut closed: list[RustType] = []
-                    for argument in type_args:
-                        match substitute(argument, names, arguments):
-                            Ok(value) => closed.append(value.clone())
-                            Err(_error) => return Ok(None)
-                    if not closed_arguments(closed):
                         return Ok(None)
                     key = (identity.clone(), closed)
                     if pending.seen.contains(key):

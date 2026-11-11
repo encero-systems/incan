@@ -524,7 +524,7 @@ pub def receiver_method_identity(
         None => return Ok(target.canonical.clone())
 
 
-def owner_method_identity(
+pub def owner_method_identity(
     module: &BodyIrModule,
     target: &MethodTarget,
     owner: PlanType,

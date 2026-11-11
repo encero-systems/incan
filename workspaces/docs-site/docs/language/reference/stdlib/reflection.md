@@ -74,15 +74,17 @@ A nested model or enum uses its declaring package's persistent identity and clos
 
 Model and class values expose `__field_value__(name: str) -> Option[T]` and `__field_items__() -> list[tuple[str, T]]` directly; no `std.reflection` import is required. `T` is the common field type when all exposed fields share one type, otherwise a union of the exposed field types. These views are read-only and use the same field ordering as `__fields__()`.
 
-## Handwritten typed-value protocols
+## Typed-value protocols
 
-`std.primitives.reflection` and `std.reflection` expose the same declarations. These protocols require explicit adoption and handwritten traversal, reconstruction and shape members.
+`std.primitives.reflection` and `std.reflection` expose the same declarations. A model, enum or non-Rust newtype automatically adopts `Walk` and `Reconstruct` when all of its stored types support the protocol and it declares none of `__walk__`, `__shape__` or `__reconstruct__`. Declaring any one of those members selects an explicit handwritten implementation instead. Classes, rusttypes, references, callables, generators, unresolved types and open type arguments require ordinary explicit adoption.
 
 ### `Walk` and `Reconstruct`
 
-`Walk.__walk__[E, W with Walker[E]](self, mut walker: W) -> Result[None, E]` visits the adopter's stored representation. Its static `__shape__() -> ShapeInfo` supplies the corresponding description without constructing a value. `Reconstruct` extends `Walk` and requires static `__reconstruct__[E, S with Source[E]](mut source: S) -> Result[Self, E]`.
+`Walk.__walk__[E, W with Walker[E]](self, mut walker: BorrowedMut[W]) -> Result[None, E]` visits the adopter's stored representation. Its static `__shape__() -> ShapeInfo` supplies the corresponding description without constructing a value. `Reconstruct` extends `Walk` and requires static `__reconstruct__[E, S with Source[E]](mut source: S) -> Result[Self, E]`.
 
 A handwritten reconstruction must restore complete valid state and retain the source's error context. It must not replay constructor input normalization. Handwritten reconstruction owns its validation calls.
+
+Generated traversal visits stored model fields in declaration order, including private fields, and preserves borrowed payloads rather than cloning them for the walker. Generated reconstruction reads that same stored shape, uses declared defaults only when the source's `takes_default` policy allows it, and does not replay virtual constructor inputs or field normalization. A model with registered final checks runs those checks over the completed restored state; failure is passed to `source.invalid` with the original `ValidationError`, and no partial model is returned.
 
 ### `Walker[E]`
 
@@ -90,17 +92,17 @@ All members return `Result[None, E]` and take `mut self`. Scalar and begin/end d
 
 | Method | Parameters | Default behavior |
 | --- | --- | --- |
-| `bool`, `str`, `bytes` | `value: bool`, `value: str`, `value: bytes`, respectively | No observation |
+| `bool`, `str`, `bytes` | `value: bool`, `value: Borrowed[str]`, `value: Borrowed[bytes]`, respectively | No observation |
 | `integer`, `unsigned`, `float` | `value: i128`, `value: u128`, `value: f64`, respectively | No observation |
-| `decimal` | `value: DecimalValue` | No observation |
+| `decimal` | `value: Borrowed[DecimalValue]` | No observation |
 | `none` | None | No observation |
-| `some[V with Walk]`, `element[V with Walk]` | `value: V` | Call `value.__walk__(self)` |
+| `some[V with Walk]`, `element[V with Walk]` | `value: Borrowed[V]` | Call `value.__walk__(self)` |
 | `begin_sequence` | `kind: SequenceKind, length: int` | No observation |
 | `end_sequence`, `end_dict`, `end_model`, `end_variant` | None | No observation |
 | `begin_dict` | `length: int` | No observation |
-| `entry[K with Walk, V with Walk]` | `key: K, value: V` | Walk key, then value; propagate the first error |
+| `entry[K with Walk, V with Walk]` | `key: Borrowed[K], value: Borrowed[V]` | Walk key, then value; propagate the first error |
 | `begin_model` | `shape: ShapeInfo` | No observation |
-| `field[V with Walk]` | `info: FieldInfo, value: V` | Call `value.__walk__(self)` |
+| `field[V with Walk]` | `info: FieldInfo, value: Borrowed[V]` | Call `value.__walk__(self)` |
 | `begin_variant` | `info: VariantInfo` | No observation |
 | `member` | `spelling: FrozenStr` | No observation |
 | `reference` | `kind: FrozenStr, identity: FrozenBytes` | No observation; never fetch the referenced value |
@@ -144,7 +146,7 @@ A present optional field is `Some(None)` when `V=Option[T]`; a missing field is 
 
 ### Shape carriers
 
-`ShapeInfo` fields are `name: FrozenStr`, `identity: FrozenBytes`, `renamed_from: FrozenList[FrozenStr]`, `renamed_from_lifecycle: Option[LifecycleInfo]`, `spelling: FrozenStr`, `fields: FrozenList[FieldInfo]` and `variants: FrozenList[VariantInfo]`. All are supplied explicitly. Static `ShapeInfo.of[T with Walk]() -> ShapeInfo` calls the adopter's `__shape__()`.
+`ShapeInfo` fields are `name: FrozenStr`, `identity: Option[FrozenBytes]`, `renamed_from: FrozenList[FrozenStr]`, `renamed_from_lifecycle: Option[LifecycleInfo]`, `selector: Option[FrozenStr]`, `spelling: Option[FrozenStr]`, `fields: FrozenList[FieldInfo]`, `variants: FrozenList[VariantInfo]` and `declarations: FrozenList[ShapeInfo]`. All are supplied explicitly. `identity` names the closed nominal declaration and `selector` is its canonical stored-type selector; both are absent without a persistent package namespace. `spelling` is absent when a target-dependent `isize` or `usize` occurs at any depth. `declarations` contains the finite reachable shape closure with each nested declaration's own closure empty. Static `ShapeInfo.of[T with Walk]() -> ShapeInfo` calls the adopter's `__shape__()`.
 
 `VariantInfo` fields are `name: FrozenStr`, `identity: FrozenBytes`, `description: Option[FrozenStr]`, `fields: FrozenList[FieldInfo]`, `extra: FrozenDict[FrozenStr, FrozenStr]`, `renamed_from: FrozenList[FrozenStr]` and `renamed_from_lifecycle: Option[LifecycleInfo]`. All are supplied explicitly.
 
