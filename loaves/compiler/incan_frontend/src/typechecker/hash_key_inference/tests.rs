@@ -113,6 +113,7 @@ fn assert_checkers(
         comparable_work.mutation_components, comparable_work.mutation_member_visits, comparable_work.body_local_checks
     );
     comparable_work.body_finalizations = 0;
+    comparable_work.local_record_evaluations = 0;
     comparable_work.declaration_local_checks = 0;
     comparable_work.declaration_finalizations = 0;
     comparable_work.declaration_view_reuses = 0;

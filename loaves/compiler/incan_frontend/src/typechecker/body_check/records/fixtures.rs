@@ -39,9 +39,7 @@ pub(crate) fn verify_fixture(source: &str, name: &str, fields: Fields) -> Result
         .and_then(|identity| checker.type_info.declarations.ownership_contracts.get(identity))
         .cloned();
     drop(checker);
-    let NativeOwner::Settled(restored) = restore(&positions, &program, owner, &fields)? else {
-        return Err(NodeBindingError::MissingNode);
-    };
+    let restored = restore(&positions, &program, owner, &fields)?;
     compare_native(&expected, &restored.view)?;
     if restored.ownership != expected_ownership {
         return Err(NodeBindingError::BaselineDifference("ownership contract".into()));
@@ -113,47 +111,12 @@ pub(super) fn fixture(source: &str, name: &str) -> Result<(Program, TypeChecker,
 
 /// Capture the actual pre-settlement statement output, not a relabeled final body. Unsupported pending capabilities
 /// refuse explicitly until the codec represents their decisions and references.
-pub(crate) fn fixture_local_projection(source: &str, name: &str) -> Result<Fields, NodeBindingError> {
-    let (program, checker, owner) = local_fixture(source, name)?;
-    let local = checker
-        .body_checks
-        .iter()
-        .map(|input| input.local())
-        .find(|local| local.owner == owner && local.kind == LocalOwnerKind::Body)
-        .ok_or(NodeBindingError::MissingOwner)?;
-    let positions = Positions::new(&checker, &program, owner, false)?;
-    let mut fields = local_fields(&positions, local)?;
-    fields.push(vec!["status".into(), String::new(), "pending".into(), "true".into()]);
-    fields.sort();
-    fields.insert(
-        0,
-        vec![
-            "header".into(),
-            positions.nodes.owner().render_compact(),
-            positions.nodes.root().to_owned(),
-            "local".into(),
-            "incan.checker-free-functions/10".into(),
-        ],
-    );
-    Ok(fields)
-}
-
-/// Rebuild a pending local owner and compare every native field to an independent pre-settlement cold baseline.
-pub(crate) fn verify_local_fixture(source: &str, name: &str, fields: Fields) -> Result<(), NodeBindingError> {
-    let (program, checker, owner) = local_fixture(source, name)?;
-    let positions = Positions::new(&checker, &program, owner, false)?;
-    let expected = checker
-        .body_checks
-        .iter()
-        .map(|input| input.local())
-        .find(|local| local.owner == owner && local.kind == LocalOwnerKind::Body)
+pub(crate) fn fixture_local_record(source: &str, name: &str) -> Result<Fields, NodeBindingError> {
+    let (_, checker, owner) = fixture(source, name)?;
+    checker
+        .produced_local_record(owner)
         .cloned()
-        .ok_or(NodeBindingError::MissingOwner)?;
-    drop(checker);
-    let NativeOwner::Local(local) = restore(&positions, &program, owner, &fields)? else {
-        return Err(NodeBindingError::MissingNode);
-    };
-    compare_native(&expected, &local)
+        .ok_or(NodeBindingError::MissingOwner)
 }
 
 /// The initial local profile proves every unsupported collection empty and refuses traversal-indexed decisions.
