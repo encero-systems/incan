@@ -24,6 +24,7 @@ from pub::internal_models.records import (
     encode_record_key,
 )
 from pub::internal_models import (
+    CompiledBodyValue,
     DemandPage,
     InputSnapshot,
     PreparedInputs,
@@ -39,7 +40,9 @@ from pub::internal_models import (
     decode_ready_work,
     encode_prepared_inputs,
     encode_ready_work,
+    encode_compiled_body_values,
 )
+from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, CheckedRecord, encode_record
 from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
 from compiler_body_values import (
@@ -49,7 +52,11 @@ from compiler_body_values import (
     select_body_inventory,
     select_body_values,
 )
+from compiler_body_publication import publish_compiled_bodies
 from compiler_source_projection import project_source, publish_source_projection
+from publication import publish_binary
+from scratch import scratch_directory
+from unit import UnitDescription
 
 
 pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[None, str]:
@@ -193,12 +200,12 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
 
 pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[None, str]:
     """A body edit keeps the module header and sibling owner identities while changing exactly one owner digest."""
-    original = "from std import env\n\nalias Count = int\n\nmodel Item:\n    value: Count\n\ndef first() -> int:\n    return 1\n\ndef second() -> int:\n    return 2\n"
+    original = "from std import env\n\ntype Count = int\n\nmodel Item:\n    value: Count\n\ndef first() -> int:\n    return 1\n\ndef second() -> int:\n    return 2\n"
     edited = original.replace("return 1", "return 3")
     before = project_source("package", "src/main.incn", original)?
     after = project_source("package", "src/main.incn", edited)?
 
-    assert before.header.text == "from std import env\n\nalias Count = int\n\n"
+    assert before.header.text == "from std import env\n\ntype Count = int\n\n"
     assert before.header.digest() == after.header.digest()
     assert len(before.owners) == 3 and len(after.owners) == 3
     mut changed = 0
@@ -276,6 +283,75 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
         "first",
         "second",
     ]
+    return Ok(None)
+
+
+pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[None, str]:
+    """A successful compiler sidecar becomes witnessed declaration/local/final graph values for the next edit."""
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("project")
+    source = root.joinpath("src").joinpath("main.incn")
+    source.parent().mkdir(true, true).map_err((error) => error.message())?
+    source_text = "def main() -> None:\n    pass\n"
+    source.write_text(source_text, "utf-8", "strict", None).map_err((error) => error.message())?
+    unit = UnitDescription(
+        source=source.0,
+        project_root=root.0,
+        source_root=source.parent().0,
+        package="app",
+        version="0.1.0",
+        profile="debug",
+        declared_features=[],
+        active_features=[],
+        loaves=[],
+        rust_crates=[],
+        contract_models=[],
+        c_headers=[],
+    )
+    identity = "app|module:main|main|function|module|0|() -> unit"
+    semantic_root = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    declaration = encode_record(
+        CheckedRecord(
+            profile=CHECKER_PROFILE,
+            owner=identity,
+            root=semantic_root,
+            family=CheckedFamily.Declaration,
+            fields=[],
+        ),
+    ).map_err((error) => f"{error:?}")?
+    local = encode_record(
+        CheckedRecord(profile=CHECKER_PROFILE, owner=identity, root=semantic_root, family=CheckedFamily.Local, fields=[]),
+    ).map_err((error) => f"{error:?}")?
+    final = encode_record(
+        CheckedRecord(profile=CHECKER_PROFILE, owner=identity, root=semantic_root, family=CheckedFamily.Final, fields=[]),
+    ).map_err((error) => f"{error:?}")?
+    output = scratch.path().joinpath("compiled-body-output")
+    publish_binary(
+        output,
+        encode_compiled_body_values(
+            [
+                CompiledBodyValue(
+                    module="src/main.incn",
+                    name="main",
+                    identity=identity,
+                    declaration=declaration,
+                    local=local,
+                    final=final,
+                ),
+            ],
+        ).map_err((error) => f"{error:?}")?,
+    )?
+    before = store_snapshot(memory_root()).map_err((error) => error.message())?
+    published = publish_compiled_bodies(before, unit, output)?
+    assert published.bodies == 1
+    assert not output.is_file()
+    selected = select_body_inventory(published.snapshot, CHECKER_PROFILE)?
+    assert len(selected) == 1 and selected[0].identity == identity
+
+    edited = project_source("app", "src/main.incn", source_text.replace("pass", "println(\"edited\")"))?
+    changed = edited.owners[0].key
+    projected = publish_source_projection(published.snapshot, edited)?
+    assert invalid_body_owners(projected.snapshot, [changed], CHECKER_PROFILE)? == [identity]
     return Ok(None)
 
 

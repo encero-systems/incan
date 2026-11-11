@@ -9,7 +9,8 @@ from std.json import JsonValue, parse
 from bakery import find, fact_file
 from bakery_records import Fact
 from bakery_roots import register_root
-from compiler_body_values import encode_body_inventory, select_body_inventory
+from compiler_body_publication import publish_captured_source_inputs, publish_compiled_bodies
+from compiler_body_values import encode_body_inventory, invalid_body_owners, select_body_inventory
 from engine_epochs import record_text, load_epoch
 from features import FeatureRequest
 from files import json_text
@@ -19,6 +20,7 @@ from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, Transaction, begi
 from store_path_conversion import snapshot
 from toolchain import load_toolchain
 from unit import describe
+from unit_compiler import graph_body_output_path
 from unit_rust import prepare_native
 from unit_freshness import fingerprint, unit_key
 from observation import FileMetadata, file_metadata
@@ -55,6 +57,7 @@ pub model ProgramOutcome:
     pub code: i32
     pub unit: Option[NativeUnit] = None
     pub evaluations: int = 0
+    pub body_evaluations: int = 0
     pub native_bakes: int = 0
     pub console: str = ""
     pub epoch_reads: int = 0
@@ -137,13 +140,16 @@ pub def obtain(
     record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
     # 3. Exactly one existing producer owns claiming and publishing a native unit.
     graph = snapshot(store).map_err((error) => error.message())?
-    selected_bodies = encode_body_inventory(select_body_inventory(graph, CHECKER_PROFILE)?)?
+    projected = publish_captured_source_inputs(graph, ready, epoch.inputs)?
+    invalid = invalid_body_owners(projected.snapshot, projected.keys, CHECKER_PROFILE)?
+    selected_bodies = encode_body_inventory(select_body_inventory(projected.snapshot, CHECKER_PROFILE)?)?
     produced = obtain_executable(ready, toolchain, binary, compiled_key, true, Some(store), true, Some(selected_bodies))?
     if produced.code != 0:
         return Ok(
             ProgramOutcome(
                 code=produced.code,
                 evaluations=produced.evaluations,
+                body_evaluations=len(invalid),
                 console=console,
                 epoch_reads=epoch_reads,
             ),
@@ -152,6 +158,12 @@ pub def obtain(
     for input in epoch.inputs:
         if not captured_file_current(Path(input.path), input.metadata):
             return Err("captured inputs changed before native selection; submit a new request")
+    if produced.native_bakes == 1:
+        publish_compiled_bodies(
+            snapshot(store).map_err((error) => error.message())?,
+            ready,
+            graph_body_output_path(ready, compiled_key),
+        )?
     fact = produced_fact(produced.fact)?
     unit = NativeUnit(identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0)
     return Ok(
@@ -159,6 +171,7 @@ pub def obtain(
             code=0,
             unit=Some(unit),
             evaluations=produced.evaluations,
+            body_evaluations=len(invalid),
             native_bakes=produced.native_bakes,
             console=console,
             epoch_reads=epoch_reads,

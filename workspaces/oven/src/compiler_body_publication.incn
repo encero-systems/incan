@@ -1,0 +1,223 @@
+"""Publish successful compiler body outputs into the ranked record graph."""
+
+from std.fs import Path
+from pub::incan_platform.store import Snapshot, begin, commit, put
+from pub::internal_models import (
+    CompiledBodyValue,
+    ProducerRank,
+    ProducerStage,
+    decode_compiled_body_values,
+    record_root,
+)
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.records import (
+    PreparationEvidence,
+    ReadReceipt,
+    ReadScope,
+    RecordKey,
+    RecordRead,
+    RecordReads,
+    RecordRequest,
+    RecordSelection,
+    StoreRecordSource,
+    encode_record_key,
+)
+from compiler_graph_records import publish_evaluation
+from compiler_source_projection import (
+    SourceProjection,
+    SourceProjectionRecord,
+    project_source,
+    publish_source_projection,
+)
+from engine_capture import CapturedInput, InputRole
+from files import discard_file
+from unit import UnitDescription
+
+const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
+
+
+pub model PublishedCompiledBodies:
+    """The graph generation and number of body pairs published from one successful whole check."""
+
+    pub snapshot: Snapshot
+    pub bodies: int
+
+
+pub model PublishedSourceInputs:
+    """The graph generation and logical keys rewritten by captured source projection."""
+
+    pub snapshot: Snapshot
+    pub keys: list[RecordKey]
+
+
+pub def publish_captured_source_inputs(
+    selected: Snapshot,
+    unit: UnitDescription,
+    inputs: list[CapturedInput],
+) -> Result[PublishedSourceInputs, str]:
+    """Project every captured Incan source owned by this unit before graph reuse is selected."""
+    origin = source_origin(unit)
+    prefix = unit.project_root + "/"
+    mut current = selected
+    mut changed: list[RecordKey] = []
+    for input in inputs:
+        if (
+            input.path.startswith(prefix)
+            and input.path.endswith(".incn")
+            and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]
+        ):
+            logical = input.path[len(prefix):]
+            source = Path(input.path).read_text("utf-8", "strict").map_err((error) => error.message())?
+            projection = project_source(origin, logical, source)?
+            changed.append(projection.header.key)
+            for owner in projection.owners:
+                changed.append(owner.key)
+            current = publish_source_projection(current, projection)?.snapshot
+    return Ok(PublishedSourceInputs(snapshot=current, keys=changed))
+
+
+pub def publish_compiled_bodies(
+    selected: Snapshot,
+    unit: UnitDescription,
+    output: Path,
+) -> Result[PublishedCompiledBodies, str]:
+    """
+    Publish one successful compiler sidecar through source projections and witnessed checker evaluations.
+
+    1. Authenticate the bounded sidecar through the shared checker codec.
+    2. Publish each source projection and declaration value before any body receipt reads them.
+    3. Publish local/final pairs with owner, header and declaration witnesses.
+    """
+    # 1. The sidecar is invocation output, not an authority until this graph publication succeeds.
+    if not output.is_file():
+        return Err("successful graph-enabled compile did not publish body outputs")
+    encoded = output.read_bytes().map_err((error) => error.message())?
+    discard_file(output)
+    values = decode_compiled_body_values(encoded).map_err((error) => f"compiled body output refused: {error:?}")?
+    origin = source_origin(unit)
+
+    # 2. Source and declaration values are installed before receipts authenticate their reads.
+    mut current = selected
+    mut modules: list[str] = []
+    for value in values:
+        if value.module not in modules:
+            source_path = Path(unit.project_root).joinpath(value.module)
+            source = source_path.read_text("utf-8", "strict").map_err((error) => error.message())?
+            current = publish_source_projection(current, project_source(origin, value.module, source)?)?.snapshot
+            modules.append(value.module)
+    mut declaration_transaction = begin(current)
+    for value in values:
+        declaration_transaction = put(
+            declaration_transaction,
+            encode_record_key(body_key("declaration", origin, value.identity, value.name, root(value.declaration)?))?,
+            value.declaration,
+        )
+    current = commit(declaration_transaction).map_err((error) => error.message())?
+
+    # 3. A cold whole check publishes the same graph values later edited activations replace independently.
+    mut published = 0
+    for value in values:
+        projection = source_projection(unit, origin, value.module)?
+        owner = owner_record(projection, value.name)?
+        declarations = module_declarations(values, origin, value.module)?
+        local_key = body_key("local", origin, value.identity, "checked", root(value.local)?)
+        mut local_reads = [request(owner.key), request(projection.header.key)]
+        for declaration in declarations:
+            local_reads.append(request(declaration))
+        local_receipt = receipt(current, local_key, local_reads)?
+        local = publish_evaluation(
+            current,
+            "compiled-local-" + value.identity,
+            ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0),
+            value.local,
+            local_receipt,
+        )?
+        final_key = body_key("final", origin, value.identity, "checked", root(value.final)?)
+        mut final_reads = [request(owner.key), request(projection.header.key), request(local_key)]
+        for declaration in declarations:
+            final_reads.append(request(declaration))
+        final_receipt = receipt(
+            local.snapshot,
+            final_key,
+            final_reads,
+        )?
+        final = publish_evaluation(
+            local.snapshot,
+            "compiled-final-" + value.identity,
+            ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=1),
+            value.final,
+            final_receipt,
+        )?
+        current = final.snapshot
+        published += 1
+    return Ok(PublishedCompiledBodies(snapshot=current, bodies=published))
+
+
+def source_projection(unit: UnitDescription, origin: str, module: str) -> Result[SourceProjection, str]:
+    """Recreate one already-published projection to select its logical owner and header keys."""
+    path = Path(unit.project_root).joinpath(module)
+    source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    return project_source(origin, module, source)
+
+
+def owner_record(projection: SourceProjection, name: str) -> Result[SourceProjectionRecord, str]:
+    """Select one compiled free function's source record by its source spelling."""
+    for owner in projection.owners:
+        if owner.key.facet == name:
+            return Ok(owner)
+    return Err("compiled body output has no matching owner source: " + name)
+
+
+def module_declarations(values: list[CompiledBodyValue], origin: str, module: str) -> Result[list[RecordKey], str]:
+    """Name the complete immutable declaration environment available to one cold-checked module."""
+    mut declarations: list[RecordKey] = []
+    for value in values:
+        if value.module == module:
+            declarations.append(body_key("declaration", origin, value.identity, value.name, root(value.declaration)?))
+    return Ok(declarations)
+
+
+def body_key(family: str, origin: str, identity: str, facet: str, context: str) -> RecordKey:
+    """Name one canonical checker value under its stable owner and semantic root."""
+    return RecordKey(
+        family=family,
+        identity_profile=IDENTITY_PROFILE,
+        origin=origin,
+        identity=identity,
+        facet=facet,
+        context=context,
+    )
+
+
+def source_origin(unit: UnitDescription) -> str:
+    """Use the package authority, or the standalone namespace whose view already isolates manifest-free sources."""
+    if unit.package != "":
+        return unit.package
+    return "standalone"
+
+
+def root(encoded: bytes) -> Result[str, str]:
+    """Map codec faults at the engine boundary without weakening checker-record validation."""
+    return record_root(encoded).map_err((error) => f"compiled checker root refused: {error:?}")
+
+
+def request(key: RecordKey) -> RecordRequest:
+    """Read one complete logical checker or source-projection value."""
+    return RecordRequest(key=key, selection=RecordSelection.Field("value"))
+
+
+def receipt(selected: Snapshot, output: RecordKey, requests: list[RecordRequest]) -> Result[ReadReceipt, str]:
+    """Authenticate one cold-check producer's complete projected inputs through the ordinary scoped reader."""
+    scope = ReadScope(snapshot=selected.digest, profile=CHECKER_PROFILE)
+    preparation = PreparationEvidence(
+        output=output,
+        rank_certificate="compiled-check",
+        selector_witnesses="compiled-check",
+    )
+    source = StoreRecordSource.open(selected, scope, [encode_record_key(item.key)? for item in requests])
+    mut reads = RecordReads.start(scope, preparation, requests)
+    for item in requests:
+        match reads.read(source, item):
+            RecordRead.Failed(_) => return Err("compiled body publication could not read a required input")
+            _ => pass
+    return reads.finish().map_err((_) => "compiled body publication produced an incomplete receipt")

@@ -420,6 +420,14 @@ pub def decode_compiled_body_values(encoded: bytes) -> Result[list[CompiledBodyV
     return Ok(values)
 
 
+pub def record_root(encoded: bytes) -> Result[str, CodecFault]:
+    """Read one validated checker record's position-free semantic root for its logical record key."""
+    tokens = frames(encoded)?
+    if len(tokens) < 4 or not full_digest(tokens[3]):
+        return Err(CodecFault.Malformed)
+    return Ok(tokens[3])
+
+
 def validate_compiled_body_value(value: CompiledBodyValue) -> Result[None, CodecFault]:
     """Require one declaration and a matching local/final pair under the compiler-owned stable identity."""
     declaration = decode_graph_record(value.declaration, value.identity)?

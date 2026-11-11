@@ -134,7 +134,7 @@ pub(crate) fn produce_local_record(
     source: &str,
     name: &str,
     declaration: Fields,
-    environment: Vec<Fields>,
+    environment: Vec<(String, String, Fields)>,
 ) -> Result<Fields, NodeBindingError> {
     let tokens = crate::lexer::lex(source).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
     let program = crate::parser::parse(&tokens).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
@@ -149,18 +149,12 @@ pub(crate) fn produce_local_record(
     checker.collect_program_check_declarations(&program);
     checker.record_program_header_facts();
     checker.record_source_declaration_identities(&program);
+    for (index, (environment_name, identity, fields)) in environment.into_iter().enumerate() {
+        install_environment_declaration(&mut checker, source.len(), index, &environment_name, &identity, &fields)?;
+    }
     checker.record_type_param_declaration_spans(&program);
     checker.visibility_point = super::super::VisibilityPoint::Collected;
     checker.prepare_program_body_facts();
-    for fields in environment {
-        let environment_owner = decoded_owner(&checker, &program, &fields)?;
-        if environment_owner == owner {
-            return Err(NodeBindingError::BaselineDifference(
-                "local declaration appears in environment".into(),
-            ));
-        }
-        checker.retain_declaration_record(environment_owner, fields);
-    }
     if decoded_owner(&checker, &program, &declaration)? != owner {
         return Err(NodeBindingError::BaselineDifference("local declaration input".into()));
     }
@@ -169,13 +163,105 @@ pub(crate) fn produce_local_record(
     checker
         .produced_local_record(owner)
         .cloned()
-        .ok_or(NodeBindingError::MissingOwner)
+        .ok_or_else(|| NodeBindingError::InvalidField("projected local record is absent".into()))
+}
+
+/// Install one authenticated sibling signature without requiring its source declaration in the projected program.
+fn install_environment_declaration(
+    checker: &mut TypeChecker,
+    source_len: usize,
+    index: usize,
+    name: &str,
+    expected_identity: &str,
+    fields: &Fields,
+) -> Result<(), NodeBindingError> {
+    use crate::symbols::{FunctionInfo, Symbol, SymbolKind};
+
+    let header = fields
+        .first()
+        .filter(|row| row.len() == 5 && row[0] == "header" && row[3] == "declaration")
+        .ok_or(NodeBindingError::MissingOwner)?;
+    if header[1] != expected_identity {
+        return Err(NodeBindingError::WrongOwner);
+    }
+    let signature = fields
+        .iter()
+        .find(|row| row.len() >= 4 && row[0] == "signature" && row[2] == "declaration")
+        .ok_or_else(|| NodeBindingError::InvalidField("environment declaration signature is absent".into()))?;
+    if !fields.iter().any(|row| row == &["status", "", "refused", "false"]) {
+        return Err(NodeBindingError::InvalidField(
+            "environment declaration is refused".into(),
+        ));
+    }
+    let mut values = signature[3..].iter();
+    let is_async = next(&mut values)?
+        .parse::<bool>()
+        .map_err(|_| NodeBindingError::MissingNode)?;
+    let params = read_parameters(&mut values)?;
+    let return_type = read_type(&mut values)?;
+    if values.next().is_some() {
+        return Err(NodeBindingError::InvalidField(
+            "environment declaration signature has trailing fields".into(),
+        ));
+    }
+    let start = source_len.saturating_add(index.saturating_mul(2)).saturating_add(1);
+    let span = Span::new(start, start.saturating_add(1));
+    let symbol_id = checker.symbols.define(Symbol {
+        name: name.to_owned(),
+        kind: SymbolKind::Function(FunctionInfo {
+            params: params.clone(),
+            return_type: return_type.clone(),
+            is_async,
+            type_params: Vec::new(),
+            type_param_bounds: std::collections::HashMap::new(),
+            type_param_bound_details: std::collections::HashMap::new(),
+            emitted_name: None,
+        }),
+        span,
+        scope: 0,
+    });
+    let canonical = checker
+        .symbols
+        .identity_of(symbol_id)
+        .cloned()
+        .ok_or(NodeBindingError::MissingOwner)?;
+    let binding = super::super::super::type_info::FunctionBindingInfo {
+        is_async,
+        params,
+        return_type,
+        identity: Some(canonical.clone()),
+    };
+    let stable = checker
+        .stable_function_identity(&binding)
+        .filter(|identity| identity.render_compact() == expected_identity)
+        .ok_or(NodeBindingError::WrongOwner)?;
+    checker
+        .type_info
+        .declarations
+        .function_bindings
+        .insert(name.to_owned(), binding.clone());
+    checker
+        .type_info
+        .declarations
+        .function_bindings_by_span
+        .insert(span, binding);
+    checker
+        .type_info
+        .declarations
+        .source_identities
+        .insert(canonical, stable);
+    Ok(())
 }
 
 /// Settle one decoded local value in a private checker and return only that owner's final record. Source collection
 /// supplies current coordinates and declaration identities; no body check, ambient checker or sibling local value is
 /// available to this producer.
-pub(crate) fn produce_final_record(source: &str, name: &str, local: Fields) -> Result<Fields, NodeBindingError> {
+pub(crate) fn produce_final_record(
+    source: &str,
+    name: &str,
+    local: Fields,
+    environment: Vec<(String, String, Fields)>,
+) -> Result<Fields, NodeBindingError> {
     let tokens = crate::lexer::lex(source).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
     let program = crate::parser::parse(&tokens).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
     let owner = program
@@ -189,6 +275,9 @@ pub(crate) fn produce_final_record(source: &str, name: &str, local: Fields) -> R
     checker.collect_program_check_declarations(&program);
     checker.record_program_header_facts();
     checker.record_source_declaration_identities(&program);
+    for (index, (environment_name, identity, fields)) in environment.into_iter().enumerate() {
+        install_environment_declaration(&mut checker, source.len(), index, &environment_name, &identity, &fields)?;
+    }
     checker.record_type_param_declaration_spans(&program);
     checker.visibility_point = super::super::VisibilityPoint::Collected;
     checker.prepare_program_body_facts();
