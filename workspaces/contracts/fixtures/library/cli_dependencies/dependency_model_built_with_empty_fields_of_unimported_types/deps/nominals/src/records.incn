@@ -12,3 +12,15 @@ pub model Card:
 
     pub def summary(self) -> str:
         return f"{self.title} {len(self.evidence_ids)} {len(self.tags)}"
+
+
+pub model DefaultSettings:
+    """A dependency-owned value constructed by another model's field default."""
+
+    pub enabled: bool
+
+
+pub model DefaultContainer:
+    """A public model whose declaration-owned default cannot be represented as a manifest literal."""
+
+    pub settings: DefaultSettings = DefaultSettings(enabled=true)

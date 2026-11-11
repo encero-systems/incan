@@ -4,7 +4,7 @@ from rust::std::vec import Vec
 from rust::std::clone import Clone as RuntimeClone
 from std.derives.copying import Clone
 from default_payload import DefaultPayload
-pub from records import Card
+pub from records import Card, DefaultContainer
 pub from ids import EvidenceId
 pub from api import fraction_of
 

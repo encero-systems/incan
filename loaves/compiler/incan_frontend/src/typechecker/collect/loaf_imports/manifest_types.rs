@@ -12,7 +12,9 @@ impl TypeChecker {
             traits: export.traits.clone(),
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             derives: export.derives.clone(),
-            fields: self.fields_from_manifest(&export.name, &export.fields, false),
+            // A compiled model's declaration-owned Body IR supplies defaults that cannot be materialized in its
+            // manifest, including defaults that construct another exported model.
+            fields: self.fields_from_manifest(&export.name, &export.fields, true),
             field_order: export.fields.iter().map(|field| field.name.clone()).collect(),
             properties: self.properties_from_manifest(&export.name, &export.properties),
             method_overloads,
@@ -473,7 +475,7 @@ impl TypeChecker {
         &self,
         owner: &str,
         fields: &[FieldExport],
-        uses_provider_constructor_bridge: bool,
+        has_executable_constructor_defaults: bool,
     ) -> std::collections::HashMap<String, FieldInfo> {
         fields
             .iter()
@@ -498,7 +500,7 @@ impl TypeChecker {
                             crate::library_manifest::MemberVisibilityExport::Private
                         ),
                         owner: Some(owner.to_string()),
-                        has_default: if uses_provider_constructor_bridge {
+                        has_default: if has_executable_constructor_defaults {
                             field.has_default
                         } else {
                             field
