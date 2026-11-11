@@ -100,14 +100,13 @@ def projected_owner_controls() -> Result[None, str]:
     owner = "def first() -> int:\n    return second()\n"
     sibling = "def second() -> int:\n    return 2\n"
     complete = header + owner + "\n" + sibling
-    declaration = fixture_record(complete, "first", true).map_err((error) => "projected owner declaration: " + error.to_string())?
-    environment = fixture_record(complete, "second", true).map_err((error) => "projected environment declaration: " + error.to_string())?
-    local_rows = produce_local_record(
-        header + owner,
-        "first",
-        declaration,
-        [("second", environment[0][1], environment)],
-    ).map_err(
+    declaration = fixture_record(complete, "first", true).map_err(
+        (error) => "projected owner declaration: " + error.to_string(),
+    )?
+    environment = fixture_record(complete, "second", true).map_err(
+        (error) => "projected environment declaration: " + error.to_string(),
+    )?
+    local_rows = produce_local_record(header + owner, "first", declaration, [("second", environment[0][1], environment)]).map_err(
         (error) => "projected local: " + error.to_string(),
     )?
     local = from_native_local_fields(local_rows).map_err((_) => "projected local producer")?
@@ -337,6 +336,7 @@ def input_protocol_controls() -> Result[None, str]:
         ("def fresh() -> int:\n    value: Owned[int] = 3\n    return value\n", "fresh"),
         ("def copy(value: Owned[int]) -> int:\n    first: Owned[int] = value\n    second: Owned[int] = first\n    return second\n", "copy"),
         ("def transfer(value: Owned[str]) -> int:\n    retained: Owned[str] = value\n    return len(retained)\n", "transfer"),
+        ("def invocation_key(arguments: list[str]) -> str:\n    return \" \".join(arguments[:2])\n", "invocation_key"),
         ("def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\ndef use(value: Borrowed[str]) -> int:\n    retained = view(value)\n    values = [retained]\n    return len(values)\n", "use"),
         ("def width(value: Borrowed[str]) -> Owned[int] from value:\n    return len(value)\ndef use(value: Borrowed[str]) -> int:\n    retained = width(value)\n    return retained\n", "use"),
     ]
