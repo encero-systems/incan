@@ -28,6 +28,7 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOr
 mod callable_products;
 mod checked_program;
 mod declaration_validation;
+mod graph_body_output;
 
 use checked_program::*;
 use declaration_validation::*;
@@ -173,6 +174,8 @@ pub(crate) struct Dependencies {
     shared_native: Option<PathBuf>,
     /// Separate graph-selected checker values supplied by the engine; these bytes never enter the unit description.
     graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
+    /// Optional invocation output for freshly produced checker values; it is not a compilation input.
+    graph_body_output: Option<PathBuf>,
 }
 
 impl Dependencies {
@@ -212,6 +215,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     let mut rustc_args = Vec::new();
     let mut shared_native = None;
     let mut graph_body_records = incan_frontend::checker_records::GraphBodyRecords::default();
+    let mut graph_body_output = None;
     let mut remaining = arguments.iter();
     while let Some(option) = remaining.next() {
         if option == "--library" {
@@ -223,6 +227,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
             "--rustc-arg" => rustc_args.push(value.clone()),
             "--shared-native" => shared_native = Some(PathBuf::from(value)),
             "--graph-body-records" => graph_body_records = read_graph_body_records(Path::new(value))?,
+            "--graph-body-output" => graph_body_output = Some(PathBuf::from(value)),
             _ => return Err(format!("unknown native source option {option}")),
         }
     }
@@ -241,6 +246,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         rustc_args,
         shared_native,
         graph_body_records,
+        graph_body_output,
     })
 }
 
@@ -286,7 +292,14 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
     let overflow_checks = unit.profile != "release";
     let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
     let receipt = RefusalReceipt(None);
-    let mut program = check_compilation_source(unit, rust, false, receipt.clone(), dependencies.graph_body_records)?;
+    let mut program = check_compilation_source(
+        unit,
+        rust,
+        false,
+        receipt.clone(),
+        dependencies.graph_body_records,
+        dependencies.graph_body_output,
+    )?;
     lower_compilation_plan(
         &mut program,
         kind,
@@ -352,6 +365,7 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
             false,
             &RefusalReceipt(None),
             dependencies.graph_body_records,
+            None,
         )
     })?;
     let manifest = program
@@ -383,7 +397,7 @@ pub(crate) fn compile_resident(arguments: &[String]) -> Result<(), Box<dyn std::
 fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err(
-            "usage: --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [--rustc-arg ARG] [--library] [--shared-native DIR] [--graph-body-records PATH]"
+            "usage: --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [--rustc-arg ARG] [--library] [--shared-native DIR] [--graph-body-records PATH] [--graph-body-output PATH]"
                 .into(),
         );
     }
@@ -423,6 +437,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         resident,
         receipt.clone(),
         dependencies.graph_body_records.clone(),
+        dependencies.graph_body_output.clone(),
     )?;
     if census_complete(&mut program, kind, overflow_checks)? {
         return Ok(());
@@ -503,11 +518,12 @@ fn check_compilation_source(
     resident: bool,
     receipt: RefusalReceipt,
     graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
+    graph_body_output: Option<PathBuf>,
 ) -> Result<CheckedProgram, Box<dyn std::error::Error>> {
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(&unit, &rust, resident, &receipt, graph_body_records)
+        checked_modules(&unit, &rust, resident, &receipt, graph_body_records, graph_body_output)
     });
     match checked {
         Ok(program) => Ok(program),

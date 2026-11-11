@@ -6,10 +6,13 @@ from checker_records import (
     CheckedFamily,
     CheckedRecord,
     CodecFault,
+    CompiledBodyValue,
     GraphBodyValue,
     decode_graph_body_values,
+    decode_compiled_body_values,
     encode_record,
     encode_graph_body_values,
+    encode_compiled_body_values,
     decode_record,
     semantic_digest,
     from_native_final_fields,
@@ -46,6 +49,7 @@ pub def canonical_record_controls() -> Result[None, str]:
         println(f"canonical-record declaration={declaration} fields={len(base.fields)} bytes={len(before)} stable=true")
         codec_fault_controls(before, base)
     local_record_controls(source, moved)?
+    compiled_output_controls(source)?
     projected_owner_controls()?
     edited_owner_controls()?
     diagnostic_record_controls()?
@@ -53,6 +57,40 @@ pub def canonical_record_controls() -> Result[None, str]:
     final_value_controls()?
     ownership_record_controls()?
     input_protocol_controls()?
+    return Ok(None)
+
+
+def compiled_output_controls(source: str) -> Result[None, str]:
+    """The successful-check sidecar preserves one authenticated declaration/local/final producer triple."""
+    declaration = checked_fixture(source, "main", true)?
+    declaration_bytes = encode_record(declaration).map_err((_) => "compiled declaration encode")?
+    local_rows = produce_local_record(
+        source,
+        "main",
+        native_fields(declaration).map_err((_) => "compiled declaration fields")?,
+        [],
+    ).map_err((error) => error.to_string())?
+    local = from_native_local_fields(local_rows).map_err((_) => "compiled local record")?
+    local_bytes = encode_record(local).map_err((_) => "compiled local encode")?
+    final_rows = produce_final_record(source, "main", native_fields(local).map_err((_) => "compiled local fields")?).map_err(
+        (error) => error.to_string(),
+    )?
+    final_bytes = encode_record(from_native_final_fields(final_rows).map_err((_) => "compiled final record")?).map_err(
+        (_) => "compiled final encode",
+    )?
+    value = CompiledBodyValue(
+        module="src/main.incn",
+        name="main",
+        identity=local.owner,
+        declaration=declaration_bytes,
+        local=local_bytes,
+        final=final_bytes,
+    )
+    encoded = encode_compiled_body_values([value]).map_err((_) => "compiled output encode")?
+    decoded = decode_compiled_body_values(encoded).map_err((_) => "compiled output decode")?
+    assert len(decoded) == 1
+    assert decoded[0].module == value.module and decoded[0].name == value.name and decoded[0].identity == value.identity
+    assert decoded[0].declaration == value.declaration and decoded[0].local == value.local and decoded[0].final == value.final
     return Ok(None)
 
 

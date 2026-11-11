@@ -128,10 +128,14 @@ pub from activation_envelopes import (
 pub from checker_records import (
     GraphBodyValue,
     GraphBodyFields,
+    CompiledBodyValue,
+    from_native_fields,
     from_native_final_fields,
     from_native_local_fields,
     encode_record,
     encode_graph_body_values,
     decode_graph_body_values,
+    encode_compiled_body_values,
+    decode_compiled_body_values,
 )
 pub from read_receipts import RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt

@@ -85,6 +85,7 @@ pub(super) fn checked_modules(
     resident: bool,
     receipt: &RefusalReceipt,
     graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
+    graph_body_output: Option<PathBuf>,
 ) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
     let path = unit
@@ -115,12 +116,15 @@ pub(super) fn checked_modules(
     let tests = crate::test_unit::collect(unit, &session)?;
     let package_identity = unit.package.as_str();
     let mut callable_products = callable_products::CallableProducts::prepare(unit, &modules, &mut session);
+    let mut graph_body_output =
+        graph_body_output::GraphBodyOutput::prepare(graph_body_output, unit.project_root.clone());
     let mut publication = library.then(|| PublicationFacts::new(package_identity));
     let analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
         session
             .analyze_unit(&modules, library.then_some(package_identity), &mut |module, checker| {
                 callable_products.observe(module, checker);
+                graph_body_output.observe(module, checker);
                 if let Some(publication) = publication.as_mut() {
                     publication.visit(module, checker, module.file_path == path);
                 }
@@ -132,6 +136,7 @@ pub(super) fn checked_modules(
         .position(|module| module.file_path == path)
         .ok_or("entry module is missing")?;
     validate_module_declarations(&modules, &analysis).inspect_err(|_| receipt.deterministic())?;
+    graph_body_output.publish()?;
     let manifest = match publication {
         Some(publication) => {
             let manifest = publication

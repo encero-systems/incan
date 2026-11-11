@@ -9,7 +9,7 @@ from darwin_executable import normalize_release_executable
 from bakery import bakery
 from compiler_refusals import compile_or_replay
 from compiler_worker import compile_resident, served_resident
-from files import open_stream, read
+from files import discard_file, open_stream, read
 from observation import trace_boundary
 from publication import publish, publish_binary
 from rust_facts import refresh as refresh_rust_facts
@@ -59,6 +59,9 @@ pub def compile_prepared_unit(
         records_path = Path(f"{path.0}.graph-body-records")
         publish_binary(records_path, records)?
         native += ["--graph-body-records", records_path.0]
+        output_path = Path(f"{path.0}.graph-body-output")
+        discard_file(output_path)
+        native += ["--graph-body-output", output_path.0]
     invocation = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
     # 3. Refusal replay preserves the owner's request-local console routing.
     trace_boundary("compiler_request")
@@ -66,6 +69,12 @@ pub def compile_prepared_unit(
     if code == 0 and executable:
         normalize_release_executable(output, unit.profile)?
     return Ok(code)
+
+
+pub def graph_body_output_path(unit: UnitDescription, key: Key) -> Path:
+    """Name the invocation sidecar written beside this exact described unit without publishing another descriptor."""
+    directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
+    return directory.joinpath(f"{described_by(key)}.unit.json.graph-body-output")
 
 
 pub def crate_name(unit: UnitDescription) -> str:

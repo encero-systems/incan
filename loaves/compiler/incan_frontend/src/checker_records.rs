@@ -21,6 +21,22 @@ pub struct GraphBodyRecord {
 #[derive(Debug, Clone, Default)]
 pub struct GraphBodyRecords(Arc<BTreeMap<String, GraphBodyRecord>>);
 
+/// Canonical field primitives emitted for one checked top-level free function.
+///
+/// This bootstrap publication view exposes no checker state and retains only values already emitted by their
+/// declaration, local and final producer boundaries.
+#[derive(Debug, Clone)]
+pub struct CheckedOwnerRecordFields {
+    /// Source spelling used to match the independently projected owner source record.
+    pub name: String,
+    /// Declaration-family field primitives.
+    pub declaration: Vec<Vec<String>>,
+    /// Pending local-family field primitives.
+    pub local: Vec<Vec<String>>,
+    /// Settled final-family field primitives.
+    pub final_value: Vec<Vec<String>>,
+}
+
 impl GraphBodyRecords {
     /// Build one identity-keyed inventory, refusing duplicate identities rather than selecting by input order.
     pub fn new(records: Vec<GraphBodyRecord>) -> Result<Self, RecordAdapterFault> {
@@ -82,4 +98,29 @@ pub fn produce_final_record(
     local: Vec<Vec<String>>,
 ) -> Result<Vec<Vec<String>>, RecordAdapterFault> {
     crate::typechecker::body_check::records::produce_final_record(source, name, local)
+}
+
+/// Collect already-produced records for top-level free functions after one successful program check.
+///
+/// A function without all three producer outputs is omitted rather than reconstructed from whole-check state. Graph
+/// publication therefore cannot manufacture a value that did not cross its owning semantic boundary.
+pub fn checked_owner_record_fields(
+    program: &crate::ast::Program,
+    checker: &crate::typechecker::TypeChecker,
+) -> Vec<CheckedOwnerRecordFields> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let crate::ast::Declaration::Function(function) = &declaration.node else {
+                return None;
+            };
+            Some(CheckedOwnerRecordFields {
+                name: function.name.clone(),
+                declaration: checker.produced_declaration_record(declaration.span)?.clone(),
+                local: checker.available_local_record(declaration.span)?.clone(),
+                final_value: checker.available_final_record(declaration.span)?.clone(),
+            })
+        })
+        .collect()
 }
