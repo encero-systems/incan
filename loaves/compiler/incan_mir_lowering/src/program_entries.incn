@@ -20,10 +20,13 @@ from rust::incan_semantics_core import (
     canonical_module_identity,
     CompilerNodeId,
 )
-from rust::incan_semantics_core::body_ir import Body as RustBody
+from rust::incan_semantics_core::body_ir import Body as RustBody, BodyIrModule as RustBodyIrModule
 from classes import function_name, is_program_entry, body_module_identity
 from program_context import ProgramContext, body_at
 from rust::std::collections import BTreeMap
+from rust::std::panic import resume_unwind
+from rust::std::sync import Arc
+from rust::std::thread import JoinHandle, spawn
 from rust::serde_json import to_string as native_json
 from scalar_store import scalar_inputs, retained_scalar, retain_scalar
 from table_views import borrowed_at
@@ -31,7 +34,14 @@ from decorator_caches import DecoratorFrame
 from traits import is_lazy_method_body
 from async_ import boxed_future_constructor, async_entry, async_test_name, evaluator_name
 from type_parameters import Instance, request_instance, merge_instance_requests
-from lowering import BodyIrModule
+from lowering import BodyIrModule, program_context
+from native_type_identity import (
+    ConstructorIndex,
+    constructor_index_with_packages as index_constructors,
+    with_generic_constructor_arities,
+)
+from options import intrinsic_declarations
+from unions import collect_unions
 from program_refusals import append_generator_constructor
 from frame_instances import (
     append_synthesized,
@@ -45,7 +55,242 @@ from function_frames import lower_function
 from checked_values import location
 
 
+model ModuleFrames:
+    """One module's independently lowered frames and their deterministic merge inputs."""
+
+    functions: list[Function]
+    externals: list[ExternalFunction]
+    instances: list[Instance]
+    positions: list[int]
+    traces: list[str]
+    intrinsic_count: int
+
+
 pub def lower_ordinary_bodies(
+    context: Arc[RustBodyIrModule],
+    source_context: Arc[RustBodyIrModule],
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
+    program: ProgramContext,
+    owners: &list[str],
+    sources: &list[str],
+    files: &list[str],
+    entry: int,
+    kind: str,
+    tests: list[str],
+    mut intrinsics: list[EnumDeclaration],
+    mut functions: list[Function],
+    mut externals: list[ExternalFunction],
+    mut instances: list[Instance],
+    mut emitted_frames: EmittedFrames,
+    unions: list[RustType],
+    trace: bool,
+    scalar_products: Option[str],
+    scalar_bodies: &BTreeMap[CompilerNodeId, str],
+    overflow_checks: bool,
+) -> Result[None, str]:
+    """Lower modules on four native workers, then merge every observable inventory in module order."""
+    mut module_bodies: BTreeMap[str, list[int]] = BTreeMap.new()
+    for position in range(len(context.as_ref().bodies)):
+        owner = body_module_identity(body_at(context.as_ref().bodies, position))?
+        module_bodies.entry(owner).or_insert([]).push(position)
+    shared_source_files = Arc.new(source_files.clone())
+    shared_package_versions = Arc.new(package_versions.clone())
+    shared_scalar_bodies = Arc.new(scalar_bodies.clone())
+    mut completed: list[ModuleFrames] = []
+    mut start = 0
+    while start < len(owners):
+        mut end = start + 4
+        if end > len(owners):
+            end = len(owners)
+        mut workers: list[JoinHandle[Result[ModuleFrames, str]]] = []
+        for index in range(start, end):
+            checked_owner = owners[index]
+            mut positions: list[int] = []
+            match module_bodies.get(checked_owner):
+                Some(selected) =>
+                    for selected_position in selected:
+                        positions.append(int(selected_position.clone()))
+                None => pass
+            worker_context = context.clone()
+            worker_source_context = source_context.clone()
+            worker_source_files = shared_source_files.clone()
+            worker_package_versions = shared_package_versions.clone()
+            worker_scalar_bodies = shared_scalar_bodies.clone()
+            source = sources[index]
+            file = files[index]
+            entry_file = files[entry]
+            selected_tests = list(tests)
+            selected_kind = str(kind)
+            products = scalar_products
+            workers.append(
+                spawn(
+                    () => lower_module_frames(
+                        worker_context,
+                        worker_source_context,
+                        worker_source_files,
+                        worker_package_versions,
+                        positions,
+                        source,
+                        file,
+                        entry_file,
+                        index == entry,
+                        selected_kind,
+                        selected_tests,
+                        trace,
+                        products,
+                        worker_scalar_bodies,
+                        overflow_checks,
+                    ),
+                ),
+            )
+        mut reversed: list[ModuleFrames] = []
+        while len(workers) > 0:
+            worker = workers.pop()
+            match worker.join():
+                Ok(result) => reversed.append(result?)
+                Err(payload) => resume_unwind(payload)
+        while len(reversed) > 0:
+            completed.append(reversed.pop())
+        start = end
+    for result in completed:
+        if result.intrinsic_count != len(intrinsics):
+            return lower_ordinary_bodies_serial(
+                context.as_ref(),
+                program,
+                owners,
+                sources,
+                files,
+                entry,
+                kind,
+                tests,
+                intrinsics,
+                functions,
+                externals,
+                instances,
+                emitted_frames,
+                unions,
+                trace,
+                scalar_products,
+                scalar_bodies,
+            )
+    mut names = function_names()
+    mut signatures = external_index()
+    for result in completed:
+        for message in result.traces:
+            println(message)
+        append_synthesized(functions, names, result.functions)?
+        merge_indexed(externals, signatures, result.externals)?
+        merge_instance_requests(instances, result.instances)
+        for position in result.positions:
+            emitted_frames.record(body_at(context.as_ref().bodies, position), position)
+    return Ok(None)
+
+
+def lower_module_frames(
+    context: Arc[RustBodyIrModule],
+    source_context: Arc[RustBodyIrModule],
+    source_files: Arc[BTreeMap[str, str]],
+    package_versions: Arc[BTreeMap[str, str]],
+    positions: list[int],
+    source: str,
+    file: str,
+    entry_file: str,
+    in_entry: bool,
+    kind: str,
+    tests: list[str],
+    trace: bool,
+    scalar_products: Option[str],
+    scalar_bodies: Arc[BTreeMap[CompilerNodeId, str]],
+    overflow_checks: bool,
+) -> Result[ModuleFrames, str]:
+    """Rebuild immutable layout views locally and lower one module without shared mutable output."""
+    template_constructors = index_constructors(
+        source_context.as_ref().nominal_declarations,
+        source_files.as_ref(),
+        package_versions.as_ref(),
+    )
+    constructors = Arc.new(
+        with_generic_constructor_arities(
+            index_constructors(
+                context.as_ref().nominal_declarations,
+                source_files.as_ref(),
+                package_versions.as_ref(),
+            ),
+            template_constructors,
+        ),
+    )
+    unions = collect_unions(context.as_ref())
+    mut intrinsics = intrinsic_declarations(constructors.as_ref(), context.as_ref(), entry_file, [])?
+    program = program_context(constructors, context.as_ref(), intrinsics, unions, overflow_checks)?
+    mut functions: list[Function] = []
+    mut externals: list[ExternalFunction] = []
+    mut instances: list[Instance] = []
+    mut emitted = no_emitted_frames()
+    mut traces: list[str] = []
+    mut names = function_names()
+    mut signatures = external_index()
+    for position in positions:
+        body = body_at(context.as_ref().bodies, position)
+        if not ordinary_body(context.as_ref(), body, emitted, kind):
+            continue
+        if trace:
+            traces.append(f"lowering: body {body_module_identity(body)?} {body.name} {body.span.start}")
+        diagnostic_owner = f" in {body.name} at {file}"
+        function, runtime, pending, synthesized = lower_ordinary_frame(
+            context.as_ref(),
+            program,
+            body,
+            unions,
+            source,
+            file,
+            intrinsics,
+            scalar_products,
+            scalar_bodies.as_ref(),
+        ).map_err((reason) => reason + diagnostic_owner)?
+        merge_instance_requests(instances, pending)
+        if len(named_functions(names, functions, function.name)) != 0:
+            return Err(f"unsupported Body IR overloaded function {body.name}")
+        functions.append(function)
+        if kind == "library" and body.is_async:
+            mut captures: list[PlanType] = []
+            for parameter in function.parameters:
+                captures.append(parameter.ty)
+            functions.append(
+                boxed_future_constructor(
+                    function_name(context.as_ref(), body),
+                    CalleeKind.Planned(function.name),
+                    captures,
+                    function.return_type,
+                    function.span,
+                ),
+            )
+        emitted.record(body, position)
+        append_synthesized(functions, names, synthesized)?
+        append_async_entry(context.as_ref(), body, function, in_entry, tests, intrinsics, functions, externals)?
+        append_generator_constructor(
+            program.constructors.as_ref(),
+            functions,
+            context.as_ref(),
+            body,
+            source,
+            file,
+            intrinsics,
+        )?
+        merge_indexed(externals, signatures, runtime)?
+    return Ok(
+        ModuleFrames(
+            functions=functions,
+            externals=externals,
+            instances=instances,
+            positions=emitted.body_positions,
+            traces=traces,
+            intrinsic_count=len(intrinsics),
+        ),
+    )
+
+
+pub def lower_ordinary_bodies_serial(
     context: &BodyIrModule,
     program: ProgramContext,
     owners: &list[str],
