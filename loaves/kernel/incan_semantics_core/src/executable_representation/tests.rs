@@ -211,6 +211,24 @@ fn field_record_metadata_round_trips_and_is_revalidated() -> Result<(), Box<dyn 
     let decoded = decode_module(&encode_module(&module)?)?;
     assert_eq!(decoded, module);
 
+    // Public inspection can remain empty while full stored metadata survives a publication round trip.
+    let mut hidden = declaration.clone();
+    hidden.field_public = vec![false];
+    hidden.reflection_fields = Some(Vec::new());
+    assert!(module.is_well_formed_nominal_declaration(&hidden));
+    let mut hidden_module = module.clone();
+    hidden_module.nominal_declarations = vec![hidden.clone()];
+    assert_eq!(decode_module(&encode_module(&hidden_module)?)?, hidden_module);
+    // A legacy empty public projection is still valid, but carries no evidence for the stored slot.
+    hidden.reflection_metadata = Some(Vec::new());
+    assert!(module.is_well_formed_nominal_declaration(&hidden));
+    let mut duplicated = declaration.clone();
+    if let Some(records) = &mut duplicated.reflection_metadata {
+        let first = records.first().cloned().ok_or("missing field record")?;
+        records.push(first);
+    }
+    assert!(!module.is_well_formed_nominal_declaration(&duplicated));
+
     let mut invalid_namespace = declaration.clone();
     if let Some(package) = &mut invalid_namespace.record_package_identity {
         package.registry_id = "sha256:bad".to_owned();

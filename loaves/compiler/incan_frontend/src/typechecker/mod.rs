@@ -108,6 +108,7 @@ mod source_signatures;
 pub use declaration_views::{CheckEnvironmentView, CheckedBindingView, DeclarationView, VisibilityPoint};
 mod trait_bound_relations;
 mod type_info;
+mod typed_value_protocol;
 pub(crate) use type_info::{ClassLayoutInfo, RustCheckedCall};
 mod undetermined_type_params;
 mod union_member_identity;
