@@ -1,0 +1,70 @@
+"""Stage leased compiler snapshot descriptors in the owner's physical bakery before worker activation."""
+
+from std.fs import Path
+from publication import publish
+from pub::incan_platform.store import HOME_VIEW, Snapshot, begin, commit, lease_token, put, snapshot as placed_snapshot
+from pub::incan_platform.store import store_identity
+from pub::incan_worker_host.record_snapshot import (
+    SnapshotHandle,
+    StoreView,
+    canonical_roots,
+    encode_snapshot_handle,
+    encode_store_view,
+    snapshot_handle_digest,
+    snapshot_record_key,
+)
+from store_path_conversion import store_path
+
+
+pub class StagedSnapshot:
+    """A descriptor digest whose exact source view and publication stay leased until the owner drops this value."""
+
+    pub digest: str
+    selected: Snapshot
+    published: Snapshot
+
+    @staticmethod
+    pub def retained(digest: str, selected: Snapshot, published: Snapshot) -> StagedSnapshot:
+        """Retain both leases only after the descriptor and home binding are fully published."""
+        return StagedSnapshot(digest=digest, selected=selected, published=published)
+
+
+pub def stage_snapshot(
+    home: Path,
+    store: Path,
+    selected: Snapshot,
+    allowed_roots: list[str],
+    format_profile: str,
+) -> Result[StagedSnapshot, str]:
+    """
+    Stage one content-named `SnapshotHandle`, then atomically bind the owner's home to that physical bakery.
+
+    The returned value keeps the target revision and descriptor publication leased across `Prepare` or `Evaluate`;
+    the worker receives only its digest and independently resolves `<home>/bakery.view`.
+    """
+    root = store_path(store)
+    if selected.root.placement != root.placement or selected.root.value != root.value:
+        return Err("compiler snapshot belongs to another physical store")
+    if selected.generation < 1 or selected.index == "" or selected.pin is None:
+        return Err("compiler snapshot must name a leased nonempty view")
+    roots = canonical_roots(allowed_roots)?
+    identity = store_identity(root).map_err((error) => error.message())?
+    handle = SnapshotHandle(
+        store_id=identity,
+        generation=selected.generation,
+        manifest=selected.digest,
+        view=selected.view,
+        view_revision=selected.index,
+        allowed_roots=roots,
+        lease=lease_token(selected),
+        format_profile=format_profile,
+    )
+    encoded = encode_snapshot_handle(handle)?
+    digest = snapshot_handle_digest(handle)?
+    home_view = placed_snapshot(root, HOME_VIEW).map_err((error) => error.message())?
+    published = commit(put(begin(home_view), snapshot_record_key(digest), encoded.encode("utf-8"))).map_err(
+        (error) => error.message(),
+    )?
+    binding = encode_store_view(StoreView(store_id=identity, locator=store.0, home_view=HOME_VIEW))?
+    publish(home.joinpath("bakery.view"), binding + "\n")?
+    return Ok(StagedSnapshot.retained(digest, selected, published))
