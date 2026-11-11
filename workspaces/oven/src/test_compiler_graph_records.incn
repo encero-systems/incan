@@ -40,6 +40,7 @@ from pub::internal_models import (
 )
 from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
+from compiler_body_values import publish_body_values, select_body_values
 
 
 pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[None, str]:
@@ -128,12 +129,68 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
     for identity in ["run43-present-output", "run43-deleted-output", "run43-absent-output", "run43-member-output"]:
         if reused_value(invalidated, identity)? is not None:
             return Err("changed dependency did not invalidate: " + identity)
+
+    # One body enters checking only with both graph-admitted stages; either invalidated stage keeps full-source work.
+    local_request = request("run44-local-input", RecordSelection.Field("value"))
+    final_request = request("run44-final-input", RecordSelection.Field("value"))
+    body_inputs = commit(
+        put(
+            put(begin(invalidated), encode_record_key(local_request.key)?, b"local input"),
+            encode_record_key(final_request.key)?,
+            b"final input",
+        ),
+    ).map_err((error) => error.message())?
+    local_receipt = fixture_receipt(body_inputs, family_key("local", "run44-body"), local_request)?
+    final_receipt = fixture_receipt(body_inputs, family_key("final", "run44-body"), final_request)?
+    body = publish_body_values(
+        body_inputs,
+        "run44-local-claim",
+        ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=1),
+        b"local value",
+        local_receipt,
+        "run44-final-claim",
+        ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=2),
+        b"final value",
+        final_receipt,
+    )?
+    selected_body = select_body_values(
+        body.snapshot,
+        family_key("local", "run44-body"),
+        family_key("final", "run44-body"),
+        "profile",
+    )?
+    match selected_body:
+        Some(values) =>
+            assert values.local == b"local value"
+            assert values.final == b"final value"
+        None => return Err("unchanged local/final body pair did not reuse")
+    changed_body = commit(put(begin(body.snapshot), encode_record_key(final_request.key)?, b"changed final input")).map_err(
+        (error) => error.message(),
+    )?
+    assert select_body_values(
+        changed_body,
+        family_key("local", "run44-body"),
+        family_key("final", "run44-body"),
+        "profile",
+    )? is None
     return Ok(None)
 
 
 def publish_fixture(selected: Snapshot, identity: str, dependency: RecordRequest) -> Result[PublishedEvaluation, str]:
     """Publish one evaluation whose sole dependency was read through the authenticated store source."""
     output = key(identity)
+    receipt = fixture_receipt(selected, output, dependency)?
+    return publish_evaluation(
+        selected,
+        "claim-" + identity,
+        ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=3),
+        ("checked " + identity).encode("utf-8"),
+        receipt,
+    )
+
+
+def fixture_receipt(selected: Snapshot, output: RecordKey, dependency: RecordRequest) -> Result[ReadReceipt, str]:
+    """Read one fixture dependency and return its completed authenticated receipt."""
     scope = ReadScope(snapshot=selected.digest, profile="profile")
     preparation = PreparationEvidence(
         output=output,
@@ -145,14 +202,7 @@ def publish_fixture(selected: Snapshot, identity: str, dependency: RecordRequest
     match reads.read(source, dependency):
         RecordRead.Failed(_) => return Err("fixture dependency read failed")
         _ => pass
-    receipt = reads.finish().map_err((_) => "fixture dependency receipt failed")?
-    return publish_evaluation(
-        selected,
-        "claim-" + identity,
-        ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=3),
-        ("checked " + identity).encode("utf-8"),
-        receipt,
-    )
+    return reads.finish().map_err((_) => "fixture dependency receipt failed")
 
 
 def reused_value(selected: Snapshot, identity: str) -> Result[Option[bytes], str]:

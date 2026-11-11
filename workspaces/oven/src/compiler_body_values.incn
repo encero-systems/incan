@@ -1,0 +1,58 @@
+"""Select and publish paired local/final body values through the compiler evaluation graph."""
+
+from pub::incan_platform.store import Snapshot
+from pub::internal_models import ProducerRank
+from pub::internal_models.records import ReadReceipt, RecordKey
+from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
+
+
+pub model SelectedBodyValues:
+    """One owner's reusable local and final values, admitted from the same selected graph generation."""
+
+    pub local: bytes
+    pub final: bytes
+
+
+pub model PublishedBodyValues:
+    """The graph generation and evaluation identities produced for one completed body pair."""
+
+    pub snapshot: Snapshot
+    pub local: PublishedEvaluation
+    pub final: PublishedEvaluation
+
+
+pub def select_body_values(
+    selected: Snapshot,
+    local: RecordKey,
+    final: RecordKey,
+    profile: str,
+) -> Result[Option[SelectedBodyValues], str]:
+    """
+    Select one owner's local and final values before checking, or preserve the full-source fallback as one miss.
+
+    A final value is never carried without its matching local predecessor. Each value independently revalidates its
+    completed read receipt against the same selected graph generation.
+    """
+    reusable_local = reusable_evaluation(selected, local, profile)?
+    reusable_final = reusable_evaluation(selected, final, profile)?
+    match (reusable_local, reusable_final):
+        (Some(local_value), Some(final_value)) =>
+            return Ok(Some(SelectedBodyValues(local=local_value.value, final=final_value.value)))
+        _ => return Ok(None)
+
+
+pub def publish_body_values(
+    selected: Snapshot,
+    local_claim: str,
+    local_rank: ProducerRank,
+    local_value: bytes,
+    local_receipt: ReadReceipt,
+    final_claim: str,
+    final_rank: ProducerRank,
+    final_value: bytes,
+    final_receipt: ReadReceipt,
+) -> Result[PublishedBodyValues, str]:
+    """Publish one edited body's local then final producer outputs through the graph's witnessed authority."""
+    local = publish_evaluation(selected, local_claim, local_rank, local_value, local_receipt)?
+    final = publish_evaluation(local.snapshot, final_claim, final_rank, final_value, final_receipt)?
+    return Ok(PublishedBodyValues(snapshot=final.snapshot, local=local, final=final))
