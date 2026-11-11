@@ -146,6 +146,7 @@ impl TypeChecker {
             pub_library_declaration_scopes: HashMap::new(),
             dependency_semantics_pending: false,
             dependency_method_input_contracts: Default::default(),
+            dependency_method_headers: Default::default(),
             current_module_path: None,
             source_import_targets: HashMap::new(),
             declared_crate_names: None,

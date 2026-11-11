@@ -553,5 +553,47 @@ fn carried_view_calls_hold_the_reference_carrier() -> Result<(), Box<dyn std::er
         "{operands:?}\n{:#?}",
         lowered.block
     );
+    // A match retains its actual shared/exclusive reference payload and its source-proof obligation.
+    for (mode, returned, action, physical_mutable) in [
+        (
+            "value: Borrowed[Counter]",
+            "Borrowed[Counter]",
+            "assert view.value == 3",
+            false,
+        ),
+        (
+            "mut value: BorrowedMut[Counter]",
+            "Reference[Counter]",
+            "view.value = 9",
+            true,
+        ),
+    ] {
+        let source = format!(
+            "model Counter:\n    pub value: int\ndef maybe({mode}) -> Option[{returned}] from value:\n    return Some(value)\ndef main() -> None:\n    mut counter = Counter(value=3)\n    match maybe(counter):\n        Some(view) => {action}\n        None => assert false\n"
+        );
+        let module = super::admitted(&source)?;
+        let body = module
+            .bodies
+            .iter()
+            .find(|body| body.name == "main")
+            .ok_or("missing match caller")?;
+        let local = body
+            .locals
+            .iter()
+            .find(|local| local.name.as_deref() == Some("view"))
+            .ok_or("missing reference payload")?;
+        assert!(
+            if physical_mutable {
+                matches!(local.ty, incan_semantics_core::IncanType::RefMut(_))
+            } else {
+                matches!(local.ty, incan_semantics_core::IncanType::Ref(_))
+            },
+            "{local:?}"
+        );
+        assert!(!body.explicit_input_bindings.is_empty());
+        let mut stripped = body.clone();
+        stripped.checked_input_profile = None;
+        assert!(stripped.input_profile_gap().is_some());
+    }
     Ok(())
 }

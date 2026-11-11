@@ -5,6 +5,7 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOr
 
 use super::{InputCall, InputCallKind, InputFlow, flow};
 use crate::typechecker::TypeCheckInfo;
+use std::borrow::Cow;
 
 mod accesses;
 mod call_evaluation;
@@ -74,7 +75,7 @@ impl TypeCheckInfo {
     pub(in crate::typechecker) fn selected_input_contract(
         &self,
         call: &InputCall,
-    ) -> Result<Option<&crate::ownership_metadata::CheckedOwnershipContract>, &'static str> {
+    ) -> Result<Option<Cow<'_, crate::ownership_metadata::CheckedOwnershipContract>>, &'static str> {
         let contract = self.declarations.ownership_contracts.get(&call.callee);
         match call.kind {
             // A native call's contract is the one its selected Rust signature gives it.
@@ -82,7 +83,7 @@ impl TypeCheckInfo {
                 .protocols
                 .native_input_contracts
                 .get(&call.callee)
-                .map(Some)
+                .map(|contract| Some(Cow::Borrowed(contract)))
                 .ok_or("native invocation has no contract from its signature"),
             InputCallKind::Explicit => {
                 let contract = contract.ok_or("invocation has no canonical ownership contract")?;
@@ -98,7 +99,7 @@ impl TypeCheckInfo {
                 {
                     return Err("invocation has no canonical explicit input slot");
                 }
-                Ok(Some(contract))
+                Ok(Some(Cow::Borrowed(contract)))
             }
             InputCallKind::Ordinary => {
                 if !matches!(
@@ -127,12 +128,27 @@ impl TypeCheckInfo {
                         }
                         binding.ok_or("ordinary invocation has no canonical source header")?
                     }
-                    SemanticSourceTargetKind::Method if call.receiver.is_some() => self
-                        .declarations
-                        .method_bindings_by_span
-                        .get(&call.callee.declaration_span)
-                        .filter(|binding| binding.identity.as_ref() == Some(&call.callee))
-                        .ok_or("ordinary method invocation has no canonical source header")?,
+                    SemanticSourceTargetKind::Method if call.receiver.is_some() => {
+                        if let Some(binding) = self
+                            .declarations
+                            .method_bindings_by_span
+                            .get(&call.callee.declaration_span)
+                            .filter(|binding| binding.identity.as_ref() == Some(&call.callee))
+                        {
+                            binding
+                        } else {
+                            let header = self
+                                .declarations
+                                .imported_method_headers
+                                .get(&call.callee)
+                                .filter(|header| header.identity.as_ref() == Some(&call.callee))
+                                .ok_or("ordinary method invocation has no canonical source header")?;
+                            if header.is_async || header.params != call.parameters || header.receiver != call.receiver {
+                                return Err("ordinary invocation differs from its imported method header");
+                            }
+                            return Ok(None);
+                        }
+                    }
                     _ => return Err("ordinary invocation syntax differs from its canonical declaration"),
                 };
                 if binding.is_async || binding.params != call.parameters {
@@ -148,7 +164,16 @@ impl TypeCheckInfo {
                 {
                     return Err("indirect invocation requires a checked callable binding");
                 }
-                Ok(None)
+                let Some(crate::symbols::ResolvedType::Function(parameters, _)) =
+                    self.expressions.body_ir_binding_types.get(&call.callee)
+                else {
+                    return Err("indirect invocation has no retained callable binding type");
+                };
+                let (values, contract) = self.callable_value_parameters(parameters)?;
+                if values != call.parameters {
+                    return Err("indirect invocation differs from its retained callable signature");
+                }
+                Ok(contract.map(Cow::Owned))
             }
         }
     }
@@ -171,7 +196,8 @@ impl TypeCheckInfo {
             .get(&loan.span)
             .filter(|_| graph.invocations.contains_key(&loan.span))
             .ok_or("local loan has no checked ownership annotation")?;
-        let view = crate::ownership_metadata::returned_view(self.selected_input_contract(call)?)?
+        let selected = self.selected_input_contract(call)?;
+        let view = crate::ownership_metadata::returned_view(selected.as_deref())?
             .ok_or("returned view local names a call without a returned view")?;
         let expected = if view.access == incan_semantics_core::IncanInputAccess::Exclusive {
             flow::LoanKind::Exclusive
@@ -332,7 +358,8 @@ impl TypeCheckInfo {
                 return Err("invocation differs from its checked caller or signature");
             }
             let result = self.expr_type(*span).ok_or("invocation result has no checked type")?;
-            let contract = self.selected_input_contract(call)?;
+            let selected = self.selected_input_contract(call)?;
+            let contract = selected.as_deref();
             let required = call.kind == InputCallKind::Explicit
                 && contract.is_some_and(|contract| {
                     contract.result_source.is_none()
@@ -356,8 +383,9 @@ impl TypeCheckInfo {
             {
                 return Err("invocation omits a required selected parameter");
             }
-            let contract = self.selected_input_contract(call)?;
-            if matches!(call.kind, InputCallKind::Ordinary | InputCallKind::Indirect) {
+            let selected = self.selected_input_contract(call)?;
+            let contract = selected.as_deref();
+            if matches!(call.kind, InputCallKind::Ordinary | InputCallKind::Indirect) && contract.is_none() {
                 for (slot, parameter) in call.parameters.iter().enumerate() {
                     // A closure local passed to a function-typed parameter: checking admits a capturing closure only
                     // where its callee calls it and keeps it no longer.

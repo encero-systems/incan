@@ -1,4 +1,4 @@
-# behavior: captured closures retain their environments in callable annotations, arguments, returns and union members; named functions remain callable from union members, lists and fields (#2256)
+# behavior: captured closures retain their environments in callable annotations, arguments, returns and union members; named functions remain callable from union members, lists and fields; and a callable field uses the same read-then-call operation in direct and parenthesized call spellings (#2256, #2948)
 # expect-stdout:
 #   6
 #   6
@@ -12,6 +12,8 @@
 #   6
 #   8
 #   0
+#   4
+#   5
 #   2
 #   text 9 14 12
 
@@ -97,6 +99,8 @@ def main() -> None:
     op = Op(step=(x) => x - 1)
     step = op.step
     println(step(1))
+    println(op.step(5))
+    println((op.step)(6))
     sizes: list[(list[int]) -> int] = [size_of()]
     size = sizes[0]
     println(size([1, 2]))

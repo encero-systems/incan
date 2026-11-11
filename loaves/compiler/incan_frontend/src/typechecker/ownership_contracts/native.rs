@@ -20,6 +20,8 @@ pub(super) struct NativeResultDependencies {
     pub(super) call: String,
     pub(super) sources: Vec<SourceSlot>,
     pub(super) carried: Option<usize>,
+    /// Access of a direct reference or one builtin carrier payload, independently of its input access.
+    pub(super) view_access: Option<incan_semantics_core::IncanInputAccess>,
 }
 
 /// Retain each native call inside the body at `body`, or every native call when the facts are one body's own, as an
@@ -122,15 +124,6 @@ impl crate::typechecker::TypeCheckInfo {
                 .and_then(|call| call.parameters.first())
                 .is_some_and(|parameter| !matches!(parameter.ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_)))
     }
-
-    /// Whether the call at `span` is a native associated function written on its type, as in `HashMap.new()`: its
-    /// method syntax names the type, not a receiver value, so it is called like a free function.
-    pub(in crate::typechecker) fn native_associated_call(&self, span: Span) -> bool {
-        self.protocols
-            .explicit_input_calls
-            .get(&span)
-            .is_some_and(|call| call.kind == InputCallKind::Native && call.receiver.is_none())
-    }
 }
 
 impl crate::typechecker::TypeChecker {
@@ -152,6 +145,8 @@ impl crate::typechecker::TypeChecker {
         if !self.type_holds_native_signature_loan(&call.return_type) {
             return Ok(None);
         }
+        let carried = native_result_payload(self, &call.return_type)?;
+        let view_access = native_result_view_access(&call.return_type, carried);
         let expected = call.parameters.len() + 1;
         if call.signature_loans.len() != expected {
             return Err(format!(
@@ -167,7 +162,8 @@ impl crate::typechecker::TypeChecker {
             return Ok(Some(NativeResultDependencies {
                 call: call.path.clone(),
                 sources: Vec::new(),
-                carried: native_result_payload(self, &call.return_type)?,
+                carried,
+                view_access,
             }));
         }
         let first_argument = usize::from(call.has_receiver);
@@ -210,7 +206,8 @@ impl crate::typechecker::TypeChecker {
         Ok(Some(NativeResultDependencies {
             call: call.path.clone(),
             sources,
-            carried: native_result_payload(self, &call.return_type)?,
+            carried,
+            view_access,
         }))
     }
 }
@@ -243,4 +240,22 @@ fn native_result_payload(
         };
     }
     Ok(None)
+}
+
+/// Read a native result's own reference access. Lifetime-bearing owners are not references, and an exclusive input
+/// cannot upgrade a shared result to an exclusive view.
+fn native_result_view_access(
+    result: &ResolvedType,
+    carried: Option<usize>,
+) -> Option<incan_semantics_core::IncanInputAccess> {
+    let payload = match (result, carried) {
+        (ResolvedType::Generic(_, arguments), Some(index)) => arguments.get(index)?,
+        (_, None) => result,
+        _ => return None,
+    };
+    match payload {
+        ResolvedType::Ref(_) => Some(incan_semantics_core::IncanInputAccess::Shared),
+        ResolvedType::RefMut(_) => Some(incan_semantics_core::IncanInputAccess::Exclusive),
+        _ => None,
+    }
 }

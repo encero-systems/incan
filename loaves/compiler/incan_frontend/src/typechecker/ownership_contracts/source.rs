@@ -377,6 +377,9 @@ impl Builder<'_> {
         incoming: Vec<usize>,
         consume: bool,
     ) -> Result<Vec<usize>, Unavailable> {
+        if let Some(count) = self.source_enum_payload_count(expression) {
+            return self.source_enum_construction(expression, count, incoming);
+        }
         if let Some(result) = self.retained_result(expression, incoming.clone(), false)? {
             return Ok(result.incoming);
         }

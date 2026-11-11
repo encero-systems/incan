@@ -916,6 +916,9 @@ pub struct TypeChecker {
     /// from body proofs; each dependency refresh replaces its own entries and a new import set clears the cache.
     dependency_method_input_contracts:
         std::collections::BTreeMap<CanonicalSymbolId, crate::ownership_metadata::CheckedOwnershipContract>,
+    /// Imported ordinary method headers preserved across the program-check reset with their declaring identities.
+    /// Dependency refresh replaces its own entries; a new import set discards the previous inventory.
+    dependency_method_headers: std::collections::BTreeMap<CanonicalSymbolId, MethodInfo>,
     /// Module path for the program being checked (if known).
     pub current_module_path: Option<Vec<String>>,
     /// Source import aliases with declaration origins known from the dependency import graph.

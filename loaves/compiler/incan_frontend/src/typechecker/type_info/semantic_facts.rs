@@ -420,6 +420,28 @@ impl TypeCheckInfo {
             } => {
                 for parameter in &mut params {
                     parameter.ty = self.qualify_semantic_type(parameter.ty.clone());
+                    if let IncanType::Generic { base, args } = &parameter.ty
+                        && let Some(mode) = incan_lang::lang::types::ownership::from_str(base)
+                        && let [value] = args.as_slice()
+                    {
+                        parameter.input_access = match mode {
+                            incan_lang::lang::types::ownership::OwnershipMode::Borrowed => {
+                                incan_semantics_core::IncanInputAccess::Shared
+                            }
+                            incan_lang::lang::types::ownership::OwnershipMode::BorrowedMut => {
+                                incan_semantics_core::IncanInputAccess::Exclusive
+                            }
+                            incan_lang::lang::types::ownership::OwnershipMode::Owned => {
+                                incan_semantics_core::IncanInputAccess::Owned
+                            }
+                            incan_lang::lang::types::ownership::OwnershipMode::Reference => {
+                                return IncanType::Unsupported(
+                                    "callable input cannot declare a returned-reference contract".into(),
+                                );
+                            }
+                        };
+                        parameter.ty = value.clone();
+                    }
                 }
                 IncanType::Function {
                     params,
