@@ -168,24 +168,33 @@ def verify_native_graph_publication(helper: Path, toolchain: Toolchain) -> Resul
 
 
 def verify_mixed_provider(request: RustBuild, root: Path) -> Result[None, str]:
-    """A Rust root consumes an Incan provider whose mixed dependency keeps its facade and native facet distinct."""
-    bridge = root.joinpath("bridge")
+    """A Rust root stages the complete three-Loaf Incan chain, including its mixed leaf provider."""
+    outer = root.joinpath("outer")
+    bridge = outer.joinpath("deps/bridge")
     mixed = bridge.joinpath("deps/mixed")
-    for project in [root, bridge, mixed]:
+    for project in [root, outer, bridge, mixed]:
         make_directory(project.joinpath("src"))?
     make_directory(mixed.joinpath("rust/src"))?
     write(
         root.joinpath("loaf.toml"),
-        "[project]\nname='mixed_consumer'\nversion='1.0.0'\n[rust]\nedition='2024'\n[[rust.bin]]\nname='mixed_consumer'\npath='src/main.rs'\n[dependencies]\nbridge={path='bridge'}\n",
+        "[project]\nname='mixed_consumer'\nversion='1.0.0'\n[rust]\nedition='2024'\n[[rust.bin]]\nname='mixed_consumer'\npath='src/main.rs'\n[dependencies]\nouter={path='outer'}\n",
     )?
-    write(root.joinpath("src/main.rs"), "fn main() { println!(\"{}\", bridge::value()); }\n")?
+    write(root.joinpath("src/main.rs"), "fn main() { println!(\"{}\", outer::value()); }\n")?
+    write(
+        outer.joinpath("loaf.toml"),
+        "[project]\nname='outer'\nversion='1.0.0'\n[dependencies]\nbridge={path='deps/bridge'}\n",
+    )?
+    write(
+        outer.joinpath("src/lib.incn"),
+        "from pub::bridge import bridged\n\npub def value() -> int:\n    \"\"\"Return the value from the direct bridge.\"\"\"\n    return bridged()\n",
+    )?
     write(
         bridge.joinpath("loaf.toml"),
         "[project]\nname='bridge'\nversion='1.0.0'\n[dependencies]\nmixed={path='deps/mixed'}\n",
     )?
     write(
         bridge.joinpath("src/lib.incn"),
-        "from pub::mixed import amount\n\npub def value() -> int:\n    return amount()\n",
+        "from pub::mixed import amount\n\npub def bridged() -> int:\n    \"\"\"Return the value from the transitive mixed provider.\"\"\"\n    return amount()\n",
     )?
     write(
         mixed.joinpath("loaf.toml"),
@@ -193,7 +202,7 @@ def verify_mixed_provider(request: RustBuild, root: Path) -> Result[None, str]:
     )?
     write(
         mixed.joinpath("src/lib.incn"),
-        "from rust::mixed_native import native_value\n\npub def amount() -> int:\n    return native_value()\n",
+        "from rust::mixed_native import native_value\n\npub def amount() -> int:\n    \"\"\"Return the native leaf value.\"\"\"\n    return native_value()\n",
     )?
     write(
         mixed.joinpath("rust/src/lib.rs"),
@@ -207,6 +216,12 @@ def verify_mixed_provider(request: RustBuild, root: Path) -> Result[None, str]:
     assert len(programs) == 1
     output = Command.new(programs[0]).output().map_err((error) => str(error))?
     assert output.status.success() and output.stdout == b"7\x0a" and output.stderr == b""
+    leaf = outer.joinpath(f"target/incan/loaves/mixed/{selected.profile}")
+    for name in ["mixed.incnlib", "libmixed.rlib"]:
+        artifact = leaf.joinpath(name)
+        assert artifact.is_file(), f"transitive library artifact was not staged: {artifact.0}"
+        producer = Path(f"{artifact.0}.oven-unit")
+        assert producer.is_file(), f"transitive library producer identity was not staged: {producer.0}"
     assert build_rust(selected)? == programs
     return Ok(None)
 
