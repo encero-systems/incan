@@ -120,6 +120,9 @@ impl SurfaceIndex {
             ExecutableDeclaration::Nominal(nominal) | ExecutableDeclaration::NominalWithTraits(nominal, _) => {
                 restore_trait_fields(std::slice::from_mut(nominal), remainder)?;
             }
+            ExecutableDeclaration::NominalWithNativeDefaults { nominal, .. } => {
+                restore_trait_fields(std::slice::from_mut(nominal), remainder)?;
+            }
             _ if !remainder.is_empty() => return Err(malformed("unexpected declaration trailer")),
             _ => {}
         }

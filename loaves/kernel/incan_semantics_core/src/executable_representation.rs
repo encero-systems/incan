@@ -86,12 +86,13 @@ use crate::body_ir::{
 /// field lifecycle, original-position and literal-empty-default facts. The positional schema requires fresh producers.
 /// Version 55 retains unresolved source-result independence obligations in checked input profiles. Generic
 /// templates carry their exact result types until the consuming instantiation proves independent storage.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 55;
+/// Version 56 retains the exact native call selections used by nominal field and method defaults.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 56;
 
 /// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
 /// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations, returned
 /// views, conditional profiles or the component carrying a view.
-const OLDEST_SUPPORTED_VERSION: u32 = 55;
+const OLDEST_SUPPORTED_VERSION: u32 = 56;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]
@@ -196,6 +197,15 @@ pub enum ExecutableDeclaration {
     Trait(CanonicalSymbolId),
     /// Nominal layout with checker-proven concrete trait dispatch slots.
     NominalWithTraits(NominalDeclaration, Vec<crate::body_ir::TraitImplementation>),
+    /// Nominal layout whose retained field or method defaults select exact native call instantiations.
+    NominalWithNativeDefaults {
+        /// Checked nominal layout and declaration-owned default frames.
+        nominal: NominalDeclaration,
+        /// Checker-proven concrete trait dispatch slots, empty when the nominal adopts no executable traits.
+        implementations: Vec<crate::body_ir::TraitImplementation>,
+        /// Producer-selected native callees used by retained default computations.
+        callables: Vec<crate::body_ir::LoafCallable>,
+    },
     /// Checker-evaluated immutable scalar or text, with no runtime storage.
     Constant(crate::body_ir::ConstantDeclaration),
     /// Alias-expanded semantic type, including union members and their canonical dependencies.
@@ -289,6 +299,9 @@ impl ExecutableDeclaration {
             Self::Enum(value) => Some(&value.canonical),
             Self::Trait(value) => Some(value),
             Self::NominalWithTraits(value, _) => Some(&value.canonical),
+            Self::NominalWithNativeDefaults { nominal, callables, .. } => {
+                (!callables.is_empty() && valid_native_calls(callables)).then_some(&nominal.canonical)
+            }
             Self::Constant(value) => Some(&value.canonical),
             Self::TypeAlias(value) => Some(&value.canonical),
             Self::Static(value) => Some(&value.canonical),

@@ -299,7 +299,7 @@ pub(super) fn project_nominals(
             continue;
         }
         match publication::project_nominal(nominal, module, library, public) {
-            Ok((nominal, mut requirements)) => {
+            Ok((nominal, mut requirements, callables)) => {
                 let implementations = module
                     .trait_implementations
                     .iter()
@@ -316,7 +316,13 @@ pub(super) fn project_nominals(
                     requirements.insert(implementation.implementation.clone());
                 }
                 let identity = nominal.canonical.clone();
-                let declaration = if implementations.is_empty() {
+                let declaration = if !callables.is_empty() {
+                    ExecutableDeclaration::NominalWithNativeDefaults {
+                        nominal,
+                        implementations,
+                        callables,
+                    }
+                } else if implementations.is_empty() {
                     ExecutableDeclaration::Nominal(nominal)
                 } else {
                     ExecutableDeclaration::NominalWithTraits(nominal, implementations)
@@ -515,6 +521,9 @@ pub(super) fn record_type_context_members(
             ExecutableDeclaration::Nominal(value) | ExecutableDeclaration::NominalWithTraits(value, _) => {
                 value.field_identities.iter().collect()
             }
+            ExecutableDeclaration::NominalWithNativeDefaults { nominal, .. } => {
+                nominal.field_identities.iter().collect()
+            }
             ExecutableDeclaration::FieldlessEnum(value) => {
                 value.variants.iter().map(|variant| &variant.canonical).collect()
             }
@@ -588,6 +597,9 @@ pub(super) fn encode_surface(
         let mut encoded = postcard::to_allocvec(&entry.declaration).map_err(|error| malformed(error.to_string()))?;
         match &entry.declaration {
             ExecutableDeclaration::Nominal(nominal) | ExecutableDeclaration::NominalWithTraits(nominal, _) => {
+                append_trait_fields(&mut encoded, std::slice::from_ref(nominal))?;
+            }
+            ExecutableDeclaration::NominalWithNativeDefaults { nominal, .. } => {
                 append_trait_fields(&mut encoded, std::slice::from_ref(nominal))?;
             }
             _ => {}

@@ -336,7 +336,14 @@ pub(super) fn project_nominal(
     module: &BodyIrModule,
     library: &str,
     eligible: &BTreeSet<CanonicalSymbolId>,
-) -> Result<(crate::body_ir::NominalDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
+) -> Result<
+    (
+        crate::body_ir::NominalDeclaration,
+        BTreeSet<CanonicalSymbolId>,
+        Vec<crate::body_ir::LoafCallable>,
+    ),
+    CoverageReason,
+> {
     // Local inheritance is executable only with the validated full source module; package closure is not admitted.
     if source.class_inheritance.is_some() {
         return Err(CoverageReason::UnsupportedConstruct);
@@ -351,6 +358,7 @@ pub(super) fn project_nominal(
     // Automatic conversion is invocation-local and cannot become a published package obligation.
     nominal.newtype_string_conversion = crate::body_ir::NewtypeStringConversion::Unselected;
     let mut audit = PublicationAudit::new(module, library, eligible, &source.named_type_identities);
+    let mut native_calls = Vec::new();
     audit.type_parameters.extend(source.type_parameters.iter().cloned());
     audit.identity(&mut nominal.canonical, false)?;
     nominal.direct_declaration_id = declaration_id(&nominal.canonical)?;
@@ -399,12 +407,14 @@ pub(super) fn project_nominal(
         let projected = project_body(defaults, module, library, eligible)?;
         nominal.field_default_body = Some(Box::new(projected.body));
         audit.requirements.extend(projected.requirements);
+        native_calls.extend(projected.native_calls);
     }
     for binding in &mut nominal.method_partial_defaults {
         audit.identity(&mut binding.target, true)?;
         let projected = project_body(&binding.frame, module, library, eligible)?;
         *binding.frame = projected.body;
         audit.requirements.extend(projected.requirements);
+        native_calls.extend(projected.native_calls);
     }
     let carrier = if source.type_parameters.is_empty() {
         source.carrier_name()
@@ -418,7 +428,9 @@ pub(super) fn project_nominal(
         audit.used_nominal_types.insert(carrier, nominal.canonical.clone());
     }
     nominal.named_type_identities = audit.used_nominal_types;
-    Ok((nominal, audit.requirements))
+    let native_callables = module.loaf_callables.iter().collect::<Vec<_>>();
+    let callables = selected_native_calls(&native_calls, &native_callables)?;
+    Ok((nominal, audit.requirements, callables))
 }
 
 /// Project a checked normal enum, retaining canonical variant addresses and auditing every payload type.

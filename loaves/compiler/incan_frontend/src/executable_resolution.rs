@@ -286,7 +286,12 @@ fn resolve_from_catalog(
         }));
         let (offset, length) = (*offset, *length);
         let declaration = surface.read(package, &identity, offset, length)?;
-        if let ExecutableDeclaration::NominalWithTraits(_, implementations) = &declaration {
+        let implementations: &[incan_semantics_core::body_ir::TraitImplementation] = match &declaration {
+            ExecutableDeclaration::NominalWithTraits(_, implementations)
+            | ExecutableDeclaration::NominalWithNativeDefaults { implementations, .. } => implementations,
+            _ => &[],
+        };
+        if !implementations.is_empty() {
             // Lazy defaults are declaration requirements, even when the consumer never spells their trait. An
             // uncovered unused default contributes no body, just as an uncovered source-adoption root does.
             pending.extend(
@@ -432,6 +437,15 @@ fn retain_declaration(module: &mut BodyIrModule, declaration: ExecutableDeclarat
         ExecutableDeclaration::NominalWithTraits(value, implementations) => {
             module.nominal_declarations.push(value);
             module.trait_implementations.extend(implementations);
+        }
+        ExecutableDeclaration::NominalWithNativeDefaults {
+            nominal,
+            implementations,
+            callables,
+        } => {
+            module.nominal_declarations.push(nominal);
+            module.trait_implementations.extend(implementations);
+            retain_native_callables(module, callables);
         }
     }
 }

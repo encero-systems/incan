@@ -377,6 +377,55 @@ fn public_type_context_retains_private_fields_and_requires_checked_layouts() -> 
     Ok(())
 }
 
+/// Declaration-owned defaults retain the exact native calls selected while checking the producer.
+#[test]
+fn nominal_defaults_retain_native_call_selections() -> Result<(), Box<dyn std::error::Error>> {
+    let mut owner = identity("Holder", 2);
+    owner.kind = SemanticSourceTargetKind::Model;
+    owner.declaration_span = HirSourceSpan::new(200, 499);
+    let mut field = identity("value", 3);
+    field.kind = SemanticSourceTargetKind::Field;
+    field.namespace = SymbolNamespace::Member;
+    let native =
+        crate::body_ir::rust_item_identity("std::cell::RefCell::new").ok_or("native callable identity unavailable")?;
+    let mut defaults = body("Holder", 2);
+    defaults.type_parameters.clear();
+    defaults.canonical = Some(owner.clone());
+    defaults.block.stmts.push(call(native.clone()));
+    let mut nominal = generic_holder_declaration(owner.clone(), field.clone());
+    nominal.has_field_defaults = true;
+    nominal.field_default_body = Some(Box::new(defaults));
+    let callable = crate::body_ir::LoafCallable {
+        canonical: native,
+        item: "std::cell::RefCell::new".into(),
+        parameters: Vec::new(),
+        return_type: IncanType::Primitive(IncanPrimitiveType::Unit),
+        type_parameters: Vec::new(),
+        native_type_arguments: Vec::new(),
+        native_callable_parameters: Vec::new(),
+        parameter_defaults: Vec::new(),
+        declaration_frame: None,
+    };
+    let mut module = module(Vec::new());
+    module.nominal_declarations.push(nominal);
+    module.loaf_callables.push(callable.clone());
+
+    let bytes = publish(&module, &BTreeSet::from([owner.clone(), field]))?;
+    let reader = SurfaceReader::open(&bytes)?;
+    let ExecutableDeclaration::NominalWithNativeDefaults {
+        nominal,
+        implementations,
+        callables,
+    } = reader.fragment(&owner)?
+    else {
+        return Err("nominal native default publication missing".into());
+    };
+    assert!(nominal.field_default_body.is_some());
+    assert!(implementations.is_empty());
+    assert_eq!(callables, vec![callable]);
+    Ok(())
+}
+
 /// Foreign type bindings retain distinct declared origins, while unused private checker bindings stay absent.
 #[test]
 fn checked_nominal_type_bindings_are_pruned_and_contribute_public_requirements()
