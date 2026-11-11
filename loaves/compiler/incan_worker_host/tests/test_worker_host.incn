@@ -13,7 +13,16 @@ from rust::std::thread import sleep
 from rust::std::time import Duration, Instant
 from std.json import JsonValue, parse
 from pub::incan_platform.ipc import Connection, dial, listen
-from host import HostSettings, WorkerHost, complete, host_for, next_request
+from host import (
+    HostSettings,
+    WorkerActivation,
+    WorkerHost,
+    complete,
+    complete_record,
+    host_for,
+    next_activation,
+    next_request,
+)
 from lifecycle import ActivationOutcome, Bounds, FOOTPRINT_CEILING, FOOTPRINT_MARGIN, Retirement, lifecycle
 from protocol import (
     MISMATCH,
@@ -33,9 +42,13 @@ from record_protocol import (
     RECORD_SCHEMA,
     RecordMessage,
     Prepare,
+    Prepared,
     NeedPrerequisite,
     Evaluate,
     Produced,
+    SemanticRefusal,
+    CompilerFault,
+    accept_record_reply,
     decode_record_message,
     encode_record_message,
 )
@@ -103,6 +116,14 @@ def raw_caller(socket: str, sent: bytes) -> Result[Connection, str]:
     return Ok(connected)
 
 
+def record_caller(socket: str, request: RecordMessage) -> Result[Connection, str]:
+    """A version-two caller that sent one framed request and waits for its typed reply."""
+    mut connected = dial(socket)?
+    connected.wait_at_most(5)
+    connected.send(encode_record_message(request, GENERATION))?
+    return Ok(connected)
+
+
 def reply(mut connected: Connection) -> Result[JsonValue, str]:
     """The reply document a caller received."""
     payload = connected.receive()?
@@ -143,6 +164,19 @@ def served(mut host: WorkerHost) -> Result[CompileRequest, str]:
     match next_request(host):
         Some(request) => return Ok(request)
         None => return Err("the host retired instead of serving a request")
+
+
+def served_record(mut host: WorkerHost) -> Result[RecordMessage, str]:
+    """The next version-two request the host hands its compiler record entry."""
+    match next_activation(host):
+        Some(WorkerActivation.Record(request)) => return Ok(request)
+        Some(WorkerActivation.Compile(_)) => return Err("the host substituted a compile request")
+        None => return Err("the host retired instead of serving a record request")
+
+
+def record_reply(mut connected: Connection) -> Result[RecordMessage, str]:
+    """Decode one version-two reply from the host under this test's worker generation."""
+    return decode_record_message(connected.receive()?, GENERATION)
 
 
 def ended(mut host: WorkerHost) -> bool:
@@ -241,7 +275,7 @@ pub def test_replies_keep_the_protocol_bytes() -> Result[None, str]:
 
 
 pub def test_record_activations_use_the_worker_version_two_protocol() -> Result[None, str]:
-    """Prepare, prerequisite, evaluation and production bodies round-trip only under the record worker schema."""
+    """Every request and reply body round-trips only under the record worker schema."""
     prepare = RecordMessage.Prepare(Prepare(stage="declaration", snapshot="s", demand_root="d", producer_profile="p"))
     prepared = decode_record_message(encode_record_message(prepare, GENERATION), GENERATION)?
     match prepared:
@@ -254,6 +288,11 @@ pub def test_record_activations_use_the_worker_version_two_protocol() -> Result[
         RecordMessage.NeedPrerequisite(value) =>
             assert value.keys_root == "keys" and value.earlier_rank == 7
         _ => return Err("worker record NeedPrerequisite changed family")
+
+    prepared_reply = RecordMessage.Prepared(Prepared(prepared_root="prepared"))
+    match decode_record_message(encode_record_message(prepared_reply, GENERATION), GENERATION)?:
+        RecordMessage.Prepared(value) => assert value.prepared_root == "prepared"
+        _ => return Err("worker record Prepared changed family")
 
     evaluate = RecordMessage.Evaluate(
         Evaluate(
@@ -277,11 +316,119 @@ pub def test_record_activations_use_the_worker_version_two_protocol() -> Result[
             assert value.staged_root == "staged" and value.witness_root == "w"
         _ => return Err("worker record Produced changed family")
 
+    refusal = RecordMessage.SemanticRefusal(
+        SemanticRefusal(diagnostic_root="diagnostics", witness_root="witnesses"),
+    )
+    match decode_record_message(encode_record_message(refusal, GENERATION), GENERATION)?:
+        RecordMessage.SemanticRefusal(value) =>
+            assert value.diagnostic_root == "diagnostics" and value.witness_root == "witnesses"
+        _ => return Err("worker record SemanticRefusal changed family")
+
+    fault = RecordMessage.CompilerFault(CompilerFault(fault_root="fault"))
+    match decode_record_message(encode_record_message(fault, GENERATION), GENERATION)?:
+        RecordMessage.CompilerFault(value) => assert value.fault_root == "fault"
+        _ => return Err("worker record CompilerFault changed family")
+
     wrong = f"{{\"generation\":\"{GENERATION}\",\"kind\":\"prepare\",\"schema\":\"incan.engine/1\"}}"
     match decode_record_message(wrong.encode("utf-8"), GENERATION):
         Err(_) => pass
         Ok(_) => return Err("the worker admitted an engine protocol record body")
     assert RECORD_SCHEMA == "incan.compiler-worker/2"
+    return Ok(None)
+
+
+pub def test_record_request_reply_sets_are_closed() -> Result[None, str]:
+    """Prepare and Evaluate accept only their settled replies; a cross-request reply is a protocol fault."""
+    prepare = RecordMessage.Prepare(Prepare(stage="local", snapshot="s", demand_root="d", producer_profile="p"))
+    evaluate = RecordMessage.Evaluate(
+        Evaluate(
+            work_root="work",
+            snapshot="s",
+            prepared_root="prepared",
+            reservation="reservation",
+            cancellation_generation=0,
+        ),
+    )
+    for reply in [
+        RecordMessage.Prepared(Prepared(prepared_root="prepared")),
+        RecordMessage.NeedPrerequisite(NeedPrerequisite(keys_root="keys", earlier_rank=1)),
+        RecordMessage.SemanticRefusal(SemanticRefusal(diagnostic_root="diagnostics", witness_root="witnesses")),
+        RecordMessage.CompilerFault(CompilerFault(fault_root="fault")),
+    ]:
+        _ = accept_record_reply(prepare, reply)?
+    for reply in [
+        RecordMessage.Produced(
+            Produced(staged_root="staged", witness_root="witnesses", diagnostic_root="diagnostics", counter_root="c"),
+        ),
+        RecordMessage.SemanticRefusal(SemanticRefusal(diagnostic_root="diagnostics", witness_root="witnesses")),
+        RecordMessage.CompilerFault(CompilerFault(fault_root="fault")),
+    ]:
+        _ = accept_record_reply(evaluate, reply)?
+    match accept_record_reply(
+        prepare,
+        RecordMessage.Produced(
+            Produced(staged_root="staged", witness_root="witnesses", diagnostic_root="diagnostics", counter_root="c"),
+        ),
+    ):
+        Err(reason) => assert reason == "compiler worker record reply does not match its request"
+        Ok(_) => return Err("Prepare accepted an Evaluate-only reply")
+    match accept_record_reply(evaluate, RecordMessage.Prepared(Prepared(prepared_root="prepared"))):
+        Err(reason) => assert reason == "compiler worker record reply does not match its request"
+        Ok(_) => return Err("Evaluate accepted a Prepare-only reply")
+    return Ok(None)
+
+
+pub def test_record_requests_cross_the_host_with_their_closed_replies() -> Result[None, str]:
+    """The host serves both request kinds, returns their allowed replies, and closes on a cross-request reply."""
+    socket = socket_path("records")
+    mut host = host_for(settings(socket, 10000, 16777216, None))?
+    prepare = RecordMessage.Prepare(Prepare(stage="local", snapshot="s", demand_root="d", producer_profile="p"))
+    mut preparing = record_caller(socket, prepare)?
+    match served_record(host)?:
+        RecordMessage.Prepare(value) => assert value.stage == "local"
+        _ => return Err("the host changed the Prepare request")
+    complete_record(host, RecordMessage.Prepared(Prepared(prepared_root="prepared")), -1)
+    match record_reply(preparing)?:
+        RecordMessage.Prepared(value) => assert value.prepared_root == "prepared"
+        _ => return Err("the host changed the Prepared reply")
+
+    evaluate = RecordMessage.Evaluate(
+        Evaluate(
+            work_root="work",
+            snapshot="s",
+            prepared_root="prepared",
+            reservation="reservation",
+            cancellation_generation=0,
+        ),
+    )
+    mut evaluating = record_caller(socket, evaluate)?
+    match served_record(host)?:
+        RecordMessage.Evaluate(value) => assert value.work_root == "work"
+        _ => return Err("the host changed the Evaluate request")
+    complete_record(
+        host,
+        RecordMessage.Produced(
+            Produced(staged_root="staged", witness_root="witnesses", diagnostic_root="diagnostics", counter_root="c"),
+        ),
+        -1,
+    )
+    match record_reply(evaluating)?:
+        RecordMessage.Produced(value) => assert value.staged_root == "staged"
+        _ => return Err("the host changed the Produced reply")
+
+    mut faulty = record_caller(socket, prepare)?
+    _ = served_record(host)?
+    complete_record(
+        host,
+        RecordMessage.Produced(
+            Produced(staged_root="staged", witness_root="witnesses", diagnostic_root="diagnostics", counter_root="c"),
+        ),
+        -1,
+    )
+    match record_reply(faulty):
+        Err(reason) => assert reason != ""
+        Ok(_) => return Err("the host answered a Prepare request with Produced")
+    assert ended(host)
     return Ok(None)
 
 

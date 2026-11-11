@@ -20,12 +20,27 @@ pub from record_protocol import (
     RecordMessage,
     RecordMessageKind,
     Prepare,
+    Prepared,
     NeedPrerequisite,
     Evaluate,
     Produced,
+    SemanticRefusal,
+    CompilerFault,
+    RecordAdmission,
+    admit_record,
+    accept_record_reply,
     encode_record_message,
     decode_record_message,
 )
 pub from lifecycle import ActivationOutcome
 pub from endpoint import CallerWatch, abandon
-pub from host import WorkerHost, start, next_request, complete, caller_watch
+pub from host import (
+    WorkerActivation,
+    WorkerHost,
+    start,
+    next_request,
+    next_activation,
+    complete,
+    complete_record,
+    caller_watch,
+)

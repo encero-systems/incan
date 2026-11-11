@@ -17,30 +17,39 @@ use std::io::PipeWriter;
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
 
-use incan_worker_host::{ActivationOutcome, CallerWatch, CompileRequest, WorkerCommand};
+use incan_worker_host::{ActivationOutcome, CallerWatch, CompileRequest, WorkerActivation, WorkerCommand};
 
 mod console;
 
 /// Serve the requests the worker host admits until it retires.
 pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut host = incan_worker_host::start(&arguments.to_vec(), footprint())?;
-    while let Some(request) = incan_worker_host::next_request(&mut host) {
-        let mut timing = crate::native_timing::Timing::requested();
-        let watch =
-            incan_worker_host::caller_watch(&mut host).map(|watch| Abandonment::watch(watch, request.retire_after));
-        let outcome = activate(&request);
-        timing.mark("worker_compiled");
-        // Disarm before replying. A one-activation process has no next caller, so its observer can end with it.
-        drop(watch);
-        if request.retire_after {
-            timing.mark("worker_observer_detached");
-        } else {
-            timing.mark("worker_observer_joined");
-            release_free_memory();
-            timing.mark("worker_heap_released");
+    while let Some(activation) = incan_worker_host::next_activation(&mut host) {
+        match activation {
+            WorkerActivation::Compile(request) => {
+                let mut timing = crate::native_timing::Timing::requested();
+                let watch = incan_worker_host::caller_watch(&mut host)
+                    .map(|watch| Abandonment::watch(watch, request.retire_after));
+                let outcome = activate(&request);
+                timing.mark("worker_compiled");
+                // Disarm before replying. A one-activation process has no next caller, so its observer can end with it.
+                drop(watch);
+                if request.retire_after {
+                    timing.mark("worker_observer_detached");
+                } else {
+                    timing.mark("worker_observer_joined");
+                    release_free_memory();
+                    timing.mark("worker_heap_released");
+                }
+                incan_worker_host::complete(&mut host, outcome, footprint());
+                timing.mark("worker_completed");
+            }
+            WorkerActivation::Record(request) => {
+                let reply = crate::compiler_record_service::activate(request);
+                release_free_memory();
+                incan_worker_host::complete_record(&mut host, reply, footprint());
+            }
         }
-        incan_worker_host::complete(&mut host, outcome, footprint());
-        timing.mark("worker_completed");
     }
     Ok(())
 }
