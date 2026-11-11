@@ -12,11 +12,12 @@ from graph_dependencies import prepare_graph
 from graph_rust import inspect_rust
 from features import FeatureRequest
 from rust_testing import build_rust_tests
-from loaf_local_graph import LocalFacet
+from loaf_local_graph import LocalEdge, LocalFacet
 from rust_activation import DependencyDomain
 from rust_units import build_rust
 from rust_build import RustBuild, facet_slot, ordered, rust_output
 from rust_registry import read_registry_units
+from rust_scheduler import LOWERING_RESERVATION_BYTES, UNIT_RESERVATION_BYTES, RustUnitSchedule
 from scratch import scratch_directory
 from testing import run_rust_harness, test_sources
 from toolchain import Toolchain, load_toolchain, rust_compiler
@@ -37,6 +38,7 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     5. Require optimized qualification and iteration to preserve the same edit/revert behavior.
     6. Reuse and execute the test harnesses repeatedly from another checkout.
     """
+    verify_scheduler_policy()?
     temporary = scratch_directory()?
     root = temporary.path()
     verify_incremental_policy(root)?
@@ -142,6 +144,48 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
     verify_native_graph_publication(helper, toolchain)?
     verify_mixed_provider(optimized, root.joinpath("mixed-consumer"))?
     return Ok(None)
+
+
+def verify_scheduler_policy() -> Result[None, str]:
+    """Admit newly ready work immediately and keep lowering within its larger memory reservation."""
+    left = scheduling_facet("left")
+    right = scheduling_facet("right")
+    dependent = scheduling_facet("dependent", [LocalEdge(alias="left", project="left", domain=DependencyDomain.Target)])
+    mut schedule = RustUnitSchedule.start(
+        [left, right, dependent],
+        jobs=2,
+        memory=2 * UNIT_RESERVATION_BYTES,
+    )
+    assert schedule.admit() == [0, 1]
+    schedule.finish(0)?
+    assert schedule.admit() == [2], "a newly ready unit waited for an unrelated active unit"
+    schedule.finish(2)?
+    schedule.finish(1)?
+    assert schedule.done()
+
+    lowering = scheduling_facet("incan_mir_lowering")
+    ordinary = scheduling_facet("ordinary")
+    mut bounded = RustUnitSchedule.start([lowering, ordinary], jobs=2, memory=LOWERING_RESERVATION_BYTES)
+    assert bounded.admit() == [0], "lowering shared its six-GiB reservation"
+    bounded.finish(0)?
+    assert bounded.admit() == [1]
+    bounded.finish(1)?
+    assert bounded.done()
+    return Ok(None)
+
+
+def scheduling_facet(name: str, local: list[LocalEdge] = []) -> LocalFacet:
+    """Construct one target-domain scheduler fixture without filesystem or compiler inputs."""
+    return LocalFacet(
+        project=name,
+        domain=DependencyDomain.Target,
+        features=[],
+        local=local,
+        registry=[],
+        registry_aliases=[],
+        package=name,
+        version="1.0.0",
+    )
 
 
 def verify_native_graph_publication(helper: Path, toolchain: Toolchain) -> Result[None, str]:

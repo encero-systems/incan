@@ -118,6 +118,8 @@ pub model RustBuild:
     pub installed: Dict[str, list[str]] = {}
     # Rust implementations consume native facets; Incan consumers require complete public Loaf facades.
     pub rust_facet_dependencies: bool = false
+    # Public Oven/Incan command surfaces may delegate ready dependency units to isolated worker processes.
+    pub schedule_rust_units: bool = false
     # Unasked inspection and editor preparation may execute compile-time code only when trust evidence covers it.
     pub unattended: bool = false
     # Stable trust evidence keyed by selected Loaf package identity.

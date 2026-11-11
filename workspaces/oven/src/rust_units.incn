@@ -10,7 +10,14 @@ uses those bindings instead of inferring a dependency's identity from an artifac
 """
 
 from rust::incan_loaf_names import artifact_stem, native_crate_name
-from rust::std::process import id
+from rust::std::cell import RefCell
+from rust::std::env import current_exe
+from rust::std::fs import File
+from rust::std::process import Child, Command, Stdio, id
+from rust::std::rc import Rc
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue
 from codegen import remap_arguments, rust_incremental_arguments, rust_metadata
@@ -67,11 +74,21 @@ from rust_build import (
     selected_toolchain,
 )
 from rust_binaries import compile_binary
+from rust_scheduler import RustUnitSchedule, unit_reservation
 
 # The schema of the receipt a build leaves of the libraries it built.
 const RECEIPT_SCHEMA: str = "incan.rust-units/1"
 # Installed native support is produced once in release mode and is link-compatible with every consumer profile.
 const INSTALLED_SUPPORT_PROFILE: str = "release"
+
+
+model RunningUnit:
+    """One active scheduled unit process and its private result and diagnostic paths."""
+
+    position: int
+    child: Rc[RefCell[Child]]
+    result: Path
+    log: Path
 
 
 pub def build_rust(request: RustBuild) -> Result[list[str], str]:
@@ -116,7 +133,14 @@ def build_prepared_rust(request: RustBuild) -> Result[list[str], str]:
     if len(trust.missing) > 0:
         return Err(trust.stop())
     output = rust_output(root, request.profile)
-    # 2. A unit that fails blocks only the units that link it, so every other unit is still attempted.
+    # 2. The outer Rust-project route prebuilds ready dependency roots concurrently. Each child uses the same bakery,
+    #    disables nested scheduling and leaves this serial integration to verify exact producer identities.
+    if (
+        request.rust_facet_dependencies
+        and get_or("INCAN_RUST_SCHEDULER", "") != "serial"
+        and request.schedule_rust_units
+    ):
+        schedule_rust_dependencies(facets, request, root, output)?
     mut built: Dict[str, BuiltUnit] = {}
     mut failed: Dict[str, str] = {}
     mut reports: list[str] = []
@@ -154,6 +178,187 @@ def blocking_unit(facet: LocalFacet, failed: Dict[str, str]) -> str:
         if edge.key() in failed:
             return failed[edge.key()]
     return ""
+
+
+def schedule_rust_dependencies(
+    facets: list[LocalFacet],
+    request: RustBuild,
+    root: Path,
+    output: Path,
+) -> Result[None, str]:
+    """
+    Compile graph-ready dependencies in isolated one-facet workers, then return for serial identity integration.
+
+    1. Exclude the target root, whose library and binaries remain the final serial unit.
+    2. Admit ready facets under CPU and memory reservations and give each the completed dependency receipt.
+    3. Integrate terminal receipts in the parent; failures block only their dependents and retain per-unit logs.
+    """
+    dependencies = [facet for facet in facets if not (facet.project == root.0 and facet.domain == DependencyDomain.Target)]
+    if len(dependencies) < 2:
+        return Ok(None)
+    directory = output.joinpath(f"scheduler-{id()}")
+    directory.mkdir(true, true).map_err((error) => f"cannot create scheduler evidence: {error.message()}")?
+    mut schedule = RustUnitSchedule.start(dependencies)
+    mut active: Dict[int, RunningUnit] = {}
+    mut built: Dict[str, BuiltUnit] = {}
+    mut failed: Dict[str, str] = {}
+    mut reasons: Dict[str, str] = {}
+    while not schedule.done():
+        for position in schedule.admit():
+            facet = dependencies[position]
+            trace(
+                f"Rust scheduler admitted {facet.key()} reservation={unit_reservation(facet)} active={schedule.active_count()}",
+            )
+            blocker = blocking_unit(facet, failed)
+            if blocker != "":
+                failed[facet.key()] = blocker
+                reasons[facet.key()] = f"{facet.project}: blocked by {blocker}"
+                schedule.finish(position)?
+                continue
+            active[position] = start_scheduled_unit(position, facet, request, built, directory)?
+        if schedule.done():
+            break
+        if schedule.stalled():
+            return Err("the local Rust units depend on each other in a cycle")
+        mut retained: Dict[int, RunningUnit] = {}
+        mut progressed = false
+        for position in sorted([position for position in active.keys()]):
+            item = active[position]
+            match item.child.borrow_mut().try_wait().map_err((error) => f"cannot wait for Rust unit: {error}")?:
+                None => retained[position] = item
+                Some(status) =>
+                    progressed = true
+                    facet = dependencies[position]
+                    trace(f"Rust scheduler completed {facet.key()} success={status.success()}")
+                    if not status.success():
+                        failed[facet.key()] = facet.project
+                        reasons[facet.key()] = f"{facet.project}: scheduled build failed\n{log_tail(item.log, 40)}"
+                    else:
+                        completed = read_receipt(item.result, true)?
+                        if facet.key() not in completed:
+                            failed[facet.key()] = facet.project
+                            reasons[facet.key()] = f"{facet.project}: scheduled build published no keyed unit receipt"
+                        else:
+                            built[facet.key()] = completed[facet.key()]
+                    schedule.finish(position)?
+        active = retained
+        if not progressed and schedule.active_count() > 0:
+            sleep(Duration.from_millis(20))
+    mut reports: list[str] = []
+    for facet in dependencies:
+        if facet.key() in reasons:
+            reports.append(reasons[facet.key()])
+    if len(reports) > 0:
+        body = "\n\n".join(reports)
+        return Err(f"{len(reports)} of {len(dependencies)} scheduled Rust units did not compile:\n\n{body}")
+    return Ok(None)
+
+
+def start_scheduled_unit(
+    position: int,
+    facet: LocalFacet,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    directory: Path,
+) -> Result[RunningUnit, str]:
+    """Start one internal worker with an atomic receipt of exactly the dependencies already completed."""
+    inputs = directory.joinpath(f"{position}.inputs.json")
+    result = directory.joinpath(f"{position}.result.json")
+    log = directory.joinpath(f"{position}.log")
+    publish(inputs, json_text(receipt_document(built, true))?)?
+    output = File.create(log.0).map_err((error) => f"{log.0}: {error}")?
+    errors = output.try_clone().map_err((error) => str(error))?
+    executable = match scheduler_executable():
+        Some(found) => found
+        None => return Err("the Rust unit scheduler has no Oven executable")
+    mut command = Command.new(executable)
+    command.arg("__rust-unit").arg(facet.key()).arg(inputs.0).arg(result.0).arg(request.project)
+    command.arg("--profile").arg(request.profile)
+    if not request.default_features:
+        command.arg("--no-default-features")
+    if request.all_features:
+        command.arg("--all-features")
+    if len(request.features) > 0:
+        command.arg("--features").arg(",".join(request.features))
+    for name in sorted([name for name in request.substitutes.keys()]):
+        command.arg("--substitute").arg(f"{name}={request.substitutes[name]}")
+    command.env("OVEN_OWNER", "off").env("INCAN_NO_BANNER", "1")
+    command.stdin(Stdio.null()).stdout(output).stderr(errors)
+    child = command.spawn().map_err((error) => f"cannot start scheduled build for {facet.project}: {error}")?
+    return Ok(RunningUnit(position=position, child=Rc.new(RefCell.new(child)), result=result, log=log))
+
+
+def scheduler_executable() -> Option[str]:
+    """Select an explicit worker or the active executable after the caller authorizes process delegation."""
+    configured = get_or("OVEN_ENGINE_BINARY", "")
+    if configured != "":
+        return Some(configured)
+    match current_exe():
+        Err(_) => return None
+        Ok(found) => return Some(str(found.to_string_lossy().into_owned()))
+
+
+pub def scheduled_unit(
+    request: RustBuild,
+    facet_key: str,
+    inputs: Path,
+    result: Path,
+) -> Result[i32, str]:
+    """Compile exactly one parent-admitted facet against its completed dependency receipt."""
+    mut request = prepared_build(request)?
+    root = Path(request.project).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    demand = LocalDemand(
+        project=root.0,
+        domain=DependencyDomain.Target,
+        features=request.features,
+        defaults=request.default_features,
+        all_features=request.all_features,
+    )
+    facets = ordered(local_facets(demand, target_configuration(request.rustc)?, request.substitutes, request.manifests)?)?
+    request.registry = selected_registry(request.registry, facets, request.profile)?
+    mut selected: Option[LocalFacet] = None
+    for facet in facets:
+        if facet.key() == facet_key:
+            selected = Some(facet)
+    facet = match selected:
+        None => return Err(f"scheduled Rust facet is absent: {facet_key}")
+        Some(found) => found
+    built = read_receipt(inputs, true)?
+    search = ordered_search_before(facets, facet_key, built)
+    declared = rust_facet(facet.project, true, request.manifests)?
+    if declared.kind == "":
+        return Err(f"{facet.project} declares no Rust library")
+    unit = compile_library(facet, declared, rust_output(root, request.profile), request, built, search)?
+    publish(result, json_text(receipt_document({facet.key(): unit}, true))?)?
+    return Ok(0)
+
+
+def ordered_search_before(
+    facets: list[LocalFacet],
+    selected: str,
+    built: Dict[str, BuiltUnit],
+) -> list[str]:
+    """Recreate the serial search order before one selected facet from completed keyed receipts."""
+    mut search: list[str] = []
+    for facet in facets:
+        if facet.key() == selected:
+            break
+        if facet.key() in built:
+            unit = built[facet.key()]
+            search = search + [unit.directory] + unit.search
+    return search
+
+
+def log_tail(path: Path, limit: int) -> str:
+    """Return the final diagnostic lines of one scheduler child without discarding its complete file."""
+    match path.read_text("utf-8", "replace"):
+        Err(error) => return f"cannot read {path.0}: {error.message()}"
+        Ok(text) =>
+            lines = text.split("\n")
+            mut start = 0
+            if len(lines) > limit:
+                start = len(lines) - limit
+            return "\n".join(lines[start:])
 
 
 def require_coherent_installed_generation(facets: list[LocalFacet], request: RustBuild) -> Result[None, str]:
