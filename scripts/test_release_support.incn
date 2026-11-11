@@ -11,6 +11,8 @@ from release_support import (
     check_baseline,
     parse_release_options,
     parse_verification_options,
+    reference_cache_identity,
+    reference_cache_root,
     release_receipt,
     require_candidate_census,
     same_bytes,
@@ -152,6 +154,23 @@ def test_byte_comparison_reads_complete_content() -> Result[None, str]:
     assert same_bytes(left, right)?
     right.write_bytes(b"alpHa").map_err((error) => error.message())?
     assert not same_bytes(left, right)?
+    return Ok(None)
+
+
+def test_reference_cache_identity_covers_seed_bundle_and_committed_contract_tree() -> Result[None, str]:
+    """Changing any seed component or the committed contract tree yields a distinct reference cache key."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    oven = temporary.path().joinpath("incan")
+    lsp = temporary.path().joinpath("incan-lsp")
+    manifest = temporary.path().joinpath("toolchain.json")
+    oven.write_bytes(b"oven-a").map_err((error) => error.message())?
+    lsp.write_bytes(b"lsp-a").map_err((error) => error.message())?
+    manifest.write_bytes(b"manifest-a").map_err((error) => error.message())?
+    original = reference_cache_identity(oven, lsp, manifest, "tree-a")?
+    assert reference_cache_root(temporary.path()).0 == temporary.path().joinpath("cache/release-reference").0
+    assert reference_cache_identity(oven, lsp, manifest, "tree-b")? != original
+    lsp.write_bytes(b"lsp-b").map_err((error) => error.message())?
+    assert reference_cache_identity(oven, lsp, manifest, "tree-a")? != original
     return Ok(None)
 
 
