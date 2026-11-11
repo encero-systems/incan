@@ -129,6 +129,149 @@ pub def decode_library_fact(data: bytes) -> Result[LibraryFact, str]:
     return Ok(fact)
 
 
+pub def encode_function_fact(fact: FunctionFact) -> Result[bytes, str]:
+    """Encode one supported checked function as an independently readable typed Crumb row."""
+    valid_function_fact(fact)?
+    values = [
+        Value.Text(fact.schema),
+        Value.Text(fact.kind),
+        Value.Text(fact.stable_identity),
+        Value.Text(fact.name),
+        optional_text(fact.emitted_name),
+        texts(fact.type_parameter_names),
+        integers(fact.type_parameter_bound_offsets),
+        texts(fact.bound_names),
+        optional_texts(fact.bound_source_names),
+        nested_texts(fact.bound_module_paths),
+        integers(fact.bound_type_argument_offsets),
+        integers(fact.bound_type_argument_roots),
+        booleans(fact.bound_inferred),
+        texts(fact.parameter_names),
+        integers(fact.parameter_type_roots),
+        optional_texts(fact.parameter_surface_types),
+        texts(fact.parameter_kinds),
+        booleans(fact.parameter_has_default),
+        booleans(fact.parameter_is_mut),
+        texts(fact.type_tags),
+        texts(fact.type_names),
+        integers(fact.type_child_offsets),
+        integers(fact.type_children),
+        signed(fact.return_type_root),
+        Value.Boolean(fact.is_async),
+    ]
+    return encode_record(FunctionFact.__fields__(), b"funfac\x00", "incan.FunctionFact", values)
+
+
+pub def decode_function_fact(data: bytes) -> Result[FunctionFact, str]:
+    """Decode and validate one supported function fact without accepting another record kind or schema."""
+    values = decode_record(data, FunctionFact.__fields__(), b"funfac\x00", "incan.FunctionFact")?
+    fact = FunctionFact(
+        schema=text(values[0])?,
+        kind=text(values[1])?,
+        stable_identity=text(values[2])?,
+        name=text(values[3])?,
+        emitted_name=optional_text_value(values[4])?,
+        type_parameter_names=text_list(values[5])?,
+        type_parameter_bound_offsets=integer_list(values[6])?,
+        bound_names=text_list(values[7])?,
+        bound_source_names=optional_text_list(values[8])?,
+        bound_module_paths=nested_text_list(values[9])?,
+        bound_type_argument_offsets=integer_list(values[10])?,
+        bound_type_argument_roots=integer_list(values[11])?,
+        bound_inferred=boolean_list(values[12])?,
+        parameter_names=text_list(values[13])?,
+        parameter_type_roots=integer_list(values[14])?,
+        parameter_surface_types=optional_text_list(values[15])?,
+        parameter_kinds=text_list(values[16])?,
+        parameter_has_default=boolean_list(values[17])?,
+        parameter_is_mut=boolean_list(values[18])?,
+        type_tags=text_list(values[19])?,
+        type_names=text_list(values[20])?,
+        type_child_offsets=integer_list(values[21])?,
+        type_children=integer_list(values[22])?,
+        return_type_root=integer(values[23])?,
+        is_async=boolean(values[24])?,
+    )
+    valid_function_fact(fact)?
+    return Ok(fact)
+
+
+def valid_function_fact(fact: FunctionFact) -> Result[None, str]:
+    """Refuse malformed offsets, unknown kinds and first-slice semantic fields that would otherwise be lost."""
+    if fact.schema != FUNCTION_FACT_SCHEMA or fact.kind != LibraryFactKind.Function.value():
+        return Err("function fact kind or schema mismatch")
+    if fact.stable_identity == "" or fact.name == "" or len(fact.type_tags) == 0:
+        return Err("function fact identity, name and type graph are required")
+    if not offsets_cover(fact.type_parameter_bound_offsets, len(fact.bound_names), len(fact.type_parameter_names)):
+        return Err("function fact type-parameter bound offsets are malformed")
+    if not aligned_bound_fields(fact):
+        return Err("function fact bound fields are not aligned")
+    if not offsets_cover(fact.bound_type_argument_offsets, len(fact.bound_type_argument_roots), len(fact.bound_names)):
+        return Err("function fact bound type-argument offsets are malformed")
+    if not aligned_parameter_fields(fact):
+        return Err("function fact parameter fields are not aligned")
+    for has_default in fact.parameter_has_default:
+        if has_default:
+            return Err("function facts with materialized defaults require the next schema slice")
+    if len(fact.type_names) != len(fact.type_tags):
+        return Err("function fact type fields are not aligned")
+    if not offsets_cover(fact.type_child_offsets, len(fact.type_children), len(fact.type_tags)):
+        return Err("function fact type-child offsets are malformed")
+    if not valid_type_references(fact):
+        return Err("function fact type graph contains an unsupported tag or invalid reference")
+    return Ok(None)
+
+
+def aligned_bound_fields(fact: FunctionFact) -> bool:
+    """Require every flattened bound column to describe the same number of bounds."""
+    count = len(fact.bound_names)
+    return (
+        len(fact.bound_source_names) == count
+        and len(fact.bound_module_paths) == count
+        and len(fact.bound_inferred) == count
+    )
+
+
+def aligned_parameter_fields(fact: FunctionFact) -> bool:
+    """Require every flattened parameter column to describe the same number of parameters."""
+    count = len(fact.parameter_names)
+    return (
+        len(fact.parameter_type_roots) == count
+        and len(fact.parameter_surface_types) == count
+        and len(fact.parameter_kinds) == count
+        and len(fact.parameter_has_default) == count
+        and len(fact.parameter_is_mut) == count
+    )
+
+
+def offsets_cover(offsets: list[int], values: int, groups: int) -> bool:
+    """Check one canonical prefix-offset table from zero through the complete flattened value list."""
+    if len(offsets) != groups + 1 or offsets[0] != 0 or offsets[len(offsets) - 1] != values:
+        return false
+    for index in range(groups):
+        if offsets[index] < 0 or offsets[index] > offsets[index + 1]:
+            return false
+    return true
+
+
+def valid_type_references(fact: FunctionFact) -> bool:
+    """Validate every root, edge and first-slice type tag against the closed flattened graph."""
+    count = len(fact.type_tags)
+    roots = fact.parameter_type_roots + fact.bound_type_argument_roots + [fact.return_type_root]
+    for root in roots:
+        if root < 0 or root >= count:
+            return false
+    supported = {"named", "applied", "function", "type-token", "tuple", "type-param", "self", "ref", "rust-path", "unknown", "mut-param"}
+    for index in range(count):
+        if fact.type_tags[index] not in supported:
+            return false
+        for child_index in range(fact.type_child_offsets[index], fact.type_child_offsets[index + 1]):
+            child = fact.type_children[child_index]
+            if child < 0 or child >= count:
+                return false
+    return true
+
+
 def encode_record(fields: FrozenList[FieldInfo], key: bytes, path: str, values: list[Value]) -> Result[bytes, str]:
     """Bind one value per declared field and write a self-described Crumb row."""
     if len(fields) != len(values):
@@ -236,6 +379,33 @@ def texts(values: list[str]) -> Value:
     return Value.List([Value.Text(value) for value in values])
 
 
+def optional_text(value: Option[str]) -> Value:
+    """Convert one optional text into Crumb's explicit optional carrier."""
+    match value:
+        Some(content) => return Value.Some([Value.Text(content)])
+        None => return Value.NoneValue
+
+
+def optional_texts(values: list[Option[str]]) -> Value:
+    """Convert optional text cells into a typed Crumb list."""
+    return Value.List([optional_text(value) for value in values])
+
+
+def nested_texts(values: list[list[str]]) -> Value:
+    """Convert nested text sequences into a typed Crumb list."""
+    return Value.List([texts(value) for value in values])
+
+
+def integers(values: list[int]) -> Value:
+    """Convert signed integer cells into a typed Crumb list."""
+    return Value.List([signed(value) for value in values])
+
+
+def booleans(values: list[bool]) -> Value:
+    """Convert boolean cells into a typed Crumb list."""
+    return Value.List([Value.Boolean(value) for value in values])
+
+
 def text(value: Value) -> Result[str, str]:
     """Require an owned text cell."""
     match value:
@@ -266,3 +436,58 @@ def text_list(value: Value) -> Result[list[str], str]:
                 result.append(text(item)?)
             return Ok(result)
         _ => return Err("library fact field is not a text list")
+
+
+def optional_text_value(value: Value) -> Result[Option[str], str]:
+    """Require one exact optional text cell."""
+    match value:
+        Value.NoneValue => return Ok(None)
+        Value.Some(items) =>
+            if len(items) != 1:
+                return Err("library fact optional text has the wrong arity")
+            return Ok(Some(text(items[0])?))
+        _ => return Err("library fact field is not optional text")
+
+
+def optional_text_list(value: Value) -> Result[list[Option[str]], str]:
+    """Require a list whose every cell is optional owned text."""
+    match value:
+        Value.List(items) =>
+            mut result: list[Option[str]] = []
+            for item in items:
+                result.append(optional_text_value(item)?)
+            return Ok(result)
+        _ => return Err("library fact field is not an optional-text list")
+
+
+def nested_text_list(value: Value) -> Result[list[list[str]], str]:
+    """Require a list whose every cell is a text list."""
+    match value:
+        Value.List(items) =>
+            mut result: list[list[str]] = []
+            for item in items:
+                result.append(text_list(item)?)
+            return Ok(result)
+        _ => return Err("library fact field is not a nested-text list")
+
+
+def integer_list(value: Value) -> Result[list[int], str]:
+    """Require a list whose every cell is a signed integer."""
+    match value:
+        Value.List(items) =>
+            mut result: list[int] = []
+            for item in items:
+                result.append(integer(item)?)
+            return Ok(result)
+        _ => return Err("library fact field is not an integer list")
+
+
+def boolean_list(value: Value) -> Result[list[bool], str]:
+    """Require a list whose every cell is boolean."""
+    match value:
+        Value.List(items) =>
+            mut result: list[bool] = []
+            for item in items:
+                result.append(boolean(item)?)
+            return Ok(result)
+        _ => return Err("library fact field is not a boolean list")

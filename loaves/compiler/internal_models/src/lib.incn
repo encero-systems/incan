@@ -134,5 +134,7 @@ pub from library_facts import (
     FunctionFact,
     encode_library_fact,
     decode_library_fact,
+    encode_function_fact,
+    decode_function_fact,
 )
 pub from read_receipts import RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt

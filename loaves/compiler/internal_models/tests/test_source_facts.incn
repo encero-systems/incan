@@ -1,7 +1,17 @@
 """Source-origin controls for Incan-owned compiler facts."""
 
 from compiler_records import HirSourceSpan, valid_hir_source_span
-from library_facts import LIBRARY_FACT_SCHEMA, LibraryFact, LibraryFactKind, decode_library_fact, encode_library_fact
+from library_facts import (
+    LIBRARY_FACT_SCHEMA,
+    FUNCTION_FACT_SCHEMA,
+    LibraryFact,
+    LibraryFactKind,
+    FunctionFact,
+    decode_library_fact,
+    encode_library_fact,
+    decode_function_fact,
+    encode_function_fact,
+)
 
 
 pub def test_source_facts() -> None:
@@ -34,4 +44,39 @@ pub def test_library_fact_crumb_round_trip() -> Result[None, str]:
     encoded = encode_library_fact(expected)?
     assert encoded[0:4] == b"CRMB"
     assert decode_library_fact(encoded)? == expected
+    return Ok(None)
+
+
+pub def test_function_fact_crumb_round_trip() -> Result[None, str]:
+    """The first function slice preserves generic bounds, parameters and a recursive type graph."""
+    expected = FunctionFact(
+        schema=FUNCTION_FACT_SCHEMA,
+        kind=LibraryFactKind.Function.value(),
+        stable_identity="function:pub::std-primitives::append_list|incan.source-signature/2:abcd",
+        name="append_list",
+        emitted_name=None,
+        type_parameter_names=["T"],
+        type_parameter_bound_offsets=[0, 1],
+        bound_names=["Clone"],
+        bound_source_names=[None],
+        bound_module_paths=[[]],
+        bound_type_argument_offsets=[0, 0],
+        bound_type_argument_roots=[],
+        bound_inferred=[true],
+        parameter_names=["items", "value"],
+        parameter_type_roots=[1, 0],
+        parameter_surface_types=[Some("list[T]"), None],
+        parameter_kinds=["normal", "normal"],
+        parameter_has_default=[false, false],
+        parameter_is_mut=[true, false],
+        type_tags=["type-param", "applied"],
+        type_names=["T", "List"],
+        type_child_offsets=[0, 0, 1],
+        type_children=[0],
+        return_type_root=1,
+        is_async=false,
+    )
+    encoded = encode_function_fact(expected)?
+    assert encoded[0:4] == b"CRMB"
+    assert decode_function_fact(encoded)? == expected
     return Ok(None)
