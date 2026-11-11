@@ -136,7 +136,6 @@ pub(super) fn checked_modules(
         .position(|module| module.file_path == path)
         .ok_or("entry module is missing")?;
     validate_module_declarations(&modules, &analysis).inspect_err(|_| receipt.deterministic())?;
-    graph_body_output.publish()?;
     let body_ir_inputs_invocation = tracing::trace_span!(
         target: "incan::invocation",
         "incan_rustc_driver::prepare_body_ir_inputs"
@@ -179,6 +178,8 @@ pub(super) fn checked_modules(
 
     // ---- The program's own modules ----
     lower_authored_modules(&modules, &analysis, &session, &mut bodies, &mut files)?;
+    graph_body_output.attach_body_ir(&modules, &bodies[loaf_modules..])?;
+    graph_body_output.publish()?;
     let cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
     let graph = if library {
         let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(

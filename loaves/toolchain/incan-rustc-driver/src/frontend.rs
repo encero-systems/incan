@@ -258,12 +258,26 @@ fn read_graph_body_records(path: &Path) -> Result<incan_frontend::checker_record
         .map_err(|error| format!("graph body record transport refused: {error:?}"))?;
     let records = decoded
         .into_iter()
-        .map(|record| incan_frontend::checker_records::GraphBodyRecord {
-            identity: record.identity,
-            local: record.local,
-            final_value: record.final_fields,
+        .map(|record| {
+            let frame = incan_semantics_core::executable_representation::decode_owner(&record.body_ir)
+                .map_err(|error| format!("graph Body IR owner frame refused: {error}"))?;
+            if frame.source.is_empty()
+                || frame
+                    .body
+                    .canonical
+                    .as_ref()
+                    .is_none_or(|identity| identity.render_compact() != record.identity)
+            {
+                return Err("graph Body IR owner frame disagrees with its selected identity".to_owned());
+            }
+            Ok(incan_frontend::checker_records::GraphBodyRecord {
+                identity: record.identity,
+                local: record.local,
+                final_value: record.final_fields,
+                body_ir: Some(frame),
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, String>>()?;
     incan_frontend::checker_records::GraphBodyRecords::new(records)
         .map_err(|error| format!("graph body record inventory refused: {error:?}"))
 }

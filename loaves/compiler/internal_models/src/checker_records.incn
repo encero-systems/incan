@@ -4,11 +4,11 @@ from std.encoding.hex import hexlify, unhexlify
 from std.hash import sha256
 
 pub const CHECKER_SCHEMA: str = "incan.checker-fields/9"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/10"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/11"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
-const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/1"
-const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/2"
+const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/2"
+const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/3"
 const MAX_GRAPH_TRANSPORT_BYTES: int = 16777216
 
 
@@ -43,23 +43,25 @@ pub model CheckedRecord:
 
 
 pub model GraphBodyValue:
-    """One graph-selected owner's encoded pending and settled checker values."""
+    """One graph-selected owner's checker values and opaque kernel-owned executable frame."""
 
     pub identity: str
     pub local: bytes
     pub final: bytes
+    pub body_ir: bytes
 
 
 pub model GraphBodyFields:
-    """One validated graph-selected owner projected into the native checker's field-only boundary."""
+    """One validated graph-selected owner projected into native checker fields plus its opaque Body IR frame."""
 
     pub identity: str
     pub local: list[list[str]]
     pub final_fields: list[list[str]]
+    pub body_ir: bytes
 
 
 pub model CompiledBodyValue:
-    """One compiler-produced declaration/local/final triple with its projected source owner."""
+    """One compiler-produced checker triple and kernel-owned Body IR frame with its projected source owner."""
 
     pub module: str
     pub name: str
@@ -67,6 +69,7 @@ pub model CompiledBodyValue:
     pub declaration: bytes
     pub local: bytes
     pub final: bytes
+    pub body_ir: bytes
 
 
 @derive(Eq)
@@ -359,7 +362,7 @@ pub def encode_graph_body_values(values: list[GraphBodyValue]) -> Result[bytes, 
         if value.identity == "" or value.identity <= previous:
             return Err(CodecFault.Malformed)
         validate_graph_body_value(value)?
-        tokens += [value.identity, hexlify(value.local), hexlify(value.final)]
+        tokens += [value.identity, hexlify(value.local), hexlify(value.final), hexlify(value.body_ir)]
         previous = value.identity
     return encode_transport_tokens(tokens)
 
@@ -370,7 +373,7 @@ pub def decode_graph_body_values(encoded: bytes) -> Result[list[GraphBodyFields]
     if len(tokens) < 2 or tokens[0] != GRAPH_TRANSPORT_SCHEMA:
         return Err(CodecFault.Malformed)
     count = decimal(tokens[1])?
-    if count > MAX_FIELDS or len(tokens) != 2 + count * 3:
+    if count > MAX_FIELDS or len(tokens) != 2 + count * 4:
         return Err(CodecFault.Malformed)
     mut selected: list[GraphBodyFields] = []
     mut previous = ""
@@ -381,13 +384,19 @@ pub def decode_graph_body_values(encoded: bytes) -> Result[list[GraphBodyFields]
             return Err(CodecFault.Malformed)
         local_bytes = unhexlify(tokens[offset + 1]).map_err((_) => CodecFault.Malformed)?
         final_bytes = unhexlify(tokens[offset + 2]).map_err((_) => CodecFault.Malformed)?
-        value = GraphBodyValue(identity=identity, local=local_bytes, final=final_bytes)
+        body_ir = unhexlify(tokens[offset + 3]).map_err((_) => CodecFault.Malformed)?
+        value = GraphBodyValue(identity=identity, local=local_bytes, final=final_bytes, body_ir=body_ir)
         records = validate_graph_body_value(value)?
         selected.append(
-            GraphBodyFields(identity=identity, local=native_fields(records[0])?, final_fields=native_fields(records[1])?),
+            GraphBodyFields(
+                identity=identity,
+                local=native_fields(records[0])?,
+                final_fields=native_fields(records[1])?,
+                body_ir=body_ir,
+            ),
         )
         previous = identity
-        offset += 3
+        offset += 4
     return Ok(selected)
 
 
@@ -409,6 +418,7 @@ pub def encode_compiled_body_outputs(outputs: CompiledBodyOutputs) -> Result[byt
             hexlify(value.declaration),
             hexlify(value.local),
             hexlify(value.final),
+            hexlify(value.body_ir),
         ]
         previous = order
     previous = ""
@@ -438,7 +448,7 @@ pub def decode_compiled_body_outputs(encoded: bytes) -> Result[CompiledBodyOutpu
         return Err(CodecFault.Malformed)
     count = decimal(tokens[1])?
     fallback_count = decimal(tokens[2])?
-    if count + fallback_count > MAX_FIELDS or len(tokens) != 3 + count * 6 + fallback_count * 4:
+    if count + fallback_count > MAX_FIELDS or len(tokens) != 3 + count * 7 + fallback_count * 4:
         return Err(CodecFault.Malformed)
     mut values: list[CompiledBodyValue] = []
     mut previous = ""
@@ -451,6 +461,7 @@ pub def decode_compiled_body_outputs(encoded: bytes) -> Result[CompiledBodyOutpu
             declaration=unhexlify(tokens[offset + 3]).map_err((_) => CodecFault.Malformed)?,
             local=unhexlify(tokens[offset + 4]).map_err((_) => CodecFault.Malformed)?,
             final=unhexlify(tokens[offset + 5]).map_err((_) => CodecFault.Malformed)?,
+            body_ir=unhexlify(tokens[offset + 6]).map_err((_) => CodecFault.Malformed)?,
         )
         order = value.module + "\n" + value.identity
         if value.module == "" or value.name == "" or value.identity == "" or order <= previous:
@@ -458,7 +469,7 @@ pub def decode_compiled_body_outputs(encoded: bytes) -> Result[CompiledBodyOutpu
         validate_compiled_body_value(value)?
         values.append(value)
         previous = order
-        offset += 6
+        offset += 7
     mut fallbacks: list[CompiledBodyFallback] = []
     previous = ""
     for _ in range(fallback_count):
@@ -498,7 +509,9 @@ pub def record_root(encoded: bytes) -> Result[str, CodecFault]:
 def validate_compiled_body_value(value: CompiledBodyValue) -> Result[None, CodecFault]:
     """Require one declaration and a matching local/final pair under the compiler-owned stable identity."""
     declaration = decode_graph_record(value.declaration, value.identity)?
-    pair = validate_graph_body_value(GraphBodyValue(identity=value.identity, local=value.local, final=value.final))?
+    pair = validate_graph_body_value(
+        GraphBodyValue(identity=value.identity, local=value.local, final=value.final, body_ir=value.body_ir),
+    )?
     if declaration.family != CheckedFamily.Declaration or pair[0].owner != declaration.owner:
         return Err(CodecFault.Malformed)
     return Ok(None)
@@ -506,6 +519,8 @@ def validate_compiled_body_value(value: CompiledBodyValue) -> Result[None, Codec
 
 def validate_graph_body_value(value: GraphBodyValue) -> Result[list[CheckedRecord], CodecFault]:
     """Bind a selected pair to its compiler-owned identity and require one shared semantic body root."""
+    if len(value.body_ir) == 0:
+        return Err(CodecFault.Malformed)
     local = decode_graph_record(value.local, value.identity)?
     final = decode_graph_record(value.final, value.identity)?
     if local.family != CheckedFamily.Local or final.family != CheckedFamily.Final:

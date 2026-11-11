@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::TypeChecker;
+use incan_semantics_core::body_ir::BodyIrModule;
 
 /// One output awaiting canonical ordering and Incan-owned encoding.
 struct PendingBodyValue {
@@ -17,6 +18,7 @@ struct PendingBodyValue {
     declaration: Vec<u8>,
     local: Vec<u8>,
     final_value: Vec<u8>,
+    body_ir: Vec<u8>,
 }
 
 /// One checked owner excluded from record reuse while retaining the reason for the full-source path.
@@ -84,6 +86,48 @@ impl GraphBodyOutput {
         Ok(())
     }
 
+    /// Attach the ordinary completed Body IR result to every eligible checker owner without projecting another
+    /// semantic schema. The kernel codec retains the native `Body` contract and its module/source provenance.
+    pub(super) fn attach_body_ir(&mut self, modules: &[ParsedModule], body_ir: &[BodyIrModule]) -> Result<(), String> {
+        if self.path.is_none() {
+            return Ok(());
+        }
+        if modules.len() != body_ir.len() {
+            return Err("graph Body IR output is not aligned with authored modules".into());
+        }
+        for (module, lowered) in modules.iter().zip(body_ir) {
+            let Ok(module_path) = module.file_path.strip_prefix(&self.project_root) else {
+                continue;
+            };
+            let module_path = module_path.to_string_lossy().into_owned();
+            for body in &lowered.bodies {
+                let Some(identity) = body.canonical.as_ref().map(|identity| identity.render_compact()) else {
+                    continue;
+                };
+                let Some(pending) = self
+                    .values
+                    .iter_mut()
+                    .find(|value| value.module == module_path && value.identity == identity)
+                else {
+                    continue;
+                };
+                pending.body_ir = incan_semantics_core::executable_representation::encode_owner(
+                    &lowered.module_id,
+                    &module_path,
+                    body,
+                )
+                .map_err(|error| format!("Body IR owner frame output refused: {error}"))?;
+            }
+        }
+        if let Some(value) = self.values.iter().find(|value| value.body_ir.is_empty()) {
+            return Err(format!(
+                "compiled graph output has no Body IR frame for {} in {}",
+                value.identity, value.module
+            ));
+        }
+        Ok(())
+    }
+
     /// Encode every eligible triple and explicit fallback through the shared schema, then atomically publish it.
     pub(super) fn publish(mut self) -> Result<(), String> {
         let Some(path) = self.path else {
@@ -111,6 +155,7 @@ impl GraphBodyOutput {
                 declaration: value.declaration,
                 local: value.local,
                 r#final: value.final_value,
+                body_ir: value.body_ir,
             })
             .collect();
         let fallbacks: Vec<internal_models::CompiledBodyFallback> = self
@@ -152,6 +197,7 @@ fn encoded_body_value(
         declaration,
         local,
         final_value,
+        body_ir: Vec::new(),
     })
 }
 

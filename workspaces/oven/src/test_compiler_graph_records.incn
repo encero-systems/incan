@@ -172,8 +172,17 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
         b"final value",
         final_receipt,
     )?
-    selected_body = select_body_values(
+    body_ir_key = family_key("body-ir", "run44-body")
+    body_ir_receipt = fixture_receipt(body.snapshot, body_ir_key, record_request(family_key("final", "run44-body")))?
+    body_ir = publish_evaluation(
         body.snapshot,
+        "run44-body-ir-claim",
+        ProducerRank(namespace=2, stage=ProducerStage.BodyIr, dependency=0),
+        b"owner-frame",
+        body_ir_receipt,
+    )?
+    selected_body = select_body_values(
+        body_ir.snapshot,
         family_key("local", "run44-body"),
         family_key("final", "run44-body"),
         "profile",
@@ -183,12 +192,13 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
             assert values.local == b"local value"
             assert values.final == b"final value"
         None => return Err("unchanged local/final body pair did not reuse")
-    inventory = select_body_inventory(body.snapshot, "profile")?
+    inventory = select_body_inventory(body_ir.snapshot, "profile")?
     assert len(inventory) == 1
     assert inventory[0].identity == "run44-body"
     assert inventory[0].local == b"local value"
     assert inventory[0].final == b"final value"
-    changed_body = commit(put(begin(body.snapshot), encode_record_key(final_request.key)?, b"changed final input")).map_err(
+    assert inventory[0].body_ir == b"owner-frame"
+    changed_body = commit(put(begin(body_ir.snapshot), encode_record_key(final_request.key)?, b"changed final input")).map_err(
         (error) => error.message(),
     )?
     assert select_body_values(
@@ -341,6 +351,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
                         declaration=declaration,
                         local=local,
                         final=final,
+                        body_ir=b"owner-frame",
                     ),
                 ],
                 fallbacks=[
@@ -357,6 +368,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     before = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_compiled_bodies(before, unit, output)?
     assert published.bodies == 1 and published.fallbacks == 1
+    assert published.snapshot.generation == before.generation + 1, "one compiled body publication used more than one generation"
     assert not output.is_file()
     fallback_key = RecordKey(
         family="eligibility",

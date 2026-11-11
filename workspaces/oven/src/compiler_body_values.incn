@@ -29,11 +29,12 @@ pub model PublishedBodyValues:
 
 
 pub model SelectedBodyRecord:
-    """One owner identity and its paired graph-admitted local/final values."""
+    """One owner identity with its graph-admitted checker pair and final kernel Body IR frame."""
 
     pub identity: str
     pub local: bytes
     pub final: bytes
+    pub body_ir: bytes
 
 
 pub def select_body_values(
@@ -57,25 +58,45 @@ pub def select_body_values(
 
 
 pub def select_body_inventory(selected: Snapshot, profile: str) -> Result[list[SelectedBodyRecord], str]:
-    """Select all complete local/final pairs while leaving incomplete or invalidated owners on full-source checking."""
+    """Select complete checker pairs with final Body IR while invalidated owners stay on fresh production."""
     locals = reusable_family_records(selected, "local", profile)?
     finals = reusable_family_records(selected, "final", profile)?
+    bodies = reusable_family_records(selected, "body-ir", profile)?
     mut selected_records: list[SelectedBodyRecord] = []
     for local in locals:
         match matching_record(finals, local):
             Some(final) =>
-                selected_records.append(
-                    SelectedBodyRecord(identity=local.key.identity, local=local.value, final=final.value),
-                )
+                match matching_record(bodies, local):
+                    Some(body) =>
+                        selected_records.append(
+                            SelectedBodyRecord(
+                                identity=local.key.identity,
+                                local=local.value,
+                                final=final.value,
+                                body_ir=body.value,
+                            ),
+                        )
+                    None => pass
             None => pass
     return Ok(selected_records)
 
 
+pub def select_body_inventory_except(
+    selected: Snapshot,
+    profile: str,
+    invalid: list[str],
+) -> Result[list[SelectedBodyRecord], str]:
+    """Select complete owner records except those reached by source changes prepared for this request."""
+    return Ok([record for record in select_body_inventory(selected, profile)? if record.identity not in invalid])
+
+
 pub def encode_body_inventory(records: list[SelectedBodyRecord]) -> Result[bytes, str]:
-    """Encode graph-admitted pairs for the separate native checker transport in their canonical selected order."""
+    """Encode graph-admitted checker pairs and owner frames for the separate native transport."""
     mut values: list[GraphBodyValue] = []
     for record in records:
-        values.append(GraphBodyValue(identity=record.identity, local=record.local, final=record.final))
+        values.append(
+            GraphBodyValue(identity=record.identity, local=record.local, final=record.final, body_ir=record.body_ir),
+        )
     return encode_graph_body_values(values).map_err((error) => f"selected body transport refused: {error:?}")
 
 
@@ -83,9 +104,18 @@ pub def invalid_body_owners(selected: Snapshot, changed: list[RecordKey], profil
     """Select invalid local/final owners from reverse edges only, before any program check or producer activation."""
     mut owners: set[str] = set()
     for reader in readers_of(selected, changed, profile)?:
-        if reader.family != "local" and reader.family != "final":
+        if reader.family not in ["local", "final", "body-ir"]:
             continue
         if reusable_evaluation(selected, reader, profile)? is None:
+            owners.add(reader.identity)
+    return Ok(sorted([owner for owner in owners]))
+
+
+pub def body_owners_reading(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[str], str]:
+    """Select body owners whose prior evaluations read keys with changed values staged by the current request."""
+    mut owners: set[str] = set()
+    for reader in readers_of(selected, changed, profile)?:
+        if reader.family in ["local", "final", "body-ir"]:
             owners.add(reader.identity)
     return Ok(sorted([owner for owner in owners]))
 
