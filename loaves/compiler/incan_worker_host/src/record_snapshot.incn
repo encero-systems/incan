@@ -1,0 +1,285 @@
+"""Resolve content-named compiler snapshot descriptors through the worker owner's home bakery binding."""
+
+from rust::std::rc import Rc
+from rust::std::string import String as RustString
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.json import JsonValue, parse
+from std.primitives.hash import sha256
+from pub::incan_platform.store import Lookup, Snapshot, lease, lease_token, lookup, owned, read_manifest
+from pub::incan_platform.store import read_store_identity, snapshot as store_snapshot
+from pub::incan_platform.store.disk import root as disk_root
+from pub::incan_platform.store.files import StoreError
+
+pub const SNAPSHOT_FORMAT_PROFILE: str = "incan.compiler-records/1"
+pub const STORE_VIEW_SCHEMA: str = "incan.store-view/1"
+const SNAPSHOT_SCHEMA: str = "incan.compiler-snapshot/1"
+const SNAPSHOT_FAMILY: str = "incan.compiler.snapshot"
+
+
+@derive(Eq)
+pub enum SnapshotFaultKind(str):
+    """Closed worker snapshot faults; none authorizes a fallback or partial read receipt."""
+
+    MissingBinding = "missing-binding"
+    InvalidBinding = "invalid-binding"
+    StoreMismatch = "store-mismatch"
+    MissingDescriptor = "missing-descriptor"
+    InvalidDescriptor = "invalid-descriptor"
+    ProfileMismatch = "profile-mismatch"
+    SnapshotMismatch = "snapshot-mismatch"
+    RootOutside = "root-outside"
+    Store = "store"
+
+
+pub model SnapshotFault with Error:
+    """One typed failure to resolve or read a staged compiler snapshot."""
+
+    pub kind: SnapshotFaultKind
+    pub detail: str
+
+    pub def message(self) -> str:
+        """Return the bounded compiler-fault detail."""
+        return f"{self.kind.value()}: {self.detail}"
+
+
+@derive(Eq)
+pub model StoreView:
+    """The only home-local locator for a physical bakery and its home view."""
+
+    pub store_id: str
+    pub locator: str
+    pub home_view: str
+
+
+@derive(Eq)
+pub model SnapshotHandle:
+    """One leased immutable store view and the record roots a compiler activation may read."""
+
+    pub store_id: str
+    pub generation: int
+    pub manifest: str
+    pub view: str
+    pub view_revision: str
+    pub allowed_roots: list[str]
+    pub lease: str
+    pub format_profile: str
+
+
+pub class ResolvedSnapshot:
+    """An exact pinned view whose reads enforce the descriptor's allowed-root invariant."""
+
+    snapshot: Snapshot
+    allowed_roots: list[str]
+
+    @staticmethod
+    pub def open(snapshot: Snapshot, allowed_roots: list[str]) -> ResolvedSnapshot:
+        """Create a resolved reader only after descriptor and lease validation succeeds."""
+        return ResolvedSnapshot(snapshot=snapshot, allowed_roots=allowed_roots)
+
+    pub def read(self, key: str) -> Result[Lookup, SnapshotFault]:
+        """Read one selected record only when its exact key or family root is inside the staged envelope."""
+        if not allowed(self.allowed_roots, key):
+            return Err(fault(SnapshotFaultKind.RootOutside, key))
+        return lookup(self.snapshot, key).map_err((error) => store_fault(error))
+
+
+pub def encode_store_view(binding: StoreView) -> Result[str, str]:
+    """Encode the canonical home bakery binding."""
+    return JsonValue
+        .object(
+            {"schema": JsonValue.string(STORE_VIEW_SCHEMA), "store_id": JsonValue.string(binding.store_id), "locator": JsonValue.string(
+                binding.locator,
+            ), "home_view": JsonValue.string(binding.home_view)},
+        )
+        .to_json()
+        .map_err((error) => error.message())
+
+
+pub def encode_snapshot_handle(handle: SnapshotHandle) -> Result[str, str]:
+    """Encode the descriptor bytes whose digest travels in a worker activation."""
+    return JsonValue
+        .object(
+            {"schema": JsonValue.string(SNAPSHOT_SCHEMA), "store_id": JsonValue.string(handle.store_id), "generation": JsonValue.int(
+                handle.generation,
+            ), "manifest": JsonValue.string(handle.manifest), "view": JsonValue.string(handle.view), "view_revision": JsonValue.string(
+                handle.view_revision,
+            ), "allowed_roots": JsonValue.array([JsonValue.string(root) for root in handle.allowed_roots]), "lease": JsonValue.string(
+                handle.lease,
+            ), "format_profile": JsonValue.string(handle.format_profile)},
+        )
+        .to_json()
+        .map_err((error) => error.message())
+
+
+pub def snapshot_handle_digest(handle: SnapshotHandle) -> Result[str, str]:
+    """Return the content identity of one canonical snapshot descriptor."""
+    return Ok(hexlify(sha256.digest(encode_snapshot_handle(handle)?.encode("utf-8"))))
+
+
+pub def snapshot_record_key(digest: str) -> str:
+    """Return the engine-owned store key for one content-named descriptor."""
+    return f"{SNAPSHOT_FAMILY}\t{digest}"
+
+
+pub def canonical_roots(roots: list[str]) -> Result[list[str], str]:
+    """Sort and deduplicate nonempty record roots so descriptor identity has one spelling."""
+    mut canonical: list[str] = []
+    for root in sorted(roots):
+        if root == "" or "\t" in root or root.strip() != root:
+            return Err("snapshot allowed roots must be nonempty record-family names")
+        if root not in canonical:
+            canonical.append(root)
+    if len(canonical) == 0:
+        return Err("snapshot descriptor requires at least one allowed root")
+    return Ok(canonical)
+
+
+pub def resolve_snapshot(home: str, digest: str) -> Result[ResolvedSnapshot, SnapshotFault]:
+    """
+    Resolve one activation digest through `<home>/bakery.view`, reopen its exact view revision and acquire its lease.
+
+    The protocol contributes no locator or capability: a missing descriptor, wrong store/profile/revision or expired
+    lease is a compiler fault before any producer read begins.
+    """
+    if not valid_digest(digest):
+        return Err(fault(SnapshotFaultKind.MissingDescriptor, digest))
+    binding_path = Path(home).joinpath("bakery.view")
+    if not binding_path.is_file():
+        return Err(fault(SnapshotFaultKind.MissingBinding, binding_path.0))
+    binding_text = binding_path
+        .read_text("utf-8", "strict")
+        .map_err((error) => fault(SnapshotFaultKind.InvalidBinding, error.message()))?
+    binding = decode_store_view(binding_text).map_err((detail) => fault(SnapshotFaultKind.InvalidBinding, detail))?
+    root = disk_root(binding.locator)
+    selected_store = read_store_identity(root).map_err((error) => store_fault(error))?
+    if selected_store != binding.store_id:
+        return Err(fault(SnapshotFaultKind.StoreMismatch, binding.store_id))
+
+    home_view = store_snapshot(root, binding.home_view).map_err((error) => store_fault(error))?
+    encoded = match lookup(home_view, snapshot_record_key(digest)).map_err((error) => store_fault(error))?:
+        Lookup.Found(value) => owned(value)
+        Lookup.Deleted => return Err(fault(SnapshotFaultKind.MissingDescriptor, digest))
+        Lookup.Absent => return Err(fault(SnapshotFaultKind.MissingDescriptor, digest))
+
+    text = RustString.from_utf8(encoded).map_err((_) => fault(SnapshotFaultKind.InvalidDescriptor, digest))?
+    handle = decode_snapshot_handle(str(text)).map_err((detail) => fault(SnapshotFaultKind.InvalidDescriptor, detail))?
+    expected = snapshot_handle_digest(handle).map_err((detail) => fault(SnapshotFaultKind.InvalidDescriptor, detail))?
+    if expected != digest:
+        return Err(fault(SnapshotFaultKind.InvalidDescriptor, "descriptor digest mismatch"))
+    if handle.store_id != binding.store_id:
+        return Err(fault(SnapshotFaultKind.StoreMismatch, handle.store_id))
+    if handle.format_profile != SNAPSHOT_FORMAT_PROFILE:
+        return Err(fault(SnapshotFaultKind.ProfileMismatch, handle.format_profile))
+    roots = canonical_roots(handle.allowed_roots).map_err((detail) => fault(SnapshotFaultKind.InvalidDescriptor, detail))?
+    if roots != handle.allowed_roots:
+        return Err(fault(SnapshotFaultKind.InvalidDescriptor, "allowed roots are not canonical"))
+
+    mut exact = read_manifest(root, handle.generation, handle.manifest, handle.view).map_err(
+        (error) => store_fault(error),
+    )?
+    if exact.index != handle.view_revision or lease_token(exact) != handle.lease:
+        return Err(fault(SnapshotFaultKind.SnapshotMismatch, digest))
+    exact.pin = Some(Rc.new(lease(exact).map_err((error) => store_fault(error))?))
+    return Ok(ResolvedSnapshot.open(exact, roots))
+
+
+def decode_store_view(text: str) -> Result[StoreView, str]:
+    """Decode one exact home bakery binding."""
+    document = parse(text).map_err((error) => error.message())?
+    if required_text(document, "schema")? != STORE_VIEW_SCHEMA:
+        return Err("unsupported bakery view schema")
+    binding = StoreView(
+        store_id=required_text(document, "store_id")?,
+        locator=required_text(document, "locator")?,
+        home_view=required_text(document, "home_view")?,
+    )
+    if binding.locator == "" or not binding.locator.startswith("/") or binding.home_view == "":
+        return Err("bakery view requires an absolute locator and a home view")
+    return Ok(binding)
+
+
+def decode_snapshot_handle(text: str) -> Result[SnapshotHandle, str]:
+    """Decode one exact compiler snapshot descriptor."""
+    document = parse(text).map_err((error) => error.message())?
+    if required_text(document, "schema")? != SNAPSHOT_SCHEMA:
+        return Err("unsupported compiler snapshot schema")
+    generation = required_int(document, "generation")?
+    if generation < 1:
+        return Err("compiler snapshot generation must be positive")
+    return Ok(
+        SnapshotHandle(
+            store_id=required_text(document, "store_id")?,
+            generation=generation,
+            manifest=required_text(document, "manifest")?,
+            view=required_text(document, "view")?,
+            view_revision=required_text(document, "view_revision")?,
+            allowed_roots=required_strings(document, "allowed_roots")?,
+            lease=required_text(document, "lease")?,
+            format_profile=required_text(document, "format_profile")?,
+        ),
+    )
+
+
+def required_text(document: JsonValue, name: str) -> Result[str, str]:
+    """Read one required string field without accepting another JSON kind."""
+    match document.get(name):
+        Some(value) =>
+            match value.as_str():
+                Some(found) => return Ok(found)
+                None => return Err(f"`{name}` must be text")
+        None => return Err(f"missing `{name}`")
+
+
+def required_int(document: JsonValue, name: str) -> Result[int, str]:
+    """Read one required integer field without accepting another JSON kind."""
+    match document.get(name):
+        Some(value) =>
+            match value.as_int():
+                Some(found) => return Ok(found)
+                None => return Err(f"`{name}` must be an integer")
+        None => return Err(f"missing `{name}`")
+
+
+def required_strings(document: JsonValue, name: str) -> Result[list[str], str]:
+    """Read one required array containing only strings."""
+    match document.get(name):
+        None => return Err(f"missing `{name}`")
+        Some(value) =>
+            match value.as_array():
+                None => return Err(f"`{name}` must be an array of strings")
+                Some(items) =>
+                    mut result: list[str] = []
+                    for item in items:
+                        match item.as_str():
+                            Some(found) => result.append(found)
+                            None => return Err(f"`{name}` must be an array of strings")
+                    return Ok(result)
+
+
+def allowed(roots: list[str], key: str) -> bool:
+    """Whether an exact key belongs to one allowed family root."""
+    for root in roots:
+        if key == root or key.startswith(root + "\t"):
+            return true
+    return false
+
+
+def valid_digest(value: str) -> bool:
+    """Whether a descriptor identity is one lowercase SHA-256 digest."""
+    if len(value) != 64:
+        return false
+    for character in value:
+        if character not in "0123456789abcdef":
+            return false
+    return true
+
+
+def fault(kind: SnapshotFaultKind, detail: str) -> SnapshotFault:
+    """Create one typed snapshot fault."""
+    return SnapshotFault(kind=kind, detail=detail)
+
+
+def store_fault(error: StoreError) -> SnapshotFault:
+    """Keep a typed store failure inside the compiler-fault boundary."""
+    return fault(SnapshotFaultKind.Store, error.message())

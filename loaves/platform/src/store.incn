@@ -8,6 +8,7 @@ The disk placement keeps this layout under its store root; the memory placement 
 format bytes without naming host paths:
 
 - `FORMAT`: the format this store is written in; a store in another format is refused, never read as empty.
+- `STORE_ID`: the persistent physical bakery identity; moving its locator does not change the store.
 - `CURRENT`: the committed generation and the digest of its manifest; replaced by rename, never edited.
 - `RETAINED`: collection's generation boundary and exact historical view leases; expired descriptors cannot reopen.
 - `snapshots/<generation>.<digest>.manifest`: one generation's parent, transaction, segment inventory, and the index
@@ -43,6 +44,7 @@ from std.primitives.hex import hexlify
 from std.primitives.locking import LockGuard
 from std.primitives.views import MappedView
 from crate.trace.schema import Operation
+from crate.ipc import session_id
 from crate.store.files import file_digest
 from crate.store.index import Entry, Location, build, entries as index_entries, find as index_find, insert
 from crate.store.index import copied_index_bytes, page_path, page_reads, view_digest, staged_pages
@@ -67,6 +69,7 @@ from crate.store.path import StorePath as Path
 
 const FORMAT: str = "incan.segment-store/3"
 const MANIFEST_SCHEMA: str = "incan.segment-manifest/3"
+const STORE_ID_LENGTH: int = 32
 pub const HOME_VIEW: str = "home"
 pub const EXPECT_ANY: int = 0
 pub const EXPECT_ABSENT: int = 1
@@ -138,6 +141,37 @@ pub model ReadCounts:
 
 # Reads this process made, for measuring what a compile reads; nothing is cached by them.
 static counted: dict[str, int] = {}
+
+
+pub def store_identity(root: Path) -> Result[str, StoreError]:
+    """Return the physical store's persistent identity, provisioning it once under the store lifecycle lock."""
+    ensure_directory(root)?
+    ensure_directory(root.joinpath("locks"))?
+    identity = root.joinpath("STORE_ID")
+    held = root.joinpath("locks/store-id").store_lock_exclusive().map_err((error) => io_failure(identity, error))?
+    match read_store_identity(root):
+        Ok(found) => return Ok(found)
+        Err(error) =>
+            if identity.exists():
+                return Err(error)
+    generated = hexlify(session_id().map_err((detail) => failure("io", identity.value, detail))?)
+    place_synced(identity, (generated + "\n").encode("utf-8"))?
+    sync_directory(root)?
+    return Ok(generated)
+
+
+pub def read_store_identity(root: Path) -> Result[str, StoreError]:
+    """Read an already-provisioned physical store identity without creating or selecting another store."""
+    identity = root.joinpath("STORE_ID")
+    if not identity.is_file():
+        return Err(failure("format", identity.value, "physical store has no persistent identity"))
+    value = identity.store_read_text("utf-8", "strict").map_err((error) => io_failure(identity, error))?.strip()
+    if len(value) != STORE_ID_LENGTH:
+        return Err(failure("format", identity.value, "malformed physical store identity"))
+    for character in value:
+        if character not in "0123456789abcdef":
+            return Err(failure("format", identity.value, "malformed physical store identity"))
+    return Ok(value)
 
 
 pub def read_counts() -> ReadCounts:

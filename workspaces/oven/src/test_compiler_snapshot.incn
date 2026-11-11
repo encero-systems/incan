@@ -1,0 +1,64 @@
+"""Compiler-record snapshot descriptors cross only the content-named bakery boundary."""
+
+from rust::std::str import from_utf8
+from std.fs import Path
+from compiler_snapshot import stage_snapshot
+from pub::incan_platform.store import Lookup, begin, commit, fork, owned, put
+from pub::incan_worker_host.record_snapshot import SNAPSHOT_FORMAT_PROFILE, SnapshotFaultKind, resolve_snapshot
+from scratch import scratch_directory
+from store_path_conversion import snapshot
+
+
+def text(value: Lookup) -> Result[str, str]:
+    """Decode one found test value without treating another store state as bytes."""
+    match value:
+        Lookup.Found(found) => return Ok(str(from_utf8(owned(found)).map_err((error) => str(error))?))
+        Lookup.Deleted => return Err("snapshot read selected a tombstone")
+        Lookup.Absent => return Err("snapshot read selected absence")
+
+
+pub def test_snapshot_descriptors_are_staged_resolved_and_scoped_by_digest() -> Result[None, str]:
+    """
+    An owner stages one exact leased view under its content digest; the worker reopens that revision through the
+    home's bakery binding, while a missing digest, wrong format profile or read outside the allowed roots is a fault.
+    """
+    scratch = scratch_directory()?
+    home = scratch.path().joinpath("home")
+    store = scratch.path().joinpath("bakery")
+    home.mkdir(true, true).map_err((error) => error.message())?
+    store.mkdir(true, true).map_err((error) => error.message())?
+
+    base = commit(put(begin(snapshot(store).map_err((error) => error.message())?), "home", b"ready")).map_err(
+        (error) => error.message(),
+    )?
+    mut project = fork(base, "project").map_err((error) => error.message())?
+    project = commit(put(put(begin(project), "compiler.input\tallowed", b"old"), "compiler.other\toutside", b"outside")).map_err(
+        (error) => error.message(),
+    )?
+
+    staged = stage_snapshot(home, store, project, ["compiler.input"], SNAPSHOT_FORMAT_PROFILE)?
+    assert len(staged.digest) == 64
+    opened = resolve_snapshot(home.0, staged.digest).map_err((fault) => fault.message())?
+    first = opened.read("compiler.input\tallowed").map_err((fault) => fault.message())?
+    assert text(first)? == "old"
+
+    project = commit(put(begin(project), "compiler.input\tallowed", b"new")).map_err((error) => error.message())?
+    retained = opened.read("compiler.input\tallowed").map_err((fault) => fault.message())?
+    assert text(retained)? == "old", "worker followed the mutable project head"
+
+    match opened.read("compiler.other\toutside"):
+        Err(fault) =>
+            assert fault.kind == SnapshotFaultKind.RootOutside
+        Ok(_) => return Err("snapshot descriptor allowed a read outside its roots")
+
+    match resolve_snapshot(home.0, "0000000000000000000000000000000000000000000000000000000000000000"):
+        Err(fault) =>
+            assert fault.kind == SnapshotFaultKind.MissingDescriptor
+        Ok(_) => return Err("worker resolved a digest the bakery does not hold")
+
+    wrong = stage_snapshot(home, store, project, ["compiler.input"], "incan.compiler-records/wrong")?
+    match resolve_snapshot(home.0, wrong.digest):
+        Err(fault) =>
+            assert fault.kind == SnapshotFaultKind.ProfileMismatch
+        Ok(_) => return Err("worker accepted a snapshot descriptor with the wrong format profile")
+    return Ok(None)
