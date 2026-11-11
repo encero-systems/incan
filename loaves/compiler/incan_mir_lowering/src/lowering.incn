@@ -423,43 +423,37 @@ pub def resume_unit_plan(
     previous_static_count = len(context.as_ref().static_declarations)
     refresh_entry_context(Arc.make_mut(context), borrowed_at(modules, entry))
     additions = continuation_inputs(source_context.as_ref(), context.as_ref(), owners, modules, sources, files)?
-    if len(additions.modules) == 0:
-        return Err("resolved runtime closure added no continuation facts")
-    addition_source_files = source_file_index(additions.modules, additions.files)?
-    added_source_context, _added_constructors, _added_owners, added_context, added_nominals, added_template_references = plan_contexts(
-        additions.modules,
-        additions.sources,
-        additions.files,
-        0,
-        false,
-        addition_source_files,
-        package_versions,
-    )?
-    extend_continuation_context(
-        Arc.make_mut(source_context),
-        Arc.make_mut(context),
-        Arc.make_mut(template_constructors),
-        owners,
-        retained_sources,
-        retained_files,
-        template_references,
-        retained_nominals,
-        additions,
-        added_source_context,
-        added_context,
-        added_template_references,
-        added_nominals,
-    )?
+    if len(additions.modules) != 0:
+        addition_source_files = source_file_index(additions.modules, additions.files)?
+        added_source_context, _added_constructors, _added_owners, added_context, added_nominals, added_template_references = plan_contexts(
+            additions.modules,
+            additions.sources,
+            additions.files,
+            0,
+            false,
+            addition_source_files,
+            package_versions,
+        )?
+        extend_continuation_context(
+            Arc.make_mut(source_context),
+            Arc.make_mut(context),
+            Arc.make_mut(template_constructors),
+            owners,
+            retained_sources,
+            retained_files,
+            template_references,
+            retained_nominals,
+            additions,
+            added_source_context,
+            added_context,
+            added_template_references,
+            added_nominals,
+        )?
     extend_constructor_authority(Arc.make_mut(template_constructors), source_files, package_versions)
     extend_constructor_index(Arc.make_mut(constructors), context.as_ref().nominal_declarations)
     extend_constructor_authority(Arc.make_mut(constructors), source_files, package_versions)
     extend_unions(unions, context.as_ref())
-    intrinsics = intrinsic_declarations(
-        constructors.as_ref(),
-        context.as_ref(),
-        entry_file,
-        intrinsics,
-    )?
+    intrinsics = intrinsic_declarations(constructors.as_ref(), context.as_ref(), entry_file, intrinsics)?
     resume_plan_roots(
         program,
         constructors,
