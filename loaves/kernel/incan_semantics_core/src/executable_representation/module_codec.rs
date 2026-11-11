@@ -40,6 +40,49 @@ pub fn decode_module(bytes: &[u8]) -> Result<BodyIrModule, ExecutableRepresentat
     Ok(framed.module)
 }
 
+/// Encode one checked executable owner with its module and logical-source provenance.
+///
+/// This is the durable value for per-owner Body IR records. It deliberately serializes the kernel's native [`Body`]
+/// contract rather than projecting it through an independently maintained compiler-record model.
+pub fn encode_owner(
+    module: &CompilerNodeId,
+    source: &str,
+    body: &Body,
+) -> Result<Vec<u8>, ExecutableRepresentationError> {
+    /// Postcard encodes the borrowed fields identically to [`EncodedOwnerRepresentation`] without cloning the body.
+    #[derive(Serialize)]
+    struct BorrowedOwnerFrame<'owner> {
+        version: u32,
+        module: &'owner CompilerNodeId,
+        source: &'owner str,
+        body: &'owner Body,
+    }
+    postcard::to_allocvec(&BorrowedOwnerFrame {
+        version: EXECUTABLE_REPRESENTATION_VERSION,
+        module,
+        source,
+        body,
+    })
+    .map_err(|error| ExecutableRepresentationError::Malformed {
+        reason: format!("could not encode the executable owner: {error}"),
+    })
+}
+
+/// Decode one checked executable owner, refusing an unfamiliar version before exposing its Body IR.
+pub fn decode_owner(bytes: &[u8]) -> Result<EncodedOwnerRepresentation, ExecutableRepresentationError> {
+    require_supported_version(bytes)?;
+    let (framed, remainder): (EncodedOwnerRepresentation, _) =
+        postcard::take_from_bytes(bytes).map_err(|error| ExecutableRepresentationError::Malformed {
+            reason: format!("could not decode the executable owner: {error}"),
+        })?;
+    if !remainder.is_empty() {
+        return Err(ExecutableRepresentationError::Malformed {
+            reason: "executable owner has trailing bytes".into(),
+        });
+    }
+    Ok(framed)
+}
+
 /// Read the version a representation declares without interpreting the module it carries.
 ///
 /// A consumer resolving dependencies needs to know whether it can execute a package before it commits to using it.
