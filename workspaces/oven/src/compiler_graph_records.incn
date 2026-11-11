@@ -15,6 +15,7 @@ from pub::internal_models.records import (
     encode_record_key,
 )
 from files import json_text
+from compiler_record_envelopes import stage_name
 
 const EVALUATION_SCHEMA: str = "incan.engine.evaluation/1"
 const RECEIPT_SCHEMA: str = "incan.engine.read-receipt/1"
@@ -199,20 +200,6 @@ def selection_document(request: RecordRequest) -> JsonValue:
                     members.continuation,
                 )},
             )
-
-
-def stage_name(stage: ProducerStage) -> str:
-    """Encode the closed producer-stage set without giving persistence authority to enum ordinals."""
-    match stage:
-        ProducerStage.Discover => return "discover"
-        ProducerStage.Signature => return "signature"
-        ProducerStage.Layout => return "layout"
-        ProducerStage.Default => return "default"
-        ProducerStage.CheckBody => return "check-body"
-        ProducerStage.BodyIr => return "body-ir"
-        ProducerStage.Instance => return "instance"
-        ProducerStage.PlanFunction => return "plan-function"
-        ProducerStage.NativeInterface => return "native-interface"
 
 
 def digest(value: bytes) -> str:
