@@ -171,6 +171,8 @@ pub(crate) struct Dependencies {
     rustc_args: Vec<String>,
     /// A development executable may link exact native carriers from this immutable store.
     shared_native: Option<PathBuf>,
+    /// Separate graph-selected checker values supplied by the engine; these bytes never enter the unit description.
+    graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
 }
 
 impl Dependencies {
@@ -209,6 +211,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     let mut library = false;
     let mut rustc_args = Vec::new();
     let mut shared_native = None;
+    let mut graph_body_records = incan_frontend::checker_records::GraphBodyRecords::default();
     let mut remaining = arguments.iter();
     while let Some(option) = remaining.next() {
         if option == "--library" {
@@ -219,6 +222,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         match option.as_str() {
             "--rustc-arg" => rustc_args.push(value.clone()),
             "--shared-native" => shared_native = Some(PathBuf::from(value)),
+            "--graph-body-records" => graph_body_records = read_graph_body_records(Path::new(value))?,
             _ => return Err(format!("unknown native source option {option}")),
         }
     }
@@ -236,7 +240,26 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         library,
         rustc_args,
         shared_native,
+        graph_body_records,
     })
+}
+
+/// Decode the engine's separate graph-record transport through the Incan-owned schema before native checking.
+fn read_graph_body_records(path: &Path) -> Result<incan_frontend::checker_records::GraphBodyRecords, String> {
+    let encoded =
+        std::fs::read(path).map_err(|error| format!("cannot read graph body records {}: {error}", path.display()))?;
+    let decoded = internal_models::decode_graph_body_values(&encoded)
+        .map_err(|error| format!("graph body record transport refused: {error:?}"))?;
+    let records = decoded
+        .into_iter()
+        .map(|record| incan_frontend::checker_records::GraphBodyRecord {
+            identity: record.identity,
+            local: record.local,
+            final_value: record.final_fields,
+        })
+        .collect();
+    incan_frontend::checker_records::GraphBodyRecords::new(records)
+        .map_err(|error| format!("graph body record inventory refused: {error:?}"))
 }
 
 /// Run source, frontend, canonical Body IR, Incan lowering, plan validation, adapter, and pinned native compilation.
@@ -263,7 +286,7 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
     let overflow_checks = unit.profile != "release";
     let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
     let receipt = RefusalReceipt(None);
-    let mut program = check_compilation_source(unit, rust, false, receipt.clone())?;
+    let mut program = check_compilation_source(unit, rust, false, receipt.clone(), dependencies.graph_body_records)?;
     lower_compilation_plan(
         &mut program,
         kind,
@@ -323,7 +346,13 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
 
     // ---- Checked source and governed publication ----
     let program = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
-        checked_modules(&unit, &rust, false, &RefusalReceipt(None))
+        checked_modules(
+            &unit,
+            &rust,
+            false,
+            &RefusalReceipt(None),
+            dependencies.graph_body_records,
+        )
     })?;
     let manifest = program
         .manifest
@@ -354,7 +383,7 @@ pub(crate) fn compile_resident(arguments: &[String]) -> Result<(), Box<dyn std::
 fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err(
-            "usage: --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [--rustc-arg ARG] [--library] [--shared-native DIR]"
+            "usage: --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [--rustc-arg ARG] [--library] [--shared-native DIR] [--graph-body-records PATH]"
                 .into(),
         );
     }
@@ -388,7 +417,13 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     let access = unit.toolchain_access.clone();
     let rust = dependencies.rust_facts(&unit, Path::new(&arguments[3]));
     let native_products = callable_products::native_directory(&unit);
-    let mut program = check_compilation_source(unit, rust, resident, receipt.clone())?;
+    let mut program = check_compilation_source(
+        unit,
+        rust,
+        resident,
+        receipt.clone(),
+        dependencies.graph_body_records.clone(),
+    )?;
     if census_complete(&mut program, kind, overflow_checks)? {
         return Ok(());
     }
@@ -467,11 +502,12 @@ fn check_compilation_source(
     rust: RustFactsSetup,
     resident: bool,
     receipt: RefusalReceipt,
+    graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
 ) -> Result<CheckedProgram, Box<dyn std::error::Error>> {
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(&unit, &rust, resident, &receipt)
+        checked_modules(&unit, &rust, resident, &receipt, graph_body_records)
     });
     match checked {
         Ok(program) => Ok(program),

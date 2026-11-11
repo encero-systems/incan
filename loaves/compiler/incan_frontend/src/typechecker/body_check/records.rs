@@ -103,6 +103,13 @@ impl TypeChecker {
         self.produced_final_records.get(&owner)
     }
 
+    /// Borrow either the final value evaluated in this activation or the graph-selected settled predecessor.
+    pub(crate) fn available_final_record(&self, owner: Span) -> Option<&Fields> {
+        self.produced_final_records
+            .get(&owner)
+            .or_else(|| self.selected_final_records.get(&owner))
+    }
+
     /// Clone the explicit refusal returned by this activation's direct final producer.
     pub(crate) fn final_record_refusal(&self, owner: Span) -> Option<NodeBindingError> {
         self.final_record_refusals.get(&owner).cloned()
@@ -116,6 +123,65 @@ impl TypeChecker {
     /// Report whether the current activation selected a declaration value for this exact source owner.
     pub(crate) fn has_declaration_record(&self, owner: Span) -> bool {
         self.callable_declaration_reuse.contains_key(&owner)
+    }
+
+    /// Restore one graph-selected final value against current compiler identities and syntax, then enqueue it for the
+    /// ordinary checked-body settlement join. A refusal leaves the caller on fresh body checking and publishes no
+    /// selected value.
+    pub(in crate::typechecker) fn reuse_graph_body_record(
+        &mut self,
+        program: &Program,
+        owner: Span,
+    ) -> Result<bool, NodeBindingError> {
+        let identity = Positions::new(self, program, owner, false)?
+            .nodes
+            .owner()
+            .render_compact();
+        let Some(selected) = self.graph_body_records.get(&identity) else {
+            return Ok(false);
+        };
+        // The checker owns selected rows after this boundary so its publication view cannot outlive the invocation
+        // transport. This is the one deliberate copy from immutable transport into checker-owned selected output.
+        let local_fields = selected.local.clone();
+        let final_fields = selected.final_value.clone();
+        let positions = Positions::for_decoded_local(self, program, owner, &local_fields)?;
+        let restored = restore(&positions, program, owner, &final_fields)?;
+        if restored.binding.is_some() || !restored.defaults.is_empty() {
+            return Err(NodeBindingError::InvalidField(
+                "body record carried declaration output".into(),
+            ));
+        }
+        let canonical = self
+            .declaration_view()
+            .function(owner)
+            .and_then(|binding| binding.identity.as_ref())
+            .cloned()
+            .ok_or(NodeBindingError::MissingOwner)?;
+        let mut diagnostic_positions = DiagnosticPositions::new(program, self.symbols.declaration_origin());
+        self.reuse_checked_body(Arc::new(restored.view), &mut diagnostic_positions)
+            .map_err(|_| NodeBindingError::ChangedBody)?;
+        match restored.ownership {
+            Some(contract) => {
+                self.type_info
+                    .declarations
+                    .ownership_contracts
+                    .insert(canonical.clone(), contract);
+            }
+            None => {
+                self.type_info.declarations.ownership_contracts.remove(&canonical);
+            }
+        }
+        self.type_info
+            .expressions
+            .body_ir_expr_types
+            .extend(restored.final_types.expressions);
+        self.type_info
+            .expressions
+            .body_ir_binding_types
+            .extend(restored.final_types.bindings);
+        self.selected_local_records.insert(owner, local_fields);
+        self.selected_final_records.insert(owner, final_fields);
+        Ok(true)
     }
 
     /// Restore one selected declaration value through current coordinates, publish its own final facts and enqueue

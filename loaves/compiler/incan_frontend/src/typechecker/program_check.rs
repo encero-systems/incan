@@ -198,6 +198,7 @@ impl TypeChecker {
         self.produced_declaration_records.clear();
         self.produced_local_records.clear();
         self.selected_local_records.clear();
+        self.selected_final_records.clear();
         self.produced_final_records.clear();
         self.final_record_refusals.clear();
         self.callable_declaration_reuse.clear();

@@ -24,9 +24,11 @@ impl TypeChecker {
             produced_declaration_records: std::collections::BTreeMap::new(),
             produced_local_records: std::collections::BTreeMap::new(),
             selected_local_records: std::collections::BTreeMap::new(),
+            selected_final_records: std::collections::BTreeMap::new(),
             produced_final_records: std::collections::BTreeMap::new(),
             final_record_refusals: std::collections::BTreeMap::new(),
             callable_declaration_reuse: std::collections::BTreeMap::new(),
+            graph_body_records: crate::checker_records::GraphBodyRecords::default(),
             lazy_result_bodies: HashSet::new(),
             iteration_replacement_bodies: HashSet::new(),
             dictionary_lookup_bodies: HashSet::new(),
@@ -175,6 +177,11 @@ impl TypeChecker {
     /// run; only admitted scalar bodies with complete source-call witnesses skip checking and feed Body IR directly.
     pub fn set_callable_body_reuse(&mut self, products: crate::declaration_interface::ValidatedCallableBodies) {
         self.callable_body_reuse = Some(products);
+    }
+
+    /// Install graph-admitted checker values for identity-based selection at the free-function body boundary.
+    pub fn set_graph_body_records(&mut self, records: crate::checker_records::GraphBodyRecords) {
+        self.graph_body_records = records;
     }
 
     /// Set the declared Rust crate names from `loaf.toml [rust-dependencies]` for checked direct imports and derives.

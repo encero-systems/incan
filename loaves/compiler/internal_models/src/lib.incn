@@ -125,5 +125,13 @@ pub from activation_envelopes import (
     envelope_key,
     stage_name,
 )
-pub from checker_records import from_native_final_fields, from_native_local_fields, encode_record
+pub from checker_records import (
+    GraphBodyValue,
+    GraphBodyFields,
+    from_native_final_fields,
+    from_native_local_fields,
+    encode_record,
+    encode_graph_body_values,
+    decode_graph_body_values,
+)
 pub from read_receipts import RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt

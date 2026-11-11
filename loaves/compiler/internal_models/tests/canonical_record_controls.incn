@@ -6,7 +6,10 @@ from checker_records import (
     CheckedFamily,
     CheckedRecord,
     CodecFault,
+    GraphBodyValue,
+    decode_graph_body_values,
     encode_record,
+    encode_graph_body_values,
     decode_record,
     semantic_digest,
     from_native_final_fields,
@@ -113,7 +116,29 @@ def local_record_controls(source: str, moved: str) -> Result[None, str]:
     assert encode_record(final_record).map_err((_) => "final encode")? == encode_record(direct).map_err(
         (_) => "direct final encode",
     )?
+    graph_transport_controls(before, final_record)?
     println(f"canonical-record local fields={len(before.fields)} bytes={len(encoded)} stable=true")
+    return Ok(None)
+
+
+def graph_transport_controls(local: CheckedRecord, final: CheckedRecord) -> Result[None, str]:
+    """The separate graph transport admits only a same-owner, same-root local/final pair in canonical owner order."""
+    local_bytes = encode_record(local).map_err((_) => "graph local encode")?
+    final_bytes = encode_record(final).map_err((_) => "graph final encode")?
+    transport = encode_graph_body_values([GraphBodyValue(identity=local.owner, local=local_bytes, final=final_bytes)]).map_err(
+        (_) => "graph transport encode",
+    )?
+    selected = decode_graph_body_values(transport).map_err((_) => "graph transport decode")?
+    assert len(selected) == 1
+    assert selected[0].identity == local.owner
+    assert selected[0].local == native_fields(local).map_err((_) => "graph local fields")?
+    assert selected[0].final_fields == native_fields(final).map_err((_) => "graph final fields")?
+    match encode_graph_body_values([GraphBodyValue(identity="wrong", local=local_bytes, final=final_bytes)]):
+        Err(CodecFault.OwnerMismatch) => pass
+        _ => return Err("graph transport accepted a mismatched owner")
+    match encode_graph_body_values([GraphBodyValue(identity=local.owner, local=final_bytes, final=local_bytes)]):
+        Err(CodecFault.Malformed) => pass
+        _ => return Err("graph transport accepted crossed families")
     return Ok(None)
 
 

@@ -56,6 +56,7 @@ pub fn typecheck_modules(
         std::path::PathBuf,
         incan_frontend::declaration_interface::ValidatedCallableBodies,
     >,
+    graph_body_records: &incan_frontend::checker_records::GraphBodyRecords,
 ) -> Result<TypecheckedModules, CliDiagnosticFailure> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::typecheck_modules").entered();
     let declared = unit
@@ -120,6 +121,7 @@ pub fn typecheck_modules(
         if let Some(products) = body_reuse.get(&module.file_path) {
             checker.set_callable_body_reuse(products.clone());
         }
+        checker.set_graph_body_records(graph_body_records.clone());
         checker
     };
 
