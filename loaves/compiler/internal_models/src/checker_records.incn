@@ -8,7 +8,7 @@ pub const CHECKER_PROFILE: str = "incan.checker-free-functions/10"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/1"
-const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/1"
+const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/2"
 const MAX_GRAPH_TRANSPORT_BYTES: int = 16777216
 
 
@@ -67,6 +67,23 @@ pub model CompiledBodyValue:
     pub declaration: bytes
     pub local: bytes
     pub final: bytes
+
+
+@derive(Eq)
+pub model CompiledBodyFallback:
+    """One checked owner that cannot enter the record fast path, with the bounded codec refusal that kept it out."""
+
+    pub module: str
+    pub name: str
+    pub identity: str
+    pub reason: str
+
+
+pub model CompiledBodyOutputs:
+    """Every record-eligible value and explicit full-source fallback from one successful compilation."""
+
+    pub values: list[CompiledBodyValue]
+    pub fallbacks: list[CompiledBodyFallback]
 
 
 @derive(Eq)
@@ -367,13 +384,13 @@ pub def decode_graph_body_values(encoded: bytes) -> Result[list[GraphBodyFields]
     return Ok(selected)
 
 
-pub def encode_compiled_body_values(values: list[CompiledBodyValue]) -> Result[bytes, CodecFault]:
-    """Encode checked producer outputs for graph publication after a successful native compilation."""
-    if len(values) > MAX_FIELDS:
+pub def encode_compiled_body_outputs(outputs: CompiledBodyOutputs) -> Result[bytes, CodecFault]:
+    """Encode eligible producer outputs and explicit full-source fallbacks after a successful native compilation."""
+    if len(outputs.values) + len(outputs.fallbacks) > MAX_FIELDS:
         return Err(CodecFault.Limit)
-    mut tokens = [COMPILED_TRANSPORT_SCHEMA, str(len(values))]
+    mut tokens = [COMPILED_TRANSPORT_SCHEMA, str(len(outputs.values)), str(len(outputs.fallbacks))]
     mut previous = ""
-    for value in values:
+    for value in outputs.values:
         order = value.module + "\n" + value.identity
         if value.module == "" or value.name == "" or value.identity == "" or order <= previous:
             return Err(CodecFault.Malformed)
@@ -387,20 +404,38 @@ pub def encode_compiled_body_values(values: list[CompiledBodyValue]) -> Result[b
             hexlify(value.final),
         ]
         previous = order
+    previous = ""
+    for fallback in outputs.fallbacks:
+        order = fallback.module + "\n" + fallback.identity
+        if (
+            fallback.module == ""
+            or fallback.name == ""
+            or fallback.identity == ""
+            or fallback.reason == ""
+            or len(fallback.reason.encode()) > MAX_RECORD_BYTES
+            or order <= previous
+        ):
+            return Err(CodecFault.Malformed)
+        for value in outputs.values:
+            if value.module == fallback.module and value.identity == fallback.identity:
+                return Err(CodecFault.Malformed)
+        tokens += [fallback.module, fallback.name, fallback.identity, fallback.reason]
+        previous = order
     return encode_transport_tokens(tokens)
 
 
-pub def decode_compiled_body_values(encoded: bytes) -> Result[list[CompiledBodyValue], CodecFault]:
-    """Decode and authenticate every compiler-produced triple before the engine may publish it."""
+pub def decode_compiled_body_outputs(encoded: bytes) -> Result[CompiledBodyOutputs, CodecFault]:
+    """Decode and authenticate every eligible triple and explicit full-source fallback before graph publication."""
     tokens = transport_frames(encoded)?
-    if len(tokens) < 2 or tokens[0] != COMPILED_TRANSPORT_SCHEMA:
+    if len(tokens) < 3 or tokens[0] != COMPILED_TRANSPORT_SCHEMA:
         return Err(CodecFault.Malformed)
     count = decimal(tokens[1])?
-    if count > MAX_FIELDS or len(tokens) != 2 + count * 6:
+    fallback_count = decimal(tokens[2])?
+    if count + fallback_count > MAX_FIELDS or len(tokens) != 3 + count * 6 + fallback_count * 4:
         return Err(CodecFault.Malformed)
     mut values: list[CompiledBodyValue] = []
     mut previous = ""
-    mut offset = 2
+    mut offset = 3
     for _ in range(count):
         value = CompiledBodyValue(
             module=tokens[offset],
@@ -417,7 +452,32 @@ pub def decode_compiled_body_values(encoded: bytes) -> Result[list[CompiledBodyV
         values.append(value)
         previous = order
         offset += 6
-    return Ok(values)
+    mut fallbacks: list[CompiledBodyFallback] = []
+    previous = ""
+    for _ in range(fallback_count):
+        fallback = CompiledBodyFallback(
+            module=tokens[offset],
+            name=tokens[offset + 1],
+            identity=tokens[offset + 2],
+            reason=tokens[offset + 3],
+        )
+        order = fallback.module + "\n" + fallback.identity
+        if (
+            fallback.module == ""
+            or fallback.name == ""
+            or fallback.identity == ""
+            or fallback.reason == ""
+            or len(fallback.reason.encode()) > MAX_RECORD_BYTES
+            or order <= previous
+        ):
+            return Err(CodecFault.Malformed)
+        for value in values:
+            if value.module == fallback.module and value.identity == fallback.identity:
+                return Err(CodecFault.Malformed)
+        fallbacks.append(fallback)
+        previous = order
+        offset += 4
+    return Ok(CompiledBodyOutputs(values=values, fallbacks=fallbacks))
 
 
 pub def record_root(encoded: bytes) -> Result[str, CodecFault]:

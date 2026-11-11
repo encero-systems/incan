@@ -6,13 +6,15 @@ from checker_records import (
     CheckedFamily,
     CheckedRecord,
     CodecFault,
+    CompiledBodyFallback,
+    CompiledBodyOutputs,
     CompiledBodyValue,
     GraphBodyValue,
     decode_graph_body_values,
-    decode_compiled_body_values,
+    decode_compiled_body_outputs,
     encode_record,
     encode_graph_body_values,
-    encode_compiled_body_values,
+    encode_compiled_body_outputs,
     decode_record,
     semantic_digest,
     from_native_final_fields,
@@ -86,11 +88,28 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         local=local_bytes,
         final=final_bytes,
     )
-    encoded = encode_compiled_body_values([value]).map_err((_) => "compiled output encode")?
-    decoded = decode_compiled_body_values(encoded).map_err((_) => "compiled output decode")?
-    assert len(decoded) == 1
-    assert decoded[0].module == value.module and decoded[0].name == value.name and decoded[0].identity == value.identity
-    assert decoded[0].declaration == value.declaration and decoded[0].local == value.local and decoded[0].final == value.final
+    fallback = CompiledBodyFallback(
+        module="src/main.incn",
+        name="other",
+        identity=local.owner + "-other",
+        reason="local record output refused: Unsupported(\"fixture\")",
+    )
+    encoded = encode_compiled_body_outputs(CompiledBodyOutputs(values=[value], fallbacks=[fallback])).map_err(
+        (_) => "compiled output encode",
+    )?
+    decoded = decode_compiled_body_outputs(encoded).map_err((_) => "compiled output decode")?
+    assert len(decoded.values) == 1 and len(decoded.fallbacks) == 1
+    assert (
+        decoded.values[0].module == value.module
+        and decoded.values[0].name == value.name
+        and decoded.values[0].identity == value.identity
+    )
+    assert (
+        decoded.values[0].declaration == value.declaration
+        and decoded.values[0].local == value.local
+        and decoded.values[0].final == value.final
+    )
+    assert decoded.fallbacks[0] == fallback
     return Ok(None)
 
 

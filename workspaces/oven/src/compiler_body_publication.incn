@@ -6,7 +6,7 @@ from pub::internal_models import (
     CompiledBodyValue,
     ProducerRank,
     ProducerStage,
-    decode_compiled_body_values,
+    decode_compiled_body_outputs,
     record_root,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE
@@ -37,10 +37,11 @@ const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
 
 
 pub model PublishedCompiledBodies:
-    """The graph generation and number of body pairs published from one successful whole check."""
+    """The graph generation and eligible/fallback body counts published from one successful whole check."""
 
     pub snapshot: Snapshot
     pub bodies: int
+    pub fallbacks: int
 
 
 pub model PublishedSourceInputs:
@@ -93,33 +94,50 @@ pub def publish_compiled_bodies(
         return Err("successful graph-enabled compile did not publish body outputs")
     encoded = output.read_bytes().map_err((error) => error.message())?
     discard_file(output)
-    values = decode_compiled_body_values(encoded).map_err((error) => f"compiled body output refused: {error:?}")?
+    outputs = decode_compiled_body_outputs(encoded).map_err((error) => f"compiled body output refused: {error:?}")?
     origin = source_origin(unit)
 
     # 2. Source and declaration values are installed before receipts authenticate their reads.
     mut current = selected
     mut modules: list[str] = []
-    for value in values:
+    for value in outputs.values:
         if value.module not in modules:
             source_path = Path(unit.project_root).joinpath(value.module)
             source = source_path.read_text("utf-8", "strict").map_err((error) => error.message())?
             current = publish_source_projection(current, project_source(origin, value.module, source)?)?.snapshot
             modules.append(value.module)
+    for fallback in outputs.fallbacks:
+        if fallback.module not in modules:
+            source_path = Path(unit.project_root).joinpath(fallback.module)
+            source = source_path.read_text("utf-8", "strict").map_err((error) => error.message())?
+            current = publish_source_projection(current, project_source(origin, fallback.module, source)?)?.snapshot
+            modules.append(fallback.module)
     mut declaration_transaction = begin(current)
-    for value in values:
+    for value in outputs.values:
         declaration_transaction = put(
             declaration_transaction,
             encode_record_key(body_key("declaration", origin, value.identity, value.name, root(value.declaration)?))?,
             value.declaration,
         )
+        declaration_transaction = put(
+            declaration_transaction,
+            encode_record_key(eligibility_key(origin, value.identity, value.name))?,
+            b"record-eligible",
+        )
+    for fallback in outputs.fallbacks:
+        declaration_transaction = put(
+            declaration_transaction,
+            encode_record_key(eligibility_key(origin, fallback.identity, fallback.name))?,
+            ("full-source: " + fallback.reason).encode("utf-8"),
+        )
     current = commit(declaration_transaction).map_err((error) => error.message())?
 
     # 3. A cold whole check publishes the same graph values later edited activations replace independently.
     mut published = 0
-    for value in values:
+    for value in outputs.values:
         projection = source_projection(unit, origin, value.module)?
         owner = owner_record(projection, value.name)?
-        declarations = module_declarations(values, origin, value.module)?
+        declarations = module_declarations(outputs.values, origin, value.module)?
         local_key = body_key("local", origin, value.identity, "checked", root(value.local)?)
         mut local_reads = [request(owner.key), request(projection.header.key)]
         for declaration in declarations:
@@ -136,11 +154,7 @@ pub def publish_compiled_bodies(
         mut final_reads = [request(owner.key), request(projection.header.key), request(local_key)]
         for declaration in declarations:
             final_reads.append(request(declaration))
-        final_receipt = receipt(
-            local.snapshot,
-            final_key,
-            final_reads,
-        )?
+        final_receipt = receipt(local.snapshot, final_key, final_reads)?
         final = publish_evaluation(
             local.snapshot,
             "compiled-final-" + value.identity,
@@ -150,7 +164,7 @@ pub def publish_compiled_bodies(
         )?
         current = final.snapshot
         published += 1
-    return Ok(PublishedCompiledBodies(snapshot=current, bodies=published))
+    return Ok(PublishedCompiledBodies(snapshot=current, bodies=published, fallbacks=len(outputs.fallbacks)))
 
 
 def source_projection(unit: UnitDescription, origin: str, module: str) -> Result[SourceProjection, str]:
@@ -186,6 +200,18 @@ def body_key(family: str, origin: str, identity: str, facet: str, context: str) 
         identity=identity,
         facet=facet,
         context=context,
+    )
+
+
+def eligibility_key(origin: str, identity: str, name: str) -> RecordKey:
+    """Name the explicit record-fast-path decision for one successfully checked owner."""
+    return RecordKey(
+        family="eligibility",
+        identity_profile=IDENTITY_PROFILE,
+        origin=origin,
+        identity=identity,
+        facet=name,
+        context="checker-record",
     )
 
 
