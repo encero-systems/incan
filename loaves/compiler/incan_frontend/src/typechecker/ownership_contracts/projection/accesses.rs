@@ -524,11 +524,12 @@ impl SourceAccesses<'_, '_> {
         if let Some(invocation) = self.proof.graph.invocations.get(&expression.span) {
             return self.invocation_arguments(invocation, arguments);
         }
+        let carrier = super::super::builtins::carrier_constructor(self.proof.facts, callee).is_some();
         for argument in arguments {
             let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
                 return Err("source access needs fixed call arguments");
             };
-            self.expression(value, false)?;
+            self.expression(value, carrier)?;
         }
         Ok(())
     }
