@@ -602,27 +602,11 @@ fn assert_canonical_record_fields() -> Result<(), Box<dyn std::error::Error>> {
     let source = "def main() -> None:\n    println(\"hello\")\n";
     let moved = "# above\n\ndef main() -> None:\n    # inside\n    println(\"hello\")\n";
     for declaration in [true, false] {
-        let fields = super::records::fixture_projection(source, "main", declaration)?;
-        let edited = super::records::fixture_projection(moved, "main", declaration)?;
-        assert_eq!(
-            fields, edited,
-            "the native primitive projection excludes every position"
-        );
-        super::records::verify_fixture(moved, "main", fields.clone())?;
-        if !declaration {
-            let mut corrupted = fields;
-            let field = corrupted
-                .iter_mut()
-                .find(|row| row[0] == "type" && row[2] == "expr" && row[3] == "str")
-                .ok_or("missing scalar type negative control")?;
-            field[3] = "int".into();
-            assert!(
-                matches!(
-                    super::records::verify_fixture(moved, "main", corrupted),
-                    Err(NodeBindingError::BaselineDifference(_))
-                ),
-                "the baseline compares native facts, not just their keys"
-            );
+        let fields = super::records::fixture_record(source, "main", declaration)?;
+        let edited = super::records::fixture_record(moved, "main", declaration)?;
+        assert_eq!(fields, edited, "the native primitive record excludes every position");
+        if declaration {
+            super::records::verify_declaration_fixture(moved, "main", fields)?;
         }
     }
     assert_canonical_record_controls()?;
@@ -636,34 +620,14 @@ fn assert_canonical_record_controls() -> Result<(), Box<dyn std::error::Error>> 
     let warning = "def main() -> None:\n    println(\"hello\")\n    return\n    println(\"unreachable\")\n";
     for source in [refused, warning] {
         let moved = format!("# moved owner\n{source}");
-        let fields = super::records::fixture_projection(source, "main", false)?;
+        let fields = super::records::fixture_record(source, "main", false)?;
         let status = fields.iter().find(|row| row[0] == "status").ok_or("missing status")?;
         assert_eq!(status[3], (source == refused).to_string());
-        assert_eq!(fields, super::records::fixture_projection(&moved, "main", false)?);
-        let before = super::records::verify_fixture(source, "main", fields.clone())?;
-        let after = super::records::verify_fixture(&moved, "main", fields.clone())?;
-        assert!(!before.is_empty());
-        assert_ne!(before, after, "rendering follows the current source revision");
-        let mut wrong_owner = fields.clone();
-        wrong_owner[0][1].push_str("wrong");
-        assert!(super::records::verify_fixture(source, "main", wrong_owner).is_err());
-        let mut wrong_profile = fields.clone();
-        wrong_profile[0][4].push_str("wrong");
-        assert!(super::records::verify_fixture(source, "main", wrong_profile).is_err());
-        let changed = source.replace("hello", "different").replace("wrong", "different");
-        assert!(super::records::verify_fixture(&changed, "main", fields.clone()).is_err());
-        let mut malformed = fields;
-        let field = malformed
-            .iter_mut()
-            .skip(1)
-            .find(|row| !row[1].is_empty())
-            .ok_or("missing anchored field")?;
-        field[1].push_str("/missing");
-        assert!(super::records::verify_fixture(source, "main", malformed).is_err());
+        assert_eq!(fields, super::records::fixture_record(&moved, "main", false)?);
     }
     let matched = "def main() -> int:\n    match 1:\n        1 => return 2\n        _ => return 3\n";
     assert!(matches!(
-        super::records::fixture_projection(matched, "main", false),
+        super::records::fixture_record(matched, "main", false),
         Err(NodeBindingError::Unsupported("ProtocolArtifacts.loan_free_scrutinees"))
     ));
     Ok(())

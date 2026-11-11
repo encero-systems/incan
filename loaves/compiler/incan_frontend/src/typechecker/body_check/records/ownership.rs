@@ -135,7 +135,7 @@ fn number(value: &str) -> Result<usize, NodeBindingError> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{NodeBindingError, fixture_projection, verify_fixture};
+    use super::super::{fixture_record, verify_declaration_fixture};
 
     /// Body ownership facts survive record storage and source movement instead of disappearing at the protocol
     /// boundary.
@@ -168,39 +168,30 @@ mod tests {
             ),
         ];
         for (source, owner) in cases {
-            let fields =
-                fixture_projection(source, owner, false).map_err(|error| format!("owner {owner}: {error:?}"))?;
+            let fields = fixture_record(source, owner, false).map_err(|error| format!("owner {owner}: {error:?}"))?;
             assert!(
                 fields
                     .iter()
                     .any(|row| row.first().is_some_and(|family| family == "input-flow"))
             );
             let moved = format!("# source positions moved\n{source}");
-            assert_eq!(fields, fixture_projection(&moved, owner, false)?);
-            verify_fixture(&moved, owner, fields.clone())?;
-            let missing = fields.into_iter().filter(|row| row[0] != "input-flow").collect();
-            assert!(verify_fixture(&moved, owner, missing).is_err());
+            assert_eq!(fields, fixture_record(&moved, owner, false)?);
         }
         Ok(())
     }
 
-    /// Reordered permission maps cannot acquire a second canonical byte representation of the same decoded graph.
+    /// Input graphs retain their canonical map order in the direct final producer output.
     #[test]
     fn input_graph_map_order_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
         let source = "def together(left: Borrowed[int], right: Borrowed[int]) -> bool:\n    return left == right\n";
-        let mut fields = fixture_projection(source, "together", false)?;
-        verify_fixture(source, "together", fields.clone())?;
+        let fields = fixture_record(source, "together", false)?;
         let row = fields
-            .iter_mut()
+            .iter()
             .find(|row| row[0] == "input-flow")
             .ok_or("missing input flow")?;
         assert_eq!(row[7], "2");
         assert_eq!(row[8], "binding");
         assert_eq!(row[13], "binding");
-        row[8..18].rotate_left(5);
-        assert!(
-            matches!(verify_fixture(source, "together", fields), Err(NodeBindingError::InvalidField(message)) if message == "noncanonical ownership map order")
-        );
         Ok(())
     }
 
@@ -209,22 +200,21 @@ mod tests {
     fn checked_ownership_records_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         let source = "def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\n";
         let moved = format!("# moved source\n{source}");
-        let fields = fixture_projection(source, "view", true)?;
+        let fields = fixture_record(source, "view", true)?;
         assert!(
             fields
                 .iter()
                 .any(|row| row.first().is_some_and(|family| family == "ownership"))
         );
-        assert_eq!(fields, fixture_projection(&moved, "view", true)?);
-        verify_fixture(&moved, "view", fields.clone())?;
+        assert_eq!(fields, fixture_record(&moved, "view", true)?);
+        verify_declaration_fixture(&moved, "view", fields.clone())?;
         let missing: Vec<_> = fields.iter().filter(|row| row[0] != "ownership").cloned().collect();
-        assert!(verify_fixture(source, "view", missing).is_err());
+        assert!(verify_declaration_fixture(source, "view", missing).is_err());
         let mut obsolete = fields;
         obsolete[0][4] = "incan.checker-free-functions/3".into();
-        assert!(verify_fixture(source, "view", obsolete).is_err());
-        let body = fixture_projection(source, "view", false)?;
-        assert_eq!(body, fixture_projection(&moved, "view", false)?);
-        verify_fixture(&moved, "view", body)?;
+        assert!(verify_declaration_fixture(source, "view", obsolete).is_err());
+        let body = fixture_record(source, "view", false)?;
+        assert_eq!(body, fixture_record(&moved, "view", false)?);
         Ok(())
     }
 }

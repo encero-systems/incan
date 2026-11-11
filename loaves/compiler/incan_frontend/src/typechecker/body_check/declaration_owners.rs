@@ -257,6 +257,7 @@ impl TypeChecker {
 
         // ---- Completed body publication ----
         for local in locals {
+            let reused = matches!(local, BodyCheckInput::Reuse { .. });
             let order = local.order();
             let checked = local.finalize(self, &effects, &mut positions);
             append_ordered_decisions(
@@ -286,6 +287,19 @@ impl TypeChecker {
                     self.produced_declaration_records.insert(owner, fields);
                 }
             } else {
+                let owner = checked.owner();
+                if !reused {
+                    match records::produce_final(self, program, owner, &checked) {
+                        Ok(fields) => {
+                            self.produced_final_records.insert(owner, fields);
+                            self.check_work.final_record_evaluations += 1;
+                        }
+                        Err(error) => {
+                            tracing::debug!(target: "incan::invocation", ?owner, ?error, "final record production refused");
+                            self.final_record_refusals.insert(owner, error);
+                        }
+                    }
+                }
                 self.checked_bodies.push(checked);
             }
         }

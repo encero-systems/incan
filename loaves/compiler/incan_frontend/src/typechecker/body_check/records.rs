@@ -96,6 +96,28 @@ impl TypeChecker {
         self.selected_local_records.insert(owner, fields);
     }
 
+    /// Borrow the final record emitted directly by this activation's settlement producer.
+    pub(crate) fn produced_final_record(&self, owner: Span) -> Option<&Fields> {
+        self.produced_final_records.get(&owner)
+    }
+
+    /// Borrow either the final value evaluated now or an independently validated selected predecessor.
+    pub(crate) fn available_final_record(&self, owner: Span) -> Option<&Fields> {
+        self.produced_final_records
+            .get(&owner)
+            .or_else(|| self.selected_final_records.get(&owner))
+    }
+
+    /// Retain one selected final value for republishing without counting it as settlement execution.
+    pub(crate) fn retain_final_record(&mut self, owner: Span, fields: Fields) {
+        self.selected_final_records.insert(owner, fields);
+    }
+
+    /// Clone the explicit refusal returned by this activation's direct final producer.
+    pub(crate) fn final_record_refusal(&self, owner: Span) -> Option<NodeBindingError> {
+        self.final_record_refusals.get(&owner).cloned()
+    }
+
     /// Retain one producer-validated declaration record until its source-order owner consumes it.
     pub(crate) fn retain_declaration_record(&mut self, owner: Span, fields: Fields) {
         self.callable_declaration_reuse.insert(owner, fields);
@@ -295,15 +317,13 @@ fn restore(
     if header[2] != positions.nodes.root() {
         return Err(NodeBindingError::ChangedBody);
     }
-    let kind = match header[3].as_str() {
-        "declaration" => LocalOwnerKind::Declaration,
-        "final" => LocalOwnerKind::Body,
-        _ => return Err(NodeBindingError::Unsupported("record stage")),
-    };
+    if header[3] != "declaration" {
+        return Err(NodeBindingError::Unsupported("record stage"));
+    }
     let mut rebound = Rebinding {
         local: BodyLocal {
             owner,
-            kind,
+            kind: LocalOwnerKind::Declaration,
             ..BodyLocal::default()
         },
         ..Rebinding::default()
@@ -333,7 +353,7 @@ fn restore(
             None,
         );
     }
-    rebound.finish(&header[3])
+    rebound.finish()
 }
 
 /// Rebinding owns decoded native scratch only for this activation; persistent bytes and source lifetimes stay outside.
@@ -453,7 +473,7 @@ impl Rebinding {
     }
 
     /// Finish one independently settled owner; pending producer values are never decoded by this adapter.
-    fn finish(mut self, stage: &str) -> Result<RestoredOwner, NodeBindingError> {
+    fn finish(mut self) -> Result<RestoredOwner, NodeBindingError> {
         self.local.mutation =
             super::super::ownership_contracts::mutation::MutationLocal::from_record_projection(self.mutation);
         self.local.mutation.restore_flow_graphs(&mut self.local.protocols);
@@ -468,7 +488,7 @@ impl Rebinding {
             dictionary: Vec::new(),
             open: Vec::new(),
         };
-        if self.status != Some(view.is_refused()) || (stage == "declaration") != self.binding.is_some() {
+        if self.status != Some(view.is_refused()) || self.binding.is_none() {
             return Err(NodeBindingError::MissingNode);
         }
         Ok(RestoredOwner {

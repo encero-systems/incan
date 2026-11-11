@@ -757,11 +757,17 @@ mod tests {
         assert_eq!(warm.check_work().declaration_local_checks, 0);
         assert_eq!(warm.check_work().body_local_checks, 1);
         assert_eq!(warm.check_work().local_record_evaluations, 1);
+        assert_eq!(warm.check_work().final_record_evaluations, 1);
         let edited_owner = current.declarations.first().ok_or("missing edited owner")?.span;
         assert_eq!(
             warm.produced_local_record(edited_owner),
             cold.produced_local_record(edited_owner),
             "the direct local producer must match the cold oracle byte for byte"
+        );
+        assert_eq!(
+            warm.produced_final_record(edited_owner),
+            cold.produced_final_record(edited_owner),
+            "the direct final producer must match the cold oracle byte for byte"
         );
         assert_eq!(scalar_module(&current, &warm), scalar_module(&current, &cold));
         Ok(())

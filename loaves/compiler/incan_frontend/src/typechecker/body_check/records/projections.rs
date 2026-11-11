@@ -9,36 +9,16 @@ pub(crate) fn produce_declaration(
     program: &Program,
     owner: Span,
 ) -> Result<Fields, NodeBindingError> {
-    encode_settled(checker, program, owner, true)
-}
-
-/// Project a settled statement value for the still-bootstrap final-family oracle.
-pub(crate) fn project_final(checker: &TypeChecker, program: &Program, owner: Span) -> Result<Fields, NodeBindingError> {
-    encode_settled(checker, program, owner, false)
-}
-
-/// Encode one settled owner through the checker profile's canonical field grammar.
-fn encode_settled(
-    checker: &TypeChecker,
-    program: &Program,
-    owner: Span,
-    declaration: bool,
-) -> Result<Fields, NodeBindingError> {
-    let positions = Positions::new(checker, program, owner, declaration)?;
-    let view = if declaration {
-        checker.checked_declaration(owner)
-    } else {
-        checker.checked_body(owner)
-    }
-    .ok_or(NodeBindingError::MissingOwner)?;
+    let positions = Positions::new(checker, program, owner, true)?;
+    let view = checker
+        .checked_declaration(owner)
+        .ok_or(NodeBindingError::MissingOwner)?;
     validate(view)?;
     let mut fields = local_fields(&positions, &view.local)?;
     ownership::project(checker, owner, &positions, &mut fields)?;
-    if declaration {
-        project_signature(checker, program, owner, &positions, &mut fields)?;
-    }
+    project_signature(checker, program, owner, &positions, &mut fields)?;
     project_diagnostics(checker, program, &positions, view, &mut fields)?;
-    project_final_types(checker, view, &positions, &mut fields)?;
+    append_settled_types(checker, view, &positions, &mut fields)?;
     fields.push(vec![
         "status".into(),
         String::new(),
@@ -52,7 +32,40 @@ fn encode_settled(
             "header".into(),
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
-            if declaration { "declaration" } else { "final" }.into(),
+            "declaration".into(),
+            "incan.checker-free-functions/10".into(),
+        ],
+    );
+    Ok(fields)
+}
+
+/// Emit one final-family value from the exact settled view supplied by its owner operation. The Incan schema assigns
+/// the family tag; native output contains only owner/root/profile metadata and canonical field primitives.
+pub(crate) fn produce_final(
+    checker: &TypeChecker,
+    program: &Program,
+    owner: Span,
+    view: &CheckedBodyView,
+) -> Result<Fields, NodeBindingError> {
+    let positions = Positions::for_local(checker, program, owner, &view.local)?;
+    validate(view)?;
+    let mut fields = local_fields(&positions, &view.local)?;
+    ownership::project(checker, owner, &positions, &mut fields)?;
+    project_diagnostics(checker, program, &positions, view, &mut fields)?;
+    append_settled_types(checker, view, &positions, &mut fields)?;
+    fields.push(vec![
+        "status".into(),
+        String::new(),
+        "refused".into(),
+        view.is_refused().to_string(),
+    ]);
+    fields.sort();
+    fields.insert(
+        0,
+        vec![
+            "header".into(),
+            positions.nodes.owner().render_compact(),
+            positions.nodes.root().to_owned(),
             "incan.checker-free-functions/10".into(),
         ],
     );
@@ -253,7 +266,7 @@ pub(super) fn final_type_values(checker: &TypeChecker, view: &CheckedBodyView) -
 
 /// Publish the selected finalized empty-list/value types and an explicitly witnessed empty native-call capability.
 /// A nonempty native-call field already fails the exhaustive local inventory until its typed codec is supported.
-pub(super) fn project_final_types(
+pub(super) fn append_settled_types(
     checker: &TypeChecker,
     view: &CheckedBodyView,
     positions: &Positions,

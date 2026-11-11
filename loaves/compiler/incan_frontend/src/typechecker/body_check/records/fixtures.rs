@@ -1,11 +1,11 @@
-//! Record projection fixtures for checked declarations and local bodies.
+//! Record fixtures for checked declarations and body-owned producers.
 
 use super::*;
 
 /// Test-sink entry: check a fixture, select one owner, return only its canonical primitives and drop the checker.
 /// This measures the production declaration record without selecting it for reuse.
-pub(crate) fn fixture_projection(source: &str, name: &str, declaration: bool) -> Result<Fields, NodeBindingError> {
-    let (program, checker, owner) = fixture(source, name)?;
+pub(crate) fn fixture_record(source: &str, name: &str, declaration: bool) -> Result<Fields, NodeBindingError> {
+    let (_, checker, owner) = fixture(source, name)?;
     if declaration {
         return checker
             .produced_declaration_records
@@ -13,24 +13,27 @@ pub(crate) fn fixture_projection(source: &str, name: &str, declaration: bool) ->
             .cloned()
             .ok_or(NodeBindingError::MissingOwner);
     }
-    project_final(&checker, &program, owner)
+    match checker.produced_final_record(owner) {
+        Some(fields) => Ok(fields.clone()),
+        None => Err(checker
+            .final_record_refusal(owner)
+            .unwrap_or(NodeBindingError::MissingOwner)),
+    }
 }
 
 /// Test baseline: independently check the current revision, retain its coordinate bindings, reconstruct the supplied
 /// fields and compare every native field. The cold checker supplies expected values only, never reconstructed ones.
-pub(crate) fn verify_fixture(source: &str, name: &str, fields: Fields) -> Result<Vec<String>, NodeBindingError> {
+pub(crate) fn verify_declaration_fixture(
+    source: &str,
+    name: &str,
+    fields: Fields,
+) -> Result<Vec<String>, NodeBindingError> {
     let (program, checker, owner) = fixture(source, name)?;
-    let declaration = fields
-        .first()
-        .is_some_and(|header| header.get(3).is_some_and(|role| role == "declaration"));
-    let expected = if declaration {
-        checker.checked_declaration(owner)
-    } else {
-        checker.checked_body(owner)
-    }
-    .cloned()
-    .ok_or(NodeBindingError::MissingOwner)?;
-    let positions = Positions::new(&checker, &program, owner, declaration)?;
+    let expected = checker
+        .checked_declaration(owner)
+        .cloned()
+        .ok_or(NodeBindingError::MissingOwner)?;
+    let positions = Positions::new(&checker, &program, owner, true)?;
     let expected_binding = checker.declaration_view().function(owner).cloned();
     let expected_types = final_type_values(&checker, &expected);
     let expected_ownership = expected_binding
@@ -49,10 +52,10 @@ pub(crate) fn verify_fixture(source: &str, name: &str, fields: Fields) -> Result
             .validate(binding.params.len(), false)
             .map_err(|message| NodeBindingError::InvalidField(message.into()))?;
     }
-    if declaration && restored.binding != expected_binding {
+    if restored.binding != expected_binding {
         return Err(NodeBindingError::BaselineDifference("declaration signature".into()));
     }
-    if declaration && restored.defaults != default_writers(&program, owner)? {
+    if restored.defaults != default_writers(&program, owner)? {
         return Err(NodeBindingError::BaselineDifference("selected default writers".into()));
     }
     if expected_types != restored.final_types {
