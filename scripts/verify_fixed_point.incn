@@ -108,6 +108,8 @@ def rebuild_generation(context: NativeContext, evidence: Path, builder: Path, ge
         stdlib=context.stdlib,
         evidence=evidence,
         timings=context.timings,
+        jobs=context.jobs,
+        memory=context.memory,
         timeout_seconds=context.timeout_seconds,
     )
     interfaces = build_source_interfaces(successor, helper, f"{generation}-")?
