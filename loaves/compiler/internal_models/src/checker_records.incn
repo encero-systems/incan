@@ -8,6 +8,7 @@ pub const CHECKER_PROFILE: str = "incan.checker-free-functions/10"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/1"
+const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/1"
 const MAX_GRAPH_TRANSPORT_BYTES: int = 16777216
 
 
@@ -55,6 +56,17 @@ pub model GraphBodyFields:
     pub identity: str
     pub local: list[list[str]]
     pub final_fields: list[list[str]]
+
+
+pub model CompiledBodyValue:
+    """One compiler-produced declaration/local/final triple with its projected source owner."""
+
+    pub module: str
+    pub name: str
+    pub identity: str
+    pub declaration: bytes
+    pub local: bytes
+    pub final: bytes
 
 
 @derive(Eq)
@@ -353,6 +365,68 @@ pub def decode_graph_body_values(encoded: bytes) -> Result[list[GraphBodyFields]
         previous = identity
         offset += 3
     return Ok(selected)
+
+
+pub def encode_compiled_body_values(values: list[CompiledBodyValue]) -> Result[bytes, CodecFault]:
+    """Encode checked producer outputs for graph publication after a successful native compilation."""
+    if len(values) > MAX_FIELDS:
+        return Err(CodecFault.Limit)
+    mut tokens = [COMPILED_TRANSPORT_SCHEMA, str(len(values))]
+    mut previous = ""
+    for value in values:
+        order = value.module + "\n" + value.identity
+        if value.module == "" or value.name == "" or value.identity == "" or order <= previous:
+            return Err(CodecFault.Malformed)
+        validate_compiled_body_value(value)?
+        tokens += [
+            value.module,
+            value.name,
+            value.identity,
+            hexlify(value.declaration),
+            hexlify(value.local),
+            hexlify(value.final),
+        ]
+        previous = order
+    return encode_transport_tokens(tokens)
+
+
+pub def decode_compiled_body_values(encoded: bytes) -> Result[list[CompiledBodyValue], CodecFault]:
+    """Decode and authenticate every compiler-produced triple before the engine may publish it."""
+    tokens = transport_frames(encoded)?
+    if len(tokens) < 2 or tokens[0] != COMPILED_TRANSPORT_SCHEMA:
+        return Err(CodecFault.Malformed)
+    count = decimal(tokens[1])?
+    if count > MAX_FIELDS or len(tokens) != 2 + count * 6:
+        return Err(CodecFault.Malformed)
+    mut values: list[CompiledBodyValue] = []
+    mut previous = ""
+    mut offset = 2
+    for _ in range(count):
+        value = CompiledBodyValue(
+            module=tokens[offset],
+            name=tokens[offset + 1],
+            identity=tokens[offset + 2],
+            declaration=unhexlify(tokens[offset + 3]).map_err((_) => CodecFault.Malformed)?,
+            local=unhexlify(tokens[offset + 4]).map_err((_) => CodecFault.Malformed)?,
+            final=unhexlify(tokens[offset + 5]).map_err((_) => CodecFault.Malformed)?,
+        )
+        order = value.module + "\n" + value.identity
+        if value.module == "" or value.name == "" or value.identity == "" or order <= previous:
+            return Err(CodecFault.Malformed)
+        validate_compiled_body_value(value)?
+        values.append(value)
+        previous = order
+        offset += 6
+    return Ok(values)
+
+
+def validate_compiled_body_value(value: CompiledBodyValue) -> Result[None, CodecFault]:
+    """Require one declaration and a matching local/final pair under the compiler-owned stable identity."""
+    declaration = decode_graph_record(value.declaration, value.identity)?
+    pair = validate_graph_body_value(GraphBodyValue(identity=value.identity, local=value.local, final=value.final))?
+    if declaration.family != CheckedFamily.Declaration or pair[0].owner != declaration.owner:
+        return Err(CodecFault.Malformed)
+    return Ok(None)
 
 
 def validate_graph_body_value(value: GraphBodyValue) -> Result[list[CheckedRecord], CodecFault]:
