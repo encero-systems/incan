@@ -59,14 +59,16 @@ impl GraphBodyOutput {
         }
     }
 
-    /// Capture one module while keeping the analysis callback's infallible observer contract.
+    /// Capture one project-owned module while keeping dependency modules as inputs rather than publication owners.
+    ///
+    /// Analysis visits authored modules and dependency modules together. Only paths beneath `project_root` belong to
+    /// this publication; a dependency's checked bodies remain authenticated dependency facts and must never make a
+    /// successful project build fail.
     fn capture(&mut self, module: &ParsedModule, checker: &TypeChecker) -> Result<(), String> {
-        let module_path = module
-            .file_path
-            .strip_prefix(&self.project_root)
-            .map_err(|_| "checked graph output module is outside the project root")?
-            .to_string_lossy()
-            .into_owned();
+        let Ok(module_path) = module.file_path.strip_prefix(&self.project_root) else {
+            return Ok(());
+        };
+        let module_path = module_path.to_string_lossy().into_owned();
         for fields in incan_frontend::checker_records::checked_owner_record_fields(&module.ast, checker) {
             let identity = header_identity(&fields.local)?;
             match encoded_body_value(&module_path, &identity, &fields) {
