@@ -3,6 +3,7 @@
 from std.fs import Path
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
+from native_build import StandardGeneration, StandardProfile, standard_profiles
 from release_support import (
     BaselineReport,
     Counts,
@@ -30,6 +31,13 @@ PASS format/a/a
 PASS graph/a/a
 total: 8 passed, 0 failed, 0 pending
 """
+
+
+def test_release_profiles_keep_seed_consumption_and_candidate_shipping_distinct() -> Result[None, str]:
+    """The seed generation needs release providers; the candidate ships release and debug providers."""
+    assert standard_profiles(StandardGeneration.SourceClosure) == [StandardProfile.Release]
+    assert standard_profiles(StandardGeneration.Candidate) == [StandardProfile.Release, StandardProfile.Debug]
+    return Ok(None)
 
 
 def test_release_arguments_keep_fixed_point_and_process_budgets_explicit() -> Result[None, str]:
