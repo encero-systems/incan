@@ -35,6 +35,27 @@ pub model NativeContext:
     pub timeout_seconds: int
 
 
+pub enum StandardProfile(str):
+    """Native standard-package profiles admitted into a release generation."""
+
+    Release = "release"
+    Debug = "debug"
+
+
+pub enum StandardGeneration(str):
+    """Release generations with distinct downstream standard-package consumers."""
+
+    SourceClosure = "source-closure"
+    Candidate = "candidate"
+
+
+pub def standard_profiles(generation: StandardGeneration) -> list[StandardProfile]:
+    """Select only profiles consumed by the source closure or shipped candidate generation."""
+    match generation:
+        StandardGeneration.SourceClosure => return [StandardProfile.Release]
+        StandardGeneration.Candidate => return [StandardProfile.Release, StandardProfile.Debug]
+
+
 pub def build_support_tool(context: NativeContext, builder_home: Path) -> Result[Path, str]:
     """Build and install the Incan native-description helper before any source runtime provider exists."""
     output = context.repo.joinpath("workspaces/oven/target/incan/release/bin/oven")
@@ -123,16 +144,29 @@ pub def build_runtime(
     return install_runtime(context, helper, unit, output)
 
 
-pub def build_standard_packages(context: NativeContext, helper: Path, phase_prefix: str) -> Result[None, str]:
-    """Compile each standard package in dependency order for release and debug from one candidate generation."""
+pub def build_standard_packages(
+    context: NativeContext,
+    helper: Path,
+    phase_prefix: str,
+    profiles: list[StandardProfile],
+) -> Result[None, str]:
+    """Compile each standard package in dependency order for the explicitly consumed native profiles."""
     standards = context.evidence.joinpath(f"{phase_prefix}standards")
     standards.mkdir(true, true).map_err((error) => error.message())?
-    for profile in ["release", "debug"]:
+    for selected in profiles:
+        profile = standard_profile_name(selected)
         admitted = standards.joinpath(f"{profile}-admitted.txt")
         admitted.write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
         for package in STANDARD_PACKAGES:
             build_standard_package(context, helper, package, profile, admitted, phase_prefix)?
     return Ok(None)
+
+
+def standard_profile_name(profile: StandardProfile) -> str:
+    """Map the closed native profile set to the spelling consumed by unit description and rustc."""
+    match profile:
+        StandardProfile.Release => return "release"
+        StandardProfile.Debug => return "debug"
 
 
 pub def build_tool(context: NativeContext, name: str, rebuild: bool, phase: str) -> Result[Path, str]:

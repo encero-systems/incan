@@ -10,6 +10,7 @@ from std.json import JsonValue
 from check_support import repository_root, write_stderr
 from native_build import (
     NativeContext,
+    StandardGeneration,
     build_runtime,
     build_source_interfaces,
     build_standard_packages,
@@ -17,6 +18,7 @@ from native_build import (
     build_tool,
     publish_support,
     require_unique_runtime_root,
+    standard_profiles,
 )
 from release_support import (
     FAMILIES,
@@ -306,7 +308,7 @@ def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
     )?
     _ = build_runtime(context, helper, Some(interfaces), true, "candidate-")?
     require_unique_runtime_root(context)?
-    build_standard_packages(context, helper, "")?
+    build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))?
     return Ok(Candidate(context=context, oven=conductor, lsp=Path("")))
 
 
@@ -337,7 +339,12 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
     )?
     _ = build_runtime(context, helper, Some(interfaces), true)?
     require_unique_runtime_root(context)?
-    build_standard_packages(context, helper, "candidate-")?
+    build_standard_packages(
+        context,
+        helper,
+        "candidate-",
+        standard_profiles(StandardGeneration.Candidate),
+    )?
     return Ok(Candidate(context=context, oven=candidate.oven, lsp=candidate.lsp))
 
 
