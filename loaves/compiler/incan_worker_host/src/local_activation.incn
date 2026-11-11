@@ -7,7 +7,6 @@ from pub::internal_models import (
     InputSnapshot,
     PreparedInputs,
     ReadyWork,
-    RecordRoot,
     decode_prepared_inputs,
     decode_ready_work,
     envelope_key,
@@ -45,8 +44,7 @@ pub def resolve_local_activation(home: str, evaluation: Evaluate) -> Result[Loca
     prepared = decode_prepared_inputs(
         required(prepared_lookup)?,
     )?
-    snapshot = InputSnapshot(root=RecordRoot(digest=evaluation.snapshot))
-    return read_local_activation(resolved, ready, snapshot, prepared)
+    return read_local_activation(resolved, ready, prepared.snapshot, prepared)
 
 
 pub def read_local_activation(

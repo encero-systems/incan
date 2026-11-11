@@ -6,8 +6,6 @@
 //! existing semantic operation. This Rust boundary is removable bootstrap debt under DD-0015 decision 4 and BE-32;
 //! scheduling, storage, preparation policy, and the record service remain Incan-owned.
 
-use std::env;
-
 use incan_worker_host::{CompilerFault, RecordMessage};
 use sha2::{Digest, Sha256};
 
@@ -15,9 +13,9 @@ use sha2::{Digest, Sha256};
 ///
 /// The request-specific root lets the engine correlate the fault with the immutable activation input. No legacy
 /// checker or cache is consulted, and no staged value or witness set is published.
-pub(crate) fn activate(request: RecordMessage) -> RecordMessage {
+pub(crate) fn activate(request: RecordMessage, home: &str) -> RecordMessage {
     match request {
-        RecordMessage::Evaluate(value) => evaluate_local(value).unwrap_or_else(fault),
+        RecordMessage::Evaluate(value) => evaluate_local(value, home).unwrap_or_else(fault),
         RecordMessage::Prepare(value) => fault(format!("unsupported-producer:{}:{}", value.stage, value.demand_root)),
         _ => fault("protocol-fault".to_owned()),
     }
@@ -28,11 +26,10 @@ pub(crate) fn activate(request: RecordMessage) -> RecordMessage {
 /// Snapshot resolution, `prepared_reader`, `StoreRecordSource` and checker-record decoding remain Incan-owned. This
 /// adapter receives only their decoded source/declaration/environment values; it never receives a `TypeChecker` or
 /// invokes `check_program_internal`.
-fn evaluate_local(value: incan_worker_host::Evaluate) -> Result<RecordMessage, String> {
-    let home = env::var("INCAN_HOME").map_err(|_| "local record activation requires INCAN_HOME".to_owned())?;
-    let staging_home = home.clone();
+fn evaluate_local(value: incan_worker_host::Evaluate, home: &str) -> Result<RecordMessage, String> {
     let snapshot = value.snapshot.clone();
-    let inputs = incan_worker_host::resolve_local_activation(home, value).map_err(|error| error.to_string())?;
+    let inputs =
+        incan_worker_host::resolve_local_activation(home.to_owned(), &value).map_err(|error| error.to_string())?;
     let rows = incan_frontend::checker_records::produce_local_record(
         &inputs.source,
         &inputs.owner,
@@ -45,8 +42,9 @@ fn evaluate_local(value: incan_worker_host::Evaluate) -> Result<RecordMessage, S
     let encoded =
         internal_models::encode_record(record).map_err(|error| format!("local record encoding refused: {error:?}"))?;
     let semantic = format!("sha256:{}", digest(&encoded));
-    let produced = incan_worker_host::stage_local_result(staging_home, snapshot, &encoded, inputs.receipt, &semantic)
-        .map_err(|error| error.to_string())?;
+    let produced =
+        incan_worker_host::stage_local_result(home.to_owned(), snapshot, &encoded, inputs.receipt, &semantic)
+            .map_err(|error| error.to_string())?;
     Ok(RecordMessage::Produced(produced))
 }
 

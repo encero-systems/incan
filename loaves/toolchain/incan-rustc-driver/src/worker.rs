@@ -24,6 +24,7 @@ mod console;
 /// Serve the requests the worker host admits until it retires.
 pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut host = incan_worker_host::start(&arguments.to_vec(), footprint())?;
+    let home = incan_worker_host::selected_home(&host);
     while let Some(activation) = incan_worker_host::next_activation(&mut host) {
         match activation {
             WorkerActivation::Compile(request) => {
@@ -45,7 +46,7 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
                 timing.mark("worker_completed");
             }
             WorkerActivation::Record(request) => {
-                let reply = crate::compiler_record_service::activate(request);
+                let reply = crate::compiler_record_service::activate(request, &home);
                 release_free_memory();
                 incan_worker_host::complete_record(&mut host, reply, footprint());
             }

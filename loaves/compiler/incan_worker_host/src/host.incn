@@ -87,6 +87,7 @@ pub class WorkerHost:
 
     pub generation: str
     pub phase: Phase
+    home: str
     socket: SocketFile
     listener: Listener
     owner: u32
@@ -100,6 +101,7 @@ pub class WorkerHost:
     @staticmethod
     pub def serving(
         generation: str,
+        home: str,
         socket: SocketFile,
         listener: Listener,
         owner: u32,
@@ -110,12 +112,17 @@ pub class WorkerHost:
         return WorkerHost(
             generation=generation,
             phase=Phase.Serving,
+            home=home,
             socket=socket,
             listener=listener,
             owner=owner,
             policy=policy,
             observer=observer,
         )
+
+    pub def selected_home(self) -> str:
+        """Return the explicit home this resident worker was started to serve."""
+        return self.home
 
     pub def next(mut self) -> Option[WorkerActivation]:
         """
@@ -367,6 +374,11 @@ pub def start(arguments: list[str], baseline: int) -> Result[WorkerHost, str]:
     )
 
 
+pub def selected_home(host: WorkerHost) -> str:
+    """Expose the resident worker's explicit home to its native executable entry."""
+    return host.selected_home()
+
+
 pub def host_for(settings: HostSettings) -> Result[WorkerHost, str]:
     """
     A listening worker host.
@@ -379,6 +391,7 @@ pub def host_for(settings: HostSettings) -> Result[WorkerHost, str]:
     bound = socket_file(settings.socket, settings.home)?
     host = WorkerHost.serving(
         settings.generation,
+        settings.home,
         socket=bound,
         listener=listener,
         owner=served_owner(bound.uid, settings.owner),
