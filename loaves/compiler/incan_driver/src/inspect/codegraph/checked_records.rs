@@ -179,7 +179,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                     capability_identity: codegraph_canonical_identity(&declaration.capability),
                     name: declaration.capability.declaration_name.clone(),
                     public: declaration.is_public,
-                    description: declaration.description.clone(),
+                    description: declaration.description.as_deref().map(visible_source_text),
                     scope: declaration
                         .scope
                         .iter()

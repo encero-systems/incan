@@ -234,10 +234,10 @@ pub fn stable_diagnostic(
         severity,
         phase,
         origin: origin_for_phase(phase),
-        message: error.message.clone(),
+        message: visible_diagnostic_text(&error.message),
         primary_span: diagnostic_span(file_name, source, error.span),
-        notes: error.notes().to_vec(),
-        hints: error.hints().to_vec(),
+        notes: error.notes().iter().map(|note| visible_diagnostic_text(note)).collect(),
+        hints: error.hints().iter().map(|hint| visible_diagnostic_text(hint)).collect(),
         expected: error.expected().map(str::to_owned),
         actual: error.actual().map(str::to_owned),
         related_spans: error
@@ -245,7 +245,7 @@ pub fn stable_diagnostic(
             .iter()
             .map(|related| DiagnosticRelatedSpan {
                 span: diagnostic_span(file_name, source, related.span),
-                label: related.label.clone(),
+                label: visible_diagnostic_text(&related.label),
             })
             .collect(),
         related_declarations: error
@@ -253,11 +253,16 @@ pub fn stable_diagnostic(
             .iter()
             .map(|related| DiagnosticRelatedDeclaration {
                 identity: related.identity.clone(),
-                label: related.label.clone(),
+                label: visible_diagnostic_text(&related.label),
             })
             .collect(),
         explain: format!("incan explain {code}"),
     }
+}
+
+/// Keep every machine-readable diagnostic string safe for terminals and editor renderers.
+fn visible_diagnostic_text(text: &str) -> String {
+    crate::source_security::escape_bidirectional_controls(text).into_owned()
 }
 
 /// Select the stable producer identity for one compiler pipeline phase.

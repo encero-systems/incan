@@ -5,7 +5,8 @@
 use super::Lexer;
 use super::tokens::{FStringPart, Token, TokenKind};
 use crate::ast::Span;
-use crate::diagnostics::errors;
+use crate::diagnostics::errors::{self, BidirectionalControlContext};
+use crate::source_security::bidirectional_control_name;
 
 // ============================================================================
 // Escape sequence handling
@@ -17,6 +18,15 @@ pub enum EscapeResult {
     Char(char),
     /// Unknown escape - preserve as-is (backslash + char)
     Unknown(char),
+    /// A `\u{...}` spelling that does not name one Unicode scalar value.
+    InvalidUnicode {
+        /// Authored escape text, which is ASCII and therefore safe to display.
+        spelling: String,
+        /// Why the authored spelling is not a scalar escape.
+        reason: &'static str,
+        /// Complete byte span of the malformed escape.
+        span: Span,
+    },
     /// End of input during escape
     Eof,
 }
@@ -38,14 +48,81 @@ pub enum ByteEscapeResult {
 impl<'a> Lexer<'a> {
     /// Process a text escape sequence (for strings and f-strings). Called after consuming the backslash.
     fn scan_text_escape(&mut self, quote: char) -> EscapeResult {
+        let escape_start = self.current_pos.saturating_sub(1);
         match self.advance() {
             Some('n') => EscapeResult::Char('\n'),
             Some('t') => EscapeResult::Char('\t'),
             Some('r') => EscapeResult::Char('\r'),
             Some('\\') => EscapeResult::Char('\\'),
+            Some('u') if self.peek() == Some('{') => self.scan_unicode_scalar_escape(escape_start, quote),
             Some(q) if q == quote => EscapeResult::Char(q),
             Some(c) => EscapeResult::Unknown(c),
             None => EscapeResult::Eof,
+        }
+    }
+
+    /// Decode a braced Unicode scalar escape after its `\u` prefix has been consumed.
+    fn scan_unicode_scalar_escape(&mut self, start: usize, quote: char) -> EscapeResult {
+        self.advance();
+        let mut spelling = String::from("\\u{");
+        let mut digits = String::new();
+        let mut invalid_character = false;
+        let mut closed = false;
+        while let Some(character) = self.peek() {
+            if character == '}' {
+                self.advance();
+                spelling.push('}');
+                closed = true;
+                break;
+            }
+            if character == quote || character == '\n' {
+                break;
+            }
+            self.advance();
+            spelling.push(character);
+            if character.is_ascii_hexdigit() {
+                digits.push(character);
+            } else {
+                invalid_character = true;
+            }
+        }
+
+        let span = Span::new(start, self.current_pos);
+        if !closed {
+            return EscapeResult::InvalidUnicode {
+                spelling,
+                reason: "the closing `}` is missing",
+                span,
+            };
+        }
+        if invalid_character {
+            return EscapeResult::InvalidUnicode {
+                spelling,
+                reason: "only hexadecimal digits are allowed",
+                span,
+            };
+        }
+        if digits.is_empty() || digits.len() > 6 {
+            return EscapeResult::InvalidUnicode {
+                spelling,
+                reason: "the escape needs one to six hexadecimal digits",
+                span,
+            };
+        }
+        let Ok(value) = u32::from_str_radix(&digits, 16) else {
+            return EscapeResult::InvalidUnicode {
+                spelling,
+                reason: "the digits do not name a Unicode scalar value",
+                span,
+            };
+        };
+        match char::from_u32(value) {
+            Some(character) => EscapeResult::Char(character),
+            None => EscapeResult::InvalidUnicode {
+                spelling,
+                reason: "surrogates and values above U+10FFFF are not Unicode scalar values",
+                span,
+            },
         }
     }
 
@@ -140,6 +217,9 @@ impl<'a> Lexer<'a> {
                             value.push('\\');
                             value.push(c);
                         }
+                        EscapeResult::InvalidUnicode { spelling, reason, span } => self
+                            .errors
+                            .push(errors::malformed_unicode_scalar_escape(&spelling, reason, span)),
                         EscapeResult::Eof => {
                             self.errors
                                 .push(errors::unterminated_escape_sequence(Span::new(start, self.current_pos)));
@@ -148,6 +228,13 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 Some(c) => {
+                    if bidirectional_control_name(c).is_some() {
+                        self.errors.push(errors::bidirectional_control_in_source(
+                            c,
+                            BidirectionalControlContext::String,
+                            Span::new(self.current_pos, self.current_pos + c.len_utf8()),
+                        ));
+                    }
                     value.push(c);
                     self.advance();
                 }
@@ -199,8 +286,14 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 Some(c) => {
-                    // Byte strings should only contain ASCII
-                    if c.is_ascii() {
+                    if bidirectional_control_name(c).is_some() {
+                        self.errors.push(errors::bidirectional_control_in_source(
+                            c,
+                            BidirectionalControlContext::String,
+                            Span::new(self.current_pos, self.current_pos + c.len_utf8()),
+                        ));
+                    } else if c.is_ascii() {
+                        // Byte strings should only contain ASCII.
                         value.push(c as u8);
                     } else {
                         self.errors
@@ -270,6 +363,9 @@ impl<'a> Lexer<'a> {
                             literal.push('\\');
                             literal.push(c);
                         }
+                        EscapeResult::InvalidUnicode { spelling, reason, span } => self
+                            .errors
+                            .push(errors::malformed_unicode_scalar_escape(&spelling, reason, span)),
                         EscapeResult::Eof => {
                             self.errors
                                 .push(errors::unterminated_fstring_escape(Span::new(start, self.current_pos)));
@@ -283,6 +379,13 @@ impl<'a> Lexer<'a> {
                     break;
                 }
                 Some(c) => {
+                    if bidirectional_control_name(c).is_some() {
+                        self.errors.push(errors::bidirectional_control_in_source(
+                            c,
+                            BidirectionalControlContext::String,
+                            Span::new(self.current_pos, self.current_pos + c.len_utf8()),
+                        ));
+                    }
                     literal.push(c);
                     self.advance();
                 }
@@ -319,6 +422,13 @@ impl<'a> Lexer<'a> {
                     self.advance();
                 }
                 Some(c) => {
+                    if bidirectional_control_name(c).is_some() {
+                        self.errors.push(errors::bidirectional_control_in_source(
+                            c,
+                            BidirectionalControlContext::Code,
+                            Span::new(self.current_pos, self.current_pos + c.len_utf8()),
+                        ));
+                    }
                     expr.push(c);
                     self.advance();
                 }

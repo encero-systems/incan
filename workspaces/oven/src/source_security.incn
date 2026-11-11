@@ -1,0 +1,126 @@
+"""Native-source admission shared by every Oven Rust and C compilation path."""
+
+from std.fs import Path
+from loaf_local_graph import LocalFacet
+
+
+pub class NativeSourceScanner:
+    """Scan each selected project once without following links or entering generated-output directories."""
+
+    seen: set[str] = set()
+
+    pub def validate(mut self, facets: list[LocalFacet]) -> Result[None, str]:
+        """Refuse the first raw bidirectional control in any selected local Rust or C source tree."""
+        for facet in facets:
+            self.scan(Path(facet.project))?
+        return Ok(None)
+
+    pub def validate_project(mut self, project: str) -> Result[None, str]:
+        """Apply the same admission at a direct native compilation boundary that has no complete facet list."""
+        return self.scan(Path(project))
+
+    def scan(mut self, path: Path) -> Result[None, str]:
+        """Walk authored files once, avoiding output directories, hidden trees and symbolic-link escapes."""
+        if path.is_symlink():
+            return Ok(None)
+        if path.is_file():
+            if native_source(path.name()):
+                self.scan_file(path)?
+            return Ok(None)
+        if not path.is_dir():
+            return Ok(None)
+        resolved = path.resolve().map_err((error) => f"{path.0}: {error.message()}")?.0
+        if resolved in self.seen:
+            return Ok(None)
+        self.seen.add(resolved)
+        for child in path.iterdir().map_err((error) => f"{path.0}: {error.message()}")?:
+            if child.is_dir() and skipped_directory(child.name()):
+                continue
+            self.scan(child)?
+        return Ok(None)
+
+    def scan_file(self, path: Path) -> Result[None, str]:
+        """Report an exact byte position, Unicode name and visible replacement for the first unsafe scalar."""
+        data = path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")?
+        mut line = 1
+        mut column = 1
+        mut index = 0
+        while index < len(data):
+            if let Some(control) = control_at(data, index):
+                escape, name = control
+                return Err(
+                    f"error[INCAN-P0101]: raw bidirectional control {name} at {path.0}:{line}:{column}; write `{escape}` instead",
+                )
+            octet = int(data[index])
+            if octet == 10:
+                line += 1
+                column = 1
+            elif octet < 128 or octet > 191:
+                column += 1
+            index += 1
+        return Ok(None)
+
+
+pub def validate_native_sources(facets: list[LocalFacet]) -> Result[None, str]:
+    """Validate a complete selected native graph before any unit in that graph compiles."""
+    mut scanner = NativeSourceScanner()
+    return scanner.validate(facets)
+
+
+pub def validate_native_project(project: str) -> Result[None, str]:
+    """Validate one direct native project at compilation entry points that do not own a graph."""
+    mut scanner = NativeSourceScanner()
+    return scanner.validate_project(project)
+
+
+def native_source(name: str) -> bool:
+    """Recognize every Rust and C-family source or header extension Oven admits as authored native input."""
+    for suffix in [".rs", ".c", ".h", ".cc", ".hh", ".cpp", ".hpp", ".cxx", ".hxx"]:
+        if name.endswith(suffix):
+            return true
+    return false
+
+
+def skipped_directory(name: str) -> bool:
+    """Keep generated output, vendored packages and hidden metadata outside authored-source admission."""
+    return name.startswith(".") or name in ["target", "node_modules"]
+
+
+def control_at(data: &bytes, index: int) -> Option[tuple[str, str]]:
+    """Decode the closed RFC 175 `Bidi_Control` set from UTF-8 bytes without embedding a raw control in Oven."""
+    if pair(data, index, 216, 156):
+        return Some(("\\u{61c}", "ARABIC LETTER MARK"))
+    if triple(data, index, 226, 128, 142):
+        return Some(("\\u{200e}", "LEFT-TO-RIGHT MARK"))
+    if triple(data, index, 226, 128, 143):
+        return Some(("\\u{200f}", "RIGHT-TO-LEFT MARK"))
+    names = [
+        "LEFT-TO-RIGHT EMBEDDING",
+        "RIGHT-TO-LEFT EMBEDDING",
+        "POP DIRECTIONAL FORMATTING",
+        "LEFT-TO-RIGHT OVERRIDE",
+        "RIGHT-TO-LEFT OVERRIDE",
+    ]
+    for offset in range(5):
+        if triple(data, index, 226, 128, 170 + offset):
+            return Some((f"\\u{{202{hex_digit(10 + offset)}}}", names[offset]))
+    isolates = ["LEFT-TO-RIGHT ISOLATE", "RIGHT-TO-LEFT ISOLATE", "FIRST STRONG ISOLATE", "POP DIRECTIONAL ISOLATE"]
+    for offset in range(4):
+        if triple(data, index, 226, 129, 166 + offset):
+            return Some((f"\\u{{206{6 + offset}}}", isolates[offset]))
+    return None
+
+
+def pair(data: &bytes, index: int, first: int, second: int) -> bool:
+    """Compare a two-byte UTF-8 sequence only after proving its bounds."""
+    return index + 1 < len(data) and int(data[index]) == first and int(data[index + 1]) == second
+
+
+def triple(data: &bytes, index: int, first: int, second: int, third: int) -> bool:
+    """Compare a three-byte UTF-8 sequence only after proving its bounds."""
+    return index + 2 < len(data) and int(data[index]) == first and int(data[index + 1]) == second and int(data[index + 2]) == third
+
+
+def hex_digit(value: int) -> str:
+    """Spell the one hexadecimal digit used by the U+202A through U+202E controls."""
+    return "0123456789abcdef"[value:value + 1]

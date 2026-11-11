@@ -425,7 +425,7 @@ pub fn format_error_with_related_sources<'a>(
     };
     let mut out = format!(
         "{bold}{kind_color}{heading}{reset}{bold}: {message}{reset}\n",
-        message = error.message,
+        message = crate::source_security::escape_bidirectional_controls(&error.message),
     );
     let mut unresolved = Vec::new();
     for related in error.related_declarations() {
@@ -471,7 +471,10 @@ pub fn format_error_with_related_sources<'a>(
     );
     render_source_annotations(&mut out, file_name, source, &mut annotations, kind_color, cyan, reset);
     for note in error.notes() {
-        out.push_str(&format!("  {cyan}= note:{reset} {}\n", note));
+        out.push_str(&format!(
+            "  {cyan}= note:{reset} {}\n",
+            crate::source_security::escape_bidirectional_controls(note)
+        ));
     }
     for related in unresolved {
         out.push_str(&format!(
@@ -481,7 +484,10 @@ pub fn format_error_with_related_sources<'a>(
         ));
     }
     for hint in error.hints() {
-        out.push_str(&format!("  {cyan}= hint:{reset} {}\n", hint));
+        out.push_str(&format!(
+            "  {cyan}= hint:{reset} {}\n",
+            crate::source_security::escape_bidirectional_controls(hint)
+        ));
     }
     out
 }
@@ -543,20 +549,27 @@ fn render_source_annotations(
     let mut shown_line = None;
     for annotation in annotations {
         let (line, column, text) = get_line_info(source, annotation.span.start);
+        let prefix_end = column.saturating_sub(1).min(text.len());
+        let visible_column = crate::source_security::escape_bidirectional_controls(&text[..prefix_end]).len() + 1;
+        let visible_text = crate::source_security::escape_bidirectional_controls(text);
         if shown_line != Some(line) {
-            out.push_str(&format!("  {cyan}{line:>width$} |{reset} {text}\n"));
+            out.push_str(&format!("  {cyan}{line:>width$} |{reset} {visible_text}\n"));
             shown_line = Some(line);
         }
         let (color, marker) = match annotation.style {
             SourceAnnotationStyle::Primary => (kind_color, '^'),
             SourceAnnotationStyle::Related => (cyan, '-'),
         };
-        let underline = marker.to_string().repeat(underline_len(annotation.span, column, text));
-        let label = annotation.label.map_or(String::new(), |label| format!(" {label}"));
+        let underline = marker
+            .to_string()
+            .repeat(visible_underline_len(annotation.span, column, text));
+        let label = annotation.label.map_or(String::new(), |label| {
+            format!(" {}", crate::source_security::escape_bidirectional_controls(label))
+        });
         out.push_str(&format!(
             "  {cyan}{:>width$} |{reset} {}{color}{underline}{reset}{label}\n",
             "",
-            " ".repeat(column.saturating_sub(1)),
+            " ".repeat(visible_column.saturating_sub(1)),
         ));
     }
 }
@@ -592,6 +605,16 @@ fn underline_len(span: Span, column: usize, line_text: &str) -> usize {
         .saturating_sub(line_start)
         .min(line_text.len())
         .saturating_sub(column.saturating_sub(1))
+        .max(1)
+}
+
+/// Measure an underline in the visible source line after every bidirectional control expands to its source escape.
+fn visible_underline_len(span: Span, column: usize, line_text: &str) -> usize {
+    let raw_length = underline_len(span, column, line_text);
+    let start = column.saturating_sub(1).min(line_text.len());
+    let end = start.saturating_add(raw_length).min(line_text.len());
+    crate::source_security::escape_bidirectional_controls(&line_text[start..end])
+        .len()
         .max(1)
 }
 
@@ -706,5 +729,19 @@ mod tests {
         assert!(rendered.contains("error[INCAN-T0001]"));
         assert!(rendered.contains("reader starts here"));
         assert!(rendered.contains("source changes here"));
+    }
+
+    /// Terminal diagnostics never reproduce a raw bidirectional control from source, labels, notes or hints.
+    #[test]
+    fn rendered_diagnostics_escape_bidirectional_controls() {
+        let source = "left\u{202e}right";
+        let error = CompileError::syntax("raw \u{202e} control".to_string(), Span::new(4, 7))
+            .with_primary_label("control \u{202e} here")
+            .with_note("note \u{202e}")
+            .with_hint("hint \u{202e}");
+        let rendered = format_error("sample.incn", source, &error);
+        assert!(rendered.contains("left\\u{202e}right"));
+        assert!(rendered.contains("raw \\u{202e} control"));
+        assert!(!rendered.contains('\u{202e}'));
     }
 }

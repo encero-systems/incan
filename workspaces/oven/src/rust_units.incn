@@ -39,6 +39,7 @@ from rust_freshness import (
 from rust_portable import portable_reusable, record_portable
 from rust_bakery import baked_rust, claim_rust, rust_store, rust_unit_name, seal_rust, view_prior_evidence
 from installed_sources import require_installed_sources
+from source_security import validate_native_sources
 from compile_time_trust import combine as combine_trust, decide, decide_registry
 from bakery import bakery, forget_view, library_directory
 from rust_registry import selected_registry
@@ -99,6 +100,7 @@ def build_prepared_rust(request: RustBuild) -> Result[list[str], str]:
         all_features=request.all_features,
     )
     facets = ordered(local_facets(demand, configuration, request.substitutes, request.manifests)?)?
+    validate_native_sources(facets)?
     mut request = request
     request.registry = selected_registry(request.registry, facets, request.profile)?
     validate_incan_packages(facets, root.0, request.manifests)?
@@ -296,6 +298,7 @@ def build_prepared_dependencies(
     """
     root = Path(request.project).resolve().map_err((error) => error.message())?
     mut request = request
+    validate_native_sources(facets)?
     validate_incan_packages(facets, root.0, request.manifests)?
     # A source build that would mix native generations is refused before any unit compiles.
     require_installed_sources(facets, request)?

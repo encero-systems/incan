@@ -520,6 +520,7 @@ pub(super) fn enum_variant_completion_detail(
 
 /// Escape a short metadata value as inline markdown code.
 pub(super) fn inline_code(value: &str) -> String {
+    let value = incan_syntax::source_security::escape_bidirectional_controls(value);
     if !value.contains('`') {
         return format!("`{value}`");
     }
@@ -535,4 +536,17 @@ pub(super) fn inline_code(value: &str) -> String {
     }
     let fence = "`".repeat(max_run + 1);
     format!("{fence} {value} {fence}")
+}
+
+#[cfg(test)]
+mod source_security_tests {
+    use super::inline_code;
+
+    /// Hover metadata shows bidirectional controls as source escapes rather than terminal control characters.
+    #[test]
+    fn inline_code_escapes_bidirectional_controls() {
+        let rendered = inline_code("left\u{202e}`right`");
+        assert_eq!(rendered, "`` left\\u{202e}`right` ``");
+        assert!(!rendered.contains('\u{202e}'));
+    }
 }

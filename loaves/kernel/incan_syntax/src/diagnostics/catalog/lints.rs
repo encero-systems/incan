@@ -39,3 +39,16 @@ pub fn unreachable_code_after_return(unreachable: Span, return_span: Span) -> Co
         .with_related_span(return_span, "This `return` always exits the block first")
         .with_hint("Remove the unreachable statements, or move them above the `return`")
 }
+
+/// Warn when two different names in one source scope have the same UTS #39 skeleton.
+pub fn confusable_identifier(name: &str, earlier: &str, span: Span, earlier_span: Span) -> CompileError {
+    CompileError::warning(
+        format!("Identifier `{name}` looks like `{earlier}` in the same scope"),
+        span,
+    )
+    .with_stable_code("INCAN-T0136")
+    .with_related_span(earlier_span, format!("`{earlier}` was declared here"))
+    .with_hint(format!(
+        "Rename `{name}` or `{earlier}` so the two names are visually distinct"
+    ))
+}

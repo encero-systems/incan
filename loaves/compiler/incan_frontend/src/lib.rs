@@ -12,7 +12,7 @@
 //! - `semantics_registry`: the surface-semantics packs both the frontend and the backend consult
 
 // Syntax components are provided by the shared incan_syntax crate.
-pub use incan_syntax::{ast, diagnostics, lexer, parser};
+pub use incan_syntax::{ast, diagnostics, lexer, parser, source_security};
 pub use parsed_module::ParsedModule;
 
 // Compiler-specific pieces remain local.

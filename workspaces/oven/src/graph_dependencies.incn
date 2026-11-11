@@ -18,6 +18,7 @@ from publication import publish
 from observation import trace
 from rust_activation import DependencyDomain
 from rust_units import build_dependencies, compile_rust_library, read_receipt, receipt_document, stored_library
+from source_security import validate_native_sources
 from rust_build import BuiltUnit, RustBuild, facet_bindings, ordered, rust_output
 from rust_registry import project_registry, read_registry_units, registry_selection, selected_registry
 from rust_manifest import rust_facet
@@ -322,6 +323,7 @@ def build_native_units(
     2. The project's own Rust facet is built only when it has binaries to link.
     3. Every other Rust facet asks the ordinary bakery route after the units it links, which must exist already.
     """
+    validate_native_sources(facets)?
     mut built: Dict[str, BuiltUnit] = {}
     # The libraries built for the graph; `linking` adds the registry's and the toolchain's directories.
     mut search: list[str] = []

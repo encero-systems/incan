@@ -26,6 +26,9 @@ fn escape_string(s: &str) -> String {
             '\t' => result.push_str("\\t"),
             '\\' => result.push_str("\\\\"),
             '"' => result.push_str("\\\""),
+            c if incan_syntax::source_security::bidirectional_control_name(c).is_some() => {
+                result.push_str(&incan_syntax::source_security::unicode_scalar_escape(c));
+            }
             c => result.push(c),
         }
     }
@@ -48,8 +51,24 @@ fn escape_fstring_literal(s: &str) -> String {
             '"' => result.push_str("\\\""),
             '{' => result.push_str("{{"),
             '}' => result.push_str("}}"),
+            c if incan_syntax::source_security::bidirectional_control_name(c).is_some() => {
+                result.push_str(&incan_syntax::source_security::unicode_scalar_escape(c));
+            }
             c => result.push(c),
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{escape_fstring_literal, escape_string};
+
+    /// Structured string values keep bidirectional controls visible when the formatter emits source.
+    #[test]
+    fn string_escapes_never_emit_raw_bidirectional_controls() {
+        let value = "left\u{202e}{right}";
+        assert_eq!(escape_string(value), "left\\u{202e}{right}");
+        assert_eq!(escape_fstring_literal(value), "left\\u{202e}{{right}}");
+    }
 }
