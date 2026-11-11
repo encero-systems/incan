@@ -106,13 +106,22 @@ pub fn call_argument_type_mismatch(
             expected, callee
         ),
     };
-    add_type_mismatch_hints(
+    let mut error = add_type_mismatch_hints(
         CompileError::type_error(message, span)
             .with_expected_actual(expected, found)
             .with_note(note),
         expected,
         found,
-    )
+    );
+    if error.hints().is_empty() {
+        let parameter = parameter
+            .map(|name| format!("parameter '{name}'"))
+            .unwrap_or_else(|| "the parameter".to_string());
+        error = error.with_hint(format!(
+            "Pass a value of type '{expected}' to '{callee}', or change {parameter} to accept '{found}'"
+        ));
+    }
+    error
 }
 
 /// Add smart hints based on the expected and found types.
