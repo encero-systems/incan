@@ -286,7 +286,7 @@ def local_entry(
     )
 
 
-def toolchain_entry(
+pub def toolchain_entry(
     unit: RegistryUnit,
     units: list[RegistryUnit],
     facets: list[LocalFacet],
@@ -311,6 +311,7 @@ def toolchain_entry(
             name=unit.loaf,
             version=unit.version,
             origin="toolchain",
+            registry=unit.registry,
             entry=unit.entry,
             dependencies=dependencies,
             features=[
