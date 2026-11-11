@@ -13,6 +13,7 @@ from native_build import (
     standard_profiles,
 )
 from release_support import (
+    FAMILIES,
     BaselineReport,
     Counts,
     append_bytes,
@@ -31,6 +32,7 @@ from release_support import (
     tree_digest,
     verification_program,
 )
+from verify_installation import census_arguments
 
 const SHA: str = "0123456789abcdef0123456789abcdef01234567"
 const COMPLETE_LOG: str = """PASS behavior/a/a
@@ -60,6 +62,16 @@ def test_release_build_admission_uses_declared_lowering_project_and_standard_mem
     assert waves[1] == ["codecs", "compression", "data"]
     assert waves[2] == ["vocab"]
     assert waves[3] == ["interop"]
+    return Ok(None)
+
+
+def test_release_census_shares_compilation_without_dropping_a_family() -> Result[None, str]:
+    """The installed census keeps every family while leaving shared compilation enabled across its 1,491 cases."""
+    arguments = census_arguments(Path("oven"), Path("fixtures"), Path("scratch"), 4, 120)
+    assert "--isolated" not in arguments
+    assert arguments[0:8] == ["oven", "fixtures", "--scratch", "scratch", "--jobs", "4", "--timeout", "120"]
+    assert arguments[8] == "--serial-families"
+    assert arguments[9:] == [family for family in FAMILIES]
     return Ok(None)
 
 

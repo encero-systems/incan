@@ -130,10 +130,7 @@ def retain_phase_timing(installation: Installation, phase: str, started: Instant
     return append_timing(installation.run.joinpath("phase-timings.tsv"), phase, started.elapsed().as_secs_f64())
 
 
-def run_concurrent_gates(
-    installation: Installation,
-    runner: Path,
-) -> Result[tuple[BaselineReport, int], str]:
+def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tuple[BaselineReport, int], str]:
     """Run independent installed gates under one host-memory budget and recover their typed results."""
     plans = verification_phase_plans(installation.jobs)
     mut invocations: list[Invocation] = []
@@ -164,8 +161,9 @@ def run_concurrent_gates(
     failed = run_all_failures(compiler.0, invocations, len(invocations), memory)?
     if len(failed) > 0:
         return Err(
-            "installed verification phase failures: "
-            + ", ".join([verification_phase_name(plans[index].phase) for index in failed]),
+            "installed verification phase failures: " + ", ".join(
+                [verification_phase_name(plans[index].phase) for index in failed],
+            ),
         )
     for plan in plans:
         name = verification_phase_name(plan.phase)
@@ -174,12 +172,10 @@ def run_concurrent_gates(
         append_timing(installation.run.joinpath("phase-timings.tsv"), name, seconds)?
     report = installed_contract_report(installation)?
     suites = int(
-        installation
-            .run
+        installation.run
             .joinpath("rust-facet-count.txt")
             .read_text("utf-8", "strict")
-            .map_err((error) => error.message())?
-            .strip(),
+            .map_err((error) => error.message())?.strip(),
     )
     return Ok((report, suites))
 
@@ -188,23 +184,11 @@ pub def verification_phase_plans(jobs: int) -> list[VerificationPhasePlan]:
     """Plan independent gates with their aggregate lowering-scale or project-scale memory reservations."""
     workers = verification_workers(jobs)
     return [
-        VerificationPhasePlan(
-            phase=VerificationPhase.Oven,
-            reservation=workers * OVEN_PROJECT_RESERVATION_BYTES,
-        ),
-        VerificationPhasePlan(
-            phase=VerificationPhase.RustFacets,
-            reservation=workers * FACET_RESERVATION_BYTES,
-        ),
-        VerificationPhasePlan(
-            phase=VerificationPhase.DriverIntegration,
-            reservation=LOWERING_RESERVATION_BYTES,
-        ),
+        VerificationPhasePlan(phase=VerificationPhase.Oven, reservation=workers * OVEN_PROJECT_RESERVATION_BYTES),
+        VerificationPhasePlan(phase=VerificationPhase.RustFacets, reservation=workers * FACET_RESERVATION_BYTES),
+        VerificationPhasePlan(phase=VerificationPhase.DriverIntegration, reservation=LOWERING_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.Lsp, reservation=SMALL_PROJECT_RESERVATION_BYTES),
-        VerificationPhasePlan(
-            phase=VerificationPhase.Census,
-            reservation=workers * LOWERING_RESERVATION_BYTES,
-        ),
+        VerificationPhasePlan(phase=VerificationPhase.Census, reservation=workers * LOWERING_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.Memory, reservation=LOWERING_RESERVATION_BYTES),
     ]
 
@@ -242,8 +226,7 @@ def run_phase(arguments: list[str]) -> Result[None, str]:
         VerificationPhase.Oven => run_oven_tests(installation)?
         VerificationPhase.RustFacets =>
             suites = run_rust_facets(installation)?
-            installation
-                .run
+            installation.run
                 .joinpath("rust-facet-count.txt")
                 .write_text(str(suites) + "\n", "utf-8", "strict", None)
                 .map_err((error) => error.message())?
@@ -251,8 +234,7 @@ def run_phase(arguments: list[str]) -> Result[None, str]:
         VerificationPhase.Lsp => verify_lsp(installation, runner)?
         VerificationPhase.Census => _ = run_contracts(installation, runner)?
         VerificationPhase.Memory => measure_memory(installation)?
-    installation
-        .run
+    installation.run
         .joinpath(f"phase-timing-{verification_phase_name(phase)}.txt")
         .write_text(str(started.elapsed().as_secs_f64()) + "\n", "utf-8", "strict", None)
         .map_err((error) => error.message())?
@@ -295,9 +277,7 @@ def phase_installation(run: Path, jobs: int, timeout_seconds: int) -> Result[Ins
     lsp = Path(get_or("INCAN_LSP", home.joinpath("bin/incan-lsp").0))
     if not oven.is_file() or not lsp.is_file():
         return Err("the installed Oven and language server are required")
-    stdlib = run.joinpath("selected-stdlib.txt").read_text("utf-8", "strict").map_err(
-        (error) => error.message(),
-    )?
+    stdlib = run.joinpath("selected-stdlib.txt").read_text("utf-8", "strict").map_err((error) => error.message())?
     return Ok(
         Installation(
             root=root,
@@ -379,9 +359,10 @@ def prepare(output: Path, jobs: int, timeout_seconds: int) -> Result[Installatio
     temporary = TemporaryDirectory.try_new_with("run.", "", Some(output)).map_err((error) => error.message())?
     run = temporary.persist().map_err((error) => error.message())?
     standard = select_standard_sources(root, home, run)?
-    run.joinpath("selected-stdlib.txt").write_text(standard, "utf-8", "strict", None).map_err(
-        (error) => error.message(),
-    )?
+    run
+        .joinpath("selected-stdlib.txt")
+        .write_text(standard, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
     retain_input_digests(run, oven, lsp)?
     return Ok(
         Installation(
@@ -510,12 +491,7 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
         )
     if len(planned) == 0:
         return Err("no Rust facets found")
-    failed = run_all_failures(
-        installation.oven.0,
-        planned,
-        installation.jobs,
-        shared_memory(host_memory()),
-    )?
+    failed = run_all_failures(installation.oven.0, planned, installation.jobs, shared_memory(host_memory()))?
     if len(failed) > 0:
         return Err("Rust facet test failures: " + ", ".join([projects[index] for index in failed]))
     return Ok(len(projects))
@@ -694,17 +670,13 @@ def run_contracts(installation: Installation, runner: Path) -> Result[BaselineRe
         Step(
             name="contracts",
             executable=runner.0,
-            arguments=[
-                installation.oven.0,
-                installation.root.joinpath("workspaces/contracts/fixtures").0,
-                "--scratch",
-                installation.run.joinpath("scratch").0,
-                "--jobs",
-                str(installation.jobs),
-                "--timeout",
-                str(installation.timeout_seconds),
-                "--isolated",
-            ] + [family for family in FAMILIES],
+            arguments=census_arguments(
+                installation.oven,
+                installation.root.joinpath("workspaces/contracts/fixtures"),
+                installation.run.joinpath("scratch"),
+                installation.jobs,
+                installation.timeout_seconds,
+            ),
             environment=environment,
             remove_environment=["RUSTC_BOOTSTRAP"],
             directory=Some(installation.root),
@@ -721,6 +693,21 @@ def run_contracts(installation: Installation, runner: Path) -> Result[BaselineRe
     )?
     write_json(installation.run.joinpath("counts.json"), counts_json(report.counts))?
     return Ok(report)
+
+
+pub def census_arguments(oven: Path, fixtures: Path, scratch: Path, jobs: int, timeout_seconds: int) -> list[str]:
+    """Select every contract family with shared compilation while retaining the release's worker and timeout budgets."""
+    return [
+        oven.0,
+        fixtures.0,
+        "--scratch",
+        scratch.0,
+        "--jobs",
+        str(jobs),
+        "--timeout",
+        str(timeout_seconds),
+        "--serial-families",
+    ] + [family for family in FAMILIES]
 
 
 def measure_memory(installation: Installation) -> Result[None, str]:
