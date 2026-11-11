@@ -192,8 +192,19 @@ pub def linking(
     built: Dict[str, BuiltUnit],
     search: list[str],
 ) -> Result[list[str], str]:
+    """Link one unit with the consumer's requested code-generation profile."""
+    return linking_with_profile(facet, request, built, search, request.profile)
+
+
+pub def linking_with_profile(
+    facet: LocalFacet,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    search: list[str],
+    profile: str,
+) -> Result[list[str], str]:
     """
-    The arguments that link a unit.
+    The arguments that link a unit under an explicit producer profile.
 
     1. Its features, as `--cfg`.
     2. The search directories: the registry's and the toolchain's, then those of the libraries built for the graph.
@@ -216,7 +227,7 @@ pub def linking(
     # 3. Each edge names its library exactly, local edges first, so no library is chosen by scanning a directory.
     arguments = arguments + local_externs(facet, built)? + registry_externs(facet, request)?
     # 4. Both unit languages read their flags from one profile table.
-    arguments = arguments + rust_arguments(request.profile)
+    arguments = arguments + rust_arguments(profile)
     return Ok(arguments)
 
 
