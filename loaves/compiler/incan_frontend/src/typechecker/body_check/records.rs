@@ -98,6 +98,16 @@ impl TypeChecker {
         self.selected_local_records.insert(owner, fields);
     }
 
+    /// Borrow the final record emitted directly by this activation's settlement producer.
+    pub(crate) fn produced_final_record(&self, owner: Span) -> Option<&Fields> {
+        self.produced_final_records.get(&owner)
+    }
+
+    /// Clone the explicit refusal returned by this activation's direct final producer.
+    pub(crate) fn final_record_refusal(&self, owner: Span) -> Option<NodeBindingError> {
+        self.final_record_refusals.get(&owner).cloned()
+    }
+
     /// Retain one producer-validated declaration record until its source-order owner consumes it.
     pub(crate) fn retain_declaration_record(&mut self, owner: Span, fields: Fields) {
         self.callable_declaration_reuse.insert(owner, fields);
@@ -201,29 +211,35 @@ impl Positions {
         // Declaration records are restored before the function scope is entered. Mint the current activation's
         // parameter handles from the symbol table's next scope index so stored nested identities bind without
         // running annotation/default checking or creating the scope early.
-        let declaration_bindings = if declaration {
-            program
-                .declarations
-                .iter()
-                .find(|declaration| declaration.span == owner)
-                .and_then(|declaration| match &declaration.node {
-                    crate::ast::Declaration::Function(function) => Some(function),
-                    _ => None,
-                })
-                .into_iter()
-                .flat_map(|function| &function.params)
-                .map(|parameter| CanonicalSymbolId {
-                    namespace: SymbolNamespace::OrdinaryLexical,
-                    origin: checker.symbols.declaration_origin(),
-                    declaration_name: parameter.node.name.clone(),
-                    kind: SemanticSourceTargetKind::Parameter,
-                    scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
-                    declaration_span: parameter.span.into(),
-                })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
+        let declaration_bindings = program
+            .declarations
+            .iter()
+            .find(|declaration| declaration.span == owner)
+            .and_then(|declaration| match &declaration.node {
+                crate::ast::Declaration::Function(function) => Some(function),
+                _ => None,
+            })
+            .into_iter()
+            .flat_map(|function| &function.params)
+            .map(|parameter| {
+                (0..checker.symbols.all_symbols().len())
+                    .filter_map(|index| checker.symbols.identity_of(index))
+                    .find(|canonical| {
+                        canonical.kind == SemanticSourceTargetKind::Parameter
+                            && canonical.origin == checker.symbols.declaration_origin()
+                            && canonical.declaration_span == parameter.span.into()
+                    })
+                    .cloned()
+                    .unwrap_or_else(|| CanonicalSymbolId {
+                        namespace: SymbolNamespace::OrdinaryLexical,
+                        origin: checker.symbols.declaration_origin(),
+                        declaration_name: parameter.node.name.clone(),
+                        kind: SemanticSourceTargetKind::Parameter,
+                        scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
+                        declaration_span: parameter.span.into(),
+                    })
+            })
+            .collect::<Vec<_>>();
         // Real checked locals, when present, replace the pre-scope parameter handles under the same stable key.
         for (canonical, stable) in nodes.binding_identities(declaration_bindings.iter().chain(nested).chain(raw))? {
             identities.insert(stable.render_compact(), canonical);
@@ -241,6 +257,38 @@ impl Positions {
         let mut positions = Self::new(checker, program, owner, false)?;
         for (canonical, stable) in positions.nodes.binding_identities(local.nested.values())? {
             positions.identities.insert(stable.render_compact(), canonical);
+        }
+        Ok(positions)
+    }
+
+    /// Bind opaque nested identities from one authenticated local value to this revision's structural declaration
+    /// nodes. Module declarations and parameters retain their ordinary collected identities; only body-local
+    /// declarations receive activation-private handles, which are mapped back to their persisted stable identities.
+    fn for_decoded_local(
+        checker: &TypeChecker,
+        program: &Program,
+        owner: Span,
+        fields: &Fields,
+    ) -> Result<Self, NodeBindingError> {
+        let mut positions = Self::new(checker, program, owner, false)?;
+        for row in fields {
+            if row.len() != 4 || row[0] != "binding" || row[2] != "declaration" {
+                continue;
+            }
+            let span = positions.span(&row[1])?;
+            let canonical = CanonicalSymbolId {
+                namespace: SymbolNamespace::OrdinaryLexical,
+                origin: checker.symbols.declaration_origin(),
+                declaration_name: row[3].clone(),
+                kind: SemanticSourceTargetKind::Local,
+                scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
+                declaration_span: span.into(),
+            };
+            if positions.identities.insert(row[3].clone(), canonical).is_some() {
+                return Err(NodeBindingError::InvalidField(
+                    "duplicate nested declaration identity".into(),
+                ));
+            }
         }
         Ok(positions)
     }
@@ -336,6 +384,57 @@ fn restore(
         );
     }
     rebound.finish(&header[3])
+}
+
+/// Rebuild one pending local producer value for its settlement activation. The value carries no finalized status,
+/// diagnostics or types; those remain owned by the settlement operation entered after this function returns.
+fn restore_pending(positions: &Positions, owner: Span, fields: &Fields) -> Result<BodyLocal, NodeBindingError> {
+    let header = fields
+        .first()
+        .filter(|header| header.len() == 5)
+        .ok_or(NodeBindingError::MissingOwner)?;
+    if header[0] != "header"
+        || header[1] != positions.nodes.owner().render_compact()
+        || header[2] != positions.nodes.root()
+        || header[3] != "local"
+        || header[4] != "incan.checker-free-functions/10"
+    {
+        return Err(NodeBindingError::Unsupported("local record header"));
+    }
+    let mut local = BodyLocal {
+        owner,
+        kind: LocalOwnerKind::Body,
+        ..BodyLocal::default()
+    };
+    let mut previous: Option<&[String]> = None;
+    let mut pending = false;
+    for row in &fields[1..] {
+        if row.len() < 4 || previous.is_some_and(|previous| previous[..3] >= row[..3]) {
+            return Err(NodeBindingError::InvalidField(
+                "canonical ordering or field width".into(),
+            ));
+        }
+        previous = Some(row);
+        if row.len() == 4 && row[0] == "status" && row[1].is_empty() && row[2] == "pending" && row[3] == "true" {
+            if pending {
+                return Err(NodeBindingError::InvalidField("duplicate pending status".into()));
+            }
+            pending = true;
+            continue;
+        }
+        restore_local(positions, &mut local, row).map_err(|error| {
+            if error == NodeBindingError::MissingNode {
+                NodeBindingError::InvalidField(format!("family={} node={} selector={}", row[0], row[1], row[2]))
+            } else {
+                error
+            }
+        })?;
+    }
+    if !pending {
+        return Err(NodeBindingError::InvalidField("missing pending status".into()));
+    }
+    local.mutation.restore_flow_graphs(&mut local.protocols);
+    Ok(local)
 }
 
 /// Rebinding owns decoded native scratch only for this activation; persistent bytes and source lifetimes stay outside.

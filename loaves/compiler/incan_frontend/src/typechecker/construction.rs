@@ -24,6 +24,8 @@ impl TypeChecker {
             produced_declaration_records: std::collections::BTreeMap::new(),
             produced_local_records: std::collections::BTreeMap::new(),
             selected_local_records: std::collections::BTreeMap::new(),
+            produced_final_records: std::collections::BTreeMap::new(),
+            final_record_refusals: std::collections::BTreeMap::new(),
             callable_declaration_reuse: std::collections::BTreeMap::new(),
             lazy_result_bodies: HashSet::new(),
             iteration_replacement_bodies: HashSet::new(),
