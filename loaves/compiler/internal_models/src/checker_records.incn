@@ -572,8 +572,16 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
                 end = type_end(values, end, 0)?
         else:
             return Err(CodecFault.Unsupported(field.selector))
+    # A builtin call keeps its selected function; a builtin method also keeps its selected owner.
+    elif field.family == "builtin":
+        if field.selector == "call" and len(values) == 1 and values[0] != "":
+            end = 1
+        elif field.selector == "method" and len(values) == 2 and values[0] != "" and values[1] != "":
+            end = 2
+        else:
+            return Err(CodecFault.Malformed)
     # Facts that hold one nonempty value.
-    elif field.family in ["binding", "reference", "write", "builtin", "default"]:
+    elif field.family in ["binding", "reference", "write", "default"]:
         if len(values) != 1 or values[0] == "":
             return Err(CodecFault.Malformed)
         end = 1

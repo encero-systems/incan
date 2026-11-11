@@ -472,6 +472,7 @@ fn restore_pending(positions: &Positions, owner: Span, fields: &Fields) -> Resul
         kind: LocalOwnerKind::Body,
         ..BodyLocal::default()
     };
+    let mut record_identities = BTreeMap::new();
     let mut previous: Option<&[String]> = None;
     let mut pending = false;
     for row in &fields[1..] {
@@ -488,7 +489,7 @@ fn restore_pending(positions: &Positions, owner: Span, fields: &Fields) -> Resul
             pending = true;
             continue;
         }
-        restore_local(positions, &mut local, row).map_err(|error| {
+        restore_local(positions, &mut local, &mut record_identities, row).map_err(|error| {
             if error == NodeBindingError::MissingNode {
                 NodeBindingError::InvalidField(format!("family={} node={} selector={}", row[0], row[1], row[2]))
             } else {
@@ -507,6 +508,8 @@ fn restore_pending(positions: &Positions, owner: Span, fields: &Fields) -> Resul
 #[derive(Default)]
 struct Rebinding {
     local: BodyLocal,
+    /// Compiler-owned identities authenticated by preceding builtin method fields.
+    record_identities: BTreeMap<String, CanonicalSymbolId>,
     diagnostics: BTreeMap<String, super::super::diagnostic_values::AnchoredDiagnostic>,
     warnings: BTreeMap<String, super::super::diagnostic_values::AnchoredDiagnostic>,
     mutation: super::super::ownership_contracts::mutation::RecordedMutation,
@@ -550,7 +553,7 @@ impl Rebinding {
             "final-type" => self.final_type(positions, row)?,
             "native-call" if row[1].is_empty() && row[2] == "empty" && row.len() == 4 && row[3] == "true" => {}
             "diagnostic" => self.diagnostic(program, positions, row)?,
-            _ => restore_local(positions, &mut self.local, row)?,
+            _ => restore_local(positions, &mut self.local, &mut self.record_identities, row)?,
         }
         Ok(())
     }
@@ -736,7 +739,12 @@ fn project_expressions(positions: &Positions, local: &BodyLocal, fields: &mut Fi
 }
 
 /// Recreate every supported local map directly from the selected field's typed primitives.
-fn restore_local(positions: &Positions, local: &mut BodyLocal, row: &[String]) -> Result<(), NodeBindingError> {
+fn restore_local(
+    positions: &Positions,
+    local: &mut BodyLocal,
+    record_identities: &mut BTreeMap<String, CanonicalSymbolId>,
+    row: &[String],
+) -> Result<(), NodeBindingError> {
     if matches!(
         row[0].as_str(),
         "input-call" | "input-local" | "input-flow" | "input-copy"
@@ -796,10 +804,9 @@ fn restore_local(positions: &Positions, local: &mut BodyLocal, row: &[String]) -
                 .insert((span, row[2].clone()), read_type(&mut values)?);
         }
         "reference" if row[2] == "read" => {
-            local
-                .references
-                .resolved_identities
-                .insert(span, positions.canonical(next(&mut values)?)?);
+            let identity = next(&mut values)?;
+            let canonical = restored_identity(positions, record_identities, identity)?;
+            local.references.resolved_identities.insert(span, canonical);
         }
         "write" => {
             local
@@ -824,6 +831,7 @@ fn restore_local(positions: &Positions, local: &mut BodyLocal, row: &[String]) -
         "builtin" if row[2] == "method" => {
             let builtin = incan_lang::lang::builtins::method_from_parts(next(&mut values)?, next(&mut values)?)
                 .ok_or(NodeBindingError::MissingNode)?;
+            retain_builtin_method_identity(record_identities, builtin)?;
             local.calls.resolved_builtin_method_calls.insert(span, builtin);
         }
         "signature" if matches!(row[2].as_str(), "monomorphs" | "type-arguments") => {
@@ -869,6 +877,36 @@ fn restore_local(positions: &Positions, local: &mut BodyLocal, row: &[String]) -
     }
     if values.next().is_some() {
         return Err(NodeBindingError::MissingNode);
+    }
+    Ok(())
+}
+
+/// Resolve an ordinary activation identity or one admitted by an earlier builtin method field in the same record.
+fn restored_identity(
+    positions: &Positions,
+    record_identities: &BTreeMap<String, CanonicalSymbolId>,
+    identity: &str,
+) -> Result<CanonicalSymbolId, NodeBindingError> {
+    positions
+        .canonical(identity)
+        .or_else(|error| record_identities.get(identity).cloned().ok_or(error))
+}
+
+/// Admit a registry-validated builtin method identity for reference fields that follow it in canonical order.
+fn retain_builtin_method_identity(
+    record_identities: &mut BTreeMap<String, CanonicalSymbolId>,
+    builtin: incan_lang::lang::builtins::BuiltinMethodId,
+) -> Result<(), NodeBindingError> {
+    let canonical = crate::symbols::canonical_builtin_member_identity(builtin.owner(), builtin.member());
+    let stable = StableDeclarationId::from_canonical(&canonical, None, None)
+        .ok_or(NodeBindingError::MissingNode)?
+        .render_compact();
+    match record_identities.get(&stable) {
+        Some(previous) if previous != &canonical => return Err(NodeBindingError::WrongOwner),
+        Some(_) => {}
+        None => {
+            record_identities.insert(stable, canonical);
+        }
     }
     Ok(())
 }
