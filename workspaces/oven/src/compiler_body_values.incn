@@ -3,7 +3,13 @@
 from pub::incan_platform.store import Snapshot
 from pub::internal_models import ProducerRank
 from pub::internal_models.records import ReadReceipt, RecordKey
-from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
+from compiler_graph_records import (
+    PublishedEvaluation,
+    ReusableRecord,
+    publish_evaluation,
+    reusable_evaluation,
+    reusable_family_records,
+)
 
 
 pub model SelectedBodyValues:
@@ -19,6 +25,14 @@ pub model PublishedBodyValues:
     pub snapshot: Snapshot
     pub local: PublishedEvaluation
     pub final: PublishedEvaluation
+
+
+pub model SelectedBodyRecord:
+    """One owner identity and its paired graph-admitted local/final values."""
+
+    pub identity: str
+    pub local: bytes
+    pub final: bytes
 
 
 pub def select_body_values(
@@ -41,6 +55,21 @@ pub def select_body_values(
         _ => return Ok(None)
 
 
+pub def select_body_inventory(selected: Snapshot, profile: str) -> Result[list[SelectedBodyRecord], str]:
+    """Select all complete local/final pairs while leaving incomplete or invalidated owners on full-source checking."""
+    locals = reusable_family_records(selected, "local", profile)?
+    finals = reusable_family_records(selected, "final", profile)?
+    mut selected_records: list[SelectedBodyRecord] = []
+    for local in locals:
+        match matching_record(finals, local):
+            Some(final) =>
+                selected_records.append(
+                    SelectedBodyRecord(identity=local.key.identity, local=local.value, final=final.value),
+                )
+            None => pass
+    return Ok(selected_records)
+
+
 pub def publish_body_values(
     selected: Snapshot,
     local_claim: str,
@@ -56,3 +85,17 @@ pub def publish_body_values(
     local = publish_evaluation(selected, local_claim, local_rank, local_value, local_receipt)?
     final = publish_evaluation(local.snapshot, final_claim, final_rank, final_value, final_receipt)?
     return Ok(PublishedBodyValues(snapshot=final.snapshot, local=local, final=final))
+
+
+def matching_record(records: list[ReusableRecord], local: ReusableRecord) -> Option[ReusableRecord]:
+    """Find the final value whose complete logical owner key differs from the local key only by family."""
+    for record in records:
+        if (
+            record.key.identity == local.key.identity
+            and record.key.identity_profile == local.key.identity_profile
+            and record.key.origin == local.key.origin
+            and record.key.facet == local.key.facet
+            and record.key.context == local.key.context
+        ):
+            return Some(record)
+    return None

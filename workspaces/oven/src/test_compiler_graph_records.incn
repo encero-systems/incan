@@ -40,7 +40,7 @@ from pub::internal_models import (
 )
 from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
-from compiler_body_values import publish_body_values, select_body_values
+from compiler_body_values import publish_body_values, select_body_inventory, select_body_values
 
 
 pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[None, str]:
@@ -164,6 +164,11 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
             assert values.local == b"local value"
             assert values.final == b"final value"
         None => return Err("unchanged local/final body pair did not reuse")
+    inventory = select_body_inventory(body.snapshot, "profile")?
+    assert len(inventory) == 1
+    assert inventory[0].identity == "run44-body"
+    assert inventory[0].local == b"local value"
+    assert inventory[0].final == b"final value"
     changed_body = commit(put(begin(body.snapshot), encode_record_key(final_request.key)?, b"changed final input")).map_err(
         (error) => error.message(),
     )?
