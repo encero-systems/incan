@@ -1,22 +1,10 @@
 """Resolve one local-family activation into decoded source, declaration and immutable environment inputs."""
 
-from pub::incan_platform.store import Lookup, owned
-from pub::internal_models import (
-    PREPARED_FAMILY,
-    WORK_FAMILY,
-    InputSnapshot,
-    PreparedInputs,
-    ReadyWork,
-    decode_prepared_inputs,
-    decode_ready_work,
-    envelope_key,
-    encode_read_receipt,
-    prepared_reader,
-)
+from pub::internal_models import prepared_reader
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, decode_record, native_fields
 from pub::internal_models.records import ReadReceipt, ReadScope, RecordRead
+from checked_activation import ResolvedCheckingActivation, resolve_checking_activation, stage_checking_result
 from record_protocol import Evaluate, Produced
-from record_snapshot import ResolvedSnapshot, resolve_snapshot
 
 
 pub model LocalActivationInputs:
@@ -31,34 +19,20 @@ pub model LocalActivationInputs:
 
 pub def resolve_local_activation(home: str, evaluation: Evaluate) -> Result[LocalActivationInputs, str]:
     """Resolve and decode one Evaluate message's work/preparation roots before opening its scoped store reader."""
-    if evaluation.reservation == "" or evaluation.cancellation_generation < 0:
-        return Err("local evaluation requires a reservation and cancellation generation")
-    resolved = resolve_snapshot(home, evaluation.snapshot).map_err((error) => error.message())?
-    ready_lookup = resolved
-        .read(envelope_key(WORK_FAMILY, evaluation.work_root)?)
-        .map_err((error) => error.message())?
-    ready = decode_ready_work(required(ready_lookup)?)?
-    prepared_lookup = resolved
-        .read(envelope_key(PREPARED_FAMILY, evaluation.prepared_root)?)
-        .map_err((error) => error.message())?
-    prepared = decode_prepared_inputs(
-        required(prepared_lookup)?,
-    )?
-    return read_local_activation(resolved, ready, prepared.snapshot, prepared)
+    return read_local_activation(resolve_checking_activation(home, evaluation)?)
 
 
-pub def read_local_activation(
-    resolved: ResolvedSnapshot,
-    ready: ReadyWork,
-    snapshot: InputSnapshot,
-    prepared: PreparedInputs,
-) -> Result[LocalActivationInputs, str]:
+pub def read_local_activation(activation: ResolvedCheckingActivation) -> Result[LocalActivationInputs, str]:
     """
     Construct the prepared reader and store source from one activation, then decode only its declared inputs.
 
     Exactly one source and one matching declaration are required. Other declaration values form the immutable
     environment; no checker, cache or whole-program value is available at this boundary.
     """
+    resolved = activation.snapshot
+    ready = activation.ready
+    prepared = activation.prepared
+    snapshot = prepared.snapshot
     mut reader = prepared_reader(ready, snapshot, prepared).map_err((_) => "invalid local activation preparation")?
     scope = ReadScope(snapshot=snapshot.root.digest, profile=ready.profile.identity.digest)
     source = resolved.record_source(scope)
@@ -73,6 +47,7 @@ pub def read_local_activation(
             RecordRead.Absent(_) => return Err("local activation input is absent")
             RecordRead.Members(_) => return Err("local activation input cannot be a member page")
             RecordRead.Failed(_) => return Err("local activation record read failed")
+
         if request.key.family == "source" and request.key.context == "local":
             if source_text is not None or request.key.facet == "":
                 return Err("local activation requires one named source input")
@@ -116,26 +91,4 @@ pub def stage_local_result(
     semantic: str,
 ) -> Result[Produced, str]:
     """Stage one produced value and its canonical evidence pages, then return only their content roots."""
-    receipt_bytes = encode_read_receipt(receipt)?
-    diagnostic = b""
-    counter = f"evaluations=1\nsemantic={semantic}".encode("utf-8")
-    resolved = resolve_snapshot(home, snapshot).map_err((error) => error.message())?
-    roots = resolved
-        .stage_compiler_outputs(value, receipt_bytes, diagnostic, counter)
-        .map_err((error) => error.message())?
-    return Ok(
-        Produced(
-            staged_root=roots.value,
-            witness_root=roots.receipt,
-            diagnostic_root=roots.diagnostic,
-            counter_root=roots.counter,
-        ),
-    )
-
-
-def required(value: Lookup) -> Result[bytes, str]:
-    """Read one required activation envelope as owned bytes before the resolved snapshot moves into record reads."""
-    match value:
-        Lookup.Found(found) => return Ok(owned(found))
-        Lookup.Deleted => return Err("compiler activation envelope was deleted")
-        Lookup.Absent => return Err("compiler activation envelope is absent")
+    return stage_checking_result(home, snapshot, value, receipt, semantic)

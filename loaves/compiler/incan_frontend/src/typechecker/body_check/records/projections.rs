@@ -9,34 +9,14 @@ pub(crate) fn produce_declaration(
     program: &Program,
     owner: Span,
 ) -> Result<Fields, NodeBindingError> {
-    encode_settled(checker, program, owner, true)
-}
-
-/// Project a settled statement value for the still-bootstrap final-family oracle.
-pub(crate) fn project_final(checker: &TypeChecker, program: &Program, owner: Span) -> Result<Fields, NodeBindingError> {
-    encode_settled(checker, program, owner, false)
-}
-
-/// Encode one settled owner through the checker profile's canonical field grammar.
-fn encode_settled(
-    checker: &TypeChecker,
-    program: &Program,
-    owner: Span,
-    declaration: bool,
-) -> Result<Fields, NodeBindingError> {
-    let positions = Positions::new(checker, program, owner, declaration)?;
-    let view = if declaration {
-        checker.checked_declaration(owner)
-    } else {
-        checker.checked_body(owner)
-    }
-    .ok_or(NodeBindingError::MissingOwner)?;
+    let positions = Positions::new(checker, program, owner, true)?;
+    let view = checker
+        .checked_declaration(owner)
+        .ok_or(NodeBindingError::MissingOwner)?;
     validate(view)?;
     let mut fields = local_fields(&positions, &view.local)?;
     ownership::project(checker, owner, &positions, &mut fields)?;
-    if declaration {
-        project_signature(checker, program, owner, &positions, &mut fields)?;
-    }
+    project_signature(checker, program, owner, &positions, &mut fields)?;
     project_diagnostics(checker, program, &positions, view, &mut fields)?;
     project_final_types(checker, view, &positions, &mut fields)?;
     fields.push(vec![
@@ -52,11 +32,71 @@ fn encode_settled(
             "header".into(),
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
-            if declaration { "declaration" } else { "final" }.into(),
+            "declaration".into(),
             "incan.checker-free-functions/10".into(),
         ],
     );
     Ok(fields)
+}
+
+/// Emit one final-family value from the exact settled view supplied by its owner operation. The Incan schema assigns
+/// the family tag; native output contains only owner/root/profile metadata and canonical field primitives.
+pub(crate) fn produce_final(
+    checker: &TypeChecker,
+    program: &Program,
+    owner: Span,
+    view: &CheckedBodyView,
+) -> Result<Fields, NodeBindingError> {
+    let positions = Positions::for_local(checker, program, owner, &view.local)
+        .map_err(|error| final_boundary_error("positions", error))?;
+    encode_final(checker, program, owner, view, &positions)
+}
+
+/// Encode one settled statement owner with activation-owned identity bindings. The caller must have produced the
+/// supplied view by settling exactly this owner's decoded local input.
+pub(super) fn encode_final(
+    checker: &TypeChecker,
+    program: &Program,
+    owner: Span,
+    view: &CheckedBodyView,
+    positions: &Positions,
+) -> Result<Fields, NodeBindingError> {
+    if view.owner() != owner {
+        return Err(NodeBindingError::WrongOwner);
+    }
+    validate(view).map_err(|error| final_boundary_error("validation", error))?;
+    let mut fields =
+        local_fields(positions, &view.local).map_err(|error| final_boundary_error("local fields", error))?;
+    ownership::project(checker, owner, positions, &mut fields)
+        .map_err(|error| final_boundary_error("ownership", error))?;
+    project_diagnostics(checker, program, positions, view, &mut fields)
+        .map_err(|error| final_boundary_error("diagnostics", error))?;
+    project_final_types(checker, view, positions, &mut fields).map_err(|error| final_boundary_error("types", error))?;
+    fields.push(vec![
+        "status".into(),
+        String::new(),
+        "refused".into(),
+        view.is_refused().to_string(),
+    ]);
+    fields.sort();
+    fields.insert(
+        0,
+        vec![
+            "header".into(),
+            positions.nodes.owner().render_compact(),
+            positions.nodes.root().to_owned(),
+            "incan.checker-free-functions/10".into(),
+        ],
+    );
+    Ok(fields)
+}
+
+/// Retain the failed final-family boundary when an authenticated owner lacks one required identity binding.
+fn final_boundary_error(boundary: &str, error: NodeBindingError) -> NodeBindingError {
+    if error == NodeBindingError::MissingOwner {
+        return NodeBindingError::InvalidField(format!("final {boundary} is missing an owner binding"));
+    }
+    error
 }
 
 /// References keep their stable target and a structural source role; parameter writes stay declaration-owned.

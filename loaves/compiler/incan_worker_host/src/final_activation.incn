@@ -1,0 +1,78 @@
+"""Resolve one final-family activation into decoded source and local inputs."""
+
+from pub::internal_models import prepared_reader
+from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, CodecFault, decode_record, native_fields
+from pub::internal_models.records import ReadReceipt, ReadScope, RecordRead
+from checked_activation import ResolvedCheckingActivation
+
+
+pub model FinalActivationInputs:
+    """Decoded values passed to the frontend's single-owner final entry, plus their completed read receipt."""
+
+    pub source: str
+    pub owner: str
+    pub local: list[list[str]]
+    pub receipt: ReadReceipt
+
+
+pub def read_final_activation(activation: ResolvedCheckingActivation) -> Result[FinalActivationInputs, str]:
+    """
+    Construct the prepared reader and decode only one source and its matching local value.
+
+    No declaration environment, ambient checker or sibling local value is available to final settlement. Callee
+    effect values remain a future profile capability and therefore cannot enter this initial activation envelope.
+    """
+    resolved = activation.snapshot
+    ready = activation.ready
+    prepared = activation.prepared
+    snapshot = prepared.snapshot
+    mut reader = prepared_reader(ready, snapshot, prepared).map_err((_) => "invalid final activation preparation")?
+    scope = ReadScope(snapshot=snapshot.root.digest, profile=ready.profile.identity.digest)
+    source = resolved.record_source(scope)
+    mut source_text: Option[str] = None
+    mut owner = ""
+    mut local: Option[list[list[str]]] = None
+    for request in prepared.required_reads:
+        found = match reader.read(source, request):
+            RecordRead.Found(value) => value.value
+            RecordRead.Deleted(_) => return Err("final activation input was deleted")
+            RecordRead.Absent(_) => return Err("final activation input is absent")
+            RecordRead.Members(_) => return Err("final activation input cannot be a member page")
+            RecordRead.Failed(_) => return Err("final activation record read failed")
+
+        if request.key.family == "source" and request.key.context == "final":
+            if source_text is not None or request.key.facet == "":
+                return Err("final activation requires one named source input")
+            source_text = Some(found.decode().map_err((_) => "final source record is not UTF-8")?)
+            owner = request.key.facet
+        elif (
+            request.key.family == "local"
+            and request.key.identity == ready.output.identity
+            and request.key.context != ""
+        ):
+            if local is not None:
+                return Err("final activation has more than one own local input")
+            record = decode_record(found, CHECKER_PROFILE, request.key.identity, request.key.context).map_err(
+                (fault) => "final local record is invalid: " + codec_fault_name(fault),
+            )?
+            if record.family != CheckedFamily.Local:
+                return Err("final activation requires a local-family input")
+            local = Some(native_fields(record).map_err((_) => "final local fields are invalid")?)
+        else:
+            return Err("final activation prepared an unsupported input family")
+    completed = reader.finish().map_err((_) => "final activation read receipt is incomplete")?
+    match (source_text, local):
+        (Some(source_value), Some(local_value)) =>
+            return Ok(FinalActivationInputs(source=source_value, owner=owner, local=local_value, receipt=completed))
+        _ => return Err("final activation is missing source or local input")
+
+
+def codec_fault_name(fault: CodecFault) -> str:
+    """Name the exact local-codec refusal without leaking input values into worker diagnostics."""
+    match fault:
+        CodecFault.Malformed => return "malformed"
+        CodecFault.ProfileMismatch => return "profile mismatch"
+        CodecFault.OwnerMismatch => return "owner mismatch"
+        CodecFault.BodyChanged => return "body changed"
+        CodecFault.Unsupported(_) => return "unsupported"
+        CodecFault.Limit => return "limit"

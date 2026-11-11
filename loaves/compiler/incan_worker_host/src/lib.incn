@@ -48,7 +48,14 @@ pub from record_snapshot import (
     canonical_roots,
     resolve_snapshot,
 )
-pub from local_activation import LocalActivationInputs, read_local_activation, resolve_local_activation, stage_local_result
+pub from checked_activation import ResolvedCheckingActivation, resolve_checking_activation, stage_checking_result
+pub from local_activation import (
+    LocalActivationInputs,
+    read_local_activation,
+    resolve_local_activation,
+    stage_local_result,
+)
+pub from final_activation import FinalActivationInputs, read_final_activation
 pub from endpoint import CallerWatch, abandon
 pub from host import (
     WorkerActivation,
