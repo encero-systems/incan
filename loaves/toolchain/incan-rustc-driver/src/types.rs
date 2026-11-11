@@ -6,8 +6,12 @@ use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::RuntimeCarrier;
 use rustc_middle::ty::{ExistentialPredicateStableCmpExt as _, Ty, TyCtxt};
 
-/// Construct an unsized trait object from its principal arguments followed by declaration-ordered associated
-/// equalities. Auto traits and const arguments require a richer checked carrier and refuse here.
+/// Construct an unsized native trait alias from its principal arguments and declaration-ordered associated
+/// equalities. Like a Rust trait-object type alias, the object has a static lifetime unless its declaration retains
+/// another lifetime contract. References to the alias still have independent call-scoped loans; their lifetime must
+/// not replace the owned object's bound. Erasing the object bound here reaches signature outlives checking before
+/// MIR region erasure and crashes for `Any: 'static` (#2368). Auto traits and const arguments require a richer checked
+/// carrier and refuse here.
 pub(crate) fn native_trait_object<'tcx>(
     tcx: TyCtxt<'tcx>,
     principal: rustc_hir::def_id::DefId,
@@ -73,7 +77,7 @@ pub(crate) fn native_trait_object<'tcx>(
     }
     predicates.sort_by(|left, right| left.skip_binder().stable_cmp(tcx, &right.skip_binder()));
     let predicates = tcx.mk_poly_existential_predicates(&predicates);
-    Ok(Ty::new_dynamic(tcx, predicates, tcx.lifetimes.re_erased))
+    Ok(Ty::new_dynamic(tcx, predicates, tcx.lifetimes.re_static))
 }
 
 /// Translate admitted scalar, model, collection, callable, and uninhabited types to their canonical native
