@@ -92,6 +92,9 @@ pub struct CompilationSession {
     unit: UnitDescription,
     /// Native-only accepted scalar body products; checking and graph sessions leave this inventory empty.
     callable_body_reuse: BTreeMap<PathBuf, incan_frontend::declaration_interface::ValidatedCallableBodies>,
+    /// Graph-selected checker values remain a separate identity-keyed transport and never enter scalar callable-body
+    /// products or the compilation-unit description.
+    graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
     /// The unit's source root, copied from its description.
     pub source_root: PathBuf,
     /// The compiled Loaves the program imports from: its dependencies and the standard packages.
@@ -186,6 +189,7 @@ impl CompilationSession {
             contract_model_bundles,
             unit: unit.clone(),
             callable_body_reuse: BTreeMap::new(),
+            graph_body_records: incan_frontend::checker_records::GraphBodyRecords::default(),
         })
     }
 
@@ -201,6 +205,11 @@ impl CompilationSession {
         products: BTreeMap<PathBuf, incan_frontend::declaration_interface::ValidatedCallableBodies>,
     ) {
         self.callable_body_reuse = products;
+    }
+
+    /// Install graph-admitted checker values for the record-scoped body boundary of this session's module checks.
+    pub fn set_graph_body_records(&mut self, records: incan_frontend::checker_records::GraphBodyRecords) {
+        self.graph_body_records = records;
     }
 
     /// The compiled Loaves the program imports from.
@@ -301,6 +310,7 @@ impl CompilationSession {
             None,
             visit,
             &self.callable_body_reuse,
+            &self.graph_body_records,
         );
         let mut expansion_errors = self.expansion_failures(modules);
         match checked {

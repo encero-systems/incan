@@ -1,12 +1,14 @@
 """Canonical field records for the initial free-function checker profile; native objects never enter the codec."""
 
-from std.encoding.hex import hexlify
+from std.encoding.hex import hexlify, unhexlify
 from std.hash import sha256
 
 pub const CHECKER_SCHEMA: str = "incan.checker-fields/9"
 pub const CHECKER_PROFILE: str = "incan.checker-free-functions/10"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
+const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/1"
+const MAX_GRAPH_TRANSPORT_BYTES: int = 16777216
 
 
 @derive(Eq)
@@ -37,6 +39,22 @@ pub model CheckedRecord:
     pub root: str
     pub family: CheckedFamily
     pub fields: list[CanonicalField]
+
+
+pub model GraphBodyValue:
+    """One graph-selected owner's encoded pending and settled checker values."""
+
+    pub identity: str
+    pub local: bytes
+    pub final: bytes
+
+
+pub model GraphBodyFields:
+    """One validated graph-selected owner projected into the native checker's field-only boundary."""
+
+    pub identity: str
+    pub local: list[list[str]]
+    pub final_fields: list[list[str]]
 
 
 @derive(Eq)
@@ -288,6 +306,108 @@ pub def native_fields(record: CheckedRecord) -> Result[list[list[str]], CodecFau
     for field in record.fields:
         rows.append([field.family, field.node, field.selector] + field.values)
     return Ok(rows)
+
+
+pub def encode_graph_body_values(values: list[GraphBodyValue]) -> Result[bytes, CodecFault]:
+    """
+    Encode graph-selected body pairs independently of the unit description and callable-body product cache.
+
+    Each pair is decoded before framing, so an owner mismatch, changed body root or crossed local/final family cannot
+    enter the transport. Strict owner order gives equivalent selections one canonical byte representation.
+    """
+    if len(values) > MAX_FIELDS:
+        return Err(CodecFault.Limit)
+    mut tokens = [GRAPH_TRANSPORT_SCHEMA, str(len(values))]
+    mut previous = ""
+    for value in values:
+        if value.identity == "" or value.identity <= previous:
+            return Err(CodecFault.Malformed)
+        validate_graph_body_value(value)?
+        tokens += [value.identity, hexlify(value.local), hexlify(value.final)]
+        previous = value.identity
+    return encode_transport_tokens(tokens)
+
+
+pub def decode_graph_body_values(encoded: bytes) -> Result[list[GraphBodyFields], CodecFault]:
+    """Decode and authenticate every selected body pair before projecting its canonical native field primitives."""
+    tokens = transport_frames(encoded)?
+    if len(tokens) < 2 or tokens[0] != GRAPH_TRANSPORT_SCHEMA:
+        return Err(CodecFault.Malformed)
+    count = decimal(tokens[1])?
+    if count > MAX_FIELDS or len(tokens) != 2 + count * 3:
+        return Err(CodecFault.Malformed)
+    mut selected: list[GraphBodyFields] = []
+    mut previous = ""
+    mut offset = 2
+    for _ in range(count):
+        identity = str(tokens[offset])
+        if identity == "" or identity <= previous:
+            return Err(CodecFault.Malformed)
+        local_bytes = unhexlify(tokens[offset + 1]).map_err((_) => CodecFault.Malformed)?
+        final_bytes = unhexlify(tokens[offset + 2]).map_err((_) => CodecFault.Malformed)?
+        value = GraphBodyValue(identity=identity, local=local_bytes, final=final_bytes)
+        records = validate_graph_body_value(value)?
+        selected.append(
+            GraphBodyFields(identity=identity, local=native_fields(records[0])?, final_fields=native_fields(records[1])?),
+        )
+        previous = identity
+        offset += 3
+    return Ok(selected)
+
+
+def validate_graph_body_value(value: GraphBodyValue) -> Result[list[CheckedRecord], CodecFault]:
+    """Bind a selected pair to its compiler-owned identity and require one shared semantic body root."""
+    local = decode_graph_record(value.local, value.identity)?
+    final = decode_graph_record(value.final, value.identity)?
+    if local.family != CheckedFamily.Local or final.family != CheckedFamily.Final:
+        return Err(CodecFault.Malformed)
+    if local.root != final.root:
+        return Err(CodecFault.BodyChanged)
+    return Ok([local, final])
+
+
+def decode_graph_record(encoded: bytes, identity: str) -> Result[CheckedRecord, CodecFault]:
+    """Read only the canonical root needed to invoke the ordinary fully bound checker-record decoder."""
+    tokens = frames(encoded)?
+    if len(tokens) < 4:
+        return Err(CodecFault.Malformed)
+    return decode_record(encoded, CHECKER_PROFILE, identity, tokens[3])
+
+
+def encode_transport_tokens(tokens: list[str]) -> Result[bytes, CodecFault]:
+    """Frame transport tokens with the checker codec's canonical decimal byte lengths."""
+    mut fragments: list[str] = []
+    mut size = 0
+    for token in tokens:
+        raw = token.encode()
+        prefix = str(len(raw)) + ":"
+        fragments.append(prefix + token)
+        size += len(prefix) + len(raw)
+        if size > MAX_GRAPH_TRANSPORT_BYTES:
+            return Err(CodecFault.Limit)
+    return Ok("".join(fragments).encode())
+
+
+def transport_frames(encoded: bytes) -> Result[list[str], CodecFault]:
+    """Parse a bounded graph transport using the same unambiguous framing as individual checker records."""
+    if len(encoded) > MAX_GRAPH_TRANSPORT_BYTES:
+        return Err(CodecFault.Limit)
+    mut offset = 0
+    mut tokens: list[str] = []
+    while offset < len(encoded):
+        mut end = offset
+        while end < len(encoded) and encoded[end] != 58:
+            end += 1
+        if end == len(encoded):
+            return Err(CodecFault.Malformed)
+        prefix = encoded[offset:end].decode().map_err((_) => CodecFault.Malformed)?
+        size = decimal(prefix)?
+        offset = end + 1
+        if size > len(encoded) - offset:
+            return Err(CodecFault.Malformed)
+        tokens.append(encoded[offset:offset + size].decode().map_err((_) => CodecFault.Malformed)?)
+        offset += size
+    return Ok(tokens)
 
 
 def validate_field(field: CanonicalField) -> Result[None, CodecFault]:

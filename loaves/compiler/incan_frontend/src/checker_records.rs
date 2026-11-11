@@ -1,7 +1,49 @@
 //! Internal canonical-checker test sink. The Incan contract owns schemas, validation, framing and semantic digests;
 //! these bootstrap adapters expose existing checked values and current native position bindings as field primitives.
 
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 pub use crate::typechecker::canonical_nodes::NodeBindingError as RecordAdapterFault;
+
+/// One graph-admitted body pair keyed by the compiler-owned stable declaration identity encoded in both records.
+#[derive(Debug, Clone)]
+pub struct GraphBodyRecord {
+    /// Stable declaration identity authenticated by the Incan checker-record codec.
+    pub identity: String,
+    /// Pending local-family field primitives retained for publication through the graph authority.
+    pub local: Vec<Vec<String>>,
+    /// Settled final-family field primitives restored through the ordinary checked-body assembly.
+    pub final_value: Vec<Vec<String>>,
+}
+
+/// Immutable graph-selected body inventory shared by module checkers in one compilation session.
+#[derive(Debug, Clone, Default)]
+pub struct GraphBodyRecords(Arc<BTreeMap<String, GraphBodyRecord>>);
+
+impl GraphBodyRecords {
+    /// Build one identity-keyed inventory, refusing duplicate identities rather than selecting by input order.
+    pub fn new(records: Vec<GraphBodyRecord>) -> Result<Self, RecordAdapterFault> {
+        let mut selected = BTreeMap::new();
+        for record in records {
+            let identity = record.identity.clone();
+            if selected.insert(identity, record).is_some() {
+                return Err(RecordAdapterFault::InvalidField("duplicate graph body identity".into()));
+            }
+        }
+        Ok(Self(Arc::new(selected)))
+    }
+
+    /// Borrow one exact declaration's already codec-validated pair.
+    pub(crate) fn get(&self, identity: &str) -> Option<&GraphBodyRecord> {
+        self.0.get(identity)
+    }
+
+    /// Report whether this transport carries any graph-selected bodies.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
 
 /// Return one fixture owner's field primitives and destroy its native checker before returning. `declaration`
 /// selects the independent declaration/default writer; false selects the settled statement owner.
