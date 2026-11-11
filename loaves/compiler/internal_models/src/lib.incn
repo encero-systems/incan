@@ -126,4 +126,4 @@ pub from activation_envelopes import (
     stage_name,
 )
 pub from checker_records import from_native_final_fields, from_native_local_fields, encode_record
-pub from read_receipts import RECEIPT_SCHEMA, encode_read_receipt
+pub from read_receipts import RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt

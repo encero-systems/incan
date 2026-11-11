@@ -135,7 +135,12 @@ def members_read(
     upper: str,
     continuation: str,
 ) -> RecordRead:
-    """Read a canonical bounded member page and bind the platform proof to the compiler's selector and order."""
+    """
+    Read a canonical bounded member page and retain its semantic selection independently of the store's index root.
+
+    The platform authenticates the lookup under the selected snapshot. The compiler witness hashes only the selected
+    names, bounds and continuation so an unrelated store write does not invalidate an unchanged dependency.
+    """
     if order != "canonical":
         return RecordRead.Failed(ReadFault.SelectionMismatch)
     match lookup_members(snapshot, key, lower, upper, continuation, request.byte_limit):
@@ -150,9 +155,11 @@ def members_read(
                 return RecordRead.Failed(ReadFault.InvalidEvidence)
             digest = hexlify(
                 sha256.digest(
-                    (found.membership_digest + "\n" + selector + "\n" + order + "\n" + lower + "\n" + upper).encode(
-                        "utf-8",
-                    ),
+                    (
+                        selector + "\n" + order + "\n" + lower + "\n" + upper + "\n" + found.continuation + "\n" + hexlify(
+                            sha256.digest(value),
+                        )
+                    ).encode("utf-8"),
                 ),
             )
             return RecordRead.Members(
