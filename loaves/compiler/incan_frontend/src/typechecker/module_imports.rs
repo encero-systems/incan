@@ -257,10 +257,11 @@ impl TypeChecker {
     /// never in the consumer's lexical symbol table, so sibling modules may export the same spelling safely.
     pub(super) fn predeclare_dependency_interfaces(&mut self, dependencies: &[(&str, &Program)], public_only: bool) {
         for (module_name, dep_ast) in dependencies {
-            let members = self
-                .dependency_member_symbols
-                .entry((*module_name).to_string())
-                .or_default();
+            let members = Arc::make_mut(
+                self.dependency_member_symbols
+                    .entry((*module_name).to_string())
+                    .or_default(),
+            );
             for decl in &dep_ast.declarations {
                 if public_only && !is_public_decl(decl) {
                     continue;

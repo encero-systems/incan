@@ -178,7 +178,9 @@ use incan_lang::lang::types::stringlike::StringLikeId;
 use incan_lang::numeric_values::numeric_type_losslessly_widens_to;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
-pub use dependency_interface::{ModuleDependencyInterface, ModuleDependencyInterfaceSnapshot};
+pub use dependency_interface::{
+    DependencyInterfacePreparationCache, ModuleDependencyInterface, ModuleDependencyInterfaceSnapshot,
+};
 
 /// Immutable public-export projections for source dependencies, keyed by the same canonical module names as the
 /// dependency AST closure.
@@ -797,16 +799,21 @@ pub struct TypeChecker {
     /// This staging slot is consumed after the legacy oracle has populated its comparison state. It never widens the
     /// closure and is empty for direct API callers that still exercise legacy dependency collection.
     selected_dependency_interfaces: Vec<Arc<ModuleDependencyInterface>>,
+    /// Manifest-derived dependency preparations shared only by the fresh checkers of this build.
+    ///
+    /// Source interfaces and mutable checker state never enter this cache. A direct API checker owns an independent
+    /// empty cache, while graph orchestration explicitly gives its checkers one build-scoped handle.
+    dependency_interface_preparation_cache: dependency_interface::DependencyInterfacePreparationCache,
     /// Exact source-module member symbols collected from dependencies, keyed by canonical module name.
     ///
     /// Direct source imports use this map before falling back to ambient symbol lookup so `from module import name as
     /// alias` binds `module.name`, not an unrelated same-name symbol imported earlier from a sibling dependency.
-    pub dependency_member_symbols: HashMap<String, HashMap<String, SymbolKind>>,
+    pub dependency_member_symbols: HashMap<String, Arc<HashMap<String, SymbolKind>>>,
     /// Exact transparent type-alias targets exported by dependency modules.
     ///
     /// Alias expansion is source semantics, so targets are keyed by owner module and are copied into the consumer's
     /// local alias map only when an explicit source import creates that binding.
-    pub dependency_member_type_aliases: HashMap<String, HashMap<String, TypeAliasTarget>>,
+    pub dependency_member_type_aliases: HashMap<String, Arc<HashMap<String, TypeAliasTarget>>>,
     /// Checked `Registry.define(...)` contracts exported by dependency source modules, keyed by canonical module name.
     ///
     /// This cache is deliberately separate from imported static types. A `Registry[K, T]` type alone is not proof of
@@ -821,21 +828,21 @@ pub struct TypeChecker {
     ///
     /// Source imports must preserve the callable projection, not only the callable signature, so const evaluation and
     /// lowering see the same partial preset semantics on both sides of an import or facade boundary.
-    pub dependency_member_partial_projections: HashMap<String, HashMap<String, PartialProjectionInfo>>,
+    pub dependency_member_partial_projections: HashMap<String, Arc<HashMap<String, PartialProjectionInfo>>>,
     /// Module-owned direct dependency members captured while that module is being imported.
     ///
     /// Dependency re-export refresh runs after all modules have been imported, when the ambient symbol table may
     /// contain unrelated same-name declarations from sibling modules. Direct members must therefore come from this
     /// per-module snapshot rather than a later global `lookup_symbol(...)`.
-    pub dependency_direct_member_symbols: HashMap<String, HashMap<String, SymbolKind>>,
+    pub dependency_direct_member_symbols: HashMap<String, Arc<HashMap<String, SymbolKind>>>,
     /// Direct dependency-owned type-alias targets before facade re-export projection.
-    pub dependency_direct_member_type_aliases: HashMap<String, HashMap<String, TypeAliasTarget>>,
+    pub dependency_direct_member_type_aliases: HashMap<String, Arc<HashMap<String, TypeAliasTarget>>>,
     /// Canonical identities retained by direct dependency member bindings, including source aliases.
     ///
     /// A public `alias` binding carries its target declaration's identity, so reconstructing identity from the alias
     /// spelling and span would invent a second declaration. This cache preserves the symbol table's authoritative
     /// answer across the dependency boundary.
-    pub dependency_direct_member_identities: HashMap<String, HashMap<String, CanonicalSymbolId>>,
+    pub dependency_direct_member_identities: HashMap<String, Arc<HashMap<String, CanonicalSymbolId>>>,
     /// Nominal bindings captured in a source declaration's own scope before its signature enters a consumer.
     /// Contextual empty values use these bindings rather than the caller's same-spelled declarations. A declaration
     /// and its members share one immutable snapshot instead of retaining a full map for every member.
@@ -853,10 +860,10 @@ pub struct TypeChecker {
     /// A facade does not own what it re-exports, so an identity must follow this link to the declaring module instead
     /// of naming the facade. Stored as the written import path plus the original name, resolved with the facade's own
     /// module path as the resolution base.
-    pub dependency_member_reexports: HashMap<String, HashMap<String, DependencyMemberReexport>>,
+    pub dependency_member_reexports: HashMap<String, Arc<HashMap<String, DependencyMemberReexport>>>,
     /// Public-library re-export links omitted by the frozen source-member cache; only private Body IR call checking
     /// follows these links. Direct source declarations and ordinary import resolution remain authoritative.
-    body_ir_dependency_pub_reexports: HashMap<String, HashMap<String, (ImportPath, String)>>,
+    body_ir_dependency_pub_reexports: HashMap<String, Arc<HashMap<String, (ImportPath, String)>>>,
     /// True module path segments for a registered dependency, keyed by its flattened cache name.
     ///
     /// The cache name is the underscore-joined spelling that also names the emitted Rust module, so it is not
@@ -870,7 +877,7 @@ pub struct TypeChecker {
     /// declare names its declaration (#1796).
     nominal_declarations: union_member_identity::NominalDeclarationContext,
     /// Module-owned direct partial projection metadata captured while that module is being imported.
-    pub dependency_direct_member_partial_projections: HashMap<String, HashMap<String, PartialProjectionInfo>>,
+    pub dependency_direct_member_partial_projections: HashMap<String, Arc<HashMap<String, PartialProjectionInfo>>>,
     /// RFC 024 derivable-module metadata from imported source modules, keyed by module path.
     pub dependency_derivable_modules: HashMap<String, Vec<String>>,
     /// Checked declaring identities of source-module derive entries, including imported trait aliases.

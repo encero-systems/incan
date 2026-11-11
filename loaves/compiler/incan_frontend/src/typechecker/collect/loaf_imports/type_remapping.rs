@@ -96,12 +96,123 @@ impl TypeChecker {
         if let Some(remapping) = self.foreign_pub_type_remappings.get(library) {
             return remapping.clone();
         }
-        let seeds = collect_nominal_type_origins(manifest);
-        let (remapping, loaves) = self.resolve_public_type_origins(library, seeds);
-        self.reconstruct_artifact_layouts(library, &remapping, &loaves);
+        let prepared = self.prepared_foreign_remapping(library, manifest);
+        self.install_prepared_foreign_remapping(&prepared);
+        let remapping = prepared.remapping.as_ref().clone();
         self.foreign_pub_type_remappings
             .insert(library.to_string(), remapping.clone());
         remapping
+    }
+
+    /// Build one compiled Loaf's foreign nominal projection once, then share its immutable effects across the fresh
+    /// checkers of this module graph.
+    fn prepared_foreign_remapping(
+        &self,
+        library: &str,
+        manifest: &LibraryManifest,
+    ) -> Arc<crate::typechecker::dependency_interface::PreparedForeignRemapping> {
+        let cached = match self.dependency_interface_preparation_cache.foreign_remappings.lock() {
+            Ok(cache) => cache.get(library).cloned(),
+            Err(poisoned) => poisoned.into_inner().get(library).cloned(),
+        };
+        if let Some(cached) = cached {
+            return cached;
+        }
+
+        let _trace = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::prepare_compiled_dependency_interface",
+            library,
+        )
+        .entered();
+        let mut builder = TypeChecker::new();
+        builder.set_loaves(Arc::clone(&self.loaves));
+        let (remapping, preserving_identity_keys, preserving_type_keys) =
+            builder.build_foreign_remapping(library, manifest);
+        let mut replacing_identities = HashMap::new();
+        let mut preserving_identities = HashMap::new();
+        for (name, identity) in &builder.public_library_type_identities {
+            if preserving_identity_keys.contains(name) {
+                preserving_identities.insert(name.clone(), identity.clone());
+            } else {
+                replacing_identities.insert(name.clone(), identity.clone());
+            }
+        }
+        let mut appending_types = HashMap::new();
+        let mut preserving_types = HashMap::new();
+        for (name, types) in builder.transitive_pub_types {
+            if preserving_type_keys.contains(&name) {
+                preserving_types.insert(name, types);
+            } else {
+                appending_types.insert(name, types);
+            }
+        }
+        let prepared = Arc::new(crate::typechecker::dependency_interface::PreparedForeignRemapping {
+            remapping: Arc::new(remapping),
+            replacing_identities: Arc::new(replacing_identities),
+            preserving_identities: Arc::new(preserving_identities),
+            appending_types: Arc::new(appending_types),
+            preserving_types: Arc::new(preserving_types),
+            errors: Arc::from(builder.errors),
+        });
+        match self.dependency_interface_preparation_cache.foreign_remappings.lock() {
+            Ok(mut cache) => Arc::clone(
+                cache
+                    .entry(library.to_string())
+                    .or_insert_with(|| Arc::clone(&prepared)),
+            ),
+            Err(poisoned) => {
+                let mut cache = poisoned.into_inner();
+                Arc::clone(
+                    cache
+                        .entry(library.to_string())
+                        .or_insert_with(|| Arc::clone(&prepared)),
+                )
+            }
+        }
+    }
+
+    /// Replay one prepared compiled dependency under the receiving checker's existing collision rules.
+    fn install_prepared_foreign_remapping(
+        &mut self,
+        prepared: &crate::typechecker::dependency_interface::PreparedForeignRemapping,
+    ) {
+        self.public_library_type_identities.extend(
+            prepared
+                .replacing_identities
+                .iter()
+                .map(|(name, identity)| (name.clone(), identity.clone())),
+        );
+        for (name, identity) in prepared.preserving_identities.iter() {
+            self.public_library_type_identities
+                .entry(name.clone())
+                .or_insert_with(|| identity.clone());
+        }
+        for (name, values) in prepared.appending_types.iter() {
+            self.transitive_pub_types
+                .entry(name.clone())
+                .or_default()
+                .extend(values.iter().cloned());
+        }
+        for (name, values) in prepared.preserving_types.iter() {
+            self.transitive_pub_types
+                .entry(name.clone())
+                .or_insert_with(|| values.clone());
+        }
+        self.errors.extend(prepared.errors.iter().cloned());
+    }
+
+    /// Compute the immutable foreign nominal projection in an otherwise empty checker.
+    fn build_foreign_remapping(
+        &mut self,
+        library: &str,
+        manifest: &LibraryManifest,
+    ) -> (HashMap<String, String>, HashSet<String>, HashSet<String>) {
+        let seeds = collect_nominal_type_origins(manifest);
+        let (remapping, loaves) = self.resolve_public_type_origins(library, seeds);
+        let (preserving_identity_keys, preserving_type_keys) =
+            self.reconstruct_artifact_layouts(library, &remapping, &loaves);
+        (remapping, preserving_identity_keys, preserving_type_keys)
     }
 
     /// Walk from the seed origins to every Loaf transitively required, registering each type's spelling.
@@ -170,11 +281,15 @@ impl TypeChecker {
         library: &str,
         remapping: &HashMap<String, String>,
         loaves: &BTreeMap<String, LoafEntry>,
-    ) {
+    ) -> (HashSet<String>, HashSet<String>) {
+        let mut preserving_identity_keys = HashSet::new();
+        let mut preserving_type_keys = HashSet::new();
         for entry in loaves.values() {
-            let local_remapping = self.register_artifact_type_names(library, entry, remapping);
-            self.rebuild_artifact_symbol_layouts(entry, &local_remapping);
+            let (local_remapping, entry_preserving_keys) = self.register_artifact_type_names(library, entry, remapping);
+            preserving_identity_keys.extend(entry_preserving_keys);
+            preserving_type_keys.extend(self.rebuild_artifact_symbol_layouts(entry, &local_remapping));
         }
+        (preserving_identity_keys, preserving_type_keys)
     }
 
     /// Register every nominal export of one artifact under its qualified consumer name.
@@ -189,8 +304,9 @@ impl TypeChecker {
         library: &str,
         entry: &LoafEntry,
         remapping: &HashMap<String, String>,
-    ) -> HashMap<String, String> {
+    ) -> (HashMap<String, String>, HashSet<String>) {
         let mut local_remapping = remapping.clone();
+        let mut preserving_keys = HashSet::new();
         let artifact = &entry.artifact;
         let owner_route = entry.key.as_str();
         let graph = &artifact.manifest.contract_metadata.identity_graph;
@@ -230,9 +346,12 @@ impl TypeChecker {
                 selected_provider: Some(artifact.identity.clone()),
             };
             if reexported {
-                self.public_library_type_identities
-                    .entry(qualified.clone())
-                    .or_insert(identity);
+                if let std::collections::hash_map::Entry::Vacant(vacant) =
+                    self.public_library_type_identities.entry(qualified.clone())
+                {
+                    vacant.insert(identity);
+                    preserving_keys.insert(qualified.clone());
+                }
             } else {
                 self.public_library_type_identities.insert(qualified.clone(), identity);
             }
@@ -242,7 +361,7 @@ impl TypeChecker {
                 local_remapping.insert(export.public_name.clone(), qualified);
             }
         }
-        local_remapping
+        (local_remapping, preserving_keys)
     }
 
     /// Rebuild one artifact's exported symbol layouts with foreign type names already resolved.
@@ -254,9 +373,10 @@ impl TypeChecker {
         &mut self,
         entry: &LoafEntry,
         local_remapping: &HashMap<String, String>,
-    ) {
+    ) -> HashSet<String> {
         let artifact = &entry.artifact;
         let owner_route = entry.key.as_str();
+        let mut preserving_type_keys = HashSet::new();
         for export in &artifact.manifest.contract_metadata.identity_graph.exports {
             // A top-level export is described by the manifest's own nominal info; a nested one has to be read back
             // from its declaration, because only the declaration records the members.
@@ -292,10 +412,17 @@ impl TypeChecker {
             self.remap_symbol_kind_with_import_aliases(&mut kind, local_remapping);
             Self::mark_compiled_class_field_provider(&mut kind, owner_route);
             if let SymbolKind::Type(info) = kind {
+                if let Some(carrier) = declaration
+                    .as_ref()
+                    .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
+                {
+                    preserving_type_keys.insert(carrier);
+                }
                 self.cache_retained_nominal_layout(declaration.as_ref(), &info);
                 self.transitive_pub_types.entry(qualified).or_default().push(info);
             }
         }
+        preserving_type_keys
     }
 
     /// Report a malformed compiled-library input without repeating the diagnostic's shape at each call.

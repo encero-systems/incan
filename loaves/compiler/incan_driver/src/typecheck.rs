@@ -18,7 +18,9 @@ use crate::unit::UnitDescription;
 use incan_frontend::loaf_index::LoafIndex;
 use incan_frontend::module::{ExportedSymbol, exported_symbols};
 use incan_frontend::parsed_module::ParsedModule;
-use incan_frontend::typechecker::{CBindingDescriptor, ModuleDependencyInterface, TypeCheckInfo};
+use incan_frontend::typechecker::{
+    CBindingDescriptor, DependencyInterfacePreparationCache, ModuleDependencyInterface, TypeCheckInfo,
+};
 use incan_frontend::{diagnostics, typechecker};
 use incan_lang::lang::standard_packages::StandardPackageNamespacePolicy;
 use incan_semantics_core::SymbolOrigin;
@@ -101,6 +103,7 @@ pub fn typecheck_modules(
             .filter(|loaf| unit.not_prepared_loaves.contains(&loaf.name))
             .flat_map(|loaf| [loaf.key.clone(), loaf.name.clone()]),
     );
+    let dependency_preparations = DependencyInterfacePreparationCache::default();
     let configured_checker = |module: &ParsedModule| {
         let mut checker = typechecker::TypeChecker::new();
         checker.set_declared_crate_names(declared.clone());
@@ -109,6 +112,7 @@ pub fn typecheck_modules(
         checker.set_record_package_identity(unit.record_package_identity());
         register_module_path_segments(&mut checker, modules);
         checker.set_loaves(Arc::clone(loaves));
+        checker.set_dependency_interface_preparation_cache(dependency_preparations.clone());
         checker.set_not_prepared_loaves(not_prepared.clone());
         if let Some(policy) = own_standard_package {
             checker.set_own_standard_package(policy);

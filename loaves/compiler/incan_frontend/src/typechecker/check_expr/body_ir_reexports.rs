@@ -1,6 +1,7 @@
 //! Resolve published calls through retained source facade links and preserve their selected declaration facts.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use super::TypeChecker;
 use crate::ast::{
@@ -142,7 +143,7 @@ impl TypeChecker {
             }
         }
         self.body_ir_dependency_pub_reexports
-            .insert(module_name.to_owned(), links);
+            .insert(module_name.to_owned(), Arc::new(links));
     }
 
     /// Validate an unresolved imported placeholder against one closed manifest signature, retaining only Body IR

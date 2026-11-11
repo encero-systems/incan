@@ -13,6 +13,26 @@ use stable_encoding::stable_encode;
 /// Schema version for the complete dependency-interface snapshot compared by the shadow oracle.
 pub const MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION: u32 = 4;
 
+/// Build-scoped immutable preparations shared by the fresh checkers of one collected module graph.
+///
+/// The cache contains only manifest-derived dependency facts. It never stores local declarations, lexical imports,
+/// diagnostics produced by a source module, or a merged source dependency closure.
+#[derive(Clone, Debug, Default)]
+pub struct DependencyInterfacePreparationCache {
+    pub(super) foreign_remappings: Arc<std::sync::Mutex<HashMap<String, Arc<PreparedForeignRemapping>>>>,
+}
+
+/// One compiled Loaf's prepared foreign nominal remapping and the effects its installation replays.
+#[derive(Clone, Debug)]
+pub(super) struct PreparedForeignRemapping {
+    pub(super) remapping: Arc<HashMap<String, String>>,
+    pub(super) replacing_identities: Arc<HashMap<String, PublicLibraryTypeIdentity>>,
+    pub(super) preserving_identities: Arc<HashMap<String, PublicLibraryTypeIdentity>>,
+    pub(super) appending_types: Arc<HashMap<String, Vec<TypeInfo>>>,
+    pub(super) preserving_types: Arc<HashMap<String, Vec<TypeInfo>>>,
+    pub(super) errors: Arc<[crate::diagnostics::CompileError]>,
+}
+
 /// One provider's sealed dependency interface, built once from its successful local checker.
 ///
 /// The interface is retained behind [`Arc`] by orchestration. This stage keeps legacy dependency collection as the
@@ -123,6 +143,11 @@ struct ProviderCollectionReceipt {
 }
 
 impl TypeChecker {
+    /// Share one build's immutable compiled-dependency preparations with this fresh checker.
+    pub fn set_dependency_interface_preparation_cache(&mut self, cache: DependencyInterfacePreparationCache) {
+        self.dependency_interface_preparation_cache = cache;
+    }
+
     /// Select the immutable provider handles that form the next module's exact dependency closure.
     pub fn select_dependency_interfaces(&mut self, interfaces: Vec<Arc<ModuleDependencyInterface>>) {
         self.selected_dependency_interfaces = interfaces;
@@ -390,18 +415,16 @@ impl TypeChecker {
             module_path: module_path.clone(),
             public_only,
             exports,
-            member_symbols: Arc::new(
-                self.dependency_member_symbols
-                    .get(module_name)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
-            member_type_aliases: Arc::new(
-                self.dependency_member_type_aliases
-                    .get(module_name)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
+            member_symbols: self
+                .dependency_member_symbols
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
+            member_type_aliases: self
+                .dependency_member_type_aliases
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
             registry_definitions: self.dependency_registry_definitions.get(module_name).cloned(),
             registry_consts: Arc::new(
                 self.dependency_registry_consts
@@ -410,20 +433,18 @@ impl TypeChecker {
                     .map(|(identity, value)| (identity.clone(), value.clone()))
                     .collect(),
             ),
-            member_partial_projections: Arc::new(
-                self.dependency_member_partial_projections
-                    .get(module_name)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
-            direct_member_symbols: Arc::new(direct_member_symbols),
-            direct_member_type_aliases: Arc::new(
-                self.dependency_direct_member_type_aliases
-                    .get(module_name)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
-            direct_member_identities: Arc::new(direct_member_identities),
+            member_partial_projections: self
+                .dependency_member_partial_projections
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
+            direct_member_symbols,
+            direct_member_type_aliases: self
+                .dependency_direct_member_type_aliases
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
+            direct_member_identities,
             declaration_nominal_scopes: Arc::new(
                 self.declaration_nominal_scopes
                     .iter()
@@ -445,24 +466,21 @@ impl TypeChecker {
                     .map(|(identity, callable)| (identity.clone(), callable.clone()))
                     .collect(),
             ),
-            member_reexports: Arc::new(
-                self.dependency_member_reexports
-                    .get(module_name)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
-            body_ir_pub_reexports: Arc::new(
-                self.body_ir_dependency_pub_reexports
-                    .get(module_name)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
-            direct_member_partial_projections: Arc::new(
-                self.dependency_direct_member_partial_projections
-                    .get(module_name)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
+            member_reexports: self
+                .dependency_member_reexports
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
+            body_ir_pub_reexports: self
+                .body_ir_dependency_pub_reexports
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
+            direct_member_partial_projections: self
+                .dependency_direct_member_partial_projections
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
             derivable_modules: Arc::new(
                 self.dependency_derivable_modules
                     .iter()
@@ -509,6 +527,20 @@ impl TypeChecker {
     /// The caller supplies handles in collected-module closure order. Local declarations, imports, diagnostics and
     /// body facts are not touched; only the dependency layer under those local facts is replaced.
     pub fn install_dependency_interfaces(&mut self, interfaces: &[Arc<ModuleDependencyInterface>]) {
+        let _trace = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::install_dependency_interface_tables",
+            interfaces = interfaces.len(),
+        )
+        .entered();
+        self.clear_dependency_interface_tables();
+        for interface in interfaces {
+            self.install_dependency_interface(interface);
+        }
+    }
+
+    /// Clear only the dependency-owned tables replaced by an exact interface selection.
+    fn clear_dependency_interface_tables(&mut self) {
         self.dependency_exports.clear();
         self.dependency_member_symbols.clear();
         self.dependency_member_type_aliases.clear();
@@ -532,104 +564,106 @@ impl TypeChecker {
         self.transitive_pub_traits.clear();
         self.public_library_type_identities.clear();
         self.cached_pub_libraries.clear();
-        for interface in interfaces {
-            let name = interface.module_name.clone();
-            self.dependency_exports
-                .insert(name.clone(), Arc::clone(&interface.exports));
-            self.dependency_member_symbols
-                .insert(name.clone(), interface.member_symbols.as_ref().clone());
-            self.dependency_member_type_aliases
-                .insert(name.clone(), interface.member_type_aliases.as_ref().clone());
-            if let Some(definitions) = &interface.registry_definitions {
-                self.dependency_registry_definitions
-                    .insert(name.clone(), definitions.clone());
-            }
-            self.dependency_registry_consts.extend(
-                interface
-                    .registry_consts
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone())),
-            );
-            self.dependency_member_partial_projections
-                .insert(name.clone(), interface.member_partial_projections.as_ref().clone());
-            self.dependency_direct_member_symbols
-                .insert(name.clone(), interface.direct_member_symbols.as_ref().clone());
-            self.dependency_direct_member_type_aliases
-                .insert(name.clone(), interface.direct_member_type_aliases.as_ref().clone());
-            self.dependency_direct_member_identities
-                .insert(name.clone(), interface.direct_member_identities.as_ref().clone());
-            self.declaration_nominal_scopes.extend(
-                interface
-                    .declaration_nominal_scopes
-                    .iter()
-                    .map(|(key, value)| (key.clone(), Arc::clone(value))),
-            );
-            self.retained_nominal_carriers.extend(
-                interface
-                    .retained_nominal_carriers
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone())),
-            );
-            self.declaration_callables.extend(
-                interface
-                    .declaration_callables
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone())),
-            );
-            self.dependency_member_reexports
-                .insert(name.clone(), interface.member_reexports.as_ref().clone());
-            self.body_ir_dependency_pub_reexports
-                .insert(name.clone(), interface.body_ir_pub_reexports.as_ref().clone());
-            self.dependency_module_path_segments
-                .insert(name.clone(), interface.module_path.clone());
-            self.dependency_direct_member_partial_projections
-                .insert(name, interface.direct_member_partial_projections.as_ref().clone());
-            self.dependency_derivable_modules.extend(
-                interface
-                    .derivable_modules
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone())),
-            );
-            self.dependency_derivable_trait_identities.extend(
-                interface
-                    .derivable_trait_identities
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone())),
-            );
-            self.dependency_module_traits.extend(
-                interface
-                    .module_traits
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone())),
-            );
-            self.dependency_trait_rust_derive_paths.extend(
-                interface
-                    .trait_rust_derive_paths
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone())),
-            );
-            for (name, values) in interface.transitive_public_types.iter() {
-                self.transitive_pub_types
-                    .entry(name.clone())
-                    .or_default()
-                    .extend(values.iter().cloned());
-            }
-            for (name, values) in interface.transitive_public_traits.iter() {
-                self.transitive_pub_traits
-                    .entry(name.clone())
-                    .or_default()
-                    .extend(values.iter().cloned());
-            }
-            for library in interface.compiled_libraries.iter() {
-                self.install_compiled_library_semantics(library);
-            }
-            self.public_library_type_identities.extend(
-                interface
-                    .public_library_type_identities
-                    .iter()
-                    .map(|(name, identity)| (name.clone(), identity.clone())),
-            );
+    }
+
+    /// Install one sealed provider while preserving the selected closure's stable order.
+    fn install_dependency_interface(&mut self, interface: &ModuleDependencyInterface) {
+        let name = interface.module_name.clone();
+        self.dependency_exports
+            .insert(name.clone(), Arc::clone(&interface.exports));
+        self.dependency_member_symbols
+            .insert(name.clone(), Arc::clone(&interface.member_symbols));
+        self.dependency_member_type_aliases
+            .insert(name.clone(), Arc::clone(&interface.member_type_aliases));
+        if let Some(definitions) = &interface.registry_definitions {
+            self.dependency_registry_definitions
+                .insert(name.clone(), definitions.clone());
         }
+        self.dependency_registry_consts.extend(
+            interface
+                .registry_consts
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        self.dependency_member_partial_projections
+            .insert(name.clone(), Arc::clone(&interface.member_partial_projections));
+        self.dependency_direct_member_symbols
+            .insert(name.clone(), Arc::clone(&interface.direct_member_symbols));
+        self.dependency_direct_member_type_aliases
+            .insert(name.clone(), Arc::clone(&interface.direct_member_type_aliases));
+        self.dependency_direct_member_identities
+            .insert(name.clone(), Arc::clone(&interface.direct_member_identities));
+        self.declaration_nominal_scopes.extend(
+            interface
+                .declaration_nominal_scopes
+                .iter()
+                .map(|(key, value)| (key.clone(), Arc::clone(value))),
+        );
+        self.retained_nominal_carriers.extend(
+            interface
+                .retained_nominal_carriers
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        self.declaration_callables.extend(
+            interface
+                .declaration_callables
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        self.dependency_member_reexports
+            .insert(name.clone(), Arc::clone(&interface.member_reexports));
+        self.body_ir_dependency_pub_reexports
+            .insert(name.clone(), Arc::clone(&interface.body_ir_pub_reexports));
+        self.dependency_module_path_segments
+            .insert(name.clone(), interface.module_path.clone());
+        self.dependency_direct_member_partial_projections
+            .insert(name, Arc::clone(&interface.direct_member_partial_projections));
+        self.dependency_derivable_modules.extend(
+            interface
+                .derivable_modules
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        self.dependency_derivable_trait_identities.extend(
+            interface
+                .derivable_trait_identities
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        self.dependency_module_traits.extend(
+            interface
+                .module_traits
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        self.dependency_trait_rust_derive_paths.extend(
+            interface
+                .trait_rust_derive_paths
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        for (name, values) in interface.transitive_public_types.iter() {
+            self.transitive_pub_types
+                .entry(name.clone())
+                .or_default()
+                .extend(values.iter().cloned());
+        }
+        for (name, values) in interface.transitive_public_traits.iter() {
+            self.transitive_pub_traits
+                .entry(name.clone())
+                .or_default()
+                .extend(values.iter().cloned());
+        }
+        for library in interface.compiled_libraries.iter() {
+            self.install_compiled_library_semantics(library);
+        }
+        self.public_library_type_identities.extend(
+            interface
+                .public_library_type_identities
+                .iter()
+                .map(|(name, identity)| (name.clone(), identity.clone())),
+        );
     }
 
     /// Rebuild one compiled Loaf's checker-local semantic cache from its already-indexed immutable manifest.
@@ -650,6 +684,12 @@ impl TypeChecker {
     /// the historical arena even though ordinary lookup resolves through immutable module-keyed tables.
     pub fn install_dependency_interfaces_directly(&mut self, interfaces: &[Arc<ModuleDependencyInterface>]) {
         self.install_dependency_interfaces(interfaces);
+        let _trace = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::install_dependency_interface_symbols",
+            interfaces = interfaces.len(),
+        )
+        .entered();
         for interface in interfaces {
             self.symbols.begin_dependency_interface_bindings();
             for (symbol, identity) in interface.symbol_rows.iter() {
@@ -836,12 +876,12 @@ fn module_table<V: Serialize>(
 fn nested_module_table<V: Serialize>(
     name: &'static str,
     module_name: &str,
-    values: &HashMap<String, HashMap<String, V>>,
+    values: &HashMap<String, Arc<HashMap<String, V>>>,
 ) -> DependencyInterfaceTableSnapshot {
     let mut entries = values
         .get(module_name)
         .into_iter()
-        .flat_map(HashMap::iter)
+        .flat_map(|members| members.iter())
         .map(|(member, value)| stable_encode(&(member, value)))
         .collect::<Vec<_>>();
     entries.sort();
@@ -939,7 +979,7 @@ fn map_table<K: Serialize, V: Serialize>(
 /// Render a module-keyed map whose inner maps also need deterministic ordering.
 fn nested_table<V: Serialize>(
     name: &'static str,
-    values: &HashMap<String, HashMap<String, V>>,
+    values: &HashMap<String, Arc<HashMap<String, V>>>,
 ) -> DependencyInterfaceTableSnapshot {
     let mut entries = values
         .iter()
