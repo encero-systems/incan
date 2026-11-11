@@ -42,6 +42,7 @@ from pub::internal_models import (
 from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
 from compiler_body_values import encode_body_inventory, publish_body_values, select_body_inventory, select_body_values
+from compiler_source_projection import project_source, publish_source_projection
 
 
 pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[None, str]:
@@ -180,6 +181,35 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
         family_key("final", "run44-body"),
         "profile",
     )? is None
+    return Ok(None)
+
+
+pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[None, str]:
+    """A body edit keeps the module header and sibling owner identities while changing exactly one owner digest."""
+    original = "from std import env\n\nalias Count = int\n\nmodel Item:\n    value: Count\n\ndef first() -> int:\n    return 1\n\ndef second() -> int:\n    return 2\n"
+    edited = original.replace("return 1", "return 3")
+    before = project_source("package", "src/main.incn", original)?
+    after = project_source("package", "src/main.incn", edited)?
+
+    assert before.header.text == "from std import env\n\nalias Count = int\n\n"
+    assert before.header.digest() == after.header.digest()
+    assert len(before.owners) == 3 and len(after.owners) == 3
+    mut changed = 0
+    for index in range(len(before.owners)):
+        assert before.owners[index].key == after.owners[index].key
+        if before.owners[index].digest() != after.owners[index].digest():
+            changed += 1
+    assert changed == 1
+    assert before.owners[0].text.startswith("model Item")
+    assert before.owners[1].text.startswith("def first")
+    assert before.owners[2].text.startswith("def second")
+    assert before.owners[0].start < before.owners[0].end
+
+    selected = store_snapshot(memory_root()).map_err((error) => error.message())?
+    published = publish_source_projection(selected, before)?
+    assert len(published.keys) == 4
+    for key in published.keys:
+        assert get(published.snapshot, key).map_err((error) => error.message())? is not None
     return Ok(None)
 
 
