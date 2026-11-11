@@ -1138,4 +1138,6 @@ pub fn check(program: &Program) -> Result<(), Vec<CompileError>> {
 }
 
 #[cfg(test)]
+mod diagnostic_types_tests;
+#[cfg(test)]
 mod nominal_scope_tests;

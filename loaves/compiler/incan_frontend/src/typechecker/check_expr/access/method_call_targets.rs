@@ -641,7 +641,8 @@ impl TypeChecker {
     /// A constructor preserves explicit or expected type arguments, or infers them from its checked payloads when
     /// neither is written, instead of erasing them to the enum name. Payload expressions are checked once with their
     /// context, then ordinary call binding validates their types and arity. A construction that none of these
-    /// determines is refused (#2762).
+    /// determines is refused (#2762). A plain enum receiver keeps its written owner in the source result so
+    /// diagnostics never expose the canonical Body IR carrier (#2763); qualified receivers retain that carrier.
     pub(super) fn check_enum_method_call(
         &mut self,
         call: &MethodCallSite<'_>,
@@ -719,7 +720,16 @@ impl TypeChecker {
             (None, Some(arguments)) => ResolvedType::Generic(enum_name.clone(), arguments),
             (None, None) => base_ty.clone(),
         };
-        let qualified = crate::typechecker::collect::dotted_path_segments(&call.base.node)
+        let segments = crate::typechecker::collect::dotted_path_segments(&call.base.node);
+        let result = match (segments.as_deref(), result) {
+            (Some([source_name]), ResolvedType::Named(_)) => ResolvedType::Named(source_name.clone()),
+            (Some([source_name]), ResolvedType::Generic(_, arguments)) => {
+                ResolvedType::Generic(source_name.clone(), arguments)
+            }
+            (_, result) => result,
+        };
+        let qualified = segments
+            .filter(|segments| segments.len() > 1)
             .and_then(|segments| self.qualified_nominal_carrier(&segments));
         Some(match (qualified, result) {
             (Some(carrier), ResolvedType::Named(_)) => ResolvedType::Named(carrier),
