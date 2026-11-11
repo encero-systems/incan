@@ -332,15 +332,17 @@ fn retain_feature_requirements(manifest: &mut LibraryManifest, modules: &[Parsed
 /// Write a Loaf's files beside its rlib in `dir`: `<name>.incnbody`, the executable representation of `bodies` (the
 /// unit's own Body IR modules) projected onto the manifest's public identities; `<name>.incngraph`, the already-encoded
 /// graph from that same checking pass; `<name>.native.json`, the unit's native closure; an indexed `<name>.rustabi`
-/// when dependency-owned native facts are needed; and `<name>.incnlib` last,
-/// so its presence means the artifact set is complete. `<name>` is the shared artifact stem; the manifest retains
-/// the original semantic package name.
+/// when dependency-owned native facts are needed; and `<name>.incnlib` last, so its presence means the artifact set is
+/// complete. A package-test publication may retain every private declaration as an implementation root without adding
+/// it to the manifest's public identities. `<name>` is the shared artifact stem; the manifest retains the original
+/// semantic package name.
 pub fn prepare_loaf_publication(
     dir: &Path,
     mut manifest: LibraryManifest,
     bodies: &[BodyIrModule],
     closure: &LoafNativeClosure,
     graph: &[u8],
+    retain_private_roots: bool,
 ) -> CliResult<PreparedLoafPublication> {
     let name = manifest.name.clone();
 
@@ -354,7 +356,15 @@ pub fn prepare_loaf_publication(
         .filter(|body| body.first_representation_gap().is_some())
         .filter_map(|body| body.canonical.clone())
         .collect::<BTreeSet<_>>();
-    let surface = build_surface(bodies, &name, &manifest.version, &public, &unrepresentable).map_err(|error| {
+    let surface = build_surface(
+        bodies,
+        &name,
+        &manifest.version,
+        &public,
+        &unrepresentable,
+        retain_private_roots,
+    )
+    .map_err(|error| {
         CliError::failure(format!(
             "failed to produce the executable representation of {name}: {error}"
         ))
@@ -392,8 +402,9 @@ pub fn write_loaf(
     bodies: &[BodyIrModule],
     closure: &LoafNativeClosure,
     graph: &[u8],
+    retain_private_roots: bool,
 ) -> CliResult<()> {
-    prepare_loaf_publication(dir, manifest, bodies, closure, graph)?.write(dir)
+    prepare_loaf_publication(dir, manifest, bodies, closure, graph, retain_private_roots)?.write(dir)
 }
 
 /// Publish sibling artifacts relative to their common artifact root so moving an otherwise identical build to a new

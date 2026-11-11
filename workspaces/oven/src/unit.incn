@@ -72,6 +72,9 @@ pub model UnitDescription:
     pub search_index: Option[str] = None
     pub rust_abi: list[str] = []
     pub kind: str = "program"
+    # A library built for its own project tests retains package-private implementation fragments without widening its
+    # public manifest. Ordinary library descriptions leave this false.
+    pub package_test_surface: bool = false
     pub program_entries: list[str] = []
     pub vocab_entry: Option[str] = None
     pub vocab: Option[str] = None
@@ -125,6 +128,8 @@ pub model UnitDescription:
         ), "rust_abi": texts(self.rust_abi)}
         if let Some(registry) = self.registry_id:
             fields["registry_id"] = JsonValue.string(registry)
+        if self.package_test_surface:
+            fields["package_test_surface"] = JsonValue.bool(true)
         if self.toolchain_access.declared():
             fields["toolchain_access"] = self.toolchain_access.to_json()
         if let Some(context) = self.checked_context:

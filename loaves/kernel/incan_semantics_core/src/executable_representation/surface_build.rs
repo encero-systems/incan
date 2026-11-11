@@ -5,9 +5,11 @@ use super::*;
 /// Build public coverage and its deterministic execution closure from one declaring compilation.
 ///
 /// `public` comes from the finalized manifest, including public members, and remains the exact resolution surface.
-/// Private declarations enter only when reachable from covered public roots. `unrepresentable` names the bodies Body IR
-/// could not fully represent ([`crate::body_ir::Body::first_representation_gap`]), in addition to this layer's
-/// portable-reference checks.
+/// Private declarations enter only when reachable from covered public roots, unless `retain_private_roots` requests
+/// package-internal implementation coverage for a same-package test artifact. Those extra roots remain in the
+/// implementation index and never become public declarations. `unrepresentable` names the bodies Body IR could not
+/// fully represent ([`crate::body_ir::Body::first_representation_gap`]), in addition to this layer's portable-reference
+/// checks.
 ///
 /// The work is a pipeline and the order is load-bearing, in a way worth stating exactly. Coverage starts
 /// pessimistic, and `Covered` is written once, in the final phase, from whatever is still admitted by then. The
@@ -21,6 +23,7 @@ pub fn build_surface(
     package_version: &str,
     public: &BTreeSet<CanonicalSymbolId>,
     unrepresentable: &BTreeSet<CanonicalSymbolId>,
+    retain_private_roots: bool,
 ) -> Result<Vec<u8>, ExecutableRepresentationError> {
     let candidates = checked_candidates(modules, library, public);
     let mut declarations = uncovered_owned_declarations(library, &candidates);
@@ -28,7 +31,8 @@ pub fn build_surface(
     record_trait_slots(&admitted, &mut declarations);
     record_type_context_members(&admitted, &mut declarations);
     retain_only_satisfiable(library, &mut admitted, &mut declarations);
-    retain_reachable(library, public, &mut admitted, &mut declarations);
+    let roots = if retain_private_roots { &candidates } else { public };
+    retain_reachable(library, roots, &mut admitted, &mut declarations);
     for coverage in declarations.values_mut() {
         if matches!(coverage, DeclarationCoverage::TypeContext { owner } if !admitted.contains_key(owner)) {
             *coverage = DeclarationCoverage::Uncovered(CoverageReason::RequiredDeclarationUnavailable);

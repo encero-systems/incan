@@ -58,6 +58,7 @@ fn assert_metadata_publication(
             "0.1.0",
             &public,
             &BTreeSet::new(),
+            false,
         )?;
         let reader = SurfaceReader::open(&bytes)?;
         let (_, coverage) = reader

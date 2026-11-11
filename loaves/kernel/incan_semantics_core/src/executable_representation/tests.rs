@@ -106,7 +106,14 @@ fn publish(
     module: &BodyIrModule,
     public: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<Vec<u8>, ExecutableRepresentationError> {
-    build_surface(std::slice::from_ref(module), "probe", "1.2.3", public, &BTreeSet::new())
+    build_surface(
+        std::slice::from_ref(module),
+        "probe",
+        "1.2.3",
+        public,
+        &BTreeSet::new(),
+        false,
+    )
 }
 
 /// A canonical call participates in closure even before any branch is executed.

@@ -198,6 +198,27 @@ fn public_membership_and_explicit_empty_body_coverage() -> Result<(), Box<dyn st
         reader.declaration(&identity("public", 1))?.direct_call_id.path(),
         "pub::probe::lib#decl.100..199"
     );
+
+    let bytes = build_surface(
+        std::slice::from_ref(&module),
+        "probe",
+        "1.2.3",
+        &public,
+        &BTreeSet::new(),
+        true,
+    )?;
+    let reader = SurfaceReader::open(&bytes)?;
+    assert!(!reader.index().declarations.contains_key(&identity("private_secret", 2)));
+    assert!(
+        reader
+            .index()
+            .implementation
+            .contains_key(&identity("private_secret", 2))
+    );
+    assert!(matches!(
+        reader.index().execution_coverage(&identity("private_secret", 2))?,
+        DeclarationCoverage::Covered { .. }
+    ));
     Ok(())
 }
 

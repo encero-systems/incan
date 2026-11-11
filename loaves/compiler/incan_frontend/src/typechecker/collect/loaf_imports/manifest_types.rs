@@ -33,16 +33,9 @@ impl TypeChecker {
             traits: export.traits.clone(),
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             derives: export.derives.clone(),
-            fields: self.fields_from_manifest(
-                &export.name,
-                &export.fields,
-                export.fields.iter().any(|field| {
-                    matches!(
-                        field.visibility,
-                        crate::library_manifest::MemberVisibilityExport::Private
-                    )
-                }),
-            ),
+            // As for compiled models, the declaration-owned Body IR supplies non-literal defaults that the manifest
+            // cannot materialize.
+            fields: self.fields_from_manifest(&export.name, &export.fields, true),
             field_defaults: Box::new(
                 export
                     .fields

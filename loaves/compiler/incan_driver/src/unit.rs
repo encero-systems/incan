@@ -53,6 +53,11 @@ pub struct UnitDescription {
     /// The entry contract; descriptions predating explicit kinds describe programs.
     #[serde(default)]
     pub kind: UnitKind,
+    /// Whether a library retains package-private implementation roots for tests of that same package.
+    ///
+    /// These roots remain outside the manifest's public surface and cannot be imported by ordinary consumers.
+    #[serde(default)]
+    pub package_test_surface: bool,
     /// Additional program entry sources, in selector order. Each must be a collected source module with a main.
     #[serde(default)]
     pub program_entries: Vec<PathBuf>,

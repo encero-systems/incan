@@ -60,6 +60,7 @@ pub(super) fn assert_generic_newtype_provider_methods() -> Result<(), Box<dyn st
                 "0.1.0",
                 &public,
                 &BTreeSet::new(),
+                false,
             )?;
             let reader = SurfaceReader::open(&bytes)?;
             let coverage = reader.index().coverage(&identity)?;
