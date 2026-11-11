@@ -25,6 +25,7 @@ fn graph_body_records_restore_through_checked_body_assembly() -> Result<(), Box<
         identity,
         local: local.clone(),
         final_value: final_value.clone(),
+        body_ir: None,
     }])?;
 
     let mut selected = TypeChecker::new();

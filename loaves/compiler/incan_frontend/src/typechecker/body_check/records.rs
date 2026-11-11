@@ -48,7 +48,7 @@ fn produce_local(
             "header".into(),
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
-            "incan.checker-free-functions/10".into(),
+            "incan.checker-free-functions/11".into(),
         ],
     );
     Ok(fields)
@@ -157,6 +157,15 @@ impl TypeChecker {
             .and_then(|binding| binding.identity.as_ref())
             .cloned()
             .ok_or(NodeBindingError::MissingOwner)?;
+        let reused_body = selected
+            .body_ir
+            .as_ref()
+            .filter(|frame| {
+                frame.body.canonical.as_ref() == Some(&canonical)
+                    && frame.body.span == owner
+                    && frame.body.name == canonical.declaration_name
+            })
+            .map(|frame| frame.body.clone());
         let mut diagnostic_positions = DiagnosticPositions::new(program, self.symbols.declaration_origin());
         self.reuse_checked_body(Arc::new(restored.view), &mut diagnostic_positions)
             .map_err(|_| NodeBindingError::ChangedBody)?;
@@ -181,6 +190,9 @@ impl TypeChecker {
             .extend(restored.final_types.bindings);
         self.selected_local_records.insert(owner, local_fields);
         self.selected_final_records.insert(owner, final_fields);
+        if let Some(body) = reused_body {
+            self.type_info.reused_callable_bodies.insert(owner, body);
+        }
         Ok(true)
     }
 
@@ -402,7 +414,7 @@ fn restore(
         .first()
         .filter(|header| header.len() == 5)
         .ok_or(NodeBindingError::MissingOwner)?;
-    if header[0] != "header" || header[4] != "incan.checker-free-functions/10" {
+    if header[0] != "header" || header[4] != "incan.checker-free-functions/11" {
         return Err(NodeBindingError::Unsupported("record profile"));
     }
     if header[1] != positions.nodes.owner().render_compact() {
@@ -463,7 +475,7 @@ fn restore_pending(positions: &Positions, owner: Span, fields: &Fields) -> Resul
         || header[1] != positions.nodes.owner().render_compact()
         || header[2] != positions.nodes.root()
         || header[3] != "local"
-        || header[4] != "incan.checker-free-functions/10"
+        || header[4] != "incan.checker-free-functions/11"
     {
         return Err(NodeBindingError::Unsupported("local record header"));
     }

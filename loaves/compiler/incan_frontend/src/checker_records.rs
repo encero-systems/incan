@@ -15,6 +15,9 @@ pub struct GraphBodyRecord {
     pub local: Vec<Vec<String>>,
     /// Settled final-family field primitives restored through the ordinary checked-body assembly.
     pub final_value: Vec<Vec<String>>,
+    /// Kernel-decoded v55 executable owner frame, when the graph selected a complete Body IR value with the checker
+    /// pair. The checker validates its current canonical owner and physical source span before exposing it to Body IR.
+    pub body_ir: Option<incan_semantics_core::executable_representation::EncodedOwnerRepresentation>,
 }
 
 /// Immutable graph-selected body inventory shared by module checkers in one compilation session.

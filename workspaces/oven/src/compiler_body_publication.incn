@@ -162,7 +162,16 @@ pub def publish_compiled_bodies(
             value.final,
             final_receipt,
         )?
-        current = final.snapshot
+        body_ir_key = body_key("body-ir", origin, value.identity, "checked", root(value.final)?)
+        body_ir_receipt = receipt(final.snapshot, body_ir_key, [request(final_key)])?
+        body_ir = publish_evaluation(
+            final.snapshot,
+            "compiled-body-ir-" + value.identity,
+            ProducerRank(namespace=0, stage=ProducerStage.BodyIr, dependency=0),
+            value.body_ir,
+            body_ir_receipt,
+        )?
+        current = body_ir.snapshot
         published += 1
     return Ok(PublishedCompiledBodies(snapshot=current, bodies=published, fallbacks=len(outputs.fallbacks)))
 
