@@ -314,16 +314,23 @@ pub def from_native_final_fields(rows: list[list[str]]) -> Result[CheckedRecord,
 
 
 def from_family_fields(rows: list[list[str]], family: CheckedFamily) -> Result[CheckedRecord, CodecFault]:
-    """Attach one schema-selected family to native owner/root/profile metadata and canonical field primitives."""
-    if len(rows) == 0 or len(rows[0]) != 4 or rows[0][0] != "header":
+    """Attach or verify one family on fresh producer rows or a decoded graph value retained for re-publication."""
+    if len(rows) == 0 or len(rows[0]) == 0 or rows[0][0] != "header":
         return Err(CodecFault.Malformed)
     header = rows[0]
+    mut profile = ""
+    if len(header) == 4:
+        profile = header[3]
+    elif len(header) == 5 and header[3] == family_name(family):
+        profile = header[4]
+    else:
+        return Err(CodecFault.Malformed)
     mut fields: list[CanonicalField] = []
     for row in rows[1:]:
         if len(row) < 4:
             return Err(CodecFault.Malformed)
         fields.append(CanonicalField(family=row[0], node=row[1], selector=row[2], values=row[3:]))
-    record = CheckedRecord(profile=header[3], owner=header[1], root=header[2], family=family, fields=fields)
+    record = CheckedRecord(profile=profile, owner=header[1], root=header[2], family=family, fields=fields)
     validate(record)?
     return Ok(record)
 
