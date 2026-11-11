@@ -8,7 +8,14 @@ from std.fs import Path
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
 from check_support import repository_root, write_stderr
-from oven_tests import LOWERING_RESERVATION_BYTES, Invocation, host_memory, run_all_failures, shared_memory
+from oven_tests import (
+    LOWERING_RESERVATION_BYTES,
+    PROJECT_RESERVATION_BYTES as OVEN_PROJECT_RESERVATION_BYTES,
+    Invocation,
+    host_memory,
+    run_all_failures,
+    shared_memory,
+)
 from release_support import (
     FAMILIES,
     BaselineReport,
@@ -27,12 +34,13 @@ from release_support import (
 
 const GIB: int = 1073741824
 const FACET_RESERVATION_BYTES: int = 2 * GIB
-const PROJECT_RESERVATION_BYTES: int = 2 * GIB
+const SMALL_PROJECT_RESERVATION_BYTES: int = 2 * GIB
 
 
 pub enum VerificationPhase(str):
     """Independent installed-verification gates with stable child-process spellings."""
 
+    Oven = "oven"
     RustFacets = "rust-facets"
     DriverIntegration = "driver-integration"
     Lsp = "lsp"
@@ -83,13 +91,12 @@ def main() -> None:
 
 pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, str]:
     """
-    Verify an installed toolchain in five steps.
+    Verify an installed toolchain in four steps.
 
     1. Audit installation paths and select only shipped standard packages.
     2. Build this checkout's contract runner with the installed compiler.
-    3. Run the complete Oven test inventory.
-    4. Concurrently run every Rust facet, direct-driver integration, LSP, census, and cold memory gate.
-    5. Preserve every committed PASS key and all per-phase evidence.
+    3. Concurrently run Oven, every Rust facet, direct-driver integration, LSP, census, and cold memory gates.
+    4. Preserve every committed PASS key and all per-phase evidence.
     """
     installation = prepare(output, jobs, timeout_seconds)?
 
@@ -103,17 +110,12 @@ pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, st
     runner = build_runner(installation)?
     retain_phase_timing(installation, "runner-build", phase_started)?
 
-    # 3. Oven's complete unit inventory finishes before any other gate can read its installed state.
-    phase_started = Instant.now()
-    run_oven_tests(installation)?
-    retain_phase_timing(installation, "oven-tests", phase_started)?
-
-    # 4. Independent projects and scratch roots share only the content-addressed installed home.
+    # 3. Independent projects and scratch roots share only the content-addressed installed home.
     phase_started = Instant.now()
     report, suites = run_concurrent_gates(installation, runner)?
     retain_phase_timing(installation, "concurrent-gates", phase_started)?
 
-    # 5. The caller receives one durable evidence directory even on hosts with shared temporary storage.
+    # 4. The caller receives one durable evidence directory even on hosts with shared temporary storage.
     summary = baseline_summary(report) + f"; {suites} Rust facet suites\n"
     installation.run
         .joinpath("summary.txt")
@@ -187,6 +189,10 @@ pub def verification_phase_plans(jobs: int) -> list[VerificationPhasePlan]:
     workers = verification_workers(jobs)
     return [
         VerificationPhasePlan(
+            phase=VerificationPhase.Oven,
+            reservation=workers * OVEN_PROJECT_RESERVATION_BYTES,
+        ),
+        VerificationPhasePlan(
             phase=VerificationPhase.RustFacets,
             reservation=workers * FACET_RESERVATION_BYTES,
         ),
@@ -194,7 +200,7 @@ pub def verification_phase_plans(jobs: int) -> list[VerificationPhasePlan]:
             phase=VerificationPhase.DriverIntegration,
             reservation=LOWERING_RESERVATION_BYTES,
         ),
-        VerificationPhasePlan(phase=VerificationPhase.Lsp, reservation=PROJECT_RESERVATION_BYTES),
+        VerificationPhasePlan(phase=VerificationPhase.Lsp, reservation=SMALL_PROJECT_RESERVATION_BYTES),
         VerificationPhasePlan(
             phase=VerificationPhase.Census,
             reservation=workers * LOWERING_RESERVATION_BYTES,
@@ -213,6 +219,7 @@ def verification_workers(jobs: int) -> int:
 def verification_phase_name(phase: VerificationPhase) -> str:
     """Map the closed phase enum to its stable child-process spelling without cross-module method dispatch."""
     match phase:
+        VerificationPhase.Oven => return "oven"
         VerificationPhase.RustFacets => return "rust-facets"
         VerificationPhase.DriverIntegration => return "driver-integration"
         VerificationPhase.Lsp => return "lsp"
@@ -232,6 +239,7 @@ def run_phase(arguments: list[str]) -> Result[None, str]:
     installation = phase_installation(run, jobs, timeout_seconds)?
     started = Instant.now()
     match phase:
+        VerificationPhase.Oven => run_oven_tests(installation)?
         VerificationPhase.RustFacets =>
             suites = run_rust_facets(installation)?
             installation
@@ -254,6 +262,7 @@ def run_phase(arguments: list[str]) -> Result[None, str]:
 def parse_verification_phase(text: str) -> Result[VerificationPhase, str]:
     """Parse only the five internal verification phase spellings."""
     match text:
+        "oven" => return Ok(VerificationPhase.Oven)
         "rust-facets" => return Ok(VerificationPhase.RustFacets)
         "driver-integration" => return Ok(VerificationPhase.DriverIntegration)
         "lsp" => return Ok(VerificationPhase.Lsp)
