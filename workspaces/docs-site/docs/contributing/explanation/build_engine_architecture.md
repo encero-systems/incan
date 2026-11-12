@@ -823,7 +823,7 @@ Baselines come from the baseline measurement of 2026-10-29 (#2481, bundle 0cb030
 
 | Proof | Kind | Baseline | Measured | Commit | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| Every override has a tracked input | Correctness | Untracked global `Plan` | Not met: `mir_built`, `type_of` and `fn_sig` read injected answers from the whole process-global plan | `0be358dd8` | Native override audit; diagnostic only |
+| Every override has a tracked input | Correctness | Untracked global `Plan` | Met for injected answers: authenticated function/layout fingerprints are carried by their HIR owners; a two-function body edit changed only the edited function fingerprint | this commit | Existing lowering-record worked example, including the symlinked signature-edit cold comparison |
 | Edited incremental output equals cold output and behavior | Correctness | Not covered | Released and source drivers produced a byte-identical hello binary from one retained input; edited versus cold remains unproved | `0be358dd8` | Retained-input native driver comparison; diagnostic only |
 | CGUs actually regenerated per edit | Efficiency | Whole native unit | Oven one-body edit: 16 of 16 CGUs executed; 1.855 s front end, 0.869 s aggregate codegen and 0.183 s link | `0be358dd8` | One-body native phase trace; diagnostic only |
 | Head-to-head rows: hello cold, unchanged, private-body edit, signature edit, two homes, unrelated packages ×1/×2/×4, demanded records ×1/×2/×4, graph and LSP, census, idle workers | Efficiency | Pinned integration tree under BE-28 | | | |
@@ -845,6 +845,21 @@ signatures and source-local definitions after the provider has started, so track
 would still be incomplete. A safe reader must bind the function product and all runtime requirements authenticated by
 that product, while alias queries need their own layout records. Until those inputs are carried into the corresponding
 HIR owner/query dependency, incremental reuse remains disabled for the unit.
+
+The first E6 implementation step replaces the bare plan index with a `PlanReader`. It accepts a record report only
+after the frontend has decoded the native interface, then checks the interface schema, every scalar-product schema,
+input key, product digest, active-function coverage and uniqueness. Each planned function declaration carries its
+complete producer-input fingerprint; each injected model or enum alias carries a fingerprint of that layout. The
+three providers explicitly read the corresponding HIR owner before returning an injected answer, including the
+callee and terminator paths reached while constructing MIR. Missing or incomplete record coverage leaves ordinary
+non-incremental compilation available but supplies no eligible tracked set.
+
+The existing lowering-record worked example is the red/green proof for this boundary. Before the adapter report
+existed it failed because no per-definition fingerprint evidence was produced. After the change, editing only
+`greeting` changes `greeting`'s fingerprint while `main` retains its exact fingerprint; the existing signature edit,
+symlinked-root invalidation, warm/cold plan comparison and warm/cold executable comparison still pass. This proves
+record isolation, not rustc incremental reuse: fixed CGU membership and an edited incremental build remain required
+before the flag can be enabled.
 
 #### Native phase diagnostic at `0be358dd8` and the 100 ms path
 
