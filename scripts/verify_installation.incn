@@ -762,8 +762,8 @@ def verify_lsp(installation: Installation, runner: Path) -> Result[None, str]:
 
 
 def run_contracts(installation: Installation, runner: Path) -> Result[BaselineReport, str]:
-    """Run all families once, accept runner status 0 or 1, then enforce completeness and the committed baseline."""
-    mut environment = command_environment(installation)
+    """Run all families with release-unit reuse and timings, then enforce completeness and the committed baseline."""
+    mut environment = contract_measurement_environment(release_bakery_environment(installation))
     environment["INCAN_LSP"] = installation.lsp.0
     log = installation.run.joinpath("contracts.log")
     code = run_step(
@@ -793,6 +793,12 @@ def run_contracts(installation: Installation, runner: Path) -> Result[BaselineRe
     )?
     write_json(installation.run.joinpath("counts.json"), counts_json(report.counts))?
     return Ok(report)
+
+
+pub def contract_measurement_environment(mut environment: Dict[str, str]) -> Dict[str, str]:
+    """Enable the contract runner's compile and execution timing rows without changing case selection or outcomes."""
+    environment["CONTRACT_TIMINGS"] = "1"
+    return environment
 
 
 pub def census_arguments(oven: Path, fixtures: Path, scratch: Path, jobs: int, timeout_seconds: int) -> list[str]:

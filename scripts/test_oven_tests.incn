@@ -26,6 +26,7 @@ from oven_tests import (
 )
 from verify_installation import (
     VerificationPhase,
+    contract_measurement_environment,
     selected_release_bakery,
     verification_phase_plans,
     verification_trace_environment,
@@ -123,6 +124,10 @@ def test_verification_phases_reserve_their_complete_parallel_work() -> Result[No
     assert selected_release_bakery(temporary.path().0) == ""
     temporary.path().joinpath("bakery").mkdir(true, true).map_err((error) => error.message())?
     assert selected_release_bakery(temporary.path().0) == temporary.path().joinpath("bakery").0
+    measured = contract_measurement_environment({"INCAN_BAKERY": "/release/bakery"})
+    assert len(measured) == 2
+    assert measured["INCAN_BAKERY"] == "/release/bakery"
+    assert measured["CONTRACT_TIMINGS"] == "1"
     return Ok(None)
 
 
