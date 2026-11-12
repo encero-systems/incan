@@ -9,9 +9,8 @@ be excluded on its own:
 2. `OVEN test --profile release` for every `loaves/*/*/tests/test_*.incn`, from its Loaf.
 
 Each invocation writes its own log under `EVIDENCE/oven-tests/`. `oven-tests.log` joins them in the order above, so
-it does not depend on scheduling. The passing ids must equal `workspaces/contracts/oven-tests.txt`. Oven-project tests
-inherit the release Bakery, except that an input-mutation oracle receives a scratch-local Bakery. Compiler-Loaf tests
-share one evidence-local Bakery because their native library bindings are mutable gate state, not release-build units.
+it does not depend on scheduling. The passing ids must equal `workspaces/contracts/oven-tests.txt`. Tests inherit the
+release Bakery, except that an input-mutation oracle receives a scratch-local Bakery.
 
 At most N invocations run at once: `--jobs N`, else the core count. Each invocation also reserves memory, and one starts
 only while the reservations fit the memory they share: `--memory GIB`, else physical memory less a headroom. Every Oven
@@ -223,22 +222,11 @@ pub def invocations(root: Path, evidence: Path, logs: Path) -> Result[list[Invoc
             ),
         )
     compiler = root.joinpath("loaves/compiler").0 + "/"
-    loaf_environment = {"INCAN_BAKERY": evidence.joinpath("oven-loaf-bakery").0}
     for source in loaf_tests(root.joinpath("loaves"))?:
         # Compiler Loaves link native support, which an installed bundle ships for the release profile only.
         loaf = source.parent().parent()
         arguments = ["test", source.0, "--profile", "release"]
-        planned.append(
-            invocation(
-                arguments,
-                loaf.0,
-                reservation_of(source, compiler),
-                logs,
-                len(planned),
-                source,
-                environment=loaf_environment,
-            ),
-        )
+        planned.append(invocation(arguments, loaf.0, reservation_of(source, compiler), logs, len(planned), source))
     return Ok(planned)
 
 

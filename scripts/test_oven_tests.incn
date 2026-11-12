@@ -239,16 +239,9 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
         loaf_a.0,
         loaf_a.0,
     ]
-    loaf_bakery = evidence.joinpath("oven-loaf-bakery").0
     assert len(planned[0].environment) == 0
     assert len(planned[1].environment) == 0
-    assert [item.environment["INCAN_BAKERY"] for item in planned[2:]] == [
-        loaf_bakery,
-        loaf_bakery,
-        loaf_bakery,
-        loaf_bakery,
-        loaf_bakery,
-    ]
+    assert [len(item.environment) for item in planned[2:]] == [0, 0, 0, 0, 0]
     assert oven_test_state_root(root, "").0 == root.joinpath(".agents/state/release-oven-tests").0
     assert oven_test_state_root(root, "/outside/oven-tests").0 == "/outside/oven-tests"
     assert [item.reservation for item in planned] == [4 * GIB, 4 * GIB, 6 * GIB, 6 * GIB, 4 * GIB, 4 * GIB, 4 * GIB]
