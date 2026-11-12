@@ -52,20 +52,28 @@ pub fn internal_surface_admission_diagnostics(
     public: &BTreeSet<CanonicalSymbolId>,
 ) -> Vec<SurfaceAdmissionDiagnostic> {
     let candidates = checked_candidates(modules, library, public);
+    let native_callables = modules
+        .iter()
+        .flat_map(|module| &module.loaf_callables)
+        .collect::<Vec<_>>();
     let mut diagnostics = Vec::new();
     for module in modules {
         for nominal in &module.nominal_declarations {
             if !candidates.contains(&nominal.canonical)
                 || !matches!(
-                    publication::project_nominal(nominal, module, library, &candidates),
+                    publication::project_nominal(nominal, module, &native_callables, library, &candidates),
                     Err(CoverageReason::UnresolvedReference)
                 )
             {
                 continue;
             }
-            let Some((path, reference)) =
-                publication::diagnose_nominal_unresolved_reference(nominal, module, library, &candidates)
-            else {
+            let Some((path, reference)) = publication::diagnose_nominal_unresolved_reference(
+                nominal,
+                module,
+                &native_callables,
+                library,
+                &candidates,
+            ) else {
                 continue;
             };
             diagnostics.push(SurfaceAdmissionDiagnostic {
@@ -290,7 +298,7 @@ pub(super) fn project_declarations(
             }
         }
 
-        project_nominals(module, library, public, &mut admitted, declarations);
+        project_nominals(module, &native_callables, library, public, &mut admitted, declarations);
         project_enums(module, library, public, &mut admitted, declarations)?;
     }
     Ok(admitted)
@@ -329,6 +337,7 @@ pub(super) fn publishes_compiled_frame(module: &BodyIrModule, body: &Body) -> bo
 /// Project public nominal layouts and retain checked trait slots without synthesizing consumer dispatch.
 pub(super) fn project_nominals(
     module: &BodyIrModule,
+    native_callables: &[&crate::body_ir::LoafCallable],
     library: &str,
     public: &BTreeSet<CanonicalSymbolId>,
     admitted: &mut BTreeMap<CanonicalSymbolId, AdmittedDeclaration>,
@@ -339,7 +348,7 @@ pub(super) fn project_nominals(
         if !declarations.contains_key(&nominal.canonical) {
             continue;
         }
-        match publication::project_nominal(nominal, module, library, public) {
+        match publication::project_nominal(nominal, module, native_callables, library, public) {
             Ok((nominal, mut requirements, callables)) => {
                 let implementations = module
                     .trait_implementations

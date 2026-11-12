@@ -57,7 +57,9 @@ pub(super) fn retain_declared_type(ty: &mut IncanType, identities: &Identities) 
 pub(super) fn retain(module: &mut bir::BodyIrModule, facts: &TypeCheckInfo, context: &[bir::BodyIrModule]) {
     retain_return_owners(module, context);
     let constructors = constructor_arguments::collect(module, context);
-    let module_identities = super::parameter_types::retained_type_identities(facts);
+    let mut module_identities = super::parameter_types::retained_type_identities(facts);
+    retain_declared_identities(module, &mut module_identities);
+    retain_callable_types(&mut module.loaf_callables, &module_identities);
     for declaration in &mut module.nominal_declarations {
         for ty in &mut declaration.field_types {
             qualify_type(ty, None, &declaration.named_type_identities);
@@ -102,6 +104,47 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, facts: &TypeCheckInfo, cont
         if let bir::StaticInitializer::Computed(body) = &mut storage.initial {
             retain_body(body, facts, &constructors);
             storage.ty = body.return_type.clone();
+        }
+    }
+}
+
+/// Retain locally declared carrier bindings even when their private names never entered the import-facing tables.
+///
+/// Rust callable storage is collected before final carrier projection. A declaration-owned default can therefore
+/// record a local nominal by its source name while the checked call site already carries its canonical key. Both
+/// spellings must resolve through the owning module's declaration, independently of public or imported visibility.
+fn retain_declared_identities(module: &bir::BodyIrModule, identities: &mut Identities) {
+    for declaration in &module.nominal_declarations {
+        identities
+            .entry(declaration.name.clone())
+            .or_insert_with(|| declaration.canonical.clone());
+        if let Some(key) = nominal_carrier_key(&declaration.canonical) {
+            identities.entry(key).or_insert_with(|| declaration.canonical.clone());
+        }
+    }
+    for declaration in &module.enum_declarations {
+        identities
+            .entry(declaration.name.clone())
+            .or_insert_with(|| declaration.canonical.clone());
+        if let Some(key) = nominal_carrier_key(&declaration.canonical) {
+            identities.entry(key).or_insert_with(|| declaration.canonical.clone());
+        }
+    }
+}
+
+/// Project native callable signatures through the same canonical carrier map as their checked call sites.
+///
+/// Publication selects a Rust instantiation by canonical identity and native type arguments. A declaration-owned
+/// default may refine a private nominal argument to its identity-encoded carrier, so the callable inventory must
+/// retain that identical argument rather than the source spelling recorded before final carrier projection.
+fn retain_callable_types(callables: &mut [bir::LoafCallable], identities: &Identities) {
+    for callable in callables {
+        for parameter in &mut callable.parameters {
+            qualify_type(parameter, None, identities);
+        }
+        qualify_type(&mut callable.return_type, None, identities);
+        for argument in &mut callable.native_type_arguments {
+            qualify_type(argument, None, identities);
         }
     }
 }

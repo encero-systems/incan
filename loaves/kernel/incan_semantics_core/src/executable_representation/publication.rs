@@ -247,17 +247,27 @@ fn selected_native_calls(
 
 /// Name the first checked native selection absent from the module's callable inventory.
 ///
-/// Identity and native type arguments jointly select one retained Rust signature. Reporting both prevents a same-path
-/// generic instantiation from being mistaken for the unresolved reference.
+/// Identity and native type arguments jointly select one retained Rust signature. Reporting both the requested
+/// arguments and every retained candidate for that identity distinguishes a missing callable from carrier drift.
 fn unresolved_native_call_reference(
     selections: &[(CanonicalSymbolId, Vec<IncanType>)],
-    native_callables: &[crate::body_ir::LoafCallable],
+    native_callables: &[&crate::body_ir::LoafCallable],
 ) -> Option<String> {
     selections.iter().find_map(|(identity, arguments)| {
-        (!native_callables.iter().any(|callable| {
+        if native_callables.iter().any(|callable| {
             callable.canonical == *identity && callable.native_type_arguments.as_slice() == arguments.as_slice()
-        }))
-        .then(|| format!("{} with native type arguments {arguments:?}", identity.render_compact()))
+        }) {
+            return None;
+        }
+        let candidates = native_callables
+            .iter()
+            .filter(|callable| callable.canonical == *identity)
+            .map(|callable| callable.native_type_arguments.as_slice())
+            .collect::<Vec<_>>();
+        Some(format!(
+            "{} with native type arguments {arguments:?}; retained candidates {candidates:?}",
+            identity.render_compact()
+        ))
     })
 }
 
@@ -350,6 +360,7 @@ pub(super) fn project_body(
 pub(super) fn project_nominal(
     source: &crate::body_ir::NominalDeclaration,
     module: &BodyIrModule,
+    native_callables: &[&crate::body_ir::LoafCallable],
     library: &str,
     eligible: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<
@@ -444,8 +455,7 @@ pub(super) fn project_nominal(
         audit.used_nominal_types.insert(carrier, nominal.canonical.clone());
     }
     nominal.named_type_identities = audit.used_nominal_types;
-    let native_callables = module.loaf_callables.iter().collect::<Vec<_>>();
-    let callables = selected_native_calls(&native_calls, &native_callables)?;
+    let callables = selected_native_calls(&native_calls, native_callables)?;
     Ok((nominal, audit.requirements, callables))
 }
 
@@ -457,6 +467,7 @@ pub(super) fn project_nominal(
 pub(super) fn diagnose_nominal_unresolved_reference(
     source: &crate::body_ir::NominalDeclaration,
     module: &BodyIrModule,
+    native_callables: &[&crate::body_ir::LoafCallable],
     library: &str,
     eligible: &BTreeSet<CanonicalSymbolId>,
 ) -> Option<(Vec<String>, String)> {
@@ -468,8 +479,14 @@ pub(super) fn diagnose_nominal_unresolved_reference(
         }
     }
     if let Some(defaults) = &source.field_default_body
-        && let Some(diagnostic) =
-            diagnose_body_unresolved_reference(defaults, module, library, eligible, vec!["field defaults".to_owned()])
+        && let Some(diagnostic) = diagnose_body_unresolved_reference(
+            defaults,
+            module,
+            native_callables,
+            library,
+            eligible,
+            vec!["field defaults".to_owned()],
+        )
     {
         return Some(diagnostic);
     }
@@ -477,6 +494,7 @@ pub(super) fn diagnose_nominal_unresolved_reference(
         if let Some(diagnostic) = diagnose_body_unresolved_reference(
             &binding.frame,
             module,
+            native_callables,
             library,
             eligible,
             vec![format!("method defaults `{}`", binding.target.declaration_name)],
@@ -491,6 +509,7 @@ pub(super) fn diagnose_nominal_unresolved_reference(
 fn diagnose_body_unresolved_reference(
     source: &Body,
     module: &BodyIrModule,
+    native_callables: &[&crate::body_ir::LoafCallable],
     library: &str,
     eligible: &BTreeSet<CanonicalSymbolId>,
     prefix: Vec<String>,
@@ -526,7 +545,7 @@ fn diagnose_body_unresolved_reference(
             return take_unresolved_reference(&mut audit, path);
         }
         if let Some(reference) =
-            unresolved_native_call_reference(&audit.native_calls[first_native_call..], &module.loaf_callables)
+            unresolved_native_call_reference(&audit.native_calls[first_native_call..], native_callables)
         {
             let mut path = prefix.clone();
             path.push(format!("parameter `{}` default", parameter.name));
@@ -541,7 +560,7 @@ fn diagnose_body_unresolved_reference(
         return take_unresolved_reference(&mut audit, path);
     }
     if let Some(reference) =
-        unresolved_native_call_reference(&audit.native_calls[first_native_call..], &module.loaf_callables)
+        unresolved_native_call_reference(&audit.native_calls[first_native_call..], native_callables)
     {
         let mut path = prefix;
         path.push("statements".to_owned());

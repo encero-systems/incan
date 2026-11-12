@@ -162,6 +162,48 @@ pub(super) fn assert_nominal_carrier_maps_stay_shared() -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// Native callable selections and call sites must retain the same canonical argument for a private nominal.
+pub(super) fn assert_native_callable_carrier_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Reading:\n    value: int\ndef read(value: Reading) -> Reading:\n    return value\n";
+    let (_, mut facts, mut module) = checked_seed(source)?;
+    let owner = module
+        .nominal_declarations
+        .iter()
+        .find(|declaration| declaration.name == "Reading")
+        .map(|declaration| declaration.canonical.clone())
+        .ok_or("missing Reading declaration")?;
+    let carrier = bir::nominal_carrier_key(&owner).ok_or("missing Reading carrier")?;
+    facts
+        .declarations
+        .named_type_identities
+        .retain(|_, identity| identity != &owner);
+    facts
+        .declarations
+        .body_ir_native_type_identities
+        .retain(|_, identity| identity != &owner);
+    let native = bir::rust_item_identity("std::cell::RefCell::new").ok_or("missing native callable identity")?;
+    module.loaf_callables.push(bir::LoafCallable {
+        canonical: native,
+        item: "std::cell::RefCell::new".into(),
+        parameters: vec![IncanType::Named("Reading".into())],
+        return_type: IncanType::Named("Reading".into()),
+        type_parameters: Vec::new(),
+        native_type_arguments: vec![IncanType::Named("Reading".into())],
+        native_callable_parameters: Vec::new(),
+        parameter_defaults: Vec::new(),
+        declaration_frame: None,
+    });
+
+    super::nominal_carriers::retain(&mut module, &facts, &[]);
+
+    let callable = module.loaf_callables.last().ok_or("missing retained native callable")?;
+    let retained = IncanType::Named(carrier);
+    assert_eq!(callable.parameters, vec![retained.clone()]);
+    assert_eq!(callable.return_type, retained.clone());
+    assert_eq!(callable.native_type_arguments, vec![retained]);
+    Ok(())
+}
+
 /// Prove a nested generic static call carries the enclosing symbolic bound arguments into Body IR.
 pub(super) fn assert_nested_generic_static_call_arguments() -> Result<(), Box<dyn std::error::Error>> {
     let source = "trait Source[E]:\n    def integer(mut self) -> Result[int, E]\ntrait Reconstruct:\n    @staticmethod\n    def reconstruct[E, S with Source[E]](mut source: S) -> Result[Self, E]\nmodel Inner with Reconstruct:\n    value: int\n    @staticmethod\n    def reconstruct[E, S with Source[E]](mut source: S) -> Result[Inner, E]:\n        return Ok(Inner(value=source.integer()?))\nmodel Outer with Reconstruct:\n    inner: Inner\n    @staticmethod\n    def reconstruct[E, S with Source[E]](mut source: S) -> Result[Outer, E]:\n        return Ok(Outer(inner=Inner.reconstruct(source)?))\n";

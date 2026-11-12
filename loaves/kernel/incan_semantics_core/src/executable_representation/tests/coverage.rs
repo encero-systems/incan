@@ -242,8 +242,24 @@ fn internal_surface_diagnostic_names_missing_native_default_selection() -> Resul
     );
     assert_eq!(
         diagnostics[0].reference,
-        format!("{} with native type arguments []", native.render_compact())
+        format!(
+            "{} with native type arguments []; retained candidates []",
+            native.render_compact()
+        )
     );
+    let mut inventory = module(Vec::new());
+    inventory.loaf_callables.push(crate::body_ir::LoafCallable {
+        canonical: native,
+        item: "std::cell::RefCell::new".to_owned(),
+        parameters: Vec::new(),
+        return_type: crate::IncanType::Primitive(crate::IncanPrimitiveType::Unit),
+        type_parameters: Vec::new(),
+        native_type_arguments: Vec::new(),
+        native_callable_parameters: Vec::new(),
+        parameter_defaults: Vec::new(),
+        declaration_frame: None,
+    });
+    assert!(internal_surface_admission_diagnostics(&[input, inventory], "probe", &BTreeSet::from([owner])).is_empty());
     Ok(())
 }
 
