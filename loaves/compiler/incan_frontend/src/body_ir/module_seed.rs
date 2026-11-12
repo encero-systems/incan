@@ -216,7 +216,11 @@ pub(super) fn retain_source_body_contracts(
 ) {
     apply_top_level_input_contract_refusal(program, bodies);
     registry_effects::refuse_unretained_functions(program, type_info, bodies);
+    let selected = selected_body_identities(type_info);
     for body in bodies {
+        if body_is_selected(body, &selected) {
+            continue;
+        }
         representation_facts::retain(body);
     }
 }
