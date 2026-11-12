@@ -16,7 +16,6 @@ from std.encoding._shared import (
     _invalid_character,
     _invalid_input,
     _invalid_length,
-    _io_boundary_error,
     _read_source_bytes,
     _read_source_text,
     _read_stream_bytes,
@@ -24,11 +23,8 @@ from std.encoding._shared import (
     _write_stream_bytes,
 )
 from std.fs import Path
-from std.io import BytesIO, _BytesIO
-from std.primitives import hexlify as _primitive_hexlify
-
-const _BYTE_VALUES: bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff"
-const _HEX_UPPER: str = "0123456789ABCDEF"
+from std.io import _BytesIO
+from std.primitives import decode_utf8 as _decode_utf8, encode_utf8 as _encode_utf8, hexlify as _primitive_hexlify
 # Source/sink helpers
 
 
@@ -109,11 +105,15 @@ pub def b16encode(data: bytes) -> str:
     Returns:
         Two uppercase hexadecimal characters for each input byte.
     """
-    mut out = ""
-    for value in data:
-        number = int(value)
-        out = out + _hex_digit_upper(number // 16) + _hex_digit_upper(number % 16)
-    return out
+    # The primitive is linear. Six whole-string replacements retain that bound without scalar indexing.
+    text = hexlify(data)
+    return text
+        .replace("a", "A")
+        .replace("b", "B")
+        .replace("c", "C")
+        .replace("d", "D")
+        .replace("e", "E")
+        .replace("f", "F")
 
 
 pub def b16decode(text: str) -> Result[bytes, EncodingError]:
@@ -215,62 +215,49 @@ def _decode_text(text: str) -> Result[bytes, EncodingError]:
     return _decode_pairs(text)
 
 
-def _decode_pairs(text: str) -> Result[bytes, EncodingError]:
-    """Decode already length-checked hexadecimal pairs into bytes."""
-    out = BytesIO(b"")
+def _decode_pairs(text: &str) -> Result[bytes, EncodingError]:
+    """Decode already length-checked hexadecimal pairs from one UTF-8 byte projection."""
+    encoded = _encode_utf8(text)
+    mut out: list[u8] = []
     for pair_index in range(len(text) // 2):
         index = pair_index * 2
         # Two four-bit digits become one byte. Positions point back to the exact bad digit when validation fails.
-        high = _hex_value(_char_at(text, index), index)?
-        low = _hex_value(_char_at(text, index + 1), index + 1)?
-        byte_index = high * 16 + low
-        match out.write_bytes(_BYTE_VALUES[byte_index:byte_index + 1]):
-            Ok(_) => pass
-            Err(err) => return Err(_io_boundary_error("hex", err.message(), index))
-    return Ok(out.getvalue())
+        high = _hex_value(int(encoded[index]))
+        if high < 0:
+            return Err(_invalid_hex_character(text, index))
+        low = _hex_value(int(encoded[index + 1]))
+        if low < 0:
+            return Err(_invalid_hex_character(text, index + 1))
+        value: u8 = (high * 16 + low).wrapping_resize()
+        out.append(value)
+    return Ok(out)
 
 
-def _hex_digit_upper(value: int) -> str:
-    """Return one uppercase hexadecimal digit for a value in `0..15`."""
-    return _HEX_UPPER[value:value + 1]
+def _hex_value(code: int) -> int:
+    """Map one ASCII hexadecimal byte to its four-bit value, or return `-1` for another byte."""
+    if code >= 48 and code <= 57:
+        return code - 48
+    if code >= 65 and code <= 70:
+        return code - 55
+    if code >= 97 and code <= 102:
+        return code - 87
+    return -1
 
 
-def _hex_value(character: str, position: int) -> Result[int, EncodingError]:
-    """Map one hexadecimal character to its four-bit value."""
-    match character:
-        "0" => return Ok(0)
-        "1" => return Ok(1)
-        "2" => return Ok(2)
-        "3" => return Ok(3)
-        "4" => return Ok(4)
-        "5" => return Ok(5)
-        "6" => return Ok(6)
-        "7" => return Ok(7)
-        "8" => return Ok(8)
-        "9" => return Ok(9)
-        "a" | "A" => return Ok(10)
-        "b" | "B" => return Ok(11)
-        "c" | "C" => return Ok(12)
-        "d" | "D" => return Ok(13)
-        "e" | "E" => return Ok(14)
-        "f" | "F" => return Ok(15)
-        other => return Err(_invalid_character("hex", other, position))
+def _invalid_hex_character(text: &str, position: int) -> EncodingError:
+    """Recover the original scalar for an invalid byte while preserving the public error contract."""
+    for index, character in enumerate(text):
+        if index == position:
+            return _invalid_character("hex", character, position)
+    return _invalid_character("hex", "", position)
 
 
-def _char_at(value: str, index: int) -> str:
-    """Return the one-character string at a byte-indexed text position."""
-    return value[index:index + 1]
-
-
-def _strip_ascii_whitespace(value: str) -> str:
-    """Remove ASCII whitespace accepted by lenient hex decoding."""
-    mut out = ""
-    for character in value:
-        if not _is_ascii_whitespace(character):
-            out = out + character
-    return out
-
-
-def _is_ascii_whitespace(character: str) -> bool:
-    """Return whether `character` is ASCII whitespace accepted by lenient mode."""
-    return character == " " or character == "\n" or character == "\r" or character == "\t"
+def _strip_ascii_whitespace(value: &str) -> str:
+    """Remove ASCII whitespace in one byte pass while preserving every other UTF-8 sequence."""
+    mut out: list[u8] = []
+    for code in _encode_utf8(value):
+        if code != 9 and code != 10 and code != 13 and code != 32:
+            byte: u8 = code.wrapping_resize()
+            out.append(byte)
+    _, cleaned = _decode_utf8(out, false)
+    return cleaned
