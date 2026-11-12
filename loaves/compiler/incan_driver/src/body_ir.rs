@@ -6,7 +6,7 @@ use incan_frontend::loaf_index::LoafIndex;
 use incan_frontend::parsed_module::ParsedModule;
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 /// Build authored modules in collection order against one provider catalog and the preceding dependency context.
 /// The unit kind supplies publication identity; no caller may rebuild a module with a different library contract.
@@ -68,8 +68,13 @@ pub fn lower_authored_modules(
         bodies.truncate(completed);
         bodies.push(lowered);
     }
+    let selected = modules
+        .iter()
+        .filter_map(|module| analysis.type_info_for_path(&module.file_path))
+        .flat_map(incan_frontend::body_ir::selected_body_identities)
+        .collect::<HashSet<_>>();
     let (context, authored) = bodies.split_at_mut(authored_start);
-    incan_frontend::body_ir::settle_shared_reads(authored, context);
+    incan_frontend::body_ir::settle_shared_reads_with_selected(authored, context, &selected);
     Ok(())
 }
 

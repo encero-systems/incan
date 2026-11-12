@@ -142,16 +142,28 @@ struct ReadContext<'a> {
 /// resulting signatures. A function-item closure remains the declared by-value callable adapter: only its internal
 /// call lends the wrapper's owned argument to the inferred-shared target.
 pub(super) fn retain_modules(modules: &mut [bir::BodyIrModule], context: &[bir::BodyIrModule]) {
+    retain_modules_with_selected(modules, context, &HashSet::new());
+}
+
+/// Retain shared-read representation for fresh owners while selected final bodies remain immutable context.
+pub(super) fn retain_modules_with_selected(
+    modules: &mut [bir::BodyIrModule],
+    context: &[bir::BodyIrModule],
+    selected: &HashSet<CanonicalSymbolId>,
+) {
     let no_candidates = HashSet::new();
     let field_types = FieldTypes::collect(modules, context);
     let cursor_signatures = collect_signatures(modules, context, &no_candidates);
     for module in modules.iter_mut() {
         for body in &mut module.bodies {
+            if body_is_selected(body, selected) {
+                continue;
+            }
             retain_cursors(body, &cursor_signatures, &field_types, &no_candidates);
         }
     }
 
-    let mut candidates = candidate_parameters(modules);
+    let mut candidates = candidate_parameters(modules, selected);
     let signatures = collect_signatures(modules, context, &candidates);
     let mut dependents: HashMap<Candidate, HashSet<Candidate>> = HashMap::new();
     let mut refused = VecDeque::new();
@@ -188,9 +200,19 @@ pub(super) fn retain_modules(modules: &mut [bir::BodyIrModule], context: &[bir::
     let final_signatures = collect_signatures(modules, context, &no_candidates);
     for module in modules {
         for body in &mut module.bodies {
+            if body_is_selected(body, selected) {
+                continue;
+            }
             retain_body_calls(body, &final_signatures, &field_types, &no_candidates);
         }
     }
+}
+
+/// Report whether a body is a graph-selected final owner that must not be refined again.
+fn body_is_selected(body: &bir::Body, selected: &HashSet<CanonicalSymbolId>) -> bool {
+    body.canonical
+        .as_ref()
+        .is_some_and(|identity| selected.contains(identity))
 }
 
 /// Resolve one candidate's checked body and test it against the current shared-call hypothesis.
@@ -275,7 +297,7 @@ fn retain_shared_parameter(body: &mut bir::Body, parameter_index: usize) {
 /// their checked implementations keep the trait's authored ABI because an implementation body cannot refine that
 /// independently shared contract. A method targeted by a partial also keeps its authored ABI because the retained
 /// partial frame has already copied that parameter surface.
-fn candidate_parameters(modules: &[bir::BodyIrModule]) -> HashSet<Candidate> {
+fn candidate_parameters(modules: &[bir::BodyIrModule], selected: &HashSet<CanonicalSymbolId>) -> HashSet<Candidate> {
     let mut candidates = HashSet::new();
     for (module_index, module) in modules.iter().enumerate() {
         let trait_implementations = module
@@ -290,6 +312,9 @@ fn candidate_parameters(modules: &[bir::BodyIrModule]) -> HashSet<Candidate> {
             .map(|partial| partial.target.clone())
             .collect::<HashSet<_>>();
         for (body_index, body) in module.bodies.iter().enumerate() {
+            if body_is_selected(body, selected) {
+                continue;
+            }
             let eligible = body.type_parameters.is_empty()
                 && !body.is_async
                 && !body.is_generator()
