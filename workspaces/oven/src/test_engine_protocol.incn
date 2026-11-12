@@ -3,6 +3,7 @@
 from core_process import Process, spawn_detached
 from rust::std::thread import sleep
 from rust::std::time import Duration
+from rust::std::string import String as RustString
 from std.environ import get_or
 from std.encoding.hex import hexlify
 from std.fs import Path
@@ -161,6 +162,7 @@ pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     check_collection_before_selection()?
     check_collection_during_execution()?
     process_lifecycle()?
+    check_project_directory_selection()?
     check_worker_retirement()?
     identity = Identity(
         store_id="store",
@@ -227,6 +229,43 @@ def handshake_refused(state: ServiceState, hello: Hello, uid: u32) -> bool:
         Err(_) => return true
 
 
+def check_project_directory_selection() -> Result[None, str]:
+    """The records engine resolves a project directory to its declared main entry."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("project")
+    project.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(
+        project.joinpath("loaf.toml"),
+        "[project]\nname = \"engine-project\"\nversion = \"0.1.0\"\n[project.scripts]\nmain = \"src/main.incn\"\n",
+    )?
+    write(project.joinpath("src/main.incn"), "def main() -> None:\n    println(\"hello\")\n")?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    outcome = Command
+        .new(binary)
+        .arg("run")
+        .arg(project.0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    if not outcome.status.success() or outcome.stdout != b"hello\x0a" or outcome.stderr != b"":
+        error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
+        return Err(f"project records run: status={outcome.status.code()} stderr={error}")
+    mut identity = service_identity(store)?
+    identity.service_generation = fingerprint([binary, observe(Path(binary))?.stamp])?
+    mut channel = connect_with(store, identity, binary).map_err(detail)?
+    channel.send(zero_id(), Message.Stop(Stop(reason="project selection proof completed"))).map_err(detail)?
+    stopped = channel.receive().map_err(detail)?
+    match stopped.message:
+        Message.Event(value) =>
+            assert value.status == "Stopping"
+        _ => return Err("project selection proof did not stop its engine")
+    _ = channel.transport.close()
+    return Ok(None)
+
+
 def check_worker_retirement() -> Result[None, str]:
     """A one-activation compiler retires, and a body edit reads frozen compiler records instead of whole manifests."""
     scratch = scratch_directory()?
@@ -258,7 +297,8 @@ def check_worker_retirement() -> Result[None, str]:
         .output()
         .map_err((error) => str(error))?
     if not outcome.status.success() or outcome.stdout != b"hello\x0a" or outcome.stderr != b"":
-        return Err(f"initial records run: status={outcome.status.code()} stdout_bytes={len(outcome.stdout)} stderr_bytes={len(outcome.stderr)}")
+        error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
+        return Err(f"initial records run: status={outcome.status.code()} stderr={error}")
     initial_manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest")
     initial_record_reads = invocation_count(observations, "incan_frontend::read_compiler_records")
     write(source, "def main() -> None:\n    println(\"hullo\")\n")?
@@ -278,7 +318,8 @@ def check_worker_retirement() -> Result[None, str]:
         .output()
         .map_err((error) => str(error))?
     if not edited.status.success() or edited.stdout != b"hullo\x0a" or edited.stderr != b"":
-        return Err(f"edited records run: status={edited.status.code()} stdout_bytes={len(edited.stdout)} stderr_bytes={len(edited.stderr)}")
+        error = RustString.from_utf8(edited.stderr).map_err((decode_error) => str(decode_error))?
+        return Err(f"edited records run: status={edited.status.code()} stderr={error}")
     manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest") - initial_manifest_reads
     if manifest_reads != 0:
         return Err(f"one-body edit reopened {manifest_reads} whole Loaf manifests")
@@ -330,10 +371,9 @@ def invocation_count(directory: Path, function: str) -> int:
                             match parse(line):
                                 Err(_) => continue
                                 Ok(document) =>
-                                    if json_text_is(document, "kind", "begin") and json_text_is(
-                                        document,
-                                        "function",
-                                        function,
+                                    if (
+                                        json_text_is(document, "kind", "begin")
+                                        and json_text_is(document, "function", function)
                                     ):
                                         count += 1
     return count

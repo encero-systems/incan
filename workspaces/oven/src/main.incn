@@ -240,9 +240,10 @@ def scheduled_unit_command(arguments: list[str]) -> None:
     output = Path(arguments[2])
     match parse_options(arguments[3:]):
         Err(reason) => fail(f"oven internal Rust unit request: {reason}", 2)
-        Ok(options) => finish("internal Rust unit", rust_request(options).and_then(
-            (request) => scheduled_unit(request, facet, inputs, output),
-        ))
+        Ok(options) => finish(
+            "internal Rust unit",
+            rust_request(options).and_then((request) => scheduled_unit(request, facet, inputs, output)),
+        )
 
 
 def explain(arguments: list[str]) -> None:
@@ -351,17 +352,15 @@ def records_command(command: str, arguments: list[str]) -> None:
                 )
             if command == "build" and (len(passed) > 0 or options.argv0 is not None):
                 syntax_error(command, "program arguments and --argv0 require run")
+            mut source = Path(options.path)
+            match build_source(source, options.manifests):
+                Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
+                Ok(None) => fail(f"{invoked()} {command}: records engine requires an Incan program", 1)
+                Ok(Some(selected)) => source = selected
             prepared_lock(command, options)
             finish(
                 command,
-                execute_records(
-                    command,
-                    Path(options.path),
-                    options.profile,
-                    passed,
-                    options.argv0,
-                    options.engine_report,
-                ),
+                execute_records(command, source, options.profile, passed, options.argv0, options.engine_report),
             )
 
 

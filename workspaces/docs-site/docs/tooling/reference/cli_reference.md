@@ -76,7 +76,7 @@ Trust controls only whether unattended preparation and the language server may r
 
 `PATH` names an Incan entry source. Arguments after `--` are passed to the program. `--argv0 TEXT` sets the program's argument zero. Repeatable `--program-entry PATH` adds program entries. The compiled program inherits stdin, stdout and stderr; its exit status is the command's exit status.
 
-With `INCAN_ENGINE=records`, `PATH` must name one ordinary program source file, the profile must be `debug` or `release`, and editable path dependencies, vocabulary entries, foreign headers, feature-selection flags, substitutions and additional program entries are refused. Build and run select the same compiled unit. The program runs only after successful capture and native selection. `--engine-report` retains a proof report and prints one JSON line before any program output. Without that flag, proof reporting adds no console output. The flag is refused in legacy mode.
+With `INCAN_ENGINE=records`, `PATH` must name one ordinary program source file or a project directory with a conventional `src/main.incn` entry, the profile must be `debug` or `release`, and editable path dependencies, vocabulary entries, foreign headers, feature-selection flags, substitutions and additional program entries are refused. Build and run select the same compiled unit. The program runs only after successful capture and native selection. `--engine-report` retains a proof report and prints one JSON line before any program output. Without that flag, proof reporting adds no console output. The flag is refused in legacy mode.
 
 ## `oven check`
 
