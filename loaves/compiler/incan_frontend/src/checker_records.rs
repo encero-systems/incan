@@ -20,9 +20,18 @@ pub struct GraphBodyRecord {
     pub body_ir: Option<incan_semantics_core::executable_representation::EncodedOwnerRepresentation>,
 }
 
-/// Immutable graph-selected body inventory shared by module checkers in one compilation session.
+/// Keyed source of independently bounded graph body pages.
+pub trait GraphBodyRecordSource: std::fmt::Debug + Send + Sync {
+    /// Read and authenticate the page for one exact stable owner identity, returning absence without scanning peers.
+    fn read(&self, identity: &str) -> Result<Option<GraphBodyRecord>, RecordAdapterFault>;
+}
+
+/// Immutable eager fixtures or a keyed page source shared by module checkers in one compilation session.
 #[derive(Debug, Clone, Default)]
-pub struct GraphBodyRecords(Arc<BTreeMap<String, GraphBodyRecord>>);
+pub struct GraphBodyRecords {
+    eager: Arc<BTreeMap<String, GraphBodyRecord>>,
+    source: Option<Arc<dyn GraphBodyRecordSource>>,
+}
 
 /// Canonical field primitives emitted for one checked top-level free function.
 ///
@@ -52,17 +61,34 @@ impl GraphBodyRecords {
                 return Err(RecordAdapterFault::InvalidField("duplicate graph body identity".into()));
             }
         }
-        Ok(Self(Arc::new(selected)))
+        Ok(Self {
+            eager: Arc::new(selected),
+            source: None,
+        })
     }
 
-    /// Borrow one exact declaration's already codec-validated pair.
-    pub(crate) fn get(&self, identity: &str) -> Option<&GraphBodyRecord> {
-        self.0.get(identity)
+    /// Bind a lazy source whose implementation reads only the exact stable owner requested by the checker.
+    pub fn from_source(source: Arc<dyn GraphBodyRecordSource>) -> Self {
+        Self {
+            eager: Arc::new(BTreeMap::new()),
+            source: Some(source),
+        }
+    }
+
+    /// Read one exact declaration's already codec-validated pair without scanning unrelated owner pages.
+    pub(crate) fn get(&self, identity: &str) -> Result<Option<GraphBodyRecord>, RecordAdapterFault> {
+        if let Some(record) = self.eager.get(identity) {
+            return Ok(Some(record.clone()));
+        }
+        match &self.source {
+            Some(source) => source.read(identity),
+            None => Ok(None),
+        }
     }
 
     /// Report whether this transport carries any graph-selected bodies.
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.eager.is_empty() && self.source.is_none()
     }
 }
 

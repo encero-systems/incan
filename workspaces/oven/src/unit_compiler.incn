@@ -17,6 +17,7 @@ from shared_link import shared_arguments
 from toolchain import Toolchain
 from unit import UnitDescription, dependency_source_roots
 from unit_freshness import Key, artifact_identity, unit_key
+from compiler_body_values import SelectedBodyPage
 
 
 pub def compile_prepared_unit(
@@ -26,7 +27,7 @@ pub def compile_prepared_unit(
     known_key: Option[Key] = None,
     reason: str = "no stored build",
     development: bool = false,
-    graph_body_records: Option[bytes] = None,
+    graph_body_records: Option[list[SelectedBodyPage]] = None,
 ) -> Result[i32, str]:
     """
     Compile one prepared unit without dependency selection or recursive preparation.
@@ -57,7 +58,9 @@ pub def compile_prepared_unit(
     )? + shared_arguments(unit, development)?
     if let Some(records) = graph_body_records:
         records_path = Path(f"{path.0}.graph-body-records")
-        publish_binary(records_path, records)?
+        records_path.mkdir(true, true).map_err((error) => f"{records_path.0}: {error.message()}")?
+        for page in records:
+            publish_binary(records_path.joinpath(page.key), page.value)?
         native += ["--graph-body-records", records_path.0]
         output_path = Path(f"{path.0}.graph-body-output")
         discard_file(output_path)

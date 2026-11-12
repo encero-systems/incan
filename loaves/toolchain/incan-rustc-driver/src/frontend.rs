@@ -250,30 +250,87 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     })
 }
 
-/// Decode the engine's separate graph-record transport through the Incan-owned schema before native checking.
-fn read_graph_body_records(path: &Path) -> Result<incan_frontend::checker_records::GraphBodyRecords, String> {
-    let encoded =
-        std::fs::read(path).map_err(|error| format!("cannot read graph body records {}: {error}", path.display()))?;
-    let decoded = internal_models::decode_graph_body_values(&encoded)
-        .map_err(|error| format!("graph body record transport refused: {error:?}"))?;
-    let records = decoded
-        .into_iter()
-        .map(|record| {
-            let frame = incan_semantics_core::executable_representation::decode_owner(&record.body_ir)
-                .map_err(|error| format!("graph Body IR owner frame refused: {error}"))?;
-            if frame.source.is_empty() || frame.identity != record.identity {
-                return Err("graph Body IR owner frame disagrees with its selected identity".to_owned());
+/// Filesystem-backed source of independently bounded graph body pages.
+#[derive(Debug)]
+struct GraphBodyRecordPages {
+    root: PathBuf,
+}
+
+impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordPages {
+    /// Read only the page addressed by this stable owner; absence keeps that owner on the ordinary checking path.
+    fn read(
+        &self,
+        identity: &str,
+    ) -> Result<
+        Option<incan_frontend::checker_records::GraphBodyRecord>,
+        incan_frontend::checker_records::RecordAdapterFault,
+    > {
+        const MAX_PAGE_BYTES: u64 = 64 * 1024 * 1024;
+        let path = self.root.join(hex::encode(Sha256::digest(identity.as_bytes())));
+        let metadata = match std::fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                    format!("cannot inspect graph body page {}: {error}", path.display()),
+                ));
             }
-            Ok(incan_frontend::checker_records::GraphBodyRecord {
-                identity: record.identity,
-                local: record.local,
-                final_value: record.final_fields,
-                body_ir: Some(frame),
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    incan_frontend::checker_records::GraphBodyRecords::new(records)
-        .map_err(|error| format!("graph body record inventory refused: {error:?}"))
+        };
+        if !metadata.is_file() || metadata.len() > MAX_PAGE_BYTES {
+            return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                "graph body page is not a bounded regular file".into(),
+            ));
+        }
+        let encoded = std::fs::read(&path).map_err(|error| {
+            incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
+                "cannot read graph body page {}: {error}",
+                path.display()
+            ))
+        })?;
+        let mut decoded = internal_models::decode_graph_body_values(&encoded).map_err(|error| {
+            incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
+                "graph body page refused: {error:?}"
+            ))
+        })?;
+        if decoded.len() != 1 || decoded[0].identity != identity {
+            return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                "graph body page disagrees with its requested identity".into(),
+            ));
+        }
+        let record = decoded.remove(0);
+        let frame =
+            incan_semantics_core::executable_representation::decode_owner(&record.body_ir).map_err(|error| {
+                incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
+                    "graph Body IR owner frame refused: {error}"
+                ))
+            })?;
+        if frame.source.is_empty() || frame.identity != record.identity {
+            return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                "graph Body IR owner frame disagrees with its selected identity".into(),
+            ));
+        }
+        Ok(Some(incan_frontend::checker_records::GraphBodyRecord {
+            identity: record.identity,
+            local: record.local,
+            final_value: record.final_fields,
+            body_ir: Some(frame),
+        }))
+    }
+}
+
+/// Bind the engine's keyed graph-record page directory without reading an aggregate inventory.
+fn read_graph_body_records(path: &Path) -> Result<incan_frontend::checker_records::GraphBodyRecords, String> {
+    if !path.is_dir() {
+        return Err(format!(
+            "graph body record pages are not a directory: {}",
+            path.display()
+        ));
+    }
+    Ok(incan_frontend::checker_records::GraphBodyRecords::from_source(
+        std::sync::Arc::new(GraphBodyRecordPages {
+            root: path.to_path_buf(),
+        }),
+    ))
 }
 
 /// Run source, frontend, canonical Body IR, Incan lowering, plan validation, adapter, and pinned native compilation.
@@ -793,4 +850,29 @@ fn macro_externs(
         .filter(|(name, _)| !loaf_links.contains(name))
         .cloned()
         .collect()
+}
+
+#[cfg(test)]
+mod graph_body_page_tests {
+    use super::GraphBodyRecordPages;
+    use incan_frontend::checker_records::GraphBodyRecordSource;
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn keyed_body_pages_do_not_scan_unrequested_owners() -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!("incan-graph-body-pages-{}", std::process::id()));
+        if root.exists() {
+            std::fs::remove_dir_all(&root)?;
+        }
+        std::fs::create_dir_all(&root)?;
+        let unrelated = root.join(hex::encode(Sha256::digest(b"unrelated-owner")));
+        std::fs::write(&unrelated, b"malformed unrelated page")?;
+        let source = GraphBodyRecordPages { root: root.clone() };
+
+        assert!(source.read("requested-owner")?.is_none());
+        assert!(source.read("unrelated-owner").is_err());
+
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
 }
