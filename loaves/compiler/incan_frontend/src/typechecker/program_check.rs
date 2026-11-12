@@ -379,13 +379,13 @@ impl TypeChecker {
         self.settle_body_checks(program);
     }
 
-    /// Keep a retained scalar body only at its original physical lexical scope. Earlier unsupported bodies may
-    /// introduce different scopes after an edit; that invalidates this product rather than renumbering identities.
+    /// Keep a retained scalar body only at its owner-relative lexical depth. Traversing an unrelated owner first
+    /// cannot invalidate this product, while a changed nesting shape still does.
     pub(in crate::typechecker) fn callable_body_matches_current_scope(&mut self, span: Span) -> bool {
         let Some(scope) = self.type_info.reused_callable_scopes.get(&span) else {
             return false;
         };
-        if scope.is_none_or(|scope| scope == self.symbols.next_scope_index()) {
+        if scope.is_none_or(|scope| scope == self.symbols.next_scope_discriminant()) {
             return self.type_info.reused_callable_bodies.contains_key(&span);
         }
         self.type_info.reused_callable_scopes.remove(&span);

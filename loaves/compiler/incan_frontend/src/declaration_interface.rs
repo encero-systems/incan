@@ -928,7 +928,8 @@ mod tests {
     }
 
     /// Reuse independent scalar functions after imported/mixed declarations and unsupported bodies, while refusing
-    /// changed environment inputs and shifted physical scopes. All retained IR must match independent checking.
+    /// changed environment inputs. Unrelated traversal scopes do not rename later owners; all retained IR must match
+    /// independent checking.
     fn mixed_scalar_product_edits() -> Result<(), Box<dyn std::error::Error>> {
         let prefix = "from neighbor import unused\n\nmodel Marker:\n    value: int\n\ndef text(value: str) -> str:\n    return value\n\n";
         let scalar = "def first(value: int) -> int:\n    return value * 2\n\ndef second(value: int) -> int:\n    return value + 3\n\npub def answer(value: int) -> int:\n    return first(value) + second(value)\n";
@@ -957,7 +958,7 @@ mod tests {
             );
         }
 
-        // ---- Scope correspondence: keep byte locators fixed while an earlier body gains a lexical scope ----
+        // ---- Owner-relative scopes: keep later body identities fixed when an earlier body gains a lexical scope ----
         let scope = "    if true:\n        pass\n";
         let padding = format!("    #{}\n", " ".repeat(scope.len() - 6));
         let source = format!("def prefix(value: int) -> int:\n{padding}    return value\n\n{scalar}");
@@ -977,7 +978,7 @@ mod tests {
         warm.set_current_package_identity(Some("interface_test".to_owned()));
         warm.set_callable_body_reuse(selected);
         warm.check_program(&current).map_err(|errors| format!("{errors:?}"))?;
-        assert!(warm.type_info().reused_callable_bodies.is_empty());
+        assert_eq!(warm.type_info().reused_callable_bodies.len(), 3);
         assert_eq!(scalar_module(&current, &warm), scalar_module(&current, &cold));
         Ok(())
     }

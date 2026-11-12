@@ -3,10 +3,20 @@
 use super::*;
 
 impl SymbolTable {
-    /// Return the physical index that the next entered scope will receive. Retained checked lexical identities
-    /// must match this locator before body reuse; this value never becomes an edit-stable semantic identity.
-    pub(crate) fn next_scope_index(&self) -> usize {
-        self.scopes.len()
+    /// Return the lexical depth of the next entered scope. Unlike the physical scope-table index, this is relative
+    /// to the declaration's lexical owner and does not change when an unrelated owner is traversed first.
+    pub(crate) fn next_scope_discriminant(&self) -> usize {
+        self.scope_discriminant(self.current_scope).saturating_add(1)
+    }
+
+    /// Return an owner-relative lexical discriminator for an existing physical scope.
+    pub(super) fn scope_discriminant(&self, mut scope: usize) -> usize {
+        let mut depth = 0usize;
+        while let Some(parent) = self.scopes.get(scope).and_then(|candidate| candidate.parent) {
+            depth = depth.saturating_add(1);
+            scope = parent;
+        }
+        depth
     }
 
     /// Enter a new scope

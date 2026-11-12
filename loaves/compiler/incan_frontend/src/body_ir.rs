@@ -109,7 +109,8 @@ pub(crate) fn produce_free_function_seed(
         registry_package: None,
         provider_operations: &providers,
     };
-    let body = lower_function_body(function, owner, &facts);
+    let mut body = lower_function_body(function, owner, &facts);
+    retain_record_scoped_seed(&mut body)?;
     let canonical = info
         .declarations
         .function_bindings_by_span
@@ -132,6 +133,45 @@ pub(crate) fn produce_free_function_seed(
         &body,
     )
     .map_err(|_| NodeBindingError::InvalidField("Body IR seed encoding".into()))
+}
+
+/// Remove module-wide nominal inventory from a seed that consumes no nominal carrier. A body that does consume one
+/// requires an authenticated layout record and stays an explicit refusal until that producer input is available.
+pub(super) fn retain_record_scoped_seed(
+    body: &mut bir::Body,
+) -> Result<(), crate::checker_records::RecordAdapterFault> {
+    use crate::typechecker::canonical_nodes::NodeBindingError;
+
+    let consumes_retained_nominal = std::iter::once(&body.return_type)
+        .chain(body.locals.iter().map(|local| &local.ty))
+        .chain(body.params.iter().map(|parameter| &parameter.ty))
+        .any(|ty| retained_nominal_type(ty, &body.named_type_identities));
+    if consumes_retained_nominal {
+        return Err(NodeBindingError::Unsupported("Body IR seed source layout input"));
+    }
+    body.named_type_identities = Default::default();
+    Ok(())
+}
+
+fn retained_nominal_type(ty: &IncanType, identities: &std::collections::BTreeMap<String, CanonicalSymbolId>) -> bool {
+    match ty {
+        IncanType::Named(name) => identities.contains_key(name),
+        IncanType::Generic { base, args } => {
+            identities.contains_key(base) || args.iter().any(|argument| retained_nominal_type(argument, identities))
+        }
+        IncanType::Tuple(items) => items.iter().any(|item| retained_nominal_type(item, identities)),
+        IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::TypeToken(inner) => {
+            retained_nominal_type(inner, identities)
+        }
+        IncanType::NativeArray { element, .. } => retained_nominal_type(element, identities),
+        IncanType::Function { params, return_type } => {
+            params
+                .iter()
+                .any(|parameter| retained_nominal_type(&parameter.ty, identities))
+                || retained_nominal_type(return_type, identities)
+        }
+        _ => false,
+    }
 }
 pub(crate) use nominal_carriers::{retain_published_frame, retain_published_module};
 pub use primitive_adapter_requirements::required as required_primitive_adapters;

@@ -41,7 +41,19 @@ fn record_scoped_free_function_seeds_match_module_oracle() -> Result<(), Box<dyn
             "chosen",
         ),
         (
+            "def sibling(value: int) -> int:\n    return value + 1\ndef chosen(value: int) -> int:\n    return sibling(value)\n",
+            "chosen",
+        ),
+        (
             "def chosen(values: list[int]) -> int:\n    return values[0]\n",
+            "chosen",
+        ),
+        (
+            "model Value:\n    number: int\ndef chosen(value: int) -> int:\n    return value + 1\n",
+            "chosen",
+        ),
+        (
+            "class Value:\n    number: int\ndef chosen(value: int) -> int:\n    return value + 1\n",
             "chosen",
         ),
     ] {
@@ -85,11 +97,12 @@ fn record_scoped_free_function_seeds_match_module_oracle() -> Result<(), Box<dyn
             library_package: None,
             include_inline_tests: false,
         };
-        let expected = super::build_module_seed(&program, &[], checker.type_info(), &context)
+        let mut expected = super::build_module_seed(&program, &[], checker.type_info(), &context)
             .bodies
             .into_iter()
             .find(|body| body.name == selected)
             .ok_or("module oracle omitted selected seed fixture owner")?;
+        super::retain_record_scoped_seed(&mut expected)?;
         super::free_function_baseline::record_comparison(
             &expected,
             &actual.body,
@@ -100,8 +113,8 @@ fn record_scoped_free_function_seeds_match_module_oracle() -> Result<(), Box<dyn
     Ok(())
 }
 
-/// Keep the first seed boundary honest: source-owned nominal declarations remain on whole-module lowering until
-/// their exact layout records are explicit producer inputs.
+/// Keep the seed boundary honest: a free function that consumes a source-owned nominal layout remains on
+/// whole-module lowering until that exact layout is an explicit producer input.
 #[test]
 fn record_scoped_free_function_seed_refuses_unscoped_source_layouts() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model Value:\n    number: int\ndef chosen(value: Value) -> int:\n    return value.number\n";
@@ -122,35 +135,8 @@ fn record_scoped_free_function_seed_refuses_unscoped_source_layouts() -> Result<
         vec![("chosen".into(), identity.clone(), declaration)],
     );
     match result {
-        Err(crate::checker_records::RecordAdapterFault::Unsupported("Body IR seed source declaration kind")) => Ok(()),
+        Err(crate::checker_records::RecordAdapterFault::Unsupported("Body IR seed source layout input")) => Ok(()),
         other => Err(format!("unexpected Body IR seed layout result: {other:?}").into()),
-    }
-}
-
-/// Later source owners retain absolute spans and lexical ordinals that the initial owner-source projection does not
-/// carry, so they remain an explicit fallback rather than receiving a position-dependent seed.
-#[test]
-fn record_scoped_free_function_seed_refuses_later_source_owners() -> Result<(), Box<dyn std::error::Error>> {
-    let source = "def sibling(value: int) -> int:\n    return value + 1\ndef chosen(value: int) -> int:\n    return sibling(value)\n";
-    let declaration = crate::checker_records::fixture_record(source, "chosen", true)?;
-    let final_value = crate::checker_records::fixture_record(source, "chosen", false)?;
-    let identity = declaration
-        .first()
-        .and_then(|header| header.get(1))
-        .cloned()
-        .ok_or("fixture declaration identity is absent")?;
-    let result = crate::checker_records::produce_body_ir_seed(
-        source,
-        "case.incn",
-        &[],
-        "chosen",
-        &identity,
-        final_value,
-        vec![("chosen".into(), identity.clone(), declaration)],
-    );
-    match result {
-        Err(crate::checker_records::RecordAdapterFault::Unsupported("Body IR seed owner source position")) => Ok(()),
-        other => Err(format!("unexpected Body IR seed owner-position result: {other:?}").into()),
     }
 }
 

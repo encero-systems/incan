@@ -698,7 +698,7 @@ fn environment_inputs(program: &Program, source: &str) -> Result<Vec<(Span, Stri
         .collect()
 }
 
-/// Recover the single physical function scope retained by scalar parameters and locals. Multiple scopes would
+/// Recover the single owner-relative function scope retained by scalar parameters and locals. Multiple scopes would
 /// require explicit lexical replay and are refused. Bodies without lexical identities need no scope correspondence.
 fn body_scope(contexts: &[(CanonicalSymbolId, CanonicalSymbolId, u32)]) -> Result<Option<usize>, LibraryManifestError> {
     let scopes = contexts
@@ -706,7 +706,7 @@ fn body_scope(contexts: &[(CanonicalSymbolId, CanonicalSymbolId, u32)]) -> Resul
         .filter_map(|(identity, _, _)| identity.scope_discriminant.map(|scope| scope.0))
         .collect::<BTreeSet<_>>();
     if scopes.len() > 1 {
-        return Err(invalid("scalar body product contains multiple physical scopes"));
+        return Err(invalid("scalar body product contains multiple lexical scopes"));
     }
     Ok(scopes.into_iter().next())
 }

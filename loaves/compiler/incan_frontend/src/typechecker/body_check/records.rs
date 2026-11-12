@@ -347,8 +347,8 @@ impl Positions {
             .filter(|local| local.owner == owner && (!declaration || local.kind == LocalOwnerKind::Declaration))
             .flat_map(|local| local.nested.values());
         // Declaration records are restored before the function scope is entered. Mint the current activation's
-        // parameter handles from the symbol table's next scope index so stored nested identities bind without
-        // running annotation/default checking or creating the scope early.
+        // parameter handles from the symbol table's next owner-relative lexical depth so stored nested identities
+        // bind without running annotation/default checking or creating the scope early.
         let declaration_bindings = program
             .declarations
             .iter()
@@ -373,7 +373,7 @@ impl Positions {
                         origin: checker.symbols.declaration_origin(),
                         declaration_name: parameter.node.name.clone(),
                         kind: SemanticSourceTargetKind::Parameter,
-                        scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
+                        scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_discriminant())),
                         declaration_span: parameter.span.into(),
                     })
             })
@@ -423,7 +423,7 @@ impl Positions {
                 origin: checker.symbols.declaration_origin(),
                 declaration_name: row[3].clone(),
                 kind: SemanticSourceTargetKind::Local,
-                scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_index())),
+                scope_discriminant: Some(ScopeDiscriminant(checker.symbols.next_scope_discriminant())),
                 declaration_span: span.into(),
             };
             if positions.identities.insert(row[3].clone(), canonical).is_some() {

@@ -377,22 +377,12 @@ pub(crate) fn restore_body_ir_inputs(
 ) -> Result<(Program, Span, super::super::TypeCheckInfo), NodeBindingError> {
     let tokens = crate::lexer::lex(source).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
     let program = crate::parser::parse(&tokens).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
-    if program
-        .declarations
-        .iter()
-        .any(|declaration| !matches!(&declaration.node, crate::ast::Declaration::Function(_)))
-    {
-        return Err(NodeBindingError::Unsupported("Body IR seed source declaration kind"));
-    }
     let owner = program
         .declarations
         .iter()
         .find(|item| matches!(&item.node, crate::ast::Declaration::Function(function) if function.name == name))
         .map(|item| item.span)
         .ok_or(NodeBindingError::MissingOwner)?;
-    if program.declarations.first().map(|declaration| declaration.span) != Some(owner) {
-        return Err(NodeBindingError::Unsupported("Body IR seed owner source position"));
-    }
     let mut checker = TypeChecker::new();
     checker.reset_program_check(&program, false);
     checker.collect_program_check_declarations(&program);
@@ -451,8 +441,18 @@ pub(crate) fn restore_body_ir_inputs(
     }
     let positions = Positions::for_decoded_local(&checker, &program, owner, &final_value)
         .map_err(|error| NodeBindingError::InvalidField(format!("Body IR final positions: {error:?}")))?;
-    let restored = restore(&positions, &program, owner, &final_value)
-        .map_err(|error| NodeBindingError::InvalidField(format!("Body IR final restore: {error:?}")))?;
+    let restored = restore(&positions, &program, owner, &final_value).map_err(|error| {
+        if program.declarations.iter().any(|declaration| {
+            matches!(
+                declaration.node,
+                crate::ast::Declaration::Model(_) | crate::ast::Declaration::Class(_)
+            )
+        }) && matches!(&error, NodeBindingError::InvalidField(message) if message.starts_with("family=reference "))
+        {
+            return NodeBindingError::Unsupported("Body IR seed source layout input");
+        }
+        NodeBindingError::InvalidField(format!("Body IR final restore: {error:?}"))
+    })?;
     let declaration = checker
         .checked_declaration(owner)
         .cloned()

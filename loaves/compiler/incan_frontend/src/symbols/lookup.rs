@@ -50,8 +50,8 @@ impl SymbolTable {
         // A member is owned by its nominal type and distinguished by its declaration span, not by which table scope
         // its convenience binding happened to be defined in — so member identities never carry a scope discriminant
         // and compare equal however they are reached.
-        let scope_discriminant =
-            (namespace != SymbolNamespace::Member && scope != 0).then_some(ScopeDiscriminant(scope));
+        let scope_discriminant = (namespace != SymbolNamespace::Member && scope != 0)
+            .then_some(ScopeDiscriminant(self.scope_discriminant(scope)));
         CanonicalSymbolId {
             namespace,
             origin,
