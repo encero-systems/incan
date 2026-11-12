@@ -119,10 +119,7 @@ pub(super) fn checked_modules(
         .map_err(|error| error.to_string())?;
     let tests = crate::test_unit::collect(unit, &session)?;
     let package_identity = unit.package.as_str();
-    // Records invocations may reuse only graph-selected checker owners. Private products remain capture output
-    // for the lowering witness, but must not bypass the selected local/final record publication boundary.
-    let mut callable_products =
-        callable_products::CallableProducts::prepare(unit, &modules, &mut session, graph_body_output.is_none());
+    let mut callable_products = callable_products::CallableProducts::prepare(unit, &modules, &mut session);
     let mut graph_body_output =
         graph_body_output::GraphBodyOutput::prepare(graph_body_output, unit.project_root.clone())?;
     let mut publication = library.then(|| PublicationFacts::new(package_identity));
