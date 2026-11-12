@@ -368,6 +368,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     before = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_compiled_bodies(before, unit, output)?
     assert published.bodies == 1 and published.fallbacks == 1
+    assert published.snapshot.generation == before.generation + 1, "one compiled body publication used more than one generation"
     assert not output.is_file()
     fallback_key = RecordKey(
         family="eligibility",

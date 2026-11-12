@@ -81,6 +81,15 @@ pub def select_body_inventory(selected: Snapshot, profile: str) -> Result[list[S
     return Ok(selected_records)
 
 
+pub def select_body_inventory_except(
+    selected: Snapshot,
+    profile: str,
+    invalid: list[str],
+) -> Result[list[SelectedBodyRecord], str]:
+    """Select complete owner records except those reached by source changes prepared for this request."""
+    return Ok([record for record in select_body_inventory(selected, profile)? if record.identity not in invalid])
+
+
 pub def encode_body_inventory(records: list[SelectedBodyRecord]) -> Result[bytes, str]:
     """Encode graph-admitted checker pairs and owner frames for the separate native transport."""
     mut values: list[GraphBodyValue] = []
@@ -98,6 +107,15 @@ pub def invalid_body_owners(selected: Snapshot, changed: list[RecordKey], profil
         if reader.family not in ["local", "final", "body-ir"]:
             continue
         if reusable_evaluation(selected, reader, profile)? is None:
+            owners.add(reader.identity)
+    return Ok(sorted([owner for owner in owners]))
+
+
+pub def body_owners_reading(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[str], str]:
+    """Select body owners whose prior evaluations read keys with changed values staged by the current request."""
+    mut owners: set[str] = set()
+    for reader in readers_of(selected, changed, profile)?:
+        if reader.family in ["local", "final", "body-ir"]:
             owners.add(reader.identity)
     return Ok(sorted([owner for owner in owners]))
 

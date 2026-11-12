@@ -97,12 +97,10 @@ impl GraphBodyOutput {
             return Err("graph Body IR output is not aligned with authored modules".into());
         }
         for (module, lowered) in modules.iter().zip(body_ir) {
-            let module_path = module
-                .file_path
-                .strip_prefix(&self.project_root)
-                .map_err(|_| "graph Body IR output contains a non-project module")?
-                .to_string_lossy()
-                .into_owned();
+            let Ok(module_path) = module.file_path.strip_prefix(&self.project_root) else {
+                continue;
+            };
+            let module_path = module_path.to_string_lossy().into_owned();
             for body in &lowered.bodies {
                 let Some(pending) = self
                     .values
