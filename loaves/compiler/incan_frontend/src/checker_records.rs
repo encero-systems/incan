@@ -429,6 +429,64 @@ mod tests {
                 declaration_identity: "function:pub::provider::lib::value".into(),
             }]
         );
+        for source in [
+            "def main() -> None:\n    println(\"hello\")\n",
+            "def greeting() -> str:\n    return \"hello\"\n\ndef main() -> None:\n    println(greeting())\n",
+            "def increment(value: int) -> int:\n    return value + 1\n\npub def main() -> None:\n    println(increment(increment(1)))\n",
+        ] {
+            reusable_ordinary_calls(source)?;
+        }
+        Ok(())
+    }
+
+    /// Builtins and nested ordinary calls retain their complete tooling provenance when a shifted owner reuses
+    /// graph records. The independent cold checker supplies expected facts, never reconstruction inputs.
+    fn reusable_ordinary_calls(source: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let consumer = program(source)?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".into()]));
+        checker
+            .check_program(&consumer)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let mut records = Vec::new();
+        for owner in checked_owner_record_outputs(&consumer, &checker, &["main".into()])? {
+            let CheckedOwnerRecordOutput::Value(mut owner) = owner else {
+                let CheckedOwnerRecordOutput::Fallback(fallback) = owner else {
+                    return Err("missing checker output".into());
+                };
+                return Err(format!("ordinary owner {} fell back: {}", fallback.name, fallback.reason).into());
+            };
+            owner
+                .local
+                .first_mut()
+                .ok_or("missing local header")?
+                .insert(3, "local".into());
+            owner
+                .final_value
+                .first_mut()
+                .ok_or("missing final header")?
+                .insert(3, "final".into());
+            records.push(super::GraphBodyRecord {
+                identity: owner.identity,
+                local: owner.local,
+                final_value: owner.final_value,
+                body_ir: None,
+            });
+        }
+        let moved = program(&format!("# shifted declaration\n{source}"))?;
+        let mut selected = TypeChecker::new();
+        selected.set_current_module_path(Some(vec!["main".into()]));
+        selected.set_graph_body_records(super::GraphBodyRecords::new(records)?);
+        selected.check_program(&moved).map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(selected.check_work().function_bodies, 0);
+        assert_eq!(selected.check_work().local_record_evaluations, 0);
+        let mut cold = TypeChecker::new();
+        cold.set_current_module_path(Some(vec!["main".into()]));
+        cold.check_program(&moved).map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(
+            selected.type_info().c_abi.function_calls,
+            cold.type_info().c_abi.function_calls
+        );
         Ok(())
     }
 

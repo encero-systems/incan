@@ -430,6 +430,7 @@ pub(super) fn validate_local(local: &BodyLocal) -> Result<(), NodeBindingError> 
 /// One conversion path owns all local field primitives, independently of whether settlement has completed.
 pub(super) fn local_fields(positions: &Positions, local: &BodyLocal) -> Result<Fields, NodeBindingError> {
     validate_local(local)?;
+    function_calls::validate(positions, local)?;
     let mut fields = Vec::new();
     project_expressions(positions, local, &mut fields)?;
     project_references(positions, local, &mut fields)?;

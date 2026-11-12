@@ -187,12 +187,13 @@ pub(super) fn cabi_interop_artifacts(value: &CAbiInteropArtifacts) -> Result<(),
         bridge_calls,
         bindings,
         raw_calls,
-        function_calls,
+        // Reconstructed and loss-checked from the existing ordinary call signatures and source-target fields.
+        function_calls: _,
         facades,
         output_slots,
         enum_accesses,
         enum_values,
     } = value;
-    require_empty!("CAbiInteropArtifacts"; verified_bindings, bridge_calls, bindings, raw_calls, function_calls, facades, output_slots, enum_accesses, enum_values);
+    require_empty!("CAbiInteropArtifacts"; verified_bindings, bridge_calls, bindings, raw_calls, facades, output_slots, enum_accesses, enum_values);
     Ok(())
 }
