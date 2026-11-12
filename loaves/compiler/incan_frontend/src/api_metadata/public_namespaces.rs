@@ -114,8 +114,19 @@ pub(crate) fn is_package_root_module(module_path: &[String]) -> bool {
 pub fn materialize_checked_api_public_namespaces(
     api: &mut CheckedApiMetadataPackage,
 ) -> Result<(), CheckedApiPublicNamespaceError> {
+    api.public_namespaces = public_namespaces_from_modules(&api.modules)?;
+    Ok(())
+}
+
+/// Project namespaces from borrowed checked modules without copying their declarations or callable bodies.
+///
+/// Producers, legacy readers and validation use this same projection. An empty graph is legitimate for a package
+/// containing only its root module; observing that absence must not copy its complete API on every import.
+fn public_namespaces_from_modules(
+    modules: &[CheckedApiMetadata],
+) -> Result<Vec<CheckedApiPublicNamespace>, CheckedApiPublicNamespaceError> {
     let mut module_paths = HashSet::new();
-    for module in &api.modules {
+    for module in modules {
         if !module_paths.insert(module.module_path.clone()) {
             return Err(CheckedApiPublicNamespaceError::DuplicateSourceModule {
                 module_path: module.module_path.clone(),
@@ -124,7 +135,7 @@ pub fn materialize_checked_api_public_namespaces(
     }
 
     let mut namespaces = HashMap::<Vec<String>, CheckedApiPublicNamespace>::new();
-    for module in &api.modules {
+    for module in modules {
         if is_package_root_module(&module.module_path) {
             continue;
         }
@@ -192,8 +203,7 @@ pub fn materialize_checked_api_public_namespaces(
         namespace.child_modules.dedup();
     }
     namespaces.sort_by(|left, right| left.path.cmp(&right.path));
-    api.public_namespaces = namespaces;
-    Ok(())
+    Ok(namespaces)
 }
 
 /// Validate that a serialized namespace projection exactly matches its checked declaration modules.
@@ -203,11 +213,8 @@ pub fn validate_checked_api_public_namespaces(
     if api.public_namespaces.is_empty() {
         return Ok(());
     }
-    let serialized = api.public_namespaces.clone();
-    let mut derived = api.clone();
-    derived.public_namespaces.clear();
-    materialize_checked_api_public_namespaces(&mut derived)?;
-    if serialized != derived.public_namespaces {
+    let derived = public_namespaces_from_modules(&api.modules)?;
+    if api.public_namespaces != derived {
         return Err(CheckedApiPublicNamespaceError::SerializedProjectionMismatch);
     }
     Ok(())
@@ -222,15 +229,8 @@ pub fn checked_api_public_module_paths(api: &CheckedApiMetadataPackage) -> Vec<V
             .map(|namespace| namespace.path.clone())
             .collect();
     }
-    let mut compatibility = api.clone();
-    materialize_checked_api_public_namespaces(&mut compatibility)
-        .map(|()| {
-            compatibility
-                .public_namespaces
-                .into_iter()
-                .map(|namespace| namespace.path)
-                .collect()
-        })
+    public_namespaces_from_modules(&api.modules)
+        .map(|namespaces| namespaces.into_iter().map(|namespace| namespace.path).collect())
         .unwrap_or_default()
 }
 
@@ -256,21 +256,22 @@ pub fn checked_api_modules_for_public_namespace<'a>(
 }
 
 /// Return one materialized namespace, deriving a compatibility projection only for older artifacts.
+///
+/// A populated, validated graph owns both membership and absence. Reconstructing it after a miss cannot add facts;
+/// only an omitted graph authorizes compatibility reconstruction from the borrowed modules.
 pub fn checked_api_public_namespace(
     api: &CheckedApiMetadataPackage,
     module_path: &[String],
 ) -> Option<CheckedApiPublicNamespace> {
-    if let Some(namespace) = api
-        .public_namespaces
-        .iter()
-        .find(|namespace| namespace.path == module_path)
-    {
-        return Some(namespace.clone());
+    if !api.public_namespaces.is_empty() {
+        return api
+            .public_namespaces
+            .iter()
+            .find(|namespace| namespace.path == module_path)
+            .cloned();
     }
-    let mut compatibility = api.clone();
-    materialize_checked_api_public_namespaces(&mut compatibility).ok()?;
-    compatibility
-        .public_namespaces
+    public_namespaces_from_modules(&api.modules)
+        .ok()?
         .into_iter()
         .find(|namespace| namespace.path == module_path)
 }
