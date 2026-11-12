@@ -130,6 +130,7 @@ impl BodyBuilder<'_, '_> {
             return Some((|| {
                 let ty = super::returned_views::reference_authored_component(self.resolve_ty(call), access, &component);
                 let value = self.lower_expr_to_operand(&assignment.value, scope, out);
+                self.retain_aggregate_view_temporary_dependencies(&value);
                 let place = self
                     .assignment_target_place(assignment, ty, remaining, scope, span, out)
                     .ok_or("aggregate view local has no checked storage")?;

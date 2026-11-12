@@ -185,7 +185,10 @@ impl TypeCheckInfo {
         span: HirSourceSpan,
         callee: Option<&CanonicalSymbolId>,
     ) -> bool {
-        self.protocols.explicit_input_calls.contains_key(&span)
+        self.protocols
+            .explicit_input_calls
+            .get(&span)
+            .is_some_and(|call| call.kind != super::InputCallKind::Ordinary)
             || callee
                 .and_then(|callee| self.declarations.ownership_contracts.get(callee))
                 .is_some_and(|contract| {

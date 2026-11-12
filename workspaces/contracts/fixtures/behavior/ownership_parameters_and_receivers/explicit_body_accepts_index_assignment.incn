@@ -1,0 +1,18 @@
+# behavior: an explicit borrowed body accepts assignment through a builtin list index (#2500)
+# expect-stdout:
+#   true
+
+class Graph:
+    pub index: int
+
+
+def mark_index(graph: Borrowed[Graph]) -> bool:
+    """Write fresh local list storage before reading the borrowed graph."""
+    mut marked = [False]
+    marked[0] = True
+    return marked[0] and graph.index == 0
+
+
+def main() -> None:
+    graph = Graph(index=0)
+    println(mark_index(graph))

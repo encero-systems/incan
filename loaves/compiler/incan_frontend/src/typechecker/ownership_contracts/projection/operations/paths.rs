@@ -3,7 +3,7 @@
 use incan_semantics_core::HirSourceSpan;
 
 use super::super::super::flow;
-use crate::ast::{AssertKind, Condition, Expr, MatchBody, Spanned, Statement};
+use crate::ast::{AssertKind, BinaryOp, Condition, Expr, MatchBody, Spanned, Statement};
 use crate::typechecker::ownership_contracts::CallableSource;
 
 /// Source event regions retain their producer order, but only these reconstructed edges establish execution.
@@ -94,6 +94,12 @@ impl SourcePaths<'_> {
                 }
                 Statement::FieldAssignment(value) => {
                     let incoming = self.expression(&value.object, incoming)?;
+                    let incoming = self.expression(&value.value, incoming)?;
+                    self.region(statement.span, incoming)
+                }
+                Statement::IndexAssignment(value) => {
+                    let incoming = self.expression(&value.object, incoming)?;
+                    let incoming = self.expression(&value.index, incoming)?;
                     let incoming = self.expression(&value.value, incoming)?;
                     self.region(statement.span, incoming)
                 }
@@ -215,6 +221,12 @@ impl SourcePaths<'_> {
     /// Other admitted expressions retain the established contiguous-region order.
     fn expression(&mut self, expression: &Spanned<Expr>, incoming: Vec<usize>) -> Result<Vec<usize>, &'static str> {
         match &expression.node {
+            Expr::Binary(left, BinaryOp::And | BinaryOp::Or, right) => {
+                let left = self.expression(left, incoming)?;
+                let mut outgoing = self.expression(right, left.clone())?;
+                outgoing.extend(left);
+                Ok(self.region(expression.span, outgoing))
+            }
             Expr::ListComp(comprehension) => {
                 self.comprehension(&comprehension.clauses, &[&comprehension.expr], incoming)
             }
