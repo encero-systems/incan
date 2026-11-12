@@ -22,7 +22,12 @@ from oven_tests import (
     summary_document,
     oven_test_state_root,
 )
-from verify_installation import VerificationPhase, verification_phase_plans, verification_trace_environment
+from verify_installation import (
+    VerificationPhase,
+    selected_rust_facet_bakery,
+    verification_phase_plans,
+    verification_trace_environment,
+)
 
 const GIB: int = 1073741824
 
@@ -111,6 +116,11 @@ def test_verification_phases_reserve_their_complete_parallel_work() -> Result[No
     assert traces["INCAN_TRACE_DIR"] == "/evidence/traces/census/compiler"
     assert traces["INCAN_NATIVE_TIMING"] == "1"
     assert len(traces) == 2
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    assert selected_rust_facet_bakery("") == ""
+    assert selected_rust_facet_bakery(temporary.path().0) == ""
+    temporary.path().joinpath("bakery").mkdir(true, true).map_err((error) => error.message())?
+    assert selected_rust_facet_bakery(temporary.path().0) == temporary.path().joinpath("bakery").0
     return Ok(None)
 
 

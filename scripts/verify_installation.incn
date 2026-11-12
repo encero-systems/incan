@@ -20,6 +20,7 @@ from release_support import (
     FAMILIES,
     BaselineReport,
     ReleaseTrace,
+    ReservedStep,
     TOOLCHAIN_DIRECTORY,
     Step,
     append_timing,
@@ -31,6 +32,7 @@ from release_support import (
     finish_step_trace,
     parse_verification_options,
     require_step,
+    run_reserved_steps,
     run_step,
     write_json,
 )
@@ -531,8 +533,12 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
     """
     output = installation.run.joinpath("rust-tests")
     output.mkdir(true, true).map_err((error) => error.message())?
-    mut planned: list[Invocation] = []
+    mut planned: list[ReservedStep] = []
     mut projects: list[str] = []
+    mut environment = command_environment(installation)
+    bakery = selected_rust_facet_bakery(get_or("INCAN_BUILDER_HOME", ""))
+    if bakery != "":
+        environment["INCAN_BAKERY"] = bakery
     manifests = sorted(
         [path.0 for path in installation.root.joinpath("loaves").rglob("loaf.toml").map_err((error) => error.message())?],
     )
@@ -546,20 +552,41 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
         label = relative.replace("/", "-")
         projects.append(relative)
         planned.append(
-            Invocation(
-                arguments=["test", project.0, "--profile", "release"],
-                directory=installation.root.0,
+            ReservedStep(
+                child=Step(
+                    name=relative,
+                    executable=installation.oven.0,
+                    arguments=["test", project.0, "--profile", "release"],
+                    environment=environment,
+                    remove_environment=["RUSTC_BOOTSTRAP"],
+                    directory=Some(installation.root),
+                    log=output.joinpath(f"{label}.log"),
+                    timeout_seconds=installation.timeout_seconds,
+                ),
                 reservation=FACET_RESERVATION_BYTES,
-                log=output.joinpath(f"{label}.log"),
-                timeout_seconds=installation.timeout_seconds,
             ),
         )
     if len(planned) == 0:
         return Err("no Rust facets found")
-    failed = run_all_failures(installation.oven.0, planned, installation.jobs, shared_memory(host_memory()))?
+    failed = run_reserved_steps(
+        planned,
+        installation.jobs,
+        shared_memory(host_memory()),
+        installation.run.joinpath("rust-facet-timings.tsv"),
+    )?
     if len(failed) > 0:
         return Err("Rust facet test failures: " + ", ".join([projects[index] for index in failed]))
     return Ok(len(projects))
+
+
+pub def selected_rust_facet_bakery(builder_home: str) -> str:
+    """Select the release builder's existing Bakery for exact-identity facet reuse, or no override outside release."""
+    if builder_home == "":
+        return ""
+    bakery = Path(builder_home).joinpath("bakery")
+    if not bakery.is_dir():
+        return ""
+    return bakery.0
 
 
 def run_driver_integration(installation: Installation) -> Result[None, str]:
