@@ -30,6 +30,103 @@ use shared_loans::{
     assert_complete_shared_read_shapes, assert_lent_and_moved_read, assert_projected_shared_loans, assert_shared_loans,
 };
 
+/// Compare record-scoped free-function seed activation with the compatibility module oracle for a scalar owner, a
+/// sibling declaration read and a built-in aggregate layout read.
+#[test]
+fn record_scoped_free_function_seeds_match_module_oracle() -> Result<(), Box<dyn std::error::Error>> {
+    for (source, selected) in [
+        ("def chosen(value: int) -> int:\n    return value + 1\n", "chosen"),
+        (
+            "def sibling(value: int) -> int:\n    return value + 1\ndef chosen(value: int) -> int:\n    return sibling(value)\n",
+            "chosen",
+        ),
+        (
+            "def chosen(values: list[int]) -> int:\n    return values[0]\n",
+            "chosen",
+        ),
+    ] {
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let outputs = crate::checker_records::checked_owner_record_outputs(&program, &checker, &[])?;
+        let values = outputs
+            .iter()
+            .filter_map(|output| match output {
+                crate::checker_records::CheckedOwnerRecordOutput::Value(value) => Some(value),
+                crate::checker_records::CheckedOwnerRecordOutput::Fallback(_) => None,
+            })
+            .collect::<Vec<_>>();
+        let selected_value = values
+            .iter()
+            .find(|value| value.name == selected)
+            .ok_or("selected seed fixture owner is not record eligible")?;
+        let declarations = values
+            .iter()
+            .map(|value| (value.name.clone(), value.identity.clone(), value.declaration.clone()))
+            .collect();
+        let encoded = crate::checker_records::produce_body_ir_seed(
+            source,
+            "case.incn",
+            &[],
+            selected,
+            &selected_value.identity,
+            selected_value.final_value.clone(),
+            declarations,
+        )?;
+        let actual = incan_semantics_core::executable_representation::decode_owner(&encoded)?;
+        let providers = ProviderOperationCatalog::new();
+        let context = BodyIrContext {
+            modules: &[],
+            provider_operations: &providers,
+            registry_package: None,
+            library_package: None,
+            include_inline_tests: false,
+        };
+        let expected = super::build_module_seed(&program, &[], checker.type_info(), &context)
+            .bodies
+            .into_iter()
+            .find(|body| body.name == selected)
+            .ok_or("module oracle omitted selected seed fixture owner")?;
+        super::free_function_baseline::record_comparison(
+            &expected,
+            &actual.body,
+            "record-seed",
+            tempfile::tempdir()?.path(),
+        )?;
+    }
+    Ok(())
+}
+
+/// Keep the first seed boundary honest: source-owned nominal declarations remain on whole-module lowering until
+/// their exact layout records are explicit producer inputs.
+#[test]
+fn record_scoped_free_function_seed_refuses_unscoped_source_layouts() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Value:\n    number: int\ndef chosen(value: Value) -> int:\n    return value.number\n";
+    let declaration = crate::checker_records::fixture_record(source, "chosen", true)?;
+    let final_value = crate::checker_records::fixture_record(source, "chosen", false)?;
+    let identity = declaration
+        .first()
+        .and_then(|header| header.get(1))
+        .cloned()
+        .ok_or("fixture declaration identity is absent")?;
+    let result = crate::checker_records::produce_body_ir_seed(
+        source,
+        "case.incn",
+        &[],
+        "chosen",
+        &identity,
+        final_value,
+        vec![("chosen".into(), identity.clone(), declaration)],
+    );
+    match result {
+        Err(crate::checker_records::RecordAdapterFault::Unsupported("Body IR seed source declaration kind")) => Ok(()),
+        other => Err(format!("unexpected Body IR seed layout result: {other:?}").into()),
+    }
+}
+
 /// Compare complete serialized bodies and ordered union layouts after independent local operations, including an
 /// empty sibling, repeated shapes and nested callable unions. Ordered values and coordinates are never removed.
 #[test]

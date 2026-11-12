@@ -364,6 +364,123 @@ pub(crate) fn produce_final_record(
     encode_final(&checker, &program, owner, view, &positions)
 }
 
+/// Restore one accepted final owner and its authenticated declaration environment for Body IR seed construction.
+///
+/// This entry performs no checking and does not copy a whole module's settled [`TypeCheckInfo`]. Declaration
+/// collection supplies current syntax handles, each supplied declaration record restores its own checked facts, and
+/// the final record restores only the selected owner's local facts and finalized types.
+pub(crate) fn restore_body_ir_inputs(
+    source: &str,
+    name: &str,
+    mut final_value: Fields,
+    declarations: Vec<(String, String, Fields)>,
+) -> Result<(Program, Span, super::super::TypeCheckInfo), NodeBindingError> {
+    let tokens = crate::lexer::lex(source).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
+    let program = crate::parser::parse(&tokens).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
+    if program
+        .declarations
+        .iter()
+        .any(|declaration| !matches!(&declaration.node, crate::ast::Declaration::Function(_)))
+    {
+        return Err(NodeBindingError::Unsupported("Body IR seed source declaration kind"));
+    }
+    let owner = program
+        .declarations
+        .iter()
+        .find(|item| matches!(&item.node, crate::ast::Declaration::Function(function) if function.name == name))
+        .map(|item| item.span)
+        .ok_or(NodeBindingError::MissingOwner)?;
+    let mut checker = TypeChecker::new();
+    checker.reset_program_check(&program, false);
+    checker.collect_program_check_declarations(&program);
+    checker.record_program_header_facts();
+    checker.record_source_declaration_identities(&program);
+
+    let mut source_declarations = Vec::new();
+    let mut environment_index = 0;
+    for (declaration_name, identity, fields) in declarations {
+        if let Ok(source_owner) = decoded_owner(&checker, &program, &fields) {
+            if source_declarations
+                .iter()
+                .any(|(selected, _)| *selected == source_owner)
+            {
+                return Err(NodeBindingError::InvalidField(
+                    "duplicate source declaration input".into(),
+                ));
+            }
+            source_declarations.push((source_owner, fields));
+            continue;
+        }
+        install_environment_declaration(
+            &mut checker,
+            source.len(),
+            environment_index,
+            &declaration_name,
+            &identity,
+            &fields,
+        )?;
+        environment_index += 1;
+    }
+    if !source_declarations
+        .iter()
+        .any(|(source_owner, _)| *source_owner == owner)
+    {
+        return Err(NodeBindingError::InvalidField(
+            "Body IR own declaration input is absent".into(),
+        ));
+    }
+    checker.record_type_param_declaration_spans(&program);
+    checker.visibility_point = super::super::VisibilityPoint::Collected;
+    checker.prepare_program_body_facts();
+    for (source_owner, fields) in source_declarations {
+        checker.retain_declaration_record(source_owner, fields);
+        if !checker.reuse_declaration_record(&program, source_owner)? {
+            return Err(NodeBindingError::InvalidField(
+                "Body IR declaration input was not selected".into(),
+            ));
+        }
+    }
+    checker.settle_body_checks(&program);
+
+    let header = final_value.first_mut().ok_or(NodeBindingError::MissingOwner)?;
+    if header.len() == 4 {
+        header.insert(3, "final".into());
+    }
+    let positions = Positions::for_body_ir_seed(&checker, &program, owner, &final_value)
+        .map_err(|error| NodeBindingError::InvalidField(format!("Body IR final positions: {error:?}")))?;
+    let restored = restore(&positions, &program, owner, &final_value)
+        .map_err(|error| NodeBindingError::InvalidField(format!("Body IR final restore: {error:?}")))?;
+    let declaration = checker
+        .checked_declaration(owner)
+        .cloned()
+        .ok_or_else(|| NodeBindingError::InvalidField("Body IR declaration view is absent".into()))?;
+    let mut info = checker.into_type_info();
+    restored
+        .view
+        .append_lowering_inputs(&declaration, &mut info)
+        .map_err(|error| NodeBindingError::InvalidField(format!("Body IR owner inputs: {error}")))?;
+    match restored.ownership {
+        Some(contract) => {
+            let identity = info
+                .declarations
+                .function_bindings_by_span
+                .get(&owner)
+                .and_then(|binding| binding.identity.as_ref())
+                .cloned()
+                .ok_or_else(|| NodeBindingError::InvalidField("Body IR ownership binding is absent".into()))?;
+            info.declarations.ownership_contracts.insert(identity, contract);
+        }
+        None => {}
+    }
+    info.expressions
+        .body_ir_expr_types
+        .extend(restored.final_types.expressions);
+    info.expressions
+        .body_ir_binding_types
+        .extend(restored.final_types.bindings);
+    Ok((program, owner, info))
+}
+
 /// Resolve one decoded declaration record to the current revision's source handle without reading checked payloads.
 fn decoded_owner(checker: &TypeChecker, program: &Program, fields: &Fields) -> Result<Span, NodeBindingError> {
     let identity = fields

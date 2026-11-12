@@ -59,6 +59,80 @@
 use std::collections::{HashMap, HashSet};
 
 pub use free_function_baseline::verify_module as verify_free_function_inputs;
+
+/// Lower one authenticated graph-eligible free function through the existing Body IR operation.
+///
+/// The supplied [`TypeCheckInfo`] is the record-scoped owner view restored by `checker_records`; this entry does not
+/// accept a whole module checker and does not run representation passes. Unsupported declaration kinds are refused
+/// before any executable frame is encoded.
+pub(crate) fn produce_free_function_seed(
+    program: &ast::Program,
+    owner: ast::Span,
+    source_path: &str,
+    module_path: &[String],
+    identity: &str,
+    info: &TypeCheckInfo,
+) -> Result<Vec<u8>, crate::checker_records::RecordAdapterFault> {
+    use crate::typechecker::canonical_nodes::NodeBindingError;
+
+    let declaration = program
+        .declarations
+        .iter()
+        .find(|declaration| declaration.span == owner)
+        .ok_or_else(|| NodeBindingError::InvalidField("Body IR seed source owner is absent".into()))?;
+    let ast::Declaration::Function(function) = &declaration.node else {
+        return Err(NodeBindingError::Unsupported("Body IR seed owner kind"));
+    };
+    let providers = ProviderOperationCatalog::new();
+    let module_identity = body_ir_module_identity(module_path);
+    let facts = BodyIrLoweringFacts {
+        published_methods: &[],
+        model_constants: &Default::default(),
+        local_enum_declarations: &Default::default(),
+        published_callable_returns: &Default::default(),
+        published_callable_defaults: &Default::default(),
+        published_newtype_returns: &Default::default(),
+        published_storage_types: &Default::default(),
+        published_constants: &Default::default(),
+        type_info: info,
+        runtime_type_conflicts: &Default::default(),
+        retain_nominal_carriers: true,
+        function_default_sources: &collect_function_default_sources(program, info),
+        local_function_declarations: &collect_local_function_declarations(program),
+        local_nongeneric_functions: &collect_local_nongeneric_function_identities(program, info),
+        local_receiver_methods: &collect_local_receiver_methods(program, info),
+        local_trait_partials: &trait_partials::collect(program, info),
+        local_nominal_declarations: &Default::default(),
+        local_fieldless_enum_declarations: &Default::default(),
+        local_value_enum_declarations: &Default::default(),
+        module_identity: &module_identity,
+        registry_package: None,
+        provider_operations: &providers,
+    };
+    let body = lower_function_body(function, owner, &facts);
+    let canonical = info
+        .declarations
+        .function_bindings_by_span
+        .get(&owner)
+        .and_then(|binding| binding.identity.as_ref())
+        .ok_or_else(|| NodeBindingError::InvalidField("Body IR seed function binding is absent".into()))?;
+    let stable = info
+        .declarations
+        .source_identities
+        .get(canonical)
+        .map(incan_semantics_core::stable_identity::StableDeclarationId::render_compact)
+        .ok_or_else(|| NodeBindingError::InvalidField("Body IR seed stable identity is absent".into()))?;
+    if stable != identity {
+        return Err(NodeBindingError::WrongOwner);
+    }
+    incan_semantics_core::executable_representation::encode_owner(
+        &CompilerNodeId::module(module_identity),
+        source_path,
+        identity,
+        &body,
+    )
+    .map_err(|_| NodeBindingError::InvalidField("Body IR seed encoding".into()))
+}
 pub(crate) use nominal_carriers::{retain_published_frame, retain_published_module};
 pub use primitive_adapter_requirements::required as required_primitive_adapters;
 pub use source_comparison::required_published_defaults as required_comparison_defaults;

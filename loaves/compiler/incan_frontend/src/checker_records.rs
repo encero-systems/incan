@@ -187,6 +187,25 @@ pub fn produce_final_record(
     crate::typechecker::body_check::records::produce_final_record(source, name, local, environment)
 }
 
+/// Restore one accepted final record and its declaration inputs, then enter the existing free-function Body IR
+/// lowering operation and return the kernel-owned per-owner frame.
+///
+/// The caller supplies only scoped record values. This entry performs no body checking, cannot select a sibling body,
+/// and does not accept an ambient checker or whole-module [`crate::typechecker::TypeCheckInfo`].
+pub fn produce_body_ir_seed(
+    source: &str,
+    source_path: &str,
+    module_path: &[String],
+    name: &str,
+    identity: &str,
+    final_value: Vec<Vec<String>>,
+    declarations: Vec<(String, String, Vec<Vec<String>>)>,
+) -> Result<Vec<u8>, RecordAdapterFault> {
+    let (program, owner, info) =
+        crate::typechecker::body_check::records::restore_body_ir_inputs(source, name, final_value, declarations)?;
+    crate::body_ir::produce_free_function_seed(&program, owner, source_path, module_path, identity, &info)
+}
+
 /// Collect one explicit publication decision per top-level free function after a successful program check.
 ///
 /// Complete triples expose only values that crossed their owning producer boundaries. Any missing producer output
