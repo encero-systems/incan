@@ -20,6 +20,7 @@ from rust_units import (
 )
 from rust_build import BuiltUnit, RustBuild, artifact_context, linking, native_artifacts
 from rust_binaries import refuse_absolute_runtime_path
+from graph_exports import export_view
 from rust_manifest import RustFacet, package_environment
 from registry_units import RegistryUnits
 from loaf_local_graph import LocalEdge, LocalFacet
@@ -102,6 +103,7 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
     assert linked != compiler
     verify_absolute_binary_runpath_refusal()
     verify_installed_rust_producer(scratch.path().joinpath("installed"))?
+    verify_graph_export_scoping(scratch.path().joinpath("graph-views"))?
     return Ok(None)
 
 
@@ -114,6 +116,19 @@ def verify_absolute_binary_runpath_refusal() -> None:
     assert refused.refusal == "unit identity refused: absolute runtime search path"
     assert native_arguments("release") == ["-Copt-level=3"]
     assert rust_arguments("release") == ["-C", "opt-level=3", "-C", "debuginfo=0"]
+
+
+def verify_graph_export_scoping(scratch: Path) -> Result[None, str]:
+    """Equal exports share one view within a bakery while independent bakery selections cannot write the same path."""
+    home = scratch.joinpath("home")
+    digest = fingerprint(["graph"])?
+    first = export_view(home, scratch.joinpath("first-bakery"), digest)?
+    repeated = export_view(home, scratch.joinpath("first-bakery"), digest)?
+    independent = export_view(home, scratch.joinpath("second-bakery"), digest)?
+    assert first.0 == repeated.0
+    assert first.0 != independent.0
+    assert first.name() == "unit.incngraph"
+    return Ok(None)
 
 
 def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
