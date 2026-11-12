@@ -83,7 +83,7 @@ fn verify_checked_fixture(
         .cloned();
     drop(checker);
     let restored = restore(&positions, &program, owner, &fields)?;
-    compare_native(&expected, &restored.view)?;
+    compare_checked_body(&expected, &restored.view)?;
     if restored.ownership != expected_ownership {
         return Err(NodeBindingError::BaselineDifference("ownership contract".into()));
     }
@@ -114,6 +114,15 @@ fn verify_checked_fixture(
             Ok(crate::diagnostics::format_error("case.incn", source, &error))
         })
         .collect()
+}
+
+/// Compare reusable semantic values after removing invocation-local traversal offsets from both independent views.
+fn compare_checked_body(expected: &CheckedBodyView, restored: &CheckedBodyView) -> Result<(), NodeBindingError> {
+    let mut expected = expected.clone();
+    let mut restored = restored.clone();
+    Arc::make_mut(&mut expected.local).order = super::super::BodyDiagnosticOrder::default();
+    Arc::make_mut(&mut restored.local).order = super::super::BodyDiagnosticOrder::default();
+    compare_native(&expected, &restored)
 }
 
 /// Default writer membership comes from exact source default nodes; it never supplies a checked type or value.
@@ -380,7 +389,8 @@ fn decoded_owner(checker: &TypeChecker, program: &Program, fields: &Fields) -> R
     Err(NodeBindingError::MissingOwner)
 }
 
-/// The initial local profile proves every unsupported collection empty and refuses traversal-indexed decisions.
+/// The local profile proves every unsupported semantic collection empty. Traversal offsets are invocation bindings
+/// that settlement reconstructs from owner-relative events, so they never enter a reusable value.
 pub(super) fn validate_local(local: &BodyLocal) -> Result<(), NodeBindingError> {
     let BodyLocal {
         owner: _,
@@ -411,8 +421,6 @@ pub(super) fn validate_local(local: &BodyLocal) -> Result<(), NodeBindingError> 
         || !local.dictionary.is_empty()
         || !local.diagnostic_slots.is_empty()
         || !local.warning_slots.is_empty()
-        || local.order.mutation != 0
-        || local.order.dictionary != 0
     {
         return Err(NodeBindingError::Unsupported("pending local decisions"));
     }
