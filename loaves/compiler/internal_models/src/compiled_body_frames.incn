@@ -1,0 +1,319 @@
+"""Independent binary frames for compiler-produced checker records and Body IR."""
+
+from checker_records import (
+    CHECKER_PROFILE,
+    CheckedFamily,
+    CheckedRecord,
+    CodecFault,
+    CompiledBodyDependencyRead,
+    CompiledBodyFallback,
+    CompiledBodyOutputs,
+    CompiledBodyValue,
+    decode_record,
+    record_root,
+)
+
+const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-output/7"
+const FRAME_PREFIX_BYTES: int = 8
+const MAX_FRAME_BYTES: int = 67108864
+const MAX_FIELDS: int = 4096
+const MAX_METADATA_BYTES: int = 65536
+
+
+pub enum CompiledBodyOutput:
+    """One independently bounded compiler output frame, never a whole-program transport envelope."""
+
+    Value(CompiledBodyValue)
+    Fallback(CompiledBodyFallback)
+
+
+pub def encode_compiled_body_outputs(outputs: CompiledBodyOutputs) -> Result[list[bytes], CodecFault]:
+    """
+    Encode a successful compilation as independently bounded binary owner frames.
+
+    The returned list preserves canonical value-then-fallback order, but its aggregate byte length is deliberately
+    unbounded: the compiler writes and Oven reads one frame at a time.
+    """
+    if len(outputs.values) + len(outputs.fallbacks) > MAX_FIELDS:
+        return Err(CodecFault.Limit)
+    mut frames: list[bytes] = []
+    mut previous = ""
+    for value in outputs.values:
+        order = value.module + "\n" + value.identity
+        if value.module == "" or value.name == "" or value.identity == "" or order <= previous:
+            return Err(CodecFault.Malformed)
+        frames.append(encode_compiled_body_value(value)?)
+        previous = order
+    previous = ""
+    for fallback in outputs.fallbacks:
+        identity = optional_identity(fallback.identity)
+        order = fallback.module + "\n" + fallback.name + "\n" + identity
+        if order <= previous:
+            return Err(CodecFault.Malformed)
+        if identity != "":
+            for value in outputs.values:
+                if value.module == fallback.module and value.identity == identity:
+                    return Err(CodecFault.Malformed)
+        frames.append(encode_compiled_body_fallback(fallback)?)
+        previous = order
+    return Ok(frames)
+
+
+pub def compiled_body_frame_size(prefix: bytes) -> Result[int, CodecFault]:
+    """Decode one fixed-width frame length and refuse it before Oven allocates the owner payload."""
+    size = binary_field_size(prefix)?
+    if size == 0:
+        return Err(CodecFault.Limit)
+    return Ok(size)
+
+
+pub def decode_compiled_body_frame(encoded: bytes) -> Result[CompiledBodyOutput, CodecFault]:
+    """Decode one complete length-prefixed owner frame without consulting or buffering any peer frame."""
+    if len(encoded) < FRAME_PREFIX_BYTES:
+        return Err(CodecFault.Malformed)
+    size = compiled_body_frame_size(encoded[:FRAME_PREFIX_BYTES])?
+    if len(encoded) != FRAME_PREFIX_BYTES + size:
+        return Err(CodecFault.Malformed)
+    return decode_compiled_body_payload(encoded[FRAME_PREFIX_BYTES:])
+
+
+pub def decode_compiled_body_payload(encoded: bytes) -> Result[CompiledBodyOutput, CodecFault]:
+    """Decode one payload whose outer frame length was already checked before allocation."""
+    if len(encoded) == 0 or len(encoded) > MAX_FRAME_BYTES:
+        return Err(CodecFault.Limit)
+    fields = binary_fields(encoded)?
+    if len(fields) < 2 or text_field(fields[0])? != COMPILED_TRANSPORT_SCHEMA:
+        return Err(CodecFault.Malformed)
+    kind = text_field(fields[1])?
+    if kind == "value":
+        return Ok(CompiledBodyOutput.Value(decode_compiled_body_value(fields)?))
+    if kind == "fallback":
+        return Ok(CompiledBodyOutput.Fallback(decode_compiled_body_fallback(fields)?))
+    return Err(CodecFault.Malformed)
+
+
+def encode_compiled_body_value(value: CompiledBodyValue) -> Result[bytes, CodecFault]:
+    """Encode one authenticated producer triple with binary checker and Body IR fields."""
+    if value.module == "" or value.name == "" or value.identity == "":
+        return Err(CodecFault.Malformed)
+    validate_compiled_body_value(value)?
+    mut fields = [
+        COMPILED_TRANSPORT_SCHEMA.encode(),
+        b"value",
+        value.module.encode(),
+        value.name.encode(),
+        value.identity.encode(),
+        value.declaration,
+        value.local,
+        value.final,
+        value.body_ir,
+        str(len(value.dependency_reads)).encode(),
+    ]
+    mut previous = ""
+    for read in value.dependency_reads:
+        package = optional_identity(read.package)
+        order = package + "\n" + read.module + "\n" + read.name + "\n" + read.identity
+        if read.module == "" or read.name == "" or read.identity == "" or order <= previous:
+            return Err(CodecFault.Malformed)
+        fields += [package.encode(), read.module.encode(), read.name.encode(), read.identity.encode()]
+        previous = order
+    return binary_frame(fields)
+
+
+def encode_compiled_body_fallback(fallback: CompiledBodyFallback) -> Result[bytes, CodecFault]:
+    """Encode one explicit full-source decision independently of eligible owner payloads."""
+    identity = optional_identity(fallback.identity)
+    if (
+        fallback.module == ""
+        or fallback.name == ""
+        or fallback.reason == ""
+        or len(fallback.reason.encode()) > MAX_METADATA_BYTES
+    ):
+        return Err(CodecFault.Malformed)
+    return binary_frame(
+        [
+            COMPILED_TRANSPORT_SCHEMA.encode(),
+            b"fallback",
+            fallback.module.encode(),
+            fallback.name.encode(),
+            identity.encode(),
+            fallback.reason.encode(),
+        ],
+    )
+
+
+def decode_compiled_body_value(fields: list[bytes]) -> Result[CompiledBodyValue, CodecFault]:
+    """Restore one value frame after checking its exact field count and dependency ordering."""
+    if len(fields) < 10:
+        return Err(CodecFault.Malformed)
+    dependency_count = decimal(text_field(fields[9])?)?
+    if dependency_count > MAX_FIELDS or len(fields) != 10 + dependency_count * 4:
+        return Err(CodecFault.Malformed)
+    mut dependency_reads: list[CompiledBodyDependencyRead] = []
+    mut previous = ""
+    mut offset = 10
+    for _ in range(dependency_count):
+        read = CompiledBodyDependencyRead(
+            package=decoded_optional_identity(text_field(fields[offset])?),
+            module=text_field(fields[offset + 1])?,
+            name=text_field(fields[offset + 2])?,
+            identity=text_field(fields[offset + 3])?,
+        )
+        order = optional_identity(read.package) + "\n" + read.module + "\n" + read.name + "\n" + read.identity
+        if read.module == "" or read.name == "" or read.identity == "" or order <= previous:
+            return Err(CodecFault.Malformed)
+        dependency_reads.append(read)
+        previous = order
+        offset += 4
+    value = CompiledBodyValue(
+        module=text_field(fields[2])?,
+        name=text_field(fields[3])?,
+        identity=text_field(fields[4])?,
+        declaration=fields[5],
+        local=fields[6],
+        final=fields[7],
+        body_ir=fields[8],
+        dependency_reads=dependency_reads,
+    )
+    if value.module == "" or value.name == "" or value.identity == "":
+        return Err(CodecFault.Malformed)
+    validate_compiled_body_value(value)?
+    return Ok(value)
+
+
+def decode_compiled_body_fallback(fields: list[bytes]) -> Result[CompiledBodyFallback, CodecFault]:
+    """Restore one explicit full-source frame and retain identity absence as its own state."""
+    if len(fields) != 6:
+        return Err(CodecFault.Malformed)
+    fallback = CompiledBodyFallback(
+        module=text_field(fields[2])?,
+        name=text_field(fields[3])?,
+        identity=decoded_optional_identity(text_field(fields[4])?),
+        reason=text_field(fields[5])?,
+    )
+    if (
+        fallback.module == ""
+        or fallback.name == ""
+        or fallback.reason == ""
+        or len(fallback.reason.encode()) > MAX_METADATA_BYTES
+    ):
+        return Err(CodecFault.Malformed)
+    return Ok(fallback)
+
+
+def binary_frame(fields: list[bytes]) -> Result[bytes, CodecFault]:
+    """Prefix one binary-field payload with its checked little-endian byte length."""
+    mut payload: list[u8] = []
+    for field in fields:
+        append_bytes(payload, fixed_width(len(field)))
+        append_bytes(payload, field)
+        if len(payload) > MAX_FRAME_BYTES:
+            return Err(CodecFault.Limit)
+    mut framed: list[u8] = []
+    append_bytes(framed, fixed_width(len(payload)))
+    append_bytes(framed, payload)
+    return Ok(framed)
+
+
+def binary_fields(encoded: bytes) -> Result[list[bytes], CodecFault]:
+    """Split one bounded payload into opaque binary fields without UTF-8 expansion."""
+    mut fields: list[bytes] = []
+    mut offset = 0
+    while offset < len(encoded):
+        if len(encoded) - offset < FRAME_PREFIX_BYTES:
+            return Err(CodecFault.Malformed)
+        size = binary_field_size(encoded[offset:offset + FRAME_PREFIX_BYTES])?
+        offset += FRAME_PREFIX_BYTES
+        if size > len(encoded) - offset:
+            return Err(CodecFault.Malformed)
+        fields.append(encoded[offset:offset + size])
+        offset += size
+    return Ok(fields)
+
+
+def binary_field_size(prefix: bytes) -> Result[int, CodecFault]:
+    """Decode one binary field length, including the empty identity sentinel used only by fallbacks."""
+    if len(prefix) != FRAME_PREFIX_BYTES:
+        return Err(CodecFault.Malformed)
+    mut value: u64 = 0
+    for index in range(FRAME_PREFIX_BYTES - 1, -1, -1):
+        byte: u64 = prefix[index].wrapping_resize()
+        value = (value << 8) | byte
+    converted: Option[int] = value.try_resize()
+    match converted:
+        None => return Err(CodecFault.Limit)
+        Some(size) =>
+            if size < 0 or size > MAX_FRAME_BYTES:
+                return Err(CodecFault.Limit)
+            return Ok(size)
+
+
+def fixed_width(value: int) -> bytes:
+    """Encode a previously bounded nonnegative length as one portable little-endian u64."""
+    mut unsigned: u64 = value.wrapping_resize()
+    mut result: list[u8] = []
+    for _ in range(FRAME_PREFIX_BYTES):
+        octet: u8 = (unsigned & 255u64).wrapping_resize()
+        result.append(octet)
+        unsigned = unsigned >> 8
+    return result
+
+
+def append_bytes(mut target: list[u8], source: bytes) -> None:
+    """Append opaque bytes without routing them through text or hexadecimal encoding."""
+    for byte in source:
+        octet: u8 = byte.wrapping_resize()
+        target.append(octet)
+
+
+def text_field(encoded: bytes) -> Result[str, CodecFault]:
+    """Decode only schema metadata as strict UTF-8; checker and Body IR fields remain opaque bytes."""
+    return encoded.decode().map_err((_) => CodecFault.Malformed)
+
+
+def optional_identity(identity: Option[str]) -> str:
+    """Encode identity absence only for an explicit fallback; stable value records never admit this sentinel."""
+    match identity:
+        Some(value) => return value
+        None => return ""
+
+
+def decoded_optional_identity(identity: str) -> Option[str]:
+    """Restore the fallback-only empty sentinel without inventing a stable declaration identity."""
+    if identity == "":
+        return None
+    return Some(identity)
+
+
+def decimal(text: str) -> Result[int, CodecFault]:
+    """Parse one canonical nonnegative decimal count without accepting signs or padded spellings."""
+    if text == "" or len(text) > 5 or (len(text) > 1 and text.startswith("0")):
+        return Err(CodecFault.Malformed)
+    mut value = 0
+    for digit in text.encode():
+        if digit < 48 or digit > 57:
+            return Err(CodecFault.Malformed)
+        value = value * 10 + digit - 48
+    return Ok(value)
+
+
+def validate_compiled_body_value(value: CompiledBodyValue) -> Result[None, CodecFault]:
+    """Require one declaration and a matching local/final pair under the compiler-owned stable identity."""
+    declaration = decode_graph_record(value.declaration, value.identity)?
+    local = decode_graph_record(value.local, value.identity)?
+    final = decode_graph_record(value.final, value.identity)?
+    if (
+        declaration.family != CheckedFamily.Declaration
+        or local.family != CheckedFamily.Local
+        or final.family != CheckedFamily.Final
+        or local.root != final.root
+        or local.owner != declaration.owner
+        or len(value.body_ir) == 0
+    ):
+        return Err(CodecFault.Malformed)
+    return Ok(None)
+
+
+def decode_graph_record(encoded: bytes, identity: str) -> Result[CheckedRecord, CodecFault]:
+    """Decode one checker record through its authenticated semantic root and compiler-owned identity."""
+    return decode_record(encoded, CHECKER_PROFILE, identity, record_root(encoded)?)

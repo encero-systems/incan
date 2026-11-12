@@ -1,9 +1,10 @@
 """Publish successful compiler body outputs into the ranked record graph."""
 
-from std.fs import Path
+from std.fs import File, Path
 from std.encoding.hex import hexlify
 from std.json import JsonValue, parse
 from std.primitives.hash import sha256
+from rust::std::fs import metadata
 from rust::incan_semantics_core import encode_incan_symbol_identity
 from rust::incan_semantics_core::executable_representation import decode_owner
 from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, put
@@ -13,7 +14,10 @@ from pub::internal_models import (
     CompiledBodyValue,
     ProducerRank,
     ProducerStage,
-    decode_compiled_body_outputs,
+    CompiledBodyOutput,
+    CompiledBodyOutputs,
+    compiled_body_frame_size,
+    decode_compiled_body_payload,
     record_root,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE
@@ -50,6 +54,7 @@ from files import discard_file
 from unit import UnitDescription, dependency_source_roots
 
 const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
+const MAX_COMPILED_BODY_FRAMES: int = 4096
 
 
 model LoweringBody:
@@ -68,6 +73,88 @@ pub enum OwnerRecordFault(str):
 
     Absent = "absent"
     Ambiguous = "ambiguous"
+
+
+class CompiledBodyFrames:
+    """Read one independently bounded binary compiler output frame without buffering the sidecar envelope."""
+
+    file: File
+    remaining: u64
+    count: int = 0
+    fallback_phase: bool = false
+    previous_value: str = ""
+    previous_fallback: str = ""
+
+    @staticmethod
+    pub def open(path: Path) -> Result[CompiledBodyFrames, str]:
+        """Open one compiler sidecar and retain its exact remaining byte count for truncation checks."""
+        file = path.open("rb").map_err((error) => f"cannot open compiled body output: {error.message()}")?
+        size = metadata(path.0).map_err((error) => f"cannot inspect compiled body output: {error}")?.len()
+        return Ok(CompiledBodyFrames(file=file, remaining=size))
+
+    pub def next(mut self) -> Result[Option[CompiledBodyOutput], str]:
+        """Read, authenticate and order one owner frame, returning `None` only at the exact file boundary."""
+        if self.remaining == 0u64:
+            return Ok(None)
+        if self.remaining < 8u64:
+            return Err("compiled body output ends inside a frame prefix")
+        prefix = self.file.read_exact(8).map_err((error) => f"cannot read compiled body frame prefix: {error.message()}")?
+        size = compiled_body_frame_size(prefix).map_err((error) => f"compiled body output refused: {error:?}")?
+        converted: Option[u64] = size.try_resize()
+        frame_bytes = match converted:
+            Some(value) => value
+            None => return Err("compiled body frame length exceeds the host range")
+        if frame_bytes + 8u64 > self.remaining:
+            return Err("compiled body output ends inside an owner frame")
+        payload = self.file.read_exact(size).map_err((error) => f"cannot read compiled body owner frame: {error.message()}")?
+        self.remaining -= frame_bytes + 8u64
+        self.count += 1
+        if self.count > MAX_COMPILED_BODY_FRAMES:
+            return Err("compiled body output contains too many owner frames")
+        output = decode_compiled_body_payload(payload).map_err((error) => f"compiled body output refused: {error:?}")?
+        self.validate_order(output)?
+        return Ok(Some(output))
+
+    def validate_order(mut self, output: CompiledBodyOutput) -> Result[None, str]:
+        """Retain canonical value-then-fallback ordering without a whole-program decoder."""
+        match output:
+            CompiledBodyOutput.Value(value) =>
+                if self.fallback_phase:
+                    return Err("compiled body value follows a fallback frame")
+                order = value.module + "\n" + value.identity
+                if order <= self.previous_value:
+                    return Err("compiled body value frames are not in canonical order")
+                self.previous_value = order
+            CompiledBodyOutput.Fallback(fallback) =>
+                self.fallback_phase = true
+                identity = match fallback.identity:
+                    Some(value) => value
+                    None => ""
+                order = fallback.module + "\n" + fallback.name + "\n" + identity
+                if order <= self.previous_fallback:
+                    return Err("compiled body fallback frames are not in canonical order")
+                self.previous_fallback = order
+        return Ok(None)
+
+
+def read_compiled_body_outputs(path: Path) -> Result[CompiledBodyOutputs, str]:
+    """Read the sidecar as one bounded owner allocation at a time while retaining only decoded semantic values."""
+    mut reader = CompiledBodyFrames.open(path)?
+    mut values: list[CompiledBodyValue] = []
+    mut fallbacks: list[CompiledBodyFallback] = []
+    while true:
+        match reader.next()?:
+            None => return Ok(CompiledBodyOutputs(values=values, fallbacks=fallbacks))
+            Some(CompiledBodyOutput.Value(value)) => values.append(value)
+            Some(CompiledBodyOutput.Fallback(fallback)) =>
+                identity = match fallback.identity:
+                    Some(value) => value
+                    None => ""
+                if identity != "":
+                    for value in values:
+                        if value.module == fallback.module and value.identity == identity:
+                            return Err("compiled body fallback duplicates an eligible owner")
+                fallbacks.append(fallback)
 
 
 pub model PublishedCompiledBodies:
@@ -248,9 +335,8 @@ pub def prepare_compiled_bodies(
     # 1. The sidecar is invocation output, not an authority until this graph publication succeeds.
     if not output.is_file():
         return Err("successful graph-enabled compile did not publish body outputs")
-    encoded = output.read_bytes().map_err((error) => error.message())?
+    outputs = read_compiled_body_outputs(output)?
     discard_file(output)
-    outputs = decode_compiled_body_outputs(encoded).map_err((error) => f"compiled body output refused: {error:?}")?
     origin = source_origin(unit)
 
     # 2. The prepared source authenticates only values carried by this exact request transaction.

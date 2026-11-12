@@ -139,8 +139,13 @@ pub from checker_records import (
     encode_graph_body_values,
     decode_graph_body_page,
     decode_graph_body_values,
-    encode_compiled_body_outputs,
-    decode_compiled_body_outputs,
     record_root,
+)
+pub from compiled_body_frames import (
+    CompiledBodyOutput,
+    encode_compiled_body_outputs,
+    compiled_body_frame_size,
+    decode_compiled_body_frame,
+    decode_compiled_body_payload,
 )
 pub from read_receipts import RECEIPT_SCHEMA, decode_read_receipt, encode_read_receipt
