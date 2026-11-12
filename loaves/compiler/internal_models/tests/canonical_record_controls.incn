@@ -12,10 +12,8 @@ from checker_records import (
     CompiledBodyValue,
     GraphBodyValue,
     decode_graph_body_values,
-    decode_compiled_body_outputs,
     encode_record,
     encode_graph_body_values,
-    encode_compiled_body_outputs,
     decode_record,
     semantic_digest,
     from_native_final_fields,
@@ -23,6 +21,7 @@ from checker_records import (
     from_native_local_fields,
     native_fields,
 )
+from compiled_body_frames import CompiledBodyOutput, decode_compiled_body_frame, encode_compiled_body_outputs
 from rust::incan_frontend::checker_records import (
     fixture_record,
     verify_fixture,
@@ -111,23 +110,75 @@ def compiled_output_controls(source: str) -> Result[None, str]:
     encoded = encode_compiled_body_outputs(CompiledBodyOutputs(values=[value], fallbacks=[fallback, identityless])).map_err(
         (_) => "compiled output encode",
     )?
-    decoded = decode_compiled_body_outputs(encoded).map_err((_) => "compiled output decode")?
-    assert len(decoded.values) == 1 and len(decoded.fallbacks) == 2
-    assert (
-        decoded.values[0].module == value.module
-        and decoded.values[0].name == value.name
-        and decoded.values[0].identity == value.identity
-    )
-    assert decoded.values[0].dependency_reads == value.dependency_reads
-    assert (
-        decoded.values[0].declaration == value.declaration
-        and decoded.values[0].local == value.local
-        and decoded.values[0].final == value.final
-        and decoded.values[0].body_ir == value.body_ir
-    )
-    assert decoded.fallbacks[0] == fallback
-    assert decoded.fallbacks[1] == identityless
+    assert len(encoded) == 3
+    match decode_compiled_body_frame(encoded[0]).map_err((_) => "compiled value decode")?:
+        CompiledBodyOutput.Value(decoded) =>
+            assert decoded.module == value.module and decoded.name == value.name and decoded.identity == value.identity
+            assert decoded.dependency_reads == value.dependency_reads
+            assert (
+                decoded.declaration == value.declaration
+                and decoded.local == value.local
+                and decoded.final == value.final
+                and decoded.body_ir == value.body_ir
+            )
+        CompiledBodyOutput.Fallback(_) => return Err("compiled value decoded as a fallback")
+    match decode_compiled_body_frame(encoded[1]).map_err((_) => "compiled fallback decode")?:
+        CompiledBodyOutput.Fallback(decoded) => assert decoded == fallback
+        CompiledBodyOutput.Value(_) => return Err("compiled fallback decoded as a value")
+    match decode_compiled_body_frame(encoded[2]).map_err((_) => "identityless fallback decode")?:
+        CompiledBodyOutput.Fallback(decoded) => assert decoded == identityless
+        CompiledBodyOutput.Value(_) => return Err("identityless fallback decoded as a value")
+    compiled_output_size_controls(declaration, local, from_native_final_fields(final_rows).map_err((_) => "final")?)?
     return Ok(None)
+
+
+def compiled_output_size_controls(
+    declaration: CheckedRecord,
+    local: CheckedRecord,
+    final: CheckedRecord,
+) -> Result[None, str]:
+    """Many owner frames may exceed the former aggregate bound while one oversized owner remains refused."""
+    body_ir = "".join(["x" for _ in range(1000000)]).encode()
+    mut values: list[CompiledBodyValue] = []
+    for index in range(70):
+        suffix = str(index + 100)
+        identity = "function:main::owner_" + suffix
+        values.append(
+            CompiledBodyValue(
+                module="src/main.incn",
+                name="owner_" + suffix,
+                identity=identity,
+                declaration=owner_record(declaration, identity)?,
+                local=owner_record(local, identity)?,
+                final=owner_record(final, identity)?,
+                body_ir=body_ir,
+            ),
+        )
+    frames = encode_compiled_body_outputs(CompiledBodyOutputs(values=values, fallbacks=[])).map_err(
+        (_) => "many-owner compiled output encode",
+    )?
+    assert len(frames) == 70
+    assert sum([len(frame) for frame in frames]) > 67108864
+
+    mut oversized_value = values[0]
+    oversized_value.body_ir = "".join(["x" for _ in range(67108864)]).encode()
+    match encode_compiled_body_outputs(CompiledBodyOutputs(values=[oversized_value], fallbacks=[])):
+        Err(CodecFault.Limit) => pass
+        _ => return Err("compiled output accepted an owner frame over its bound")
+    return Ok(None)
+
+
+def owner_record(record: CheckedRecord, identity: str) -> Result[bytes, str]:
+    """Rebind one fixture record to a stable owner for aggregate-independent transport coverage."""
+    return encode_record(
+        CheckedRecord(
+            profile=record.profile,
+            owner=identity,
+            root=record.root,
+            family=record.family,
+            fields=record.fields,
+        ),
+    ).map_err((_) => "owner record encode")
 
 
 def projected_owner_controls() -> Result[None, str]:
