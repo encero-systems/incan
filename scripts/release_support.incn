@@ -469,6 +469,34 @@ pub def tree_bytes(root: Path) -> Result[int, str]:
     return Ok(total)
 
 
+pub def reclaim_paths(paths: list[Path]) -> Result[int, str]:
+    """Remove only caller-selected release scratch roots and return their measured logical bytes."""
+    mut reclaimed = 0
+    for path in paths:
+        if not path.exists() and not path.is_symlink():
+            continue
+        reclaimed += tree_bytes(path)?
+        path.remove_tree().map_err((error) => f"cannot remove release scratch {path.0}: {error.message()}")?
+    return Ok(reclaimed)
+
+
+pub def record_tree_sample(root: Path, evidence: Path, label: str) -> Result[int, str]:
+    """Measure one release-tree checkpoint, append it to evidence, and retain the largest observed sample."""
+    measured = tree_bytes(root)?
+    mut samples = ""
+    if evidence.is_file():
+        samples = evidence.read_text("utf-8", "strict").map_err((error) => error.message())?
+    samples += f"{label}\t{measured}\n"
+    evidence.write_text(samples, "utf-8", "strict", None).map_err((error) => error.message())?
+    peak = evidence.parent().joinpath("tree-peak.txt")
+    mut largest = 0
+    if peak.is_file():
+        largest = int(peak.read_text("utf-8", "strict").map_err((error) => error.message())?.strip())
+    if measured > largest:
+        peak.write_text(f"{measured}\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    return Ok(measured)
+
+
 pub def tree_digest(root: Path) -> Result[str, str]:
     """Hash one tree's relative directory names and complete regular-file contents in stable order."""
     if not root.is_dir():
