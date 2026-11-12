@@ -8,7 +8,12 @@ from std.environ import args, get_or
 from std.fs import Path
 from std.json import JsonValue
 from check_support import repository_root, write_stderr
-from driver_evidence import retain_driver_evidence
+from driver_evidence import (
+    DriverQualification,
+    driver_bakery,
+    driver_qualification,
+    retain_qualified_driver_evidence,
+)
 from native_build import (
     NativeContext,
     PendingToolBuild,
@@ -477,6 +482,7 @@ def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
 
 def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
     """Build the source compiler, then rebuild checking interfaces and shipped providers through it."""
+    qualification = release_driver_qualification(run)?
     driver_started = Instant.now()
     driver_span = run.trace.begin("driver-build")?
     driver_result = relink(
@@ -489,12 +495,13 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
             profile="release",
             refresh=false,
             log=run.paths.output.joinpath("driver-build.log"),
+            bakery=driver_bakery(run.seed_home, qualification).0,
         ),
     )
     run.trace.finish(driver_span)?
     driver_result?
     append_timing(run.paths.output.joinpath("timings.tsv"), "driver-build", driver_started.elapsed().as_secs_f64())?
-    retain_driver_build_evidence(run)?
+    retain_driver_build_evidence(run, qualification)?
     context = native_context(run, candidate.oven, run.paths.home)
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
     interfaces_started = Instant.now()
@@ -510,8 +517,8 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
     return Ok(Candidate(context=context, oven=candidate.oven, lsp=lsp, pending_lsp=pending))
 
 
-def retain_driver_build_evidence(run: ReleaseRun) -> Result[None, str]:
-    """Retain compiler-qualified unit identities and dependency scans before release scratch is reclaimed."""
+def release_driver_qualification(run: ReleaseRun) -> Result[DriverQualification, str]:
+    """Identify the exact compiler, complete sysroot and SDK content that qualify persistent driver units."""
     manifest = read_json(run.paths.toolchain.joinpath("toolchain.json"))?
     mut sysroot_text = manifest_string(manifest, "sysroot")?
     if not sysroot_text.startswith("/"):
@@ -521,8 +528,13 @@ def retain_driver_build_evidence(run: ReleaseRun) -> Result[None, str]:
     sdk = get_or("SDKROOT", "")
     if sdk != "":
         sdk_settings = Path(sdk).joinpath("SDKSettings.json")
+    return driver_qualification(sysroot.joinpath("bin/rustc"), sysroot, sdk_settings)
+
+
+def retain_driver_build_evidence(run: ReleaseRun, qualification: DriverQualification) -> Result[None, str]:
+    """Retain the qualified build's unit identities and dependency scans before release scratch is reclaimed."""
     target = run.paths.source.joinpath("loaves/toolchain/incan-rustc-driver/target/incan/rust/release")
-    retained = retain_driver_evidence(target, run.paths.output, sysroot.joinpath("bin/rustc"), sysroot, sdk_settings)?
+    retained = retain_qualified_driver_evidence(target, run.paths.output, qualification)?
     return append_bytes(run.paths.output.joinpath("timings.tsv"), "driver-unit-evidence", retained.bytes)
 
 

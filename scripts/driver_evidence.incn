@@ -53,6 +53,15 @@ pub def retain_driver_evidence(
     3. Retain the location-bound driver binary's scan with its explicit identity refusal, never as reusable evidence.
     """
     qualification = driver_qualification(compiler, sysroot, sdk_settings)?
+    return retain_qualified_driver_evidence(target, output, qualification)
+
+
+pub def retain_qualified_driver_evidence(
+    target: Path,
+    output: Path,
+    qualification: DriverQualification,
+) -> Result[DriverEvidence, str]:
+    """Retain driver evidence under a qualification already selected for the build's persistent Bakery."""
     directory = output.joinpath("driver-units").joinpath(qualification.identity)
     directory.mkdir(true, true).map_err((error) => error.message())?
 
@@ -75,6 +84,11 @@ pub def retain_driver_evidence(
     )?
     bytes = tree_bytes(directory)?
     return Ok(DriverEvidence(identity=qualification.identity, directory=directory, units=len(units), bytes=bytes))
+
+
+pub def driver_bakery(seed_home: Path, qualification: DriverQualification) -> Path:
+    """Select the persistent driver Bakery for one exact compiler, sysroot and SDK content qualification."""
+    return seed_home.joinpath("cache/release-driver").joinpath(qualification.identity)
 
 
 def retain_library_unit(source: Path, evidence: Path) -> Result[JsonValue, str]:

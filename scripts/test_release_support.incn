@@ -3,7 +3,7 @@
 from std.fs import Path
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
-from driver_evidence import driver_qualification, retain_driver_evidence
+from driver_evidence import driver_bakery, driver_qualification, retain_driver_evidence
 from native_build import (
     LOWERING_RESERVATION_BYTES,
     PROJECT_RESERVATION_BYTES,
@@ -258,6 +258,9 @@ def test_driver_evidence_retains_qualified_unit_identities_and_dependency_scans(
     sdk.write_bytes(b"sdk-a").map_err((error) => error.message())?
 
     original = driver_qualification(compiler, sysroot, sdk)?
+    assert driver_bakery(temporary.path(), original).0 == temporary.path().joinpath(
+        f"cache/release-driver/{original.identity}",
+    ).0
     compiler.write_bytes(b"compiler-b").map_err((error) => error.message())?
     assert driver_qualification(compiler, sysroot, sdk)?.identity != original.identity
     compiler.write_bytes(b"compiler-a").map_err((error) => error.message())?

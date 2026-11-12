@@ -32,6 +32,7 @@ pub model Relink:
     pub profile: str
     pub refresh: bool
     pub log: Path
+    pub bakery: str = ""
 
 
 def main() -> None:
@@ -180,12 +181,14 @@ pub def absolute_manifest(manifest: JsonValue, base: str) -> Result[str, str]:
 
 
 def build_driver(relink: Relink, sysroot: str, compiler_home: Path, log: Path) -> Result[None, str]:
-    """Build the driver with Oven against the compiler home, keeping the full build output in `log`."""
+    """Build the driver with Oven against the compiler home and optional qualified Bakery, retaining the full log."""
     log.parent().mkdir(true, true).map_err((error) => error.message())?
     mut command = Command.new(relink.builder)
     command.current_dir(relink.repo.0).arg("build").arg(str(DRIVER_LOAF)).arg("--profile").arg(relink.profile)
     command.env("OVEN_TRACE", "-").env("RUSTC", f"{sysroot}/bin/rustc")
     command.env("INCAN_STDLIB", relink.stdlib).env("INCAN_HOME", compiler_home.0)
+    if relink.bakery != "":
+        command.env("INCAN_BAKERY", relink.bakery)
     output = command.output().map_err((error) => f"cannot run {relink.builder}: {error.to_string()}")?
     stdout = RustString.from_utf8_lossy(output.stdout).into_owned()
     stderr = RustString.from_utf8_lossy(output.stderr).into_owned()
