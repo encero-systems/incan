@@ -6,22 +6,23 @@ impl Callbacks {
     /// Replace the session's plan with one refined against native metadata; MIR building reads the replacement.
     pub(super) fn replace_plan(&mut self, tcx: TyCtxt<'_>, plan: Plan) {
         self.plan = Arc::new(plan);
+        self.reader = Arc::new(self.reader.with_plan(Arc::clone(&self.plan)));
         match PLAN.lock() {
-            Ok(mut slot) => *slot = Some(Arc::new(ActivePlan::new(Arc::clone(&self.plan)))),
+            Ok(mut slot) => *slot = Some(Arc::clone(&self.reader)),
             Err(_) => tcx.dcx().fatal(DriverError::State.to_string()),
         }
     }
 
     /// Declare checked callables before their program entries, retaining typed function-span failures across fatal
-    /// errors. A program groups its callables by source file, one module each, re-exported at the crate root:
-    /// rustc forms codegen units per module, so one root module would optimize the whole unit on a single thread.
+    /// errors. A program groups callables into fixed modules by stable compiler definition identity: rustc forms
+    /// codegen units per module without repartitioning unrelated definitions as files or declaration counts change.
     pub(super) fn declare_callables(
         &self,
         compiler: &interface::Compiler,
         krate: &mut ast::Crate,
         sources: &Sources<'_>,
     ) {
-        let mut grouped: std::collections::BTreeMap<&str, Vec<Box<ast::Item>>> = std::collections::BTreeMap::new();
+        let mut grouped: std::collections::BTreeMap<usize, Vec<Box<ast::Item>>> = std::collections::BTreeMap::new();
         for function in &self.plan.functions {
             let span = match sources.span(&function.span) {
                 Ok(span) => span,
@@ -37,6 +38,13 @@ impl Callbacks {
                 Ok(item) => item,
                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
             };
+            if let Some(input) = self.reader.function_input(&function.name) {
+                item.attrs.push(tracked_input_attribute(
+                    &compiler.sess.psess.attr_id_generator,
+                    input,
+                    span,
+                ));
+            }
             if !function.attributes.is_empty() {
                 item.attrs.extend(crate::native_attributes::attributes(
                     &compiler.sess.psess.attr_id_generator,
@@ -52,15 +60,18 @@ impl Callbacks {
                 ));
             }
             if self.partition {
-                grouped.entry(function.span.file.as_str()).or_default().push(item);
+                grouped
+                    .entry(self.reader.function_partition(&function.name))
+                    .or_default()
+                    .push(item);
             } else {
                 krate.items.push(item);
             }
         }
-        for (index, items) in grouped.into_values().enumerate() {
+        for (partition, items) in grouped {
             krate
                 .items
-                .extend(declarations::partition_module(index, items, krate.spans.inner_span));
+                .extend(declarations::partition_module(partition, items, krate.spans.inner_span));
         }
         if !self.plan.programs.is_empty() {
             krate.items.push(
@@ -168,6 +179,18 @@ impl rustc_driver::Callbacks for Callbacks {
             add_source_backed_declarations(&self.plan, &sources, &compiler.sess.psess.attr_id_generator, krate)
         {
             compiler.sess.dcx().fatal(error.to_string());
+        }
+        for item in &mut krate.items {
+            let ast::ItemKind::TyAlias(alias) = &item.kind else {
+                continue;
+            };
+            if let Some(input) = self.reader.alias_input(alias.ident.name.as_str()) {
+                item.attrs.push(tracked_input_attribute(
+                    &compiler.sess.psess.attr_id_generator,
+                    input,
+                    item.span,
+                ));
+            }
         }
 
         // ---- Callable declarations and canonical entries ----
@@ -291,4 +314,20 @@ impl rustc_driver::Callbacks for Callbacks {
         self.codegen_started = Some(std::time::Instant::now());
         rustc_driver::Compilation::Continue
     }
+}
+
+/// Carry a complete record fingerprint in the definition's HIR owner, where overridden queries can track it.
+fn tracked_input_attribute(
+    generator: &ast::attr::AttrIdGenerator,
+    input: &super::active_plan::DefinitionInput,
+    span: rustc_span::Span,
+) -> ast::Attribute {
+    ast::attr::mk_attr_name_value_str(
+        generator,
+        ast::AttrStyle::Outer,
+        ast::Safety::Default,
+        rustc_span::Symbol::intern("doc"),
+        rustc_span::Symbol::intern(&format!("incan-native-input:{}", input.fingerprint())),
+        span,
+    )
 }

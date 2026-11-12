@@ -22,10 +22,16 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     store = root.joinpath("store")
     write(source, "def greeting() -> str:\n    return \"hello\"\n\n\ndef main() -> None:\n    println(greeting())\n")?
-    initial = lowering_example_run(binary, source, store, "hello")?
+    initial = lowering_example_run_with_fingerprints(binary, source, store, "hello")?
+    initial_fingerprints = native_fingerprints(root)?
     assert proof_count(initial, "plan_function_evaluations")? == 3
     write(source, "def greeting() -> str:\n    return \"hullo\"\n\n\ndef main() -> None:\n    println(greeting())\n")?
-    edited = lowering_example_run(binary, source, store, "hullo")?
+    edited = lowering_example_run_with_fingerprints(binary, source, store, "hullo")?
+    edited_fingerprints = native_fingerprints(root)?
+    assert fingerprint_for(edited_fingerprints, "greeting")? != fingerprint_for(initial_fingerprints, "greeting")?
+    assert fingerprint_for(edited_fingerprints, "main")? == fingerprint_for(initial_fingerprints, "main")?
+    assert partition_for(edited_fingerprints, "greeting")? == partition_for(initial_fingerprints, "greeting")?
+    assert partition_for(edited_fingerprints, "main")? == partition_for(initial_fingerprints, "main")?
     diagnostic = edited.to_json().map_err((error) => error.message())?
     assert proof_count(edited, "plan_function_evaluations")? == 1, diagnostic
     assert proof_count(edited, "plan_function_reuses")? == 2, diagnostic
@@ -98,6 +104,20 @@ def lowering_example_run(binary: str, source: Path, store: Path, expected: str) 
     return command_proof(outcome.stdout)
 
 
+def lowering_example_run_with_fingerprints(binary: str, source: Path, store: Path, expected: str) -> Result[JsonValue, str]:
+    """Run one native request while asking the adapter for per-definition tracked-input evidence."""
+    outcome = Command
+        .new(binary).arg("run").arg(source.0).args(["--profile", "release", "--engine-report"])
+        .env("INCAN_NATIVE_PLAN_REPORT", source.parent().joinpath("native.plan").0)
+        .env("INCAN_NATIVE_FINGERPRINT_REPORT", source.parent().joinpath("native.fingerprints").0)
+        .env("INCAN_ENGINE", "records").env("INCAN_BAKERY", store.0).output().map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or not output.endswith(expected + "\n") or errors != "":
+        return Err(f"lowering example: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return command_proof(outcome.stdout)
+
+
 def command_proof(output: bytes) -> Result[JsonValue, str]:
     """Decode the first line emitted by `--engine-report`, leaving the following program stdout independent."""
     text = from_utf8(output).map_err((error) => str(error))?
@@ -110,3 +130,25 @@ def command_proof(output: bytes) -> Result[JsonValue, str]:
 def proof_count(report: JsonValue, name: str) -> Result[int, str]:
     """Read one required producer counter without accepting an absent or nonnumeric field."""
     return report.require(name).map_err((error) => error.message())?.expect_int().map_err((error) => error.message())
+
+
+def native_fingerprints(root: Path) -> Result[list[str], str]:
+    """Read the adapter's one-line-per-definition tracked-input report."""
+    text = root.joinpath("native.fingerprints").read_text("utf-8", "strict").map_err((error) => error.message())?
+    return Ok([line for line in text.split("\n") if line != ""])
+
+
+def fingerprint_for(rows: list[str], function: str) -> Result[str, str]:
+    """Select one function's complete tracked fingerprint without accepting duplicates."""
+    matches = [row.split("\t")[2] for row in rows if len(row.split("\t")) == 4 and row.split("\t")[1] == function]
+    if len(matches) != 1:
+        return Err(f"native fingerprint report has {len(matches)} rows for {function}: {rows}")
+    return Ok(matches[0])
+
+
+def partition_for(rows: list[str], function: str) -> Result[str, str]:
+    """Select one function's fixed native partition without accepting duplicates."""
+    matches = [row.split("\t")[3] for row in rows if len(row.split("\t")) == 4 and row.split("\t")[1] == function]
+    if len(matches) != 1:
+        return Err(f"native fingerprint report has {len(matches)} partitions for {function}: {rows}")
+    return Ok(matches[0])

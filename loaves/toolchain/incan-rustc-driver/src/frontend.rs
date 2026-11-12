@@ -657,6 +657,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         kind,
         overflow_checks,
         library_facades,
+        dependencies.plan_record_report.as_deref(),
     )
     .map_err(|error| {
         if matches!(error, crate::adapter::DriverError::Plan(_)) {
