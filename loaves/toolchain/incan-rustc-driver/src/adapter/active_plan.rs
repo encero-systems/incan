@@ -7,6 +7,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+const NATIVE_CGU_PARTITIONS: usize = 16;
+
 /// The exact record input attached to one compiler definition.
 #[derive(Clone)]
 pub(crate) struct DefinitionInput {
@@ -21,6 +23,10 @@ impl DefinitionInput {
 
     pub(crate) fn fingerprint(&self) -> &str {
         &self.fingerprint
+    }
+
+    pub(crate) fn partition(&self) -> usize {
+        stable_partition(&self.identity)
     }
 }
 
@@ -216,6 +222,13 @@ impl PlanReader {
         self.alias_inputs.get(name)
     }
 
+    pub(super) fn function_partition(&self, name: &str) -> usize {
+        self.function_inputs
+            .get(name)
+            .map(DefinitionInput::partition)
+            .unwrap_or_else(|| stable_partition(name))
+    }
+
     /// The first source-local function item named `name` among the session's crate items.
     pub(crate) fn item(&self, tcx: TyCtxt<'_>, name: &str) -> Option<DefId> {
         self.named_items
@@ -243,12 +256,30 @@ impl PlanReader {
         let mut rows = self
             .function_inputs
             .iter()
-            .map(|(name, input)| format!("{}\t{}\t{}", input.identity(), name, input.fingerprint()))
+            .map(|(name, input)| {
+                format!(
+                    "{}\t{}\t{}\t{}",
+                    input.identity(),
+                    name,
+                    input.fingerprint(),
+                    input.partition()
+                )
+            })
             .collect::<Vec<_>>();
         rows.sort();
         std::fs::write(path, format!("{}\n", rows.join("\n")))
             .map_err(|error| DriverError::Invocation(format!("cannot write native fingerprint report: {error}")))
     }
+}
+
+/// A fixed, deterministic partition independent of declaration count and source-file ordering.
+fn stable_partition(value: &str) -> usize {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in value.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash as usize % NATIVE_CGU_PARTITIONS
 }
 
 impl std::ops::Deref for PlanReader {
