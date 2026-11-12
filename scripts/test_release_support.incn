@@ -317,27 +317,40 @@ def test_tree_measurement_walks_regular_files_once_and_records_bytes() -> Result
 
 
 def test_release_trace_uses_invocation_records_and_phase_parent_links() -> Result[None, str]:
-    """The release trace is directly consumable as invocation JSONL and parents every step to its active phase."""
+    """Invocation JSONL preserves both same-process phase parents and a child process's inherited parent."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     directory = temporary.path().joinpath("trace")
     mut trace = ReleaseTrace.open(directory)?
     trace.phase("checkout")?
-    step = trace.begin("materialize-source")?
-    trace.finish(step)?
+    installed = trace.begin("installed-ci")?
+    child = ReleaseTrace.linked(directory, installed.id, "scripts/verify_installation.incn")?
+    relocation = child.begin("relocation")?
+    child.finish(relocation)?
+    child.complete()?
+    trace.finish(installed)?
     trace.complete()?
     paths = directory.glob("*.jsonl").map_err((error) => error.message())?
-    assert len(paths) == 1
-    lines = [line for line in paths[0].read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n") if line != ""]
-    assert len(lines) == 5
-    records = [JsonValue.parse(line).map_err((error) => error.message())? for line in lines]
-    assert json_text(records[0], "schema")? == "incan.invocations/1"
-    assert json_text(records[0], "kind")? == "process"
-    assert json_text(records[1], "function")? == "checkout"
-    assert json_text(records[2], "function")? == "materialize-source"
-    phase_id = json_text(records[1], "id")?
-    assert json_text(records[2], "parent")? == phase_id
-    assert json_text(records[3], "id")? == json_text(records[2], "id")?
-    assert json_text(records[4], "id")? == phase_id
+    assert len(paths) == 2
+    mut records: list[JsonValue] = []
+    for path in paths:
+        for line in path.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+            if line != "":
+                records.append(JsonValue.parse(line).map_err((error) => error.message())?)
+    process_records = [record for record in records if json_optional_text(record, "schema") == "incan.invocations/1"]
+    assert len(process_records) == 2
+    checkout_records = [record for record in records if json_optional_text(record, "function") == "checkout"]
+    installed_records = [record for record in records if json_optional_text(record, "function") == "installed-ci"]
+    relocation_records = [record for record in records if json_optional_text(record, "function") == "relocation"]
+    assert len(checkout_records) == 1
+    assert len(installed_records) == 1
+    assert len(relocation_records) == 1
+    phase_id = json_text(checkout_records[0], "id")?
+    installed_id = json_text(installed_records[0], "id")?
+    assert json_text(installed_records[0], "parent")? == phase_id
+    assert json_text(relocation_records[0], "parent")? == installed_id
+    linked_processes = [record for record in process_records if json_optional_text(record, "executable") == "scripts/verify_installation.incn"]
+    assert len(linked_processes) == 1
+    assert json_text(linked_processes[0], "parent")? == installed_id
     return Ok(None)
 
 
@@ -411,6 +424,13 @@ def candidate_refusal(reference: &BaselineReport, candidate: &BaselineReport) ->
 def json_text(value: JsonValue, key: str) -> Result[str, str]:
     """Read one required string field from a trace test record."""
     return value.require(key).and_then((field) => field.expect_str()).map_err((error) => error.message())
+
+
+def json_optional_text(value: JsonValue, key: str) -> str:
+    """Read one optional string field for concise trace-record selection."""
+    match value.get(key):
+        Some(field) => return field.as_str().unwrap_or("")
+        None => return ""
 
 
 def make_tree_writable(root: Path) -> Result[None, str]:
