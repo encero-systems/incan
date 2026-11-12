@@ -261,7 +261,7 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
         default_projection,
         "src/default.incn",
         "context",
-        "member/context:src::default::context#in(model:src::default::RecordKey)[0]",
+        "field:package::src::default::RecordKey::context|signature",
     )?.key == default_owner.key
     projected_default = publish_source_projection(published.snapshot, default_projection)?
     declaration = family_key("declaration", "model-record-key")

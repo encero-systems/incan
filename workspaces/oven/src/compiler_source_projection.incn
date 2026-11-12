@@ -163,9 +163,8 @@ pub def compiled_owner_source(
     declaration = stable_member_declaration(identity)
     if declaration != "":
         for prefix in ["default:", "field:"]:
-            qualified = prefix + declaration + ":" + name
             for owner in projection.owners:
-                if owner.key.facet == qualified:
+                if owner.key.facet.startswith(prefix) and owner.key.facet.endswith(":" + declaration + ":" + name):
                     return Ok(owner)
     mut default: Option[SourceProjectionRecord] = None
     for owner in projection.owners:
@@ -186,7 +185,10 @@ pub def compiled_owner_source(
 
 
 def stable_member_declaration(identity: str) -> str:
-    """Recover the enclosing nominal declaration spelling from one compiler-owned nested stable identity."""
+    """Recover the enclosing nominal declaration name from one compiler-owned stable identity."""
+    compact = identity.split("|")[0].split("::")
+    if len(compact) >= 2:
+        return compact[len(compact) - 2]
     nested = identity.split("#in(")
     if len(nested) < 2:
         return ""
@@ -194,7 +196,7 @@ def stable_member_declaration(identity: str) -> str:
     parts = owner.split(":")
     if len(parts) < 2 or parts[len(parts) - 1] == "":
         return ""
-    return parts[0] + ":" + parts[len(parts) - 1]
+    return parts[len(parts) - 1]
 
 
 pub def declaration_index_key(origin: str, path: str) -> RecordKey:
