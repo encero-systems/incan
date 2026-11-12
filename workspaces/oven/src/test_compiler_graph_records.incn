@@ -63,7 +63,7 @@ from unit import UnitDescription
 
 pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[None, str]:
     """No selected snapshot can observe only part of a completed evaluation and its four witness kinds."""
-    assert len(decode_graph_body_values(encode_body_inventory([])?).map_err((error) => f"{error:?}")?) == 0
+    assert len(encode_body_inventory([])?) == 0
     before = store_snapshot(memory_root()).map_err((error) => error.message())?
     receipt = witnessed_receipt()
     published = publish_evaluation(
@@ -381,6 +381,10 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     assert required(published.snapshot, encode_record_key(fallback_key)?)? == b"full-source: local record output refused: Unsupported(\"fixture\")"
     selected = select_body_inventory(published.snapshot, CHECKER_PROFILE)?
     assert len(selected) == 1 and selected[0].identity == identity
+    pages = encode_body_inventory(selected)?
+    assert len(pages) == 1 and len(pages[0].key) == 64
+    decoded = decode_graph_body_values(pages[0].value).map_err((error) => f"{error:?}")?
+    assert len(decoded) == 1 and decoded[0].identity == identity
 
     edited = project_source("app", "src/main.incn", source_text.replace("pass", "println(\"edited\")"))?
     changed = edited.owners[0].key

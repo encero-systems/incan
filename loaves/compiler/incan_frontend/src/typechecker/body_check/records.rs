@@ -137,7 +137,7 @@ impl TypeChecker {
             .nodes
             .owner()
             .render_compact();
-        let Some(selected) = self.graph_body_records.get(&identity) else {
+        let Some(selected) = self.graph_body_records.get(&identity)? else {
             return Ok(false);
         };
         // The checker owns selected rows after this boundary so its publication view cannot outlive the invocation

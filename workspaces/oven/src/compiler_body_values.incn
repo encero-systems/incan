@@ -1,5 +1,7 @@
 """Select and publish paired local/final body values through the compiler evaluation graph."""
 
+from std.encoding.hex import hexlify
+from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot
 from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values
 from pub::internal_models.records import ReadReceipt, RecordKey
@@ -35,6 +37,13 @@ pub model SelectedBodyRecord:
     pub local: bytes
     pub final: bytes
     pub body_ir: bytes
+
+
+pub model SelectedBodyPage:
+    """One bounded, identity-addressed graph body page for lazy native-driver retrieval."""
+
+    pub key: str
+    pub value: bytes
 
 
 pub def select_body_values(
@@ -90,14 +99,15 @@ pub def select_body_inventory_except(
     return Ok([record for record in select_body_inventory(selected, profile)? if record.identity not in invalid])
 
 
-pub def encode_body_inventory(records: list[SelectedBodyRecord]) -> Result[bytes, str]:
-    """Encode graph-admitted checker pairs and owner frames for the separate native transport."""
-    mut values: list[GraphBodyValue] = []
+pub def encode_body_inventory(records: list[SelectedBodyRecord]) -> Result[list[SelectedBodyPage], str]:
+    """Encode each graph-admitted checker pair and owner frame as one bounded, identity-addressed page."""
+    mut pages: list[SelectedBodyPage] = []
     for record in records:
-        values.append(
-            GraphBodyValue(identity=record.identity, local=record.local, final=record.final, body_ir=record.body_ir),
-        )
-    return encode_graph_body_values(values).map_err((error) => f"selected body transport refused: {error:?}")
+        value = encode_graph_body_values(
+            [GraphBodyValue(identity=record.identity, local=record.local, final=record.final, body_ir=record.body_ir)],
+        ).map_err((error) => f"selected body page refused: {error:?}")?
+        pages.append(SelectedBodyPage(key=hexlify(sha256.digest(record.identity.encode("utf-8"))), value=value))
+    return Ok(pages)
 
 
 pub def invalid_body_owners(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[str], str]:

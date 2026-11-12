@@ -38,6 +38,7 @@ from bakery import (
 )
 from bakery_records import Fact
 from bakery_roots import register_root
+from compiler_body_values import SelectedBodyPage
 from compiler_refusals import check_or_replay
 from observation import trace, trace_launch
 from toolchain import Toolchain
@@ -162,7 +163,7 @@ pub def obtain_executable(
     development: bool = false,
     selected_store: Option[Path] = None,
     defer_publication: bool = false,
-    graph_body_records: Option[bytes] = None,
+    graph_body_records: Option[list[SelectedBodyPage]] = None,
 ) -> Result[Made, str]:
     """
     Obtain the executable of `key` from the home bakery and make `output` a view of it.
@@ -283,7 +284,7 @@ def compile_staged(
     key: Key,
     reason: str,
     shared: bool,
-    graph_body_records: Option[bytes] = None,
+    graph_body_records: Option[list[SelectedBodyPage]] = None,
 ) -> Result[i32, str]:
     """Compile a unit to its staged name. Returns the compiler's exit code."""
     return compile_prepared_unit(unit, toolchain, staged, Some(key), reason, shared, graph_body_records)
