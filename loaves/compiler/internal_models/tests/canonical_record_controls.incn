@@ -224,6 +224,12 @@ def graph_transport_controls(local: CheckedRecord, final: CheckedRecord) -> Resu
     assert selected[0].local == native_fields(local).map_err((_) => "graph local fields")?
     assert selected[0].final_fields == native_fields(final).map_err((_) => "graph final fields")?
     assert selected[0].body_ir == b"owner-frame"
+    large_body_ir = "".join(["x" for _ in range(100000)]).encode()
+    large_transport = encode_graph_body_values(
+        [GraphBodyValue(identity=local.owner, local=local_bytes, final=final_bytes, body_ir=large_body_ir)],
+    ).map_err((_) => "large graph transport encode")?
+    large_selected = decode_graph_body_values(large_transport).map_err((_) => "large graph transport decode")?
+    assert large_selected[0].body_ir == large_body_ir
     selected_local = from_native_local_fields(selected[0].local).map_err((_) => "selected local re-encode")?
     selected_final = from_native_final_fields(selected[0].final_fields).map_err((_) => "selected final re-encode")?
     assert encode_record(selected_local).map_err((_) => "selected local bytes")? == local_bytes

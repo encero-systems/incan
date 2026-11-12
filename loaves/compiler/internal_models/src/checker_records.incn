@@ -9,7 +9,9 @@ const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/2"
 const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/3"
-const MAX_GRAPH_TRANSPORT_BYTES: int = 16777216
+# One whole-program transport carries all bounded checker records plus native owner frames; bound the aggregate at
+# 64 MiB while individual checker records retain their narrower 64 KiB limit.
+const MAX_GRAPH_TRANSPORT_BYTES: int = 67108864
 
 
 @derive(Eq)
@@ -565,13 +567,27 @@ def transport_frames(encoded: bytes) -> Result[list[str], CodecFault]:
         if end == len(encoded):
             return Err(CodecFault.Malformed)
         prefix = encoded[offset:end].decode().map_err((_) => CodecFault.Malformed)?
-        size = decimal(prefix)?
+        size = transport_size(prefix)?
         offset = end + 1
         if size > len(encoded) - offset:
             return Err(CodecFault.Malformed)
         tokens.append(encoded[offset:offset + size].decode().map_err((_) => CodecFault.Malformed)?)
         offset += size
     return Ok(tokens)
+
+
+def transport_size(text: str) -> Result[int, CodecFault]:
+    """Read one canonical frame length up to the aggregate transport limit, including six-digit owner frames."""
+    if text == "" or len(text) > 8 or (len(text) > 1 and text.startswith("0")):
+        return Err(CodecFault.Malformed)
+    mut value = 0
+    for digit in text.encode():
+        if digit < 48 or digit > 57:
+            return Err(CodecFault.Malformed)
+        value = value * 10 + digit - 48
+    if value > MAX_GRAPH_TRANSPORT_BYTES:
+        return Err(CodecFault.Limit)
+    return Ok(value)
 
 
 def validate_field(field: CanonicalField) -> Result[None, CodecFault]:

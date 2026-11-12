@@ -161,7 +161,7 @@ impl TypeChecker {
             .body_ir
             .as_ref()
             .filter(|frame| {
-                frame.body.canonical.as_ref() == Some(&canonical)
+                frame.identity == canonical.render_compact()
                     && frame.body.span == owner
                     && frame.body.name == canonical.declaration_name
             })

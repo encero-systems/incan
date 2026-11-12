@@ -14,6 +14,7 @@ use incan_semantics_core::body_ir::BodyIrModule;
 struct PendingBodyValue {
     module: String,
     name: String,
+    span: incan_frontend::ast::Span,
     identity: String,
     declaration: Vec<u8>,
     local: Vec<u8>,
@@ -101,19 +102,17 @@ impl GraphBodyOutput {
             };
             let module_path = module_path.to_string_lossy().into_owned();
             for body in &lowered.bodies {
-                let Some(identity) = body.canonical.as_ref().map(|identity| identity.render_compact()) else {
-                    continue;
-                };
                 let Some(pending) = self
                     .values
                     .iter_mut()
-                    .find(|value| value.module == module_path && value.identity == identity)
+                    .find(|value| value.module == module_path && value.name == body.name && value.span == body.span)
                 else {
                     continue;
                 };
                 pending.body_ir = incan_semantics_core::executable_representation::encode_owner(
                     &lowered.module_id,
                     &module_path,
+                    &pending.identity,
                     body,
                 )
                 .map_err(|error| format!("Body IR owner frame output refused: {error}"))?;
@@ -145,6 +144,7 @@ impl GraphBodyOutput {
             .sort_by(|left, right| (&left.module, &left.identity).cmp(&(&right.module, &right.identity)));
         self.fallbacks
             .sort_by(|left, right| (&left.module, &left.identity).cmp(&(&right.module, &right.identity)));
+        let body_ir_bytes: usize = self.values.iter().map(|value| value.body_ir.len()).sum();
         let values: Vec<internal_models::CompiledBodyValue> = self
             .values
             .into_iter()
@@ -168,9 +168,14 @@ impl GraphBodyOutput {
                 reason: fallback.reason,
             })
             .collect();
+        let body_count = values.len();
         let outputs = internal_models::CompiledBodyOutputs { values, fallbacks };
         let encoded = internal_models::encode_compiled_body_outputs(outputs)
-            .map_err(|error| format!("compiled graph output refused: {error:?}"))?;
+            .map_err(|error| {
+                format!(
+                    "compiled graph output refused: {error:?} ({body_count} owner frames, {body_ir_bytes} raw Body IR bytes)"
+                )
+            })?;
         publish(&path, &encoded)
     }
 }
@@ -193,6 +198,7 @@ fn encoded_body_value(
     Ok(PendingBodyValue {
         module: module.to_owned(),
         name: fields.name.clone(),
+        span: fields.span,
         identity: identity.to_owned(),
         declaration,
         local,
