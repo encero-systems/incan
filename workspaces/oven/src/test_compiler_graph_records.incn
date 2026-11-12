@@ -248,7 +248,7 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     for key in published.keys:
         assert get(published.snapshot, key).map_err((error) => error.message())? is not None
 
-    default_source = "pub model RecordKey:\n    pub context: str = \"base\"\n    pub other: int = 1\n\n    pub def rendered(self) -> str:\n        return self.context\n"
+    default_source = "@derive(Eq)\npub model RecordKey:\n    \"\"\"One decorated record with independently witnessed field defaults.\"\"\"\n\n    pub context: str = \"base\"\n    pub other: int = 1\n\n    pub def rendered(self) -> str:\n        return self.context\n"
     default_projection = project_source("package", "src/default.incn", default_source)?
     default_owner = projected_owner(default_projection, "default:model:RecordKey:context")?
     model_owner = projected_owner(default_projection, "model:RecordKey")?

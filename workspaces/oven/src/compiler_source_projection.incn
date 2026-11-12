@@ -297,26 +297,22 @@ def field_default_records(
 
 
 def direct_member_starts(source: str) -> list[int]:
-    """Locate direct nominal members while bracketed multi-line defaults remain one member chunk."""
+    """Locate direct nominal members after any decorators while bracketed defaults remain one member chunk."""
     mut starts: list[int] = []
     mut offset = 0
     mut member_indent = -1
     mut depth = 0
-    mut first = true
     for line in source.split("\n"):
-        if first:
-            first = false
-        else:
-            content = line.strip()
-            indent = leading_whitespace(line)
-            if content != "" and not content.startswith("#"):
-                if member_indent < 0:
-                    member_indent = indent
-                if indent == member_indent and depth == 0:
-                    starts.append(offset)
-                depth += delimiter_delta(line)
-                if depth < 0:
-                    depth = 0
+        content = line.strip()
+        indent = leading_whitespace(line)
+        if content != "" and not content.startswith("#") and indent > 0:
+            if member_indent < 0:
+                member_indent = indent
+            if indent == member_indent and depth == 0:
+                starts.append(offset)
+            depth += delimiter_delta(line)
+            if depth < 0:
+                depth = 0
         offset += len(line) + 1
     return starts
 
