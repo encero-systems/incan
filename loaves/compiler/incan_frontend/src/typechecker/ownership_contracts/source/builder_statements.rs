@@ -368,6 +368,36 @@ impl Builder<'_> {
         ))
     }
 
+    /// Evaluate a checked collection index write once in source order, then write through the exact projected
+    /// owner. Dynamic element identities conservatively overlap in the flow graph, matching indexed reads.
+    pub(super) fn index_assignment(
+        &mut self,
+        assignment: &IndexAssignmentStmt,
+        span: Span,
+        incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        if self.checker.type_info.resolved_operator_call(span).is_some() {
+            return Err(Unavailable {
+                span,
+                reason: "overloaded index assignment needs its selected call contract".into(),
+            });
+        }
+        let mut path = self.place(&assignment.object)?;
+        path.place.projection.push(Projection::Element(assignment.index.span));
+        let incoming = self.evaluate_place(&assignment.object, incoming)?;
+        let incoming = self.expression(&assignment.index, incoming, false)?;
+        let incoming = self.expression(&assignment.value, incoming, true)?;
+        Ok(self.event(
+            incoming,
+            Event::Access {
+                place: path.place,
+                access: Access::Write,
+                through: path.through,
+            },
+            assignment.index.span,
+        ))
+    }
+
     /// Primitive scalar compound assignment reads its selected target before the right operand, then writes the
     /// same place. Overloaded operators remain calls whose access contract cannot be inferred from their spelling.
     pub(super) fn compound_assignment(
@@ -669,6 +699,7 @@ impl Builder<'_> {
             Statement::Assignment(assignment) => self.assignment(assignment, statement.span, incoming),
             Statement::TupleUnpack(unpack) => self.tuple_unpack(unpack, incoming),
             Statement::FieldAssignment(assignment) => self.field_assignment(assignment, incoming),
+            Statement::IndexAssignment(assignment) => self.index_assignment(assignment, statement.span, incoming),
             Statement::CompoundAssignment(assignment) => self.compound_assignment(assignment, statement.span, incoming),
             Statement::If(branch) => self.if_statement(branch, incoming),
             Statement::While(loop_) => {

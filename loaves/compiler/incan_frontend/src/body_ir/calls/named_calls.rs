@@ -569,6 +569,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             Some(Err(description)) => return self.unsupported_operand(description, scope, hir_span_value, out),
             None => {}
         }
+        let aggregate_source = self.aggregate_view_temporary_source(span, None, &bound.arguments);
         if let Some((access, _, _, component)) = self.type_info.selected_aggregate_view(span) {
             if bound.is_async {
                 return self.unsupported_operand(
@@ -580,7 +581,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             ty = super::returned_views::reference_authored_component(ty, access, &component);
         }
-        self.push_call_temp(target, bound.arguments, ty, scope, hir_span_value, false, out)
+        let result = self.push_call_temp(target, bound.arguments, ty, scope, hir_span_value, false, out);
+        self.record_aggregate_view_temporary_dependencies(&result, aggregate_source);
+        result
     }
 
     /// Replace only operands whose source display method was already selected by the accepting checker.

@@ -99,6 +99,11 @@ impl CheckedInputBody<'_> {
                     self.visit_operation_expression(&value.object, parameters, execution, seen)?;
                     self.visit_operation_expression(&value.value, parameters, execution, seen)?;
                 }
+                Statement::IndexAssignment(value) => {
+                    self.visit_operation_expression(&value.object, parameters, execution, seen)?;
+                    self.visit_operation_expression(&value.index, parameters, execution, seen)?;
+                    self.visit_operation_expression(&value.value, parameters, execution, seen)?;
+                }
                 // Every arm starts from the evaluated scrutinee; the match reaches what follows when one arm does.
                 Statement::Expr(Spanned {
                     node: Expr::Match(scrutinee, arms),
@@ -355,7 +360,7 @@ impl CheckedInputBody<'_> {
     ) -> Result<(), &'static str> {
         self.visit_operation_expression(receiver, parameters, execution, seen)?;
         let retained = super::super::builtins::retained_iterator_method(self.facts, expression.span).is_some();
-        let list = super::super::builtins::list_method_writes(self.facts, expression.span).is_some();
+        let place_method = super::super::builtins::builtin_place_method_writes(self.facts, expression.span).is_some();
         let view = super::super::builtins::byte_slice_view(self.facts, expression).is_some();
         if view {
             return Ok(());
@@ -363,23 +368,29 @@ impl CheckedInputBody<'_> {
         for argument in arguments {
             let value = match argument {
                 CallArg::Positional(value) => value,
-                CallArg::Named(_, value) if !list => value,
-                _ if list => return Err("operation coverage needs positional list method arguments"),
+                CallArg::Named(_, value) if !place_method => value,
+                _ if place_method => return Err("operation coverage needs positional builtin place method arguments"),
                 _ => return Err("operation coverage needs checked fixed call arguments"),
             };
             self.visit_operation_expression(value, parameters, execution, seen)?;
         }
-        if retained || list {
+        if self
+            .facts
+            .resolved_identity(expression.span)
+            .is_some_and(|identity| identity.kind == incan_semantics_core::SemanticSourceTargetKind::Variant)
+        {
+            return Ok(());
+        }
+        if retained || place_method {
             return Ok(());
         }
         if self
             .facts
-            .resolved_identity(expression.span)
-            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+            .protocols
+            .explicit_input_calls
+            .get(&expression.span)
+            .is_some_and(|call| call.receiver.is_some())
         {
-            return Ok(());
-        }
-        if !self.facts.native_associated_call(expression.span) {
             self.authenticate_method_receiver(expression, receiver)?;
         }
         self.record_invocation(expression.span, arguments, seen)
@@ -404,20 +415,20 @@ impl CheckedInputBody<'_> {
             .and_then(|loan| self.graph.loans.get(loan.0))
             .ok_or("method call has no checked receiver loan")?;
         let inner = super::super::builtins::view_call(receiver);
-        let authenticated = match self.call_place(receiver)? {
-            Some((source, _)) => source == loan.source,
-            None => match &loan.source.root {
-                flow::Root::Temporary {
-                    owner,
-                    expression: actual_expression,
-                    invocation,
-                } => {
-                    owner == self.canonical_owner()
-                        && *actual_expression == receiver.span
-                        && *invocation == expression.span
-                        && loan.source.projection.is_empty()
-                }
-                flow::Root::Binding(_) => loan
+        let authenticated = match &loan.source.root {
+            flow::Root::Temporary {
+                owner,
+                expression: actual_expression,
+                invocation,
+            } => {
+                owner == self.canonical_owner()
+                    && *actual_expression == receiver.span
+                    && *invocation == expression.span
+                    && loan.source.projection.is_empty()
+            }
+            flow::Root::Binding(_) => match self.call_place(receiver)? {
+                Some((source, _)) => source == loan.source,
+                None => loan
                     .parent
                     .and_then(|parent| self.graph.loans.get(parent.0))
                     .is_some_and(|parent| {
@@ -621,6 +632,13 @@ impl CheckedInputBody<'_> {
                     return Err("operation alias cannot infer computed property access");
                 }
                 place.projection.push(flow::Projection::Field(field.clone()));
+                Ok(Some((place, loan)))
+            }
+            Expr::Index(base, index) => {
+                let Some((mut place, loan)) = self.operation_borrowed_place(base, parameters)? else {
+                    return Ok(None);
+                };
+                place.projection.push(flow::Projection::Element(index.span));
                 Ok(Some((place, loan)))
             }
             _ => Ok(None),

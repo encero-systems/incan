@@ -5,6 +5,8 @@ use incan_lang::lang::builtins::BuiltinMethodId;
 use incan_lang::lang::surface::bytes_methods::BytesMethodId;
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::surface::iterator_methods::IteratorMethodId;
+use incan_lang::lang::surface::option_methods::OptionMethodId;
+use incan_lang::lang::surface::set_methods::SetMethodId;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
@@ -111,11 +113,18 @@ pub(crate) fn carried_view_binding(pattern: &Spanned<Pattern>, payload: usize) -
     }
 }
 
-/// Whether a method call is a builtin `list` method, and whether it changes its receiver in place: `Some(true)` for a
-/// write, `Some(false)` for a read. A trait or source method selected for the call is never a builtin.
-pub(super) fn list_method_writes(facts: &TypeCheckInfo, span: Span) -> Option<bool> {
+/// Whether a method call is a supported builtin place operation, and whether it changes its receiver in place:
+/// `Some(true)` for a write, `Some(false)` for a read. A trait or source method selected for the call is never a
+/// builtin. Registry identities, rather than method spellings, keep same-named source methods outside this boundary.
+pub(super) fn builtin_place_method_writes(facts: &TypeCheckInfo, span: Span) -> Option<bool> {
     match facts.resolved_builtin_method_call(span)? {
         operation @ BuiltinMethodId::List(_) => Some(operation.changes_receiver()),
+        operation @ BuiltinMethodId::Set(SetMethodId::Add | SetMethodId::Contains) => {
+            Some(operation.changes_receiver())
+        }
+        operation @ BuiltinMethodId::Option(OptionMethodId::IsSome | OptionMethodId::IsNone) => {
+            Some(operation.changes_receiver())
+        }
         _ => None,
     }
 }

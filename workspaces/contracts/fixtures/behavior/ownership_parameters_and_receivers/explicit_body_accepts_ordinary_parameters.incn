@@ -1,0 +1,23 @@
+# behavior: an explicit input body accepts passing owned storage to an ordinary inferred parameter (#2500)
+# expect-stdout:
+#   2
+
+class Graph:
+    pub values: list[int]
+
+    pub def read_view(self) -> Borrowed[Graph] from self:
+        """Borrow this graph's values."""
+        return self
+
+
+def ordinary_count(graph: Graph) -> int:
+    """Read through an ordinary inferred parameter."""
+    return len(graph.values)
+
+
+def main() -> None:
+    graph = Graph(values=[1, 2])
+    count = ordinary_count(graph)
+    reader = graph.read_view()
+    assert len(reader.values) == count
+    println(count)

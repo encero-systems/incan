@@ -1,0 +1,20 @@
+# behavior: an explicit borrowed body accepts a compound while-loop condition (#2500)
+# expect-stdout:
+#   2
+
+class Graph:
+    pub values: list[int]
+
+
+def counted(graph: Borrowed[Graph]) -> int:
+    """Count borrowed values under a compound loop condition."""
+    enabled = True
+    mut index = 0
+    while enabled and index < len(graph.values):
+        index += 1
+    return index
+
+
+def main() -> None:
+    graph = Graph(values=[1, 2])
+    println(counted(graph))
