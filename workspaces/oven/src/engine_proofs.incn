@@ -26,15 +26,23 @@ pub def prepare_report(
     editable = capture.in_reach
     frozen = capture.frozen
     document = JsonValue.object(
-        {"schema": JsonValue.string("incan.engine.proofs/1"), "run": JsonValue.string(run), "granularity": JsonValue.string(
+        {"schema": JsonValue.string("incan.engine.proofs/2"), "run": JsonValue.string(run), "granularity": JsonValue.string(
             "unit-record",
-        ), "unit_evaluations": JsonValue.int(produced.evaluations), "native_bakes": JsonValue.int(produced.native_bakes), "source_stats": JsonValue.int(
-            editable.stats,
-        ), "source_reads": JsonValue.int(editable.reads), "source_hashes": JsonValue.int(editable.hashes), "source_listings": JsonValue.int(
-            editable.listings,
-        ), "epoch_reads": JsonValue.int(produced.epoch_reads), "frozen_stats": JsonValue.int(frozen.stats), "frozen_reads": JsonValue.int(
-            frozen.reads,
-        ), "frozen_hashes": JsonValue.int(frozen.hashes)},
+        ), "unit_evaluations": JsonValue.int(produced.evaluations), "body_evaluations": JsonValue.int(
+            produced.body_evaluations,
+        ), "native_bakes": JsonValue.int(produced.native_bakes), "source_stats": JsonValue.int(editable.stats), "source_reads": JsonValue.int(
+            editable.reads,
+        ), "source_hashes": JsonValue.int(editable.hashes), "source_listings": JsonValue.int(editable.listings), "epoch_reads": JsonValue.int(
+            produced.epoch_reads,
+        ), "frozen_stats": JsonValue.int(frozen.stats), "frozen_reads": JsonValue.int(frozen.reads), "frozen_hashes": JsonValue.int(
+            frozen.hashes,
+        ), "plan_function_evaluations": JsonValue.int(
+            produced.plan_function_evaluations,
+        ), "plan_function_reuses": JsonValue.int(produced.plan_function_reuses), "lowering_demand_evaluations": JsonValue.int(
+            produced.lowering_demand_evaluations,
+        ), "lowering_demand_reuses": JsonValue.int(produced.lowering_demand_reuses), "native_interface_evaluations": JsonValue.int(
+            produced.native_interface_evaluations,
+        )},
     )
     selected = snapshot(store).map_err((error) => error.message())?
     return Ok(put(begin(selected), report_key(run), json_text(document)?.encode("utf-8")))

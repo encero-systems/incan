@@ -8,15 +8,20 @@ from std.environ import args, get_or
 from std.fs import Path
 from std.json import JsonValue
 from check_support import repository_root, write_stderr
+from driver_evidence import retain_driver_evidence
 from native_build import (
     NativeContext,
+    PendingToolBuild,
     StandardGeneration,
     StandardProfile,
     build_runtime,
-    build_shipped_tools_with_standard_profile,
+    build_candidate_standard_and_start_lsp,
+    build_oven_with_standard_profile,
     build_source_interfaces,
     build_source_tools,
     build_standard_packages,
+    cancel_tool_build,
+    finish_tool_build,
     publish_support,
     require_unique_runtime_root,
     standard_profiles,
@@ -25,12 +30,16 @@ from oven_tests import host_memory, shared_memory
 from release_support import (
     FAMILIES,
     TOOLCHAIN_DIRECTORY,
+    BackgroundStep,
     BaselineReport,
     Counts,
     ReleaseOptions,
+    ReleaseTrace,
     Step,
     append_bytes,
     append_timing,
+    append_timing_file,
+    cancel_background_step,
     check_baseline,
     counts_json,
     digest,
@@ -38,11 +47,16 @@ from release_support import (
     parse_release_options,
     reference_cache_identity,
     reference_cache_root,
+    reference_worker_arguments,
+    reclaim_paths,
+    record_tree_sample,
     reuse_reference_log,
     require_candidate_census,
     release_receipt,
     release_rust_cache_root,
     run_step,
+    start_background_step,
+    finish_background_step,
     shared_relocated_sysroot,
     store_reference_log,
     tree_bytes,
@@ -75,6 +89,7 @@ pub model ReleaseRun:
     pub seed_lsp: Path
     pub target: str
     pub started: Instant
+    pub trace: ReleaseTrace
 
 
 pub model Candidate:
@@ -83,6 +98,7 @@ pub model Candidate:
     pub context: NativeContext
     pub oven: Path
     pub lsp: Path
+    pub pending_lsp: Option[PendingToolBuild]
 
 
 pub model ReleaseTreeBytes:
@@ -102,6 +118,12 @@ pub model ReleaseTreeBytes:
 def main() -> None:
     """Run release qualification, reporting argument refusals as status 2 and release refusals as status 1."""
     arguments = args().unwrap_or([])
+    if len(arguments) > 1 and arguments[1] == "--reference-census":
+        match run_reference_worker(arguments[2:]):
+            Ok(_) => exit(0)
+            Err(message) =>
+                write_stderr(message + "\n")
+                exit(1)
     match parse_release_options(arguments[1:]):
         Ok(options) =>
             match release(options):
@@ -124,11 +146,11 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     2. Build the source support closure without an installed runtime provider.
     3. Build and select the candidate compiler, runtime, and standard Loaves.
     4. Build and pack the shipped Oven and language server.
-    5. Measure the seed census that defines the integration inventory and passing outcomes.
+    5. Join the seed census that defines the integration inventory and passing outcomes.
     6. Install the bundle into a second home, then measure memory and the candidate census once in that context.
     7. When requested, rebuild DD-0010's six named artifacts and require byte identity.
     """
-    run = prepare_release(options)?
+    mut run = prepare_release(options)?
 
     # 1. A release builds a full committed tree while its orchestration remains this compiled Incan program.
     phase(run, "checkout")?
@@ -136,34 +158,167 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     phase(run, "seed-home")?
     prepare_candidate_home(run)?
 
-    # 2. The seed compiles the support helper; that helper publishes one fresh source support generation.
-    phase(run, "source-closure")?
-    mut candidate = build_source_closure(run)?
+    # 2. The seed census starts once its only inputs exist, yielding workers while candidate production proceeds.
+    reference = match start_reference_census(run):
+        Ok(started) => started
+        Err(message) =>
+            phase(run, "reference-verification")?
+            return Err(message)
+
+    match phase(run, "source-closure"):
+        Ok(_) => pass
+        Err(message) =>
+            _ = cancel_background_step(reference)
+            return Err(message)
+    mut candidate = match build_source_closure(run):
+        Ok(built) => built
+        Err(message) =>
+            _ = cancel_background_step(reference)
+            return Err(message)
 
     # 3. Candidate compiler selection precedes runtime and standard production through that compiler.
-    phase(run, "candidate-compiler")?
-    candidate = build_candidate_compiler(run, candidate)?
+    match phase(run, "candidate-compiler"):
+        Ok(_) => pass
+        Err(message) =>
+            _ = cancel_background_step(reference)
+            return Err(message)
+    candidate = match build_candidate_compiler(run, candidate):
+        Ok(built) => built
+        Err(message) =>
+            _ = cancel_background_step(reference)
+            return Err(message)
 
     # 4. Shipped tools and archive are all built from the selected source and candidate home.
-    phase(run, "bundle")?
-    candidate = build_bundle(run, candidate)?
+    match phase(run, "bundle"):
+        Ok(_) => pass
+        Err(message) =>
+            _ = cancel_background_step(reference)
+            return Err(message)
+    candidate = match build_bundle(run, candidate):
+        Ok(built) => built
+        Err(message) =>
+            _ = cancel_background_step(reference)
+            return Err(message)
+
+    if not run.options.prove_fixed_point:
+        reclaim(run, "build-lane", [run.paths.lane])?
 
     # 5. The seed defines the independent case inventory and outcomes the installed candidate must retain.
     phase(run, "reference-verification")?
-    reference = reference_census(run)?
+    reference_log = finish_reference_census(run, reference)?
+    reclaim(run, "reference-scratch", [run.paths.output.joinpath("reference-contracts-scratch")])?
+    if not run.options.prove_fixed_point:
+        reclaim(run, "source-targets", generated_source_targets(run))?
 
     # 6. The fresh installation owns the candidate census and the release's one memory measurement.
     phase(run, "installed-verification")?
     installed = installed_verification(run, candidate)?
     candidate_report = candidate_census(run, installed)?
-    compare_reference(run, reference, candidate_report)?
+    compare_reference(run, reference_log, candidate_report)?
 
     # 7. Fixed-point work is an explicit release gate because it intentionally doubles native production.
     if run.options.prove_fixed_point:
         phase(run, "fixed-point")?
         prove_fixed_point(candidate.context)?
+        reclaim(run, "fixed-point-work", [run.paths.lane, run.paths.home, run.paths.source])?
+    else:
+        reclaim(run, "qualified-build-inputs", [run.paths.home, run.paths.source])?
     complete_receipt(run, candidate_report.counts)?
     return Ok(run.paths.output.joinpath("receipt.json"))
+
+
+def start_reference_census(run: ReleaseRun) -> Result[BackgroundStep, str]:
+    """Start the seed census worker with bounded case concurrency and phase-private timing output."""
+    run.paths.output
+        .joinpath("reference-timings.tsv")
+        .write_text("", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    worker = release_step(
+        run,
+        "reference-worker",
+        run.seed_oven.0,
+        reference_worker_arguments(
+            run.paths.source,
+            run.paths.output,
+            run.seed_home,
+            run.seed_lsp,
+            run.options.jobs,
+            run.options.timeout_seconds,
+        ),
+        run.paths.source,
+        build_environment(run, run.seed_home, run.seed_oven),
+        20,
+    )
+    return start_background_step(worker)
+
+
+def finish_reference_census(run: ReleaseRun, worker: BackgroundStep) -> Result[Path, str]:
+    """Join the seed census, merge its complete timings and preserve its original refusal text."""
+    outcome = finish_background_step(worker, run.options.timeout_seconds * 20)
+    append_timing_file(run.paths.output.joinpath("timings.tsv"), run.paths.output.joinpath("reference-timings.tsv"))?
+    status, elapsed = outcome?
+    append_timing(run.paths.output.joinpath("timings.tsv"), "reference-overlap", elapsed)?
+    if status != 0:
+        log = run.paths.output.joinpath("reference-worker.log")
+        message = log.read_text("utf-8", "replace").map_err((error) => error.message())?.strip()
+        if message != "":
+            return Err(message)
+        return Err(f"reference worker failed with status {status}; log: {log.0}")
+    return Ok(run.paths.output.joinpath("reference-contracts.log"))
+
+
+def run_reference_worker(arguments: list[str]) -> Result[None, str]:
+    """Reconstruct the immutable seed census context in a child that can overlap candidate production."""
+    if len(arguments) != 6:
+        return Err("internal reference census needs SOURCE OUTPUT SEED_HOME SEED_LSP JOBS TIMEOUT")
+    source = Path(arguments[0]).resolve().map_err((error) => error.message())?
+    output = Path(arguments[1]).resolve().map_err((error) => error.message())?
+    seed_home = Path(arguments[2]).resolve().map_err((error) => error.message())?
+    jobs = positive_worker_value(arguments[4], "jobs")?
+    timeout_seconds = positive_worker_value(arguments[5], "timeout")?
+    paths = ReleasePaths(
+        output=output,
+        source=source,
+        lane=output.joinpath("lane"),
+        home=output.joinpath("build-home"),
+        toolchain=output.joinpath("build-home").joinpath(TOOLCHAIN_DIRECTORY),
+        bundle=output.joinpath("bundle"),
+    )
+    mut run = ReleaseRun(
+        root=source,
+        options=ReleaseOptions(
+            source_sha="0000000000000000000000000000000000000000",
+            output=output,
+            keep_trees=false,
+            prove_fixed_point=false,
+            jobs=jobs,
+            timeout_seconds=timeout_seconds,
+        ),
+        paths=paths,
+        seed_home=seed_home,
+        seed_oven=seed_home.joinpath("bin/incan"),
+        seed_lsp=Path(arguments[3]),
+        target="",
+        started=Instant.now(),
+        trace=ReleaseTrace.open(output.joinpath("trace"))?,
+    )
+    run.trace.phase("reference-verification")?
+    _ = reference_census(run, output.joinpath("reference-timings.tsv"))?
+    run.trace.complete()?
+    return Ok(None)
+
+
+def positive_worker_value(text: str, name: str) -> Result[int, str]:
+    """Parse one positive internal worker value without accepting signs or whitespace."""
+    if text == "":
+        return Err(f"reference census {name} must be positive")
+    for character in text:
+        if character not in "0123456789":
+            return Err(f"reference census {name} must be positive")
+    value = int(text)
+    if value < 1:
+        return Err(f"reference census {name} must be positive")
+    return Ok(value)
 
 
 def prepare_release(options: ReleaseOptions) -> Result[ReleaseRun, str]:
@@ -188,6 +343,7 @@ def prepare_release(options: ReleaseOptions) -> Result[ReleaseRun, str]:
     paths.bundle.mkdir(true, true).map_err((error) => error.message())?
     paths.lane.joinpath("out").mkdir(true, true).map_err((error) => error.message())?
     paths.output.joinpath("timings.tsv").write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+    trace = ReleaseTrace.open(paths.output.joinpath("trace"))?
     run = ReleaseRun(
         root=root,
         options=options,
@@ -197,6 +353,7 @@ def prepare_release(options: ReleaseOptions) -> Result[ReleaseRun, str]:
         seed_lsp=seed_lsp,
         target=target,
         started=Instant.now(),
+        trace=trace,
     )
     phase(run, "initializing")?
     return Ok(run)
@@ -315,13 +472,14 @@ def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
     _ = build_runtime(context, helper, Some(interfaces), true, "candidate-")?
     require_unique_runtime_root(context)?
     build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))?
-    return Ok(Candidate(context=context, oven=conductor, lsp=Path("")))
+    return Ok(Candidate(context=context, oven=conductor, lsp=Path(""), pending_lsp=None))
 
 
 def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
     """Build the source compiler, then rebuild checking interfaces and shipped providers through it."""
     driver_started = Instant.now()
-    relink(
+    driver_span = run.trace.begin("driver-build")?
+    driver_result = relink(
         Relink(
             repo=run.paths.source,
             bootstrap=run.paths.lane.joinpath("bootstrap"),
@@ -332,8 +490,11 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
             refresh=false,
             log=run.paths.output.joinpath("driver-build.log"),
         ),
-    )?
+    )
+    run.trace.finish(driver_span)?
+    driver_result?
     append_timing(run.paths.output.joinpath("timings.tsv"), "driver-build", driver_started.elapsed().as_secs_f64())?
+    retain_driver_build_evidence(run)?
     context = native_context(run, candidate.oven, run.paths.home)
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
     interfaces_started = Instant.now()
@@ -345,19 +506,52 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
     )?
     _ = build_runtime(context, helper, Some(interfaces), true)?
     require_unique_runtime_root(context)?
-    build_standard_packages(context, helper, "candidate-", [StandardProfile.Release])?
-    return Ok(Candidate(context=context, oven=candidate.oven, lsp=candidate.lsp))
+    lsp, pending = build_candidate_standard_and_start_lsp(context, helper, "candidate-")?
+    return Ok(Candidate(context=context, oven=candidate.oven, lsp=lsp, pending_lsp=pending))
+
+
+def retain_driver_build_evidence(run: ReleaseRun) -> Result[None, str]:
+    """Retain compiler-qualified unit identities and dependency scans before release scratch is reclaimed."""
+    manifest = read_json(run.paths.toolchain.joinpath("toolchain.json"))?
+    mut sysroot_text = manifest_string(manifest, "sysroot")?
+    if not sysroot_text.startswith("/"):
+        sysroot_text = run.paths.toolchain.joinpath(sysroot_text).0
+    sysroot = Path(sysroot_text)
+    mut sdk_settings = Path("")
+    sdk = get_or("SDKROOT", "")
+    if sdk != "":
+        sdk_settings = Path(sdk).joinpath("SDKSettings.json")
+    target = run.paths.source.joinpath("loaves/toolchain/incan-rustc-driver/target/incan/rust/release")
+    retained = retain_driver_evidence(target, run.paths.output, sysroot.joinpath("bin/rustc"), sysroot, sdk_settings)?
+    return append_bytes(run.paths.output.joinpath("timings.tsv"), "driver-unit-evidence", retained.bytes)
 
 
 def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
     """Build the shipped tools, copy the bundle tools, and pack the installed candidate toolchain."""
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
-    tools = build_shipped_tools_with_standard_profile(candidate.context, helper, "candidate-", StandardProfile.Debug)?
+    overlap = candidate.pending_lsp.is_some()
+    oven = match build_oven_with_standard_profile(
+        candidate.context,
+        helper,
+        "candidate-",
+        StandardProfile.Debug,
+        overlap,
+    ):
+        Ok(built) => built
+        Err(message) =>
+            if let Some(pending) = candidate.pending_lsp:
+                _ = cancel_tool_build(pending)
+            return Err(message)
+
+    lsp = match candidate.pending_lsp:
+        Some(pending) => finish_tool_build(candidate.context, pending)?
+        None => candidate.lsp
+
     bundle_oven = run.paths.bundle.joinpath("incan")
-    _ = tools.oven.copy(bundle_oven, true, true).map_err((error) => error.message())?
+    _ = oven.copy(bundle_oven, true, true).map_err((error) => error.message())?
     context = native_context(run, bundle_oven, run.paths.home)
     bundle_lsp = run.paths.bundle.joinpath("incan-lsp")
-    _ = tools.lsp.copy(bundle_lsp, true, true).map_err((error) => error.message())?
+    _ = lsp.copy(bundle_lsp, true, true).map_err((error) => error.message())?
     require_release_step(
         run,
         release_step(
@@ -369,10 +563,10 @@ def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str
             build_environment(run, run.paths.home, bundle_oven),
         ),
     )?
-    return Ok(Candidate(context=context, oven=bundle_oven, lsp=bundle_lsp))
+    return Ok(Candidate(context=context, oven=bundle_oven, lsp=bundle_lsp, pending_lsp=None))
 
 
-def reference_census(run: ReleaseRun) -> Result[Path, str]:
+def reference_census(run: ReleaseRun, timings: Path) -> Result[Path, str]:
     """Reuse or measure the released seed against the same content-identified committed contract tree."""
     project = run.paths.source.joinpath("workspaces/contracts")
     log = run.paths.output.joinpath("reference-contracts.log")
@@ -389,15 +583,12 @@ def reference_census(run: ReleaseRun) -> Result[Path, str]:
         match census_results(cached):
             Ok(_) =>
                 reuse_reference_log(cached, log)?
-                append_timing(
-                    run.paths.output.joinpath("timings.tsv"),
-                    "reference-cache-hit",
-                    cache_started.elapsed().as_secs_f64(),
-                )?
+                append_timing(timings, "reference-cache-hit", cache_started.elapsed().as_secs_f64())?
                 return Ok(log)
             Err(_) => pass
-    require_release_step(
+    require_release_step_at(
         run,
+        timings,
         release_step(
             run,
             "reference-runner-build",
@@ -410,8 +601,9 @@ def reference_census(run: ReleaseRun) -> Result[Path, str]:
     runner = project.joinpath("target/incan/release/bin/contracts")
     mut environment = build_environment(run, run.seed_home, run.seed_oven)
     environment["INCAN_LSP"] = run.seed_lsp.0
-    code = timed_release_step(
+    code = timed_release_step_at(
         run,
+        timings,
         census_step(run, "reference-contracts", runner, run.seed_oven, environment, log, false),
     )?
     if code > 1:
@@ -419,11 +611,7 @@ def reference_census(run: ReleaseRun) -> Result[Path, str]:
     _ = census_results(log)?
     cache_started = Instant.now()
     store_reference_log(log, cached)?
-    append_timing(
-        run.paths.output.joinpath("timings.tsv"),
-        "reference-cache-store",
-        cache_started.elapsed().as_secs_f64(),
-    )?
+    append_timing(timings, "reference-cache-store", cache_started.elapsed().as_secs_f64())?
     return Ok(log)
 
 
@@ -499,7 +687,7 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path
     environment["INCAN_RELEASE_ARCHIVE"] = run.paths.bundle.joinpath("toolchain.tar.zst").0
     environment["INCAN_BUILDER_HOME"] = run.paths.home.0
     environment["INCAN_BUILDER_SOURCE"] = run.paths.source.0
-    require_release_step(
+    require_linked_release_step(
         run,
         release_step(
             run,
@@ -523,7 +711,18 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path
     runs = run.paths.output.joinpath("ci").glob("run.*").map_err((error) => error.message())?
     if len(runs) != 1 or not runs[0].joinpath("contracts.log").is_file():
         return Err("expected one installed census")
-    return Ok(runs[0].joinpath("contracts.log"))
+    log = runs[0].joinpath("contracts.log")
+    _ = record_tree_sample(
+        run.paths.output,
+        run.paths.output.joinpath("tree-samples.tsv"),
+        "installed-verification-complete",
+    )?
+    reclaim(
+        run,
+        "installed-verification-scratch",
+        [verification, home, runs[0].joinpath("runner"), runs[0].joinpath("scratch"), runs[0].joinpath("lsp-scratch")],
+    )?
+    return Ok(log)
 
 
 def compare_reference(run: ReleaseRun, reference: Path, candidate: &BaselineReport) -> Result[None, str]:
@@ -579,6 +778,7 @@ def census_step(
         directory=Some(run.paths.source),
         log=log,
         timeout_seconds=run.options.timeout_seconds * 20,
+        trace=Some(run.trace),
     )
 
 
@@ -595,6 +795,7 @@ def native_context(run: ReleaseRun, builder: Path, home: Path) -> NativeContext:
         jobs=run.options.jobs,
         memory=shared_memory(host_memory()),
         timeout_seconds=run.options.timeout_seconds,
+        trace=Some(run.trace),
     )
 
 
@@ -729,16 +930,22 @@ def release_step(
         directory=Some(directory),
         log=run.paths.output.joinpath(f"{name}.log"),
         timeout_seconds=run.options.timeout_seconds * timeout_multiplier,
+        trace=Some(run.trace),
     )
 
 
 def timed_release_step(run: ReleaseRun, child: Step) -> Result[int, str]:
     """Run one release phase and append its wall duration even when the child refuses."""
+    return timed_release_step_at(run, run.paths.output.joinpath("timings.tsv"), child)
+
+
+def timed_release_step_at(run: ReleaseRun, timings: Path, child: Step) -> Result[int, str]:
+    """Run one release child while directing its timing row to an exclusive writer's file."""
     name = str(child.name)
     log = child.log.clone()
     started = Instant.now()
     outcome = run_step(child)
-    append_timing(run.paths.output.joinpath("timings.tsv"), name, started.elapsed().as_secs_f64())?
+    append_timing(timings, name, started.elapsed().as_secs_f64())?
     code = match outcome:
         Ok(observed) => observed
         Err(message) => return Err(f"{message}\n{log_tail(log)}")
@@ -756,9 +963,51 @@ def require_release_step(run: ReleaseRun, child: Step) -> Result[None, str]:
     return Ok(None)
 
 
+def require_linked_release_step(run: ReleaseRun, mut child: Step) -> Result[None, str]:
+    """Run one release child below a span whose identity its process can inherit for nested trace records."""
+    span = run.trace.begin(child.name)?
+    child.environment["INCAN_RELEASE_TRACE_DIR"] = run.paths.output.joinpath("trace").0
+    child.environment["INCAN_RELEASE_TRACE_PARENT"] = span.id
+    child.trace = None
+    outcome = require_release_step(run, child)
+    run.trace.finish(span)?
+    return outcome
+
+
+def require_release_step_at(run: ReleaseRun, timings: Path, child: Step) -> Result[None, str]:
+    """Require one release child while retaining its duration in the selected exclusive timing file."""
+    name = str(child.name)
+    log = child.log.clone()
+    code = timed_release_step_at(run, timings, child)?
+    if code != 0:
+        return Err(f"{name} failed with status {code}; log: {log.0}\n{log_tail(log)}")
+    return Ok(None)
+
+
 def phase(run: ReleaseRun, name: str) -> Result[None, str]:
     """Publish a refused receipt naming the phase before any of its work starts."""
+    _ = record_tree_sample(run.paths.output, run.paths.output.joinpath("tree-samples.tsv"), f"before-{name}")?
+    run.trace.phase(name)?
     return write_receipt(run, name, "refused", 1, None, JsonValue.null(), JsonValue.null())
+
+
+def generated_source_targets(run: ReleaseRun) -> list[Path]:
+    """Name release-produced target roots whose binaries have already moved to the lane, home, or bundle."""
+    return [
+        run.paths.source.joinpath("workspaces/oven/target"),
+        run.paths.source.joinpath("workspaces/contracts/target"),
+        run.paths.source.joinpath("loaves/toolchain/incan-lsp/target"),
+        run.paths.source.joinpath("loaves/toolchain/incan-rustc-driver/target"),
+        run.paths.source.joinpath("loaves/compiler/incan_native_runtime/target"),
+    ]
+
+
+def reclaim(run: ReleaseRun, label: str, paths: list[Path]) -> Result[None, str]:
+    """Reclaim one completed phase's exact scratch roots and retain the measured byte reduction."""
+    reclaimed = reclaim_paths(paths)?
+    append_bytes(run.paths.output.joinpath("timings.tsv"), f"reclaimed/{label}", reclaimed)?
+    _ = record_tree_sample(run.paths.output, run.paths.output.joinpath("tree-samples.tsv"), f"after-{label}")?
+    return Ok(None)
 
 
 def complete_receipt(run: ReleaseRun, counts: Counts) -> Result[None, str]:
@@ -778,6 +1027,7 @@ def complete_receipt(run: ReleaseRun, counts: Counts) -> Result[None, str]:
         remove_passing_work_trees(run)?
     retained = measure_release_tree_bytes(run)?
     record_release_tree_bytes(run.paths.output.joinpath("timings.tsv"), "", retained)?
+    run.trace.complete()?
     return write_receipt(run, "complete", "passed", 0, Some(counts), oven_tests, release_tree_bytes_json(retained))
 
 

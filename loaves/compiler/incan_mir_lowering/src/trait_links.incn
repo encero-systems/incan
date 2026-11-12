@@ -18,16 +18,18 @@ pub def validate_project_implementation(
     module: &BodyIrModule,
     implementation: &TraitImplementation,
     modules: &list[BodyIrModule],
+    retained: &BodyIrModule,
 ) -> Result[None, str]:
     """
-    Validate one trait implementation record of `module` against every module of the project.
+    Validate one trait implementation record against the current module slice and retained joined project authority.
 
     A record whose trait and filling body belong to this module is the module's own to validate. A record of an
     imported trait names a slot another module declares: it holds only when this module retains the adopter's layout,
     the adopter's own method or the slot's own default fills it, and an adopter-owned body remains retained. A package
     default holds by its checked identity until a call demands its executable body ([`is_imported_slot`]). Nor has a
     Rust trait's slot: it holds when the adopter's own adoption lists it and some module retains the filling body.
-    Matching spellings never establish any of these.
+    A continuation may carry an unchanged declaring module only in `retained`; matching spellings never establish any
+    of these facts.
     """
     if module.is_well_formed_trait_implementation(implementation):
         return Ok(None)
@@ -41,17 +43,24 @@ pub def validate_project_implementation(
         if (
             implementation.implementation == implementation.method
             or retains_body(modules, implementation.implementation)
+            or retained_body(retained, implementation.implementation)
         ):
             return Ok(None)
         return Err("invalid Body IR trait implementation without a retained declaration")
     # A Rust trait has no declaring project module; the adopter's own adoption record names its slots instead.
     if adopted_rust_slot(module, implementation):
-        if retains_body(modules, implementation.implementation):
+        if (
+            retains_body(modules, implementation.implementation)
+            or retained_body(retained, implementation.implementation)
+        ):
             return Ok(None)
         return Err("invalid Body IR Rust trait implementation without a retained declaration")
-    if not declares_slot(modules, implementation.method):
+    if not declares_slot(modules, implementation.method) and not retained_declares_slot(retained, implementation.method):
         return Err("invalid Body IR trait implementation without its declaring trait")
-    if not retains_body(modules, implementation.implementation):
+    if (
+        not retains_body(modules, implementation.implementation)
+        and not retained_body(retained, implementation.implementation)
+    ):
         return Err("invalid Body IR trait implementation without a retained declaration")
     return Ok(None)
 
@@ -147,6 +156,15 @@ def module_declares_slot(module: &BodyIrModule, slot: &CanonicalSymbolId) -> boo
     return false
 
 
+def retained_declares_slot(retained: &BodyIrModule, slot: &CanonicalSymbolId) -> bool:
+    """Whether the already validated joined context retains the trait identity enclosing this slot."""
+    for protocol_position in range(len(retained.trait_declarations)):
+        declaration = borrowed_at(retained.trait_declarations, protocol_position)
+        if declaration.origin == slot.origin and contains(declaration, slot):
+            return true
+    return false
+
+
 def retains_body(modules: &list[BodyIrModule], identity: &CanonicalSymbolId) -> bool:
     """Whether some module retains the filling body under its canonical direct-call identity."""
     for module_position in range(len(modules)):
@@ -180,6 +198,15 @@ def module_retains_body(module: &BodyIrModule, identity: &CanonicalSymbolId) -> 
                     return true
             None => pass
     return false
+
+
+def retained_body(retained: &BodyIrModule, identity: &CanonicalSymbolId) -> bool:
+    """Whether the already validated joined context retains this canonical body or linked declaration."""
+    for body_position in range(len(retained.bodies)):
+        body = borrowed_at(retained.bodies, body_position)
+        if body.canonical == Some(identity.clone()):
+            return true
+    return module_retains_body(retained, identity)
 
 
 pub def contains(owner: CanonicalSymbolId, member: CanonicalSymbolId) -> bool:

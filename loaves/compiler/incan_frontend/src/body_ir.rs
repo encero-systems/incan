@@ -153,7 +153,8 @@ pub fn build_body_ir_module(
     context: &BodyIrContext<'_>,
 ) -> bir::BodyIrModule {
     let mut module = build_body_ir_module_unsettled(program, module_path, type_info, context);
-    shared_reads::retain_modules(std::slice::from_mut(&mut module), context.modules);
+    let selected = selected_body_identities(type_info);
+    shared_reads::retain_modules_with_selected(std::slice::from_mut(&mut module), context.modules, &selected);
     module
 }
 
@@ -166,7 +167,8 @@ pub fn build_body_ir_module_unsettled(
     context: &BodyIrContext<'_>,
 ) -> bir::BodyIrModule {
     let mut module = build_module_seed(program, module_path, type_info, context);
-    retain_module_representations(&mut module, program, type_info, context.modules);
+    let selected = selected_body_identities(type_info);
+    retain_module_representations(&mut module, program, type_info, context.modules, &selected);
     module
 }
 
@@ -174,6 +176,32 @@ pub fn build_body_ir_module_unsettled(
 /// modules are immutable context whose already-published signatures may participate but cannot be refined here.
 pub fn settle_shared_reads(modules: &mut [bir::BodyIrModule], context: &[bir::BodyIrModule]) {
     shared_reads::retain_modules(modules, context);
+}
+
+/// Settle shared reads for freshly lowered owners while treating graph-selected owners as immutable final Body IR.
+/// Selected bodies remain visible to signature and field lookups, but no representation pass may rewrite them.
+pub fn settle_shared_reads_with_selected(
+    modules: &mut [bir::BodyIrModule],
+    context: &[bir::BodyIrModule],
+    selected: &HashSet<CanonicalSymbolId>,
+) {
+    shared_reads::retain_modules_with_selected(modules, context, selected);
+}
+
+/// Return the canonical owners whose final Body IR was selected from the graph for this checked module.
+pub fn selected_body_identities(type_info: &TypeCheckInfo) -> HashSet<CanonicalSymbolId> {
+    type_info
+        .reused_callable_bodies
+        .values()
+        .filter_map(|body| body.canonical.clone())
+        .collect()
+}
+
+/// Report whether a body is a graph-selected final owner that representation passes must leave immutable.
+fn body_is_selected(body: &bir::Body, selected: &HashSet<CanonicalSymbolId>) -> bool {
+    body.canonical
+        .as_ref()
+        .is_some_and(|identity| selected.contains(identity))
 }
 
 /// The declarations-only Body IR one member of an import cycle contributes to the other members' context before its

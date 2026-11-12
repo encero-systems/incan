@@ -33,7 +33,7 @@ pub(crate) fn produce_declaration(
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
             "declaration".into(),
-            "incan.checker-free-functions/10".into(),
+            crate::checker_records::GRAPH_BODY_RECORD_PROFILE.into(),
         ],
     );
     Ok(fields)
@@ -85,7 +85,7 @@ pub(super) fn encode_final(
             "header".into(),
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
-            "incan.checker-free-functions/10".into(),
+            crate::checker_records::GRAPH_BODY_RECORD_PROFILE.into(),
         ],
     );
     Ok(fields)
@@ -195,8 +195,6 @@ pub(super) fn validate(view: &CheckedBodyView) -> Result<(), NodeBindingError> {
         || !view.local.dictionary.is_empty()
         || !view.local.diagnostic_slots.is_empty()
         || !view.local.warning_slots.is_empty()
-        || view.local.order.mutation != 0
-        || view.local.order.dictionary != 0
     {
         return Err(NodeBindingError::Unsupported("deferred effect or diagnostic ordering"));
     }

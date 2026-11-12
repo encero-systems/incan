@@ -176,6 +176,13 @@ pub def absolute_manifest(manifest: JsonValue, base: str) -> Result[str, str]:
                 if text != "":
                     fields[key] = JsonValue.string(absolute(text, base))
             None => pass
+    match manifest.get("compiler_records"):
+        Some(value) =>
+            mut records = value.expect_object().map_err((error) => error.message())?
+            root = records["root"].expect_str().map_err((error) => error.message())?
+            records["root"] = JsonValue.string(absolute(root, base))
+            fields["compiler_records"] = JsonValue.object(records)
+        None => pass
     return JsonValue.object(fields).to_pretty_json().map_err((error) => error.message())
 
 

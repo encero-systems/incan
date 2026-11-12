@@ -2,21 +2,34 @@
 
 from rust::incan_loaf_names import native_crate_name
 from rust::std::process import Command, Stdio
+from rust::std::fs import remove_dir_all
 from std.fs import Path
+from std.json import parse
 from driver_command import driver_command
 from codegen import compiled_arguments
 from darwin_executable import normalize_release_executable
 from bakery import bakery
 from compiler_refusals import compile_or_replay
 from compiler_worker import compile_resident, served_resident
-from files import open_stream, read
+from files import discard_file, open_stream, read
 from observation import trace_boundary
-from publication import publish
+from publication import publish, publish_binary
 from rust_facts import refresh as refresh_rust_facts
 from shared_link import shared_arguments
 from toolchain import Toolchain
 from unit import UnitDescription, dependency_source_roots
 from unit_freshness import Key, artifact_identity, unit_key
+from compiler_body_values import SelectedBodyPage
+
+
+pub model PlanRecordCounts:
+    """Actual lowering producer work observed for one records-engine compiler activation."""
+
+    pub plan_evaluations: int = 0
+    pub plan_reuses: int = 0
+    pub lowering_demand_evaluations: int = 0
+    pub lowering_demand_reuses: int = 0
+    pub native_interface_evaluations: int = 0
 
 
 pub def compile_prepared_unit(
@@ -26,6 +39,7 @@ pub def compile_prepared_unit(
     known_key: Option[Key] = None,
     reason: str = "no stored build",
     development: bool = false,
+    graph_body_records: Option[list[SelectedBodyPage]] = None,
 ) -> Result[i32, str]:
     """
     Compile one prepared unit without dependency selection or recursive preparation.
@@ -46,7 +60,7 @@ pub def compile_prepared_unit(
     output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
     # 2. Native flags match the profile and the caller's explicit linkage request.
     executable = unit.kind in ["program", "test"]
-    native = compiled_arguments(
+    mut native = compiled_arguments(
         unit.profile,
         key.codegen,
         unit.project_root,
@@ -54,6 +68,27 @@ pub def compile_prepared_unit(
         dependency_source_roots(unit),
         toolchain.sysroot,
     )? + shared_arguments(unit, development)?
+    if let Some(records) = graph_body_records:
+        records_path = Path(f"{path.0}.graph-body-records")
+        if records_path.exists():
+            remove_dir_all(records_path.0).map_err((error) => f"cannot replace selected plan inputs: {error}")?
+        records_path.mkdir(true, true).map_err((error) => f"{records_path.0}: {error.message()}")?
+        generation = match unit.checked_context:
+            Some(value) => value
+            None => return Err("records lowering requires the complete compiler context")
+        publish_binary(records_path.joinpath("producer-profile"), generation.encode("utf-8"))?
+        for page in records:
+            publish_binary(records_path.joinpath(page.key), page.value)?
+        native += ["--graph-body-records", records_path.0]
+        native += ["--plan-record-products", records_path.0]
+        output_path = Path(f"{path.0}.graph-body-output")
+        discard_file(output_path)
+        native += ["--graph-body-output", output_path.0]
+        report = Path(f"{path.0}.graph-plan-report")
+        if report.exists():
+            remove_dir_all(report.0).map_err((error) => f"cannot replace plan record report {report.0}: {error}")?
+        report.mkdir(true, true).map_err((error) => f"cannot create plan record report {report.0}: {error.message()}")?
+        native += ["--plan-record-report", report.0]
     invocation = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
     # 3. Refusal replay preserves the owner's request-local console routing.
     trace_boundary("compiler_request")
@@ -61,6 +96,56 @@ pub def compile_prepared_unit(
     if code == 0 and executable:
         normalize_release_executable(output, unit.profile)?
     return Ok(code)
+
+
+pub def graph_body_output_path(unit: UnitDescription, key: Key) -> Path:
+    """Name the invocation sidecar written beside this exact described unit without publishing another descriptor."""
+    directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
+    return directory.joinpath(f"{described_by(key)}.unit.json.graph-body-output")
+
+
+pub def plan_record_counts(unit: UnitDescription, key: Key) -> Result[PlanRecordCounts, str]:
+    """Count only loss-checked plan products that the lowering reports as evaluated or reused for this request."""
+    report = plan_record_report_path(unit, key)
+    mut counts = PlanRecordCounts()
+    if not report.is_dir():
+        return Ok(counts)
+    for entry in report.iterdir().map_err((error) => f"cannot read plan record report {report.0}: {error.message()}")?:
+        if not entry.is_file() or not entry.name().endswith(".event"):
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => f"cannot read plan record event {entry.0}: {error.message()}")?
+        event = parse(text).map_err((error) => f"cannot decode plan record event {entry.0}: {error.message()}")?
+        reused = event.require("reused").map_err((error) => error.message())?.expect_bool().map_err(
+            (error) => error.message(),
+        )?
+        function = event.require("function").map_err((error) => error.message())?.expect_str().map_err(
+            (error) => error.message(),
+        )?
+        entry_role = event.get("role") is not None
+        if reused:
+            counts.plan_reuses += 1
+            if not entry_role:
+                counts.lowering_demand_reuses += 1
+        else:
+            counts.plan_evaluations += 1
+            if not entry_role:
+                counts.lowering_demand_evaluations += 1
+    interface = report.joinpath("native-interface.json")
+    if interface.is_file():
+        value = parse(interface.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
+            (error) => error.message(),
+        )?
+        schema = value.require("schema").and_then((field) => field.expect_str()).map_err((error) => error.message())?
+        if schema != "incan.native-interface/1":
+            return Err("unsupported native-interface producer report")
+        counts.native_interface_evaluations = 1
+    return Ok(counts)
+
+
+pub def plan_record_report_path(unit: UnitDescription, key: Key) -> Path:
+    """Name the request-local lowering output consumed by proof counters and atomic Bakery publication."""
+    directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
+    return directory.joinpath(f"{described_by(key)}.unit.json.graph-plan-report")
 
 
 pub def crate_name(unit: UnitDescription) -> str:

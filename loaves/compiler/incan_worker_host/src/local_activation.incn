@@ -14,6 +14,8 @@ pub model LocalActivationInputs:
     pub owner: str
     pub declaration: list[list[str]]
     pub environment: list[list[list[str]]]
+    pub environment_names: list[str]
+    pub environment_identities: list[str]
     pub receipt: ReadReceipt
 
 
@@ -36,10 +38,13 @@ pub def read_local_activation(activation: ResolvedCheckingActivation) -> Result[
     mut reader = prepared_reader(ready, snapshot, prepared).map_err((_) => "invalid local activation preparation")?
     scope = ReadScope(snapshot=snapshot.root.digest, profile=ready.profile.identity.digest)
     source = resolved.record_source(scope)
-    mut source_text: Option[str] = None
+    mut module_header: Option[str] = None
+    mut owner_source: Option[str] = None
     mut owner = ""
     mut declaration: Option[list[list[str]]] = None
     mut environment: list[list[list[str]]] = []
+    mut environment_names: list[str] = []
+    mut environment_identities: list[str] = []
     for request in prepared.required_reads:
         found = match reader.read(source, request):
             RecordRead.Found(value) => value.value
@@ -48,10 +53,14 @@ pub def read_local_activation(activation: ResolvedCheckingActivation) -> Result[
             RecordRead.Members(_) => return Err("local activation input cannot be a member page")
             RecordRead.Failed(_) => return Err("local activation record read failed")
 
-        if request.key.family == "source" and request.key.context == "local":
-            if source_text is not None or request.key.facet == "":
-                return Err("local activation requires one named source input")
-            source_text = Some(found.decode().map_err((_) => "local source record is not UTF-8")?)
+        if request.key.family == "module-header" and request.key.facet == "module":
+            if module_header is not None:
+                return Err("local activation requires one module header")
+            module_header = Some(found.decode().map_err((_) => "local module header is not UTF-8")?)
+        elif request.key.family == "owner-source" and request.key.facet != "":
+            if owner_source is not None:
+                return Err("local activation requires one named owner source")
+            owner_source = Some(found.decode().map_err((_) => "local owner source is not UTF-8")?)
             owner = request.key.facet
         elif request.key.family == "declaration" and request.key.context != "":
             record = decode_record(found, CHECKER_PROFILE, request.key.identity, request.key.context).map_err(
@@ -66,21 +75,25 @@ pub def read_local_activation(activation: ResolvedCheckingActivation) -> Result[
                 declaration = Some(fields)
             else:
                 environment.append(fields)
+                environment_names.append(request.key.facet)
+                environment_identities.append(request.key.identity)
         else:
             return Err("local activation prepared an unsupported input family")
     completed = reader.finish().map_err((_) => "local activation read receipt is incomplete")?
-    match (source_text, declaration):
-        (Some(source_value), Some(declaration_value)) =>
+    match (module_header, owner_source, declaration):
+        (Some(header_value), Some(source_value), Some(declaration_value)) =>
             return Ok(
                 LocalActivationInputs(
-                    source=source_value,
+                    source=header_value + source_value,
                     owner=owner,
                     declaration=declaration_value,
                     environment=environment,
+                    environment_names=environment_names,
+                    environment_identities=environment_identities,
                     receipt=completed,
                 ),
             )
-        _ => return Err("local activation is missing source or declaration input")
+        _ => return Err("local activation is missing module header, owner source or declaration input")
 
 
 pub def stage_local_result(

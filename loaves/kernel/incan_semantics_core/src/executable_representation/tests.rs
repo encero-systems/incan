@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::{
     CoverageReason, DeclarationCoverage, EXECUTABLE_REPRESENTATION_VERSION, ExecutableDeclaration,
     ExecutableRepresentationError, MAX_SURFACE_INDEX_BYTES, OLDEST_SUPPORTED_VERSION, SurfaceIndex, SurfaceReader,
-    build_surface, decode_module, encode_module, publication, require_supported_version,
+    build_surface, decode_module, decode_owner, encode_module, encode_owner, publication, require_supported_version,
 };
 use crate::body_ir::{
     ArgumentBinding, Block, Body, BodyIrModule, CallableParam, CallableParamDefault, CallableTarget, Callee,
@@ -18,6 +18,25 @@ use crate::{
 
 mod coverage;
 mod public_contexts;
+
+#[test]
+fn executable_owner_frame_round_trips_the_native_body_and_provenance() -> Result<(), Box<dyn std::error::Error>> {
+    let owner = body("retained", 4);
+    let module = CompilerNodeId::module("probe::lib");
+    let encoded = encode_owner(&module, "src/lib.incn", "function:probe::lib::retained", &owner)?;
+    let decoded = decode_owner(&encoded)?;
+
+    assert_eq!(decoded.version, EXECUTABLE_REPRESENTATION_VERSION);
+    assert_eq!(decoded.module, module);
+    assert_eq!(decoded.source, "src/lib.incn");
+    assert_eq!(decoded.identity, "function:probe::lib::retained");
+    assert_eq!(decoded.body, owner);
+    assert_eq!(
+        encode_owner(&decoded.module, &decoded.source, &decoded.identity, &decoded.body)?,
+        encoded
+    );
+    Ok(())
+}
 
 /// Distinct package identities remain stable even when input bodies are reordered.
 fn identity(name: &str, ordinal: usize) -> CanonicalSymbolId {

@@ -1,0 +1,88 @@
+"""Bind bounded plan products to relative owner positions and relocate them without lowering their bodies again."""
+
+from std.json import JsonValue, parse
+from pub::incan_mir_plan import SourceSpan
+from rust::incan_semantics_core import HirSourceSpan
+from checked_values import location
+
+
+pub def relative_body_positions(body: str, source: str, file: str, owner: SourceSpan) -> Result[str, str]:
+    """Witness every Body IR node's relative line and column; only a uniform owner-line move can reuse a product."""
+    value = parse(body).map_err((error) => error.message())?
+    mut positions: list[str] = []
+    collect_positions(value, source, file, owner, positions)?
+    return Ok(";".join(positions))
+
+
+pub def relocate_product(text: str, file: str, line: int) -> Result[str, str]:
+    """Relocate only the existing codec's source-span objects, leaving native instructions and literal text intact."""
+    mut product = parse(text).map_err((error) => error.message())?.expect_object().map_err((error) => error.message())?
+    function = parse(product["function"].expect_str().map_err((error) => error.message())?).map_err(
+        (error) => error.message(),
+    )?
+    origin = function.require("span").map_err((error) => error.message())?
+    old_file = origin.require("file").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+    old_line = origin.require("line").and_then((value) => value.expect_int()).map_err((error) => error.message())?
+    moved = shift_positions(function, old_file, old_line, file, line)?
+    product["function"] = JsonValue.string(moved.to_json().map_err((error) => error.message())?)
+    product["runtime"] = shift_positions(product["runtime"], old_file, old_line, file, line)?
+    return JsonValue.object(product).to_json().map_err((error) => error.message())
+
+
+def collect_positions(
+    value: JsonValue,
+    source: str,
+    file: str,
+    owner: SourceSpan,
+    mut positions: list[str],
+) -> Result[None, str]:
+    """Read coordinate fields from the producer's native serialization; this visitor never interprets IR operations."""
+    if value.is_array():
+        for child in value.expect_array().map_err((error) => error.message())?:
+            collect_positions(child, source, file, owner, positions)?
+    elif value.is_object():
+        fields = value.expect_object().map_err((error) => error.message())?
+        for key in sorted([key for key in fields.keys()]):
+            child = fields[key]
+            if key == "span":
+                offset = child.require("start").and_then((value) => value.expect_int()).map_err(
+                    (error) => error.message(),
+                )?
+                native_offset = source_offset(offset)?
+                span = location(HirSourceSpan.new(native_offset, native_offset), source, file)
+                positions.append(f"{span.line - owner.line}:{span.column}")
+            elif key not in ["canonical", "named_type_identities"]:
+                collect_positions(child, source, file, owner, positions)?
+    return Ok(None)
+
+
+def source_offset(offset: int) -> Result[usize, str]:
+    """Convert one checked JSON coordinate to the native source index without truncation."""
+    converted: Option[usize] = offset.try_resize()
+    match converted:
+        Some(value) => return Ok(value)
+        None => return Err("invalid body position")
+
+
+def shift_positions(value: JsonValue, old_file: str, old_line: int, file: str, line: int) -> Result[JsonValue, str]:
+    """Apply a validated uniform line translation; a mixed-source or negative location refuses this bounded codec."""
+    if value.is_array():
+        mut moved: list[JsonValue] = []
+        for child in value.expect_array().map_err((error) => error.message())?:
+            moved.append(shift_positions(child, old_file, old_line, file, line)?)
+        return Ok(JsonValue.array(moved))
+    if not value.is_object():
+        return Ok(value)
+    mut fields = value.expect_object().map_err((error) => error.message())?
+    if len(fields) == 3 and "file" in fields and "line" in fields and "column" in fields:
+        if fields["file"].expect_str().map_err((error) => error.message())? != old_file:
+            return Err("plan-function position map refuses a mixed-source frame")
+        moved_line = fields["line"].expect_int().map_err((error) => error.message())? - old_line + line
+        if moved_line < 1:
+            return Err("plan-function position map precedes its owner")
+        fields["file"] = JsonValue.string(file)
+        fields["line"] = JsonValue.int(moved_line)
+    else:
+        for key in [key for key in fields.keys()]:
+            fields[key] = shift_positions(fields[key], old_file, old_line, file, line)?
+    return Ok(JsonValue.object(fields))

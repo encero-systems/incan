@@ -1,0 +1,251 @@
+"""Project one source file into independently digestible callable-owner and module-header records."""
+
+from std.encoding.hex import hexlify
+from std.primitives.hash import sha256
+from pub::incan_platform.store import Snapshot, begin, commit, put
+from pub::internal_models.records import RecordKey, encode_record_key
+
+const SOURCE_PROFILE: str = "incan.source-projection/1"
+
+
+pub model SourceProjectionRecord:
+    """One exact source slice, its original coordinates and its digest over only the slice bytes."""
+
+    pub key: RecordKey
+    pub text: str
+    pub start: int
+    pub end: int
+
+    pub def digest(self) -> str:
+        """Return the semantic identity of this slice without folding file-wide coordinates into it."""
+        return hexlify(sha256.digest(self.text.encode("utf-8")))
+
+
+pub model SourceProjection:
+    """The module context, declaration surface and independently reusable callable owners projected from one source file."""
+
+    pub header: SourceProjectionRecord
+    pub declarations: SourceProjectionRecord
+    pub owners: list[SourceProjectionRecord]
+
+
+pub model PublishedSourceProjection:
+    """The store generation and canonical record keys published by one source projection."""
+
+    pub snapshot: Snapshot
+    pub keys: list[str]
+
+
+model Boundary:
+    """One top-level source chunk and the callable name it owns, when it is a body owner."""
+
+    start: int
+    owner: str
+
+
+class SourceProjector:
+    """A single-file projector that keeps source slicing state inside its owning operation."""
+
+    origin: str
+    path: str
+    source: str
+    lines: list[str]
+    boundaries: list[Boundary] = []
+
+    @staticmethod
+    pub def open(origin: str, path: str, source: str) -> SourceProjector:
+        """Prepare exact newline-preserving lines for one source file."""
+        parts = source.split("\n")
+        mut lines: list[str] = []
+        for index in range(len(parts)):
+            mut suffix = ""
+            if index + 1 < len(parts):
+                suffix = "\n"
+            lines.append(parts[index] + suffix)
+        return SourceProjector(origin=origin, path=path, source=source, lines=lines)
+
+    def discover(mut self) -> None:
+        """Locate top-level chunks while attaching consecutive decorators to their following declaration."""
+        mut offset = 0
+        mut decorated_start = -1
+        for line in self.lines:
+            content = line.strip()
+            top_level = content != "" and line[0] not in " \t"
+            if top_level and content.startswith("@"):
+                if decorated_start < 0:
+                    decorated_start = offset
+            elif top_level and not content.startswith("#"):
+                mut start = 0
+                if decorated_start >= 0:
+                    start = decorated_start
+                else:
+                    start = offset
+                self.boundaries.append(Boundary(start=start, owner=declaration_owner(content)))
+                decorated_start = -1
+            offset += len(line)
+        if decorated_start >= 0:
+            self.boundaries.append(Boundary(start=decorated_start, owner=""))
+
+    pub def projection(mut self) -> Result[SourceProjection, str]:
+        """Partition source owners while retaining a body-independent declaration surface for selector invalidation."""
+        self.discover()
+        mut header = ""
+        mut declarations = ""
+        mut owners: list[SourceProjectionRecord] = []
+        if len(self.boundaries) == 0:
+            header = self.source
+        else:
+            if self.boundaries[0].start > 0:
+                header += self.source[:self.boundaries[0].start]
+            for index in range(len(self.boundaries)):
+                boundary = self.boundaries[index]
+                mut end = len(self.source)
+                if index + 1 < len(self.boundaries):
+                    end = self.boundaries[index + 1].start
+                text = self.source[boundary.start:end]
+                if boundary.owner == "":
+                    header += text
+                else:
+                    declarations += boundary.owner + "\n" + declaration_surface(text) + "\n"
+                    owners.append(
+                        SourceProjectionRecord(
+                            key=source_key("owner-source", self.origin, self.path, boundary.owner),
+                            text=text,
+                            start=boundary.start,
+                            end=end,
+                        ),
+                    )
+        return Ok(
+            SourceProjection(
+                header=SourceProjectionRecord(
+                    key=source_key("module-header", self.origin, self.path, "module"),
+                    text=header,
+                    start=0,
+                    end=len(self.source),
+                ),
+                declarations=SourceProjectionRecord(
+                    key=source_key("declaration-index", self.origin, self.path, "module"),
+                    text=declarations,
+                    start=0,
+                    end=len(self.source),
+                ),
+                owners=owners,
+            ),
+        )
+
+
+pub def project_source(origin: str, path: str, source: str) -> Result[SourceProjection, str]:
+    """Produce one module header and one exact source record per top-level declaration owner."""
+    if origin == "" or path == "":
+        return Err("source projection requires an origin and logical path")
+    return SourceProjector.open(origin, path, source).projection()
+
+
+pub def owner_source_key(origin: str, path: str, name: str) -> RecordKey:
+    """Name one declaration owner's exact source projection for a compiler-witnessed dependency read."""
+    return source_key("owner-source", origin, path, name)
+
+
+pub def declaration_index_key(origin: str, path: str) -> RecordKey:
+    """Name the body-independent declaration surface used to invalidate project declaration readers before checking."""
+    return source_key("declaration-index", origin, path, "module")
+
+
+pub def signature_record(owner: &SourceProjectionRecord) -> SourceProjectionRecord:
+    """Project one declaration's header without its implementation, preserving its kind-qualified source owner."""
+    mut key = owner.key
+    key.family = "declaration-signature"
+    return SourceProjectionRecord(key=key, text=declaration_surface(owner.text), start=owner.start, end=owner.end)
+
+
+pub def publish_source_projection(
+    selected: Snapshot,
+    projection: SourceProjection,
+) -> Result[PublishedSourceProjection, str]:
+    """Publish a complete file projection in one transaction, replacing only equal canonical logical keys."""
+    mut transaction = put(
+        begin(selected),
+        encode_record_key(projection.header.key)?,
+        projection.header.text.encode("utf-8"),
+    )
+    mut published = [encode_record_key(projection.header.key)?]
+    declaration_key = encode_record_key(projection.declarations.key)?
+    transaction = put(transaction, declaration_key, projection.declarations.text.encode("utf-8"))
+    published.append(declaration_key)
+    for owner in projection.owners:
+        for record in [owner, signature_record(owner)]:
+            key = encode_record_key(record.key)?
+            transaction = put(transaction, key, record.text.encode("utf-8"))
+            published.append(key)
+    snapshot = commit(transaction).map_err((error) => error.message())?
+    return Ok(PublishedSourceProjection(snapshot=snapshot, keys=published))
+
+
+def declaration_surface(source: str) -> str:
+    """Project a callable header without its body; retain complete non-callable declarations conservatively."""
+    mut callable = false
+    mut depth = 0
+    mut surface = ""
+    for line in source.split("\n"):
+        content = line.strip()
+        if not callable and not content.startswith("@"):
+            callable = callable_declaration(content)
+            if not callable:
+                return source
+        surface += line + "\n"
+        for character in line:
+            if character in "([{":
+                depth += 1
+            elif character in ")]}":
+                depth -= 1
+        if callable and depth == 0 and content.endswith(":"):
+            return surface
+    return source
+
+
+def callable_declaration(line: str) -> bool:
+    """Recognize the callable declaration forms whose indented bodies do not contribute to checked signatures."""
+    mut header = line
+    for prefix in ["pub ", "async "]:
+        if header.startswith(prefix):
+            header = header[len(prefix):]
+    return header.startswith("def ")
+
+
+def declaration_owner(line: str) -> str:
+    """Name an independently owned declaration while imports, aliases and other module forms stay in the header."""
+    mut header = f"{line}"
+    for prefix in ["pub ", "async "]:
+        if header.startswith(prefix):
+            header = header[len(prefix):]
+    for kind in ["def", "const", "static", "model", "capability", "class", "trait", "partial", "newtype", "enum"]:
+        prefix = kind + " "
+        if header.startswith(prefix):
+            name = identifier_prefix(header[len(prefix):])
+            if kind == "def":
+                return name
+            if name != "":
+                return kind + ":" + name
+    return ""
+
+
+def identifier_prefix(candidate: str) -> str:
+    """Read one declaration name without interpreting its following type, generic or parameter syntax."""
+    mut end = 0
+    while end < len(candidate) and candidate[end] in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789":
+        end += 1
+    if end == 0:
+        return ""
+    return candidate[:end]
+
+
+def source_key(family: str, origin: str, path: str, facet: str) -> RecordKey:
+    """Name one source projection independently of the file-wide content revision and physical coordinates."""
+    return RecordKey(
+        family=family,
+        identity_profile=SOURCE_PROFILE,
+        origin=origin,
+        identity=path,
+        facet=facet,
+        context="",
+    )

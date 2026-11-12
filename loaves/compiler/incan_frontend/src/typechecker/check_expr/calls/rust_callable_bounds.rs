@@ -8,6 +8,7 @@ use crate::diagnostics::errors;
 use crate::resolved_type_subst::map_resolved_type_leaves;
 use crate::symbols::{CallableParam, ResolvedType};
 use incan_lang::interop::{RustFunctionSig, RustItemKind, rust_auto_trait, rust_callable_trait};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::body_ir::NativeClosureStorage;
 
 impl TypeChecker {
@@ -286,6 +287,33 @@ impl TypeChecker {
         if depth > 24 || matches!(ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) {
             return false;
         }
+        if self.has_forwarded_auto_trait_evidence(ty, marker) {
+            return true;
+        }
+        if let ResolvedType::Generic(name, arguments) = ty
+            && matches!(
+                collections::from_str(name),
+                Some(
+                    CollectionTypeId::List
+                        | CollectionTypeId::Dict
+                        | CollectionTypeId::Set
+                        | CollectionTypeId::Option
+                        | CollectionTypeId::Result
+                        | CollectionTypeId::FrozenList
+                        | CollectionTypeId::FrozenDict
+                        | CollectionTypeId::FrozenSet
+                )
+            )
+        {
+            return arguments
+                .iter()
+                .all(|argument| self.capture_has_native_auto_trait(argument, marker, depth + 1));
+        }
+        if let ResolvedType::Tuple(arguments) = ty {
+            return arguments
+                .iter()
+                .all(|argument| self.capture_has_native_auto_trait(argument, marker, depth + 1));
+        }
         let native = match ty {
             ResolvedType::Int => ResolvedType::RustPath("i64".into()),
             ResolvedType::Float => ResolvedType::RustPath("f64".into()),
@@ -296,6 +324,35 @@ impl TypeChecker {
             }
             _ => self.rusttype_native_target(ty).unwrap_or_else(|| ty.clone()),
         };
+        if matches!(marker, "Send" | "Sync")
+            && let Some((base, definition, arguments, _)) = self.rust_identity_for_type(&native)
+        {
+            let owner = definition.as_deref().unwrap_or(&base);
+            if arguments.len() == 1 {
+                if matches!(owner, "std::sync::Arc" | "alloc::sync::Arc") {
+                    return self.capture_has_native_auto_trait(&arguments[0], "Send", depth + 1)
+                        && self.capture_has_native_auto_trait(&arguments[0], "Sync", depth + 1);
+                }
+                if matches!(
+                    owner,
+                    "std::vec::Vec" | "alloc::vec::Vec" | "std::option::Option" | "core::option::Option"
+                ) {
+                    return self.capture_has_native_auto_trait(&arguments[0], marker, depth + 1);
+                }
+            }
+            if arguments.len() == 2
+                && matches!(
+                    owner,
+                    "std::collections::BTreeMap"
+                        | "alloc::collections::BTreeMap"
+                        | "alloc::collections::btree::map::BTreeMap"
+                )
+            {
+                return arguments
+                    .iter()
+                    .all(|argument| self.capture_has_native_auto_trait(argument, marker, depth + 1));
+            }
+        }
         let Some(path) = self.rust_canonical_path_for_receiver_type(&native) else {
             return false;
         };
@@ -333,5 +390,29 @@ impl TypeChecker {
                 self.capture_has_native_auto_trait(&subject, required, depth + 1)
             })
         })
+    }
+
+    /// Reuse an admitted transparent rusttype's native proof after a Rust owner has projected the alias to storage.
+    /// The declaration check already proved the backing Rust carrier implements the marker; wrappers such as Arc
+    /// retain that carrier rather than its source spelling when their conditional auto-trait bounds are solved.
+    fn has_forwarded_auto_trait_evidence(&self, ty: &ResolvedType, marker: &str) -> bool {
+        self.type_info
+            .rust
+            .rusttype_forwarded_trait_adoptions
+            .iter()
+            .filter(|(_, trait_name)| {
+                trait_name == marker
+                    || trait_name
+                        .rsplit(['.', ':'])
+                        .find(|segment| !segment.is_empty())
+                        .is_some_and(|name| name == marker)
+            })
+            .any(|(name, _)| {
+                let source = ResolvedType::Named(name.clone());
+                source == *ty
+                    || self
+                        .rusttype_native_target(&source)
+                        .is_some_and(|target| self.rust_trait_carriers_match(&target, ty))
+            })
     }
 }

@@ -9,6 +9,9 @@ from std.json import JsonValue, parse
 from bakery import find, fact_file
 from bakery_records import Fact
 from bakery_roots import register_root
+from compiler_body_publication import prepare_captured_source_inputs, prepare_compiled_bodies
+from compiler_body_values import body_owners_reading, encode_body_inventory, select_body_inventory_except
+from compiler_plan_values import select_plan_inventory_except, plan_owners_reading
 from engine_epochs import record_text, load_epoch
 from features import FeatureRequest
 from files import json_text
@@ -18,12 +21,14 @@ from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, Transaction, begi
 from store_path_conversion import snapshot
 from toolchain import load_toolchain
 from unit import describe
+from unit_compiler import graph_body_output_path, plan_record_counts, plan_record_report_path
 from unit_rust import prepare_native
 from unit_freshness import fingerprint, unit_key
 from observation import FileMetadata, file_metadata
 from shared_link import development_link, linkage_key, library_witness, witness_current
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
+from pub::internal_models.checker_records import CHECKER_PROFILE
 
 const SCHEMA: str = "incan.engine.native-unit/1"
 
@@ -53,7 +58,13 @@ pub model ProgramOutcome:
     pub code: i32
     pub unit: Option[NativeUnit] = None
     pub evaluations: int = 0
+    pub body_evaluations: int = 0
     pub native_bakes: int = 0
+    pub plan_function_evaluations: int = 0
+    pub plan_function_reuses: int = 0
+    pub lowering_demand_evaluations: int = 0
+    pub lowering_demand_reuses: int = 0
+    pub native_interface_evaluations: int = 0
     pub console: str = ""
     pub epoch_reads: int = 0
     pub transaction: Option[Transaction] = None
@@ -122,9 +133,6 @@ pub def obtain(
         or len(described.c_headers) > 0
     ):
         return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
-    for loaf in described.loaves:
-        if loaf.is_dependency():
-            return Err("unit records do not yet capture editable path dependencies")
     ready = prepare_native(described, toolchain)?
     compiled_key = unit_key(ready, toolchain)?
     if compiled_key.refusal != "":
@@ -134,20 +142,45 @@ pub def obtain(
     binary = program_binary(ready)
     record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
     # 3. Exactly one existing producer owns claiming and publishing a native unit.
-    produced = obtain_executable(ready, toolchain, binary, compiled_key, true, Some(store), true)?
+    graph = snapshot(store).map_err((error) => error.message())?
+    projected = prepare_captured_source_inputs(graph, begin(graph), ready, epoch.inputs)?
+    invalid = body_owners_reading(graph, projected.keys, CHECKER_PROFILE)?
+    retained_bodies = select_body_inventory_except(graph, CHECKER_PROFILE, invalid)?
+    mut selected_bodies = encode_body_inventory(retained_bodies)?
+    # Lowering revalidates its exact checked inputs; a changed raw source slice may still produce equal meaning.
+    invalid_plans = plan_owners_reading(graph, projected.keys)?
+    selected_bodies.extend(select_plan_inventory_except(graph, invalid_plans)?)
+    produced = obtain_executable(ready, toolchain, binary, compiled_key, true, Some(store), true, Some(selected_bodies))?
+    plan_counts = plan_record_counts(ready, compiled_key)?
     if produced.code != 0:
         return Ok(
             ProgramOutcome(
                 code=produced.code,
                 evaluations=produced.evaluations,
+                body_evaluations=len(invalid),
                 console=console,
                 epoch_reads=epoch_reads,
+                plan_function_evaluations=plan_counts.plan_evaluations,
+                plan_function_reuses=plan_counts.plan_reuses,
+                lowering_demand_evaluations=plan_counts.lowering_demand_evaluations,
+                lowering_demand_reuses=plan_counts.lowering_demand_reuses,
             ),
         )
     # 4. Source edits cannot certify a native unit for a different captured epoch.
     for input in epoch.inputs:
         if not captured_file_current(Path(input.path), input.metadata):
             return Err("captured inputs changed before native selection; submit a new request")
+    mut request_transaction = merge_request_transaction(produced.transaction, projected.transaction)
+    if produced.native_bakes == 1:
+        bodies = prepare_compiled_bodies(
+            request_transaction,
+            ready,
+            graph_body_output_path(ready, compiled_key),
+            Some(plan_record_report_path(ready, compiled_key)),
+            Some(graph),
+            retained_bodies,
+        )?
+        request_transaction = bodies.transaction
     fact = produced_fact(produced.fact)?
     unit = NativeUnit(identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0)
     return Ok(
@@ -155,13 +188,30 @@ pub def obtain(
             code=0,
             unit=Some(unit),
             evaluations=produced.evaluations,
+            body_evaluations=len(invalid),
             native_bakes=produced.native_bakes,
+            plan_function_evaluations=plan_counts.plan_evaluations,
+            plan_function_reuses=plan_counts.plan_reuses,
+            lowering_demand_evaluations=plan_counts.lowering_demand_evaluations,
+            lowering_demand_reuses=plan_counts.lowering_demand_reuses,
+            native_interface_evaluations=plan_counts.native_interface_evaluations,
             console=console,
             epoch_reads=epoch_reads,
-            transaction=index_program(store, selector, unit, produced.transaction)?,
+            transaction=index_program(store, selector, unit, Some(request_transaction))?,
             claim=produced.claim,
         ),
     )
+
+
+def merge_request_transaction(native: Option[Transaction], source: Transaction) -> Transaction:
+    """Combine prepared native payload records and captured source projections under one request publication."""
+    match native:
+        None => return source
+        Some(value) =>
+            mut combined = value
+            combined.writes.extend(source.writes)
+            combined.payloads.extend(source.payloads)
+            return combined
 
 
 pub def select_program(store: Path, view: str, unit: NativeUnit, handle: str) -> Result[NativeSelection, str]:

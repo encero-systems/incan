@@ -282,25 +282,33 @@ impl TypeChecker {
             if checked.local.kind == LocalOwnerKind::Declaration {
                 let owner = checked.owner();
                 self.checked_declarations.push(checked);
-                if let Ok(fields) = records::produce_declaration(self, program, owner) {
-                    self.produced_declaration_records.insert(owner, fields);
+                match records::produce_declaration(self, program, owner) {
+                    Ok(fields) => {
+                        self.produced_declaration_records.insert(owner, fields);
+                    }
+                    Err(error) => {
+                        tracing::debug!(target: "incan::invocation", ?owner, ?error, "declaration record production refused");
+                        self.declaration_record_refusals.insert(owner, error);
+                    }
                 }
             } else {
                 let owner = checked.owner();
                 self.checked_bodies.push(checked);
-                let produced = self
-                    .checked_bodies
-                    .last()
-                    .ok_or(crate::typechecker::canonical_nodes::NodeBindingError::MissingOwner)
-                    .and_then(|view| records::produce_final(self, program, owner, view));
-                match produced {
-                    Ok(fields) => {
-                        self.produced_final_records.insert(owner, fields);
-                        self.check_work.final_record_evaluations += 1;
-                    }
-                    Err(error) => {
-                        tracing::debug!(target: "incan::invocation", ?owner, ?error, "final record production refused");
-                        self.final_record_refusals.insert(owner, error);
+                if !self.selected_final_records.contains_key(&owner) {
+                    let produced = self
+                        .checked_bodies
+                        .last()
+                        .ok_or(crate::typechecker::canonical_nodes::NodeBindingError::MissingOwner)
+                        .and_then(|view| records::produce_final(self, program, owner, view));
+                    match produced {
+                        Ok(fields) => {
+                            self.produced_final_records.insert(owner, fields);
+                            self.check_work.final_record_evaluations += 1;
+                        }
+                        Err(error) => {
+                            tracing::debug!(target: "incan::invocation", ?owner, ?error, "final record production refused");
+                            self.final_record_refusals.insert(owner, error);
+                        }
                     }
                 }
             }

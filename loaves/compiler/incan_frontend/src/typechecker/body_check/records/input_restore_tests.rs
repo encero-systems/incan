@@ -1,5 +1,7 @@
 //! Native restoration independently authenticates the retained invalid-graph fault.
 
+use std::collections::BTreeMap;
+
 use super::super::{BodyLocal, Positions, fixture};
 use super::{InputFlow, Reader, restore};
 
@@ -359,7 +361,7 @@ fn parameter_requirements_preserve_conflicts_and_identity() -> Result<(), Box<dy
             owner,
             ..BodyLocal::default()
         };
-        super::super::restore_local(&positions, &mut local, &row)?;
+        super::super::restore_local(&positions, &mut local, &mut BTreeMap::new(), &row)?;
         let requirement = local
             .expressions
             .body_ir_parameter_requirements
@@ -370,7 +372,7 @@ fn parameter_requirements_preserve_conflicts_and_identity() -> Result<(), Box<dy
         let mut restored = Vec::new();
         super::super::project_expressions(&positions, &local, &mut restored)?;
         assert_eq!(restored, vec![row.clone()]);
-        assert!(super::super::restore_local(&positions, &mut local, &row).is_err());
+        assert!(super::super::restore_local(&positions, &mut local, &mut BTreeMap::new(), &row).is_err());
     }
     let mut wrong = row.clone();
     let body = checker.checked_body(owner).ok_or("missing checked owner")?;
@@ -387,7 +389,7 @@ fn parameter_requirements_preserve_conflicts_and_identity() -> Result<(), Box<dy
         owner,
         ..BodyLocal::default()
     };
-    assert!(super::super::restore_local(&positions, &mut local, &wrong).is_err());
+    assert!(super::super::restore_local(&positions, &mut local, &mut BTreeMap::new(), &wrong).is_err());
     assert!(local.expressions.body_ir_parameter_requirements.is_empty());
     Ok(())
 }

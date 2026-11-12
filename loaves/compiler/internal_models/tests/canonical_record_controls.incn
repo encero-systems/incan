@@ -6,7 +6,16 @@ from checker_records import (
     CheckedFamily,
     CheckedRecord,
     CodecFault,
+    CompiledBodyFallback,
+    CompiledBodyDependencyRead,
+    CompiledBodyOutputs,
+    CompiledBodyValue,
+    GraphBodyValue,
+    decode_graph_body_values,
+    decode_compiled_body_outputs,
     encode_record,
+    encode_graph_body_values,
+    encode_compiled_body_outputs,
     decode_record,
     semantic_digest,
     from_native_final_fields,
@@ -43,12 +52,111 @@ pub def canonical_record_controls() -> Result[None, str]:
         println(f"canonical-record declaration={declaration} fields={len(base.fields)} bytes={len(before)} stable=true")
         codec_fault_controls(before, base)
     local_record_controls(source, moved)?
+    compiled_output_controls(source)?
+    projected_owner_controls()?
     edited_owner_controls()?
     diagnostic_record_controls()?
     default_record_controls()?
     final_value_controls()?
     ownership_record_controls()?
     input_protocol_controls()?
+    return Ok(None)
+
+
+def compiled_output_controls(source: str) -> Result[None, str]:
+    """The successful-check sidecar preserves one authenticated declaration/local/final producer triple."""
+    declaration = checked_fixture(source, "main", true)?
+    declaration_bytes = encode_record(declaration).map_err((_) => "compiled declaration encode")?
+    local_rows = produce_local_record(
+        source,
+        "main",
+        native_fields(declaration).map_err((_) => "compiled declaration fields")?,
+        [],
+    ).map_err((error) => error.to_string())?
+    local = from_native_local_fields(local_rows).map_err((_) => "compiled local record")?
+    local_bytes = encode_record(local).map_err((_) => "compiled local encode")?
+    final_rows = produce_final_record(source, "main", native_fields(local).map_err((_) => "compiled local fields")?, []).map_err(
+        (error) => error.to_string(),
+    )?
+    final_bytes = encode_record(from_native_final_fields(final_rows).map_err((_) => "compiled final record")?).map_err(
+        (_) => "compiled final encode",
+    )?
+    value = CompiledBodyValue(
+        module="src/main.incn",
+        name="main",
+        identity=local.owner,
+        declaration=declaration_bytes,
+        local=local_bytes,
+        final=final_bytes,
+        body_ir=b"owner-frame",
+        dependency_reads=[CompiledBodyDependencyRead(
+            package=Some("provider"),
+            module="lib",
+            name="value",
+            identity="provider|module:lib|value|function|module|0|() -> int",
+        )],
+    )
+    fallback = CompiledBodyFallback(
+        module="src/main.incn",
+        name="other",
+        identity=Some(local.owner + "-other"),
+        reason="local record output refused: Unsupported(\"fixture\")",
+    )
+    identityless = CompiledBodyFallback(
+        module="src/main.incn",
+        name="required_pin",
+        identity=None,
+        reason="checked owner has no stable declaration identity",
+    )
+    encoded = encode_compiled_body_outputs(CompiledBodyOutputs(values=[value], fallbacks=[fallback, identityless])).map_err(
+        (_) => "compiled output encode",
+    )?
+    decoded = decode_compiled_body_outputs(encoded).map_err((_) => "compiled output decode")?
+    assert len(decoded.values) == 1 and len(decoded.fallbacks) == 2
+    assert (
+        decoded.values[0].module == value.module
+        and decoded.values[0].name == value.name
+        and decoded.values[0].identity == value.identity
+    )
+    assert decoded.values[0].dependency_reads == value.dependency_reads
+    assert (
+        decoded.values[0].declaration == value.declaration
+        and decoded.values[0].local == value.local
+        and decoded.values[0].final == value.final
+        and decoded.values[0].body_ir == value.body_ir
+    )
+    assert decoded.fallbacks[0] == fallback
+    assert decoded.fallbacks[1] == identityless
+    return Ok(None)
+
+
+def projected_owner_controls() -> Result[None, str]:
+    """An owner parses with module context while a called sibling enters only through its declaration record."""
+    header = "# projected module context\n\n"
+    owner = "def first() -> int:\n    return second()\n"
+    sibling = "def second() -> int:\n    return 2\n"
+    complete = header + owner + "\n" + sibling
+    declaration = fixture_record(complete, "first", true).map_err(
+        (error) => "projected owner declaration: " + error.to_string(),
+    )?
+    environment = fixture_record(complete, "second", true).map_err(
+        (error) => "projected environment declaration: " + error.to_string(),
+    )?
+    local_rows = produce_local_record(header + owner, "first", declaration, [("second", environment[0][1], environment)]).map_err(
+        (error) => "projected local: " + error.to_string(),
+    )?
+    local = from_native_local_fields(local_rows).map_err((_) => "projected local producer")?
+    final_rows = produce_final_record(
+        header + owner,
+        "first",
+        native_fields(local).map_err((_) => "projected local fields")?,
+        [("second", environment[0][1], environment)],
+    ).map_err((error) => "projected final: " + error.to_string())?
+    projected = from_native_final_fields(final_rows).map_err((_) => "projected final producer")?
+    direct = checked_fixture(complete, "first", false)?
+    assert encode_record(projected).map_err((_) => "projected final encode")? == encode_record(direct).map_err(
+        (_) => "direct projected final encode",
+    )?
     return Ok(None)
 
 
@@ -105,7 +213,7 @@ def local_record_controls(source: str, moved: str) -> Result[None, str]:
     decoded = decode_record(encoded, CHECKER_PROFILE, after.owner, after.root).map_err((_) => "local decode")?
     assert decoded.family == CheckedFamily.Local
     assert native_fields(decoded).map_err((_) => "local fields")? == native_fields(before).map_err((_) => "local fields")?
-    final_rows = produce_final_record(source, "main", native_fields(before).map_err((_) => "local fields")?).map_err(
+    final_rows = produce_final_record(source, "main", native_fields(before).map_err((_) => "local fields")?, []).map_err(
         (error) => error.to_string(),
     )?
     final_record = from_native_final_fields(final_rows).map_err((_) => "final producer")?
@@ -113,7 +221,44 @@ def local_record_controls(source: str, moved: str) -> Result[None, str]:
     assert encode_record(final_record).map_err((_) => "final encode")? == encode_record(direct).map_err(
         (_) => "direct final encode",
     )?
+    graph_transport_controls(before, final_record)?
     println(f"canonical-record local fields={len(before.fields)} bytes={len(encoded)} stable=true")
+    return Ok(None)
+
+
+def graph_transport_controls(local: CheckedRecord, final: CheckedRecord) -> Result[None, str]:
+    """The separate graph transport admits only a same-owner, same-root local/final pair in canonical owner order."""
+    local_bytes = encode_record(local).map_err((_) => "graph local encode")?
+    final_bytes = encode_record(final).map_err((_) => "graph final encode")?
+    transport = encode_graph_body_values(
+        [GraphBodyValue(identity=local.owner, local=local_bytes, final=final_bytes, body_ir=b"owner-frame")],
+    ).map_err((_) => "graph transport encode")?
+    selected = decode_graph_body_values(transport).map_err((_) => "graph transport decode")?
+    assert len(selected) == 1
+    assert selected[0].identity == local.owner
+    assert selected[0].local == native_fields(local).map_err((_) => "graph local fields")?
+    assert selected[0].final_fields == native_fields(final).map_err((_) => "graph final fields")?
+    assert selected[0].body_ir == b"owner-frame"
+    large_body_ir = "".join(["x" for _ in range(100000)]).encode()
+    large_transport = encode_graph_body_values(
+        [GraphBodyValue(identity=local.owner, local=local_bytes, final=final_bytes, body_ir=large_body_ir)],
+    ).map_err((_) => "large graph transport encode")?
+    large_selected = decode_graph_body_values(large_transport).map_err((_) => "large graph transport decode")?
+    assert large_selected[0].body_ir == large_body_ir
+    selected_local = from_native_local_fields(selected[0].local).map_err((_) => "selected local re-encode")?
+    selected_final = from_native_final_fields(selected[0].final_fields).map_err((_) => "selected final re-encode")?
+    assert encode_record(selected_local).map_err((_) => "selected local bytes")? == local_bytes
+    assert encode_record(selected_final).map_err((_) => "selected final bytes")? == final_bytes
+    match encode_graph_body_values(
+        [GraphBodyValue(identity="wrong", local=local_bytes, final=final_bytes, body_ir=b"owner-frame")],
+    ):
+        Err(CodecFault.OwnerMismatch) => pass
+        _ => return Err("graph transport accepted a mismatched owner")
+    match encode_graph_body_values(
+        [GraphBodyValue(identity=local.owner, local=final_bytes, final=local_bytes, body_ir=b"owner-frame")],
+    ):
+        Err(CodecFault.Malformed) => pass
+        _ => return Err("graph transport accepted crossed families")
     return Ok(None)
 
 
@@ -242,6 +387,7 @@ def input_protocol_controls() -> Result[None, str]:
         ("def fresh() -> int:\n    value: Owned[int] = 3\n    return value\n", "fresh"),
         ("def copy(value: Owned[int]) -> int:\n    first: Owned[int] = value\n    second: Owned[int] = first\n    return second\n", "copy"),
         ("def transfer(value: Owned[str]) -> int:\n    retained: Owned[str] = value\n    return len(retained)\n", "transfer"),
+        ("def invocation_key(arguments: list[str]) -> str:\n    return \" \".join(arguments[:2])\n", "invocation_key"),
         ("def view(value: Borrowed[str]) -> Borrowed[str] from value:\n    return value\ndef use(value: Borrowed[str]) -> int:\n    retained = view(value)\n    values = [retained]\n    return len(values)\n", "use"),
         ("def width(value: Borrowed[str]) -> Owned[int] from value:\n    return len(value)\ndef use(value: Borrowed[str]) -> int:\n    retained = width(value)\n    return retained\n", "use"),
     ]

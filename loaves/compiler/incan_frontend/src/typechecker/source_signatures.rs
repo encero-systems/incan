@@ -14,6 +14,31 @@ use super::type_info::semantic_callable_param_from_resolved;
 use super::{TypeChecker, semantic_type_from_resolved};
 
 impl TypeChecker {
+    /// Derive the persistent module-level identity for one decoded free-function binding.
+    ///
+    /// Record-scoped activations use this after installing an authenticated environment declaration without its
+    /// source AST. The same signature projection as ordinary collection keeps the record identity authoritative.
+    pub(in crate::typechecker) fn stable_function_identity(
+        &self,
+        binding: &super::FunctionBindingInfo,
+    ) -> Option<StableDeclarationId> {
+        let canonical = binding.identity.as_ref()?;
+        let nominals = self.checked_nominal_type_identities();
+        source_callable_identity(
+            canonical,
+            SourceInputs {
+                parameters: &binding.params,
+                ownership: self.type_info.declarations.ownership_contracts.get(canonical),
+                receiver_offset: 0,
+            },
+            &binding.return_type,
+            binding.is_async,
+            &[],
+            nominals.as_ref(),
+            None,
+        )
+    }
+
     /// Freeze source identities using settled collected signatures, before defaults, bodies or decorator rebinding.
     pub(super) fn record_source_declaration_identities(&mut self, program: &Program) {
         let nominals = self.checked_nominal_type_identities();

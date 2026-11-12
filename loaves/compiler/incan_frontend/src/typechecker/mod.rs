@@ -542,16 +542,27 @@ pub struct TypeChecker {
     checked_declarations: Vec<std::sync::Arc<body_check::CheckedBodyView>>,
     /// Declaration-family records emitted at their settlement boundary, before any module product observes them.
     produced_declaration_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    declaration_record_refusals: std::collections::BTreeMap<Span, canonical_nodes::NodeBindingError>,
+    /// Producer-validated declaration records selected for this source revision and retained for publication without
+    /// pretending the declaration producer ran in this invocation.
+    selected_declaration_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
     /// Local-family records emitted at the direct statement-check boundary, before any settlement or module observer.
     produced_local_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    local_record_refusals: std::collections::BTreeMap<Span, canonical_nodes::NodeBindingError>,
     /// Producer-validated local records selected for this source revision without counting them as evaluations.
     selected_local_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    /// Codec-validated settled values restored through the ordinary checked-body assembly and retained for graph
+    /// publication without pretending the settlement producer ran in this invocation.
+    selected_final_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
     /// Final-family records emitted by direct settlement, before any module observer.
     produced_final_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
     /// Explicit capability refusals from direct final producers, retained for test and adapter reporting.
     final_record_refusals: std::collections::BTreeMap<Span, canonical_nodes::NodeBindingError>,
     /// Producer-validated declaration records selected for the current source revision and consumed once by owner.
     callable_declaration_reuse: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    /// Graph-admitted local/final pairs keyed by compiler-owned stable declaration identity. This transport remains
+    /// separate from scalar callable-body products and is consulted only at the record-scoped body boundary.
+    graph_body_records: crate::checker_records::GraphBodyRecords,
     /// Callable bodies that produced a checked lazy result and therefore need retained-result ownership analysis.
     /// The marker is consumed when that body's flow is finalized; it never becomes a published semantic fact.
     lazy_result_bodies: HashSet<CanonicalSymbolId>,

@@ -39,8 +39,9 @@ pub fn verify_module(
     );
     result?;
     // ---- Representations: retain the same finalization schedule ----
-    super::retain_module_representations(&mut expected, program, info, context.modules);
-    super::retain_module_representations(&mut actual, program, info, context.modules);
+    let selected = super::selected_body_identities(info);
+    super::retain_module_representations(&mut expected, program, info, context.modules, &selected);
+    super::retain_module_representations(&mut actual, program, info, context.modules, &selected);
 
     // ---- Evidence: compare each physical free-function output ----
     for declaration in &program.declarations {

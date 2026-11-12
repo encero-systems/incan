@@ -1,0 +1,901 @@
+"""Publish successful compiler body outputs into the ranked record graph."""
+
+from std.fs import Path
+from std.encoding.hex import hexlify
+from std.json import JsonValue, parse
+from std.primitives.hash import sha256
+from rust::incan_semantics_core import encode_incan_symbol_identity
+from rust::incan_semantics_core::executable_representation import decode_owner
+from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, put
+from pub::internal_models import (
+    CompiledBodyDependencyRead,
+    CompiledBodyFallback,
+    CompiledBodyValue,
+    ProducerRank,
+    ProducerStage,
+    decode_compiled_body_outputs,
+    record_root,
+)
+from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.records import (
+    PreparationEvidence,
+    ReadReceipt,
+    ReadFault,
+    ReadScope,
+    RevisionEvidence,
+    SelectedFact,
+    RecordRead,
+    RecordSource,
+    RecordKey,
+    RecordReads,
+    RecordRequest,
+    RecordSelection,
+    ReadWitness,
+    encode_record_key,
+)
+from compiler_graph_records import prepare_evaluation, reusable_evaluation
+from compiler_body_fallbacks import fallback_reasons
+from compiler_plan_values import LOWERING_PROFILE
+from compiler_body_values import SelectedBodyRecord
+from compiler_source_projection import (
+    SourceProjection,
+    SourceProjectionRecord,
+    declaration_index_key,
+    owner_source_key,
+    project_source,
+    signature_record,
+)
+from engine_capture import CapturedInput, InputRole
+from files import discard_file
+from unit import UnitDescription, dependency_source_roots
+
+const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
+
+
+model LoweringBody:
+    """An actual fresh or graph-selected owner witness; retained owners are never claimed as fresh checker output."""
+
+    identity: str
+    module: str
+    final: bytes
+    body_ir: bytes
+    retained: bool = false
+    signature_reads: list[RecordKey] = []
+
+
+pub enum OwnerRecordFault(str):
+    """Closed owner-selection failures so retained history skips only an owner that is genuinely absent."""
+
+    Absent = "absent"
+    Ambiguous = "ambiguous"
+
+
+pub model PublishedCompiledBodies:
+    """The graph generation and eligible/fallback body counts published from one successful whole check."""
+
+    pub snapshot: Snapshot
+    pub bodies: int
+    pub fallbacks: int
+
+
+pub model PreparedCompiledBodies:
+    """Body records staged beside a native request's other outputs without publishing another generation."""
+
+    pub transaction: Transaction
+    pub bodies: int
+    pub fallbacks: int
+
+
+class PreparedBodyRecordSource with RecordSource:
+    """Authenticate reads from the exact values staged by one compiled-body publication transaction."""
+
+    scope: ReadScope
+    values: Dict[str, bytes] = {}
+
+    @staticmethod
+    pub def open(scope: ReadScope) -> PreparedBodyRecordSource:
+        """Create an empty source bound to one compiler profile and publication preparation."""
+        return PreparedBodyRecordSource(scope=scope)
+
+    pub def add(mut self, key: str, value: bytes) -> None:
+        """Make one exact pending value available to later producers in the same transaction."""
+        self.values[key] = value
+
+    pub def for_profile(self, profile: str) -> PreparedBodyRecordSource:
+        """Bind the same staged values to the next producer profile without weakening its read-scope check."""
+        scope = ReadScope(snapshot=self.scope.snapshot, profile=profile)
+        return PreparedBodyRecordSource(scope=scope, values=self.values)
+
+    def read(self, scope: ReadScope, request: RecordRequest) -> RecordRead:
+        """Return one staged field with content evidence, or fail when publication order left it unavailable."""
+        if scope != self.scope:
+            return RecordRead.Failed(ReadFault.SnapshotMismatch)
+        key = match encode_record_key(request.key):
+            Ok(value) => value
+            Err(_) => return RecordRead.Failed(ReadFault.InvalidEvidence)
+
+        if key not in self.values:
+            return RecordRead.Failed(ReadFault.UnfinishedSupplier)
+        value = self.values[key]
+        semantic = hexlify(sha256.digest(value))
+        evidence = RevisionEvidence(scope=scope, request=request, revision=semantic, semantic_digest=semantic)
+        return RecordRead.Found(SelectedFact(evidence=evidence, value=value, selection_digest=semantic))
+
+
+pub model PublishedSourceInputs:
+    """The graph generation and logical keys rewritten by captured source projection."""
+
+    pub snapshot: Snapshot
+    pub keys: list[RecordKey]
+
+
+pub model PreparedSourceInputs:
+    """Captured source projections staged for one atomic native request and the keys whose values changed."""
+
+    pub transaction: Transaction
+    pub keys: list[RecordKey]
+
+
+pub def publish_captured_source_inputs(
+    selected: Snapshot,
+    unit: UnitDescription,
+    inputs: list[CapturedInput],
+) -> Result[PublishedSourceInputs, str]:
+    """Publish captured Incan source projections in one standalone transaction."""
+    prepared = prepare_captured_source_inputs(selected, begin(selected), unit, inputs)?
+    published = commit(prepared.transaction).map_err((error) => error.message())?
+    return Ok(PublishedSourceInputs(snapshot=published, keys=prepared.keys))
+
+
+pub def prepare_captured_source_inputs(
+    selected: Snapshot,
+    transaction: Transaction,
+    unit: UnitDescription,
+    inputs: list[CapturedInput],
+) -> Result[PreparedSourceInputs, str]:
+    """Stage captured source projections and report only keys whose semantic values differ from the selected view."""
+    mut prepared = transaction
+    mut changed: list[RecordKey] = []
+    for input in inputs:
+        if input.path.endswith(".incn") and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]:
+            match captured_source_identity(unit, input.path)?:
+                None => continue
+                Some(identity) =>
+                    source = Path(input.path).read_text("utf-8", "strict").map_err((error) => error.message())?
+                    projection = project_source(identity[0], identity[1], source)?
+                    header_key = encode_record_key(projection.header.key)?
+                    header_value = projection.header.text.encode("utf-8")
+                    if get(selected, header_key).map_err((error) => error.message())? != Some(header_value):
+                        changed.append(projection.header.key)
+                    prepared = put(prepared, header_key, header_value)
+                    declaration_key = encode_record_key(projection.declarations.key)?
+                    declaration_value = projection.declarations.text.encode("utf-8")
+                    if get(selected, declaration_key).map_err((error) => error.message())? != Some(declaration_value):
+                        changed.append(projection.declarations.key)
+                    prepared = put(prepared, declaration_key, declaration_value)
+                    for owner in projection.owners:
+                        for record in [owner, signature_record(owner)]:
+                            owner_key = encode_record_key(record.key)?
+                            owner_value = record.text.encode("utf-8")
+                            if get(selected, owner_key).map_err((error) => error.message())? != Some(owner_value):
+                                changed.append(record.key)
+                            prepared = put(prepared, owner_key, owner_value)
+    return Ok(PreparedSourceInputs(transaction=prepared, keys=changed))
+
+
+def captured_source_identity(unit: UnitDescription, path: str) -> Result[Option[Tuple[str, str]], str]:
+    """Compare physical input and root paths so symlinked checkouts cannot omit changed source witnesses."""
+    mut normalized = ""
+    match Path(path).resolve():
+        Err(_) => return Ok(None)
+        Ok(resolved) => normalized = resolved.0
+    for dependency in dependency_source_roots(unit):
+        if let Some(relative) = captured_relative_path(normalized, dependency[1])?:
+            return Ok(Some((dependency[0], logical_module(relative))))
+    if let Some(relative) = captured_relative_path(normalized, unit.project_root)?:
+        return Ok(Some((source_origin(unit), relative)))
+    return Ok(None)
+
+
+def captured_relative_path(path: str, root: str) -> Result[Option[str], str]:
+    """Resolve the described root with the input's path policy; an unreadable root must refuse reuse."""
+    physical = Path(root).resolve().map_err((error) => f"cannot resolve captured source root {root}: {error.message()}")?
+    prefix = physical.0 + "/"
+    if path.startswith(prefix):
+        return Ok(Some(path[len(prefix):]))
+    return Ok(None)
+
+
+def logical_module(relative: str) -> str:
+    """Canonicalize an editable dependency source path the same way source-module resolution names its module."""
+    mut without_extension = relative
+    if without_extension.endswith(".incn"):
+        without_extension = without_extension[:len(without_extension) - len(".incn")]
+    mut parts = without_extension.split("/")
+    if len(parts) > 0 and parts[len(parts) - 1] in ["mod", "__init__"]:
+        parts = parts[:len(parts) - 1]
+    elif len(parts) > 1 and parts[len(parts) - 1] == "prelude":
+        parts = parts[:len(parts) - 1]
+    return "/".join(parts)
+
+
+pub def publish_compiled_bodies(
+    selected: Snapshot,
+    unit: UnitDescription,
+    output: Path,
+) -> Result[PublishedCompiledBodies, str]:
+    """Publish one successful compiler sidecar in a standalone atomic transaction."""
+    prepared = prepare_compiled_bodies(begin(selected), unit, output)?
+    published = commit(prepared.transaction).map_err((error) => error.message())?
+    return Ok(PublishedCompiledBodies(snapshot=published, bodies=prepared.bodies, fallbacks=prepared.fallbacks))
+
+
+pub def prepare_compiled_bodies(
+    transaction: Transaction,
+    unit: UnitDescription,
+    output: Path,
+    plan_output: Option[Path] = None,
+    selected: Option[Snapshot] = None,
+    retained: list[SelectedBodyRecord] = [],
+) -> Result[PreparedCompiledBodies, str]:
+    """
+    Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
+
+    1. Authenticate the bounded sidecar through the shared checker codec.
+    2. Stage each source projection and declaration value before any body receipt reads them.
+    3. Stage local, final and Body IR evaluations in the caller's request transaction.
+    """
+    # 1. The sidecar is invocation output, not an authority until this graph publication succeeds.
+    if not output.is_file():
+        return Err("successful graph-enabled compile did not publish body outputs")
+    encoded = output.read_bytes().map_err((error) => error.message())?
+    discard_file(output)
+    outputs = decode_compiled_body_outputs(encoded).map_err((error) => f"compiled body output refused: {error:?}")?
+    origin = source_origin(unit)
+
+    # 2. The prepared source authenticates only values carried by this exact request transaction.
+    scope = ReadScope(snapshot=transaction.id, profile=CHECKER_PROFILE)
+    mut source = PreparedBodyRecordSource.open(scope)
+    mut prepared = transaction
+    mut modules: list[str] = []
+    for value in outputs.values:
+        if value.module not in modules:
+            projection = source_projection(unit, origin, value.module)?
+            header_key = encode_record_key(projection.header.key)?
+            header_value = projection.header.text.encode("utf-8")
+            prepared = put(prepared, header_key, header_value)
+            source.add(header_key, header_value)
+            declaration_key = encode_record_key(projection.declarations.key)?
+            declaration_value = projection.declarations.text.encode("utf-8")
+            prepared = put(prepared, declaration_key, declaration_value)
+            source.add(declaration_key, declaration_value)
+            for owner in projection.owners:
+                for record in [owner, signature_record(owner)]:
+                    owner_key = encode_record_key(record.key)?
+                    owner_value = record.text.encode("utf-8")
+                    prepared = put(prepared, owner_key, owner_value)
+                    source.add(owner_key, owner_value)
+            modules.append(value.module)
+    for fallback in outputs.fallbacks:
+        if fallback.module not in modules:
+            projection = source_projection(unit, origin, fallback.module)?
+            header_key = encode_record_key(projection.header.key)?
+            header_value = projection.header.text.encode("utf-8")
+            prepared = put(prepared, header_key, header_value)
+            source.add(header_key, header_value)
+            declaration_key = encode_record_key(projection.declarations.key)?
+            declaration_value = projection.declarations.text.encode("utf-8")
+            prepared = put(prepared, declaration_key, declaration_value)
+            source.add(declaration_key, declaration_value)
+            for owner in projection.owners:
+                for record in [owner, signature_record(owner)]:
+                    owner_key = encode_record_key(record.key)?
+                    owner_value = record.text.encode("utf-8")
+                    prepared = put(prepared, owner_key, owner_value)
+                    source.add(owner_key, owner_value)
+            modules.append(fallback.module)
+    editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
+    for value in outputs.values:
+        for dependency in value.dependency_reads:
+            match dependency.package:
+                Some(package) =>
+                    if package in editable_packages:
+                        owner = signature_record(dependency_owner_record(unit, package, dependency.module, dependency.name)?)
+                        prepared = put(prepared, encode_record_key(owner.key)?, owner.text.encode("utf-8"))
+                        source.add(encode_record_key(owner.key)?, owner.text.encode("utf-8"))
+                None =>
+                    slot = project_declaration_slot(origin, dependency.module, dependency.name)
+                    slot_value = dependency.identity.encode("utf-8")
+                    prepared = put(prepared, encode_record_key(slot)?, slot_value)
+                    source.add(encode_record_key(slot)?, slot_value)
+                    dependency_module = project_dependency_module(unit, dependency.module)?
+                    dependency_projection = source_projection(unit, origin, dependency_module)?
+                    declaration_key = encode_record_key(dependency_projection.declarations.key)?
+                    declaration_value = dependency_projection.declarations.text.encode("utf-8")
+                    prepared = put(prepared, declaration_key, declaration_value)
+                    source.add(declaration_key, declaration_value)
+                    signature = project_signature_record(unit, origin, dependency.module, dependency.name)?
+                    signature_key = encode_record_key(signature.key)?
+                    signature_value = signature.text.encode("utf-8")
+                    prepared = put(prepared, signature_key, signature_value)
+                    source.add(signature_key, signature_value)
+    for value in outputs.values:
+        declaration_key = encode_record_key(
+            body_key("declaration", origin, value.identity, value.name, root(value.declaration)?),
+        )?
+        prepared = put(prepared, declaration_key, value.declaration)
+        source.add(declaration_key, value.declaration)
+        prepared = put(
+            prepared,
+            encode_record_key(eligibility_key(origin, value.identity, value.name))?,
+            b"record-eligible",
+        )
+    for fallback in outputs.fallbacks:
+        match fallback.identity:
+            Some(identity) =>
+                prepared = put(
+                    prepared,
+                    encode_record_key(eligibility_key(origin, identity, fallback.name))?,
+                    ("full-source: " + fallback.reason).encode("utf-8"),
+                )
+            None => pass
+
+    # 3. A cold whole check stages the same graph values later edited activations replace independently.
+    mut published = 0
+    for value in outputs.values:
+        projection = source_projection(unit, origin, value.module)?
+        owner = owner_record(projection, value.name).map_err((error) => owner_record_message(error, value.name))?
+        declarations = module_declarations(outputs.values, origin, value.module)?
+        local_key = body_key("local", origin, value.identity, "checked", root(value.local)?)
+        mut local_reads = [request(owner.key), request(projection.header.key), request(projection.declarations.key)]
+        for declaration in declarations:
+            local_reads.append(request(declaration))
+        for dependency in value.dependency_reads:
+            match dependency_read_key(unit, origin, dependency, editable_packages)?:
+                Some(key) => local_reads.append(request(key))
+                None => pass
+            match dependency_invalidation_key(unit, origin, dependency)?:
+                Some(key) => local_reads.append(request(key))
+                None => pass
+            match dependency_signature_key(unit, origin, dependency, editable_packages)?:
+                Some(key) => local_reads.append(request(key))
+                None => pass
+        local_receipt = prepared_receipt(source, scope, local_key, local_reads)?
+        local = prepare_evaluation(
+            prepared,
+            "compiled-local-" + value.identity,
+            ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=0),
+            value.local,
+            local_receipt,
+        )?
+        prepared = local.transaction
+        source.add(encode_record_key(local_key)?, value.local)
+        final_key = body_key("final", origin, value.identity, "checked", root(value.final)?)
+        mut final_reads = [
+            request(owner.key),
+            request(projection.header.key),
+            request(projection.declarations.key),
+            request(local_key),
+        ]
+        for declaration in declarations:
+            final_reads.append(request(declaration))
+        for dependency in value.dependency_reads:
+            match dependency_read_key(unit, origin, dependency, editable_packages)?:
+                Some(key) => final_reads.append(request(key))
+                None => pass
+            match dependency_invalidation_key(unit, origin, dependency)?:
+                Some(key) => final_reads.append(request(key))
+                None => pass
+            match dependency_signature_key(unit, origin, dependency, editable_packages)?:
+                Some(key) => final_reads.append(request(key))
+                None => pass
+        final_receipt = prepared_receipt(source, scope, final_key, final_reads)?
+        final = prepare_evaluation(
+            prepared,
+            "compiled-final-" + value.identity,
+            ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=1),
+            value.final,
+            final_receipt,
+        )?
+        prepared = final.transaction
+        source.add(encode_record_key(final_key)?, value.final)
+        body_ir_key = body_key("body-ir", origin, value.identity, "checked", root(value.final)?)
+        body_ir_receipt = prepared_receipt(source, scope, body_ir_key, [request(final_key)])?
+        body_ir = prepare_evaluation(
+            prepared,
+            "compiled-body-ir-" + value.identity,
+            ProducerRank(namespace=0, stage=ProducerStage.BodyIr, dependency=0),
+            value.body_ir,
+            body_ir_receipt,
+        )?
+        prepared = body_ir.transaction
+        source.add(encode_record_key(body_ir_key)?, value.body_ir)
+        published += 1
+    if let Some(report) = plan_output:
+        witnesses = lowering_witnesses(outputs.values, retained, source, selected, unit, origin)?
+        prepared = prepare_lowering_records(prepared, source, witnesses, outputs.fallbacks, origin, report, unit, selected)?
+    return Ok(PreparedCompiledBodies(transaction=prepared, bodies=published, fallbacks=len(outputs.fallbacks)))
+
+
+def lowering_witnesses(
+    fresh: list[CompiledBodyValue],
+    retained: list[SelectedBodyRecord],
+    mut source: PreparedBodyRecordSource,
+    selected: Option[Snapshot],
+    unit: UnitDescription,
+    origin: str,
+) -> Result[list[LoweringBody], str]:
+    """Carry only graph-selected inputs with unchanged current owner/header bytes; never invent fresh checker facts."""
+    mut witnesses: list[LoweringBody] = []
+    editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
+    for value in fresh:
+        mut signatures = [source_projection(unit, origin, value.module)?.declarations.key]
+        signatures.extend(module_declarations(fresh, origin, value.module)?)
+        for dependency in value.dependency_reads:
+            match dependency_read_key(unit, origin, dependency, editable_packages)?:
+                Some(key) => signatures.append(key)
+                None => pass
+            match dependency_signature_key(unit, origin, dependency, editable_packages)?:
+                Some(key) => signatures.append(key)
+                None => pass
+            match dependency_invalidation_key(unit, origin, dependency)?:
+                Some(key) => signatures.append(key)
+                None => pass
+        witnesses.append(LoweringBody(
+            identity=value.identity, module=value.module, final=value.final, body_ir=value.body_ir,
+            signature_reads=signatures,
+        ))
+    for record in retained:
+        if record.identity in [value.identity for value in witnesses]:
+            continue
+        decoded = decode_owner(record.body_ir).map_err((error) => str(error))?
+        if decoded.identity != record.identity:
+            return Err("retained Body IR disagrees with its graph owner")
+        key = body_key("body-ir", origin, record.identity, "checked", root(record.final)?)
+        prior = match selected:
+            None => return Err("retained Body IR has no selected graph")
+            Some(value) => value
+        if get(prior, encode_record_key(key)?).map_err((error) => error.message())? != Some(record.body_ir):
+            return Err("retained Body IR differs from the selected graph")
+        projection = source_projection(unit, origin, decoded.source)?
+        owner = match retained_owner_record(projection, str(decoded.body.name))?:
+            # A removed or renamed owner remains valid history in the selected graph, but it is not a witness for
+            # the current compile and must not cross into this request's lowering inventory.
+            None => continue
+            Some(value) => value
+        for binding in [projection.header, owner]:
+            if get(prior, encode_record_key(binding.key)?).map_err((error) => error.message())? != Some(binding.text.encode("utf-8")):
+                return Err("retained Body IR has changed current source inputs")
+        source.add(encode_record_key(key)?, record.body_ir)
+        local_key = body_key("local", origin, record.identity, "checked", root(record.local)?)
+        local = match reusable_evaluation(prior, local_key, CHECKER_PROFILE)?:
+            None => return Err("retained lowering owner has no witnessed checker inputs")
+            Some(value) => value
+        mut signatures: list[RecordKey] = []
+        for witness in local.receipt.witnesses:
+            match witness:
+                ReadWitness.Found(found, _) =>
+                    input = found.request.key
+                    if input.family in ["declaration", "declaration-slot", "declaration-signature", "declaration-index"]:
+                        encoded = encode_record_key(input)?
+                        value = match get(prior, encoded).map_err((error) => error.message())?:
+                            None => return Err("retained lowering signature input is absent")
+                            Some(value) => value
+                        source.add(encoded, value)
+                        signatures.append(input)
+                _ => return Err("retained lowering owner has an unsupported checker witness")
+        witnesses.append(LoweringBody(
+            identity=record.identity, module=decoded.source, final=record.final, body_ir=record.body_ir, retained=true,
+            signature_reads=signatures,
+        ))
+    return Ok(witnesses)
+
+
+def prepare_lowering_records(
+    transaction: Transaction,
+    mut source: PreparedBodyRecordSource,
+    values: list[LoweringBody],
+    fallbacks: list[CompiledBodyFallback],
+    origin: str,
+    report: Path,
+    unit: UnitDescription,
+    selected: Option[Snapshot],
+) -> Result[Transaction, str]:
+    """Stage evaluated lowering-demand and plan-function values through their exact Body IR witnesses."""
+    if not report.is_dir():
+        return Err("successful records compile did not publish lowering outputs")
+    scope = ReadScope(snapshot=transaction.id, profile=LOWERING_PROFILE)
+    mut staged_source = source.for_profile(LOWERING_PROFILE)
+    mut prepared = transaction
+    mut events: list[JsonValue] = []
+    for path in sorted([path.0 for path in report.iterdir().map_err((error) => error.message())?]):
+        entry = Path(path)
+        if not entry.is_file() or not path.endswith(".event"):
+            continue
+        event = parse(entry.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
+            (error) => f"lowering output refused: {error.message()}",
+        )?
+        if event.require("schema").map_err((error) => error.message())?.expect_int().map_err(
+            (error) => error.message(),
+        )? != 2:
+            return Err("lowering output has an unsupported schema")
+        events.append(event)
+    mut plan_keys: list[RecordKey] = []
+    # Scalar demand and plan suppliers settle before the entry-binding contribution reads main's demand.
+    for event in events:
+        if is_entry_event(event)?:
+            continue
+        event_identity = required_event_text(event, "identity")?
+        key = required_event_text(event, "key")?
+        function = required_event_text(event, "function")?
+        product = required_event_text(event, "product")?.encode("utf-8")
+        body = body_value(values, fallbacks, event_identity)?
+        if body.retained and not event.require("reused").and_then((field) => field.expect_bool()).map_err((error) => error.message())?:
+            return Err("a fresh plan product requires a fresh graph Body IR witness")
+        identity = body.identity
+        body_ir_key = body_key("body-ir", origin, identity, "checked", root(body.final)?)
+        demand_key = body_key("lowering-demand", origin, identity, function, key)
+        demand_value = lowering_demand(product)?
+        signature_reads = [request(key) for key in body.signature_reads]
+        demand_receipt = prepared_receipt(staged_source, scope, demand_key, [request(body_ir_key)] + signature_reads)?
+        check_reused_output(selected, event, demand_key, demand_value)?
+        demand = prepare_evaluation(
+            prepared,
+            "lowering-demand-" + identity,
+            ProducerRank(namespace=0, stage=ProducerStage.LoweringDemand, dependency=0),
+            demand_value,
+            demand_receipt,
+        )?
+        prepared = demand.transaction
+        staged_source.add(encode_record_key(demand_key)?, demand_value)
+        plan_key = body_key("plan-function", origin, identity, "body:" + function, key)
+        check_reused_output(selected, event, plan_key, product)?
+        plan_receipt = prepared_receipt(staged_source, scope, plan_key, [request(demand_key)] + signature_reads)?
+        plan = prepare_evaluation(
+            prepared,
+            "plan-function-" + identity,
+            ProducerRank(namespace=0, stage=ProducerStage.PlanFunction, dependency=0),
+            product,
+            plan_receipt,
+        )?
+        prepared = plan.transaction
+        staged_source.add(encode_record_key(plan_key)?, product)
+        plan_keys.append(plan_key)
+    for event in events:
+        if not is_entry_event(event)?:
+            continue
+        body = body_value(values, fallbacks, required_event_text(event, "identity")?)?
+        demand_key = body_key("lowering-demand", origin, body.identity, "main", required_event_text(event, "demand")?)
+        key = body_key("plan-function", origin, body.identity, "entry", required_event_text(event, "key")?)
+        product = required_event_text(event, "product")?.encode("utf-8")
+        check_reused_output(selected, event, key, product)?
+        receipt = prepared_receipt(staged_source, scope, key, [request(demand_key)])?
+        entry = prepare_evaluation(
+            prepared, "plan-entry-" + body.identity,
+            ProducerRank(namespace=0, stage=ProducerStage.PlanFunction, dependency=1), product, receipt,
+        )?
+        prepared = entry.transaction
+        staged_source.add(encode_record_key(key)?, product)
+        plan_keys.append(key)
+    if not report.joinpath("native-interface.json").is_file():
+        require_plan_refusal(report)?
+        return Ok(prepared)
+    return prepare_native_interface(prepared, staged_source, scope, unit, origin, values, report, plan_keys)
+
+
+def require_plan_refusal(report: Path) -> Result[None, str]:
+    """Accept an incomplete native interface only when lowering retained an explicit per-function refusal."""
+    for entry in report.iterdir().map_err((error) => error.message())?:
+        if entry.is_file() and entry.name().endswith(".refusal"):
+            document = parse(entry.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
+                (error) => error.message(),
+            )?
+            if document.require("schema").and_then((field) => field.expect_int()).map_err(
+                (error) => error.message(),
+            )? != 2:
+                return Err("lowering refusal has an unsupported schema")
+            _ = required_event_text(document, "function")?
+            _ = required_event_text(document, "refusal")?
+            return Ok(None)
+    return Err("successful records compile omitted its native interface without a lowering refusal")
+
+
+def is_entry_event(event: JsonValue) -> Result[bool, str]:
+    """Distinguish the compiler-owned entry role from an authored function whose name happens to be entry."""
+    match event.get("role"):
+        None => return Ok(false)
+        Some(role) =>
+            if role.expect_str().map_err((error) => error.message())? != "entry":
+                return Err("unsupported plan-function role")
+            return Ok(true)
+
+
+def lowering_demand(product: bytes) -> Result[bytes, str]:
+    """Retain the actual checked inputs and exact runtime signatures discovered by existing scalar lowering."""
+    record = parse(product.decode().map_err((_) => "invalid scalar record UTF-8")?).map_err((error) => error.message())?
+    native = parse(required_event_text(record, "function")?).map_err((error) => error.message())?
+    value = JsonValue.object({
+        "schema": JsonValue.string("incan.lowering-demand/2"),
+        "inputs": record.require("inputs").map_err((error) => error.message())?,
+        "runtime": native.require("runtime").map_err((error) => error.message())?,
+    })
+    return Ok(value.to_json().map_err((error) => error.message())?.encode("utf-8"))
+
+
+def check_reused_output(selected: Option[Snapshot], event: JsonValue, key: RecordKey, value: bytes) -> Result[None, str]:
+    """A compiler reuse event must reproduce the exact value previously selected from the graph."""
+    reused = event.require("reused").and_then((value) => value.expect_bool()).map_err((error) => error.message())?
+    if reused:
+        prior = match selected:
+            Some(value) => value
+            None => return Err("a reused lowering record has no selected graph snapshot")
+        if get(prior, encode_record_key(key)?).map_err((error) => error.message())? != Some(value):
+            return Err("a reused lowering record differs from its selected graph authority")
+    return Ok(None)
+
+
+def prepare_native_interface(
+    transaction: Transaction,
+    mut source: PreparedBodyRecordSource,
+    scope: ReadScope,
+    unit: UnitDescription,
+    origin: str,
+    bodies: list[LoweringBody],
+    report: Path,
+    plans: list[RecordKey],
+) -> Result[Transaction, str]:
+    """Witness the complete loss-checked native plan against its exact function members and current source positions."""
+    path = report.joinpath("native-interface.json")
+    document = parse(path.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
+        (error) => error.message(),
+    )?
+    if required_event_text(document, "schema")? != "incan.native-interface/1":
+        return Err("native-interface has an unsupported schema")
+    key = body_key("native-interface", origin, origin, unit.profile, unit.checked_context.unwrap_or(""))
+    mut reads = [request(plan) for plan in plans]
+    mut modules: list[str] = []
+    for body in bodies:
+        if body.module not in modules:
+            projection = source_projection(unit, origin, body.module)?
+            reads.append(request(projection.header.key))
+            for owner in projection.owners:
+                reads.append(request(owner.key))
+            modules.append(body.module)
+    receipt = prepared_receipt(source, scope, key, reads)?
+    prepared = prepare_evaluation(
+        transaction, "native-interface-" + origin,
+        ProducerRank(namespace=0, stage=ProducerStage.NativeInterface, dependency=0),
+        required_event_text(document, "plan")?.encode("utf-8"), receipt,
+    )?
+    return Ok(prepared.transaction)
+
+
+def required_event_text(event: JsonValue, key: str) -> Result[str, str]:
+    """Read one required lowering-event text field without accepting coercion."""
+    return event.require(key).map_err((error) => error.message())?.expect_str().map_err((error) => error.message())
+
+
+def body_value(
+    values: list[LoweringBody],
+    fallbacks: list[CompiledBodyFallback],
+    identity: str,
+) -> Result[LoweringBody, str]:
+    """Authenticate one lowering event against graph-eligible Body IR, retaining an exact checker fallback reason."""
+    mut available: list[str] = []
+    for value in values:
+        decoded = decode_owner(value.body_ir).map_err((error) => f"cannot decode graph-eligible Body IR owner: {error}")?
+        if decoded.identity != value.identity:
+            return Err("graph-eligible Body IR owner disagrees with its stable publication identity")
+        match decoded.body.canonical:
+            Some(canonical) =>
+                encoded = encode_incan_symbol_identity(canonical)
+                available.append(encoded)
+                if encoded == identity:
+                    return Ok(value)
+            None => pass
+    reasons = "; ".join(fallback_reasons(fallbacks))
+    return Err(f"lowering output owner {identity} is absent from graph-eligible Body IR: {available}; checker-record fallbacks: {reasons}")
+
+
+def source_projection(unit: UnitDescription, origin: str, module: str) -> Result[SourceProjection, str]:
+    """Recreate one already-published projection to select its logical owner and header keys."""
+    path = Path(unit.project_root).joinpath(module)
+    source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    return project_source(origin, module, source)
+
+
+pub def retained_owner_record(projection: SourceProjection, name: str) -> Result[Option[SourceProjectionRecord], str]:
+    """Skip only an absent retained owner while propagating every malformed owner-selection state."""
+    match owner_record(projection, name):
+        Ok(value) => return Ok(Some(value))
+        Err(OwnerRecordFault.Absent) => return Ok(None)
+        Err(OwnerRecordFault.Ambiguous) => return Err(owner_record_message(OwnerRecordFault.Ambiguous, name))
+
+
+def owner_record(projection: SourceProjection, name: str) -> Result[SourceProjectionRecord, OwnerRecordFault]:
+    """Select exactly one compiled owner's source record across callable and kind-qualified declaration facets."""
+    mut selected: Option[SourceProjectionRecord] = None
+    for owner in projection.owners:
+        if owner.key.facet == name or owner.key.facet.endswith(":" + name):
+            match selected:
+                Some(_) => return Err(OwnerRecordFault.Ambiguous)
+                None =>
+                    selected = Some(owner)
+    match selected:
+        Some(owner) => return Ok(owner)
+        None => return Err(OwnerRecordFault.Absent)
+
+
+def owner_record_message(error: OwnerRecordFault, name: str) -> str:
+    """Render one closed owner-selection refusal at the surrounding string-error boundary."""
+    match error:
+        OwnerRecordFault.Absent => return "compiled body output has no matching owner source: " + name
+        OwnerRecordFault.Ambiguous => return "compiled body output has multiple matching owner sources: " + name
+
+
+def dependency_owner_record(
+    unit: UnitDescription,
+    package: str,
+    module: str,
+    name: str,
+) -> Result[SourceProjectionRecord, str]:
+    """Read one compiler-witnessed editable dependency owner from its described logical module root."""
+    mut root = ""
+    for dependency in dependency_source_roots(unit):
+        if dependency[0] == package:
+            root = dependency[1]
+    if root == "":
+        return Err("compiled body output names an unselected editable dependency: " + package)
+    base = Path(root).joinpath(module)
+    mut candidates = [Path(base.0 + ".incn"), base.joinpath("mod.incn"), base.joinpath("__init__.incn")]
+    if "/" in module:
+        candidates.append(base.joinpath("prelude.incn"))
+    for candidate in candidates:
+        if candidate.is_file():
+            source = candidate.read_text("utf-8", "strict").map_err((error) => error.message())?
+            return owner_record(project_source(package, module, source)?, name).map_err(
+                (error) => owner_record_message(error, name),
+            )
+    return Err(f"compiled body output dependency module is absent: {package}:{module}")
+
+
+def module_declarations(values: list[CompiledBodyValue], origin: str, module: str) -> Result[list[RecordKey], str]:
+    """Name the complete immutable declaration environment available to one cold-checked module."""
+    mut declarations: list[RecordKey] = []
+    for value in values:
+        if value.module == module:
+            declarations.append(body_key("declaration", origin, value.identity, value.name, root(value.declaration)?))
+    return Ok(declarations)
+
+
+def dependency_read_key(
+    unit: UnitDescription,
+    origin: str,
+    dependency: CompiledBodyDependencyRead,
+    editable_packages: list[str],
+) -> Result[Option[RecordKey], str]:
+    """Select the producer declaration for a project read or the existing editable-package source witness."""
+    match dependency.package:
+        Some(package) =>
+            if package in editable_packages:
+                return Ok(Some(signature_record(dependency_owner_record(unit, package, dependency.module, dependency.name)?).key))
+            return Ok(None)
+        None => return Ok(Some(project_declaration_slot(origin, dependency.module, dependency.name)))
+
+
+def project_signature_record(unit: UnitDescription, origin: str, module: str, name: str) -> Result[SourceProjectionRecord, str]:
+    """Bind a checked project callee to its body-independent source header under the same logical owner."""
+    projection = source_projection(unit, origin, project_dependency_module(unit, module)?)?
+    return Ok(signature_record(owner_record(projection, name).map_err((error) => owner_record_message(error, name))?))
+
+
+def dependency_signature_key(
+    unit: UnitDescription, origin: str, dependency: CompiledBodyDependencyRead, editable_packages: list[str],
+) -> Result[Option[RecordKey], str]:
+    """Expose each editable callee's signature as a direct checker and lowering invalidation dependency."""
+    match dependency.package:
+        None => return Ok(Some(project_signature_record(unit, origin, dependency.module, dependency.name)?.key))
+        Some(_) => return Ok(None)
+
+
+def dependency_invalidation_key(
+    unit: UnitDescription,
+    origin: str,
+    dependency: CompiledBodyDependencyRead,
+) -> Result[Option[RecordKey], str]:
+    """Select the captured project declaration surface that makes signature and removal edits visible before checking."""
+    if dependency.package is not None:
+        return Ok(None)
+    return Ok(Some(declaration_index_key(origin, project_dependency_module(unit, dependency.module)?)))
+
+
+def project_dependency_module(unit: UnitDescription, module: str) -> Result[str, str]:
+    """Resolve a checked project module identity to the captured source path used by source projection."""
+    base = Path(unit.source_root).joinpath(module)
+    mut candidates = [Path(base.0 + ".incn"), base.joinpath("mod.incn"), base.joinpath("__init__.incn")]
+    if "/" in module:
+        candidates.append(base.joinpath("prelude.incn"))
+    # Candidates resolve through symlinks (macOS `/var` is `/private/var`), so the root they're compared with must too.
+    root = Path(unit.project_root).resolve().map_err((error) => f"cannot resolve project root {error.message()}")?
+    prefix = root.0 + "/"
+    for candidate in candidates:
+        match candidate.resolve():
+            Ok(resolved) =>
+                if resolved.0.startswith(prefix) and candidate.is_file():
+                    return Ok(resolved.0[len(prefix):])
+            Err(_) => pass
+    return Err("compiled body output dependency module is absent: project:" + module)
+
+
+def project_declaration_slot(origin: str, module: str, name: str) -> RecordKey:
+    """Name one project declaration slot whose value is the producer's checked stable identity."""
+    return RecordKey(
+        family="declaration-slot",
+        identity_profile=IDENTITY_PROFILE,
+        origin=origin,
+        identity=module,
+        facet=name,
+        context="checked-signature",
+    )
+
+
+def body_key(family: str, origin: str, identity: str, facet: str, context: str) -> RecordKey:
+    """Name one canonical checker value under its stable owner and semantic root."""
+    return RecordKey(
+        family=family,
+        identity_profile=IDENTITY_PROFILE,
+        origin=origin,
+        identity=identity,
+        facet=facet,
+        context=context,
+    )
+
+
+def eligibility_key(origin: str, identity: str, name: str) -> RecordKey:
+    """Name the explicit record-fast-path decision for one successfully checked owner."""
+    return RecordKey(
+        family="eligibility",
+        identity_profile=IDENTITY_PROFILE,
+        origin=origin,
+        identity=identity,
+        facet=name,
+        context="checker-record",
+    )
+
+
+def source_origin(unit: UnitDescription) -> str:
+    """Use the package authority, or the standalone namespace whose view already isolates manifest-free sources."""
+    if unit.package != "":
+        return unit.package
+    return "standalone"
+
+
+def root(encoded: bytes) -> Result[str, str]:
+    """Map codec faults at the engine boundary without weakening checker-record validation."""
+    return record_root(encoded).map_err((error) => f"compiled checker root refused: {error:?}")
+
+
+def request(key: RecordKey) -> RecordRequest:
+    """Read one complete logical checker or source-projection value."""
+    return RecordRequest(key=key, selection=RecordSelection.Field("value"))
+
+
+def prepared_receipt(
+    source: PreparedBodyRecordSource,
+    scope: ReadScope,
+    output: RecordKey,
+    requests: list[RecordRequest],
+) -> Result[ReadReceipt, str]:
+    """Authenticate one producer's exact inputs from the caller-owned publication transaction."""
+    preparation = PreparationEvidence(
+        output=output,
+        rank_certificate="compiled-check",
+        selector_witnesses="compiled-check",
+    )
+    mut reads = RecordReads.start(scope, preparation, requests)
+    for item in requests:
+        match reads.read(source, item):
+            RecordRead.Failed(fault) =>
+                return Err(f"compiled body publication could not read {encode_record_key(item.key)?}: {fault:?}")
+            _ => pass
+    return reads.finish().map_err((_) => "compiled body publication produced an incomplete receipt")

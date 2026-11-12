@@ -84,6 +84,8 @@ pub(super) fn checked_modules(
     rust: &RustFactsSetup,
     resident: bool,
     receipt: &RefusalReceipt,
+    graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
+    graph_body_output: Option<PathBuf>,
 ) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
     let path = unit
@@ -100,6 +102,7 @@ pub(super) fn checked_modules(
     let mut session = session
         .and_then(|session| session.with_rust_facts(rust))
         .map_err(|error| error.to_string())?;
+    session.set_graph_body_records(graph_body_records);
     let library = unit.kind == UnitKind::Library;
     let modules = if library {
         collect_library_modules_detailed_with_session(path.clone(), &session)
@@ -113,12 +116,15 @@ pub(super) fn checked_modules(
     let tests = crate::test_unit::collect(unit, &session)?;
     let package_identity = unit.package.as_str();
     let mut callable_products = callable_products::CallableProducts::prepare(unit, &modules, &mut session);
+    let mut graph_body_output =
+        graph_body_output::GraphBodyOutput::prepare(graph_body_output, unit.project_root.clone())?;
     let mut publication = library.then(|| PublicationFacts::new(package_identity));
     let analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
         session
             .analyze_unit(&modules, library.then_some(package_identity), &mut |module, checker| {
                 callable_products.observe(module, checker);
+                graph_body_output.observe(module, checker);
                 if let Some(publication) = publication.as_mut() {
                     publication.visit(module, checker, module.file_path == path);
                 }
@@ -130,6 +136,11 @@ pub(super) fn checked_modules(
         .position(|module| module.file_path == path)
         .ok_or("entry module is missing")?;
     validate_module_declarations(&modules, &analysis).inspect_err(|_| receipt.deterministic())?;
+    let body_ir_inputs_invocation = tracing::trace_span!(
+        target: "incan::invocation",
+        "incan_rustc_driver::prepare_body_ir_inputs"
+    )
+    .entered();
     let manifest = match publication {
         Some(publication) => {
             let manifest = publication
@@ -146,11 +157,12 @@ pub(super) fn checked_modules(
         &requested,
     )
     .ok_or("unsupported Body IR string conversion contract identity")?;
-
-    // ---- Declarations the program reaches in its Loaves ----
     let checked_local = checked_local_identities(manifest.as_ref());
     let runtime_callable_bindings = runtime_declarations(&session, manifest.as_ref());
     let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
+    drop(body_ir_inputs_invocation);
+
+    // ---- Declarations the program reaches in its Loaves ----
     let mut package_versions = resolved.package_versions;
     package_versions.insert(unit.package.clone(), unit.version.clone());
     let reached_loaves = resolved.entries;
@@ -166,6 +178,8 @@ pub(super) fn checked_modules(
 
     // ---- The program's own modules ----
     lower_authored_modules(&modules, &analysis, &session, &mut bodies, &mut files)?;
+    graph_body_output.attach_body_ir(&modules, &bodies[loaf_modules..])?;
+    graph_body_output.publish()?;
     let cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
     let graph = if library {
         let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(
@@ -370,7 +384,8 @@ pub(super) fn complete_dependency_context_in_place(
 pub(super) fn satisfy_runtime_requirements(
     program: &mut CheckedProgram,
     requirements: Vec<RuntimeRequirement>,
-) -> Result<(), String> {
+) -> Result<Vec<usize>, String> {
+    let previous = runtime_module_generations(&program.modules)?;
     let mut next = program.dependencies.requested.clone();
     for requirement in &requirements {
         if !next.insert(requirement.canonical.clone()) {
@@ -411,7 +426,53 @@ pub(super) fn satisfy_runtime_requirements(
         );
     }
     context.requested = next;
-    prepare_dependency_context(program)
+    prepare_dependency_context(program)?;
+    changed_runtime_module_indices(program, &previous)
+}
+
+/// Record the compact monotonic tables that dependency reconstruction can extend between lowering attempts.
+fn runtime_module_generations(modules: &[BodyIrModule]) -> Result<BTreeMap<String, [usize; 11]>, String> {
+    let mut generations = BTreeMap::new();
+    for module in modules {
+        let owner = module.module_id.path().to_owned();
+        let generation = [
+            module.bodies.len(),
+            module.nominal_declarations.len(),
+            module.enum_declarations.len(),
+            module.fieldless_enum_declarations.len(),
+            module.value_enum_declarations.len(),
+            module.trait_declarations.len(),
+            module.trait_implementations.len(),
+            module.static_declarations.len(),
+            module.decorated_bindings.len(),
+            module.loaf_callables.len(),
+            module.native_union_declarations.len(),
+        ];
+        if generations.insert(owner.clone(), generation).is_some() {
+            return Err(format!("duplicate Body IR module owner `{owner}`"));
+        }
+    }
+    Ok(generations)
+}
+
+/// Select only modules whose monotonic checked tables grew, plus the entry whose compact linkage facts are refreshed.
+fn changed_runtime_module_indices(
+    program: &CheckedProgram,
+    previous: &BTreeMap<String, [usize; 11]>,
+) -> Result<Vec<usize>, String> {
+    let current = runtime_module_generations(&program.modules)?;
+    let mut selected = Vec::new();
+    for (index, module) in program.modules.iter().enumerate() {
+        let owner = module.module_id.path();
+        if previous.get(owner) != current.get(owner) {
+            selected.push(index);
+        }
+    }
+    if !selected.contains(&program.entry) {
+        selected.push(program.entry);
+        selected.sort_unstable();
+    }
+    Ok(selected)
 }
 
 /// Retain layout-authoritative runtime declarations without claiming that the unit selected their operations.

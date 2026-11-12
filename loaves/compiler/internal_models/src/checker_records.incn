@@ -1,12 +1,17 @@
 """Canonical field records for the initial free-function checker profile; native objects never enter the codec."""
 
-from std.encoding.hex import hexlify
+from std.encoding.hex import hexlify, unhexlify
 from std.hash import sha256
 
 pub const CHECKER_SCHEMA: str = "incan.checker-fields/9"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/10"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/15"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
+const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/2"
+const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/6"
+# One whole-program transport carries all bounded checker records plus native owner frames; bound the aggregate at
+# 64 MiB while individual checker records retain their narrower 64 KiB limit.
+const MAX_GRAPH_TRANSPORT_BYTES: int = 67108864
 
 
 @derive(Eq)
@@ -37,6 +42,64 @@ pub model CheckedRecord:
     pub root: str
     pub family: CheckedFamily
     pub fields: list[CanonicalField]
+
+
+pub model GraphBodyValue:
+    """One graph-selected owner's checker values and opaque kernel-owned executable frame."""
+
+    pub identity: str
+    pub local: bytes
+    pub final: bytes
+    pub body_ir: bytes
+
+
+pub model GraphBodyFields:
+    """One validated graph-selected owner projected into native checker fields plus its opaque Body IR frame."""
+
+    pub identity: str
+    pub local: list[list[str]]
+    pub final_fields: list[list[str]]
+    pub body_ir: bytes
+
+
+pub model CompiledBodyValue:
+    """One compiler-produced checker triple and kernel-owned Body IR frame with its projected source owner."""
+
+    pub module: str
+    pub name: str
+    pub identity: str
+    pub declaration: bytes
+    pub local: bytes
+    pub final: bytes
+    pub body_ir: bytes
+    pub dependency_reads: list[CompiledBodyDependencyRead] = []
+
+
+@derive(Eq)
+pub model CompiledBodyDependencyRead:
+    """One exact package or project declaration record witnessed by a compiled owner."""
+
+    pub package: Option[str]
+    pub module: str
+    pub name: str
+    pub identity: str
+
+
+@derive(Eq)
+pub model CompiledBodyFallback:
+    """One checked owner that cannot enter the record fast path, retaining absence when identity production failed."""
+
+    pub module: str
+    pub name: str
+    pub identity: Option[str]
+    pub reason: str
+
+
+pub model CompiledBodyOutputs:
+    """Every record-eligible value and explicit full-source fallback from one successful compilation."""
+
+    pub values: list[CompiledBodyValue]
+    pub fallbacks: list[CompiledBodyFallback]
 
 
 @derive(Eq)
@@ -147,6 +210,7 @@ def validate(record: CheckedRecord) -> Result[None, CodecFault]:
         # Field names are versioned schema vocabulary, never native field offsets or Debug spellings.
         if field.family not in [
             "type",
+            "type-identity",
             "binding",
             "binding-type",
             "reference",
@@ -267,16 +331,23 @@ pub def from_native_final_fields(rows: list[list[str]]) -> Result[CheckedRecord,
 
 
 def from_family_fields(rows: list[list[str]], family: CheckedFamily) -> Result[CheckedRecord, CodecFault]:
-    """Attach one schema-selected family to native owner/root/profile metadata and canonical field primitives."""
-    if len(rows) == 0 or len(rows[0]) != 4 or rows[0][0] != "header":
+    """Attach or verify one family on fresh producer rows or a decoded graph value retained for re-publication."""
+    if len(rows) == 0 or len(rows[0]) == 0 or rows[0][0] != "header":
         return Err(CodecFault.Malformed)
     header = rows[0]
+    mut profile = ""
+    if len(header) == 4:
+        profile = header[3]
+    elif len(header) == 5 and header[3] == family_name(family):
+        profile = header[4]
+    else:
+        return Err(CodecFault.Malformed)
     mut fields: list[CanonicalField] = []
     for row in rows[1:]:
         if len(row) < 4:
             return Err(CodecFault.Malformed)
         fields.append(CanonicalField(family=row[0], node=row[1], selector=row[2], values=row[3:]))
-    record = CheckedRecord(profile=header[3], owner=header[1], root=header[2], family=family, fields=fields)
+    record = CheckedRecord(profile=profile, owner=header[1], root=header[2], family=family, fields=fields)
     validate(record)?
     return Ok(record)
 
@@ -290,6 +361,306 @@ pub def native_fields(record: CheckedRecord) -> Result[list[list[str]], CodecFau
     return Ok(rows)
 
 
+pub def encode_graph_body_values(values: list[GraphBodyValue]) -> Result[bytes, CodecFault]:
+    """
+    Encode graph-selected body pairs independently of the unit description and callable-body product cache.
+
+    Each pair is decoded before framing, so an owner mismatch, changed body root or crossed local/final family cannot
+    enter the transport. Strict owner order gives equivalent selections one canonical byte representation.
+    """
+    if len(values) > MAX_FIELDS:
+        return Err(CodecFault.Limit)
+    mut tokens = [GRAPH_TRANSPORT_SCHEMA, str(len(values))]
+    mut previous = ""
+    for value in values:
+        if value.identity == "" or value.identity <= previous:
+            return Err(CodecFault.Malformed)
+        validate_graph_body_value(value)?
+        tokens += [value.identity, hexlify(value.local), hexlify(value.final), hexlify(value.body_ir)]
+        previous = value.identity
+    return encode_transport_tokens(tokens)
+
+
+pub def decode_graph_body_values(encoded: bytes) -> Result[list[GraphBodyFields], CodecFault]:
+    """Decode and authenticate every selected body pair before projecting its canonical native field primitives."""
+    tokens = transport_frames(encoded)?
+    if len(tokens) < 2 or tokens[0] != GRAPH_TRANSPORT_SCHEMA:
+        return Err(CodecFault.Malformed)
+    count = decimal(tokens[1])?
+    if count > MAX_FIELDS or len(tokens) != 2 + count * 4:
+        return Err(CodecFault.Malformed)
+    mut selected: list[GraphBodyFields] = []
+    mut previous = ""
+    mut offset = 2
+    for _ in range(count):
+        identity = str(tokens[offset])
+        if identity == "" or identity <= previous:
+            return Err(CodecFault.Malformed)
+        local_bytes = unhexlify(tokens[offset + 1]).map_err((_) => CodecFault.Malformed)?
+        final_bytes = unhexlify(tokens[offset + 2]).map_err((_) => CodecFault.Malformed)?
+        body_ir = unhexlify(tokens[offset + 3]).map_err((_) => CodecFault.Malformed)?
+        selected.append(decode_graph_body_page(identity, local_bytes, final_bytes, body_ir)?)
+        previous = identity
+        offset += 4
+    return Ok(selected)
+
+
+pub def decode_graph_body_page(
+    identity: str,
+    local: bytes,
+    final: bytes,
+    body_ir: bytes,
+) -> Result[GraphBodyFields, CodecFault]:
+    """Authenticate one already unframed owner page while the native #3036 framing workaround remains removable."""
+    value = GraphBodyValue(identity=identity, local=local, final=final, body_ir=body_ir)
+    records = validate_graph_body_value(value)?
+    return Ok(
+        GraphBodyFields(
+            identity=identity,
+            local=native_fields(records[0])?,
+            final_fields=native_fields(records[1])?,
+            body_ir=body_ir,
+        ),
+    )
+
+
+pub def encode_compiled_body_outputs(outputs: CompiledBodyOutputs) -> Result[bytes, CodecFault]:
+    """Encode eligible producer outputs and explicit full-source fallbacks after a successful native compilation."""
+    if len(outputs.values) + len(outputs.fallbacks) > MAX_FIELDS:
+        return Err(CodecFault.Limit)
+    mut tokens = [COMPILED_TRANSPORT_SCHEMA, str(len(outputs.values)), str(len(outputs.fallbacks))]
+    mut previous = ""
+    for value in outputs.values:
+        order = value.module + "\n" + value.identity
+        if value.module == "" or value.name == "" or value.identity == "" or order <= previous:
+            return Err(CodecFault.Malformed)
+        validate_compiled_body_value(value)?
+        tokens += [
+            value.module,
+            value.name,
+            value.identity,
+            hexlify(value.declaration),
+            hexlify(value.local),
+            hexlify(value.final),
+            hexlify(value.body_ir),
+            str(len(value.dependency_reads)),
+        ]
+        mut previous_read = ""
+        for read in value.dependency_reads:
+            package = optional_identity(read.package)
+            read_order = package + "\n" + read.module + "\n" + read.name + "\n" + read.identity
+            if read.module == "" or read.name == "" or read.identity == "" or read_order <= previous_read:
+                return Err(CodecFault.Malformed)
+            tokens += [package, read.module, read.name, read.identity]
+            previous_read = read_order
+        previous = order
+    previous = ""
+    for fallback in outputs.fallbacks:
+        identity = optional_identity(fallback.identity)
+        order = fallback.module + "\n" + fallback.name + "\n" + identity
+        if (
+            fallback.module == ""
+            or fallback.name == ""
+            or fallback.reason == ""
+            or len(fallback.reason.encode()) > MAX_RECORD_BYTES
+            or order <= previous
+        ):
+            return Err(CodecFault.Malformed)
+        if identity != "":
+            for value in outputs.values:
+                if value.module == fallback.module and value.identity == identity:
+                    return Err(CodecFault.Malformed)
+        tokens += [fallback.module, fallback.name, identity, fallback.reason]
+        previous = order
+    return encode_transport_tokens(tokens)
+
+
+pub def decode_compiled_body_outputs(encoded: bytes) -> Result[CompiledBodyOutputs, CodecFault]:
+    """Decode and authenticate every eligible triple and explicit full-source fallback before graph publication."""
+    tokens = transport_frames(encoded)?
+    if len(tokens) < 3 or tokens[0] != COMPILED_TRANSPORT_SCHEMA:
+        return Err(CodecFault.Malformed)
+    count = decimal(tokens[1])?
+    fallback_count = decimal(tokens[2])?
+    if count + fallback_count > MAX_FIELDS:
+        return Err(CodecFault.Malformed)
+    mut values: list[CompiledBodyValue] = []
+    mut previous = ""
+    mut offset = 3
+    for _ in range(count):
+        if offset + 8 > len(tokens):
+            return Err(CodecFault.Malformed)
+        dependency_count = decimal(tokens[offset + 7])?
+        if dependency_count > MAX_FIELDS or offset + 8 + dependency_count * 4 > len(tokens):
+            return Err(CodecFault.Malformed)
+        mut dependency_reads: list[CompiledBodyDependencyRead] = []
+        mut previous_read = ""
+        mut dependency_offset = offset + 8
+        for _ in range(dependency_count):
+            read = CompiledBodyDependencyRead(
+                package=decoded_optional_identity(tokens[dependency_offset]),
+                module=tokens[dependency_offset + 1],
+                name=tokens[dependency_offset + 2],
+                identity=tokens[dependency_offset + 3],
+            )
+            read_order = optional_identity(read.package) + "\n" + read.module + "\n" + read.name + "\n" + read.identity
+            if read.module == "" or read.name == "" or read.identity == "" or read_order <= previous_read:
+                return Err(CodecFault.Malformed)
+            dependency_reads.append(read)
+            previous_read = read_order
+            dependency_offset += 4
+        value = CompiledBodyValue(
+            module=tokens[offset],
+            name=tokens[offset + 1],
+            identity=tokens[offset + 2],
+            declaration=unhexlify(tokens[offset + 3]).map_err((_) => CodecFault.Malformed)?,
+            local=unhexlify(tokens[offset + 4]).map_err((_) => CodecFault.Malformed)?,
+            final=unhexlify(tokens[offset + 5]).map_err((_) => CodecFault.Malformed)?,
+            body_ir=unhexlify(tokens[offset + 6]).map_err((_) => CodecFault.Malformed)?,
+            dependency_reads=dependency_reads,
+        )
+        order = value.module + "\n" + value.identity
+        if value.module == "" or value.name == "" or value.identity == "" or order <= previous:
+            return Err(CodecFault.Malformed)
+        validate_compiled_body_value(value)?
+        values.append(value)
+        previous = order
+        offset = dependency_offset
+    mut fallbacks: list[CompiledBodyFallback] = []
+    if len(tokens) != offset + fallback_count * 4:
+        return Err(CodecFault.Malformed)
+    previous = ""
+    for _ in range(fallback_count):
+        fallback = CompiledBodyFallback(
+            module=tokens[offset],
+            name=tokens[offset + 1],
+            identity=decoded_optional_identity(tokens[offset + 2]),
+            reason=tokens[offset + 3],
+        )
+        identity = optional_identity(fallback.identity)
+        order = fallback.module + "\n" + fallback.name + "\n" + identity
+        if (
+            fallback.module == ""
+            or fallback.name == ""
+            or fallback.reason == ""
+            or len(fallback.reason.encode()) > MAX_RECORD_BYTES
+            or order <= previous
+        ):
+            return Err(CodecFault.Malformed)
+        if identity != "":
+            for value in values:
+                if value.module == fallback.module and value.identity == identity:
+                    return Err(CodecFault.Malformed)
+        fallbacks.append(fallback)
+        previous = order
+        offset += 4
+    return Ok(CompiledBodyOutputs(values=values, fallbacks=fallbacks))
+
+
+def optional_identity(identity: Option[str]) -> str:
+    """Encode identity absence only for an explicit fallback; stable value records never admit this sentinel."""
+    match identity:
+        Some(value) => return value
+        None => return ""
+
+
+def decoded_optional_identity(identity: str) -> Option[str]:
+    """Restore the fallback-only empty sentinel without inventing a stable declaration identity."""
+    if identity == "":
+        return None
+    return Some(identity)
+
+
+pub def record_root(encoded: bytes) -> Result[str, CodecFault]:
+    """Read one validated checker record's position-free semantic root for its logical record key."""
+    tokens = frames(encoded)?
+    if len(tokens) < 4 or not full_digest(tokens[3]):
+        return Err(CodecFault.Malformed)
+    return Ok(tokens[3])
+
+
+def validate_compiled_body_value(value: CompiledBodyValue) -> Result[None, CodecFault]:
+    """Require one declaration and a matching local/final pair under the compiler-owned stable identity."""
+    declaration = decode_graph_record(value.declaration, value.identity)?
+    pair = validate_graph_body_value(
+        GraphBodyValue(identity=value.identity, local=value.local, final=value.final, body_ir=value.body_ir),
+    )?
+    if declaration.family != CheckedFamily.Declaration or pair[0].owner != declaration.owner:
+        return Err(CodecFault.Malformed)
+    return Ok(None)
+
+
+def validate_graph_body_value(value: GraphBodyValue) -> Result[list[CheckedRecord], CodecFault]:
+    """Bind a selected pair to its compiler-owned identity and require one shared semantic body root."""
+    if len(value.body_ir) == 0:
+        return Err(CodecFault.Malformed)
+    local = decode_graph_record(value.local, value.identity)?
+    final = decode_graph_record(value.final, value.identity)?
+    if local.family != CheckedFamily.Local or final.family != CheckedFamily.Final:
+        return Err(CodecFault.Malformed)
+    if local.root != final.root:
+        return Err(CodecFault.BodyChanged)
+    return Ok([local, final])
+
+
+def decode_graph_record(encoded: bytes, identity: str) -> Result[CheckedRecord, CodecFault]:
+    """Read only the canonical root needed to invoke the ordinary fully bound checker-record decoder."""
+    tokens = frames(encoded)?
+    if len(tokens) < 4:
+        return Err(CodecFault.Malformed)
+    return decode_record(encoded, CHECKER_PROFILE, identity, tokens[3])
+
+
+def encode_transport_tokens(tokens: list[str]) -> Result[bytes, CodecFault]:
+    """Frame transport tokens with the checker codec's canonical decimal byte lengths."""
+    mut fragments: list[str] = []
+    mut size = 0
+    for token in tokens:
+        raw = token.encode()
+        prefix = str(len(raw)) + ":"
+        fragments.append(prefix + token)
+        size += len(prefix) + len(raw)
+        if size > MAX_GRAPH_TRANSPORT_BYTES:
+            return Err(CodecFault.Limit)
+    return Ok("".join(fragments).encode())
+
+
+def transport_frames(encoded: bytes) -> Result[list[str], CodecFault]:
+    """Parse a bounded graph transport using the same unambiguous framing as individual checker records."""
+    if len(encoded) > MAX_GRAPH_TRANSPORT_BYTES:
+        return Err(CodecFault.Limit)
+    mut offset = 0
+    mut tokens: list[str] = []
+    while offset < len(encoded):
+        mut end = offset
+        while end < len(encoded) and encoded[end] != 58:
+            end += 1
+        if end == len(encoded):
+            return Err(CodecFault.Malformed)
+        prefix = encoded[offset:end].decode().map_err((_) => CodecFault.Malformed)?
+        size = transport_size(prefix)?
+        offset = end + 1
+        if size > len(encoded) - offset:
+            return Err(CodecFault.Malformed)
+        tokens.append(encoded[offset:offset + size].decode().map_err((_) => CodecFault.Malformed)?)
+        offset += size
+    return Ok(tokens)
+
+
+def transport_size(text: str) -> Result[int, CodecFault]:
+    """Read one canonical frame length up to the aggregate transport limit, including six-digit owner frames."""
+    if text == "" or len(text) > 8 or (len(text) > 1 and text.startswith("0")):
+        return Err(CodecFault.Malformed)
+    mut value = 0
+    for digit in text.encode():
+        if digit < 48 or digit > 57:
+            return Err(CodecFault.Malformed)
+        value = value * 10 + digit - 48
+    if value > MAX_GRAPH_TRANSPORT_BYTES:
+        return Err(CodecFault.Limit)
+    return Ok(value)
+
+
 def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
     """The profile defines each primitive field grammar; unknown selectors or extra primitives are unsupported."""
     values = field.values
@@ -301,6 +672,12 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
         if field.selector not in ["expr", "body-expr", "assignment", "destination"]:
             return Err(CodecFault.Unsupported(field.selector))
         end = type_end(values, 0, 0)?
+    # One checked nominal/native identity at a structural component of an expression's resolved type.
+    elif field.family == "type-identity":
+        if field.node == "" or len(values) != 1 or values[0] == "":
+            return Err(CodecFault.Malformed)
+        validate_type_identity_path(field.selector)?
+        end = 1
     # A binding's type: the binding, then its type.
     elif field.family == "binding-type":
         if field.node == "" or len(values) == 0 or values[0] == "":
@@ -370,8 +747,16 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
                 end = type_end(values, end, 0)?
         else:
             return Err(CodecFault.Unsupported(field.selector))
+    # A builtin call keeps its selected function; a builtin method also keeps its selected owner.
+    elif field.family == "builtin":
+        if field.selector == "call" and len(values) == 1 and values[0] != "":
+            end = 1
+        elif field.selector == "method" and len(values) == 2 and values[0] != "" and values[1] != "":
+            end = 2
+        else:
+            return Err(CodecFault.Malformed)
     # Facts that hold one nonempty value.
-    elif field.family in ["binding", "reference", "write", "builtin", "default"]:
+    elif field.family in ["binding", "reference", "write", "default"]:
         if len(values) != 1 or values[0] == "":
             return Err(CodecFault.Malformed)
         end = 1
@@ -422,6 +807,18 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
         return Err(CodecFault.Unsupported(field.family))
     if end != len(values):
         return Err(CodecFault.Malformed)
+    return Ok(None)
+
+
+def validate_type_identity_path(path: str) -> Result[None, CodecFault]:
+    """Accept the canonical root marker or at most 32 dot-separated canonical component indices."""
+    if path == "root":
+        return Ok(None)
+    components = path.split(".")
+    if len(components) == 0 or len(components) > 32:
+        return Err(CodecFault.Malformed)
+    for component in components:
+        _ = decimal(component)?
     return Ok(None)
 
 

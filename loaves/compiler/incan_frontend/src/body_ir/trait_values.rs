@@ -4,7 +4,7 @@
 //! identity, and each checked call retains the concrete carrier occupying that input's declaration slot.
 
 use super::{CanonicalSymbolId, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 mod inference;
 
@@ -23,6 +23,7 @@ pub(super) fn retain_inputs(
     program: &ast::Program,
     facts: &TypeCheckInfo,
     context: &[bir::BodyIrModule],
+    selected: &HashSet<CanonicalSymbolId>,
 ) {
     let adoptions = super::collect::collect_trait_argument_witnesses(program, facts, &module.nominal_declarations);
     let mut signatures = HashMap::new();
@@ -33,8 +34,12 @@ pub(super) fn retain_inputs(
         if identity.kind != SemanticSourceTargetKind::Function {
             continue;
         }
-        retain_annotation_identities(body, program, facts);
-        let inputs = retain_body_inputs(body);
+        let inputs = if super::body_is_selected(body, selected) {
+            published_inputs(body)
+        } else {
+            retain_annotation_identities(body, program, facts);
+            retain_body_inputs(body)
+        };
         if !inputs.slots.is_empty() {
             signatures.insert(identity, inputs);
         }
@@ -48,6 +53,9 @@ pub(super) fn retain_inputs(
         }
     }
     for body in &mut module.bodies {
+        if super::body_is_selected(body, selected) {
+            continue;
+        }
         retain_body_arguments(body, &signatures, &module.nominal_declarations, &adoptions);
     }
 }

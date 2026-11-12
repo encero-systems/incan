@@ -28,6 +28,7 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOr
 mod callable_products;
 mod checked_program;
 mod declaration_validation;
+mod graph_body_output;
 
 use checked_program::*;
 use declaration_validation::*;
@@ -149,6 +150,14 @@ struct CheckedProgram {
     tests: Vec<crate::test_unit::CollectedTest>,
 }
 
+/// The changed checked-module slice passed across the Incan boundary for one lowering continuation.
+struct LoweringRetryInputs {
+    modules: Vec<BodyIrModule>,
+    sources: Vec<String>,
+    files: Vec<String>,
+    entry: usize,
+}
+
 /// Exact caller-declared native libraries and their dependency search directories.
 pub(crate) struct Dependencies {
     /// The native libraries the unit links, as `--extern CRATE=RLIB` pairs.
@@ -163,6 +172,14 @@ pub(crate) struct Dependencies {
     rustc_args: Vec<String>,
     /// A development executable may link exact native carriers from this immutable store.
     shared_native: Option<PathBuf>,
+    /// Separate graph-selected checker values supplied by the engine; these bytes never enter the unit description.
+    graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
+    /// Optional invocation output for freshly produced checker values; it is not a compilation input.
+    graph_body_output: Option<PathBuf>,
+    /// Request-local directory for actual plan-function producer evaluations and reuses.
+    plan_record_report: Option<PathBuf>,
+    /// Bakery-selected plan-function products; private target caches are never record authority.
+    plan_record_products: Option<PathBuf>,
 }
 
 impl Dependencies {
@@ -201,6 +218,10 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     let mut library = false;
     let mut rustc_args = Vec::new();
     let mut shared_native = None;
+    let mut graph_body_records = incan_frontend::checker_records::GraphBodyRecords::default();
+    let mut graph_body_output = None;
+    let mut plan_record_report = None;
+    let mut plan_record_products = None;
     let mut remaining = arguments.iter();
     while let Some(option) = remaining.next() {
         if option == "--library" {
@@ -211,6 +232,10 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         match option.as_str() {
             "--rustc-arg" => rustc_args.push(value.clone()),
             "--shared-native" => shared_native = Some(PathBuf::from(value)),
+            "--graph-body-records" => graph_body_records = read_graph_body_records(Path::new(value))?,
+            "--graph-body-output" => graph_body_output = Some(PathBuf::from(value)),
+            "--plan-record-report" => plan_record_report = Some(PathBuf::from(value)),
+            "--plan-record-products" => plan_record_products = Some(PathBuf::from(value)),
             _ => return Err(format!("unknown native source option {option}")),
         }
     }
@@ -228,7 +253,168 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         library,
         rustc_args,
         shared_native,
+        graph_body_records,
+        graph_body_output,
+        plan_record_report,
+        plan_record_products,
     })
+}
+
+/// Filesystem-backed source of independently bounded graph body pages.
+#[derive(Debug)]
+struct GraphBodyRecordPages {
+    root: PathBuf,
+}
+
+/// Raw values from one graph body transport page after bounded native framing and hex decoding.
+struct EncodedGraphBodyPage {
+    identity: String,
+    local: Vec<u8>,
+    final_value: Vec<u8>,
+    body_ir: Vec<u8>,
+}
+
+/// Decode the outer page framing natively until #3036 permits the canonical Incan bytes decoder to handle dynamic
+/// slices without making a retained owner take seconds. The Incan codec still authenticates both checker records.
+fn decode_graph_body_page_transport(encoded: &[u8]) -> Result<EncodedGraphBodyPage, String> {
+    let frames = graph_body_page_frames(encoded)?;
+    if frames.len() != 6 || frames[0] != b"incan.checker-graph-transport/2" || frames[1] != b"1" {
+        return Err("graph body page has an unsupported transport header".into());
+    }
+    let identity = std::str::from_utf8(frames[2])
+        .map_err(|error| format!("graph body page identity is not UTF-8: {error}"))?
+        .to_owned();
+    let local = hex::decode(frames[3]).map_err(|error| format!("graph body local record is not hex: {error}"))?;
+    let final_value = hex::decode(frames[4]).map_err(|error| format!("graph body final record is not hex: {error}"))?;
+    let body_ir = hex::decode(frames[5]).map_err(|error| format!("graph Body IR frame is not hex: {error}"))?;
+    Ok(EncodedGraphBodyPage {
+        identity,
+        local,
+        final_value,
+        body_ir,
+    })
+}
+
+/// Split canonical byte-length frames in one bounded page without interpreting their schema-owned payloads.
+fn graph_body_page_frames(encoded: &[u8]) -> Result<Vec<&[u8]>, String> {
+    const MAX_PAGE_BYTES: usize = 64 * 1024 * 1024;
+    if encoded.len() > MAX_PAGE_BYTES {
+        return Err("graph body page exceeds its transport bound".into());
+    }
+    let mut frames = Vec::new();
+    let mut offset = 0;
+    while offset < encoded.len() {
+        let relative_end = encoded[offset..]
+            .iter()
+            .position(|byte| *byte == b':')
+            .ok_or_else(|| "graph body page has an unterminated frame length".to_string())?;
+        let end = offset + relative_end;
+        let prefix = &encoded[offset..end];
+        if prefix.is_empty() || prefix.len() > 8 || (prefix.len() > 1 && prefix[0] == b'0') {
+            return Err("graph body page has a noncanonical frame length".into());
+        }
+        let mut size = 0usize;
+        for digit in prefix {
+            if !digit.is_ascii_digit() {
+                return Err("graph body page has a nondecimal frame length".into());
+            }
+            size = size
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(usize::from(*digit - b'0')))
+                .ok_or_else(|| "graph body page frame length overflowed".to_string())?;
+        }
+        offset = end + 1;
+        let frame_end = offset
+            .checked_add(size)
+            .filter(|frame_end| *frame_end <= encoded.len())
+            .ok_or_else(|| "graph body page has a truncated frame".to_string())?;
+        frames.push(&encoded[offset..frame_end]);
+        offset = frame_end;
+    }
+    Ok(frames)
+}
+
+impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordPages {
+    /// Read only the page addressed by this stable owner; absence keeps that owner on the ordinary checking path.
+    fn read(
+        &self,
+        identity: &str,
+    ) -> Result<
+        Option<incan_frontend::checker_records::GraphBodyRecord>,
+        incan_frontend::checker_records::RecordAdapterFault,
+    > {
+        const MAX_PAGE_BYTES: u64 = 64 * 1024 * 1024;
+        let path = self.root.join(hex::encode(Sha256::digest(identity.as_bytes())));
+        let metadata = match std::fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                    format!("cannot inspect graph body page {}: {error}", path.display()),
+                ));
+            }
+        };
+        if !metadata.is_file() || metadata.len() > MAX_PAGE_BYTES {
+            return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                "graph body page is not a bounded regular file".into(),
+            ));
+        }
+        let encoded = std::fs::read(&path).map_err(|error| {
+            incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
+                "cannot read graph body page {}: {error}",
+                path.display()
+            ))
+        })?;
+        let page = decode_graph_body_page_transport(&encoded).map_err(|error| {
+            incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
+                "graph body page refused: {error}"
+            ))
+        })?;
+        if page.identity != identity {
+            return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                "graph body page disagrees with its requested identity".into(),
+            ));
+        }
+        let record =
+            internal_models::decode_graph_body_page(page.identity, &page.local, &page.final_value, &page.body_ir)
+                .map_err(|error| {
+                    incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
+                        "graph body page refused: {error:?}"
+                    ))
+                })?;
+        let frame =
+            incan_semantics_core::executable_representation::decode_owner(&record.body_ir).map_err(|error| {
+                incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
+                    "graph Body IR owner frame refused: {error}"
+                ))
+            })?;
+        if frame.source.is_empty() || frame.identity != record.identity {
+            return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                "graph Body IR owner frame disagrees with its selected identity".into(),
+            ));
+        }
+        Ok(Some(incan_frontend::checker_records::GraphBodyRecord {
+            identity: record.identity,
+            local: record.local,
+            final_value: record.final_fields,
+            body_ir: Some(frame),
+        }))
+    }
+}
+
+/// Bind the engine's keyed graph-record page directory without reading an aggregate inventory.
+fn read_graph_body_records(path: &Path) -> Result<incan_frontend::checker_records::GraphBodyRecords, String> {
+    if !path.is_dir() {
+        return Err(format!(
+            "graph body record pages are not a directory: {}",
+            path.display()
+        ));
+    }
+    Ok(incan_frontend::checker_records::GraphBodyRecords::from_source(
+        std::sync::Arc::new(GraphBodyRecordPages {
+            root: path.to_path_buf(),
+        }),
+    ))
 }
 
 /// Run source, frontend, canonical Body IR, Incan lowering, plan validation, adapter, and pinned native compilation.
@@ -255,7 +441,14 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
     let overflow_checks = unit.profile != "release";
     let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
     let receipt = RefusalReceipt(None);
-    let mut program = check_compilation_source(unit, rust, false, receipt.clone())?;
+    let mut program = check_compilation_source(
+        unit,
+        rust,
+        false,
+        receipt.clone(),
+        dependencies.graph_body_records,
+        dependencies.graph_body_output,
+    )?;
     lower_compilation_plan(
         &mut program,
         kind,
@@ -263,6 +456,7 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
         &source,
         &receipt,
         &mut Vec::new(),
+        None,
         None,
     )?;
     print!(
@@ -315,7 +509,14 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
 
     // ---- Checked source and governed publication ----
     let program = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
-        checked_modules(&unit, &rust, false, &RefusalReceipt(None))
+        checked_modules(
+            &unit,
+            &rust,
+            false,
+            &RefusalReceipt(None),
+            dependencies.graph_body_records,
+            None,
+        )
     })?;
     let manifest = program
         .manifest
@@ -346,7 +547,7 @@ pub(crate) fn compile_resident(arguments: &[String]) -> Result<(), Box<dyn std::
 fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err(
-            "usage: --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [--rustc-arg ARG] [--library] [--shared-native DIR]"
+            "usage: --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [--rustc-arg ARG] [--library] [--shared-native DIR] [--graph-body-records PATH] [--graph-body-output PATH]"
                 .into(),
         );
     }
@@ -379,8 +580,19 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     // The grant comes only from the description, read after the identity check and the bootstrap refusal.
     let access = unit.toolchain_access.clone();
     let rust = dependencies.rust_facts(&unit, Path::new(&arguments[3]));
-    let native_products = callable_products::native_directory(&unit);
-    let mut program = check_compilation_source(unit, rust, resident, receipt.clone())?;
+    let native_products = dependencies
+        .plan_record_products
+        .as_ref()
+        .map(|path| path.to_string_lossy().into_owned())
+        .or_else(|| callable_products::native_directory(&unit));
+    let mut program = check_compilation_source(
+        unit,
+        rust,
+        resident,
+        receipt.clone(),
+        dependencies.graph_body_records.clone(),
+        dependencies.graph_body_output.clone(),
+    )?;
     if census_complete(&mut program, kind, overflow_checks)? {
         return Ok(());
     }
@@ -393,8 +605,19 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         &receipt,
         &mut published_unions,
         native_products,
+        dependencies
+            .plan_record_report
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned()),
     )?;
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
+    if let (Some(products), Some(report)) = (&dependencies.plan_record_products, &dependencies.plan_record_report) {
+        incan_mir_lowering::publish_plan_records(
+            &plan,
+            products.to_string_lossy().into_owned(),
+            report.to_string_lossy().into_owned(),
+        )?;
+    }
 
     // ---- Exact native dependencies, including checked Loaf implementation layouts ----
     let native_externs =
@@ -459,11 +682,13 @@ fn check_compilation_source(
     rust: RustFactsSetup,
     resident: bool,
     receipt: RefusalReceipt,
+    graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
+    graph_body_output: Option<PathBuf>,
 ) -> Result<CheckedProgram, Box<dyn std::error::Error>> {
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(&unit, &rust, resident, &receipt)
+        checked_modules(&unit, &rust, resident, &receipt, graph_body_records, graph_body_output)
     });
     match checked {
         Ok(program) => Ok(program),
@@ -484,6 +709,7 @@ fn lower_compilation_plan(
     receipt: &RefusalReceipt,
     published_unions: &mut Vec<NativeUnionDeclaration>,
     native_products: Option<String>,
+    plan_record_report: Option<String>,
 ) -> Result<crate::plan::Plan, Box<dyn std::error::Error>> {
     tracing::debug!(target: "incan::invocation", modules = program.modules.len(),
         module_body_entries = program.modules.iter().map(|module| module.bodies.len()).sum::<usize>(),
@@ -498,39 +724,60 @@ fn lower_compilation_plan(
         prepare_runtime_layouts(program, layout_requirements)?;
     }
     let mut continuation = None;
+    let mut retry_indices: Option<Vec<usize>> = None;
     loop {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
-        let inputs = SourceInputs {
-            scalar_products: native_products.clone(),
-            scalar_bodies: program.cacheable_bodies.clone(),
-            sources: program.sources.clone(),
-            files: program.files.clone(),
-            tests: program.tests.iter().map(|test| test.name.clone()).collect(),
-            package_versions: program.dependencies.package_versions.clone(),
-            overflow_checks,
-        };
         let mut attempt_unions = Vec::new();
         let planning = match continuation.take() {
-            Some(preserved) => resume_unit_plan(
-                preserved,
-                &program.modules,
-                inputs,
-                program.entry.try_into()?,
-                &kind_name,
-                &mut attempt_unions,
-            ),
-            None => unit_plan(
-                &program.modules,
-                inputs,
-                program.entry.try_into()?,
-                &kind_name,
-                &mut attempt_unions,
-            ),
+            Some(preserved) => {
+                let selected = retry_indices
+                    .take()
+                    .ok_or("lowering continuation has no resolved module delta")?;
+                let retry = lowering_retry_inputs(program, &selected)?;
+                let inputs = SourceInputs {
+                    scalar_products: None,
+                    scalar_bodies: Vec::new(),
+                    sources: retry.sources,
+                    files: retry.files,
+                    tests: program.tests.iter().map(|test| test.name.clone()).collect(),
+                    package_versions: program.dependencies.package_versions.clone(),
+                    overflow_checks,
+                    record_report: plan_record_report.clone(),
+                };
+                resume_unit_plan(
+                    preserved,
+                    &retry.modules,
+                    // #3022: remove this borrow when an owned model field can transfer through the Incan wrapper.
+                    &inputs,
+                    retry.entry.try_into()?,
+                    &kind_name,
+                    &mut attempt_unions,
+                )
+            }
+            None => {
+                let inputs = SourceInputs {
+                    scalar_products: native_products.clone(),
+                    scalar_bodies: program.cacheable_bodies.clone(),
+                    sources: program.sources.clone(),
+                    files: program.files.clone(),
+                    tests: program.tests.iter().map(|test| test.name.clone()).collect(),
+                    package_versions: program.dependencies.package_versions.clone(),
+                    overflow_checks,
+                    record_report: plan_record_report.clone(),
+                };
+                unit_plan(
+                    &program.modules,
+                    inputs,
+                    program.entry.try_into()?,
+                    &kind_name,
+                    &mut attempt_unions,
+                )
+            }
         }
         .inspect_err(|_| receipt.deterministic())?;
         match planning {
             UnitPlanning::NeedsRuntime(preserved, requirements) => {
-                satisfy_runtime_requirements(program, requirements)?;
+                retry_indices = Some(satisfy_runtime_requirements(program, requirements)?);
                 continuation = Some(preserved);
             }
             UnitPlanning::Complete(Some(plan)) => {
@@ -543,6 +790,46 @@ fn lower_compilation_plan(
     report_missing_entrypoint(source)?;
     receipt.deterministic();
     Err(SourceFailure::MissingEntrypoint.into())
+}
+
+/// Copy only the changed runtime modules and aligned provenance into one continuation boundary value.
+fn lowering_retry_inputs(program: &CheckedProgram, selected: &[usize]) -> Result<LoweringRetryInputs, String> {
+    let mut modules = Vec::with_capacity(selected.len());
+    let mut sources = Vec::with_capacity(selected.len());
+    let mut files = Vec::with_capacity(selected.len());
+    let mut entry = None;
+    for (retry_index, &program_index) in selected.iter().enumerate() {
+        modules.push(
+            program
+                .modules
+                .get(program_index)
+                .ok_or("lowering continuation selected a missing Body IR module")?
+                .clone(),
+        );
+        sources.push(
+            program
+                .sources
+                .get(program_index)
+                .ok_or("lowering continuation selected missing source provenance")?
+                .clone(),
+        );
+        files.push(
+            program
+                .files
+                .get(program_index)
+                .ok_or("lowering continuation selected missing file provenance")?
+                .clone(),
+        );
+        if program_index == program.entry {
+            entry = Some(retry_index);
+        }
+    }
+    Ok(LoweringRetryInputs {
+        modules,
+        sources,
+        files,
+        entry: entry.ok_or("lowering continuation omitted the entry module")?,
+    })
 }
 
 /// Lower authored modules from their checked facts and the canonical provider catalog. Dependency bodies already
@@ -591,6 +878,7 @@ fn census_complete(
                 tests: Vec::new(),
                 package_versions: program.dependencies.package_versions.clone(),
                 overflow_checks,
+                record_report: None,
             },
             program.entry.try_into()?,
             false,
@@ -598,7 +886,9 @@ fn census_complete(
             &kind_name,
         );
         match outcome {
-            RefusalPlanning::NeedsRuntime(requirements) => satisfy_runtime_requirements(program, requirements)?,
+            RefusalPlanning::NeedsRuntime(requirements) => {
+                let _ = satisfy_runtime_requirements(program, requirements)?;
+            }
             RefusalPlanning::Complete(refusals) => break refusals,
         }
     };
@@ -614,6 +904,7 @@ fn census_complete(
                 tests: Vec::new(),
                 package_versions: program.dependencies.package_versions.clone(),
                 overflow_checks,
+                record_report: None,
             },
             program.entry.try_into()?,
             true,
@@ -664,4 +955,46 @@ fn macro_externs(
         .filter(|(name, _)| !loaf_links.contains(name))
         .cloned()
         .collect()
+}
+
+#[cfg(test)]
+mod graph_body_page_tests {
+    use super::{GraphBodyRecordPages, decode_graph_body_page_transport};
+    use incan_frontend::checker_records::GraphBodyRecordSource;
+    use sha2::{Digest, Sha256};
+
+    #[test]
+    fn keyed_body_pages_do_not_scan_unrequested_owners() -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!("incan-graph-body-pages-{}", std::process::id()));
+        if root.exists() {
+            std::fs::remove_dir_all(&root)?;
+        }
+        std::fs::create_dir_all(&root)?;
+        let unrelated = root.join(hex::encode(Sha256::digest(b"unrelated-owner")));
+        std::fs::write(&unrelated, b"malformed unrelated page")?;
+        let source = GraphBodyRecordPages { root: root.clone() };
+
+        assert!(source.read("requested-owner")?.is_none());
+        assert!(source.read("unrelated-owner").is_err());
+
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn native_page_framing_preserves_each_schema_owned_value() -> Result<(), Box<dyn std::error::Error>> {
+        let tokens = ["incan.checker-graph-transport/2", "1", "owner", "00", "ff", "6162"];
+        let encoded = tokens
+            .iter()
+            .map(|token| format!("{}:{token}", token.len()))
+            .collect::<String>();
+
+        let page = decode_graph_body_page_transport(encoded.as_bytes())?;
+
+        assert_eq!(page.identity, "owner");
+        assert_eq!(page.local, [0]);
+        assert_eq!(page.final_value, [255]);
+        assert_eq!(page.body_ir, b"ab");
+        Ok(())
+    }
 }

@@ -216,7 +216,11 @@ pub(super) fn retain_source_body_contracts(
 ) {
     apply_top_level_input_contract_refusal(program, bodies);
     registry_effects::refuse_unretained_functions(program, type_info, bodies);
+    let selected = selected_body_identities(type_info);
     for body in bodies {
+        if body_is_selected(body, &selected) {
+            continue;
+        }
         representation_facts::retain(body);
     }
 }
@@ -365,14 +369,15 @@ pub(super) fn retain_module_representations(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
     context: &[bir::BodyIrModule],
+    selected: &HashSet<CanonicalSymbolId>,
 ) {
-    source_comparison::retain_equality_borrows(module);
+    source_comparison::retain_equality_borrows(module, selected);
     let opaque_carriers = opaque_returns::collect(module, type_info);
     // Retain source trait annotations before local opaque propagation replaces return types with model witnesses.
-    trait_values::retain_inputs(module, program, type_info, context);
-    trait_returns::retain_returns(module, program, type_info, context);
-    opaque_returns::retain(module, &opaque_carriers);
-    nominal_carriers::retain(module, type_info, context);
+    trait_values::retain_inputs(module, program, type_info, context, selected);
+    trait_returns::retain_returns(module, program, type_info, context, selected);
+    opaque_returns::retain(module, &opaque_carriers, selected);
+    nominal_carriers::retain(module, type_info, context, selected);
     primitive_adapters::retain(module);
     union_layouts::retain(module);
 }

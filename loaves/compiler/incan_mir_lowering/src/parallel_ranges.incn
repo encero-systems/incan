@@ -1,0 +1,28 @@
+"""Deterministic body-weighted source-module ranges shared by parallel lowering stages."""
+
+
+pub def balanced_module_ranges(weights: &list[int], worker_limit: int = 4) -> list[tuple[int, int]]:
+    """Split source order into at most `worker_limit` nonempty contiguous ranges balanced by body count."""
+    mut ranges: list[tuple[int, int]] = []
+    if len(weights) == 0 or worker_limit <= 0:
+        return ranges
+    mut remaining_weight = 0
+    for weight in weights:
+        remaining_weight += weight
+    mut start = 0
+    mut workers_left = worker_limit
+    if len(weights) < workers_left:
+        workers_left = len(weights)
+    while start < len(weights):
+        target_weight = (remaining_weight + workers_left - 1) // workers_left
+        mut selected_weight = 0
+        mut end = start
+        maximum_end = len(weights) - workers_left + 1
+        while end < maximum_end and (end == start or selected_weight < target_weight):
+            selected_weight += weights[end]
+            end += 1
+        ranges.append((start, end))
+        remaining_weight -= selected_weight
+        workers_left -= 1
+        start = end
+    return ranges

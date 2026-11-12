@@ -4,7 +4,7 @@ use super::*;
 /// value-returning body and explicit source contracts keep their established ownership.
 pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model Native:\n    value: int\nmodel Wrapper:\n    item: Native\nclass Reader:\n    pub def read(self, items: Native) -> int:\n        return items.value\ntrait Fetcher:\n    def fetch(self, scope: Native, request: Native) -> int: ...\nclass Fetch with Fetcher:\n    def fetch(self, scope: Native, request: Native) -> int:\n        return scope.value + request.value\ndef leaf(items: Native) -> int:\n    return items.value\ndef explicit(items: &Native) -> int:\n    return items.value\ndef forward(items: Native) -> int:\n    return leaf(items)\ndef explicit_forward(items: Native) -> int:\n    return explicit(items)\ndef explicit_projected(wrapper: &Wrapper) -> int:\n    return explicit(wrapper.item)\ndef method_forward(reader: Reader, items: Native) -> int:\n    return reader.read(items)\ndef trait_forward[F with Fetcher](source: F, scope: Native, request: Native) -> int:\n    return source.fetch(scope, request)\ndef left(items: Native, remaining: int) -> int:\n    if remaining == 0:\n        return items.value\n    return right(items, remaining - 1)\ndef right(items: Native, remaining: int) -> int:\n    if remaining == 0:\n        return items.value\n    return left(items, remaining - 1)\ndef escaped(items: Native) -> int:\n    return items.value\ndef take(items: Native) -> Native:\n    return items\ndef use() -> int:\n    callback = escaped\n    return callback(Native(value=1))\n";
-    let (_, _, mut candidate) = checked_seed(source)?;
+    let (program, facts, mut candidate) = checked_seed(source)?;
     let leaf = candidate
         .bodies
         .iter_mut()
@@ -25,6 +25,21 @@ pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
             .collect(),
         owned_initializers: Vec::new(),
     });
+    let selected_leaf = leaf.clone();
+    let selected_identity = selected_leaf
+        .canonical
+        .clone()
+        .ok_or("missing selected loan identity")?;
+    let mut partially_selected = candidate.clone();
+    let selected = std::collections::HashSet::from([selected_identity]);
+    super::retain_module_representations(&mut partially_selected, &program, &facts, &[], &selected);
+    super::shared_reads::retain_modules_with_selected(std::slice::from_mut(&mut partially_selected), &[], &selected);
+    let retained_selected_leaf = partially_selected
+        .bodies
+        .iter()
+        .find(|body| body.name == "leaf")
+        .ok_or("missing selected loan body")?;
+    assert_eq!(retained_selected_leaf, &selected_leaf);
     for access in [
         incan_semantics_core::IncanInputAccess::Shared,
         incan_semantics_core::IncanInputAccess::Exclusive,

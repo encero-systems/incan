@@ -380,14 +380,25 @@ impl TypeChecker {
         let previous_raw_owner =
             std::mem::replace(&mut self.current_c_abi_raw_call_owner, prepared.c_abi_raw_call_owner);
         let (restore, yield_context) = self.enter_prepared_callable(prepared.callable);
-        self.check_work.function_bodies += 1;
-        let local_index = self.check_callable_body(
-            &func.body,
-            func.is_async(),
-            span,
-            yield_context,
-            super::ownership_contracts::CallableSource::Function(func),
-        );
+        let reused = record_program.is_some_and(|program| match self.reuse_graph_body_record(program, span) {
+            Ok(reused) => reused,
+            Err(error) => {
+                tracing::debug!(target: "incan::invocation", ?span, ?error, "graph body selection refused");
+                false
+            }
+        });
+        let local_index = if reused {
+            None
+        } else {
+            self.check_work.function_bodies += 1;
+            self.check_callable_body(
+                &func.body,
+                func.is_async(),
+                span,
+                yield_context,
+                super::ownership_contracts::CallableSource::Function(func),
+            )
+        };
         self.receiver_plan_inputs.current_function = previous_function;
         self.current_c_abi_raw_call_owner = previous_raw_owner;
         self.finish_prepared_callable(restore);

@@ -9,14 +9,20 @@ from std.tempfile import TemporaryDirectory
 from release_support import (
     STANDARD_PACKAGES,
     TOOLCHAIN_DIRECTORY,
+    BackgroundStep,
     ReservedStep,
+    ReleaseSpan,
+    ReleaseTrace,
     Step,
     append_timing,
+    cancel_background_step,
     digest,
+    finish_background_step,
     log_tail,
     run_reserved_steps,
     run_step,
     same_bytes,
+    start_background_step,
 )
 
 const GIB: int = 1073741824
@@ -41,23 +47,24 @@ pub model NativeContext:
     pub jobs: int
     pub memory: int
     pub timeout_seconds: int
+    pub trace: Option[ReleaseTrace] = None
 
 
-pub model ShippedTools:
-    """The completed Oven and language-server executables selected for the release bundle."""
-
-    pub oven: Path
-    pub lsp: Path
-
-
-model NativeBuildPlan:
+pub model NativeBuildPlan:
     """One native child plus the output and stable destination published only after it succeeds."""
 
-    name: str
-    output: Path
-    destination: Path
-    child: Step
-    reservation: int
+    pub name: str
+    pub output: Path
+    pub destination: Path
+    pub child: Step
+    pub reservation: int
+
+
+pub model PendingToolBuild:
+    """One tool child retained while later release production consumes the remaining bounded capacity."""
+
+    pub plan: NativeBuildPlan
+    pub worker: BackgroundStep
 
 
 model PreparedStandardPackage:
@@ -190,6 +197,86 @@ pub def build_standard_packages(
     return Ok(None)
 
 
+pub def build_candidate_standard_and_start_lsp(
+    context: NativeContext,
+    helper: Path,
+    phase_prefix: str,
+) -> Result[tuple[Path, Option[PendingToolBuild]], str]:
+    """
+    Build candidate release providers while the independent Rust-only language server builds.
+
+    The language-server project contains no Incan source and reads the selected driver, sysroot, compiler Loaves, and
+    Rust dependency closure that already exist after candidate relinking. It does not consume the standard providers
+    being produced here. One project slot and its memory reservation remain unavailable to standard-package waves until
+    the language-server child finishes.
+    """
+    lsp = tool_build_plan(context, "lsp", false, "lsp-build")?
+    remaining = overlapping_project_capacity(context.jobs, context.memory)
+    match remaining:
+        None =>
+            build_standard_packages(context, helper, phase_prefix, [StandardProfile.Release])?
+            run_build_plans(context, [lsp])?
+            return Ok((complete_build_plan(lsp)?, None))
+        Some(_) => pass
+
+    worker = start_background_step(lsp.child)?
+    jobs, memory = match remaining:
+        Some(capacity) => capacity
+        None =>
+            _ = cancel_background_step(worker)
+            return Err("project capacity disappeared before the language-server build started")
+
+    reserved = reserve_project_capacity(context, jobs, memory)
+    match build_standard_packages(reserved, helper, phase_prefix, [StandardProfile.Release]):
+        Ok(_) => pass
+        Err(message) =>
+            _ = cancel_background_step(worker)
+            return Err(message)
+    return Ok((Path(""), Some(PendingToolBuild(plan=lsp, worker=worker))))
+
+
+pub def finish_tool_build(context: NativeContext, pending: PendingToolBuild) -> Result[Path, str]:
+    """Join, time, validate, and publish a tool child retained across release phases."""
+    code, elapsed = finish_background_step(pending.worker, context.timeout_seconds)?
+    append_timing(context.timings, pending.plan.child.name, elapsed)?
+    if code != 0:
+        return Err(
+            f"{pending.plan.child.name} failed with status {code}; log: {pending.plan.child.log.0}\n{log_tail(
+                pending.plan.child.log,
+            )}",
+        )
+    return complete_build_plan(pending.plan)
+
+
+pub def cancel_tool_build(pending: PendingToolBuild) -> Result[None, str]:
+    """Stop and reap one retained tool child after another required build has failed."""
+    return cancel_background_step(pending.worker)
+
+
+pub def overlapping_project_capacity(jobs: int, memory: int) -> Option[tuple[int, int]]:
+    """Return the standard-build capacity left after reserving one project child, or refuse unsafe overlap."""
+    if jobs < 2 or memory < PROJECT_RESERVATION_BYTES + STANDARD_RESERVATION_BYTES:
+        return None
+    return Some((jobs - 1, memory - PROJECT_RESERVATION_BYTES))
+
+
+def reserve_project_capacity(context: NativeContext, jobs: int, memory: int) -> NativeContext:
+    """Reserve one worker and one project-scale memory allowance for an overlapping tool build."""
+    return NativeContext(
+        repo=context.repo,
+        lane=context.lane,
+        home=context.home,
+        builder=context.builder,
+        stdlib=context.stdlib,
+        evidence=context.evidence,
+        timings=context.timings,
+        jobs=jobs,
+        memory=memory,
+        timeout_seconds=context.timeout_seconds,
+        trace=context.trace,
+    )
+
+
 def standard_profile_name(profile: StandardProfile) -> str:
     """Map the closed native profile set to the spelling consumed by unit description and rustc."""
     match profile:
@@ -214,13 +301,34 @@ pub def build_tool(context: NativeContext, name: str, rebuild: bool, phase: str)
     return complete_build_plan(plan)
 
 
-pub def build_shipped_tools_with_standard_profile(
+pub def build_oven_with_standard_profile(
     context: NativeContext,
     helper: Path,
     phase_prefix: str,
     profile: StandardProfile,
-) -> Result[ShippedTools, str]:
-    """Overlap Oven and LSP production with independent standard compilation, then publish every successful output."""
+    reserve_project: bool,
+) -> Result[Path, str]:
+    """Reserve any retained tool child, then start Oven with the first dependency-ready standard wave."""
+    if reserve_project:
+        match overlapping_project_capacity(context.jobs, context.memory):
+            Some((jobs, memory)) =>
+                return build_oven_and_standard_profile(
+                    reserve_project_capacity(context, jobs, memory),
+                    helper,
+                    phase_prefix,
+                    profile,
+                )
+            None => return Err("cannot run Oven while the language server holds the only available project capacity")
+    return build_oven_and_standard_profile(context, helper, phase_prefix, profile)
+
+
+def build_oven_and_standard_profile(
+    context: NativeContext,
+    helper: Path,
+    phase_prefix: str,
+    profile: StandardProfile,
+) -> Result[Path, str]:
+    """Start Oven beside independent standard compilation and publish every successful output."""
     selected = standard_profile_name(profile)
     standards = context.evidence.joinpath(f"{phase_prefix}standards")
     standards.mkdir(true, true).map_err((error) => error.message())?
@@ -233,10 +341,8 @@ pub def build_shipped_tools_with_standard_profile(
     for package in waves[0]:
         packages.append(prepare_standard_package(context, helper, package, selected, admitted, phase_prefix)?)
     oven = tool_build_plan(context, "oven", true, "oven-build")?
-    lsp = tool_build_plan(context, "lsp", false, "lsp-build")?
     mut planned = [ReservedStep(child=package.child, reservation=STANDARD_RESERVATION_BYTES) for package in packages]
     planned.append(ReservedStep(child=oven.child, reservation=oven.reservation))
-    planned.append(ReservedStep(child=lsp.child, reservation=lsp.reservation))
     require_reserved_success(context, planned)?
 
     for package in packages:
@@ -244,8 +350,7 @@ pub def build_shipped_tools_with_standard_profile(
     for index in range(1, len(waves)):
         build_standard_wave(context, helper, waves[index], selected, admitted, phase_prefix)?
     completed_oven = complete_build_plan(oven)?
-    completed_lsp = complete_build_plan(lsp)?
-    return Ok(ShippedTools(oven=completed_oven, lsp=completed_lsp))
+    return Ok(completed_oven)
 
 
 pub def require_unique_runtime_root(context: NativeContext) -> Result[None, str]:
@@ -550,6 +655,7 @@ def compile_library_step(
             directory=Some(context.repo),
             log=context.evidence.joinpath(f"{phase}.log"),
             timeout_seconds=context.timeout_seconds,
+            trace=context.trace,
         ),
     )
 
@@ -621,6 +727,7 @@ def helper_json(
 ) -> Result[JsonValue, str]:
     """Run the native-description helper and parse its sole JSON document."""
     started = Instant.now()
+    span = begin_native_trace(context.trace, phase)?
     mut command = Command.new(helper.0)
     command.current_dir(context.repo.0)
     for argument in arguments:
@@ -638,6 +745,7 @@ def helper_json(
         .write_text(stdout + stderr, "utf-8", "strict", None)
         .map_err((error) => error.message())?
     append_timing(context.timings, phase, started.elapsed().as_secs_f64())?
+    finish_native_trace(context.trace, span)?
     if not output.status.success():
         log = context.evidence.joinpath(f"{phase}.log")
         return Err(f"{phase} failed; log: {log.0}\n{log_tail(log)}")
@@ -684,7 +792,22 @@ def step(
         directory=Some(directory),
         log=log,
         timeout_seconds=context.timeout_seconds,
+        trace=context.trace,
     )
+
+
+def begin_native_trace(trace: Option[ReleaseTrace], name: str) -> Result[Option[ReleaseSpan], str]:
+    """Open a directly executed native-helper span when release tracing is active."""
+    match trace:
+        Some(selected) => return Ok(Some(selected.begin(name)?))
+        None => return Ok(None)
+
+
+def finish_native_trace(trace: Option[ReleaseTrace], span: Option[ReleaseSpan]) -> Result[None, str]:
+    """Close a directly executed native-helper span when release tracing is active."""
+    match (trace, span):
+        (Some(selected), Some(opened)) => return selected.finish(opened)
+        _ => return Ok(None)
 
 
 def tool_build_plan(context: NativeContext, name: str, rebuild: bool, phase: str) -> Result[NativeBuildPlan, str]:

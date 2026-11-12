@@ -3,25 +3,34 @@
 from std.fs import Path
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
+from driver_evidence import driver_qualification, retain_driver_evidence
 from native_build import (
     LOWERING_RESERVATION_BYTES,
     PROJECT_RESERVATION_BYTES,
     STANDARD_RESERVATION_BYTES,
     StandardGeneration,
     StandardProfile,
+    overlapping_project_capacity,
     standard_build_waves,
     standard_profiles,
 )
 from release_support import (
     FAMILIES,
+    TOOLCHAIN_DIRECTORY,
     BaselineReport,
     Counts,
+    ReleaseTrace,
     append_bytes,
+    append_timing_file,
     check_baseline,
     parse_release_options,
     parse_verification_options,
     reference_cache_identity,
     reference_cache_root,
+    reference_census_jobs,
+    reference_worker_arguments,
+    reclaim_paths,
+    record_tree_sample,
     reuse_reference_log,
     release_receipt,
     release_rust_cache_root,
@@ -34,7 +43,8 @@ from release_support import (
     tree_digest,
     verification_program,
 )
-from verify_installation import census_arguments
+from verify_installation import audit_relocation, census_arguments, require_pristine_relocation_inputs
+from relink_driver import absolute_manifest
 
 const SHA: str = "0123456789abcdef0123456789abcdef01234567"
 const COMPLETE_LOG: str = """PASS behavior/a/a
@@ -64,6 +74,9 @@ def test_release_build_admission_uses_declared_lowering_project_and_standard_mem
     assert waves[1] == ["codecs", "compression", "data"]
     assert waves[2] == ["vocab"]
     assert waves[3] == ["interop"]
+    assert overlapping_project_capacity(4, 10 * gib) == Some((3, 8 * gib))
+    assert overlapping_project_capacity(1, 10 * gib) == None
+    assert overlapping_project_capacity(4, 3 * gib) == None
     return Ok(None)
 
 
@@ -74,6 +87,21 @@ def test_release_census_shares_compilation_without_dropping_a_family() -> Result
     assert arguments[0:8] == ["oven", "fixtures", "--scratch", "scratch", "--jobs", "4", "--timeout", "120"]
     assert arguments[8] == "--serial-families"
     assert arguments[9:] == [family for family in FAMILIES]
+    assert reference_census_jobs(1) == 1
+    assert reference_census_jobs(4) == 2
+    worker = reference_worker_arguments(Path("source"), Path("out"), Path("home"), Path("lsp"), 4, 120)
+    assert worker == [
+        "run",
+        "source/scripts/release.incn",
+        "--",
+        "--reference-census",
+        "source",
+        "out",
+        "home",
+        "lsp",
+        "2",
+        "120",
+    ]
     return Ok(None)
 
 
@@ -217,6 +245,74 @@ def test_reference_cache_identity_covers_seed_bundle_and_committed_contract_tree
     return Ok(None)
 
 
+def test_driver_evidence_retains_qualified_unit_identities_and_dependency_scans() -> Result[None, str]:
+    """Compiler, sysroot and SDK bytes key complete driver library evidence while the binary remains refused."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    compiler = temporary.path().joinpath("compiler/rustc")
+    sysroot = temporary.path().joinpath("sysroot")
+    sdk = temporary.path().joinpath("sdk/SDKSettings.json")
+    compiler.parent().mkdir(true, true).map_err((error) => error.message())?
+    sysroot.joinpath("lib").mkdir(true, true).map_err((error) => error.message())?
+    sdk.parent().mkdir(true, true).map_err((error) => error.message())?
+    compiler.write_bytes(b"compiler-a").map_err((error) => error.message())?
+    sysroot.joinpath("lib/libstd.rlib").write_bytes(b"sysroot-a").map_err((error) => error.message())?
+    sdk.write_bytes(b"sdk-a").map_err((error) => error.message())?
+
+    original = driver_qualification(compiler, sysroot, sdk)?
+    compiler.write_bytes(b"compiler-b").map_err((error) => error.message())?
+    assert driver_qualification(compiler, sysroot, sdk)?.identity != original.identity
+    compiler.write_bytes(b"compiler-a").map_err((error) => error.message())?
+    sysroot.joinpath("lib/libstd.rlib").write_bytes(b"sysroot-b").map_err((error) => error.message())?
+    assert driver_qualification(compiler, sysroot, sdk)?.identity != original.identity
+    sysroot.joinpath("lib/libstd.rlib").write_bytes(b"sysroot-a").map_err((error) => error.message())?
+    sdk.write_bytes(b"sdk-b").map_err((error) => error.message())?
+    assert driver_qualification(compiler, sysroot, sdk)?.identity != original.identity
+    sdk.write_bytes(b"sdk-a").map_err((error) => error.message())?
+
+    target = temporary.path().joinpath("target")
+    unit = target.joinpath("incan_driver-unit")
+    unit.mkdir(true, true).map_err((error) => error.message())?
+    native = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    unit
+        .joinpath("library.d")
+        .write_text("library: src/lib.rs\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    unit
+        .joinpath("library.portable-inputs")
+        .write_text(native + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    unit.joinpath("incan_driver.incngraph").write_bytes(b"graph").map_err((error) => error.message())?
+    publication = JsonValue.object({"unit": JsonValue.string(native)})
+    unit
+        .joinpath("libincan_driver.rlib.oven-unit")
+        .write_text(publication.to_json().map_err((error) => error.message())?, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    target.joinpath("bin").mkdir(true, true).map_err((error) => error.message())?
+    target
+        .joinpath("bin/incan-rustc-driver.d")
+        .write_text("driver: src/main.rs\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    retained = retain_driver_evidence(target, temporary.path().joinpath("release"), compiler, sysroot, sdk)?
+    assert retained.identity == original.identity
+    assert retained.units == 1
+    assert retained.bytes > 0
+    assert retained.directory.joinpath("incan_driver/library.d").is_file()
+    assert retained.directory.joinpath("incan_driver/library.portable-inputs").is_file()
+    assert retained.directory.joinpath("binary/incan-rustc-driver.d").is_file()
+    manifest = JsonValue
+        .parse(
+            retained.directory
+                .joinpath("manifest.json")
+                .read_text("utf-8", "strict")
+                .map_err((error) => error.message())?,
+        )
+        .map_err((error) => error.message())?
+    assert manifest.require("schema").and_then((value) => value.expect_str()).map_err((error) => error.message())? == "incan.release-driver-units/1"
+    binary = manifest.require("binary").map_err((error) => error.message())?
+    assert binary.require("unit_identity").map_err((error) => error.message())?.is_null()
+    return Ok(None)
+
+
 def test_reference_cache_store_moves_then_reuses_complete_evidence() -> Result[None, str]:
     """Cache publication retains the release log, and reuse materializes the same complete bytes."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
@@ -231,6 +327,12 @@ def test_reference_cache_store_moves_then_reuses_complete_evidence() -> Result[N
     assert cached.read_text("utf-8", "strict").map_err((error) => error.message())? == COMPLETE_LOG
     reuse_reference_log(cached, reused)?
     assert reused.read_text("utf-8", "strict").map_err((error) => error.message())? == COMPLETE_LOG
+    timings = temporary.path().joinpath("timings.tsv")
+    worker_timings = temporary.path().joinpath("reference-timings.tsv")
+    timings.write_text("source-closure\t1.0\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    worker_timings.write_text("reference-contracts\t2.0\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    append_timing_file(timings, worker_timings)?
+    assert timings.read_text("utf-8", "strict").map_err((error) => error.message())? == ("source-closure\t1.0\nreference-contracts\t2.0\n")
     return Ok(None)
 
 
@@ -289,8 +391,68 @@ def test_tree_measurement_walks_regular_files_once_and_records_bytes() -> Result
     return Ok(None)
 
 
+def test_release_trace_uses_invocation_records_and_phase_parent_links() -> Result[None, str]:
+    """Invocation JSONL preserves both same-process phase parents and a child process's inherited parent."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    directory = temporary.path().joinpath("trace")
+    mut trace = ReleaseTrace.open(directory)?
+    trace.phase("checkout")?
+    installed = trace.begin("installed-ci")?
+    child = ReleaseTrace.linked(directory, installed.id, "scripts/verify_installation.incn")?
+    relocation = child.begin("relocation")?
+    child.finish(relocation)?
+    child.complete()?
+    trace.finish(installed)?
+    trace.complete()?
+    paths = directory.glob("*.jsonl").map_err((error) => error.message())?
+    assert len(paths) == 2
+    mut records: list[JsonValue] = []
+    for path in paths:
+        for line in path.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
+            if line != "":
+                records.append(JsonValue.parse(line).map_err((error) => error.message())?)
+    process_records = [record for record in records if json_optional_text(record, "schema") == "incan.invocations/1"]
+    assert len(process_records) == 2
+    checkout_records = [record for record in records if json_optional_text(record, "function") == "checkout"]
+    installed_records = [record for record in records if json_optional_text(record, "function") == "installed-ci"]
+    relocation_records = [record for record in records if json_optional_text(record, "function") == "relocation"]
+    assert len(checkout_records) == 1
+    assert len(installed_records) == 1
+    assert len(relocation_records) == 1
+    phase_id = json_text(checkout_records[0], "id")?
+    installed_id = json_text(installed_records[0], "id")?
+    assert json_text(installed_records[0], "parent")? == phase_id
+    assert json_text(relocation_records[0], "parent")? == installed_id
+    linked_processes = [record for record in process_records if json_optional_text(record, "executable") == "scripts/verify_installation.incn"]
+    assert len(linked_processes) == 1
+    assert json_text(linked_processes[0], "parent")? == installed_id
+    return Ok(None)
+
+
+def test_release_scratch_reclamation_is_exact_and_retains_peak_evidence() -> Result[None, str]:
+    """Only selected scratch roots are removed, with reclaimed bytes and the largest tree sample retained."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path().joinpath("release")
+    scratch = root.joinpath("scratch")
+    retained = root.joinpath("bundle")
+    scratch.mkdir(true, true).map_err((error) => error.message())?
+    retained.mkdir(true, true).map_err((error) => error.message())?
+    scratch.joinpath("large").write_bytes(b"12345").map_err((error) => error.message())?
+    retained.joinpath("artifact").write_bytes(b"abc").map_err((error) => error.message())?
+    evidence = root.joinpath("tree-samples.tsv")
+    assert record_tree_sample(root, evidence, "before")? >= 8
+    assert reclaim_paths([scratch])? == 5
+    after = record_tree_sample(root, evidence, "after")?
+    assert not scratch.exists()
+    assert retained.joinpath("artifact").is_file()
+    peak = int(root.joinpath("tree-peak.txt").read_text("utf-8", "strict").map_err((error) => error.message())?.strip())
+    assert peak >= after
+    assert evidence.read_text("utf-8", "strict").map_err((error) => error.message())?.contains("before\t")
+    return Ok(None)
+
+
 def test_installed_verification_uses_only_the_clean_checkout() -> Result[None, str]:
-    """An ignored launching-checkout fixture cannot enter verification through the selected program source."""
+    """Verification selects the clean checkout and separates shipped portability from local observation caches."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     launching = temporary.path().joinpath("launching")
     verification = temporary.path().joinpath("verification-source")
@@ -310,6 +472,48 @@ def test_installed_verification_uses_only_the_clean_checkout() -> Result[None, s
     assert program.0 == verification.joinpath("scripts/verify_installation.incn").0
     assert ignored.is_file()
     assert not selected_source.joinpath("workspaces/contracts/fixtures/project/example/target/ignored").exists()
+
+    home = temporary.path().joinpath("home")
+    toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("toolchain.json").write_text("{}\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    native = toolchain.joinpath("native/example")
+    native.mkdir(true, true).map_err((error) => error.message())?
+    portable = native.joinpath("portable.json")
+    observations = native.joinpath("observations.json")
+    portable
+        .write_text("{\"path\": \"/builder/source.rs\"}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    observations
+        .write_text("{\"path\": \"/builder/source.rs\"}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    match require_pristine_relocation_inputs(home):
+        Ok(_) => return Err("a shipped observation cache passed relocation intake")
+        Err(message) =>
+            assert message.contains("path-keyed observations"), message
+    observations.unlink().map_err((error) => error.message())?
+    match audit_relocation(home, ["/builder"]):
+        Ok(_) => return Err("a portable release document retained a builder path")
+        Err(message) =>
+            assert message.contains("nonportable toolchain JSON"), message
+    portable
+        .write_text("{\"path\": \"builder/source.rs\"}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    observations
+        .write_text("{\"path\": \"/local/source.rs\"}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    audit_relocation(home, ["/builder"])?
+    manifest = JsonValue.parse(
+        "{\"driver\":\"bin/driver\",\"sysroot\":\"sysroot\",\"rust_abi\":[],\"search\":[],\"externs\":[],\"compiler_records\":{\"root\":\"compiler-records\",\"digest\":\"pin\"}}",
+    ).map_err((error) => error.message())?
+    relocated = JsonValue.parse(absolute_manifest(manifest, verification.0)?).map_err((error) => error.message())?
+    records = relocated.require("compiler_records").map_err((error) => error.message())?
+    assert records.require("root").and_then((value) => value.expect_str()).map_err(
+        (error) => error.message(),
+    )? == verification.joinpath("compiler-records").0
+    assert records.require("digest").and_then((value) => value.expect_str()).map_err(
+        (error) => error.message(),
+    )? == "pin"
     return Ok(None)
 
 
@@ -332,6 +536,18 @@ def candidate_refusal(reference: &BaselineReport, candidate: &BaselineReport) ->
     match require_candidate_census(reference, candidate):
         Ok(_) => return "accepted"
         Err(message) => return message
+
+
+def json_text(value: JsonValue, key: str) -> Result[str, str]:
+    """Read one required string field from a trace test record."""
+    return value.require(key).and_then((field) => field.expect_str()).map_err((error) => error.message())
+
+
+def json_optional_text(value: JsonValue, key: str) -> str:
+    """Read one optional string field for concise trace-record selection."""
+    match value.get(key):
+        Some(field) => return field.as_str().unwrap_or("")
+        None => return ""
 
 
 def make_tree_writable(root: Path) -> Result[None, str]:

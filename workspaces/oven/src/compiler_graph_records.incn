@@ -3,7 +3,7 @@
 from std.encoding.hex import hexlify
 from std.json import JsonValue, parse
 from std.primitives.hash import sha256
-from pub::incan_platform.store import Snapshot, begin, commit, get, put
+from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, keys, put
 from pub::internal_models import (
     ProducerRank,
     ProducerStage,
@@ -42,9 +42,29 @@ pub model PublishedEvaluation:
     pub edge_count: int
 
 
+pub model PreparedEvaluation:
+    """One evaluation and all graph records staged in a caller-owned transaction for atomic request publication."""
+
+    pub transaction: Transaction
+    pub value_key: str
+    pub value_digest: str
+    pub receipt_key: str
+    pub receipt_root: str
+    pub evaluation_key: str
+    pub edge_count: int
+
+
 pub model ReusableEvaluation:
     """One persisted compiler value admitted only after every recorded dependency still validates."""
 
+    pub value: bytes
+    pub receipt: ReadReceipt
+
+
+pub model ReusableRecord:
+    """One graph-admitted reusable value together with its complete logical record key."""
+
+    pub key: RecordKey
     pub value: bytes
     pub receipt: ReadReceipt
 
@@ -66,6 +86,29 @@ pub def publish_evaluation(
     receipt: ReadReceipt,
 ) -> Result[PublishedEvaluation, str]:
     """Publish a value, evaluation, completed receipt and both edge directions in one store transaction."""
+    prepared = prepare_evaluation(begin(selected), claim_key, rank, value, receipt)?
+    published = commit(prepared.transaction).map_err((error) => error.message())?
+    return Ok(
+        PublishedEvaluation(
+            snapshot=published,
+            value_key=prepared.value_key,
+            value_digest=prepared.value_digest,
+            receipt_key=prepared.receipt_key,
+            receipt_root=prepared.receipt_root,
+            evaluation_key=prepared.evaluation_key,
+            edge_count=prepared.edge_count,
+        ),
+    )
+
+
+pub def prepare_evaluation(
+    transaction: Transaction,
+    claim_key: str,
+    rank: ProducerRank,
+    value: bytes,
+    receipt: ReadReceipt,
+) -> Result[PreparedEvaluation, str]:
+    """Stage a value, evaluation, completed receipt and both edge directions in a caller-owned transaction."""
     if claim_key == "" or receipt.scope.profile == "" or receipt.schema != READ_SCHEMA:
         return Err("a completed evaluation requires a claim, profile and read-receipt schema")
     if rank.namespace < 0 or rank.dependency < 0:
@@ -79,22 +122,18 @@ pub def publish_evaluation(
     evaluation_key = evaluation_record_key(receipt.scope.profile, value_key)
     evaluation = encode_evaluation(receipt.scope.profile, value_key, claim_key, value_digest, receipt_root, rank)?
 
-    mut transaction = put(begin(selected), value_key, value)
-    transaction = put(transaction, receipt_key, receipt_bytes)
-    transaction = put(transaction, evaluation_key, evaluation)
+    mut prepared = put(transaction, value_key, value)
+    prepared = put(prepared, receipt_key, receipt_bytes)
+    prepared = put(prepared, evaluation_key, evaluation)
+    prepared = put(prepared, output_index_key(receipt.scope.profile, value_key), evaluation_key.encode("utf-8"))
     for index in range(len(edges)):
         edge = encode_edge(value_key, receipt.scope.profile, edges[index])?
         identity = digest(edge)
-        transaction = put(transaction, f"incan.engine.edge-out\t{evaluation_key}\t{index}", edge)
-        transaction = put(
-            transaction,
-            f"incan.engine.edge-in\t{edges[index].target}\t{edges[index].kind}\t{identity}",
-            edge,
-        )
-    published = commit(transaction).map_err((error) => error.message())?
+        prepared = put(prepared, f"incan.engine.edge-out\t{evaluation_key}\t{index}", edge)
+        prepared = put(prepared, f"incan.engine.edge-in\t{edges[index].target}\t{edges[index].kind}\t{identity}", edge)
     return Ok(
-        PublishedEvaluation(
-            snapshot=published,
+        PreparedEvaluation(
+            transaction=prepared,
             value_key=value_key,
             value_digest=value_digest,
             receipt_key=receipt_key,
@@ -152,10 +191,69 @@ pub def reusable_evaluation(
     return Ok(Some(ReusableEvaluation(value=value, receipt=receipt)))
 
 
+pub def reusable_family_records(selected: Snapshot, family: str, profile: str) -> Result[list[ReusableRecord], str]:
+    """Select every witnessed value in one family/profile from the graph's engine-owned output index."""
+    if family == "" or profile == "" or "\t" in family or "\t" in profile:
+        return Err("reusable compiler family selection requires delimiter-free family and profile names")
+    prefix = "incan.engine.output\t" + profile + "\t"
+    mut records: list[ReusableRecord] = []
+    for indexed in keys(selected).map_err((error) => error.message())?:
+        if not indexed.startswith(prefix):
+            continue
+        key = decode_record_key(indexed[len(prefix):])?
+        if key.family != family:
+            continue
+        match reusable_evaluation(selected, key, profile)?:
+            Some(reused) => records.append(ReusableRecord(key=key, value=reused.value, receipt=reused.receipt))
+            None => pass
+    return Ok(records)
+
+
+pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[RecordKey], str]:
+    """Read the prior graph's reverse edges for changed records without entering any compiler or whole-program check."""
+    mut readers: Dict[str, RecordKey] = {}
+    selected_keys = keys(selected).map_err((error) => error.message())?
+    for target in changed:
+        prefix = "incan.engine.edge-in\t" + encode_record_key(target)? + "\t"
+        for indexed in selected_keys:
+            if not indexed.startswith(prefix):
+                continue
+            edge = parse(required_value(selected, indexed)?.decode().map_err((_) => "compiler graph edge is not UTF-8")?).map_err(
+                (error) => error.message(),
+            )?
+            if required_text(edge, "schema")? != EDGE_SCHEMA or required_text(edge, "profile")? != profile:
+                continue
+            reader = required_text(edge, "reader")?
+            readers[reader] = decode_record_key(reader)?
+    return Ok([readers[key] for key in sorted([item for item in readers.keys()])])
+
+
 pub def evaluation_record_key(profile: str, output: str) -> str:
     """Return the selected evaluation identity for one output under one exact producer profile."""
     identity = digest((profile + "\n" + output).encode("utf-8"))
     return "incan.engine.evaluation\t" + identity
+
+
+def output_index_key(profile: str, output: str) -> str:
+    """Name one profile's current logical output without duplicating its value or evaluation document."""
+    return "incan.engine.output\t" + profile + "\t" + output
+
+
+def decode_record_key(encoded: str) -> Result[RecordKey, str]:
+    """Decode the canonical six-field record key retained verbatim in the output index."""
+    fields = encoded.split("\t")
+    if len(fields) != 6:
+        return Err("compiler output index contains a malformed record key")
+    return Ok(
+        RecordKey(
+            family=fields[0],
+            identity_profile=fields[1],
+            origin=fields[2],
+            identity=fields[3],
+            facet=fields[4],
+            context=fields[5],
+        ),
+    )
 
 
 def normalized_edges(witnesses: list[ReadWitness]) -> Result[list[EdgeFact], str]:

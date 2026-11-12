@@ -5,6 +5,71 @@ use super::baseline_compare::canonical_debug;
 use super::{AnchorFault, BodyLocal, CheckedBodyView, DiagnosticPositions, TypeChecker};
 use crate::ast::Span;
 
+#[test]
+fn graph_body_records_restore_through_checked_body_assembly() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def main() -> None:\n    println(\"hello\")\n";
+    let program = parsed(source)?;
+    let declaration = super::records::fixture_record(source, "main", true)?;
+    let mut local = super::records::produce_local_record(source, "main", declaration, Vec::new())?;
+    local
+        .first_mut()
+        .ok_or("missing local header")?
+        .insert(3, "local".into());
+    let mut final_value = super::records::fixture_record(source, "main", false)?;
+    final_value
+        .first_mut()
+        .ok_or("missing final header")?
+        .insert(3, "final".into());
+    let identity = local.first().ok_or("missing local header")?[1].clone();
+    let records = crate::checker_records::GraphBodyRecords::new(vec![crate::checker_records::GraphBodyRecord {
+        identity,
+        local: local.clone(),
+        final_value: final_value.clone(),
+        body_ir: None,
+    }])?;
+
+    let mut selected = TypeChecker::new();
+    selected.set_graph_body_records(records.clone());
+    selected
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let work = selected.check_work();
+    assert_eq!(work.function_bodies, 0);
+    assert_eq!(work.local_record_evaluations, 0);
+    assert_eq!(work.final_record_evaluations, 0);
+    assert_eq!(work.body_view_reuses, 1);
+    let owner = program.declarations.first().ok_or("missing declaration")?.span;
+    assert!(selected.available_declaration_record(owner).is_some());
+    assert_eq!(selected.available_local_record(owner), Some(&local));
+    assert_eq!(selected.available_final_record(owner), Some(&final_value));
+
+    let edited = parsed("def main() -> None:\n    println(\"changed\")\n")?;
+    let mut fallback = TypeChecker::new();
+    fallback.set_graph_body_records(records);
+    fallback
+        .check_program(&edited)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let fallback_work = fallback.check_work();
+    assert_eq!(fallback_work.function_bodies, 1);
+    assert_eq!(fallback_work.local_record_evaluations, 1);
+    assert_eq!(fallback_work.final_record_evaluations, 1);
+    Ok(())
+}
+
+#[test]
+fn selected_declaration_is_republished_with_a_fresh_local_body() -> Result<(), Box<dyn std::error::Error>> {
+    let source =
+        "def output_index_key(profile: str, output: str) -> str:\n    key = profile + output\n    return key\n";
+    super::records::selected_declaration_survives_local_projection(source, "output_index_key")?;
+    Ok(())
+}
+
+/// Parse one record-boundary fixture without introducing an alternate checker setup.
+fn parsed(source: &str) -> Result<crate::ast::Program, Box<dyn std::error::Error>> {
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    Ok(crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?)
+}
+
 impl TypeChecker {
     /// Declaration-owned defaults never become statement-body inputs, and the separate owner keeps the checked
     /// expression even when the body is refused. Constant and static rules are exercised by the cold matrix.
@@ -666,5 +731,8 @@ fn assert_canonical_record_controls() -> Result<(), Box<dyn std::error::Error>> 
         super::records::fixture_record(matched, "main", false),
         Err(NodeBindingError::Unsupported("ProtocolArtifacts.loan_free_scrutinees"))
     ));
+    let ordered = "def touch(mut items: list[int]) -> None:\n    pass\n\ndef caller() -> None:\n    items = [1]\n    touch(items)\n\ndef later() -> int:\n    return 1\n";
+    let later = super::records::fixture_record(ordered, "later", true)?;
+    super::records::verify_fixture(ordered, "later", later)?;
     Ok(())
 }

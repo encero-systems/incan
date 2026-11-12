@@ -7,6 +7,7 @@ from rust::std::process import id as process_id
 from std.fs import Path
 from pub::incan_mir_plan import ExternalFunction, Function, SourceSpan
 from scalar_products import encode_product, decode_product
+from record_positions import relocate_product
 
 
 @derive(Serialize, Deserialize)
@@ -17,6 +18,29 @@ model ScalarRecord:
     inputs: list[str]
     function: str
     digest: str
+
+
+@derive(Serialize, Deserialize)
+model ScalarRecordEvent:
+    """One request-local observation of an evaluated or reused plan-function product."""
+
+    schema: int
+    identity: str
+    key: str
+    function: str
+    product: str
+    reused: bool
+    runtime_requirements: int
+
+
+@derive(Serialize, Deserialize)
+model ScalarRecordRefusal:
+    """One request-local refusal to represent an ordinarily lowered function as a scalar record."""
+
+    schema: int
+    identity: str
+    function: str
+    refusal: str
 
 
 pub def scalar_inputs(body: str, name: str, span: SourceSpan, overflow_checks: bool, reads: str) -> list[str]:
@@ -33,7 +57,16 @@ pub def scalar_inputs(body: str, name: str, span: SourceSpan, overflow_checks: b
     ]
 
 
-pub def retained_scalar(directory: str, inputs: list[str]) -> Option[tuple[Function, list[ExternalFunction]]]:
+pub def record_scalar_inputs(body: str, name: str, span: SourceSpan, overflow: bool, reads: str, positions: str) -> list[str]:
+    """Separate a record's checked meaning and relative positions from its current owner-line translation."""
+    return ["incan.record-function/1", body, name, str(span.file), str(overflow), reads, positions]
+
+
+pub def retained_scalar(
+    directory: str,
+    inputs: list[str],
+    span: Option[SourceSpan] = None,
+) -> Option[tuple[Function, list[ExternalFunction]]]:
     """
     Read a complete native function whose full producer inputs still match.
 
@@ -47,33 +80,98 @@ pub def retained_scalar(directory: str, inputs: list[str]) -> Option[tuple[Funct
         Ok(path) =>
             match path.read_text("utf-8", "strict"):
                 Err(_) => return None
-                Ok(text) => return restore_record(text, inputs)
+                Ok(text) => return restore_record(text, inputs, span)
 
 
-pub def retain_scalar(directory: str, inputs: list[str], function: &Function, runtime: &list[ExternalFunction]) -> None:
+pub def retain_scalar(directory: str, inputs: list[str], function: &Function, runtime: &list[ExternalFunction]) -> Result[None, str]:
     """
     Publish a loss-checked scalar native function without changing compilation's verdict.
 
     1. Encode and authenticate every function field against its producer inputs.
     2. Write a complete temporary record and atomically replace its destination.
     """
-    # 1. An unsupported native shape refuses this cache, retaining ordinary lowering.
-    match encoded_record(inputs, function, runtime):
-        Err(_) => return
-        Ok(text) =>
-            # 2. Publication is independent of the successful compilation's verdict.
-            _ = publish_record(directory, inputs, text)
+    # 1. Records mode must preserve an unsupported native shape as an explicit producer refusal.
+    text = encoded_record(inputs, function, runtime)?
+    # 2. The request-local transport is required input to Bakery publication, so failed writes refuse the producer.
+    return publish_record(directory, inputs, text)
+
+
+pub def report_scalar(
+    directory: Option[str],
+    products: str,
+    inputs: list[str],
+    identity: str,
+    function: str,
+    reused: bool,
+    runtime: int,
+) -> Result[None, str]:
+    """Publish one bounded product event for Bakery admission; records mode refuses incomplete transport."""
+    if let Some(root) = directory:
+        digest = fingerprint(inputs)?
+        product = scalar_path(products, inputs)?.read_text("utf-8", "strict").map_err(
+            (error) => f"cannot read plan-function product {error.message()}",
+        )?
+        # Revalidate the exact bytes before they cross from private lowering transport into Bakery publication.
+        if restore_record(product, inputs) is None:
+            return Err("plan-function product failed its lowering codec round trip")
+        event = ScalarRecordEvent(
+            schema=2,
+            identity=identity,
+            key=digest.replace("sha256:", ""),
+            function=function,
+            product=product,
+            reused=reused,
+            runtime_requirements=runtime,
+        )
+        text = to_string(event).map_err((error) => str(error))?
+        path = Path(root).joinpath(digest.replace("sha256:", "") + ".event")
+        path.parent().mkdir(true, true).map_err((error) => error.message())?
+        path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def report_scalar_refusal(
+    directory: Option[str],
+    identity: str,
+    function: str,
+    refusal: str,
+) -> Result[None, str]:
+    """Retain an explicit record refusal without changing the ordinary lowering verdict."""
+    if let Some(root) = directory:
+        report = ScalarRecordRefusal(
+            schema=2,
+            identity=identity,
+            function=function,
+            refusal=refusal,
+        )
+        text = to_string(report).map_err((error) => str(error))?
+        digest = fingerprint([identity, function, refusal])?.replace("sha256:", "")
+        path = Path(root).joinpath(digest + ".refusal")
+        path.parent().mkdir(true, true).map_err((error) => error.message())?
+        path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    return Ok(None)
 
 
 def encoded_record(inputs: list[str], function: &Function, runtime: &list[ExternalFunction]) -> Result[str, str]:
     """Authenticate the entire native payload after the codec proves an exact structural round trip."""
-    payload = encode_product(function, runtime)?
+    mut payload = encode_product(function, runtime)?
+    if inputs[0] == "incan.record-function/1":
+        relative = relocate_product(payload, "<owner>", 1)?
+        restored = relocate_product(relative, str(function.span.file), function.span.line)?
+        restored_function, restored_runtime = decode_product(restored)?
+        if encode_product(restored_function, restored_runtime)? != payload:
+            return Err("plan-function position round trip changed native facts")
+        payload = relative
     digest = fingerprint([payload])?
     record = ScalarRecord(schema=3, inputs=inputs, function=payload, digest=digest)
     return to_string(record).map_err((error) => str(error))
 
 
-def restore_record(text: str, inputs: list[str]) -> Option[tuple[Function, list[ExternalFunction]]]:
+def restore_record(
+    text: str,
+    inputs: list[str],
+    span: Option[SourceSpan] = None,
+) -> Option[tuple[Function, list[ExternalFunction]]]:
     """Treat invalid schema, changed inputs and altered native bytes as cache misses before decoding a function."""
     match decode_record(text):
         Err(_) => return None
@@ -85,7 +183,13 @@ def restore_record(text: str, inputs: list[str]) -> Option[tuple[Function, list[
                 Ok(digest) =>
                     if record.digest != digest:
                         return None
-            match decode_product(record.function):
+            mut payload = record.function
+            if inputs[0] == "incan.record-function/1":
+                if let Some(current) = span:
+                    match relocate_product(payload, str(current.file), current.line):
+                        Ok(moved) => payload = moved
+                        Err(_) => return None
+            match decode_product(payload):
                 Ok(product) => return Some(product)
                 Err(_) => return None
 

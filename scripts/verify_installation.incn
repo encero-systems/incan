@@ -19,15 +19,20 @@ from oven_tests import (
 from release_support import (
     FAMILIES,
     BaselineReport,
+    ReleaseTrace,
+    ReservedStep,
     TOOLCHAIN_DIRECTORY,
     Step,
     append_timing,
     baseline_summary,
     check_baseline,
+    begin_step_trace,
     counts_json,
     digest,
+    finish_step_trace,
     parse_verification_options,
     require_step,
+    run_reserved_steps,
     run_step,
     write_json,
 )
@@ -38,8 +43,9 @@ const SMALL_PROJECT_RESERVATION_BYTES: int = 2 * GIB
 
 
 pub enum VerificationPhase(str):
-    """Independent installed-verification gates with stable child-process spellings."""
+    """Independent installed-verification audit and gates with stable child-process spellings."""
 
+    Relocation = "relocation"
     Oven = "oven"
     RustFacets = "rust-facets"
     DriverIntegration = "driver-integration"
@@ -91,31 +97,30 @@ def main() -> None:
 
 pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, str]:
     """
-    Verify an installed toolchain in four steps.
+    Verify an installed toolchain in three steps.
 
-    1. Audit installation paths and select only shipped standard packages.
-    2. Build this checkout's contract runner with the installed compiler.
-    3. Concurrently run Oven, every Rust facet, direct-driver integration, LSP, census, and cold memory gates.
-    4. Preserve every committed PASS key and all per-phase evidence.
+    1. Select only shipped standard packages and build this checkout's contract runner.
+    2. Concurrently audit relocation and run Oven, every Rust facet, direct-driver integration, LSP, census, and memory.
+    3. Preserve every committed PASS key and all per-phase evidence.
     """
     installation = prepare(output, jobs, timeout_seconds)?
+    trace = verification_release_trace()?
 
-    # 1. Installed records may name only this installation and never a builder path.
+    # 1. Refuse path-keyed cache payloads before installed use regenerates them, then build the checkout runner.
+    require_pristine_relocation_inputs(installation.home)?
     mut phase_started = Instant.now()
-    audit_relocation(installation.home, [get_or("INCAN_BUILDER_HOME", ""), get_or("INCAN_BUILDER_SOURCE", "")])?
-    retain_phase_timing(installation, "relocation", phase_started)?
-
-    # 2. A checkout runner proves the installed compiler can read the current source contracts.
-    phase_started = Instant.now()
-    runner = build_runner(installation)?
+    runner_span = begin_step_trace(trace, "runner-build")?
+    runner_result = build_runner(installation)
+    finish_step_trace(trace, runner_span)?
+    runner = runner_result?
     retain_phase_timing(installation, "runner-build", phase_started)?
 
-    # 3. Independent projects and scratch roots share only the content-addressed installed home.
+    # 2. The relocation audit and independent gates share only the read-only installed toolchain.
     phase_started = Instant.now()
     report, suites = run_concurrent_gates(installation, runner)?
     retain_phase_timing(installation, "concurrent-gates", phase_started)?
 
-    # 4. The caller receives one durable evidence directory even on hosts with shared temporary storage.
+    # 3. The caller receives one durable evidence directory even on hosts with shared temporary storage.
     summary = baseline_summary(report) + f"; {suites} Rust facet suites\n"
     installation.run
         .joinpath("summary.txt")
@@ -130,6 +135,17 @@ def retain_phase_timing(installation: Installation, phase: str, started: Instant
     return append_timing(installation.run.joinpath("phase-timings.tsv"), phase, started.elapsed().as_secs_f64())
 
 
+def verification_release_trace() -> Result[Option[ReleaseTrace], str]:
+    """Join the outer release trace only when both its directory and installed-CI parent are supplied."""
+    directory = get_or("INCAN_RELEASE_TRACE_DIR", "")
+    parent = get_or("INCAN_RELEASE_TRACE_PARENT", "")
+    if directory == "" and parent == "":
+        return Ok(None)
+    if directory == "" or parent == "":
+        return Err("installed verification needs both INCAN_RELEASE_TRACE_DIR and INCAN_RELEASE_TRACE_PARENT")
+    return Ok(Some(ReleaseTrace.linked(Path(directory), parent, "scripts/verify_installation.incn")?))
+
+
 def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tuple[BaselineReport, int], str]:
     """Run independent installed gates under one host-memory budget and recover their typed results."""
     plans = verification_phase_plans(installation.jobs)
@@ -141,9 +157,7 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
         name = verification_phase_name(plan.phase)
         trace_environment = verification_trace_environment(installation.run, name, retain_traces)
         if retain_traces:
-            Path(trace_environment["INCAN_TRACE_DIR"])
-                .mkdir(true, true)
-                .map_err((error) => error.message())?
+            Path(trace_environment["INCAN_TRACE_DIR"]).mkdir(true, true).map_err((error) => error.message())?
         invocations.append(
             Invocation(
                 arguments=[
@@ -192,16 +206,14 @@ pub def verification_trace_environment(run: Path, phase: str, enabled: bool) -> 
     if not enabled:
         return {}
     stem = run.joinpath("traces").joinpath(phase)
-    return {
-        "INCAN_TRACE_DIR": stem.joinpath("compiler").0,
-        "INCAN_NATIVE_TIMING": "1",
-    }
+    return {"INCAN_TRACE_DIR": stem.joinpath("compiler").0, "INCAN_NATIVE_TIMING": "1"}
 
 
 pub def verification_phase_plans(jobs: int) -> list[VerificationPhasePlan]:
-    """Plan independent gates with their aggregate lowering-scale or project-scale memory reservations."""
+    """Plan the read-only audit and independent gates with explicit whole-process memory reservations."""
     workers = verification_workers(jobs)
     return [
+        VerificationPhasePlan(phase=VerificationPhase.Relocation, reservation=SMALL_PROJECT_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.Oven, reservation=workers * OVEN_PROJECT_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.RustFacets, reservation=workers * FACET_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.DriverIntegration, reservation=LOWERING_RESERVATION_BYTES),
@@ -221,6 +233,7 @@ def verification_workers(jobs: int) -> int:
 def verification_phase_name(phase: VerificationPhase) -> str:
     """Map the closed phase enum to its stable child-process spelling without cross-module method dispatch."""
     match phase:
+        VerificationPhase.Relocation => return "relocation"
         VerificationPhase.Oven => return "oven"
         VerificationPhase.RustFacets => return "rust-facets"
         VerificationPhase.DriverIntegration => return "driver-integration"
@@ -240,7 +253,24 @@ def run_phase(arguments: list[str]) -> Result[None, str]:
     timeout_seconds = phase_positive(arguments[4], "timeout")?
     installation = phase_installation(run, jobs, timeout_seconds)?
     started = Instant.now()
+    trace = verification_release_trace()?
+    name = verification_phase_name(phase)
+    span = begin_step_trace(trace, name)?
+    outcome = run_selected_phase(installation, runner, phase)
+    finish_step_trace(trace, span)?
+    outcome?
+    installation.run
+        .joinpath(f"phase-timing-{name}.txt")
+        .write_text(str(started.elapsed().as_secs_f64()) + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    return Ok(None)
+
+
+def run_selected_phase(installation: Installation, runner: Path, phase: VerificationPhase) -> Result[None, str]:
+    """Run one closed installed-verification audit or gate after its process-level trace span is open."""
     match phase:
+        VerificationPhase.Relocation =>
+            audit_relocation(installation.home, [get_or("INCAN_BUILDER_HOME", ""), get_or("INCAN_BUILDER_SOURCE", "")])?
         VerificationPhase.Oven => run_oven_tests(installation)?
         VerificationPhase.RustFacets =>
             suites = run_rust_facets(installation)?
@@ -252,16 +282,13 @@ def run_phase(arguments: list[str]) -> Result[None, str]:
         VerificationPhase.Lsp => verify_lsp(installation, runner)?
         VerificationPhase.Census => _ = run_contracts(installation, runner)?
         VerificationPhase.Memory => measure_memory(installation)?
-    installation.run
-        .joinpath(f"phase-timing-{verification_phase_name(phase)}.txt")
-        .write_text(str(started.elapsed().as_secs_f64()) + "\n", "utf-8", "strict", None)
-        .map_err((error) => error.message())?
     return Ok(None)
 
 
 def parse_verification_phase(text: str) -> Result[VerificationPhase, str]:
-    """Parse only the five internal verification phase spellings."""
+    """Parse only the seven internal verification phase spellings."""
     match text:
+        "relocation" => return Ok(VerificationPhase.Relocation)
         "oven" => return Ok(VerificationPhase.Oven)
         "rust-facets" => return Ok(VerificationPhase.RustFacets)
         "driver-integration" => return Ok(VerificationPhase.DriverIntegration)
@@ -321,7 +348,7 @@ def installed_contract_report(installation: Installation) -> Result[BaselineRepo
 
 
 pub def audit_relocation(home: Path, builder_paths: list[str]) -> Result[None, str]:
-    """Refuse stale generations and absolute JSON paths outside the selected installation."""
+    """Refuse stale generations and nonlocal paths in portable installed content after local observations may exist."""
     installation = home.resolve().map_err((error) => error.message())?
     toolchain = installation.joinpath(TOOLCHAIN_DIRECTORY)
     if not toolchain.is_dir():
@@ -339,12 +366,27 @@ pub def audit_relocation(home: Path, builder_paths: list[str]) -> Result[None, s
         if builder == "":
             continue
         for document in toolchain.rglob("*").map_err((error) => error.message())?:
-            if document.is_file():
+            if document.is_file() and not is_relocation_observation_cache(document):
                 match document.read_text("utf-8", "strict"):
                     Ok(text) =>
                         if f"{builder}/" in text:
                             return Err(f"installed records name the builder: {builder}")
                     Err(_) => pass
+    return Ok(None)
+
+
+pub def require_pristine_relocation_inputs(home: Path) -> Result[None, str]:
+    """Require the archive to contain no path-keyed observation cache before installed commands regenerate them."""
+    toolchain = home.resolve().map_err((error) => error.message())?.joinpath(TOOLCHAIN_DIRECTORY)
+    if not toolchain.is_dir():
+        return Err(f"missing installed toolchain: {toolchain.0}")
+    for name in ["native", "loaves"]:
+        directory = toolchain.joinpath(name)
+        if not directory.is_dir():
+            continue
+        caches = directory.rglob("*observations.json").map_err((error) => error.message())?
+        if len(caches) > 0:
+            return Err(f"installed archive retained path-keyed observations: {caches[0].0}")
     return Ok(None)
 
 
@@ -354,12 +396,19 @@ def release_json_documents(toolchain: Path) -> Result[list[Path], str]:
     for name in ["native", "loaves"]:
         directory = toolchain.joinpath(name)
         if directory.is_dir():
-            documents += directory.rglob("*.json").map_err((error) => error.message())?
+            documents += [path for path in directory.rglob("*.json").map_err((error) => error.message())? if not is_relocation_observation_cache(
+                path,
+            )]
     for name in ["closure.json", "selected.json"]:
         document = toolchain.joinpath("registry").joinpath(name)
         if document.is_file():
             documents.append(document)
     return Ok(documents)
+
+
+def is_relocation_observation_cache(path: Path) -> bool:
+    """Recognize the path-keyed caches archive packing excludes and installed use recreates locally."""
+    return path.name().ends_with("observations.json")
 
 
 def prepare(output: Path, jobs: int, timeout_seconds: int) -> Result[Installation, str]:
@@ -484,8 +533,12 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
     """
     output = installation.run.joinpath("rust-tests")
     output.mkdir(true, true).map_err((error) => error.message())?
-    mut planned: list[Invocation] = []
+    mut planned: list[ReservedStep] = []
     mut projects: list[str] = []
+    mut environment = command_environment(installation)
+    bakery = selected_rust_facet_bakery(get_or("INCAN_BUILDER_HOME", ""))
+    if bakery != "":
+        environment["INCAN_BAKERY"] = bakery
     manifests = sorted(
         [path.0 for path in installation.root.joinpath("loaves").rglob("loaf.toml").map_err((error) => error.message())?],
     )
@@ -499,20 +552,41 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
         label = relative.replace("/", "-")
         projects.append(relative)
         planned.append(
-            Invocation(
-                arguments=["test", project.0, "--profile", "release"],
-                directory=installation.root.0,
+            ReservedStep(
+                child=Step(
+                    name=relative,
+                    executable=installation.oven.0,
+                    arguments=["test", project.0, "--profile", "release"],
+                    environment=environment,
+                    remove_environment=["RUSTC_BOOTSTRAP"],
+                    directory=Some(installation.root),
+                    log=output.joinpath(f"{label}.log"),
+                    timeout_seconds=installation.timeout_seconds,
+                ),
                 reservation=FACET_RESERVATION_BYTES,
-                log=output.joinpath(f"{label}.log"),
-                timeout_seconds=installation.timeout_seconds,
             ),
         )
     if len(planned) == 0:
         return Err("no Rust facets found")
-    failed = run_all_failures(installation.oven.0, planned, installation.jobs, shared_memory(host_memory()))?
+    failed = run_reserved_steps(
+        planned,
+        installation.jobs,
+        shared_memory(host_memory()),
+        installation.run.joinpath("rust-facet-timings.tsv"),
+    )?
     if len(failed) > 0:
         return Err("Rust facet test failures: " + ", ".join([projects[index] for index in failed]))
     return Ok(len(projects))
+
+
+pub def selected_rust_facet_bakery(builder_home: str) -> str:
+    """Select the release builder's existing Bakery for exact-identity facet reuse, or no override outside release."""
+    if builder_home == "":
+        return ""
+    bakery = Path(builder_home).joinpath("bakery")
+    if not bakery.is_dir():
+        return ""
+    return bakery.0
 
 
 def run_driver_integration(installation: Installation) -> Result[None, str]:

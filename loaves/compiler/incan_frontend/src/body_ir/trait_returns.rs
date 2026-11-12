@@ -4,7 +4,7 @@
 //! refinement. Different return carriers remain open and are refused; no boxing or vtable conversion is introduced.
 
 use super::{CanonicalSymbolId, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// A retained callable's original source result and its current concrete representation witness.
 #[derive(Clone)]
@@ -38,10 +38,13 @@ pub(super) fn retain_returns(
     program: &ast::Program,
     facts: &TypeCheckInfo,
     context: &[bir::BodyIrModule],
+    selected: &HashSet<CanonicalSymbolId>,
 ) {
     let mut signatures = HashMap::new();
     for body in &mut module.bodies {
-        retain_return_annotation(body, program, facts);
+        if !super::body_is_selected(body, selected) {
+            retain_return_annotation(body, program, facts);
+        }
         if let Some(identity) = &body.canonical {
             signatures.insert(identity.clone(), signature(body));
         }
@@ -69,9 +72,17 @@ pub(super) fn retain_returns(
         .iter()
         .chain(context.iter().flat_map(|module| &module.nominal_declarations))
         .collect::<Vec<_>>();
-    for _ in 0..=module.bodies.len() {
+    let active = module
+        .bodies
+        .iter()
+        .filter(|body| !super::body_is_selected(body, selected))
+        .count();
+    for _ in 0..=active {
         let mut changed = false;
         for (body, original) in module.bodies.iter_mut().zip(&original_locals) {
+            if super::body_is_selected(body, selected) {
+                continue;
+            }
             let carrier = refine_body(
                 body,
                 &ReturnContext {

@@ -21,7 +21,8 @@ from rust::incan_semantics_core::body_ir import (
     Constant,
 )
 from rust::std::collections import BTreeSet, VecDeque
-from type_parameters import substitute, instantiate, static_type_arguments, UNBOUND_TYPE_PARAMETER
+from type_parameters import substitute, instantiate, indexed_static_type_arguments, UNBOUND_TYPE_PARAMETER
+from native_type_identity import ConstructorIndex
 from table_views import borrowed_at
 
 
@@ -166,7 +167,7 @@ pub def declaration_storage(module: &BodyIrModule) -> list[RustType]:
     return types
 
 
-pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
+pub def nominal_frames(constructors: &ConstructorIndex, module: &BodyIrModule) -> Result[list[Body], str]:
     """Collect source, static and closed callable frames for layout discovery without granting execution."""
     mut frames: list[Body] = []
     mut pending = scheduled_frames()
@@ -174,12 +175,12 @@ pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
         body = borrowed_at(module.bodies, body_position)
         frames.append(body.clone())
         if len(body.type_parameters) == 0:
-            schedule_block(module, body.block, [], [], pending, [])?
+            schedule_block(constructors, module, body.block, [], [], pending, [])?
     for declaration in module.static_declarations:
         match declaration.initial:
             StaticInitializer.Computed(body) =>
                 append_static_frame(frames, body)
-                schedule_block(module, body.block, [], [], pending, [])?
+                schedule_block(constructors, module, body.block, [], [], pending, [])?
             _ => pass
     while let Some(request) = pending.pending.pop_front():
         # This inventory closes layout types only; executable callable ownership is selected by call lowering. A method
@@ -195,6 +196,7 @@ pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
             Some(identity) =>
                 ancestry = request.ancestors + [identity.render_compact()]
                 schedule_block(
+                    constructors,
                     module,
                     request.body.block,
                     request.body.type_parameters.clone(),
@@ -224,6 +226,7 @@ def append_static_frame(mut frames: list[Body], body: &Body) -> None:
 
 
 def schedule_block(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     block: &Block,
     names: list[str],
@@ -233,11 +236,20 @@ def schedule_block(
 ) -> Result[None, str]:
     """Visit checked calls through normalized blocks; other executable constructs retain their normal lowering path."""
     for position in range(len(block.stmts)):
-        schedule_statement(module, borrowed_at(block.stmts, position).kind, names, arguments, pending, ancestors)?
+        schedule_statement(
+            constructors,
+            module,
+            borrowed_at(block.stmts, position).kind,
+            names,
+            arguments,
+            pending,
+            ancestors,
+        )?
     return Ok(None)
 
 
 def schedule_statement(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     kind: &StatementKind,
     names: list[str],
@@ -252,7 +264,7 @@ def schedule_statement(
                 Callee.Function(callable) =>
                     match callable:
                         CallableTarget.Named(target) =>
-                            call_types = static_type_arguments(module, target)?
+                            call_types = indexed_static_type_arguments(constructors, target)?
                             schedule_call(module, target.canonical, call_types, names, arguments, pending, ancestors)?
                         _ => pass
                 Callee.Method(target) => schedule_call(
@@ -266,12 +278,14 @@ def schedule_statement(
                 )?
                 _ => pass
         StatementKind.Assign(place=_destination, rvalue=value) =>
-            schedule_value(module, value, names, arguments, pending, ancestors)?
+            schedule_value(constructors, module, value, names, arguments, pending, ancestors)?
         StatementKind.Race(destination=_destination, arms=arms) =>
             for arm in arms:
-                schedule_block(module, arm.body, names, arguments, pending, ancestors)?
-        StatementKind.Loop(body=nested) => schedule_block(module, nested, names, arguments, pending, ancestors)?
+                schedule_block(constructors, module, arm.body, names, arguments, pending, ancestors)?
+        StatementKind.Loop(body=nested) =>
+            schedule_block(constructors, module, nested, names, arguments, pending, ancestors)?
         StatementKind.UnsafeRegion(acknowledgment=_receipt, body=nested) => schedule_block(
+            constructors,
             module,
             nested,
             names,
@@ -280,15 +294,16 @@ def schedule_statement(
             ancestors,
         )?
         StatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
-            schedule_block(module, then_body, names, arguments, pending, ancestors)?
+            schedule_block(constructors, module, then_body, names, arguments, pending, ancestors)?
             match else_body:
-                Some(nested) => schedule_block(module, nested, names, arguments, pending, ancestors)?
+                Some(nested) => schedule_block(constructors, module, nested, names, arguments, pending, ancestors)?
                 None => pass
         _ => pass
     return Ok(None)
 
 
 def schedule_value(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     value: &Rvalue,
     names: list[str],
@@ -300,12 +315,13 @@ def schedule_value(
     match value:
         Rvalue.Match(scrutinee=_scrutinee, arms=arms) =>
             for arm in arms:
-                schedule_arm(module, arm, names, arguments, pending, ancestors)?
+                schedule_arm(constructors, module, arm, names, arguments, pending, ancestors)?
         _ => pass
     return Ok(None)
 
 
 def schedule_arm(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     arm: &MatchArm,
     names: list[str],
@@ -315,9 +331,9 @@ def schedule_arm(
 ) -> Result[None, str]:
     """Preserve the checked generic binders and call lineage across a match guard and body."""
     for statement in arm.guard_stmts:
-        schedule_statement(module, statement.kind, names, arguments, pending, ancestors)?
+        schedule_statement(constructors, module, statement.kind, names, arguments, pending, ancestors)?
     for statement in arm.body_stmts:
-        schedule_statement(module, statement.kind, names, arguments, pending, ancestors)?
+        schedule_statement(constructors, module, statement.kind, names, arguments, pending, ancestors)?
     return Ok(None)
 
 

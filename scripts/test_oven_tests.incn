@@ -22,9 +22,16 @@ from oven_tests import (
     summary_document,
     oven_test_state_root,
 )
-from verify_installation import VerificationPhase, verification_phase_plans, verification_trace_environment
+from verify_installation import (
+    VerificationPhase,
+    selected_rust_facet_bakery,
+    verification_phase_plans,
+    verification_trace_environment,
+)
 
 const GIB: int = 1073741824
+
+
 def test_jobs_follow_the_configured_count_then_the_cores() -> Result[None, str]:
     """A positive configured count wins; otherwise the cores decide, and at least one runs."""
     assert default_jobs("3", 18) == 3
@@ -88,9 +95,10 @@ def test_an_oversized_reservation_runs_alone_and_zero_memory_bounds_nothing() ->
 
 
 def test_verification_phases_reserve_their_complete_parallel_work() -> Result[None, str]:
-    """Concurrent gates reserve every requested facet or census worker and fixed project-scale phases."""
+    """The concurrent audit and gates reserve every worker and fixed project-scale phase."""
     plans = verification_phase_plans(6)
     assert [plan.phase for plan in plans] == [
+        VerificationPhase.Relocation,
         VerificationPhase.Oven,
         VerificationPhase.RustFacets,
         VerificationPhase.DriverIntegration,
@@ -98,16 +106,21 @@ def test_verification_phases_reserve_their_complete_parallel_work() -> Result[No
         VerificationPhase.Census,
         VerificationPhase.Memory,
     ]
-    assert [plan.reservation for plan in plans] == [24 * GIB, 12 * GIB, 6 * GIB, 2 * GIB, 36 * GIB, 6 * GIB]
-    assert admitted([plan.reservation for plan in plans], [0, 1, 2, 3, 4, 5], [], 6, 0) == [0, 1, 2, 3, 4, 5]
-    assert verification_phase_plans(0)[0].reservation == 4 * GIB
-    assert verification_phase_plans(0)[1].reservation == 2 * GIB
-    assert verification_phase_plans(0)[4].reservation == 6 * GIB
+    assert [plan.reservation for plan in plans] == [2 * GIB, 24 * GIB, 12 * GIB, 6 * GIB, 2 * GIB, 36 * GIB, 6 * GIB]
+    assert admitted([plan.reservation for plan in plans], [0, 1, 2, 3, 4, 5, 6], [], 7, 0) == [0, 1, 2, 3, 4, 5, 6]
+    assert verification_phase_plans(0)[1].reservation == 4 * GIB
+    assert verification_phase_plans(0)[2].reservation == 2 * GIB
+    assert verification_phase_plans(0)[5].reservation == 6 * GIB
     assert len(verification_trace_environment(Path("/evidence"), "census", false)) == 0
     traces = verification_trace_environment(Path("/evidence"), "census", true)
     assert traces["INCAN_TRACE_DIR"] == "/evidence/traces/census/compiler"
     assert traces["INCAN_NATIVE_TIMING"] == "1"
     assert len(traces) == 2
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    assert selected_rust_facet_bakery("") == ""
+    assert selected_rust_facet_bakery(temporary.path().0) == ""
+    temporary.path().joinpath("bakery").mkdir(true, true).map_err((error) => error.message())?
+    assert selected_rust_facet_bakery(temporary.path().0) == temporary.path().joinpath("bakery").0
     return Ok(None)
 
 
@@ -220,6 +233,7 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
     assert oven_test_state_root(root, "/outside/oven-tests").0 == "/outside/oven-tests"
     assert [item.reservation for item in planned] == [4 * GIB, 4 * GIB, 6 * GIB, 6 * GIB, 4 * GIB, 4 * GIB, 4 * GIB]
     assert [item.alone for item in planned] == [false, false, false, false, false, false, false]
+    assert [item.scratch is not None for item in planned] == [true, true, false, false, false, false, false]
     assert oven_a.joinpath("src/test_beta.incn").is_file()
     assert oven_b.joinpath("src/test_alpha.incn").is_file()
     assert oven_a.joinpath("tests/fixture.txt").is_file()
@@ -248,8 +262,14 @@ def test_joined_log_keeps_invocation_order_whatever_the_schedule() -> Result[Non
     mut planned: list[Invocation] = []
     for index in range(7):
         log = logs.joinpath(log_name(index, Path(f"/r/test_{index}.incn")))
-        planned.append(Invocation(arguments=[f"line {index}"], directory=root.0, reservation=GIB, log=log))
+        scratch = root.joinpath(f"scratch-{index}")
+        scratch.mkdir(true, true).map_err((error) => error.message())?
+        scratch.joinpath("target").write_text("built\n", "utf-8", "strict", None).map_err((error) => error.message())?
+        planned.append(
+            Invocation(arguments=[f"line {index}"], directory=root.0, reservation=GIB, log=log, scratch=Some(scratch)),
+        )
     assert run_all("/bin/echo", planned, 5, 3 * GIB)?
+    assert len(root.glob("scratch-*").map_err((error) => error.message())?) == 0
     joined = join_logs(planned, root.joinpath("joined.log"))?
     assert joined == "line 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\n"
     assert not run_all("/usr/bin/false", planned, 4, 0)?

@@ -1,0 +1,112 @@
+"""Real record-scoped lowering reuse through the installed native driver."""
+
+from rust::std::process import Command
+from rust::std::str import from_utf8
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue, parse
+from files import write
+from scratch import scratch_directory
+from engine_client import service_identity
+from engine_endpoint import connect_with
+from engine_messages import Message, Stop
+from engine_wire import zero_id
+from observation import observe
+from unit_freshness import fingerprint
+
+pub def test_lowering_record_worked_example() -> Result[None, str]:
+    """Body edits and moves reuse callers; a callee signature edit invalidates their plans and matches cold output."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    source = root.joinpath("hello.incn")
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    write(source, "def greeting() -> str:\n    return \"hello\"\n\n\ndef main() -> None:\n    println(greeting())\n")?
+    initial = lowering_example_run(binary, source, store, "hello")?
+    assert proof_count(initial, "plan_function_evaluations")? == 3
+    write(source, "def greeting() -> str:\n    return \"hullo\"\n\n\ndef main() -> None:\n    println(greeting())\n")?
+    edited = lowering_example_run(binary, source, store, "hullo")?
+    diagnostic = edited.to_json().map_err((error) => error.message())?
+    assert proof_count(edited, "plan_function_evaluations")? == 1, diagnostic
+    assert proof_count(edited, "plan_function_reuses")? == 2, diagnostic
+    assert proof_count(edited, "lowering_demand_evaluations")? == 1, diagnostic
+    assert proof_count(edited, "lowering_demand_reuses")? == 1, diagnostic
+    assert proof_count(edited, "native_interface_evaluations")? == 1, diagnostic
+    write(source, "def greeting() -> str:\n    return \"hullo\"\n\n\n# inserted above main\ndef main() -> None:\n    println(greeting())\n")?
+    commented = lowering_example_run(binary, source, store, "hullo")?
+    comment_diagnostic = commented.to_json().map_err((error) => error.message())?
+    assert proof_count(commented, "plan_function_evaluations")? == 0, comment_diagnostic
+    assert proof_count(commented, "plan_function_reuses")? == 3, comment_diagnostic
+    assert proof_count(commented, "lowering_demand_evaluations")? == 0, comment_diagnostic
+    assert proof_count(commented, "native_interface_evaluations")? == 1, comment_diagnostic
+    stop_example_engine(binary, store)?
+    signature = root.joinpath("signature-source")
+    signature.mkdir(true, true).map_err((error) => error.message())?
+    linked = root.joinpath("signature")
+    linked.symlink_to(signature).map_err((error) => error.message())?
+    return verify_signature_edit(binary, linked)
+
+
+def verify_signature_edit(binary: str, root: Path) -> Result[None, str]:
+    """A signature edit through a symlink must recheck main and reproduce the cold plan and executable."""
+    root.mkdir(true, true).map_err((error) => error.message())?
+    source = root.joinpath("hello.incn")
+    store = root.joinpath("store")
+    write(source, "def value() -> int:\n    return 1\n\n\ndef main() -> None:\n    println(value())\n")?
+    _ = lowering_example_run(binary, source, store, "1")?
+    write(source, "def value() -> str:\n    return \"one\"\n\n\ndef main() -> None:\n    println(value())\n")?
+    warm = lowering_example_run(binary, source, store, "one")?
+    diagnostic = warm.to_json().map_err((error) => error.message())?
+    assert proof_count(warm, "body_evaluations")? == 2, diagnostic
+    assert proof_count(warm, "plan_function_evaluations")? == 3, diagnostic
+    assert proof_count(warm, "plan_function_reuses")? == 0, diagnostic
+    plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
+    executable = root.joinpath("target/incan/release/bin/hello").read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, store)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    cold_store = root.joinpath("cold-store")
+    _ = lowering_example_run(binary, source, cold_store, "one")?
+    assert plan == root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?, "warm and cold native plans differ"
+    assert executable == root.joinpath("target/incan/release/bin/hello").read_bytes().map_err((error) => error.message())?, "warm and cold executables differ"
+    return stop_example_engine(binary, cold_store)
+
+
+def stop_example_engine(binary: str, store: Path) -> Result[None, str]:
+    """Stop one disposable records engine after its final request."""
+    mut identity = service_identity(store)?
+    identity.service_generation = fingerprint([binary, observe(Path(binary))?.stamp])?
+    mut channel = connect_with(store, identity, binary).map_err((refusal) => refusal.detail)?
+    channel.send(zero_id(), Message.Stop(Stop(reason="lowering example completed"))).map_err((refusal) => refusal.detail)?
+    stopped = channel.receive().map_err((refusal) => refusal.detail)?
+    match stopped.message:
+        Message.Event(value) => assert value.status == "Stopping"
+        _ => return Err("lowering example did not stop its engine")
+    _ = channel.transport.close()
+    return Ok(None)
+
+
+def lowering_example_run(binary: str, source: Path, store: Path, expected: str) -> Result[JsonValue, str]:
+    """Run one real engine request and require both successful native output and its measured proof."""
+    outcome = Command
+        .new(binary).arg("run").arg(source.0).args(["--profile", "release", "--engine-report"])
+        .env("INCAN_NATIVE_PLAN_REPORT", source.parent().joinpath("native.plan").0)
+        .env("INCAN_ENGINE", "records").env("INCAN_BAKERY", store.0).output().map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or not output.endswith(expected + "\n") or errors != "":
+        return Err(f"lowering example: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return command_proof(outcome.stdout)
+
+
+def command_proof(output: bytes) -> Result[JsonValue, str]:
+    """Decode the first line emitted by `--engine-report`, leaving the following program stdout independent."""
+    text = from_utf8(output).map_err((error) => str(error))?
+    lines = text.split("\n")
+    if len(lines) < 2:
+        return Err("records command emitted no proof report")
+    return parse(lines[0]).map_err((error) => error.message())
+
+
+def proof_count(report: JsonValue, name: str) -> Result[int, str]:
+    """Read one required producer counter without accepting an absent or nonnumeric field."""
+    return report.require(name).map_err((error) => error.message())?.expect_int().map_err((error) => error.message())

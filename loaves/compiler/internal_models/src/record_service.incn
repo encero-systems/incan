@@ -16,6 +16,7 @@ pub enum ProducerStage:
     CheckBody
     BodyIr
     Instance
+    LoweringDemand
     PlanFunction
     NativeInterface
 

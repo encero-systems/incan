@@ -2,11 +2,26 @@
 
 use crate::session::{CompilationAnalysis, CompilationSession};
 use crate::unit::UnitKind;
+use incan_frontend::body_ir::ProviderOperationCatalog;
 use incan_frontend::loaf_index::LoafIndex;
 use incan_frontend::parsed_module::ParsedModule;
+use incan_frontend::typechecker::TypeCheckInfo;
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
+use std::thread;
+
+/// Maximum source components lowered at once inside one compiler invocation.
+///
+/// Each worker owns a cloned dependency context and a compiler-sized stack. Four workers bound those temporary
+/// graphs and stacks conservatively inside the 6 GiB lowering reservation while still using independent cores.
+const MAX_BODY_IR_WORKERS: usize = 4;
+
+/// One strongly connected source component and the completed source modules it imports.
+struct AuthoredComponent {
+    members: Vec<usize>,
+    dependencies: Vec<usize>,
+}
 
 /// Build authored modules in collection order against one provider catalog and the preceding dependency context.
 /// The unit kind supplies publication identity; no caller may rebuild a module with a different library contract.
@@ -21,56 +36,293 @@ pub fn lower_authored_modules(
     bodies: &mut Vec<BodyIrModule>,
 ) -> Result<(), String> {
     let authored_start = bodies.len();
-    let provider_operations = incan_frontend::body_ir::ProviderOperationCatalog::from_loaves(session.loaves())?;
+    let provider_operations = ProviderOperationCatalog::from_loaves(session.loaves())?;
     let unit = session.unit();
     let library_package = (unit.kind == UnitKind::Library).then_some(unit.package.as_str());
     let cycle_peers = crate::modules::import_cycle_peers(modules, session.own_standard_package());
-    for (index, module) in modules.iter().enumerate() {
-        let type_info = analysis
-            .type_info_for_path(&module.file_path)
-            .ok_or("module analysis is missing")?;
-        let completed = bodies.len();
+    let type_infos = modules
+        .iter()
+        .map(|module| {
+            analysis
+                .type_info_for_path(&module.file_path)
+                .ok_or("module analysis is missing")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let components = authored_components(modules, session.own_standard_package(), &cycle_peers);
+    let waves = component_waves(&components, modules.len())?;
+    let mut authored = (0..modules.len()).map(|_| None).collect::<Vec<Option<BodyIrModule>>>();
+    for wave in waves {
+        let lowered = lower_component_wave(
+            &wave,
+            &components,
+            modules,
+            &type_infos,
+            &cycle_peers,
+            bodies,
+            &authored,
+            &provider_operations,
+            &unit.package,
+            library_package,
+            unit.kind == UnitKind::Test,
+        )?;
+        for (index, module) in lowered {
+            if authored[index].replace(module).is_some() {
+                return Err("Body IR source component produced a module twice".to_string());
+            }
+        }
+    }
+    let lowered = authored
+        .into_iter()
+        .map(|module| module.ok_or("Body IR source component omitted a module"))
+        .collect::<Result<Vec<_>, _>>()?;
+    bodies.extend(lowered);
+    let selected = modules
+        .iter()
+        .filter_map(|module| analysis.type_info_for_path(&module.file_path))
+        .flat_map(incan_frontend::body_ir::selected_body_identities)
+        .collect::<HashSet<_>>();
+    let (context, authored_bodies) = bodies.split_at_mut(authored_start);
+    incan_frontend::body_ir::settle_shared_reads_with_selected(authored_bodies, context, &selected);
+    Ok(())
+}
+
+/// Group source modules into import-cycle components and retain their external dependency closures.
+fn authored_components(
+    modules: &[ParsedModule],
+    own_standard_package: Option<&'static incan_lang::lang::standard_packages::StandardPackageNamespacePolicy>,
+    cycle_peers: &[Vec<usize>],
+) -> Vec<AuthoredComponent> {
+    let module_idx_by_key = crate::modules::module_key_index(modules);
+    let mut claimed = vec![false; modules.len()];
+    let mut components = Vec::new();
+    for index in 0..modules.len() {
+        if claimed[index] {
+            continue;
+        }
+        let mut members = Vec::with_capacity(cycle_peers[index].len() + 1);
+        members.push(index);
+        members.extend(cycle_peers[index].iter().copied());
+        members.sort_unstable();
+        members.dedup();
+        for &member in &members {
+            claimed[member] = true;
+        }
+        let member_set = members.iter().copied().collect::<BTreeSet<_>>();
+        let dependencies = members
+            .iter()
+            .flat_map(|&member| {
+                crate::modules::imported_module_dep_indexes_for(
+                    modules,
+                    member,
+                    &module_idx_by_key,
+                    own_standard_package,
+                )
+            })
+            .filter(|dependency| !member_set.contains(dependency))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        components.push(AuthoredComponent { members, dependencies });
+    }
+    components
+}
+
+/// Place source components in dependency-ready waves while retaining their stable collected order within each wave.
+///
+/// Parsed module order is an output-order contract, not a topological-order contract. Standard packages can collect a
+/// consumer before its imported provider, so readiness is derived from the component graph itself.
+fn component_waves(components: &[AuthoredComponent], module_count: usize) -> Result<Vec<Vec<usize>>, String> {
+    let mut component_by_module = vec![usize::MAX; module_count];
+    for (component_index, component) in components.iter().enumerate() {
+        for &member in &component.members {
+            component_by_module[member] = component_index;
+        }
+    }
+    let dependencies = components
+        .iter()
+        .map(|component| {
+            component
+                .dependencies
+                .iter()
+                .map(|dependency| component_by_module[*dependency])
+                .collect::<BTreeSet<_>>()
+        })
+        .collect::<Vec<_>>();
+    let mut complete = vec![false; components.len()];
+    let mut waves = Vec::new();
+    while complete.iter().any(|done| !done) {
+        let ready = dependencies
+            .iter()
+            .enumerate()
+            .filter(|(index, required)| !complete[*index] && required.iter().all(|dependency| complete[*dependency]))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if ready.is_empty() {
+            return Err("Body IR source component graph remains cyclic after import-cycle grouping".to_string());
+        }
+        for &index in &ready {
+            complete[index] = true;
+        }
+        waves.push(ready);
+    }
+    Ok(waves)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn component_waves_do_not_require_dependencies_to_precede_consumers() -> Result<(), String> {
+        let components = vec![
+            AuthoredComponent {
+                members: vec![0],
+                dependencies: vec![1],
+            },
+            AuthoredComponent {
+                members: vec![1],
+                dependencies: Vec::new(),
+            },
+        ];
+        assert_eq!(component_waves(&components, 2)?, vec![vec![1], vec![0]]);
+        Ok(())
+    }
+}
+
+/// Lower one dependency-ready wave with bounded scoped threads and return results in component order.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the worker boundary carries one immutable compilation context"
+)]
+fn lower_component_wave(
+    wave: &[usize],
+    components: &[AuthoredComponent],
+    modules: &[ParsedModule],
+    type_infos: &[&TypeCheckInfo],
+    cycle_peers: &[Vec<usize>],
+    dependency_bodies: &[BodyIrModule],
+    authored: &[Option<BodyIrModule>],
+    provider_operations: &ProviderOperationCatalog,
+    registry_package: &str,
+    library_package: Option<&str>,
+    include_inline_tests: bool,
+) -> Result<Vec<(usize, BodyIrModule)>, String> {
+    let available = thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1);
+    let workers = available.min(MAX_BODY_IR_WORKERS).max(1);
+    let mut lowered = Vec::new();
+    for batch in wave.chunks(workers) {
+        let mut completed = thread::scope(|scope| -> Result<Vec<Vec<(usize, BodyIrModule)>>, String> {
+            let mut handles = Vec::with_capacity(batch.len());
+            for &component_index in batch {
+                let builder = thread::Builder::new()
+                    .name(format!("incan-body-ir-{component_index}"))
+                    .stack_size(incan_frontend::compiler_stack::compiler_stack_bytes());
+                let handle = builder
+                    .spawn_scoped(scope, move || {
+                        lower_component(
+                            &components[component_index],
+                            modules,
+                            type_infos,
+                            cycle_peers,
+                            dependency_bodies,
+                            authored,
+                            provider_operations,
+                            registry_package,
+                            library_package,
+                            include_inline_tests,
+                        )
+                    })
+                    .map_err(|error| format!("cannot start Body IR worker: {error}"))?;
+                handles.push(handle);
+            }
+            let mut results = Vec::with_capacity(handles.len());
+            for handle in handles {
+                match handle.join() {
+                    Ok(result) => results.push(result?),
+                    Err(payload) => std::panic::resume_unwind(payload),
+                }
+            }
+            Ok(results)
+        })?;
+        for result in &mut completed {
+            lowered.append(result);
+        }
+    }
+    Ok(lowered)
+}
+
+/// Lower one source component serially against immutable external dependencies, preserving cycle peer declarations.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the worker boundary carries one immutable compilation context"
+)]
+fn lower_component(
+    component: &AuthoredComponent,
+    modules: &[ParsedModule],
+    type_infos: &[&TypeCheckInfo],
+    cycle_peers: &[Vec<usize>],
+    dependency_bodies: &[BodyIrModule],
+    authored: &[Option<BodyIrModule>],
+    provider_operations: &ProviderOperationCatalog,
+    registry_package: &str,
+    library_package: Option<&str>,
+    include_inline_tests: bool,
+) -> Result<Vec<(usize, BodyIrModule)>, String> {
+    let mut context_modules = Vec::with_capacity(dependency_bodies.len() + component.dependencies.len());
+    context_modules.extend_from_slice(dependency_bodies);
+    for &dependency in &component.dependencies {
+        context_modules.push(
+            authored[dependency]
+                .as_ref()
+                .ok_or("Body IR source dependency is incomplete")?
+                .clone(),
+        );
+    }
+    let context_len = context_modules.len();
+    for &index in &component.members {
+        let module = &modules[index];
+        let completed = context_modules.len();
         for &peer in cycle_peers[index].iter().filter(|&&peer| peer > index) {
-            let peer_module = &modules[peer];
-            let peer_info = analysis
-                .type_info_for_path(&peer_module.file_path)
-                .ok_or("module analysis is missing")?;
-            bodies.push(incan_frontend::body_ir::build_cycle_declarations(
-                &peer_module.ast,
-                &peer_module.path_segments,
-                peer_info,
+            context_modules.push(incan_frontend::body_ir::build_cycle_declarations(
+                &modules[peer].ast,
+                &modules[peer].path_segments,
+                type_infos[peer],
                 library_package,
             ));
         }
         let context = incan_frontend::body_ir::BodyIrContext {
-            modules: bodies,
-            provider_operations: &provider_operations,
-            registry_package: Some(&unit.package),
+            modules: &context_modules,
+            provider_operations,
+            registry_package: Some(registry_package),
             library_package,
-            include_inline_tests: unit.kind == UnitKind::Test,
+            include_inline_tests,
         };
         if let Some(directory) = std::env::var_os("INCAN_BODY_IR_FREE_BASELINE") {
             incan_frontend::body_ir::verify_free_function_inputs(
                 &module.ast,
                 &module.path_segments,
-                type_info,
+                type_infos[index],
                 &context,
                 std::path::Path::new(&directory),
             )
             .map_err(|error| format!("Body IR free-function input baseline: {error}"))?;
         }
+        let _invocation =
+            tracing::trace_span!(target: "incan::invocation", "incan_driver::build_body_ir_module", module = index)
+                .entered();
         let lowered = incan_frontend::body_ir::build_body_ir_module_unsettled(
             &module.ast,
             &module.path_segments,
-            type_info,
+            type_infos[index],
             &context,
         );
-        bodies.truncate(completed);
-        bodies.push(lowered);
+        context_modules.truncate(completed);
+        context_modules.push(lowered);
     }
-    let (context, authored) = bodies.split_at_mut(authored_start);
-    incan_frontend::body_ir::settle_shared_reads(authored, context);
-    Ok(())
+    let lowered = context_modules.split_off(context_len);
+    Ok(component.members.iter().copied().zip(lowered).collect())
 }
 
 /// Construct authored source bodies through compilation's sequential module boundary.

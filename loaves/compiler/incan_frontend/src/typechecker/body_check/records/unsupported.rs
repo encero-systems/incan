@@ -26,7 +26,7 @@ pub(super) fn expression_artifacts(value: &ExpressionArtifacts) -> Result<(), No
         body_ir_nominal_pattern_owners,
         body_ir_parameter_requirements: _,
         expr_types: _,
-        expression_type_identities,
+        expression_type_identities: _,
         assignment_binding_types: _,
         computed_property_accesses,
         ident_kinds: _,
@@ -38,7 +38,7 @@ pub(super) fn expression_artifacts(value: &ExpressionArtifacts) -> Result<(), No
         source_targets: _,
         local_partial_method_targets,
     } = value;
-    require_empty!("ExpressionArtifacts"; body_ir_open_calls, body_ir_open_values, body_ir_open_bindings, body_ir_empty_list_requirements, body_ir_callable_name_reads, body_ir_nominal_pattern_owners, expression_type_identities, computed_property_accesses, numeric_conversion_destinations, read_only_dict_lookups, chained_values_written_per_target, validated_newtype_coercions, local_partial_method_targets);
+    require_empty!("ExpressionArtifacts"; body_ir_open_calls, body_ir_open_values, body_ir_open_bindings, body_ir_empty_list_requirements, body_ir_callable_name_reads, body_ir_nominal_pattern_owners, computed_property_accesses, numeric_conversion_destinations, read_only_dict_lookups, chained_values_written_per_target, validated_newtype_coercions, local_partial_method_targets);
     Ok(())
 }
 
@@ -187,12 +187,13 @@ pub(super) fn cabi_interop_artifacts(value: &CAbiInteropArtifacts) -> Result<(),
         bridge_calls,
         bindings,
         raw_calls,
-        function_calls,
+        // Reconstructed and loss-checked from the existing ordinary call signatures and source-target fields.
+        function_calls: _,
         facades,
         output_slots,
         enum_accesses,
         enum_values,
     } = value;
-    require_empty!("CAbiInteropArtifacts"; verified_bindings, bridge_calls, bindings, raw_calls, function_calls, facades, output_slots, enum_accesses, enum_values);
+    require_empty!("CAbiInteropArtifacts"; verified_bindings, bridge_calls, bindings, raw_calls, facades, output_slots, enum_accesses, enum_values);
     Ok(())
 }

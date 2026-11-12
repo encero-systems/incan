@@ -25,6 +25,31 @@ pub(crate) fn fixture_record(source: &str, name: &str, declaration: bool) -> Res
 /// fields and compare every native field. The cold checker supplies expected values only, never reconstructed ones.
 pub(crate) fn verify_fixture(source: &str, name: &str, mut fields: Fields) -> Result<Vec<String>, NodeBindingError> {
     let (program, checker, owner) = fixture(source, name)?;
+    verify_checked_fixture(source, &mut fields, program, checker, owner)
+}
+
+/// Test baseline for an owner that reads one admitted Loaf dependency; the dependency artifact and module identity
+/// are installed before the independent cold check, then the ordinary native comparison proves the decoded fields.
+#[cfg(test)]
+pub(crate) fn verify_fixture_with_loaves(
+    source: &str,
+    name: &str,
+    mut fields: Fields,
+    loaves: std::sync::Arc<crate::loaf_index::LoafIndex>,
+    module_path: Vec<String>,
+) -> Result<Vec<String>, NodeBindingError> {
+    let (program, checker, owner) = fixture_with_context(source, name, Some((loaves, module_path)))?;
+    verify_checked_fixture(source, &mut fields, program, checker, owner)
+}
+
+/// Reconstruct one independently checked owner and compare every native field with its cold checked value.
+fn verify_checked_fixture(
+    source: &str,
+    fields: &mut Fields,
+    program: Program,
+    checker: TypeChecker,
+    owner: Span,
+) -> Result<Vec<String>, NodeBindingError> {
     let header = fields.first_mut().ok_or(NodeBindingError::MissingOwner)?;
     if header.is_empty() || header[0] != "header" {
         return Err(NodeBindingError::MissingOwner);
@@ -58,7 +83,7 @@ pub(crate) fn verify_fixture(source: &str, name: &str, mut fields: Fields) -> Re
         .cloned();
     drop(checker);
     let restored = restore(&positions, &program, owner, &fields)?;
-    compare_native(&expected, &restored.view)?;
+    compare_checked_body(&expected, &restored.view)?;
     if restored.ownership != expected_ownership {
         return Err(NodeBindingError::BaselineDifference("ownership contract".into()));
     }
@@ -91,6 +116,15 @@ pub(crate) fn verify_fixture(source: &str, name: &str, mut fields: Fields) -> Re
         .collect()
 }
 
+/// Compare reusable semantic values after removing invocation-local traversal offsets from both independent views.
+fn compare_checked_body(expected: &CheckedBodyView, restored: &CheckedBodyView) -> Result<(), NodeBindingError> {
+    let mut expected = expected.clone();
+    let mut restored = restored.clone();
+    Arc::make_mut(&mut expected.local).order = super::super::BodyDiagnosticOrder::default();
+    Arc::make_mut(&mut restored.local).order = super::super::BodyDiagnosticOrder::default();
+    compare_native(&expected, &restored)
+}
+
 /// Default writer membership comes from exact source default nodes; it never supplies a checked type or value.
 pub(super) fn default_writers(
     program: &Program,
@@ -119,10 +153,23 @@ pub(super) fn default_writers(
 
 /// Independent full checking belongs only to the fixture baseline. Canonical production conversion never invokes it.
 pub(super) fn fixture(source: &str, name: &str) -> Result<(Program, TypeChecker, Span), NodeBindingError> {
+    fixture_with_context(source, name, None)
+}
+
+/// Independently check one fixture after installing only the explicit package and module context it requires.
+fn fixture_with_context(
+    source: &str,
+    name: &str,
+    context: Option<(std::sync::Arc<crate::loaf_index::LoafIndex>, Vec<String>)>,
+) -> Result<(Program, TypeChecker, Span), NodeBindingError> {
     let tokens = crate::lexer::lex(source).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
     let program = crate::parser::parse(&tokens).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
     let owner = program.declarations.iter().find(|declaration| matches!(&declaration.node, crate::ast::Declaration::Function(function) if function.name == name)).map(|declaration| declaration.span).ok_or(NodeBindingError::MissingOwner)?;
     let mut checker = TypeChecker::new();
+    if let Some((loaves, module_path)) = context {
+        checker.set_current_module_path(Some(module_path));
+        checker.set_loaves(loaves);
+    }
     let _ = checker.check_program(&program);
     Ok((program, checker, owner))
 }
@@ -134,8 +181,22 @@ pub(crate) fn produce_local_record(
     source: &str,
     name: &str,
     declaration: Fields,
-    environment: Vec<Fields>,
+    environment: Vec<(String, String, Fields)>,
 ) -> Result<Fields, NodeBindingError> {
+    let (checker, owner) = projected_local_checker(source, name, declaration, environment)?;
+    checker
+        .produced_local_record(owner)
+        .cloned()
+        .ok_or_else(|| NodeBindingError::InvalidField("projected local record is absent".into()))
+}
+
+/// Build the private checker used by the local-record producer so tests can inspect its publication boundary.
+fn projected_local_checker(
+    source: &str,
+    name: &str,
+    declaration: Fields,
+    environment: Vec<(String, String, Fields)>,
+) -> Result<(TypeChecker, Span), NodeBindingError> {
     let tokens = crate::lexer::lex(source).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
     let program = crate::parser::parse(&tokens).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
     let selected = program
@@ -149,33 +210,133 @@ pub(crate) fn produce_local_record(
     checker.collect_program_check_declarations(&program);
     checker.record_program_header_facts();
     checker.record_source_declaration_identities(&program);
+    for (index, (environment_name, identity, fields)) in environment.into_iter().enumerate() {
+        install_environment_declaration(&mut checker, source.len(), index, &environment_name, &identity, &fields)?;
+    }
     checker.record_type_param_declaration_spans(&program);
     checker.visibility_point = super::super::VisibilityPoint::Collected;
     checker.prepare_program_body_facts();
-    for fields in environment {
-        let environment_owner = decoded_owner(&checker, &program, &fields)?;
-        if environment_owner == owner {
-            return Err(NodeBindingError::BaselineDifference(
-                "local declaration appears in environment".into(),
-            ));
-        }
-        checker.retain_declaration_record(environment_owner, fields);
-    }
     if decoded_owner(&checker, &program, &declaration)? != owner {
         return Err(NodeBindingError::BaselineDifference("local declaration input".into()));
     }
     checker.retain_declaration_record(owner, declaration);
-    checker.check_environment_record_declaration(&program, selected);
-    checker
-        .produced_local_record(owner)
+    let crate::ast::Declaration::Function(function) = &selected.node else {
+        return Err(NodeBindingError::MissingOwner);
+    };
+    checker.check_reused_function(&program, function, owner);
+    Ok((checker, owner))
+}
+
+/// Prove a selected declaration remains available when the current revision evaluates its local body record.
+#[cfg(test)]
+pub(crate) fn selected_declaration_survives_local_projection(source: &str, name: &str) -> Result<(), NodeBindingError> {
+    let declaration = fixture_record(source, name, true)?;
+    let expected = declaration.clone();
+    let (checker, owner) = projected_local_checker(source, name, declaration, Vec::new())?;
+    if checker.available_declaration_record(owner) == Some(&expected) {
+        return Ok(());
+    }
+    Err(NodeBindingError::InvalidField(
+        "selected declaration record was not retained for publication".into(),
+    ))
+}
+
+/// Install one authenticated sibling signature without requiring its source declaration in the projected program.
+fn install_environment_declaration(
+    checker: &mut TypeChecker,
+    source_len: usize,
+    index: usize,
+    name: &str,
+    expected_identity: &str,
+    fields: &Fields,
+) -> Result<(), NodeBindingError> {
+    use crate::symbols::{FunctionInfo, Symbol, SymbolKind};
+
+    let header = fields
+        .first()
+        .filter(|row| row.len() == 5 && row[0] == "header" && row[3] == "declaration")
+        .ok_or(NodeBindingError::MissingOwner)?;
+    if header[1] != expected_identity {
+        return Err(NodeBindingError::WrongOwner);
+    }
+    let signature = fields
+        .iter()
+        .find(|row| row.len() >= 4 && row[0] == "signature" && row[2] == "declaration")
+        .ok_or_else(|| NodeBindingError::InvalidField("environment declaration signature is absent".into()))?;
+    if !fields.iter().any(|row| row == &["status", "", "refused", "false"]) {
+        return Err(NodeBindingError::InvalidField(
+            "environment declaration is refused".into(),
+        ));
+    }
+    let mut values = signature[3..].iter();
+    let is_async = next(&mut values)?
+        .parse::<bool>()
+        .map_err(|_| NodeBindingError::MissingNode)?;
+    let params = read_parameters(&mut values)?;
+    let return_type = read_type(&mut values)?;
+    if values.next().is_some() {
+        return Err(NodeBindingError::InvalidField(
+            "environment declaration signature has trailing fields".into(),
+        ));
+    }
+    let start = source_len.saturating_add(index.saturating_mul(2)).saturating_add(1);
+    let span = Span::new(start, start.saturating_add(1));
+    let symbol_id = checker.symbols.define(Symbol {
+        name: name.to_owned(),
+        kind: SymbolKind::Function(FunctionInfo {
+            params: params.clone(),
+            return_type: return_type.clone(),
+            is_async,
+            type_params: Vec::new(),
+            type_param_bounds: std::collections::HashMap::new(),
+            type_param_bound_details: std::collections::HashMap::new(),
+            emitted_name: None,
+        }),
+        span,
+        scope: 0,
+    });
+    let canonical = checker
+        .symbols
+        .identity_of(symbol_id)
         .cloned()
-        .ok_or(NodeBindingError::MissingOwner)
+        .ok_or(NodeBindingError::MissingOwner)?;
+    let binding = super::super::super::type_info::FunctionBindingInfo {
+        is_async,
+        params,
+        return_type,
+        identity: Some(canonical.clone()),
+    };
+    let stable = checker
+        .stable_function_identity(&binding)
+        .filter(|identity| identity.render_compact() == expected_identity)
+        .ok_or(NodeBindingError::WrongOwner)?;
+    checker
+        .type_info
+        .declarations
+        .function_bindings
+        .insert(name.to_owned(), binding.clone());
+    checker
+        .type_info
+        .declarations
+        .function_bindings_by_span
+        .insert(span, binding);
+    checker
+        .type_info
+        .declarations
+        .source_identities
+        .insert(canonical, stable);
+    Ok(())
 }
 
 /// Settle one decoded local value in a private checker and return only that owner's final record. Source collection
 /// supplies current coordinates and declaration identities; no body check, ambient checker or sibling local value is
 /// available to this producer.
-pub(crate) fn produce_final_record(source: &str, name: &str, local: Fields) -> Result<Fields, NodeBindingError> {
+pub(crate) fn produce_final_record(
+    source: &str,
+    name: &str,
+    local: Fields,
+    environment: Vec<(String, String, Fields)>,
+) -> Result<Fields, NodeBindingError> {
     let tokens = crate::lexer::lex(source).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
     let program = crate::parser::parse(&tokens).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
     let owner = program
@@ -189,6 +350,9 @@ pub(crate) fn produce_final_record(source: &str, name: &str, local: Fields) -> R
     checker.collect_program_check_declarations(&program);
     checker.record_program_header_facts();
     checker.record_source_declaration_identities(&program);
+    for (index, (environment_name, identity, fields)) in environment.into_iter().enumerate() {
+        install_environment_declaration(&mut checker, source.len(), index, &environment_name, &identity, &fields)?;
+    }
     checker.record_type_param_declaration_spans(&program);
     checker.visibility_point = super::super::VisibilityPoint::Collected;
     checker.prepare_program_body_facts();
@@ -225,7 +389,8 @@ fn decoded_owner(checker: &TypeChecker, program: &Program, fields: &Fields) -> R
     Err(NodeBindingError::MissingOwner)
 }
 
-/// The initial local profile proves every unsupported collection empty and refuses traversal-indexed decisions.
+/// The local profile proves every unsupported semantic collection empty. Traversal offsets are invocation bindings
+/// that settlement reconstructs from owner-relative events, so they never enter a reusable value.
 pub(super) fn validate_local(local: &BodyLocal) -> Result<(), NodeBindingError> {
     let BodyLocal {
         owner: _,
@@ -256,8 +421,6 @@ pub(super) fn validate_local(local: &BodyLocal) -> Result<(), NodeBindingError> 
         || !local.dictionary.is_empty()
         || !local.diagnostic_slots.is_empty()
         || !local.warning_slots.is_empty()
-        || local.order.mutation != 0
-        || local.order.dictionary != 0
     {
         return Err(NodeBindingError::Unsupported("pending local decisions"));
     }
@@ -267,6 +430,7 @@ pub(super) fn validate_local(local: &BodyLocal) -> Result<(), NodeBindingError> 
 /// One conversion path owns all local field primitives, independently of whether settlement has completed.
 pub(super) fn local_fields(positions: &Positions, local: &BodyLocal) -> Result<Fields, NodeBindingError> {
     validate_local(local)?;
+    function_calls::validate(positions, local)?;
     let mut fields = Vec::new();
     project_expressions(positions, local, &mut fields)?;
     project_references(positions, local, &mut fields)?;
