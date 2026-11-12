@@ -44,6 +44,7 @@ from release_support import (
     verification_program,
 )
 from verify_installation import audit_relocation, census_arguments, require_pristine_relocation_inputs
+from relink_driver import absolute_manifest
 
 const SHA: str = "0123456789abcdef0123456789abcdef01234567"
 const COMPLETE_LOG: str = """PASS behavior/a/a
@@ -502,6 +503,17 @@ def test_installed_verification_uses_only_the_clean_checkout() -> Result[None, s
         .write_text("{\"path\": \"/local/source.rs\"}\n", "utf-8", "strict", None)
         .map_err((error) => error.message())?
     audit_relocation(home, ["/builder"])?
+    manifest = JsonValue.parse(
+        "{\"driver\":\"bin/driver\",\"sysroot\":\"sysroot\",\"rust_abi\":[],\"search\":[],\"externs\":[],\"compiler_records\":{\"root\":\"compiler-records\",\"digest\":\"pin\"}}",
+    ).map_err((error) => error.message())?
+    relocated = JsonValue.parse(absolute_manifest(manifest, verification.0)?).map_err((error) => error.message())?
+    records = relocated.require("compiler_records").map_err((error) => error.message())?
+    assert records.require("root").and_then((value) => value.expect_str()).map_err(
+        (error) => error.message(),
+    )? == verification.joinpath("compiler-records").0
+    assert records.require("digest").and_then((value) => value.expect_str()).map_err(
+        (error) => error.message(),
+    )? == "pin"
     return Ok(None)
 
 
