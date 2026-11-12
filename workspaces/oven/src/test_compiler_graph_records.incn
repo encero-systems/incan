@@ -25,6 +25,7 @@ from pub::internal_models.records import (
 )
 from pub::internal_models import (
     CompiledBodyFallback,
+    CompiledBodyDependencyRead,
     CompiledBodyOutputs,
     CompiledBodyValue,
     DemandPage,
@@ -58,7 +59,7 @@ from compiler_body_publication import publish_compiled_bodies
 from compiler_source_projection import project_source, publish_source_projection
 from publication import publish_binary
 from scratch import scratch_directory
-from unit import UnitDescription
+from unit import UnitDescription, UnitLoaf
 
 
 pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[None, str]:
@@ -299,13 +300,20 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
 
 
 pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[None, str]:
-    """A successful compiler sidecar becomes witnessed declaration/local/final graph values for the next edit."""
+    """A successful compiler sidecar witnesses local and editable-package source owners for the next edit."""
     scratch = scratch_directory()?
     root = scratch.path().joinpath("project")
     source = root.joinpath("src").joinpath("main.incn")
     source.parent().mkdir(true, true).map_err((error) => error.message())?
-    source_text = "def main() -> None:\n    pass\n\ndef other() -> None:\n    pass\n"
+    source_text = "from pub::provider import value\n\ndef main() -> int:\n    return value()\n\ndef other() -> None:\n    pass\n"
     source.write_text(source_text, "utf-8", "strict", None).map_err((error) => error.message())?
+    provider_root = scratch.path().joinpath("provider").joinpath("src")
+    provider_root.mkdir(true, true).map_err((error) => error.message())?
+    provider_source = "pub def value() -> int:\n    return 1\n"
+    provider_root
+        .joinpath("lib.incn")
+        .write_text(provider_source, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
     unit = UnitDescription(
         source=source.0,
         project_root=root.0,
@@ -315,7 +323,15 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         profile="debug",
         declared_features=[],
         active_features=[],
-        loaves=[],
+        loaves=[
+            UnitLoaf(
+                key="provider",
+                name="provider",
+                dir=scratch.path().joinpath("provider-artifact").0,
+                standard=false,
+                source_root=Some(provider_root.0),
+            ),
+        ],
         rust_crates=[],
         contract_models=[],
         c_headers=[],
@@ -352,6 +368,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
                         local=local,
                         final=final,
                         body_ir=b"owner-frame",
+                        dependency_reads=[CompiledBodyDependencyRead(package="provider", module="lib", name="value")],
                     ),
                 ],
                 fallbacks=[
@@ -365,7 +382,9 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
             ),
         ).map_err((error) => f"{error:?}")?,
     )?
-    before = store_snapshot(memory_root()).map_err((error) => error.message())?
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    provider = publish_source_projection(empty, project_source("provider", "lib", provider_source)?)?
+    before = provider.snapshot
     published = publish_compiled_bodies(before, unit, output)?
     assert published.bodies == 1 and published.fallbacks == 1
     assert published.snapshot.generation == before.generation + 1, "one compiled body publication used more than one generation"
@@ -385,6 +404,19 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     assert len(pages) == 1 and len(pages[0].key) == 64
     decoded = decode_graph_body_values(pages[0].value).map_err((error) => f"{error:?}")?
     assert len(decoded) == 1 and decoded[0].identity == identity
+    assert invalid_body_owners(published.snapshot, [], CHECKER_PROFILE)? == []
+
+    provider_body = project_source("provider", "lib", provider_source.replace("return 1", "return 2"))?
+    provider_body_edit = publish_source_projection(published.snapshot, provider_body)?
+    assert invalid_body_owners(provider_body_edit.snapshot, [provider_body.owners[0].key], CHECKER_PROFILE)? == [
+        identity,
+    ]
+
+    provider_signature = project_source("provider", "lib", provider_source.replace("value() -> int", "value() -> str"))?
+    provider_signature_edit = publish_source_projection(published.snapshot, provider_signature)?
+    assert invalid_body_owners(provider_signature_edit.snapshot, [provider_signature.owners[0].key], CHECKER_PROFILE)? == [
+        identity,
+    ]
 
     edited = project_source("app", "src/main.incn", source_text.replace("pass", "println(\"edited\")"))?
     changed = edited.owners[0].key

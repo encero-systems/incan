@@ -127,9 +127,6 @@ pub def obtain(
         or len(described.c_headers) > 0
     ):
         return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
-    for loaf in described.loaves:
-        if loaf.is_dependency():
-            return Err("unit records do not yet capture editable path dependencies")
     ready = prepare_native(described, toolchain)?
     compiled_key = unit_key(ready, toolchain)?
     if compiled_key.refusal != "":

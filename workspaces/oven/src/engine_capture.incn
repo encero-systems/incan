@@ -34,7 +34,7 @@ from observation import SETTLE_SECONDS, FileMetadata, children, file_metadata
 from toolchain import Toolchain, described_toolchain, toolchain_file
 from unit import manifest_candidates
 
-const EPOCH_SCHEMA: str = "incan.engine.build-epoch/1"
+const EPOCH_SCHEMA: str = "incan.engine.build-epoch/2"
 # How many times a file that changes while it is read is read before it is reported unstable.
 pub const READ_ATTEMPTS: int = 3
 
@@ -179,6 +179,8 @@ pub model Declarations:
     pub files: list[InputPath] = []
     # The source root the manifest declares, project-relative; empty when it declares none.
     pub source_root: str = ""
+    # Editable Incan dependency project roots, made absolute against this manifest.
+    pub dependencies: list[str] = []
 
     pub def encoded(self) -> JsonValue:
         """The declarations in their deterministic encoding."""
@@ -187,6 +189,7 @@ pub model Declarations:
                 JsonValue.string(self.manifest),
                 JsonValue.array([item.encoded() for item in self.files]),
                 JsonValue.string(self.source_root),
+                texts(self.dependencies),
             ],
         )
 
@@ -488,6 +491,8 @@ model Capture:
         2. An unchanged manifest declares what it declared before; one read now is parsed from the admitted bytes.
         3. Each declared file is checked; a missing one is recorded as absent.
         """
+        if path in self.declared:
+            return Ok(true)
         # 1. A manifest read now is parsed from exactly the bytes that were admitted.
         admission = self.editable(path, InputRole.Manifest)?
         match admission:
@@ -502,6 +507,9 @@ model Capture:
         for item in declared_files:
             if not self.is_frozen(item.path):
                 _ = self.editable(item.path, item.role)?
+        for dependency in self.declared[path].dependencies:
+            if self.manifest(Path(dependency).joinpath("loaf.toml").0)?:
+                self.members(self.source_root(dependency)?)?
         return Ok(true)
 
     def source_root(mut self, project: str) -> Result[str, str]:
@@ -774,7 +782,8 @@ def declarations_of(manifest: str, content: bytes) -> Declarations:
             mut source_root = ""
             if let Some(declared_root) = intent.source_root:
                 source_root = declared_root
-            return Declarations(manifest=manifest, files=files, source_root=source_root)
+            dependencies = [dependency_root(root, dependency.path) for dependency in intent.dependencies if not dependency.rust_facet]
+            return Declarations(manifest=manifest, files=files, source_root=source_root, dependencies=dependencies)
 
 
 def read_file(path: Path) -> Result[bytes, str]:
@@ -787,6 +796,14 @@ def absolute(path: str) -> str:
     match Path(path).absolute():
         Ok(found) => return found.0
         Err(_) => return path
+
+
+def dependency_root(manifest_root: Path, declared: str) -> str:
+    """Resolve an existing editable dependency exactly as project intake does, retaining a stable missing-path witness."""
+    candidate = manifest_root.joinpath(declared)
+    match candidate.resolve():
+        Ok(resolved) => return resolved.0
+        Err(_) => return absolute(candidate.0)
 
 
 def texts(items: list[str]) -> JsonValue:
@@ -862,11 +879,18 @@ def decoded_input(value: JsonValue) -> Result[CapturedInput, str]:
 
 def decoded_declarations(value: JsonValue) -> Result[Declarations, str]:
     """What one manifest declares, from its encoding."""
-    parts = fields(value, 3)?
+    parts = fields(value, 4)?
     mut files: list[InputPath] = []
     for item in elements(parts[1])?:
         files.append(decoded_path(item)?)
-    return Ok(Declarations(manifest=string_of(parts[0])?, files=files, source_root=string_of(parts[2])?))
+    return Ok(
+        Declarations(
+            manifest=string_of(parts[0])?,
+            files=files,
+            source_root=string_of(parts[2])?,
+            dependencies=strings_of(parts[3])?,
+        ),
+    )
 
 
 def decoded_listing(value: JsonValue) -> Result[CapturedListing, str]:

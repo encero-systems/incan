@@ -132,6 +132,11 @@ pub def project_source(origin: str, path: str, source: str) -> Result[SourceProj
     return SourceProjector.open(origin, path, source).projection()
 
 
+pub def owner_source_key(origin: str, path: str, name: str) -> RecordKey:
+    """Name one declaration owner's exact source projection for a compiler-witnessed dependency read."""
+    return source_key("owner-source", origin, path, name)
+
+
 pub def publish_source_projection(
     selected: Snapshot,
     projection: SourceProjection,
