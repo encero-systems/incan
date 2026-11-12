@@ -36,6 +36,7 @@ pub struct CompilationAnalysis {
     type_info_by_module_path: BTreeMap<Vec<String>, Arc<TypeCheckInfo>>,
     semantic_snapshots_by_path: BTreeMap<PathBuf, incan_semantics_core::SemanticModuleSnapshot>,
     namespace_body_by_path: BTreeMap<PathBuf, Arc<incan_semantics_core::body_ir::BodyIrModule>>,
+    namespace_lowering_inputs: Vec<(incan_semantics_core::CompilerNodeId, String)>,
 }
 
 impl CompilationAnalysis {
@@ -60,6 +61,11 @@ impl CompilationAnalysis {
     /// Return a whole-module Body IR record admitted with this source namespace.
     pub fn namespace_body_for_path(&self, path: &Path) -> Option<&incan_semantics_core::body_ir::BodyIrModule> {
         self.namespace_body_by_path.get(path).map(Arc::as_ref)
+    }
+
+    /// Return lowering witnesses carried by complete namespaces admitted in this analysis pass.
+    pub fn namespace_lowering_inputs(&self) -> &[(incan_semantics_core::CompilerNodeId, String)] {
+        &self.namespace_lowering_inputs
     }
 }
 
@@ -286,6 +292,7 @@ impl CompilationSession {
         visit: &mut dyn FnMut(&ParsedModule, &TypeChecker),
     ) -> Result<CompilationAnalysis, CliDiagnosticFailure> {
         let checked = self.typecheck_unit(modules, package, visit)?;
+        let namespace_lowering_inputs = checked.namespace_lowering_inputs.clone();
         let mut type_info_by_path = BTreeMap::new();
         let mut type_info_by_module_path = BTreeMap::new();
         let mut semantic_snapshots_by_path = BTreeMap::new();
@@ -307,6 +314,7 @@ impl CompilationSession {
             type_info_by_module_path,
             semantic_snapshots_by_path,
             namespace_body_by_path,
+            namespace_lowering_inputs,
         })
     }
 

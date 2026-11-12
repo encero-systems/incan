@@ -29,6 +29,7 @@ struct PendingNamespaceValue {
     interface: Vec<u8>,
     body_ir: Vec<u8>,
     dependencies: Vec<String>,
+    lowering_inputs: Vec<Vec<String>>,
 }
 
 /// One checked owner excluded from record reuse while retaining the reason for the full-source path.
@@ -104,6 +105,7 @@ impl GraphBodyOutput {
                 interface: interface.to_bytes()?,
                 body_ir: Vec::new(),
                 dependencies: dependencies.to_vec(),
+                lowering_inputs: Vec::new(),
             });
         }
         for output in
@@ -136,7 +138,12 @@ impl GraphBodyOutput {
 
     /// Attach the ordinary completed Body IR result to every eligible checker owner without projecting another
     /// semantic schema. The kernel codec retains the native `Body` contract and its module/source provenance.
-    pub(super) fn attach_body_ir(&mut self, modules: &[ParsedModule], body_ir: &[BodyIrModule]) -> Result<(), String> {
+    pub(super) fn attach_body_ir(
+        &mut self,
+        modules: &[ParsedModule],
+        body_ir: &[BodyIrModule],
+        lowering_inputs: &[(incan_semantics_core::CompilerNodeId, String)],
+    ) -> Result<(), String> {
         if self.path.is_none() {
             return Ok(());
         }
@@ -151,6 +158,12 @@ impl GraphBodyOutput {
             if let Some(namespace) = self.namespaces.iter_mut().find(|value| value.module == module_path) {
                 namespace.body_ir = incan_semantics_core::executable_representation::encode_module(lowered)
                     .map_err(|error| format!("Body IR namespace frame output refused: {error}"))?;
+                namespace.lowering_inputs = lowering_inputs
+                    .iter()
+                    .filter(|(identity, _)| lowered.bodies.iter().any(|body| &body.direct_call_id == identity))
+                    .map(|(identity, witness)| vec![identity.path().to_owned(), witness.clone()])
+                    .collect();
+                namespace.lowering_inputs.sort();
             }
             for body in &lowered.bodies {
                 let Some(pending) = self
@@ -236,6 +249,7 @@ impl GraphBodyOutput {
                 interface: value.interface,
                 body_ir: value.body_ir,
                 dependencies: value.dependencies,
+                lowering_inputs: value.lowering_inputs,
             })
             .collect();
         let body_count = values.len();

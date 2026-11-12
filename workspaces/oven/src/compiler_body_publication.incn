@@ -468,7 +468,12 @@ pub def prepare_compiled_bodies(
         for dependency in namespace.dependencies:
             reads.append(request(declaration_index_key(origin, dependency)))
         value = encode_graph_namespace_value(
-            GraphNamespaceValue(module=namespace.module, interface=namespace.interface, body_ir=namespace.body_ir),
+            GraphNamespaceValue(
+                module=namespace.module,
+                interface=namespace.interface,
+                body_ir=namespace.body_ir,
+                lowering_inputs=namespace.lowering_inputs,
+            ),
         ).map_err((error) => f"compiled namespace output refused: {error:?}")?
         receipt = prepared_receipt(source, scope, key, reads)?
         namespace_output = prepare_evaluation(
@@ -797,8 +802,10 @@ def prepare_native_interface(
     for body in bodies:
         if body.module not in modules:
             projection = source_projection(unit, origin, body.module)?
+            source.add(encode_record_key(projection.header.key)?, projection.header.text.encode("utf-8"))
             reads.append(request(projection.header.key))
             for owner in projection.owners:
+                source.add(encode_record_key(owner.key)?, owner.text.encode("utf-8"))
                 reads.append(request(owner.key))
             modules.append(body.module)
     receipt = prepared_receipt(source, scope, key, reads)?
@@ -1046,6 +1053,9 @@ def prepared_receipt(
     for item in requests:
         match reads.read(source, item):
             RecordRead.Failed(fault) =>
-                return Err(f"compiled body publication could not read {encode_record_key(item.key)?}: {fault:?}")
+                return Err(
+                    f"compiled body publication for {encode_record_key(output)?} could not read "
+                    + f"{encode_record_key(item.key)?}: {fault:?}",
+                )
             _ => pass
     return reads.finish().map_err((_) => "compiled body publication produced an incomplete receipt")

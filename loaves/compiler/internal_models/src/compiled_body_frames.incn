@@ -14,7 +14,7 @@ from checker_records import (
     record_root,
 )
 
-const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-output/8"
+const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-output/9"
 const FRAME_PREFIX_BYTES: int = 8
 const MAX_FRAME_BYTES: int = 67108864
 const MAX_FIELDS: int = 4096
@@ -103,8 +103,14 @@ pub def decode_compiled_body_payload(encoded: bytes) -> Result[CompiledBodyOutpu
 
 
 def encode_compiled_namespace_value(value: CompiledNamespaceValue) -> Result[bytes, CodecFault]:
-    """Encode one complete namespace record without interpreting its compiler-owned payloads."""
-    if value.module == "" or len(value.interface) == 0 or len(value.body_ir) == 0 or len(value.dependencies) > MAX_FIELDS:
+    """Encode one complete namespace record without interpreting its compiler-owned payloads or lowering witnesses."""
+    if (
+        value.module == ""
+        or len(value.interface) == 0
+        or len(value.body_ir) == 0
+        or len(value.dependencies) > MAX_FIELDS
+        or len(value.lowering_inputs) > MAX_FIELDS
+    ):
         return Err(CodecFault.Malformed)
     mut fields = [
         COMPILED_TRANSPORT_SCHEMA.encode(),
@@ -120,6 +126,14 @@ def encode_compiled_namespace_value(value: CompiledNamespaceValue) -> Result[byt
             return Err(CodecFault.Malformed)
         fields.append(dependency.encode())
         previous = dependency
+    fields.append(str(len(value.lowering_inputs)).encode())
+    previous = ""
+    for input in value.lowering_inputs:
+        if len(input) != 2 or input[0] == "" or input[1] == "" or input[0] <= previous:
+            return Err(CodecFault.Malformed)
+        fields.append(input[0].encode())
+        fields.append(input[1].encode())
+        previous = input[0]
     return binary_frame(fields)
 
 
@@ -213,25 +227,40 @@ def decode_compiled_body_value(fields: list[bytes]) -> Result[CompiledBodyValue,
 
 
 def decode_compiled_namespace_value(fields: list[bytes]) -> Result[CompiledNamespaceValue, CodecFault]:
-    """Restore one bounded namespace value and its canonical imported-module paths."""
+    """Restore one bounded namespace value, imported modules and canonical lowering witnesses."""
     if len(fields) < 6:
         return Err(CodecFault.Malformed)
     count = decimal(text_field(fields[5])?)?
-    if count > MAX_FIELDS or len(fields) != 6 + count:
+    if count > MAX_FIELDS or len(fields) < 7 + count:
         return Err(CodecFault.Malformed)
     mut dependencies: list[str] = []
     mut previous = ""
-    for field in fields[6:]:
+    for field in fields[6:6 + count]:
         dependency = text_field(field)?
         if dependency == "" or dependency <= previous:
             return Err(CodecFault.Malformed)
         dependencies.append(dependency)
         previous = dependency
+    lowering_count = decimal(text_field(fields[6 + count])?)?
+    if lowering_count > MAX_FIELDS or len(fields) != 7 + count + lowering_count * 2:
+        return Err(CodecFault.Malformed)
+    mut lowering_inputs: list[list[str]] = []
+    previous = ""
+    mut offset = 7 + count
+    while offset < len(fields):
+        identity = text_field(fields[offset])?
+        witness = text_field(fields[offset + 1])?
+        if identity == "" or witness == "" or identity <= previous:
+            return Err(CodecFault.Malformed)
+        lowering_inputs.append([identity, witness])
+        previous = identity
+        offset += 2
     value = CompiledNamespaceValue(
         module=text_field(fields[2])?,
         interface=fields[3],
         body_ir=fields[4],
         dependencies=dependencies,
+        lowering_inputs=lowering_inputs,
     )
     if value.module == "" or len(value.interface) == 0 or len(value.body_ir) == 0:
         return Err(CodecFault.Malformed)
