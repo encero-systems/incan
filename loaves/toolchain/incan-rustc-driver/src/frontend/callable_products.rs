@@ -114,7 +114,9 @@ fn product_directory(unit: &UnitDescription) -> Option<PathBuf> {
     if context.len() != 64 || !context.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }
-    unit.checked_products.clone()
+    unit.checked_products
+        .as_ref()
+        .map(|directory| directory.join(incan_frontend::checker_records::GRAPH_BODY_RECORD_PROFILE))
 }
 
 /// Scope native function products to Oven's complete semantic generation and current native profile. Lowering
