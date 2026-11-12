@@ -40,11 +40,15 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     assert proof_count(commented, "lowering_demand_evaluations")? == 0, comment_diagnostic
     assert proof_count(commented, "native_interface_evaluations")? == 1, comment_diagnostic
     stop_example_engine(binary, store)?
-    return verify_signature_edit(binary, root.joinpath("signature"))
+    signature = root.joinpath("signature-source")
+    signature.mkdir(true, true).map_err((error) => error.message())?
+    linked = root.joinpath("signature")
+    linked.symlink_to(signature).map_err((error) => error.message())?
+    return verify_signature_edit(binary, linked)
 
 
 def verify_signature_edit(binary: str, root: Path) -> Result[None, str]:
-    """Changing value from int to str must replan unchanged main and reproduce the cold plan and executable."""
+    """A signature edit through a symlink must recheck main and reproduce the cold plan and executable."""
     root.mkdir(true, true).map_err((error) => error.message())?
     source = root.joinpath("hello.incn")
     store = root.joinpath("store")
@@ -53,6 +57,7 @@ def verify_signature_edit(binary: str, root: Path) -> Result[None, str]:
     write(source, "def value() -> str:\n    return \"one\"\n\n\ndef main() -> None:\n    println(value())\n")?
     warm = lowering_example_run(binary, source, store, "one")?
     diagnostic = warm.to_json().map_err((error) => error.message())?
+    assert proof_count(warm, "body_evaluations")? == 2, diagnostic
     assert proof_count(warm, "plan_function_evaluations")? == 3, diagnostic
     assert proof_count(warm, "plan_function_reuses")? == 0, diagnostic
     plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
