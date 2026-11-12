@@ -18,6 +18,7 @@ from oven_tests import (
     run_all,
     run_all_failures,
     shared_memory,
+    stop_resident_owners,
     summarize,
     summary_document,
     oven_test_state_root,
@@ -233,7 +234,7 @@ def test_missing_oven_sources_fail_the_step() -> Result[None, str]:
 
 
 def test_joined_log_keeps_invocation_order_whatever_the_schedule() -> Result[None, str]:
-    """Logs written at once join in invocation order, and one failure fails the run."""
+    """Logs join in invocation order, failures fail the run, and the settled boundary stops resident owners."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path()
     logs = root.joinpath("logs")
@@ -257,6 +258,9 @@ def test_joined_log_keeps_invocation_order_whatever_the_schedule() -> Result[Non
     )
     assert run_all("/usr/bin/printenv", [environment], 1, 0)?
     assert environment_log.read_text("utf-8", "strict").map_err((error) => error.message())? == "visible\n"
+    owner_log = logs.joinpath("owners-stop.log")
+    assert stop_resident_owners("/bin/echo", owner_log)?
+    assert owner_log.read_text("utf-8", "strict").map_err((error) => error.message())? == "owner stop\n"
     return Ok(None)
 
 

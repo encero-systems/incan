@@ -40,7 +40,7 @@ pub const HEADROOM_BYTES: int = GIB
 const PASSED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ PASSED$"
 const FAILED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ (FAILED|XPASS)( |$)"
 # These read the installed toolchain and require it unchanged, which another invocation's first use of a native crate can
-# break, so they run after the others have finished.
+# break, so they run after the others have finished and their resident project owners have stopped.
 const NEEDS_SETTLED_INSTALLATION: FrozenList[str] = ["test_engine_protocol.incn"]
 const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--memory GIB]"
 # The step reports failures under the installed-verification program's name.
@@ -176,8 +176,9 @@ def run(options: Options) -> Result[str, str]:
     logs.mkdir(true, true).map_err((error) => error.message())?
     planned = invocations(root, options.evidence, logs)?
     ran = run_all(options.oven, [item for item in planned if not item.alone], options.jobs, options.memory)?
+    settled = stop_resident_owners(options.oven, logs.joinpath("owners-stop.log"))?
     ran_alone = run_all(options.oven, [item for item in planned if item.alone], 1, options.memory)?
-    succeeded = ran and ran_alone
+    succeeded = ran and settled and ran_alone
     log = options.evidence.joinpath("oven-tests.log")
     joined = join_logs(planned, log)?
     expected = read(root.joinpath("workspaces/contracts/oven-tests.txt"))?
@@ -320,6 +321,14 @@ def sorted_paths(paths: list[Path]) -> list[Path]:
 pub def run_all(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[bool, str]:
     """Run every invocation, at most `jobs` at once within `memory`, and report whether all of them succeeded."""
     return Ok(len(run_all_failures(oven, planned, jobs, memory)?) == 0)
+
+
+pub def stop_resident_owners(oven: str, log: Path) -> Result[bool, str]:
+    """Ask every resident project owner in the installed test home to stop before settled-installation tests run."""
+    planned = Invocation(arguments=["owner", "stop"], directory="", reservation=0, log=log)
+    mut child = start(oven, planned)?
+    status = child.wait().map_err((error) => f"cannot stop resident owners: {error}")?
+    return Ok(status.success())
 
 
 pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[list[int], str]:
