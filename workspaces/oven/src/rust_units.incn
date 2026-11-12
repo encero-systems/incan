@@ -386,12 +386,14 @@ def require_coherent_installed_generation(facets: list[LocalFacet], request: Rus
             continue
         blocker = blocking_unit(facet, unavailable)
         if blocker != "":
-            return Err(
-                f"installed native {declared.crate_name} links {blocker}, which is absent from the installed native generation; rebuild its support generation",
-            )
+            unavailable[facet.key()] = declared.crate_name
+            continue
         mut native: Option[BuiltUnit] = None
         if declared.kind != "":
-            native = Some(require_coherent_installed_producer(facet, declared, request, verified, search)?)
+            native = require_coherent_installed_producer(facet, declared, request, verified, search)?
+            if native == None:
+                unavailable[facet.key()] = declared.crate_name
+                continue
         mut selected = native
         if provider:
             selected = None
@@ -656,12 +658,9 @@ pub def require_coherent_installed_producer(
     request: RustBuild,
     built: Dict[str, BuiltUnit],
     search: list[str],
-) -> Result[BuiltUnit, str]:
-    """Validate and select one installed producer through the same complete proof used by the per-unit guard."""
-    selected = installed_rust_library(facet, declared, request, built, search, selected_toolchain(request)?)?
-    match selected:
-        Some(unit) => return Ok(unit)
-        None => return Err(f"installed native {declared.crate_name} disappeared while validating its generation")
+) -> Result[Option[BuiltUnit], str]:
+    """Validate one installed producer, or report that its changed inputs require a source rebuild."""
+    return installed_rust_library(facet, declared, request, built, search, selected_toolchain(request)?)
 
 
 pub def stored_library(unit: BuiltUnit) -> Result[BuiltUnit, str]:
@@ -686,7 +685,7 @@ def installed_rust_library(
 
     1. Require one selected artifact with the support producer's source/domain/features and release policy.
     2. Reconcile the producer's recorded dependencies and every completed output against its stamp.
-    3. Return that same artifact to every consumer profile; stale support is an explicit refusal, never a second producer.
+    3. Return that same artifact to every consumer profile, or let changed inputs rebuild from available source.
     """
     # 1. Direct callers may lack the prepared request's shared name index.
     mut artifacts = request.installed
@@ -728,6 +727,14 @@ def installed_rust_library(
     if why != "":
         portable = key
         if not portable_reusable(directory, portable, outputs)?:
+            source = Path(declared.library)
+            if not source.is_file():
+                return Err(
+                    f"installed native {declared.crate_name} cannot rebuild because shipped source is missing: {source.0}",
+                )
+            if why.endswith(" changed"):
+                trace(f"unit {declared.crate_name} rust: rebuilding installed producer because {why}")
+                return Ok(None)
             return Err(f"installed native {declared.crate_name} is stale: {why}; rebuild its support generation")
         current = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
         if current.digest != key.digest:
