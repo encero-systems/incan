@@ -56,7 +56,6 @@ use incan_semantics_core::executable_representation::{
 pub struct PreparedLoafPublication {
     name: String,
     surface: Vec<u8>,
-    graph: Vec<u8>,
     rust_abi: Option<Vec<u8>>,
     closure: Vec<u8>,
     manifest: String,
@@ -71,7 +70,11 @@ impl PreparedLoafPublication {
                 .map_err(|error| CliError::failure(format!("cannot write {}: {error}", path.display())))
         };
         write(format!("{}.incnbody", artifact_stem(&self.name)), &self.surface)?;
-        write(format!("{}.incngraph", artifact_stem(&self.name)), &self.graph)?;
+        let graph = dir.join(format!("{}.incngraph", artifact_stem(&self.name)));
+        if graph.exists() {
+            fs::remove_file(&graph)
+                .map_err(|error| CliError::failure(format!("cannot withdraw {}: {error}", graph.display())))?;
+        }
         if let Some(rust_abi) = self.rust_abi {
             write(format!("{}.rustabi", artifact_stem(&self.name)), &rust_abi)?;
         }
@@ -329,18 +332,14 @@ fn retain_feature_requirements(manifest: &mut LibraryManifest, modules: &[Parsed
         .collect();
 }
 
-/// Write a Loaf's files beside its rlib in `dir`: `<name>.incnbody`, the executable representation of `bodies` (the
-/// unit's own Body IR modules) projected onto the manifest's public identities; `<name>.incngraph`, the already-encoded
-/// graph from that same checking pass; `<name>.native.json`, the unit's native closure; an indexed `<name>.rustabi`
-/// when dependency-owned native facts are needed; and `<name>.incnlib` last,
-/// so its presence means the artifact set is complete. `<name>` is the shared artifact stem; the manifest retains
-/// the original semantic package name.
+/// Prepare a Loaf's native files beside its rlib: governed bodies, native closure, optional ABI cache and manifest.
+/// Inspection graphs have a separate requested publication and proof. The manifest is written last, so its presence
+/// means the native artifact set is complete.
 pub fn prepare_loaf_publication(
     dir: &Path,
     mut manifest: LibraryManifest,
     bodies: &[BodyIrModule],
     closure: &LoafNativeClosure,
-    graph: &[u8],
 ) -> CliResult<PreparedLoafPublication> {
     let name = manifest.name.clone();
 
@@ -378,7 +377,6 @@ pub fn prepare_loaf_publication(
     Ok(PreparedLoafPublication {
         name,
         surface,
-        graph: graph.to_vec(),
         rust_abi,
         closure,
         manifest,
@@ -391,9 +389,8 @@ pub fn write_loaf(
     manifest: LibraryManifest,
     bodies: &[BodyIrModule],
     closure: &LoafNativeClosure,
-    graph: &[u8],
 ) -> CliResult<()> {
-    prepare_loaf_publication(dir, manifest, bodies, closure, graph)?.write(dir)
+    prepare_loaf_publication(dir, manifest, bodies, closure)?.write(dir)
 }
 
 /// Publish sibling artifacts relative to their common artifact root so moving an otherwise identical build to a new

@@ -144,8 +144,6 @@ struct CheckedProgram {
     reached_loaves: BTreeMap<String, Vec<Vec<CanonicalSymbolId>>>,
     /// A library unit's manifest, which its executable representation completes once the unit compiles (DD-0007).
     manifest: Option<LibraryManifest>,
-    /// The owning library's portable graph bytes, encoded while its checked source context is still owned here.
-    graph: Vec<u8>,
     /// Session-collected tests; lowering receives their names and Oven receives their outcome policy.
     tests: Vec<crate::test_unit::CollectedTest>,
 }
@@ -523,14 +521,7 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
         .ok_or("a checked source interface requires a library manifest")?;
     closure.macro_externs = macro_externs(&manifest, &closure.externs, &loaf_links);
     std::fs::create_dir_all(directory)?;
-    write_loaf(
-        directory,
-        manifest,
-        &program.modules[program.own..],
-        &closure,
-        &program.graph,
-    )
-    .map_err(|error| error.to_string())?;
+    write_loaf(directory, manifest, &program.modules[program.own..], &closure).map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -631,14 +622,8 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
             search: published_search,
             macro_externs: macro_externs(&manifest, &dependencies.externs, &loaf_links),
         };
-        let prepared = prepare_loaf_publication(
-            &directory,
-            manifest,
-            &program.modules[program.own..],
-            &closure,
-            &program.graph,
-        )
-        .map_err(|error| error.to_string())?;
+        let prepared = prepare_loaf_publication(&directory, manifest, &program.modules[program.own..], &closure)
+            .map_err(|error| error.to_string())?;
         Some((directory, prepared))
     } else {
         None

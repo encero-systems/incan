@@ -950,14 +950,13 @@ def append_interface(inventory: Path, name: str, directory: Path) -> Result[None
 
 
 def runtime_artifacts() -> list[str]:
-    """Return every byte-bearing runtime generation artifact in stable order."""
+    """Return the native runtime generation artifacts; requested inspection graphs have a separate proof."""
     return [
         f"lib{RUNTIME_NAME}.rlib",
         f"{RUNTIME_NAME}.incnlib",
         f"{RUNTIME_NAME}.incnbody",
         f"{RUNTIME_NAME}.native.json",
         f"{RUNTIME_NAME}.rustabi",
-        f"{RUNTIME_NAME}.incngraph",
     ]
 
 
