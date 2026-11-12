@@ -43,6 +43,8 @@ from release_support import (
     reference_cache_identity,
     reference_cache_root,
     reference_worker_arguments,
+    reclaim_paths,
+    record_tree_sample,
     reuse_reference_log,
     require_candidate_census,
     release_receipt,
@@ -192,9 +194,15 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
             _ = cancel_background_step(reference)
             return Err(message)
 
+    if not run.options.prove_fixed_point:
+        reclaim(run, "build-lane", [run.paths.lane])?
+
     # 5. The seed defines the independent case inventory and outcomes the installed candidate must retain.
     phase(run, "reference-verification")?
     reference_log = finish_reference_census(run, reference)?
+    reclaim(run, "reference-scratch", [run.paths.output.joinpath("reference-contracts-scratch")])?
+    if not run.options.prove_fixed_point:
+        reclaim(run, "source-targets", generated_source_targets(run))?
 
     # 6. The fresh installation owns the candidate census and the release's one memory measurement.
     phase(run, "installed-verification")?
@@ -206,6 +214,9 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     if run.options.prove_fixed_point:
         phase(run, "fixed-point")?
         prove_fixed_point(candidate.context)?
+        reclaim(run, "fixed-point-work", [run.paths.lane, run.paths.home, run.paths.source])?
+    else:
+        reclaim(run, "qualified-build-inputs", [run.paths.home, run.paths.source])?
     complete_receipt(run, candidate_report.counts)?
     return Ok(run.paths.output.joinpath("receipt.json"))
 
@@ -657,7 +668,18 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path
     runs = run.paths.output.joinpath("ci").glob("run.*").map_err((error) => error.message())?
     if len(runs) != 1 or not runs[0].joinpath("contracts.log").is_file():
         return Err("expected one installed census")
-    return Ok(runs[0].joinpath("contracts.log"))
+    log = runs[0].joinpath("contracts.log")
+    _ = record_tree_sample(
+        run.paths.output,
+        run.paths.output.joinpath("tree-samples.tsv"),
+        "installed-verification-complete",
+    )?
+    reclaim(
+        run,
+        "installed-verification-scratch",
+        [verification, home, runs[0].joinpath("runner"), runs[0].joinpath("scratch"), runs[0].joinpath("lsp-scratch")],
+    )?
+    return Ok(log)
 
 
 def compare_reference(run: ReleaseRun, reference: Path, candidate: &BaselineReport) -> Result[None, str]:
@@ -910,8 +932,28 @@ def require_release_step_at(run: ReleaseRun, timings: Path, child: Step) -> Resu
 
 def phase(run: ReleaseRun, name: str) -> Result[None, str]:
     """Publish a refused receipt naming the phase before any of its work starts."""
+    _ = record_tree_sample(run.paths.output, run.paths.output.joinpath("tree-samples.tsv"), f"before-{name}")?
     run.trace.phase(name)?
     return write_receipt(run, name, "refused", 1, None, JsonValue.null(), JsonValue.null())
+
+
+def generated_source_targets(run: ReleaseRun) -> list[Path]:
+    """Name release-produced target roots whose binaries have already moved to the lane, home, or bundle."""
+    return [
+        run.paths.source.joinpath("workspaces/oven/target"),
+        run.paths.source.joinpath("workspaces/contracts/target"),
+        run.paths.source.joinpath("loaves/toolchain/incan-lsp/target"),
+        run.paths.source.joinpath("loaves/toolchain/incan-rustc-driver/target"),
+        run.paths.source.joinpath("loaves/compiler/incan_native_runtime/target"),
+    ]
+
+
+def reclaim(run: ReleaseRun, label: str, paths: list[Path]) -> Result[None, str]:
+    """Reclaim one completed phase's exact scratch roots and retain the measured byte reduction."""
+    reclaimed = reclaim_paths(paths)?
+    append_bytes(run.paths.output.joinpath("timings.tsv"), f"reclaimed/{label}", reclaimed)?
+    _ = record_tree_sample(run.paths.output, run.paths.output.joinpath("tree-samples.tsv"), f"after-{label}")?
+    return Ok(None)
 
 
 def complete_receipt(run: ReleaseRun, counts: Counts) -> Result[None, str]:

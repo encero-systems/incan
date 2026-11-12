@@ -26,6 +26,8 @@ from release_support import (
     reference_cache_root,
     reference_census_jobs,
     reference_worker_arguments,
+    reclaim_paths,
+    record_tree_sample,
     reuse_reference_log,
     release_receipt,
     release_rust_cache_root,
@@ -336,6 +338,28 @@ def test_release_trace_uses_invocation_records_and_phase_parent_links() -> Resul
     assert json_text(records[2], "parent")? == phase_id
     assert json_text(records[3], "id")? == json_text(records[2], "id")?
     assert json_text(records[4], "id")? == phase_id
+    return Ok(None)
+
+
+def test_release_scratch_reclamation_is_exact_and_retains_peak_evidence() -> Result[None, str]:
+    """Only selected scratch roots are removed, with reclaimed bytes and the largest tree sample retained."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path().joinpath("release")
+    scratch = root.joinpath("scratch")
+    retained = root.joinpath("bundle")
+    scratch.mkdir(true, true).map_err((error) => error.message())?
+    retained.mkdir(true, true).map_err((error) => error.message())?
+    scratch.joinpath("large").write_bytes(b"12345").map_err((error) => error.message())?
+    retained.joinpath("artifact").write_bytes(b"abc").map_err((error) => error.message())?
+    evidence = root.joinpath("tree-samples.tsv")
+    assert record_tree_sample(root, evidence, "before")? >= 8
+    assert reclaim_paths([scratch])? == 5
+    after = record_tree_sample(root, evidence, "after")?
+    assert not scratch.exists()
+    assert retained.joinpath("artifact").is_file()
+    peak = int(root.joinpath("tree-peak.txt").read_text("utf-8", "strict").map_err((error) => error.message())?.strip())
+    assert peak >= after
+    assert evidence.read_text("utf-8", "strict").map_err((error) => error.message())?.contains("before\t")
     return Ok(None)
 
 
