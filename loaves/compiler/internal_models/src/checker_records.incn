@@ -4,11 +4,11 @@ from std.encoding.hex import hexlify, unhexlify
 from std.hash import sha256
 
 pub const CHECKER_SCHEMA: str = "incan.checker-fields/9"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/12"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/13"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/2"
-const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/5"
+const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/6"
 # One whole-program transport carries all bounded checker records plus native owner frames; bound the aggregate at
 # 64 MiB while individual checker records retain their narrower 64 KiB limit.
 const MAX_GRAPH_TRANSPORT_BYTES: int = 67108864
@@ -77,11 +77,12 @@ pub model CompiledBodyValue:
 
 @derive(Eq)
 pub model CompiledBodyDependencyRead:
-    """One exact package declaration source record witnessed by a compiled owner."""
+    """One exact package or project declaration record witnessed by a compiled owner."""
 
-    pub package: str
+    pub package: Option[str]
     pub module: str
     pub name: str
+    pub identity: str
 
 
 @derive(Eq)
@@ -446,10 +447,11 @@ pub def encode_compiled_body_outputs(outputs: CompiledBodyOutputs) -> Result[byt
         ]
         mut previous_read = ""
         for read in value.dependency_reads:
-            read_order = read.package + "\n" + read.module + "\n" + read.name
-            if read.package == "" or read.module == "" or read.name == "" or read_order <= previous_read:
+            package = optional_identity(read.package)
+            read_order = package + "\n" + read.module + "\n" + read.name + "\n" + read.identity
+            if read.module == "" or read.name == "" or read.identity == "" or read_order <= previous_read:
                 return Err(CodecFault.Malformed)
-            tokens += [read.package, read.module, read.name]
+            tokens += [package, read.module, read.name, read.identity]
             previous_read = read_order
         previous = order
     previous = ""
@@ -489,23 +491,24 @@ pub def decode_compiled_body_outputs(encoded: bytes) -> Result[CompiledBodyOutpu
         if offset + 8 > len(tokens):
             return Err(CodecFault.Malformed)
         dependency_count = decimal(tokens[offset + 7])?
-        if dependency_count > MAX_FIELDS or offset + 8 + dependency_count * 3 > len(tokens):
+        if dependency_count > MAX_FIELDS or offset + 8 + dependency_count * 4 > len(tokens):
             return Err(CodecFault.Malformed)
         mut dependency_reads: list[CompiledBodyDependencyRead] = []
         mut previous_read = ""
         mut dependency_offset = offset + 8
         for _ in range(dependency_count):
             read = CompiledBodyDependencyRead(
-                package=tokens[dependency_offset],
+                package=decoded_optional_identity(tokens[dependency_offset]),
                 module=tokens[dependency_offset + 1],
                 name=tokens[dependency_offset + 2],
+                identity=tokens[dependency_offset + 3],
             )
-            read_order = read.package + "\n" + read.module + "\n" + read.name
-            if read.package == "" or read.module == "" or read.name == "" or read_order <= previous_read:
+            read_order = optional_identity(read.package) + "\n" + read.module + "\n" + read.name + "\n" + read.identity
+            if read.module == "" or read.name == "" or read.identity == "" or read_order <= previous_read:
                 return Err(CodecFault.Malformed)
             dependency_reads.append(read)
             previous_read = read_order
-            dependency_offset += 3
+            dependency_offset += 4
         value = CompiledBodyValue(
             module=tokens[offset],
             name=tokens[offset + 1],

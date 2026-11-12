@@ -234,7 +234,7 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
 
     selected = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_source_projection(selected, before)?
-    assert len(published.keys) == 4
+    assert len(published.keys) == 5
     for key in published.keys:
         assert get(published.snapshot, key).map_err((error) => error.message())? is not None
     return Ok(None)
@@ -262,32 +262,43 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
         "first",
         first_source.key,
         projected_header(source)?.key,
-        [first_declaration],
+        [first_declaration, projection.declarations.key],
     )?
     complete = publish_owner_pair(
         first_pair,
         "second",
         second_source.key,
         projected_header(source)?.key,
-        [second_declaration, first_declaration],
+        [second_declaration, first_declaration, projection.declarations.key],
     )?
     assert select_body_values(complete, family_key("local", "first"), family_key("final", "first"), "profile")? is not None
     assert select_body_values(complete, family_key("local", "second"), family_key("final", "second"), "profile")? is not None
 
     body_edit = project_source("package", "src/main.incn", source.replace("return 1", "return 3"))?
     changed_body = projected_owner(body_edit, "first")?
+    assert body_edit.declarations.text == projection.declarations.text
     edited = publish_source_projection(complete, body_edit)?
     assert invalid_body_owners(edited.snapshot, [changed_body.key], "profile")? == ["first"]
     assert select_body_values(edited.snapshot, family_key("local", "first"), family_key("final", "first"), "profile")? is None
     assert select_body_values(edited.snapshot, family_key("local", "second"), family_key("final", "second"), "profile")? is not None
 
     signature_projection = project_source("package", "src/main.incn", source.replace("first() -> int", "first() -> str"))?
+    assert signature_projection.declarations.text != projection.declarations.text
     changed_signature = projected_owner(signature_projection, "first")?
     signature_source = publish_source_projection(complete, signature_projection)?
     signature = commit(
         put(begin(signature_source.snapshot), encode_record_key(first_declaration)?, b"changed first declaration"),
     ).map_err((error) => error.message())?
-    assert invalid_body_owners(signature, [changed_signature.key, first_declaration], "profile")? == ["first", "second"]
+    assert invalid_body_owners(
+        signature,
+        [changed_signature.key, signature_projection.declarations.key, first_declaration],
+        "profile",
+    )? == ["first", "second"]
+
+    removed_projection = project_source("package", "src/main.incn", source.replace("def first() -> int:\n    return 1\n\n", ""))?
+    assert removed_projection.declarations.text != projection.declarations.text
+    removed = publish_source_projection(complete, removed_projection)?
+    assert invalid_body_owners(removed.snapshot, [removed_projection.declarations.key], "profile")? == ["first", "second"]
 
     import_source = source.replace("from std import env", "from std import fs")
     import_projection = project_source("package", "src/main.incn", import_source)?
@@ -300,13 +311,18 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
 
 
 pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[None, str]:
-    """A successful compiler sidecar witnesses local and editable-package source owners for the next edit."""
+    """A successful sidecar witnesses editable-package sources and project declaration signatures for the next edit."""
     scratch = scratch_directory()?
     root = scratch.path().joinpath("project")
     source = root.joinpath("src").joinpath("main.incn")
     source.parent().mkdir(true, true).map_err((error) => error.message())?
     source_text = "from pub::provider import value\n\ndef main() -> int:\n    return value()\n\ndef other() -> None:\n    pass\n"
     source.write_text(source_text, "utf-8", "strict", None).map_err((error) => error.message())?
+    root
+        .joinpath("src")
+        .joinpath("helper.incn")
+        .write_text("pub def value() -> int:\n    return 1\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
     provider_root = scratch.path().joinpath("provider").joinpath("src")
     provider_root.mkdir(true, true).map_err((error) => error.message())?
     provider_source = "pub def value() -> int:\n    return 1\n"
@@ -368,7 +384,20 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
                         local=local,
                         final=final,
                         body_ir=b"owner-frame",
-                        dependency_reads=[CompiledBodyDependencyRead(package="provider", module="lib", name="value")],
+                        dependency_reads=[
+                            CompiledBodyDependencyRead(
+                                package=None,
+                                module="helper",
+                                name="value",
+                                identity="app|module:helper|value|function|module|0|() -> int",
+                            ),
+                            CompiledBodyDependencyRead(
+                                package=Some("provider"),
+                                module="lib",
+                                name="value",
+                                identity="provider|module:lib|value|function|module|0|() -> int",
+                            ),
+                        ],
                     ),
                 ],
                 fallbacks=[
@@ -417,6 +446,26 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     assert invalid_body_owners(provider_signature_edit.snapshot, [provider_signature.owners[0].key], CHECKER_PROFILE)? == [
         identity,
     ]
+
+    project_slot = RecordKey(
+        family="declaration-slot",
+        identity_profile="incan.stable-declaration/1",
+        origin="app",
+        identity="helper",
+        facet="value",
+        context="checked-signature",
+    )
+    helper_body = project_source("app", "src/helper.incn", "pub def value() -> int:\n    return 2\n")?
+    helper_body_edit = publish_source_projection(published.snapshot, helper_body)?
+    assert invalid_body_owners(helper_body_edit.snapshot, [helper_body.owners[0].key], CHECKER_PROFILE)? == []
+    changed_signature = commit(
+        put(begin(published.snapshot), encode_record_key(project_slot)?, b"app|module:helper|value|function|module|0|() -> str"),
+    ).map_err((error) => error.message())?
+    assert invalid_body_owners(changed_signature, [project_slot], CHECKER_PROFILE)? == [identity]
+    removed = commit(delete(begin(published.snapshot), encode_record_key(project_slot)?)).map_err(
+        (error) => error.message(),
+    )?
+    assert invalid_body_owners(removed, [project_slot], CHECKER_PROFILE)? == [identity]
 
     edited = project_source("app", "src/main.incn", source_text.replace("pass", "println(\"edited\")"))?
     changed = edited.owners[0].key
