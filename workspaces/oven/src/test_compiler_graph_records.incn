@@ -247,6 +247,56 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     assert len(published.keys) == 8
     for key in published.keys:
         assert get(published.snapshot, key).map_err((error) => error.message())? is not None
+
+    default_source = "pub model RecordKey:\n    pub context: str = \"base\"\n    pub other: int = 1\n\n    pub def rendered(self) -> str:\n        return self.context\n"
+    default_projection = project_source("package", "src/default.incn", default_source)?
+    default_owner = projected_owner(default_projection, "default:model:RecordKey:context")?
+    model_owner = projected_owner(default_projection, "model:RecordKey")?
+    assert default_owner.text == "\"base\""
+    assert default_owner.start < default_owner.end
+    assert compiler_source_projection.compiled_owner_source(default_projection, "src/default.incn", "context")?.key == default_owner.key
+    projected_default = publish_source_projection(published.snapshot, default_projection)?
+    declaration = family_key("declaration", "model-record-key")
+    declared_default = commit(
+        put(begin(projected_default.snapshot), encode_record_key(declaration)?, b"record key declaration"),
+    ).map_err((error) => error.message())?
+    complete_default = publish_owner_pair(
+        declared_default,
+        "record-key-context",
+        default_owner.key,
+        default_projection.header.key,
+        [declaration],
+    )?
+
+    changed_default_projection = project_source(
+        "package",
+        "src/default.incn",
+        default_source.replace("\"base\"", "\"changed\""),
+    )?
+    changed_default = projected_owner(changed_default_projection, "default:model:RecordKey:context")?
+    assert changed_default.key == default_owner.key and changed_default.digest() != default_owner.digest()
+    changed_default_source = publish_source_projection(complete_default, changed_default_projection)?
+    assert invalid_body_owners(changed_default_source.snapshot, [model_owner.key, default_owner.key], "profile")? == [
+        "record-key-context",
+    ]
+
+    changed_field_projection = project_source(
+        "package",
+        "src/default.incn",
+        default_source.replace("other: int = 1", "other: int = 2"),
+    )?
+    assert projected_owner(changed_field_projection, "default:model:RecordKey:context")?.digest() == default_owner.digest()
+    changed_field_source = publish_source_projection(complete_default, changed_field_projection)?
+    assert invalid_body_owners(changed_field_source.snapshot, [model_owner.key], "profile")? == []
+
+    changed_method_projection = project_source(
+        "package",
+        "src/default.incn",
+        default_source.replace("return self.context", "return \"method edit\""),
+    )?
+    assert projected_owner(changed_method_projection, "default:model:RecordKey:context")?.digest() == default_owner.digest()
+    changed_method_source = publish_source_projection(complete_default, changed_method_projection)?
+    assert invalid_body_owners(changed_method_source.snapshot, [model_owner.key], "profile")? == []
     return Ok(None)
 
 

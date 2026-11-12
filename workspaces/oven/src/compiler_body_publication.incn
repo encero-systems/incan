@@ -44,6 +44,7 @@ from compiler_body_values import SelectedBodyRecord
 from compiler_source_projection import (
     SourceProjection,
     SourceProjectionRecord,
+    compiled_owner_source,
     declaration_index_key,
     owner_source_key,
     project_source,
@@ -430,7 +431,7 @@ pub def prepare_compiled_bodies(
     mut published = 0
     for value in outputs.values:
         projection = source_projection(unit, origin, value.module)?
-        owner = owner_record(projection, value.name).map_err((error) => owner_record_message(error, value.name))?
+        owner = compiled_owner_source(projection, value.module, value.name)?
         declarations = module_declarations(outputs.values, origin, value.module)?
         local_key = body_key("local", origin, value.identity, "checked", root(value.local)?)
         mut local_reads = [request(owner.key), request(projection.header.key), request(projection.declarations.key)]
@@ -544,11 +545,14 @@ def lowering_witnesses(
         if get(prior, encode_record_key(key)?).map_err((error) => error.message())? != Some(record.body_ir):
             return Err("retained Body IR differs from the selected graph")
         projection = source_projection(unit, origin, decoded.source)?
-        owner = match retained_owner_record(projection, str(decoded.body.name))?:
-            # A removed or renamed owner remains valid history in the selected graph, but it is not a witness for
-            # the current compile and must not cross into this request's lowering inventory.
-            None => continue
-            Some(value) => value
+        owner = match compiled_owner_source(projection, decoded.source, str(decoded.body.name)):
+            Ok(value) => value
+            Err(reason) =>
+                # A removed or renamed owner remains valid history in the selected graph, but it is not a witness
+                # for the current compile. Every other malformed selection state remains a hard refusal.
+                if reason.startswith("compiled body output has no matching owner source:"):
+                    continue
+                return Err(reason)
         for binding in [projection.header, owner]:
             if get(prior, encode_record_key(binding.key)?).map_err((error) => error.message())? != Some(binding.text.encode("utf-8")):
                 return Err("retained Body IR has changed current source inputs")
@@ -839,9 +843,7 @@ def dependency_owner_record(
     for candidate in candidates:
         if candidate.is_file():
             source = candidate.read_text("utf-8", "strict").map_err((error) => error.message())?
-            return owner_record(project_source(package, module, source)?, name).map_err(
-                (error) => owner_record_message(error, name),
-            )
+            return compiled_owner_source(project_source(package, module, source)?, module, name)
     return Err(f"compiled body output dependency module is absent: {package}:{module}")
 
 
