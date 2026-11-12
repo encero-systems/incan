@@ -17,7 +17,7 @@ from features import FeatureRequest
 from home import dependency_artifact_dir
 from intake import read_project, source_root_of, ManifestReader
 from unit import describe, project_root_of
-from unit_rust import compile_incan_library, describe_native, toolchain_for
+from unit_rust import compile_incan_library, compile_library_unit, describe_native, prepare_native, toolchain_for
 from incan_units import check_unit, compile_unit, make_unit, program_binary, report_dependencies, run_program
 from unit_compiler import crate_name, run_compiler
 from rust_units import build_rust, scheduled_unit
@@ -37,6 +37,7 @@ from observation import trace_boundary
 from installation_page import begin_command as begin_installation_command
 from owner_service import serve_owner
 from graph_inspection import inspect_codegraph, options as graph_options
+from graph_incan import inspect_prepared, publish_prepared_graph
 from graph_mcp import serve_graph, options as mcp_options
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
 from cli_help import help_hint, unknown_option
@@ -64,6 +65,7 @@ pub model Options:
     pub locked: bool = false
     pub direct: bool = false
     pub unattended: bool = false
+    pub codegraph: bool = false
     # One CLI preparation owns its source readings, including its provider callbacks.
     pub manifests: ManifestReader = ManifestReader()
 
@@ -314,6 +316,8 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
             options.direct = true
         elif argument == "--unattended":
             options.unattended = true
+        elif argument == "--codegraph":
+            options.codegraph = true
         elif argument == "--no-default-features":
             options.feature_options = true
             options.request.default_features = false
@@ -620,6 +624,14 @@ def validated(command: str, options: Options) -> Options:
 
 def require_command_options(command: str, options: Options) -> Result[None, str]:
     """Each command admits only options it applies, and feature selection requires an owning project."""
+    if options.codegraph:
+        if command != "build":
+            return Err("--codegraph requires an Incan library build")
+        match build_source(Path(options.path), options.manifests)?:
+            None => return Err("--codegraph requires an Incan library build")
+            Some(entry) =>
+                if entry.name() != "lib.incn":
+                    return Err("--codegraph requires an Incan library build")
     if options.direct:
         if invoked() == OVEN or command != "run":
             return Err("--direct requires incan run")
@@ -783,6 +795,15 @@ def built(options: Options, source: Path) -> Result[i32, str]:
         unit.kind = "library"
         directory = dependency_artifact_dir(unit.project_root, unit.package, unit.profile)
         output = directory.joinpath(f"lib{crate_name(unit)}.rlib")
+        toolchain = toolchain_for(unit)?
+        ready = prepare_native(unit, toolchain)?
+        status = compile_library_unit(ready, toolchain, output)?
+        if status != 0 or not options.codegraph:
+            return Ok(status)
+        graph = inspect_prepared(ready, toolchain)?
+        if not publish_prepared_graph(ready, toolchain, directory, graph)?:
+            return Err(f"{ready.package}: native publication changed while exporting its graph; retry the build")
+        return Ok(0)
     return compile_unit(unit, toolchain_for(unit)?, output)
 
 

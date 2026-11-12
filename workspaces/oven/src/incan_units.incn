@@ -81,7 +81,10 @@ pub def report_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Resu
     """
     ready = prepare_native(unit, toolchain)?
     path = write_unit(ready, crate_name(ready))?
-    return run_compiler(toolchain, ["--dependencies", path.0, toolchain.sysroot])
+    mut arguments = ["--dependencies", path.0, toolchain.sysroot]
+    if toolchain.codegraph_on_request:
+        arguments.append("--no-codegraph")
+    return run_compiler(toolchain, arguments)
 
 
 pub def format_unit(unit: UnitDescription, toolchain: Toolchain, source: str, check: bool) -> Result[i32, str]:

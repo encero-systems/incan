@@ -17,6 +17,8 @@ Its description is `<home>/toolchains/<toolchain>/toolchain.json` (`incan.toolch
 - `c_compiler`: the optional Clang that C ABI checks use; a Linux toolchain carries it. The checks read the machine's
   own headers, those of the system libraries a binding links. Without it the driver uses the machine's Clang (Xcode's
   on macOS).
+- `codegraph_on_request`: this compiler accepts `--no-codegraph`, so native compilation and graph publication have
+  separate proofs. Its absence preserves bootstrap compatibility with the preceding Oven generation.
 
 Every path is relative to the toolchain directory, which is what makes a toolchain relocatable; an absolute path is
 used as written (a bootstrap home that has not been packed).
@@ -321,6 +323,7 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             externs=externs,
             search=[located(directory, item) for item in search],
             registry_units=located(directory, text_field(document, "registry_units", [])?),
+            codegraph_on_request=optional_flag(document, "codegraph_on_request")?,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),
@@ -351,6 +354,13 @@ def optional_path(document: JsonValue, key: str, directory: Path) -> Result[str,
     if value == "":
         return Ok("")
     return Ok(located(directory, value))
+
+
+def optional_flag(document: JsonValue, key: str) -> Result[bool, list[str]]:
+    """Read an absent generation capability as false without accepting another JSON type."""
+    match document.get(key):
+        None => return Ok(false)
+        Some(value) => return value.expect_bool().map_err((_) => [key])
 
 
 pub def toolchain_file() -> Result[Path, str]:

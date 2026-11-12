@@ -228,6 +228,7 @@ def install_driver(toolchain: Path, built: Path, sysroot: str) -> Result[Path, s
     mut fields = manifest.expect_object().map_err((error) => error.message())?
     fields["driver"] = JsonValue.string(driver.0)
     fields["rust_abi"] = JsonValue.array([JsonValue.string(abi.0)])
+    fields["codegraph_on_request"] = JsonValue.bool(true)
     replace_text(
         toolchain.joinpath("toolchain.json"),
         JsonValue.object(fields).to_pretty_json().map_err((error) => error.message())?,
