@@ -31,6 +31,8 @@ pub struct TypecheckedModules {
     pub type_infos: Vec<TypeCheckInfo>,
     /// Whole-module Body IR selected with an installable namespace interface, aligned with `type_infos`.
     pub namespace_bodies: Vec<Option<incan_semantics_core::body_ir::BodyIrModule>>,
+    /// Lowering witnesses carried by the complete namespace records admitted in this pass.
+    pub namespace_lowering_inputs: Vec<(incan_semantics_core::CompilerNodeId, String)>,
     /// Non-fatal parser and typechecker diagnostics, for reports that expose them.
     ///
     /// Ordered by module, then by parser-before-typechecker within each module, so a machine-readable report is
@@ -75,6 +77,7 @@ pub fn typecheck_modules(
     let mut warnings_out = Vec::new();
     let mut type_infos = Vec::with_capacity(modules.len());
     let mut namespace_bodies = Vec::with_capacity(modules.len());
+    let mut namespace_lowering_inputs = Vec::new();
     let mut dependency_interfaces = vec![None::<Arc<ModuleDependencyInterface>>; modules.len()];
     let cycle_peers = import_cycle_peers(modules, own_standard_package);
     let related_sources = modules
@@ -185,6 +188,7 @@ pub fn typecheck_modules(
             dependency_interfaces[idx] = Some(Arc::clone(&record.interface));
             type_infos.push(TypeCheckInfo::default());
             namespace_bodies.push(Some(record.body_ir.clone()));
+            namespace_lowering_inputs.extend(record.lowering_inputs.iter().cloned());
             continue;
         }
         let _module_trace = tracing::trace_span!(
@@ -308,6 +312,7 @@ pub fn typecheck_modules(
         Ok(TypecheckedModules {
             type_infos,
             namespace_bodies,
+            namespace_lowering_inputs,
             warnings: warnings_out,
         })
     } else {

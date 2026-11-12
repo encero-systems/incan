@@ -459,10 +459,34 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
                     "graph namespace Body IR refused: {error}"
                 ))
             })?;
+        let mut lowering_inputs = Vec::with_capacity(record.lowering_inputs.len());
+        for input in record.lowering_inputs {
+            if input.len() != 2 {
+                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                    "graph namespace lowering witness has the wrong field count".into(),
+                ));
+            }
+            let mut matches = body_ir
+                .bodies
+                .iter()
+                .filter(|body| body.direct_call_id.path() == input[0]);
+            let Some(body) = matches.next() else {
+                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                    "graph namespace lowering witness names no Body IR owner".into(),
+                ));
+            };
+            if matches.next().is_some() {
+                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                    "graph namespace lowering witness names multiple Body IR owners".into(),
+                ));
+            }
+            lowering_inputs.push((body.direct_call_id.clone(), input[1].clone()));
+        }
         Ok(Some(incan_frontend::checker_records::GraphNamespaceRecord {
             source: record.module,
             interface: checked,
             body_ir,
+            lowering_inputs,
         }))
     }
 }

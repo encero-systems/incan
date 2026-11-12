@@ -49,6 +49,9 @@ from freshness_fixtures import fixture, make_executable, reconcile, unit_key, wr
 pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     """Dependency rebuilds rekey consumers; exact relocated native artifacts and fresh ABI publication stay valid."""
     scratch = scratch_directory()?
+    if get_or("INCAN_E2_NAMESPACE_ONLY", "") == "1":
+        verify_semantic_edit_matrix(scratch.path().joinpath("semantic-edit-matrix"))?
+        return Ok(None)
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
     verify_closure_readings(scratch.path().joinpath("closure.json"))?
@@ -150,6 +153,7 @@ model PhaseCounts:
     lowered_modules: int = 0
     checked_module_paths: list[str] = []
     body_ir_module_paths: list[str] = []
+    lowering_items: list[str] = []
 
     def display(self) -> str:
         """Render one stable compact count row for a failure or timing receipt."""
@@ -157,6 +161,7 @@ model PhaseCounts:
 
     def after(self, before: PhaseCounts) -> PhaseCounts:
         """Return work added after an earlier cumulative trace snapshot from the same records service."""
+        lowering_items = self.lowering_items[len(before.lowering_items):]
         return PhaseCounts(
             declarations=self.declarations - before.declarations,
             bodies=self.bodies - before.bodies,
@@ -165,10 +170,21 @@ model PhaseCounts:
             llvm=self.llvm - before.llvm,
             module_checks=self.module_checks - before.module_checks,
             body_ir_modules=self.body_ir_modules - before.body_ir_modules,
-            lowered_modules=self.lowered_modules - before.lowered_modules,
+            lowered_modules=lowering_module_count(lowering_items),
             checked_module_paths=self.checked_module_paths[len(before.checked_module_paths):],
             body_ir_module_paths=self.body_ir_module_paths[len(before.body_ir_module_paths):],
+            lowering_items=lowering_items,
         )
+
+
+def lowering_module_count(items: list[str]) -> int:
+    """Count unique source modules in one non-cumulative lowering trace slice."""
+    mut modules: set[str] = set()
+    for item in items:
+        fields = item.split("\t")
+        if len(fields) >= 5 and fields[4] != "":
+            modules.add(fields[4])
+    return len(modules)
 
 
 model MatrixBuild:
@@ -237,6 +253,7 @@ model SemanticEditMatrix:
             phase_differences.append(
                 f"warm lowered modules: expected {scenario.expected_lowered_modules}, found {warm.counts.lowered_modules}",
             )
+            phase_differences.append("lowering items: " + ", ".join(warm.counts.lowering_items))
         self.stop_engine(project.joinpath("warm-store"))?
         target = project.joinpath("target")
         if not target.is_dir():
@@ -269,6 +286,9 @@ model SemanticEditMatrix:
                     scenario.edit.value(),
                     scenario.fixture.value(),
                     warm.counts.display(),
+                    str(warm.counts.module_checks),
+                    str(warm.counts.body_ir_modules),
+                    str(warm.counts.lowered_modules),
                     str(warm.wall_ms),
                     str(cold.wall_ms),
                     "identical",
@@ -378,6 +398,7 @@ model SemanticEditMatrix:
             for line in native.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
                 if line.startswith("redo-item: lowering\t"):
                     counts.lowering += 1
+                    counts.lowering_items.append(line)
                     fields = line.split("\t")
                     if len(fields) >= 5:
                         lowered_modules.add(fields[4])
@@ -396,7 +417,10 @@ model SemanticEditMatrix:
         """Write optional development-loop samples without changing the test's verdict or ordinary console."""
         destination = get_or("INCAN_E2_MATRIX_REPORT", "")
         if destination != "":
-            header = "edit\tfixture\tdeclarations/bodies/body_ir/lowering/llvm\twarm_ms\tcold_ms\tverdict\n"
+            header = (
+                "edit\tfixture\tdeclarations/bodies/body_ir/lowering/llvm\tchecked_modules\t"
+                + "body_ir_modules\tlowered_modules\twarm_ms\tcold_ms\tverdict\n"
+            )
             Path(destination)
                 .write_text(header + "\n".join(self.rows) + "\n", "utf-8", "strict", None)
                 .map_err((error) => error.message())?
@@ -636,7 +660,7 @@ def semantic_edit_cases() -> list[MatrixCase]:
             )},
             expected_module_checks=1,
             expected_body_ir_modules=1,
-            expected_lowered_modules=0,
+            expected_lowered_modules=1,
         ),
         MatrixCase(
             edit=SemanticEdit.NamespaceSignature,
@@ -670,7 +694,7 @@ def semantic_edit_cases() -> list[MatrixCase]:
             )},
             expected_module_checks=2,
             expected_body_ir_modules=2,
-            expected_lowered_modules=0,
+            expected_lowered_modules=2,
         ),
     ]
 
