@@ -2,10 +2,11 @@
 
 from rust::std::cell import RefCell
 from rust::std::fs import File
-from rust::std::process import Child, Command, ExitStatus, Stdio
+from rust::std::ops import DerefMut
+from rust::std::process import Child, Command, ExitStatus, Stdio, id
 from rust::std::rc import Rc
 from rust::std::thread import sleep
-from rust::std::time import Duration, Instant
+from rust::std::time import Duration, Instant, SystemTime, UNIX_EPOCH
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import file_digest, sha256
@@ -77,6 +78,119 @@ pub model BaselineReport:
     pub result_statuses: Dict[str, str]
 
 
+pub model ReleaseSpan:
+    """One open release invocation span, identified within its process-owned trace stream."""
+
+    pub id: str
+
+
+model ReleaseTraceState:
+    """Mutable invocation stream state shared by every phase and step handle in one release process."""
+
+    path: Path
+    started: Instant
+    process: int
+    next_id: int = 1
+    active_phase: str = ""
+
+
+pub model ReleaseTrace:
+    """
+    Own one process's release trace and its active phase parent.
+
+    The stream uses the compiler invocation schema so the existing Where the Time Went parser can combine release
+    orchestration and compiler spans without a release-only adapter. Each process owns one file, every step attaches to
+    the phase active when it starts, and phase transitions close the previous phase before opening the next.
+    """
+
+    state: Rc[RefCell[ReleaseTraceState]]
+
+    @staticmethod
+    pub def open(directory: Path) -> Result[ReleaseTrace, str]:
+        """Create one process-owned invocation stream and publish its clock origin before any spans."""
+        directory.mkdir(true, true).map_err((error) => error.message())?
+        epoch = epoch_nanoseconds()?
+        process = int(id())
+        path = directory.joinpath(f"{process}-{epoch}.jsonl")
+        process_record = JsonValue.object(
+            {"schema": JsonValue.string("incan.invocations/1"), "kind": JsonValue.string("process"), "pid": JsonValue.int(
+                process,
+            ), "epoch_ns": JsonValue.int(epoch), "parent": JsonValue.null(), "executable": JsonValue.string(
+                "scripts/release.incn",
+            ), "thread": JsonValue.string("main"), "time_ns": JsonValue.int(0)},
+        )
+        path
+            .write_text(process_record.to_json().map_err((error) => error.message())? + "\n", "utf-8", "strict", None)
+            .map_err((error) => error.message())?
+        return Ok(
+            ReleaseTrace(state=Rc.new(RefCell.new(ReleaseTraceState(path=path, started=Instant.now(), process=process)))),
+        )
+
+    pub def phase(self, name: str) -> Result[None, str]:
+        """Close the preceding release phase and open one root phase span."""
+        mut held = self.state.as_ref().borrow_mut()
+        mut state = held.deref_mut()
+        if state.active_phase != "":
+            trace_write_end(state, state.active_phase)?
+        span = trace_begin(state, name, "")?
+        state.active_phase = span.id
+        return Ok(None)
+
+    pub def begin(self, name: str) -> Result[ReleaseSpan, str]:
+        """Open one step below the phase active at its start."""
+        mut held = self.state.as_ref().borrow_mut()
+        mut state = held.deref_mut()
+        return trace_begin(state, name, state.active_phase)
+
+    pub def finish(self, span: ReleaseSpan) -> Result[None, str]:
+        """Close one previously opened step span."""
+        mut held = self.state.as_ref().borrow_mut()
+        return trace_write_end(held.deref_mut(), span.id)
+
+    pub def complete(self) -> Result[None, str]:
+        """Close the final phase so a successful trace contains no unfinished release spans."""
+        mut held = self.state.as_ref().borrow_mut()
+        mut state = held.deref_mut()
+        if state.active_phase != "":
+            trace_write_end(state, state.active_phase)?
+            state.active_phase = ""
+        return Ok(None)
+
+
+def trace_begin(mut state: &mut ReleaseTraceState, name: str, parent: str) -> Result[ReleaseSpan, str]:
+    """Allocate and publish one begin record with an optional release-phase parent."""
+    identifier = f"release:{state.process}:{state.next_id}"
+    state.next_id += 1
+    mut parent_value = JsonValue.null()
+    if parent != "":
+        parent_value = JsonValue.string(parent)
+    trace_write(
+        state,
+        JsonValue.object(
+            {"kind": JsonValue.string("begin"), "id": JsonValue.string(identifier), "parent": parent_value, "function": JsonValue.string(
+                name,
+            ), "file": JsonValue.string("scripts/release.incn"), "line": JsonValue.null(), "fields": JsonValue.object({})},
+        ),
+    )?
+    return Ok(ReleaseSpan(id=identifier))
+
+
+def trace_write_end(state: &mut ReleaseTraceState, identifier: str) -> Result[None, str]:
+    """Publish one end record for an existing release span identity."""
+    return trace_write(state, JsonValue.object({"kind": JsonValue.string("end"), "id": JsonValue.string(identifier)}))
+
+
+def trace_write(state: &mut ReleaseTraceState, value: JsonValue) -> Result[None, str]:
+    """Append one invocation record with this process's shared monotonic clock."""
+    mut record = value.expect_object().map_err((error) => error.message())?
+    record["pid"] = JsonValue.int(state.process)
+    record["thread"] = JsonValue.string("main")
+    record["time_ns"] = JsonValue.int(int(state.started.elapsed().as_nanos()))
+    mut text = state.path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    text += JsonValue.object(record).to_json().map_err((error) => error.message())? + "\n"
+    return state.path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
 pub model Step:
     """One timed child process with isolated environment changes and durable output."""
 
@@ -88,6 +202,7 @@ pub model Step:
     pub directory: Option[Path]
     pub log: Path
     pub timeout_seconds: int
+    pub trace: Option[ReleaseTrace] = None
 
 
 pub model ReservedStep:
@@ -106,6 +221,8 @@ model RunningStep:
     timeout_seconds: int
     started: Instant
     child: Rc[RefCell[Child]]
+    trace: Option[ReleaseTrace]
+    span: Option[ReleaseSpan]
 
 
 pub model BackgroundStep:
@@ -115,6 +232,8 @@ pub model BackgroundStep:
     pub log: Path
     pub started: Instant
     pub child: Rc[RefCell[Child]]
+    pub trace: Option[ReleaseTrace]
+    pub span: Option[ReleaseSpan]
 
 
 pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, str]:
@@ -466,13 +585,17 @@ pub def run_step(step: Step) -> Result[int, str]:
     command.stdin(Stdio.null()).stdout(log).stderr(errors)
     mut child = command.spawn().map_err((error) => f"cannot start {step.name}: {error}")?
     started = Instant.now()
+    span = begin_step_trace(step.trace, step.name)?
     loop:
         match child.try_wait().map_err((error) => f"cannot wait for {step.name}: {error}")?:
-            Some(status) => return Ok(status_code(status))
+            Some(status) =>
+                finish_step_trace(step.trace, span)?
+                return Ok(status_code(status))
             None =>
                 if started.elapsed().as_secs() >= step.timeout_seconds:
                     _ = child.kill()
                     _ = child.wait()
+                    finish_step_trace(step.trace, span)?
                     return Err(f"{step.name} timed out after {step.timeout_seconds}s; log: {step.log.0}")
                 sleep(Duration.from_millis(20))
 
@@ -482,12 +605,15 @@ pub def start_background_step(step: Step) -> Result[BackgroundStep, str]:
     name = str(step.name)
     log = step.log.clone()
     child = start_step(step)?
+    span = begin_step_trace(step.trace, name)?
     return Ok(
         BackgroundStep(
             name=name,
             log=log,
             started=Instant.now(),
             child=Rc.new(RefCell.new(child)),
+            trace=step.trace,
+            span=span,
         ),
     )
 
@@ -496,11 +622,14 @@ pub def finish_background_step(step: BackgroundStep, timeout_seconds: int) -> Re
     """Join one background step under its caller-owned deadline and return status plus wall duration."""
     loop:
         match step.child.borrow_mut().try_wait().map_err((error) => f"cannot wait for {step.name}: {error}")?:
-            Some(status) => return Ok((status_code(status), step.started.elapsed().as_secs_f64()))
+            Some(status) =>
+                finish_step_trace(step.trace, step.span)?
+                return Ok((status_code(status), step.started.elapsed().as_secs_f64()))
             None =>
                 if timeout_seconds > 0 and step.started.elapsed().as_secs() >= timeout_seconds:
                     _ = step.child.borrow_mut().kill()
                     _ = step.child.borrow_mut().wait()
+                    finish_step_trace(step.trace, step.span)?
                     return Err(f"{step.name} timed out after {timeout_seconds}s; log: {step.log.0}")
                 sleep(Duration.from_millis(20))
 
@@ -509,6 +638,7 @@ pub def cancel_background_step(step: BackgroundStep) -> Result[None, str]:
     """Stop and reap a background step when an earlier release phase has already refused the run."""
     _ = step.child.borrow_mut().kill()
     _ = step.child.borrow_mut().wait().map_err((error) => f"cannot reap {step.name}: {error}")?
+    finish_step_trace(step.trace, step.span)?
     return Ok(None)
 
 
@@ -532,6 +662,8 @@ pub def run_reserved_steps(
         chosen = reserved_admitted(reservations, waiting, [item.reservation for item in active], jobs, memory)
         for index in chosen:
             child = start_step(planned[index].child)?
+            trace = planned[index].child.trace.clone()
+            span = begin_step_trace(trace, planned[index].child.name)?
             active.append(
                 RunningStep(
                     position=index,
@@ -540,6 +672,8 @@ pub def run_reserved_steps(
                     timeout_seconds=planned[index].child.timeout_seconds,
                     started=Instant.now(),
                     child=Rc.new(RefCell.new(child)),
+                    trace=trace,
+                    span=span,
                 ),
             )
         waiting = [index for index in waiting if index not in chosen]
@@ -547,6 +681,7 @@ pub def run_reserved_steps(
         for item in active:
             match item.child.borrow_mut().try_wait().map_err((error) => f"cannot wait for {item.name}: {error}")?:
                 Some(status) =>
+                    finish_step_trace(item.trace, item.span)?
                     append_timing(timings, item.name, item.started.elapsed().as_secs_f64())?
                     if not status.success():
                         failed.append(item.position)
@@ -554,6 +689,7 @@ pub def run_reserved_steps(
                     if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
                         _ = item.child.borrow_mut().kill()
                         _ = item.child.borrow_mut().wait()
+                        finish_step_trace(item.trace, item.span)?
                         append_timing(timings, item.name, item.started.elapsed().as_secs_f64())?
                         failed.append(item.position)
                     else:
@@ -603,6 +739,20 @@ def start_step(step: Step) -> Result[Child, str]:
         command.current_dir(directory.0)
     command.stdin(Stdio.null()).stdout(log).stderr(errors)
     return command.spawn().map_err((error) => f"cannot start {step.name}: {error}")
+
+
+def begin_step_trace(trace: Option[ReleaseTrace], name: str) -> Result[Option[ReleaseSpan], str]:
+    """Open a step span only when its caller supplied a release trace."""
+    match trace:
+        Some(selected) => return Ok(Some(selected.begin(name)?))
+        None => return Ok(None)
+
+
+def finish_step_trace(trace: Option[ReleaseTrace], span: Option[ReleaseSpan]) -> Result[None, str]:
+    """Close a step span only when both halves of its optional trace context exist."""
+    match (trace, span):
+        (Some(selected), Some(opened)) => return selected.finish(opened)
+        _ => return Ok(None)
 
 
 pub def require_step(step: Step) -> Result[None, str]:
@@ -682,6 +832,15 @@ pub def full_sha(value: str) -> bool:
         if character not in "0123456789abcdef":
             return false
     return true
+
+
+def epoch_nanoseconds() -> Result[int, str]:
+    """Read one Unix clock origin for an invocation-compatible process record."""
+    return SystemTime
+        .now()
+        .duration_since(UNIX_EPOCH)
+        .map((duration) => int(duration.as_nanos()))
+        .map_err((error) => str(error))
 
 
 def positive(value: str, option: str) -> Result[int, str]:

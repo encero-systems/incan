@@ -29,6 +29,7 @@ from release_support import (
     BaselineReport,
     Counts,
     ReleaseOptions,
+    ReleaseTrace,
     Step,
     append_bytes,
     append_timing,
@@ -81,6 +82,7 @@ pub model ReleaseRun:
     pub seed_lsp: Path
     pub target: str
     pub started: Instant
+    pub trace: ReleaseTrace
 
 
 pub model Candidate:
@@ -140,7 +142,7 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     6. Install the bundle into a second home, then measure memory and the candidate census once in that context.
     7. When requested, rebuild DD-0010's six named artifacts and require byte identity.
     """
-    run = prepare_release(options)?
+    mut run = prepare_release(options)?
 
     # 1. A release builds a full committed tree while its orchestration remains this compiled Incan program.
     phase(run, "checkout")?
@@ -154,6 +156,7 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
         Err(message) =>
             phase(run, "reference-verification")?
             return Err(message)
+
     match phase(run, "source-closure"):
         Ok(_) => pass
         Err(message) =>
@@ -235,10 +238,7 @@ def start_reference_census(run: ReleaseRun) -> Result[BackgroundStep, str]:
 def finish_reference_census(run: ReleaseRun, worker: BackgroundStep) -> Result[Path, str]:
     """Join the seed census, merge its complete timings and preserve its original refusal text."""
     outcome = finish_background_step(worker, run.options.timeout_seconds * 20)
-    append_timing_file(
-        run.paths.output.joinpath("timings.tsv"),
-        run.paths.output.joinpath("reference-timings.tsv"),
-    )?
+    append_timing_file(run.paths.output.joinpath("timings.tsv"), run.paths.output.joinpath("reference-timings.tsv"))?
     status, elapsed = outcome?
     append_timing(run.paths.output.joinpath("timings.tsv"), "reference-overlap", elapsed)?
     if status != 0:
@@ -267,7 +267,7 @@ def run_reference_worker(arguments: list[str]) -> Result[None, str]:
         toolchain=output.joinpath("build-home").joinpath(TOOLCHAIN_DIRECTORY),
         bundle=output.joinpath("bundle"),
     )
-    run = ReleaseRun(
+    mut run = ReleaseRun(
         root=source,
         options=ReleaseOptions(
             source_sha="0000000000000000000000000000000000000000",
@@ -283,8 +283,11 @@ def run_reference_worker(arguments: list[str]) -> Result[None, str]:
         seed_lsp=Path(arguments[3]),
         target="",
         started=Instant.now(),
+        trace=ReleaseTrace.open(output.joinpath("trace"))?,
     )
+    run.trace.phase("reference-verification")?
     _ = reference_census(run, output.joinpath("reference-timings.tsv"))?
+    run.trace.complete()?
     return Ok(None)
 
 
@@ -323,6 +326,7 @@ def prepare_release(options: ReleaseOptions) -> Result[ReleaseRun, str]:
     paths.bundle.mkdir(true, true).map_err((error) => error.message())?
     paths.lane.joinpath("out").mkdir(true, true).map_err((error) => error.message())?
     paths.output.joinpath("timings.tsv").write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+    trace = ReleaseTrace.open(paths.output.joinpath("trace"))?
     run = ReleaseRun(
         root=root,
         options=options,
@@ -332,6 +336,7 @@ def prepare_release(options: ReleaseOptions) -> Result[ReleaseRun, str]:
         seed_lsp=seed_lsp,
         target=target,
         started=Instant.now(),
+        trace=trace,
     )
     phase(run, "initializing")?
     return Ok(run)
@@ -524,11 +529,7 @@ def reference_census(run: ReleaseRun, timings: Path) -> Result[Path, str]:
         match census_results(cached):
             Ok(_) =>
                 reuse_reference_log(cached, log)?
-                append_timing(
-                    timings,
-                    "reference-cache-hit",
-                    cache_started.elapsed().as_secs_f64(),
-                )?
+                append_timing(timings, "reference-cache-hit", cache_started.elapsed().as_secs_f64())?
                 return Ok(log)
             Err(_) => pass
     require_release_step_at(
@@ -556,11 +557,7 @@ def reference_census(run: ReleaseRun, timings: Path) -> Result[Path, str]:
     _ = census_results(log)?
     cache_started = Instant.now()
     store_reference_log(log, cached)?
-    append_timing(
-        timings,
-        "reference-cache-store",
-        cache_started.elapsed().as_secs_f64(),
-    )?
+    append_timing(timings, "reference-cache-store", cache_started.elapsed().as_secs_f64())?
     return Ok(log)
 
 
@@ -716,6 +713,7 @@ def census_step(
         directory=Some(run.paths.source),
         log=log,
         timeout_seconds=run.options.timeout_seconds * 20,
+        trace=Some(run.trace),
     )
 
 
@@ -732,6 +730,7 @@ def native_context(run: ReleaseRun, builder: Path, home: Path) -> NativeContext:
         jobs=run.options.jobs,
         memory=shared_memory(host_memory()),
         timeout_seconds=run.options.timeout_seconds,
+        trace=Some(run.trace),
     )
 
 
@@ -866,6 +865,7 @@ def release_step(
         directory=Some(directory),
         log=run.paths.output.joinpath(f"{name}.log"),
         timeout_seconds=run.options.timeout_seconds * timeout_multiplier,
+        trace=Some(run.trace),
     )
 
 
@@ -910,6 +910,7 @@ def require_release_step_at(run: ReleaseRun, timings: Path, child: Step) -> Resu
 
 def phase(run: ReleaseRun, name: str) -> Result[None, str]:
     """Publish a refused receipt naming the phase before any of its work starts."""
+    run.trace.phase(name)?
     return write_receipt(run, name, "refused", 1, None, JsonValue.null(), JsonValue.null())
 
 
@@ -930,6 +931,7 @@ def complete_receipt(run: ReleaseRun, counts: Counts) -> Result[None, str]:
         remove_passing_work_trees(run)?
     retained = measure_release_tree_bytes(run)?
     record_release_tree_bytes(run.paths.output.joinpath("timings.tsv"), "", retained)?
+    run.trace.complete()?
     return write_receipt(run, "complete", "passed", 0, Some(counts), oven_tests, release_tree_bytes_json(retained))
 
 
