@@ -353,6 +353,27 @@ pub def test_the_name_record_answers_the_latest_identity_of_a_name() -> Result[N
         assert bake(store, digest_of(f"{index}a"), f"{index}", [], "dep")?
     assert lookup(store, "dep")? == Some(digest_of("19a"))
     verify_frozen_library_bindings(scratch.path())?
+    verify_equal_payload_identity_change(scratch.path())?
+    return Ok(None)
+
+
+def verify_equal_payload_identity_change(root: Path) -> Result[None, str]:
+    """Equal payload bytes cannot preserve a view's obsolete graph-producer identity."""
+    store = root.joinpath("equal-payload-bakery")
+    target = root.joinpath("equal-payload-view")
+    first = digest_of("a")
+    second = digest_of("b")
+    assert bake(store, first, "identical payload")?
+    assert bake(store, second, "identical payload")?
+    view_directory(store, baked(store, first)?, target)?
+    view_directory(store, baked(store, second)?, target)?
+    marker = read(target.joinpath("fact.json"))?
+    assert second in marker, "equal payloads retained the previous unit identity"
+    transaction = begin(snapshot(store).map_err((error) => error.message())?)
+    removed = delete(transaction, f"incan.bakery.unit\t{first}")
+    _ = commit(removed).map_err((error) => error.message())?
+    selected = library_directory(store, target)?
+    assert read(selected.joinpath("payload"))? == "identical payload"
     return Ok(None)
 
 
