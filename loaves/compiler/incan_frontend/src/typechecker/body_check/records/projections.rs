@@ -195,8 +195,6 @@ pub(super) fn validate(view: &CheckedBodyView) -> Result<(), NodeBindingError> {
         || !view.local.dictionary.is_empty()
         || !view.local.diagnostic_slots.is_empty()
         || !view.local.warning_slots.is_empty()
-        || view.local.order.mutation != 0
-        || view.local.order.dictionary != 0
     {
         return Err(NodeBindingError::Unsupported("deferred effect or diagnostic ordering"));
     }
