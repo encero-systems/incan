@@ -27,11 +27,16 @@ pub(super) struct CallableProducts {
 impl CallableProducts {
     /// Read complete immutable records before checking and install only producer-validated current selections.
     /// Oven owns the complete compiler/dependency/feature context; raw invocations without it never reuse items.
-    pub(super) fn prepare(unit: &UnitDescription, modules: &[ParsedModule], session: &mut CompilationSession) -> Self {
+    pub(super) fn prepare(
+        unit: &UnitDescription,
+        modules: &[ParsedModule],
+        session: &mut CompilationSession,
+        allow_private_reuse: bool,
+    ) -> Self {
         // ---- Store: read only the private context explicitly selected by Oven ----
         let directory = product_directory(unit);
         let mut reuse = BTreeMap::new();
-        if let Some(directory) = &directory {
+        if let Some(directory) = directory.as_ref().filter(|_| allow_private_reuse) {
             for module in modules {
                 let path = directory.join(module_key(module));
                 let selection = std::fs::read(path)
