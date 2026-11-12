@@ -352,6 +352,14 @@ impl SourceAccesses<'_, '_> {
     /// evaluates its address, not its value; fresh borrowed arguments still evaluate their nested value normally.
     fn expression(&mut self, expression: &Spanned<Expr>, consume: bool) -> Result<(), &'static str> {
         match &expression.node {
+            Expr::Field(_, _)
+                if self
+                    .proof
+                    .facts
+                    .resolved_identity(expression.span)
+                    .is_some_and(|identity| {
+                        identity.kind == incan_semantics_core::SemanticSourceTargetKind::Variant
+                    }) => {}
             Expr::Ident(_) | Expr::SelfExpr | Expr::Field(_, _) | Expr::Index(_, _) => {
                 self.stored_place_access(expression, consume)?
             }
@@ -420,16 +428,45 @@ impl SourceAccesses<'_, '_> {
         arguments: &[CallArg],
         consume: bool,
     ) -> Result<(), &'static str> {
+        if self
+            .proof
+            .facts
+            .resolved_identity(expression.span)
+            .is_some_and(|identity| identity.kind == incan_semantics_core::SemanticSourceTargetKind::Variant)
+        {
+            for argument in arguments {
+                let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
+                    return Err("source access variant construction needs fixed payloads");
+                };
+                let transfer = self.place(value)?.is_some_and(|(place, through)| {
+                    through.is_none()
+                        && self
+                            .proof
+                            .graph
+                            .permissions
+                            .get(&place.root)
+                            .is_some_and(|permission| permission.transferable)
+                }) && !self.copy_value(value)?;
+                if transfer && let Some((place, _)) = self.place(value)? {
+                    self.constrained.insert(place.root);
+                }
+                self.expression(value, transfer)?;
+            }
+            return Ok(());
+        }
         if let Some(iterator) = super::super::builtins::retained_iterator_method(self.proof.facts, expression.span) {
             return self.retained_iterator_call(receiver, arguments, iterator, expression.span, consume);
         }
-        if let Some(writes) = super::super::builtins::list_method_writes(self.proof.facts, expression.span) {
-            let (place, through) = self
-                .place(receiver)?
-                .ok_or("source list method has no stored receiver")?;
+        if let Some(writes) = super::super::builtins::builtin_place_method_writes(self.proof.facts, expression.span) {
+            let source = self.place(receiver)?;
+            if source.is_some() {
+                self.place_evaluation(receiver)?;
+            } else {
+                self.expression(receiver, false)?;
+            }
             for argument in arguments {
                 let CallArg::Positional(value) = argument else {
-                    return Err("source access needs positional list method arguments");
+                    return Err("source access needs positional builtin place method arguments");
                 };
                 self.expression(value, false)?;
             }
@@ -438,7 +475,10 @@ impl SourceAccesses<'_, '_> {
             } else {
                 flow::Access::Read
             };
-            return self.access(expression.span, &place, through, access);
+            return match source {
+                Some((place, through)) => self.access(expression.span, &place, through, access),
+                None => self.fresh_builtin_receiver_access(receiver, expression.span, access),
+            };
         }
         if self
             .proof
@@ -460,18 +500,67 @@ impl SourceAccesses<'_, '_> {
             .invocations
             .get(&expression.span)
             .ok_or("source access method call has no checked invocation")?;
-        if self.proof.facts.native_associated_call(expression.span) {
-            return self.invocation_arguments(invocation, arguments);
-        }
         if invocation.receiver_owned {
             self.expression(receiver, true)?;
             return self.invocation_arguments(invocation, arguments);
         }
         if invocation.receiver.is_none() {
-            return Err("source access method receiver has no stored place");
+            return self.invocation_arguments(invocation, arguments);
         }
         self.fresh_method_receiver(receiver, invocation)?;
         self.invocation_arguments(invocation, arguments)
+    }
+
+    /// Claim a builtin access over a computed receiver only when the graph ties it to that exact temporary or to a
+    /// retained result loan produced by the checked inner invocation.
+    fn fresh_builtin_receiver_access(
+        &mut self,
+        receiver: &Spanned<Expr>,
+        span: HirSourceSpan,
+        expected: flow::Access,
+    ) -> Result<(), &'static str> {
+        let inner = super::super::builtins::view_call(receiver);
+        let mut candidates = self.by_span.get(&span).into_iter().flatten().copied().filter(|index| {
+            if self.claimed.contains(index) {
+                return false;
+            }
+            let flow::Event::Access { place, access, through } = &self.proof.graph.nodes[*index].event else {
+                return false;
+            };
+            if *access != expected {
+                return false;
+            }
+            match (&place.root, through) {
+                (
+                    flow::Root::Temporary {
+                        owner,
+                        expression,
+                        invocation,
+                    },
+                    None,
+                ) => {
+                    owner == self.proof.canonical_owner()
+                        && *expression == receiver.span
+                        && *invocation == span
+                        && place.projection.is_empty()
+                }
+                (flow::Root::Binding(_), Some(loan)) => self.proof.graph.loans.get(loan.0).is_some_and(|retained| {
+                    retained.source == *place
+                        && retained.span == inner.span
+                        && self.proof.graph.invocations.contains_key(&inner.span)
+                }),
+                _ => false,
+            }
+        });
+        let index = candidates
+            .next()
+            .ok_or("computed builtin receiver has no authenticated retained access")?;
+        if candidates.next().is_some() || self.last.is_some_and(|previous| previous >= index) {
+            return Err("computed builtin receiver accesses are ambiguous or reordered");
+        }
+        self.last = Some(index);
+        self.claimed.insert(index);
+        Ok(())
     }
 
     /// Evaluate a non-place method receiver through the temporary or chained binding loan selected by checking.
@@ -480,9 +569,6 @@ impl SourceAccesses<'_, '_> {
         receiver: &Spanned<Expr>,
         invocation: &flow::Invocation,
     ) -> Result<(), &'static str> {
-        if self.place(receiver)?.is_some() {
-            return Ok(());
-        }
         let loan = invocation
             .receiver
             .and_then(|loan| self.proof.graph.loans.get(loan.0))
@@ -490,6 +576,9 @@ impl SourceAccesses<'_, '_> {
         match &loan.source.root {
             flow::Root::Temporary { .. } => self.expression(receiver, true),
             flow::Root::Binding(_) => {
+                if self.place(receiver)?.is_some() {
+                    return Ok(());
+                }
                 let inner = super::super::builtins::view_call(receiver);
                 if !self.proof.graph.invocations.contains_key(&inner.span) && self.proof.carrier_loan(inner).is_none() {
                     return Err("source access method receiver has no stored place");
@@ -525,11 +614,27 @@ impl SourceAccesses<'_, '_> {
             return self.invocation_arguments(invocation, arguments);
         }
         let carrier = super::super::builtins::carrier_constructor(self.proof.facts, callee).is_some();
+        let construction = self.proof.facts.constructor_field_binding(expression.span).is_some();
         for argument in arguments {
             let (CallArg::Positional(value) | CallArg::Named(_, value)) = argument else {
                 return Err("source access needs fixed call arguments");
             };
-            self.expression(value, carrier)?;
+            let consume = carrier
+                || (construction
+                    && self.place(value)?.is_some_and(|(place, through)| {
+                        through.is_none()
+                            && self
+                                .proof
+                                .graph
+                                .permissions
+                                .get(&place.root)
+                                .is_some_and(|permission| permission.transferable)
+                    })
+                    && !self.copy_value(value)?);
+            if consume && let Some((place, _)) = self.place(value)? {
+                self.constrained.insert(place.root);
+            }
+            self.expression(value, consume)?;
         }
         Ok(())
     }
@@ -791,6 +896,16 @@ impl SourceAccesses<'_, '_> {
                             flow::Access::Replace
                         },
                     )?;
+                }
+                Statement::IndexAssignment(assignment) => {
+                    let (mut place, through) = self
+                        .place(&assignment.object)?
+                        .ok_or("index write has no source owner")?;
+                    place.projection.push(flow::Projection::Element(assignment.index.span));
+                    self.place_evaluation(&assignment.object)?;
+                    self.expression(&assignment.index, false)?;
+                    self.expression(&assignment.value, true)?;
+                    self.access(assignment.index.span, &place, through, flow::Access::Write)?;
                 }
                 Statement::Assert(assertion) => {
                     let AssertKind::Condition(condition) = &assertion.kind else {
