@@ -192,6 +192,7 @@ def verify_local_bakery_graph_refresh(scratch: Path) -> Result[None, str]:
 
     first = compile_rust_library(facet, declared, scratch.joinpath("first-output"), request, {}, [])?
     assert not first.reused
+    first_bytes = Path(first.artifact).read_bytes().map_err((error) => error.message())?
     assert read(native_attempts)? == "x"
     assert read(graph_attempts)? == "x"
 
@@ -199,6 +200,7 @@ def verify_local_bakery_graph_refresh(scratch: Path) -> Result[None, str]:
     request.project = scratch.joinpath("second-consumer").0
     second = compile_rust_library(facet, declared, scratch.joinpath("second-output"), request, {}, [])?
     assert second.reused
+    assert Path(second.artifact).read_bytes().map_err((error) => error.message())? == first_bytes
     assert read(native_attempts)? == "x"
     assert read(graph_attempts)? == "xx"
 
