@@ -6,7 +6,6 @@ order. Blocks are indexed from zero. Every source-bearing node keeps its Incan
 location, including operands and places, so native diagnostics retain provenance.
 """
 
-from pub::internal_models.checked_types import CheckedType as SemanticType
 pub from _types import (
     TupleElement,
     SourceSpan,
@@ -52,340 +51,31 @@ pub from _body import (
 )
 
 
-@derive(Clone, PartialEq)
-pub enum AttributeValue:
-    """A literal an attribute macro receives as a Rust literal; a list keeps its elements in written order."""
-
-    Text(str)
-    Int(int)
-    Float(float)
-    Bool(bool)
-    List(list[AttributeValue])
-
-
-@derive(Clone, PartialEq)
-pub model AttributeArgument:
-    """One attribute argument; an empty name marks a positional one."""
-
-    pub name: str
-    pub value: AttributeValue
-
-
-@derive(Clone, PartialEq)
-pub model NativeAttribute:
-    """One exported attribute macro applied to a declaration: its canonical Rust path and written arguments."""
-
-    pub path: str
-    pub arguments: list[AttributeArgument]
-
-
-@derive(Clone, PartialEq)
-pub model GenericLoan:
-    """One source type parameter's occurrence in a concrete signature, preserving its nested native loans."""
-
-    pub slot: int
-    pub path: list[int]
-    pub parameter: int
-    pub ty: PlanType
-
-
-@derive(Clone, PartialEq)
-pub model Function:
-    """A declaration and its body, with locals zero through parameter count reserved."""
-
-    pub name: str
-    pub parameters: list[Parameter]
-    pub return_type: PlanType
-    pub locals: list[Local]
-    pub blocks: list[BasicBlock]
-    pub span: SourceSpan
-    # A coroutine's constructor is native; its executable body still comes entirely from this plan.
-    pub is_async: bool = false
-    # Only the explicit boxing constructor retains native MIR for this callee.
-    pub future_callee: Option[Callee] = None
-    # Attribute macros rustc expands on the declaration; the macro's output replaces it.
-    pub attributes: list[NativeAttribute] = []
-    # Reference preorder for each parameter and the result; equal nonempty names retain one source generic loan.
-    # Empty names keep ordinary elision, including the independent outer borrow of a mutable collection.
-    pub signature_lifetimes: list[list[str]] = []
-    # Type-parameter provenance retains hidden native lifetime arguments independently of explicit references.
-    pub generic_loans: list[GenericLoan] = []
-    # Parameter slot whose loan is retained inside an owned native result; -1 means no retained result source.
-    pub retained_result_source: int = -1
-
-
-@derive(Clone, PartialEq)
-pub model Plan:
-    """
-    A native crate with scalar functions, plain nominal layouts and normal enums; external functions are admitted by canonical path.
-
-    External declarations give validation a signature and explicit type arguments before rustc runs. The
-    adapter verifies those signatures against the loaded dependency metadata.
-    """
-
-    pub enums: list[EnumDeclaration]
-    pub models: list[ModelDeclaration]
-    pub functions: list[Function]
-    pub externals: list[ExternalFunction]
-    pub span: SourceSpan
-    # Computed static storage the adapter declares, each initialized by its planned initializer function.
-    pub statics: list[StaticCell] = []
-    # A library plan's public names, each re-exported at the crate root; an executable plan has none.
-    pub exports: list[PlanExport] = []
-    # Collected test entry functions; the adapter registers these with rustc's native test harness.
-    pub tests: list[str] = []
-    # A governed runtime's checked zip result owns each consumer-local carrier; absent entries use the linked ABI.
-    pub zip_carriers: list[ZipCarrier] = []
-    # Canonically lowered program entries; rustc applies Termination to the one selected for this process.
-    pub programs: list[str] = []
-    # A library publishes each generic ADT once; concrete layouts alias its instantiations.
-    pub generic_models: list[GenericModelDeclaration] = []
-    pub generic_enums: list[GenericEnumDeclaration] = []
-
-
-@derive(Clone, PartialEq)
-pub enum GenericLayoutType:
-    """A generic ADT field's checked type; function-pointer signatures retain inputs followed by one result entry."""
-
-    Parameter(str)
-    Concrete(PlanType)
-    Applied(str, list[GenericLayoutType])
-    Tuple(list[GenericLayoutType])
-    # Declaration-order native inputs followed by the result; never an empty signature.
-    FunctionPointer(list[GenericLayoutType])
-
-
-@derive(Clone, PartialEq)
-pub model GenericLayoutField:
-    """One source field in a generic ADT, in declaration order and with its checked visibility."""
-
-    pub name: str
-    pub ty: GenericLayoutType
-    pub public: bool
-
-
-@derive(Clone, PartialEq)
-pub model GenericModelDeclaration:
-    """A provider-owned generic ADT whose parameters, fields, and derive authority come from its checked declaration."""
-
-    pub name: str
-    pub source_name: str
-    pub parameters: list[str]
-    pub fields: list[GenericLayoutField]
-    pub derives: list[str]
-    pub span: SourceSpan
-
-
-@derive(Clone, PartialEq)
-pub model GenericEnumVariant:
-    """One authored variant with generic payload types in declaration order."""
-
-    pub name: str
-    pub fields: list[GenericLayoutType]
-
-
-@derive(Clone, PartialEq)
-pub model GenericEnumDeclaration:
-    """One provider-owned generic enum template; closed plans alias it with exact type arguments."""
-
-    pub name: str
-    pub parameters: list[str]
-    pub variants: list[GenericEnumVariant]
-    pub derives: list[str]
-    pub span: SourceSpan
-
-
-@derive(Clone, PartialEq)
-pub model ZipCarrier:
-    """Associate a builtin zip's checked element layouts with the published runtime result's closed source carrier."""
-
-    pub left: TupleElement
-    pub right: TupleElement
-    pub target: PlanType
-
-
-@derive(Clone, PartialEq)
-pub model PlanExport:
-    """
-    One public name a library plan publishes, emitted as `pub use <path> as <name>;` at the crate root.
-
-    `path` is either a planned item of this crate (`crate::<item>`) or a Rust item the library re-exports (`::<path>`).
-    """
-
-    pub name: str
-    pub path: str
-
-
-@derive(Clone, PartialEq)
-pub model StaticCell:
-    """
-    One computed module static's native storage: a lazily initialized cell holding a value of `ty`.
-
-    The adapter declares the cell and its load, store and force accessors; `initializer` names the planned function
-    with no parameters that computes the first value, run at most once, when the cell is first forced or read.
-    """
-
-    pub slot: int
-    pub ty: PlanType
-    pub initializer: str
-    pub span: SourceSpan
-    # Only the first computed cell of a module owns its initialization completion flag.
-    pub module_completion: bool = false
-
-
-@derive(Clone, PartialEq)
-pub model IteratorMethods:
-    """Checked source poll and item carrier authorizing an ordinary native SDK iterator implementation."""
-
-    pub item: PlanType
-    pub next: str
-
-
-@derive(Clone, PartialEq)
-pub model FallibleIteratorMethods:
-    """Complete standard default selection and the source poll body authorizing one concrete native implementation."""
-
-    pub item: PlanType
-    pub error: PlanType
-    pub next: str
-
-
-@derive(Clone, PartialEq)
-pub model NativeTraitMethod:
-    """A Rust trait method filled by a planned source method; rustc checks the implementation's signature."""
-
-    pub name: str
-    pub function: str
-
-
-@derive(Clone, PartialEq)
-pub model NativeTraitAdoption:
-    """A class's request to implement a concrete Rust trait; rustc proves the implementation, not this record."""
-
-    pub path: str
-    pub methods: list[NativeTraitMethod]
-
-
-@derive(Clone, PartialEq)
-pub model ModelDeclaration:
-    """
-    Checked field layout and implicit derives for one concrete source nominal layout.
-
-    A newtype has exactly one public field named `0`, emitted as a tuple slot; named model fields retain their names.
-    """
-
-    pub name: str
-    pub public: bool
-    pub fields: list[Parameter]
-    pub field_public: list[bool]
-    pub derives: list[str]
-    pub span: SourceSpan
-    # Source-owned closed generic carriers retain one native lifetime parameter for each reference in their field
-    # layout. Zero keeps the ordinary owned-layout declaration.
-    pub view_lifetime_count: int = 0
-    # A specialized carrier keeps its source name for derived Debug and declaration metadata.
-    pub source_name: str = ""
-    # A stdlib layout names the compiled SDK crate item that owns its storage; the plan never declares it. With no
-    # fields the layout is opaque: its values move and drop, but no field is read or written.
-    pub library_item: str = ""
-    # A closed SDK alias keeps the checked arguments of its declaring model's type parameters.
-    pub library_type_arguments: list[PlanType] = []
-    # Per field, the name a serde form uses where a checked alias renames it, as legacy's `#[serde(rename)]`
-    # does; an empty entry keeps the field name, and no entries means no field is renamed.
-    pub field_serde_names: list[str] = []
-    # A checked Deserialize forwards std String ingress to this exact planned root; empty keeps ordinary derives.
-    # The native boundary validates its standard Result<owner,str> signature before injecting the Rust TryFrom header.
-    pub checked_deserialize: str = ""
-    # None grants no generated hook; an empty list is an authorized empty metadata surface.
-    pub reflection_metadata: Option[list[FieldMetadata]] = None
-    # The checked primitive declaration owns generated field records. Equal-spelled user records do not gain this role.
-    pub field_metadata_carrier: bool = false
-    # Exact source comparison symbols: equality alone, or equality followed by lt/le/gt/ge. Empty grants no bridge.
-    pub comparison_methods: list[str] = []
-    # A source adoption grants native authority only after every standard slot and the poll ABI are checked.
-    pub fallible_iterator: Option[FallibleIteratorMethods] = None
-    # Ordinary native Iterator needs only the selected poll; its sum default remains SDK-owned.
-    pub iterator: Option[IteratorMethods] = None
-    # A checked standard Callable1 member and its ordered owned input/output carriers; empty grants no bridge.
-    pub callable_method: str = ""
-    pub callable_signature: list[PlanType] = []
-    # The selected source SDK TryFrom[str] identity authenticates this planned Incan conversion root.
-    # Empty paired fields grant no conversion, independently of serde's native Rust TryFrom contract.
-    pub string_conversion_root: str = ""
-    pub string_conversion_trait: str = ""
-    # Rust traits a source class implements with its own methods; empty implements none.
-    pub native_trait_adoptions: list[NativeTraitAdoption] = []
-    # Native field slots the plan cannot carry. Each keeps a unit placeholder type that never authorizes a read, a
-    # write or a construction of the layout.
-    pub unavailable_native_fields: list[int] = []
-
-
-@derive(Clone, PartialEq)
-pub model ExternalFunction:
-    """The signature of a canonical dependency function used by this plan."""
-
-    pub path: str
-    pub type_arguments: list[PlanType] = []
-    pub parameters: list[PlanType]
-    pub return_type: PlanType
-    pub span: SourceSpan
-
-
-pub def semantic_type_matches(declaration: &EnumDeclaration, ty: &SemanticType) -> bool:
-    """Compare a retained carrier's exact checked type without reconstructing identity from diagnostic text."""
-    match declaration.semantic_key:
-        Some(retained) => return retained == ty.clone()
-        None => return false
-
-
-@derive(Clone, PartialEq)
-pub enum Carrier:
-    """
-    Which standard enum a retained layout instantiates. `Option` lays out `None` then `Some`, and `Result` lays out `Ok`
-    then `Err`; any other enum is `Declared`, with its variants in source declaration order.
-    """
-
-    Declared
-    Option
-    Result
-
-
-@derive(Clone, PartialEq)
-pub model EnumDeclaration:
-    """Checked normal enum layout; variant indices follow source declaration order."""
-
-    pub name: str
-    pub public: bool
-    pub variants: list[EnumVariant]
-    pub derives: list[str]
-    pub span: SourceSpan
-    # Source-owned enum payloads retain one native lifetime parameter for each reference in source variant order.
-    # Zero keeps the ordinary owned-layout declaration.
-    pub view_lifetime_count: int = 0
-    # Standard carriers use their concrete type arguments from the variant fields.
-    pub carrier: Carrier = Carrier.Declared
-    # The exact checked carrier witness is used for identity; source_type remains diagnostic presentation only.
-    pub semantic_key: Option[SemanticType] = None
-    pub source_type: str = ""
-    # A union's Debug prints the member it holds, as legacy's hand-written impl does; it is never derived.
-    pub member_debug: bool = false
-    # A stdlib enum names the compiled SDK crate item that owns it; the plan never declares it.
-    pub library_item: str = ""
-    # Closed SDK alias arguments retained from the checked enum instance, in declaration order.
-    pub library_type_arguments: list[PlanType] = []
-    # A value enum's backing ("str" or "int") and its raw values in variant order, which its serde form writes and
-    # reads as legacy's hand-written impls do; empty for any other enum.
-    pub raw_kind: str = ""
-    pub raw_values: list[str] = []
-    # Checked source equality and ordering bodies; the adapter validates their exact enum input ABI before bridging.
-    pub comparison_methods: list[str] = []
-    # Exact callable object aliases for environment-holding union variants, in their physical order.
-    pub closure_items: list[str] = []
-
-
-@derive(Clone, PartialEq)
-pub model EnumVariant:
-    """One unit or positional payload variant; its field types are checker facts."""
-
-    pub name: str
-    pub fields: list[PlanType]
+pub from _plan import (
+    AttributeValue,
+    AttributeArgument,
+    NativeAttribute,
+    GenericLoan,
+    Function,
+    Plan,
+    GenericLayoutType,
+    GenericLayoutField,
+    GenericModelDeclaration,
+    GenericEnumVariant,
+    GenericEnumDeclaration,
+    ZipCarrier,
+    PlanExport,
+    StaticCell,
+    IteratorMethods,
+    FallibleIteratorMethods,
+    NativeTraitMethod,
+    NativeTraitAdoption,
+    ModelDeclaration,
+    ExternalFunction,
+    semantic_type_matches,
+    Carrier,
+    EnumDeclaration,
+    EnumVariant,
+)
+pub from function_records import encode_product, decode_product, encode_scalar, decode_scalar
+pub from record_codec import encode_record_plan, decode_record_plan, encode_entry_binding
