@@ -3,6 +3,7 @@
 from std.fs import Path
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
+from driver_evidence import driver_qualification, retain_driver_evidence
 from native_build import (
     LOWERING_RESERVATION_BYTES,
     PROJECT_RESERVATION_BYTES,
@@ -240,6 +241,74 @@ def test_reference_cache_identity_covers_seed_bundle_and_committed_contract_tree
     assert reference_cache_identity(oven, lsp, manifest, "tree-b")? != original
     lsp.write_bytes(b"lsp-b").map_err((error) => error.message())?
     assert reference_cache_identity(oven, lsp, manifest, "tree-a")? != original
+    return Ok(None)
+
+
+def test_driver_evidence_retains_qualified_unit_identities_and_dependency_scans() -> Result[None, str]:
+    """Compiler, sysroot and SDK bytes key complete driver library evidence while the binary remains refused."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    compiler = temporary.path().joinpath("compiler/rustc")
+    sysroot = temporary.path().joinpath("sysroot")
+    sdk = temporary.path().joinpath("sdk/SDKSettings.json")
+    compiler.parent().mkdir(true, true).map_err((error) => error.message())?
+    sysroot.joinpath("lib").mkdir(true, true).map_err((error) => error.message())?
+    sdk.parent().mkdir(true, true).map_err((error) => error.message())?
+    compiler.write_bytes(b"compiler-a").map_err((error) => error.message())?
+    sysroot.joinpath("lib/libstd.rlib").write_bytes(b"sysroot-a").map_err((error) => error.message())?
+    sdk.write_bytes(b"sdk-a").map_err((error) => error.message())?
+
+    original = driver_qualification(compiler, sysroot, sdk)?
+    compiler.write_bytes(b"compiler-b").map_err((error) => error.message())?
+    assert driver_qualification(compiler, sysroot, sdk)?.identity != original.identity
+    compiler.write_bytes(b"compiler-a").map_err((error) => error.message())?
+    sysroot.joinpath("lib/libstd.rlib").write_bytes(b"sysroot-b").map_err((error) => error.message())?
+    assert driver_qualification(compiler, sysroot, sdk)?.identity != original.identity
+    sysroot.joinpath("lib/libstd.rlib").write_bytes(b"sysroot-a").map_err((error) => error.message())?
+    sdk.write_bytes(b"sdk-b").map_err((error) => error.message())?
+    assert driver_qualification(compiler, sysroot, sdk)?.identity != original.identity
+    sdk.write_bytes(b"sdk-a").map_err((error) => error.message())?
+
+    target = temporary.path().joinpath("target")
+    unit = target.joinpath("incan_driver-unit")
+    unit.mkdir(true, true).map_err((error) => error.message())?
+    native = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    unit
+        .joinpath("library.d")
+        .write_text("library: src/lib.rs\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    unit
+        .joinpath("library.portable-inputs")
+        .write_text(native + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    unit.joinpath("incan_driver.incngraph").write_bytes(b"graph").map_err((error) => error.message())?
+    publication = JsonValue.object({"unit": JsonValue.string(native)})
+    unit
+        .joinpath("libincan_driver.rlib.oven-unit")
+        .write_text(publication.to_json().map_err((error) => error.message())?, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    target.joinpath("bin").mkdir(true, true).map_err((error) => error.message())?
+    target
+        .joinpath("bin/incan-rustc-driver.d")
+        .write_text("driver: src/main.rs\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    retained = retain_driver_evidence(target, temporary.path().joinpath("release"), compiler, sysroot, sdk)?
+    assert retained.identity == original.identity
+    assert retained.units == 1
+    assert retained.bytes > 0
+    assert retained.directory.joinpath("incan_driver/library.d").is_file()
+    assert retained.directory.joinpath("incan_driver/library.portable-inputs").is_file()
+    assert retained.directory.joinpath("binary/incan-rustc-driver.d").is_file()
+    manifest = JsonValue
+        .parse(
+            retained.directory
+                .joinpath("manifest.json")
+                .read_text("utf-8", "strict")
+                .map_err((error) => error.message())?,
+        )
+        .map_err((error) => error.message())?
+    assert manifest.require("schema").and_then((value) => value.expect_str()).map_err((error) => error.message())? == "incan.release-driver-units/1"
+    binary = manifest.require("binary").map_err((error) => error.message())?
+    assert binary.require("unit_identity").map_err((error) => error.message())?.is_null()
     return Ok(None)
 
 

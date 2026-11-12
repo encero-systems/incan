@@ -8,6 +8,7 @@ from std.environ import args, get_or
 from std.fs import Path
 from std.json import JsonValue
 from check_support import repository_root, write_stderr
+from driver_evidence import retain_driver_evidence
 from native_build import (
     NativeContext,
     PendingToolBuild,
@@ -493,6 +494,7 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
     run.trace.finish(driver_span)?
     driver_result?
     append_timing(run.paths.output.joinpath("timings.tsv"), "driver-build", driver_started.elapsed().as_secs_f64())?
+    retain_driver_build_evidence(run)?
     context = native_context(run, candidate.oven, run.paths.home)
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
     interfaces_started = Instant.now()
@@ -506,6 +508,22 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
     require_unique_runtime_root(context)?
     lsp, pending = build_candidate_standard_and_start_lsp(context, helper, "candidate-")?
     return Ok(Candidate(context=context, oven=candidate.oven, lsp=lsp, pending_lsp=pending))
+
+
+def retain_driver_build_evidence(run: ReleaseRun) -> Result[None, str]:
+    """Retain compiler-qualified unit identities and dependency scans before release scratch is reclaimed."""
+    manifest = read_json(run.paths.toolchain.joinpath("toolchain.json"))?
+    mut sysroot_text = manifest_string(manifest, "sysroot")?
+    if not sysroot_text.startswith("/"):
+        sysroot_text = run.paths.toolchain.joinpath(sysroot_text).0
+    sysroot = Path(sysroot_text)
+    mut sdk_settings = Path("")
+    sdk = get_or("SDKROOT", "")
+    if sdk != "":
+        sdk_settings = Path(sdk).joinpath("SDKSettings.json")
+    target = run.paths.source.joinpath("loaves/toolchain/incan-rustc-driver/target/incan/rust/release")
+    retained = retain_driver_evidence(target, run.paths.output, sysroot.joinpath("bin/rustc"), sysroot, sdk_settings)?
+    return append_bytes(run.paths.output.joinpath("timings.tsv"), "driver-unit-evidence", retained.bytes)
 
 
 def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
