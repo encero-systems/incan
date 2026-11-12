@@ -9,6 +9,7 @@ from native_build import (
     STANDARD_RESERVATION_BYTES,
     StandardGeneration,
     StandardProfile,
+    overlapping_project_capacity,
     standard_build_waves,
     standard_profiles,
 )
@@ -71,6 +72,9 @@ def test_release_build_admission_uses_declared_lowering_project_and_standard_mem
     assert waves[1] == ["codecs", "compression", "data"]
     assert waves[2] == ["vocab"]
     assert waves[3] == ["interop"]
+    assert overlapping_project_capacity(4, 10 * gib) == Some((3, 8 * gib))
+    assert overlapping_project_capacity(1, 10 * gib) == None
+    assert overlapping_project_capacity(4, 3 * gib) == None
     return Ok(None)
 
 

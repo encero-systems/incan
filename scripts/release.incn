@@ -10,13 +10,17 @@ from std.json import JsonValue
 from check_support import repository_root, write_stderr
 from native_build import (
     NativeContext,
+    PendingToolBuild,
     StandardGeneration,
     StandardProfile,
     build_runtime,
-    build_shipped_tools_with_standard_profile,
+    build_candidate_standard_and_start_lsp,
+    build_oven_with_standard_profile,
     build_source_interfaces,
     build_source_tools,
     build_standard_packages,
+    cancel_tool_build,
+    finish_tool_build,
     publish_support,
     require_unique_runtime_root,
     standard_profiles,
@@ -93,6 +97,7 @@ pub model Candidate:
     pub context: NativeContext
     pub oven: Path
     pub lsp: Path
+    pub pending_lsp: Option[PendingToolBuild]
 
 
 pub model ReleaseTreeBytes:
@@ -466,7 +471,7 @@ def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
     _ = build_runtime(context, helper, Some(interfaces), true, "candidate-")?
     require_unique_runtime_root(context)?
     build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))?
-    return Ok(Candidate(context=context, oven=conductor, lsp=Path("")))
+    return Ok(Candidate(context=context, oven=conductor, lsp=Path(""), pending_lsp=None))
 
 
 def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
@@ -499,19 +504,36 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
     )?
     _ = build_runtime(context, helper, Some(interfaces), true)?
     require_unique_runtime_root(context)?
-    build_standard_packages(context, helper, "candidate-", [StandardProfile.Release])?
-    return Ok(Candidate(context=context, oven=candidate.oven, lsp=candidate.lsp))
+    lsp, pending = build_candidate_standard_and_start_lsp(context, helper, "candidate-")?
+    return Ok(Candidate(context=context, oven=candidate.oven, lsp=lsp, pending_lsp=pending))
 
 
 def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
     """Build the shipped tools, copy the bundle tools, and pack the installed candidate toolchain."""
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
-    tools = build_shipped_tools_with_standard_profile(candidate.context, helper, "candidate-", StandardProfile.Debug)?
+    overlap = candidate.pending_lsp.is_some()
+    oven = match build_oven_with_standard_profile(
+        candidate.context,
+        helper,
+        "candidate-",
+        StandardProfile.Debug,
+        overlap,
+    ):
+        Ok(built) => built
+        Err(message) =>
+            if let Some(pending) = candidate.pending_lsp:
+                _ = cancel_tool_build(pending)
+            return Err(message)
+
+    lsp = match candidate.pending_lsp:
+        Some(pending) => finish_tool_build(candidate.context, pending)?
+        None => candidate.lsp
+
     bundle_oven = run.paths.bundle.joinpath("incan")
-    _ = tools.oven.copy(bundle_oven, true, true).map_err((error) => error.message())?
+    _ = oven.copy(bundle_oven, true, true).map_err((error) => error.message())?
     context = native_context(run, bundle_oven, run.paths.home)
     bundle_lsp = run.paths.bundle.joinpath("incan-lsp")
-    _ = tools.lsp.copy(bundle_lsp, true, true).map_err((error) => error.message())?
+    _ = lsp.copy(bundle_lsp, true, true).map_err((error) => error.message())?
     require_release_step(
         run,
         release_step(
@@ -523,7 +545,7 @@ def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str
             build_environment(run, run.paths.home, bundle_oven),
         ),
     )?
-    return Ok(Candidate(context=context, oven=bundle_oven, lsp=bundle_lsp))
+    return Ok(Candidate(context=context, oven=bundle_oven, lsp=bundle_lsp, pending_lsp=None))
 
 
 def reference_census(run: ReleaseRun, timings: Path) -> Result[Path, str]:
