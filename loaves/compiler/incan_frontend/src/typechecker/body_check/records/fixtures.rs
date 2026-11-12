@@ -136,6 +136,20 @@ pub(crate) fn produce_local_record(
     declaration: Fields,
     environment: Vec<(String, String, Fields)>,
 ) -> Result<Fields, NodeBindingError> {
+    let (checker, owner) = projected_local_checker(source, name, declaration, environment)?;
+    checker
+        .produced_local_record(owner)
+        .cloned()
+        .ok_or_else(|| NodeBindingError::InvalidField("projected local record is absent".into()))
+}
+
+/// Build the private checker used by the local-record producer so tests can inspect its publication boundary.
+fn projected_local_checker(
+    source: &str,
+    name: &str,
+    declaration: Fields,
+    environment: Vec<(String, String, Fields)>,
+) -> Result<(TypeChecker, Span), NodeBindingError> {
     let tokens = crate::lexer::lex(source).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
     let program = crate::parser::parse(&tokens).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
     let selected = program
@@ -159,11 +173,25 @@ pub(crate) fn produce_local_record(
         return Err(NodeBindingError::BaselineDifference("local declaration input".into()));
     }
     checker.retain_declaration_record(owner, declaration);
-    checker.check_environment_record_declaration(&program, selected);
-    checker
-        .produced_local_record(owner)
-        .cloned()
-        .ok_or_else(|| NodeBindingError::InvalidField("projected local record is absent".into()))
+    let crate::ast::Declaration::Function(function) = &selected.node else {
+        return Err(NodeBindingError::MissingOwner);
+    };
+    checker.check_reused_function(&program, function, owner);
+    Ok((checker, owner))
+}
+
+/// Prove a selected declaration remains available when the current revision evaluates its local body record.
+#[cfg(test)]
+pub(crate) fn selected_declaration_survives_local_projection(source: &str, name: &str) -> Result<(), NodeBindingError> {
+    let declaration = fixture_record(source, name, true)?;
+    let expected = declaration.clone();
+    let (checker, owner) = projected_local_checker(source, name, declaration, Vec::new())?;
+    if checker.available_declaration_record(owner) == Some(&expected) {
+        return Ok(());
+    }
+    Err(NodeBindingError::InvalidField(
+        "selected declaration record was not retained for publication".into(),
+    ))
 }
 
 /// Install one authenticated sibling signature without requiring its source declaration in the projected program.

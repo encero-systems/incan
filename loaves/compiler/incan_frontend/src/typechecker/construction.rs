@@ -22,6 +22,7 @@ impl TypeChecker {
             checked_bodies: Vec::new(),
             checked_declarations: Vec::new(),
             produced_declaration_records: std::collections::BTreeMap::new(),
+            selected_declaration_records: std::collections::BTreeMap::new(),
             produced_local_records: std::collections::BTreeMap::new(),
             selected_local_records: std::collections::BTreeMap::new(),
             selected_final_records: std::collections::BTreeMap::new(),

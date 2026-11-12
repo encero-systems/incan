@@ -39,6 +39,7 @@ fn graph_body_records_restore_through_checked_body_assembly() -> Result<(), Box<
     assert_eq!(work.final_record_evaluations, 0);
     assert_eq!(work.body_view_reuses, 1);
     let owner = program.declarations.first().ok_or("missing declaration")?.span;
+    assert!(selected.available_declaration_record(owner).is_some());
     assert_eq!(selected.available_local_record(owner), Some(&local));
     assert_eq!(selected.available_final_record(owner), Some(&final_value));
 
@@ -52,6 +53,14 @@ fn graph_body_records_restore_through_checked_body_assembly() -> Result<(), Box<
     assert_eq!(fallback_work.function_bodies, 1);
     assert_eq!(fallback_work.local_record_evaluations, 1);
     assert_eq!(fallback_work.final_record_evaluations, 1);
+    Ok(())
+}
+
+#[test]
+fn selected_declaration_is_republished_with_a_fresh_local_body() -> Result<(), Box<dyn std::error::Error>> {
+    let source =
+        "def output_index_key(profile: str, output: str) -> str:\n    key = profile + output\n    return key\n";
+    super::records::selected_declaration_survives_local_projection(source, "output_index_key")?;
     Ok(())
 }
 

@@ -196,6 +196,7 @@ impl TypeChecker {
         self.checked_bodies.clear();
         self.checked_declarations.clear();
         self.produced_declaration_records.clear();
+        self.selected_declaration_records.clear();
         self.produced_local_records.clear();
         self.selected_local_records.clear();
         self.selected_final_records.clear();
