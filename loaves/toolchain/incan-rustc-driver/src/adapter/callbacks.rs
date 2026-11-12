@@ -14,15 +14,15 @@ impl Callbacks {
     }
 
     /// Declare checked callables before their program entries, retaining typed function-span failures across fatal
-    /// errors. A program groups its callables by source file, one module each, re-exported at the crate root:
-    /// rustc forms codegen units per module, so one root module would optimize the whole unit on a single thread.
+    /// errors. A program groups callables into fixed modules by stable compiler definition identity: rustc forms
+    /// codegen units per module without repartitioning unrelated definitions as files or declaration counts change.
     pub(super) fn declare_callables(
         &self,
         compiler: &interface::Compiler,
         krate: &mut ast::Crate,
         sources: &Sources<'_>,
     ) {
-        let mut grouped: std::collections::BTreeMap<&str, Vec<Box<ast::Item>>> = std::collections::BTreeMap::new();
+        let mut grouped: std::collections::BTreeMap<usize, Vec<Box<ast::Item>>> = std::collections::BTreeMap::new();
         for function in &self.plan.functions {
             let span = match sources.span(&function.span) {
                 Ok(span) => span,
@@ -60,15 +60,18 @@ impl Callbacks {
                 ));
             }
             if self.partition {
-                grouped.entry(function.span.file.as_str()).or_default().push(item);
+                grouped
+                    .entry(self.reader.function_partition(&function.name))
+                    .or_default()
+                    .push(item);
             } else {
                 krate.items.push(item);
             }
         }
-        for (index, items) in grouped.into_values().enumerate() {
+        for (partition, items) in grouped {
             krate
                 .items
-                .extend(declarations::partition_module(index, items, krate.spans.inner_span));
+                .extend(declarations::partition_module(partition, items, krate.spans.inner_span));
         }
         if !self.plan.programs.is_empty() {
             krate.items.push(

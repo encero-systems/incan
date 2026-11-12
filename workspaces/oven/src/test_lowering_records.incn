@@ -30,6 +30,8 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     edited_fingerprints = native_fingerprints(root)?
     assert fingerprint_for(edited_fingerprints, "greeting")? != fingerprint_for(initial_fingerprints, "greeting")?
     assert fingerprint_for(edited_fingerprints, "main")? == fingerprint_for(initial_fingerprints, "main")?
+    assert partition_for(edited_fingerprints, "greeting")? == partition_for(initial_fingerprints, "greeting")?
+    assert partition_for(edited_fingerprints, "main")? == partition_for(initial_fingerprints, "main")?
     diagnostic = edited.to_json().map_err((error) => error.message())?
     assert proof_count(edited, "plan_function_evaluations")? == 1, diagnostic
     assert proof_count(edited, "plan_function_reuses")? == 2, diagnostic
@@ -138,7 +140,15 @@ def native_fingerprints(root: Path) -> Result[list[str], str]:
 
 def fingerprint_for(rows: list[str], function: str) -> Result[str, str]:
     """Select one function's complete tracked fingerprint without accepting duplicates."""
-    matches = [row.split("\t")[2] for row in rows if len(row.split("\t")) == 3 and row.split("\t")[1] == function]
+    matches = [row.split("\t")[2] for row in rows if len(row.split("\t")) == 4 and row.split("\t")[1] == function]
     if len(matches) != 1:
         return Err(f"native fingerprint report has {len(matches)} rows for {function}: {rows}")
+    return Ok(matches[0])
+
+
+def partition_for(rows: list[str], function: str) -> Result[str, str]:
+    """Select one function's fixed native partition without accepting duplicates."""
+    matches = [row.split("\t")[3] for row in rows if len(row.split("\t")) == 4 and row.split("\t")[1] == function]
+    if len(matches) != 1:
+        return Err(f"native fingerprint report has {len(matches)} partitions for {function}: {rows}")
     return Ok(matches[0])
