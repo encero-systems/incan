@@ -36,8 +36,8 @@ static COMPILATION: Mutex<()> = Mutex::new(());
 static PLAN: Mutex<Option<Arc<PlanReader>>> = Mutex::new(None);
 /// Typed errors raised while loading metadata or source locations survive rustc's fatal-error boundary.
 static FAILURE: Mutex<Option<PlanError>> = Mutex::new(None);
-/// Qualification found behavior-correct but byte-different dev executables; BE-15 keeps reuse off until that closes.
-const NATIVE_INCREMENTAL_QUALIFIED: bool = false;
+/// Qualified development reuse requires tracked plan records and content-addressed Darwin link inputs.
+const NATIVE_INCREMENTAL_QUALIFIED: bool = true;
 
 /// Stable name of rustc's empty synthetic input; authored source spans are loaded separately from the native plan.
 const SYNTHETIC_SOURCE_NAME: &str = "source";
