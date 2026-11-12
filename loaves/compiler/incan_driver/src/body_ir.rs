@@ -123,6 +123,9 @@ fn authored_components(
 }
 
 /// Place source components in dependency-ready waves while retaining their stable collected order within each wave.
+///
+/// Parsed module order is an output-order contract, not a topological-order contract. Standard packages can collect a
+/// consumer before its imported provider, so readiness is derived from the component graph itself.
 fn component_waves(components: &[AuthoredComponent], module_count: usize) -> Result<Vec<Vec<usize>>, String> {
     let mut component_by_module = vec![usize::MAX; module_count];
     for (component_index, component) in components.iter().enumerate() {
@@ -130,24 +133,55 @@ fn component_waves(components: &[AuthoredComponent], module_count: usize) -> Res
             component_by_module[member] = component_index;
         }
     }
-    let mut depths = vec![0usize; components.len()];
-    let mut waves = Vec::<Vec<usize>>::new();
-    for (component_index, component) in components.iter().enumerate() {
-        let mut depth = 0usize;
-        for &dependency in &component.dependencies {
-            let dependency_component = component_by_module[dependency];
-            if dependency_component >= component_index {
-                return Err("Body IR source components are not in dependency order".to_string());
-            }
-            depth = depth.max(depths[dependency_component] + 1);
+    let dependencies = components
+        .iter()
+        .map(|component| {
+            component
+                .dependencies
+                .iter()
+                .map(|dependency| component_by_module[*dependency])
+                .collect::<BTreeSet<_>>()
+        })
+        .collect::<Vec<_>>();
+    let mut complete = vec![false; components.len()];
+    let mut waves = Vec::new();
+    while complete.iter().any(|done| !done) {
+        let ready = dependencies
+            .iter()
+            .enumerate()
+            .filter(|(index, required)| !complete[*index] && required.iter().all(|dependency| complete[*dependency]))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if ready.is_empty() {
+            return Err("Body IR source component graph remains cyclic after import-cycle grouping".to_string());
         }
-        depths[component_index] = depth;
-        if waves.len() <= depth {
-            waves.resize_with(depth + 1, Vec::new);
+        for &index in &ready {
+            complete[index] = true;
         }
-        waves[depth].push(component_index);
+        waves.push(ready);
     }
     Ok(waves)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn component_waves_do_not_require_dependencies_to_precede_consumers() -> Result<(), String> {
+        let components = vec![
+            AuthoredComponent {
+                members: vec![0],
+                dependencies: vec![1],
+            },
+            AuthoredComponent {
+                members: vec![1],
+                dependencies: Vec::new(),
+            },
+        ];
+        assert_eq!(component_waves(&components, 2)?, vec![vec![1], vec![0]]);
+        Ok(())
+    }
 }
 
 /// Lower one dependency-ready wave with bounded scoped threads and return results in component order.
