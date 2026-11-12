@@ -825,7 +825,7 @@ Baselines come from the baseline measurement of 2026-10-29 (#2481, bundle 0cb030
 | --- | --- | --- | --- | --- | --- |
 | Every override has a tracked input | Correctness | Untracked global `Plan` | Met for injected answers: authenticated function/layout fingerprints are carried by their HIR owners; a two-function body edit changed only the edited function fingerprint | this commit | Existing lowering-record worked example, including the symlinked signature-edit cold comparison |
 | Edited incremental output equals cold output and behavior | Correctness | Not covered | Released and source drivers produced a byte-identical hello binary from one retained input; edited versus cold remains unproved | `0be358dd8` | Retained-input native driver comparison; diagnostic only |
-| CGUs actually regenerated per edit | Efficiency | Whole native unit | Oven one-body edit: 16 of 16 CGUs executed; 1.855 s front end, 0.869 s aggregate codegen and 0.183 s link | `0be358dd8` | One-body native phase trace; diagnostic only |
+| CGUs actually regenerated per edit | Efficiency | Whole native unit | Stable membership established: each function maps by compiler definition identity into one of 16 fixed partitions and retains that partition across a body edit; regeneration counts still require incremental execution | this commit | Existing two-function lowering-record worked example plus structural fixed-partition implementation |
 | Head-to-head rows: hello cold, unchanged, private-body edit, signature edit, two homes, unrelated packages ×1/×2/×4, demanded records ×1/×2/×4, graph and LSP, census, idle workers | Efficiency | Pinned integration tree under BE-28 | | | |
 | Observation overhead | Efficiency | At most 5% | One hello sample showed no regression: 73.37 ms released versus 68.88 ms source native phases; qualification remains unrun | `0be358dd8` | Retained-input native driver comparison; diagnostic only |
 
@@ -860,6 +860,13 @@ existed it failed because no per-definition fingerprint evidence was produced. A
 symlinked-root invalidation, warm/cold plan comparison and warm/cold executable comparison still pass. This proves
 record isolation, not rustc incremental reuse: fixed CGU membership and an edited incremental build remain required
 before the flag can be enabled.
+
+The second E6 step removes source-file grouping followed by dense enumeration. Program functions now select one of
+16 fixed CGU modules by a deterministic hash of their compiler definition identity; empty buckets remain empty rather
+than renumbering later buckets. Adding, moving or editing an unrelated definition therefore cannot rename another
+definition's module. The two-function worked example records the selected bucket and proves that both `greeting` and
+`main` retain it across the `greeting` body edit. This establishes stable membership only; the regeneration row is not
+complete until a development incremental run reports the CGUs rustc actually executed.
 
 #### Native phase diagnostic at `0be358dd8` and the 100 ms path
 
