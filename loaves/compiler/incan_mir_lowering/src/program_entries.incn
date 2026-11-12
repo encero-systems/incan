@@ -470,8 +470,14 @@ def lower_ordinary_frame(
     if len(pending) == 0 and len(synthesized) == 0 and len(intrinsics) == original_intrinsics:
         if let Some(directory) = products:
             if let Some(witness) = inputs:
-                retain_scalar(directory, witness, function, runtime)?
-                report_scalar(record_report, directory, witness, record_identity, function.name, false, len(runtime))?
+                match retain_scalar(directory, witness, function, runtime):
+                    Ok(_) =>
+                        report_scalar(record_report, directory, witness, record_identity, function.name, false, len(runtime))?
+                    Err(reason) =>
+                        # The ordinary compiler already has its complete lowered function. Only a records request
+                        # demands that the optional scalar product be representable and publishable.
+                        if record_report is not None:
+                            return Err(reason)
     elif record_report is not None:
         return Err("plan-function refused: lowering produced pending instances, synthesized frames, or intrinsic changes")
     return Ok((function, runtime, pending, synthesized))
