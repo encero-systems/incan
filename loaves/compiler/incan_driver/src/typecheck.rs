@@ -104,7 +104,10 @@ pub fn typecheck_modules(
             .flat_map(|loaf| [loaf.key.clone(), loaf.name.clone()]),
     );
     let dependency_preparations = DependencyInterfacePreparationCache::default();
-    let configured_checker = |module: &ParsedModule| {
+    let mut dependency_tables = typechecker::TypeChecker::new();
+    dependency_tables.set_loaves(Arc::clone(loaves));
+    dependency_tables.set_dependency_interface_preparation_cache(dependency_preparations.clone());
+    let configured_checker = |module: &ParsedModule, shared_tables: Option<&typechecker::TypeChecker>| {
         let mut checker = typechecker::TypeChecker::new();
         checker.set_declared_crate_names(declared.clone());
         checker.set_current_module_path(Some(module.path_segments.clone()));
@@ -119,6 +122,9 @@ pub fn typecheck_modules(
         }
         if let Some(products) = body_reuse.get(&module.file_path) {
             checker.set_callable_body_reuse(products.clone());
+        }
+        if let Some(tables) = shared_tables {
+            checker.share_dependency_interface_tables(tables);
         }
         checker
     };
@@ -157,7 +163,7 @@ pub fn typecheck_modules(
         warnings_out.extend(parser_warning_diagnostics(module));
 
         let check_result = {
-            let mut checker = configured_checker(module);
+            let mut checker = configured_checker(module, Some(&dependency_tables));
             checker.select_dependency_interfaces(interfaces_for_module);
 
             // A standard package checks its complete source before publishing its public checked facade.
@@ -210,6 +216,7 @@ pub fn typecheck_modules(
             Ok((type_info, interface)) => {
                 type_infos.push(type_info);
                 if let Some(interface) = interface {
+                    dependency_tables.append_dependency_interfaces(&[Arc::clone(&interface)]);
                     dependency_interfaces[idx] = Some(interface);
                 }
                 if dependency_interfaces[idx].is_none() {
@@ -222,7 +229,7 @@ pub fn typecheck_modules(
                         .filter(|dep_idx| !component_indexes.contains(dep_idx))
                         .filter_map(|dep_idx| dependency_interfaces[*dep_idx].as_ref().map(Arc::clone))
                         .collect::<Vec<_>>();
-                    let mut builder = configured_checker(&modules[component_indexes[0]]);
+                    let mut builder = configured_checker(&modules[component_indexes[0]], Some(&dependency_tables));
                     builder.install_dependency_interfaces_directly(&external_interfaces);
                     let component = component_indexes
                         .iter()
@@ -241,6 +248,7 @@ pub fn typecheck_modules(
                     );
                     debug_assert_eq!(built.len(), component_indexes.len());
                     for (component_idx, interface) in component_indexes.into_iter().zip(built) {
+                        dependency_tables.append_dependency_interfaces(&[Arc::clone(&interface)]);
                         dependency_interfaces[component_idx] = Some(interface);
                     }
                 }

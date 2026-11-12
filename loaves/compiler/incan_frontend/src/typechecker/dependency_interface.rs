@@ -153,6 +153,34 @@ impl TypeChecker {
         self.selected_dependency_interfaces = interfaces;
     }
 
+    /// Give a fresh module checker read access to the graph tables populated once by orchestration.
+    pub fn share_dependency_interface_tables(&mut self, source: &TypeChecker) {
+        self.dependency_member_symbols = source.dependency_member_symbols.clone();
+        self.dependency_member_type_aliases = source.dependency_member_type_aliases.clone();
+        self.dependency_registry_definitions = source.dependency_registry_definitions.clone();
+        self.dependency_registry_consts = source.dependency_registry_consts.clone();
+        self.dependency_member_partial_projections = source.dependency_member_partial_projections.clone();
+        self.dependency_direct_member_symbols = source.dependency_direct_member_symbols.clone();
+        self.dependency_direct_member_type_aliases = source.dependency_direct_member_type_aliases.clone();
+        self.dependency_direct_member_identities = source.dependency_direct_member_identities.clone();
+        self.declaration_nominal_scopes = source.declaration_nominal_scopes.clone();
+        self.retained_nominal_carriers = source.retained_nominal_carriers.clone();
+        self.declaration_callables = source.declaration_callables.clone();
+        self.dependency_member_reexports = source.dependency_member_reexports.clone();
+        self.body_ir_dependency_pub_reexports = source.body_ir_dependency_pub_reexports.clone();
+        self.dependency_module_path_segments = source.dependency_module_path_segments.clone();
+        self.dependency_direct_member_partial_projections = source.dependency_direct_member_partial_projections.clone();
+        self.dependency_derivable_modules = source.dependency_derivable_modules.clone();
+        self.dependency_derivable_trait_identities = source.dependency_derivable_trait_identities.clone();
+        self.dependency_module_traits = source.dependency_module_traits.clone();
+        self.dependency_trait_rust_derive_paths = source.dependency_trait_rust_derive_paths.clone();
+        self.transitive_pub_types = source.transitive_pub_types.clone();
+        self.public_library_type_identities = source.public_library_type_identities.clone();
+        self.transitive_pub_traits = source.transitive_pub_traits.clone();
+        self.cached_pub_libraries = source.cached_pub_libraries.clone();
+        self.shared_dependency_interface_tables = true;
+    }
+
     /// Consume selected handles only when they match the complete dependency list in stable closure order.
     pub(super) fn take_exact_dependency_interfaces(
         &mut self,
@@ -208,7 +236,7 @@ impl TypeChecker {
             map_table("trait_rust_derive_paths", &self.dependency_trait_rust_derive_paths),
             map_table("transitive_public_types", &self.transitive_pub_types),
             map_table("transitive_public_traits", &self.transitive_pub_traits),
-            map_table("public_library_type_identities", &*self.public_library_type_identities),
+            map_table("public_library_type_identities", &**self.public_library_type_identities),
             DependencyInterfaceTableSnapshot {
                 name: "symbol_rows",
                 entries: self
@@ -282,8 +310,8 @@ impl TypeChecker {
             for (name, program, _) in modules {
                 let start = self.symbols.all_symbols().len();
                 let (source_types, source_traits) = self.collected_source_semantics();
-                self.transitive_pub_types = source_types;
-                self.transitive_pub_traits = source_traits;
+                self.transitive_pub_types = source_types.into();
+                self.transitive_pub_traits = source_traits.into();
                 self.public_library_type_identities.clear();
                 self.cached_pub_libraries.clear();
                 self.foreign_pub_type_remappings.clear();
@@ -539,6 +567,19 @@ impl TypeChecker {
         }
     }
 
+    /// Add newly sealed provider tables to the build-scoped graph snapshot without replacing prior providers.
+    pub fn append_dependency_interfaces(&mut self, interfaces: &[Arc<ModuleDependencyInterface>]) {
+        let _trace = tracing::trace_span!(
+            target: "incan::invocation",
+            "incan_frontend::append_dependency_interface_tables",
+            interfaces = interfaces.len(),
+        )
+        .entered();
+        for interface in interfaces {
+            self.install_dependency_interface(interface);
+        }
+    }
+
     /// Clear only the dependency-owned tables replaced by an exact interface selection.
     fn clear_dependency_interface_tables(&mut self) {
         self.dependency_exports.clear();
@@ -683,7 +724,9 @@ impl TypeChecker {
     /// Dependency symbol rows are replayed in provider and declaration order because checker-wide semantic scans use
     /// the historical arena even though ordinary lookup resolves through immutable module-keyed tables.
     pub fn install_dependency_interfaces_directly(&mut self, interfaces: &[Arc<ModuleDependencyInterface>]) {
-        self.install_dependency_interfaces(interfaces);
+        if !self.shared_dependency_interface_tables {
+            self.install_dependency_interfaces(interfaces);
+        }
         let _trace = tracing::trace_span!(
             target: "incan::invocation",
             "incan_frontend::install_dependency_interface_symbols",
@@ -1037,5 +1080,18 @@ impl<K, V> MapEntries<K, V> for std::collections::BTreeMap<K, V> {
         V: 'a,
     {
         self.iter()
+    }
+}
+
+impl<K, V, T> MapEntries<K, V> for SharedDependencyTable<T>
+where
+    T: Clone + MapEntries<K, V>,
+{
+    fn entries<'a>(&'a self) -> impl Iterator<Item = (&'a K, &'a V)>
+    where
+        K: 'a,
+        V: 'a,
+    {
+        self.deref().entries()
     }
 }
