@@ -49,6 +49,7 @@ from frame_instances import (
 )
 from function_frames import lower_function
 from checked_values import location
+from parallel_ranges import balanced_module_ranges
 
 
 model ModuleFrames:
@@ -96,7 +97,6 @@ pub def lower_ordinary_bodies(
     mut completed: list[ModuleFrames] = []
     mut workers: list[JoinHandle[Result[list[ModuleFrames], str]]] = []
     mut module_weights: list[int] = []
-    mut remaining_weight = 0
     for owner in owners:
         mut weight = 1
         match module_bodies.get(owner):
@@ -105,19 +105,7 @@ pub def lower_ordinary_bodies(
                     weight = len(positions)
             None => pass
         module_weights.append(weight)
-        remaining_weight += weight
-    mut start = 0
-    mut workers_left = 4
-    if len(owners) < workers_left:
-        workers_left = len(owners)
-    while start < len(owners):
-        target_weight = (remaining_weight + workers_left - 1) // workers_left
-        mut selected_weight = 0
-        mut end = start
-        maximum_end = len(owners) - workers_left + 1
-        while end < maximum_end and (end == start or selected_weight < target_weight):
-            selected_weight += module_weights[end]
-            end += 1
+    for start, end in balanced_module_ranges(module_weights):
         mut selected_positions: list[list[int]] = []
         mut selected_sources: list[str] = []
         mut selected_files: list[str] = []
@@ -164,9 +152,6 @@ pub def lower_ordinary_bodies(
                 ),
             ),
         )
-        remaining_weight -= selected_weight
-        workers_left -= 1
-        start = end
     mut reversed: list[list[ModuleFrames]] = []
     while len(workers) > 0:
         worker = workers.pop()

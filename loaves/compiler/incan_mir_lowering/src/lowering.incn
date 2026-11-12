@@ -28,7 +28,7 @@ from pub::incan_platform.probes import current_footprint, current_live_allocated
 from rust::incan_semantics_core import IncanType as RustType, CompilerNodeId
 from rust::incan_semantics_core::body_ir import NativeUnionDeclaration, BodyIrModule as RustBodyIrModule
 from classes import body_module_identity, is_program_entry
-from project import project_context
+from project import project_context, project_context_parallel
 from continuation_context import continuation_inputs, extend_continuation_context, refresh_entry_context
 from body_index import body_index
 from program_context import ProgramContext, extend_program_context
@@ -444,10 +444,10 @@ pub def resume_unit_plan(
     previous_static_count = len(context.as_ref().static_declarations)
     refresh_entry_context(Arc.make_mut(context), borrowed_at(modules, entry))
     additions = continuation_inputs(source_context.as_ref(), context.as_ref(), owners, modules, sources, files, entry)?
-    if len(additions.modules) != 0:
-        addition_source_files = source_file_index(additions.modules, additions.files)?
-        added_source_context, _added_constructors, _added_owners, added_context, added_nominals, added_template_references = plan_contexts(
-            additions.modules,
+    if len(additions.modules.as_ref()) != 0:
+        addition_source_files = source_file_index(additions.modules.as_ref(), additions.files)?
+        added_source_context, _added_constructors, _added_owners, added_context, added_nominals, added_template_references = plan_contexts_parallel(
+            additions.modules.clone(),
             additions.sources,
             additions.files,
             additions.entry,
@@ -1127,6 +1127,45 @@ pub def plan_contexts(
     trace_lowering_footprint(footprint_trace, "validated modules")
     trace_lowering(trace, "project context")
     mut context, owners = project_context(modules, entry)?
+    source_context, constructors, nominal_instances, template_references = specialize_plan_context(
+        context, source_files, package_versions, retained_templates, footprint_trace, trace,
+    )?
+    return Ok((source_context, constructors, owners, context, nominal_instances, template_references))
+
+
+def plan_contexts_parallel(
+    modules: Arc[list[BodyIrModule]],
+    sources: &list[str],
+    files: &list[str],
+    entry: int,
+    trace: bool,
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
+    validation_context: &BodyIrModule,
+    retained_templates: &ConstructorIndex,
+) -> Result[PlanContexts, str]:
+    """Validate a resumed runtime slice and project its body-weighted module ranges concurrently."""
+    footprint_trace = native_environment("INCAN_TRACE_LOWERING_FOOTPRINT").is_some()
+    trace_lowering(trace, "validate resumed modules")
+    validate_plan_inputs(modules.as_ref(), sources, files, entry, validation_context)?
+    trace_lowering_footprint(footprint_trace, "validated resumed modules")
+    trace_lowering(trace, "parallel resumed project context")
+    mut context, owners = project_context_parallel(modules, entry)?
+    source_context, constructors, nominal_instances, template_references = specialize_plan_context(
+        context, source_files, package_versions, retained_templates, footprint_trace, trace,
+    )?
+    return Ok((source_context, constructors, owners, context, nominal_instances, template_references))
+
+
+def specialize_plan_context(
+    mut context: &mut BodyIrModule,
+    source_files: &BTreeMap[str, str],
+    package_versions: &BTreeMap[str, str],
+    retained_templates: &ConstructorIndex,
+    footprint_trace: bool,
+    trace: bool,
+) -> Result[tuple[BodyIrModule, ConstructorIndex, list[NominalInstance], list[str]], str]:
+    """Specialize one serially or concurrently projected module context under the same deterministic layout rules."""
     trace_lowering_footprint(footprint_trace, "joined project")
     # Later generic-instance and publication work reads only source nominal and enum declarations. Retain that
     # declaration authority without keeping a second copy of executable bodies or the other joined module tables.
@@ -1150,7 +1189,7 @@ pub def plan_contexts(
     trace_lowering(trace, "specialize enums")
     specialize_enums(context)?
     trace_lowering_footprint(footprint_trace, "specialized enums")
-    return Ok((source_context, constructors, owners, context, nominal_instances, template_references))
+    return Ok((source_context, constructors, nominal_instances, template_references))
 
 
 pub def source_file_index(modules: &list[BodyIrModule], files: &list[str]) -> Result[BTreeMap[str, str], str]:

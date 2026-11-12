@@ -1,6 +1,7 @@
 """Select newly resolved runtime modules and merge their specialized facts into retained lowering context."""
 
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, EnumDeclaration
+from rust::std::sync import Arc
 from native_type_identity import ConstructorIndex, extend_constructor_index
 from table_views import borrowed_at
 from nominal_instances import NominalInstance
@@ -9,7 +10,7 @@ from nominal_instances import NominalInstance
 pub model ContinuationInputs:
     """The refreshed entry and runtime modules that contribute facts the retained contexts do not contain."""
 
-    pub modules: list[BodyIrModule]
+    pub modules: Arc[list[BodyIrModule]]
     pub sources: list[str]
     pub files: list[str]
     pub entry: int
@@ -48,7 +49,7 @@ pub def continuation_inputs(
             changed = true
             break
     if not changed:
-        return Ok(ContinuationInputs(modules=[], sources=[], files=[], entry=0))
+        return Ok(ContinuationInputs(modules=Arc.new([]), sources=[], files=[], entry=0))
     mut additions: list[BodyIrModule] = []
     mut addition_sources: list[str] = []
     mut addition_files: list[str] = []
@@ -65,7 +66,7 @@ pub def continuation_inputs(
         addition_files.append(str(files[position]))
     return Ok(
         ContinuationInputs(
-            modules=additions,
+            modules=Arc.new(additions),
             sources=addition_sources,
             files=addition_files,
             entry=addition_entry,
@@ -94,8 +95,8 @@ pub def extend_continuation_context(
     Existing facts keep their positions. The added context has already passed the ordinary project specialization path,
     so raw generic receiver frames never enter the retained executable context.
     """
-    for position in range(len(additions.modules)):
-        module = borrowed_at(additions.modules, position)
+    for position in range(len(additions.modules.as_ref())):
+        module = borrowed_at(additions.modules.as_ref(), position)
         owner = str(module.module_id.path())
         if owner not in owners:
             owners.append(owner)
