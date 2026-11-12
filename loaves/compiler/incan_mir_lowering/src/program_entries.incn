@@ -35,11 +35,7 @@ from traits import is_lazy_method_body
 from async_ import boxed_future_constructor, async_entry, async_test_name, evaluator_name
 from type_parameters import Instance, request_instance, merge_instance_requests
 from lowering import BodyIrModule, program_context
-from native_type_identity import (
-    ConstructorIndex,
-    constructor_index_with_packages as index_constructors,
-    with_generic_constructor_arities,
-)
+from native_type_identity import constructor_index_with_packages as index_constructors, with_generic_constructor_arities
 from options import intrinsic_declarations
 from unions import collect_unions
 from program_refusals import append_generator_constructor
@@ -89,7 +85,7 @@ pub def lower_ordinary_bodies(
     scalar_bodies: &BTreeMap[CompilerNodeId, str],
     overflow_checks: bool,
 ) -> Result[None, str]:
-    """Lower modules on four native workers, then merge every observable inventory in module order."""
+    """Lower four contiguous module ranges over one prepared context per worker, then merge in module order."""
     mut module_bodies: BTreeMap[str, list[int]] = BTreeMap.new()
     for position in range(len(context.as_ref().bodies)):
         owner = body_module_identity(body_at(context.as_ref().bodies, position))?
@@ -98,12 +94,17 @@ pub def lower_ordinary_bodies(
     shared_package_versions = Arc.new(package_versions.clone())
     shared_scalar_bodies = Arc.new(scalar_bodies.clone())
     mut completed: list[ModuleFrames] = []
+    mut workers: list[JoinHandle[Result[list[ModuleFrames], str]]] = []
     mut start = 0
+    chunk_size = (len(owners) + 3) // 4
     while start < len(owners):
-        mut end = start + 4
+        mut end = start + chunk_size
         if end > len(owners):
             end = len(owners)
-        mut workers: list[JoinHandle[Result[ModuleFrames, str]]] = []
+        mut selected_positions: list[list[int]] = []
+        mut selected_sources: list[str] = []
+        mut selected_files: list[str] = []
+        mut selected_entries: list[bool] = []
         for index in range(start, end):
             checked_owner = owners[index]
             mut positions: list[int] = []
@@ -112,47 +113,51 @@ pub def lower_ordinary_bodies(
                     for selected_position in selected:
                         positions.append(int(selected_position.clone()))
                 None => pass
-            worker_context = context.clone()
-            worker_source_context = source_context.clone()
-            worker_source_files = shared_source_files.clone()
-            worker_package_versions = shared_package_versions.clone()
-            worker_scalar_bodies = shared_scalar_bodies.clone()
-            source = sources[index]
-            file = files[index]
-            entry_file = files[entry]
-            selected_tests = list(tests)
-            selected_kind = str(kind)
-            products = scalar_products
-            workers.append(
-                spawn(
-                    () => lower_module_frames(
-                        worker_context,
-                        worker_source_context,
-                        worker_source_files,
-                        worker_package_versions,
-                        positions,
-                        source,
-                        file,
-                        entry_file,
-                        index == entry,
-                        selected_kind,
-                        selected_tests,
-                        trace,
-                        products,
-                        worker_scalar_bodies,
-                        overflow_checks,
-                    ),
+            selected_positions.append(positions)
+            selected_sources.append(sources[index])
+            selected_files.append(files[index])
+            selected_entries.append(index == entry)
+        worker_context = context.clone()
+        worker_source_context = source_context.clone()
+        worker_source_files = shared_source_files.clone()
+        worker_package_versions = shared_package_versions.clone()
+        worker_scalar_bodies = shared_scalar_bodies.clone()
+        entry_file = files[entry]
+        selected_tests = list(tests)
+        selected_kind = str(kind)
+        products = scalar_products
+        workers.append(
+            spawn(
+                () => lower_module_frames(
+                    worker_context,
+                    worker_source_context,
+                    worker_source_files,
+                    worker_package_versions,
+                    selected_positions,
+                    selected_sources,
+                    selected_files,
+                    entry_file,
+                    selected_entries,
+                    selected_kind,
+                    selected_tests,
+                    trace,
+                    products,
+                    worker_scalar_bodies,
+                    overflow_checks,
                 ),
-            )
-        mut reversed: list[ModuleFrames] = []
-        while len(workers) > 0:
-            worker = workers.pop()
-            match worker.join():
-                Ok(result) => reversed.append(result?)
-                Err(payload) => resume_unwind(payload)
-        while len(reversed) > 0:
-            completed.append(reversed.pop())
+            ),
+        )
         start = end
+    mut reversed: list[list[ModuleFrames]] = []
+    while len(workers) > 0:
+        worker = workers.pop()
+        match worker.join():
+            Ok(result) => reversed.append(result?)
+            Err(payload) => resume_unwind(payload)
+    while len(reversed) > 0:
+        chunk = reversed.pop()
+        for result in chunk:
+            completed.append(result)
     for result in completed:
         if result.intrinsic_count != len(intrinsics):
             return lower_ordinary_bodies_serial(
@@ -192,19 +197,19 @@ def lower_module_frames(
     source_context: Arc[RustBodyIrModule],
     source_files: Arc[BTreeMap[str, str]],
     package_versions: Arc[BTreeMap[str, str]],
-    positions: list[int],
-    source: str,
-    file: str,
+    positions_by_module: list[list[int]],
+    sources: list[str],
+    files: list[str],
     entry_file: str,
-    in_entry: bool,
+    entries: list[bool],
     kind: str,
     tests: list[str],
     trace: bool,
     scalar_products: Option[str],
     scalar_bodies: Arc[BTreeMap[CompilerNodeId, str]],
     overflow_checks: bool,
-) -> Result[ModuleFrames, str]:
-    """Rebuild immutable layout views locally and lower one module without shared mutable output."""
+) -> Result[list[ModuleFrames], str]:
+    """Prepare immutable layout views once, then lower a contiguous module range without shared mutable output."""
     template_constructors = index_constructors(
         source_context.as_ref().nominal_declarations,
         source_files.as_ref(),
@@ -212,17 +217,51 @@ def lower_module_frames(
     )
     constructors = Arc.new(
         with_generic_constructor_arities(
-            index_constructors(
-                context.as_ref().nominal_declarations,
-                source_files.as_ref(),
-                package_versions.as_ref(),
-            ),
+            index_constructors(context.as_ref().nominal_declarations, source_files.as_ref(), package_versions.as_ref()),
             template_constructors,
         ),
     )
     unions = collect_unions(context.as_ref())
     mut intrinsics = intrinsic_declarations(constructors.as_ref(), context.as_ref(), entry_file, [])?
     program = program_context(constructors, context.as_ref(), intrinsics, unions, overflow_checks)?
+    mut completed: list[ModuleFrames] = []
+    for module_index in range(len(positions_by_module)):
+        completed.append(
+            lower_selected_module(
+                context.as_ref(),
+                program,
+                unions,
+                positions_by_module[module_index],
+                sources[module_index],
+                files[module_index],
+                entries[module_index],
+                kind,
+                tests,
+                intrinsics,
+                trace,
+                scalar_products,
+                scalar_bodies.as_ref(),
+            )?,
+        )
+    return Ok(completed)
+
+
+def lower_selected_module(
+    context: &BodyIrModule,
+    program: ProgramContext,
+    unions: list[RustType],
+    positions: list[int],
+    source: str,
+    file: str,
+    entry: bool,
+    kind: str,
+    tests: list[str],
+    mut intrinsics: list[EnumDeclaration],
+    trace: bool,
+    scalar_products: Option[str],
+    scalar_bodies: &BTreeMap[CompilerNodeId, str],
+) -> Result[ModuleFrames, str]:
+    """Lower one module against worker-local immutable layout views and return mergeable output."""
     mut functions: list[Function] = []
     mut externals: list[ExternalFunction] = []
     mut instances: list[Instance] = []
@@ -231,14 +270,14 @@ def lower_module_frames(
     mut names = function_names()
     mut signatures = external_index()
     for position in positions:
-        body = body_at(context.as_ref().bodies, position)
-        if not ordinary_body(context.as_ref(), body, emitted, kind):
+        body = body_at(context.bodies, position)
+        if not ordinary_body(context, body, emitted, kind):
             continue
         if trace:
             traces.append(f"lowering: body {body_module_identity(body)?} {body.name} {body.span.start}")
         diagnostic_owner = f" in {body.name} at {file}"
         function, runtime, pending, synthesized = lower_ordinary_frame(
-            context.as_ref(),
+            context,
             program,
             body,
             unions,
@@ -246,7 +285,7 @@ def lower_module_frames(
             file,
             intrinsics,
             scalar_products,
-            scalar_bodies.as_ref(),
+            scalar_bodies,
         ).map_err((reason) => reason + diagnostic_owner)?
         merge_instance_requests(instances, pending)
         if len(named_functions(names, functions, function.name)) != 0:
@@ -258,7 +297,7 @@ def lower_module_frames(
                 captures.append(parameter.ty)
             functions.append(
                 boxed_future_constructor(
-                    function_name(context.as_ref(), body),
+                    function_name(context, body),
                     CalleeKind.Planned(function.name),
                     captures,
                     function.return_type,
@@ -267,16 +306,8 @@ def lower_module_frames(
             )
         emitted.record(body, position)
         append_synthesized(functions, names, synthesized)?
-        append_async_entry(context.as_ref(), body, function, in_entry, tests, intrinsics, functions, externals)?
-        append_generator_constructor(
-            program.constructors.as_ref(),
-            functions,
-            context.as_ref(),
-            body,
-            source,
-            file,
-            intrinsics,
-        )?
+        append_async_entry(context, body, function, entry, tests, intrinsics, functions, externals)?
+        append_generator_constructor(program.constructors.as_ref(), functions, context, body, source, file, intrinsics)?
         merge_indexed(externals, signatures, runtime)?
     return Ok(
         ModuleFrames(
