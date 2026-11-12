@@ -102,7 +102,7 @@ impl TypeChecker {
         self.type_info.declarations.type_method_rebindings.clear();
         self.type_info.declarations.newtype_construction.clear();
         self.type_info.rust.type_aliases.clear();
-        self.type_info.derivations.trait_rust_derive_paths = self.dependency_trait_rust_derive_paths.clone();
+        self.type_info.derivations.trait_rust_derive_paths = (*self.dependency_trait_rust_derive_paths).clone();
         let mut method_rebindings = Vec::new();
         let mut newtype_construction = Vec::new();
         let mut adopted_traits = Vec::new();

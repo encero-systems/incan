@@ -449,30 +449,33 @@ impl TypeChecker {
         self.dependency_semantics_pending = false;
         self.dependency_method_input_contracts.clear();
         self.hash_key_inference.type_params.clear();
-        self.transitive_pub_types.clear();
-        self.public_library_type_identities.clear();
-        self.transitive_pub_traits.clear();
-        self.cached_pub_libraries.clear();
         self.foreign_pub_type_remappings.clear();
         self.pub_library_declaration_scopes.clear();
+        let selected_interfaces = self.take_exact_dependency_interfaces(dependencies);
         self.dependency_exports = dependency_exports;
-        self.dependency_member_symbols.clear();
-        self.dependency_member_type_aliases.clear();
-        self.dependency_registry_definitions.clear();
-        self.dependency_registry_consts.clear();
-        self.dependency_member_partial_projections.clear();
-        self.dependency_direct_member_symbols.clear();
-        self.dependency_direct_member_type_aliases.clear();
-        self.dependency_direct_member_identities.clear();
-        self.dependency_member_reexports.clear();
-        self.body_ir_dependency_pub_reexports.clear();
-        self.dependency_direct_member_partial_projections.clear();
-        self.dependency_derivable_modules.clear();
-        self.dependency_derivable_trait_identities.clear();
-        self.dependency_module_traits.clear();
-        self.dependency_trait_rust_derive_paths.clear();
+        if selected_interfaces.is_none() {
+            self.transitive_pub_types.clear();
+            self.public_library_type_identities.clear();
+            self.transitive_pub_traits.clear();
+            self.cached_pub_libraries.clear();
+            self.dependency_member_symbols.clear();
+            self.dependency_member_type_aliases.clear();
+            self.dependency_registry_definitions.clear();
+            self.dependency_registry_consts.clear();
+            self.dependency_member_partial_projections.clear();
+            self.dependency_direct_member_symbols.clear();
+            self.dependency_direct_member_type_aliases.clear();
+            self.dependency_direct_member_identities.clear();
+            self.dependency_member_reexports.clear();
+            self.body_ir_dependency_pub_reexports.clear();
+            self.dependency_direct_member_partial_projections.clear();
+            self.dependency_derivable_modules.clear();
+            self.dependency_derivable_trait_identities.clear();
+            self.dependency_module_traits.clear();
+            self.dependency_trait_rust_derive_paths.clear();
+        }
         self.record_nominal_declaring_modules(program, dependencies);
-        if let Some(interfaces) = self.take_exact_dependency_interfaces(dependencies) {
+        if let Some(interfaces) = selected_interfaces {
             self.install_dependency_interfaces_directly(&interfaces);
             drop(prepare);
         } else {
@@ -558,30 +561,33 @@ impl TypeChecker {
         self.dependency_semantics_pending = false;
         self.dependency_method_input_contracts.clear();
         self.hash_key_inference.type_params.clear();
-        self.transitive_pub_types.clear();
-        self.public_library_type_identities.clear();
-        self.transitive_pub_traits.clear();
-        self.cached_pub_libraries.clear();
         self.foreign_pub_type_remappings.clear();
         self.pub_library_declaration_scopes.clear();
+        let selected_interfaces = self.take_exact_dependency_interfaces(dependencies);
         self.dependency_exports = dependency_exports;
-        self.dependency_member_symbols.clear();
-        self.dependency_member_type_aliases.clear();
-        self.dependency_registry_definitions.clear();
-        self.dependency_registry_consts.clear();
-        self.dependency_member_partial_projections.clear();
-        self.dependency_direct_member_symbols.clear();
-        self.dependency_direct_member_type_aliases.clear();
-        self.dependency_direct_member_identities.clear();
-        self.dependency_member_reexports.clear();
-        self.body_ir_dependency_pub_reexports.clear();
-        self.dependency_direct_member_partial_projections.clear();
-        self.dependency_derivable_modules.clear();
-        self.dependency_derivable_trait_identities.clear();
-        self.dependency_module_traits.clear();
-        self.dependency_trait_rust_derive_paths.clear();
+        if selected_interfaces.is_none() {
+            self.transitive_pub_types.clear();
+            self.public_library_type_identities.clear();
+            self.transitive_pub_traits.clear();
+            self.cached_pub_libraries.clear();
+            self.dependency_member_symbols.clear();
+            self.dependency_member_type_aliases.clear();
+            self.dependency_registry_definitions.clear();
+            self.dependency_registry_consts.clear();
+            self.dependency_member_partial_projections.clear();
+            self.dependency_direct_member_symbols.clear();
+            self.dependency_direct_member_type_aliases.clear();
+            self.dependency_direct_member_identities.clear();
+            self.dependency_member_reexports.clear();
+            self.body_ir_dependency_pub_reexports.clear();
+            self.dependency_direct_member_partial_projections.clear();
+            self.dependency_derivable_modules.clear();
+            self.dependency_derivable_trait_identities.clear();
+            self.dependency_module_traits.clear();
+            self.dependency_trait_rust_derive_paths.clear();
+        }
         self.record_nominal_declaring_modules(program, dependencies);
-        if let Some(interfaces) = self.take_exact_dependency_interfaces(dependencies) {
+        if let Some(interfaces) = selected_interfaces {
             self.install_dependency_interfaces_directly(&interfaces);
             drop(prepare);
         } else {

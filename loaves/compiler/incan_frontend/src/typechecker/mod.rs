@@ -139,6 +139,7 @@ pub use type_info::{
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use crate::ast::*;
@@ -188,6 +189,67 @@ pub use dependency_interface::{
 /// The driver builds each value once per parsed module. Each checker retains its exact dependency-key set and lookup
 /// order while sharing the read-only export slices used by import visibility checks.
 pub type DependencyExportInterfaces = HashMap<String, Arc<[ExportedSymbol]>>;
+
+/// Copy-on-write handle to dependency tables installed once by graph orchestration.
+///
+/// A fresh module checker normally only reads these tables. Legacy direct callers can still mutate an independent
+/// default value, while an exceptional checker mutation detaches just that checker from the build-scoped snapshot.
+#[derive(Debug, Clone)]
+pub struct SharedDependencyTable<T: Clone>(Arc<T>);
+
+impl<T: Clone + Default> Default for SharedDependencyTable<T> {
+    fn default() -> Self {
+        Self(Arc::new(T::default()))
+    }
+}
+
+impl<T: Clone> From<T> for SharedDependencyTable<T> {
+    fn from(value: T) -> Self {
+        Self(Arc::new(value))
+    }
+}
+
+impl<T: Clone> Deref for SharedDependencyTable<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: Clone> DerefMut for SharedDependencyTable<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+impl<T> IntoIterator for SharedDependencyTable<T>
+where
+    T: Clone + IntoIterator,
+{
+    type Item = T::Item;
+    type IntoIter = T::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        match Arc::try_unwrap(self.0) {
+            Ok(value) => value.into_iter(),
+            Err(shared) => (*shared).clone().into_iter(),
+        }
+    }
+}
+
+impl<'a, T> IntoIterator for &'a SharedDependencyTable<T>
+where
+    T: Clone,
+    &'a T: IntoIterator,
+{
+    type Item = <&'a T as IntoIterator>::Item;
+    type IntoIter = <&'a T as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.as_ref().into_iter()
+    }
+}
 
 /// The kind of loop enclosing a `break` or `continue`, which decides whether `break` may yield a value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -808,6 +870,8 @@ pub struct TypeChecker {
     /// This staging slot is consumed after the legacy oracle has populated its comparison state. It never widens the
     /// closure and is empty for direct API callers that still exercise legacy dependency collection.
     selected_dependency_interfaces: Vec<Arc<ModuleDependencyInterface>>,
+    /// Whether dependency tables point at the build-scoped graph snapshot instead of checker-local storage.
+    shared_dependency_interface_tables: bool,
     /// Manifest-derived dependency preparations shared only by the fresh checkers of this build.
     ///
     /// Source interfaces and mutable checker state never enter this cache. A direct API checker owns an independent
@@ -817,62 +881,68 @@ pub struct TypeChecker {
     ///
     /// Direct source imports use this map before falling back to ambient symbol lookup so `from module import name as
     /// alias` binds `module.name`, not an unrelated same-name symbol imported earlier from a sibling dependency.
-    pub dependency_member_symbols: HashMap<String, Arc<HashMap<String, SymbolKind>>>,
+    pub dependency_member_symbols: SharedDependencyTable<HashMap<String, Arc<HashMap<String, SymbolKind>>>>,
     /// Exact transparent type-alias targets exported by dependency modules.
     ///
     /// Alias expansion is source semantics, so targets are keyed by owner module and are copied into the consumer's
     /// local alias map only when an explicit source import creates that binding.
-    pub dependency_member_type_aliases: HashMap<String, Arc<HashMap<String, TypeAliasTarget>>>,
+    pub dependency_member_type_aliases: SharedDependencyTable<HashMap<String, Arc<HashMap<String, TypeAliasTarget>>>>,
     /// Checked `Registry.define(...)` contracts exported by dependency source modules, keyed by canonical module name.
     ///
     /// This cache is deliberately separate from imported static types. A `Registry[K, T]` type alone is not proof of
     /// a canonical registry definition; only an owned `Registry.define(...)` declaration contributes a fact here.
-    pub dependency_registry_definitions: HashMap<String, DependencyRegistryDefinitions>,
+    pub dependency_registry_definitions: SharedDependencyTable<HashMap<String, DependencyRegistryDefinitions>>,
     /// Registry structural values of dependency source modules' `pub const` declarations, keyed by canonical identity
     /// and computed in the declaring module's scope. A descriptor naming an imported const records this value, as one
     /// naming a local const records its own; a const that is not structural keeps its refusal.
     pub dependency_registry_consts:
-        HashMap<CanonicalSymbolId, Result<incan_semantics_core::SemanticRegistryValue, String>>,
+        SharedDependencyTable<HashMap<CanonicalSymbolId, Result<incan_semantics_core::SemanticRegistryValue, String>>>,
     /// Exact source-module partial projection metadata collected from dependencies, keyed by canonical module name.
     ///
     /// Source imports must preserve the callable projection, not only the callable signature, so const evaluation and
     /// lowering see the same partial preset semantics on both sides of an import or facade boundary.
-    pub dependency_member_partial_projections: HashMap<String, Arc<HashMap<String, PartialProjectionInfo>>>,
+    pub dependency_member_partial_projections:
+        SharedDependencyTable<HashMap<String, Arc<HashMap<String, PartialProjectionInfo>>>>,
     /// Module-owned direct dependency members captured while that module is being imported.
     ///
     /// Dependency re-export refresh runs after all modules have been imported, when the ambient symbol table may
     /// contain unrelated same-name declarations from sibling modules. Direct members must therefore come from this
     /// per-module snapshot rather than a later global `lookup_symbol(...)`.
-    pub dependency_direct_member_symbols: HashMap<String, Arc<HashMap<String, SymbolKind>>>,
+    pub dependency_direct_member_symbols: SharedDependencyTable<HashMap<String, Arc<HashMap<String, SymbolKind>>>>,
     /// Direct dependency-owned type-alias targets before facade re-export projection.
-    pub dependency_direct_member_type_aliases: HashMap<String, Arc<HashMap<String, TypeAliasTarget>>>,
+    pub dependency_direct_member_type_aliases:
+        SharedDependencyTable<HashMap<String, Arc<HashMap<String, TypeAliasTarget>>>>,
     /// Canonical identities retained by direct dependency member bindings, including source aliases.
     ///
     /// A public `alias` binding carries its target declaration's identity, so reconstructing identity from the alias
     /// spelling and span would invent a second declaration. This cache preserves the symbol table's authoritative
     /// answer across the dependency boundary.
-    pub dependency_direct_member_identities: HashMap<String, Arc<HashMap<String, CanonicalSymbolId>>>,
+    pub dependency_direct_member_identities:
+        SharedDependencyTable<HashMap<String, Arc<HashMap<String, CanonicalSymbolId>>>>,
     /// Nominal bindings captured in a source declaration's own scope before its signature enters a consumer.
     /// Contextual empty values use these bindings rather than the caller's same-spelled declarations. A declaration
     /// and its members share one immutable snapshot instead of retaining a full map for every member.
-    declaration_nominal_scopes: HashMap<CanonicalSymbolId, Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>>,
+    declaration_nominal_scopes:
+        SharedDependencyTable<HashMap<CanonicalSymbolId, Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>>>,
     /// Carrier contributions of retained declaration scopes, indexed once per immutable scope admission. The owning
     /// scopes are append-only, so this inventory contains one spelling per retained canonical nominal, not
     /// generations.
-    retained_nominal_carriers: std::collections::BTreeMap<CanonicalSymbolId, String>,
+    retained_nominal_carriers: SharedDependencyTable<std::collections::BTreeMap<CanonicalSymbolId, String>>,
     /// Private value-composition snapshot after declaration collection; lexical alias shadows invalidate it.
     checking_nominal_scope: RefCell<Option<CheckingNominalScope>>,
     /// Original callable signatures before receiver or trait arguments replace their declaration-owned binders.
-    declaration_callables: HashMap<CanonicalSymbolId, DeclarationCallableTypes>,
+    declaration_callables: SharedDependencyTable<HashMap<CanonicalSymbolId, DeclarationCallableTypes>>,
     /// Re-export links a dependency module publishes, keyed by module cache key then exported name.
     ///
     /// A facade does not own what it re-exports, so an identity must follow this link to the declaring module instead
     /// of naming the facade. Stored as the written import path plus the original name, resolved with the facade's own
     /// module path as the resolution base.
-    pub dependency_member_reexports: HashMap<String, Arc<HashMap<String, DependencyMemberReexport>>>,
+    pub dependency_member_reexports:
+        SharedDependencyTable<HashMap<String, Arc<HashMap<String, DependencyMemberReexport>>>>,
     /// Public-library re-export links omitted by the frozen source-member cache; only private Body IR call checking
     /// follows these links. Direct source declarations and ordinary import resolution remain authoritative.
-    body_ir_dependency_pub_reexports: HashMap<String, Arc<HashMap<String, (ImportPath, String)>>>,
+    body_ir_dependency_pub_reexports:
+        SharedDependencyTable<HashMap<String, Arc<HashMap<String, (ImportPath, String)>>>>,
     /// True module path segments for a registered dependency, keyed by its flattened cache name.
     ///
     /// The cache name is the underscore-joined spelling that also names the emitted Rust module, so it is not
@@ -881,20 +951,21 @@ pub struct TypeChecker {
     /// that answered, and two spellings of one module would yield two identities. Registering the real segments
     /// alongside the flat name — the same thing `IrCodegen::add_module_with_path_segments` does for emission — lets an
     /// identity name the module that actually answered.
-    pub dependency_module_path_segments: HashMap<String, Vec<String>>,
+    pub dependency_module_path_segments: SharedDependencyTable<HashMap<String, Vec<String>>>,
     /// Which modules of the current check declare each nominal type name, so a union member of a name several of them
     /// declare names its declaration (#1796).
     nominal_declarations: union_member_identity::NominalDeclarationContext,
     /// Module-owned direct partial projection metadata captured while that module is being imported.
-    pub dependency_direct_member_partial_projections: HashMap<String, Arc<HashMap<String, PartialProjectionInfo>>>,
+    pub dependency_direct_member_partial_projections:
+        SharedDependencyTable<HashMap<String, Arc<HashMap<String, PartialProjectionInfo>>>>,
     /// RFC 024 derivable-module metadata from imported source modules, keyed by module path.
-    pub dependency_derivable_modules: HashMap<String, Vec<String>>,
+    pub dependency_derivable_modules: SharedDependencyTable<HashMap<String, Vec<String>>>,
     /// Checked declaring identities of source-module derive entries, including imported trait aliases.
-    pub dependency_derivable_trait_identities: HashMap<String, CanonicalSymbolId>,
+    pub dependency_derivable_trait_identities: SharedDependencyTable<HashMap<String, CanonicalSymbolId>>,
     /// RFC 024/user-module trait metadata from imported source modules, keyed by module-qualified trait name.
-    pub dependency_module_traits: HashMap<String, TraitInfo>,
+    pub dependency_module_traits: SharedDependencyTable<HashMap<String, TraitInfo>>,
     /// RFC 024 trait-level Rust derive metadata from imported source modules, keyed by module-qualified trait name.
-    pub dependency_trait_rust_derive_paths: HashMap<String, Vec<String>>,
+    pub dependency_trait_rust_derive_paths: SharedDependencyTable<HashMap<String, Vec<String>>>,
     /// Exact Rust derive macro paths applied directly to local concrete declarations.
     ///
     /// `@derive(...)` keeps source-trait adoption metadata in [`TypeInfo`]. Direct RFC 043 `@rust.derive(...)`
@@ -920,20 +991,20 @@ pub struct TypeChecker {
     /// These entries are intentionally **not** source-visible names: they exist so values returned from imported
     /// functions/methods can still participate in method lookup and trait compatibility even when the consumer did not
     /// explicitly import every referenced carrier type.
-    pub transitive_pub_types: HashMap<String, Vec<TypeInfo>>,
+    pub transitive_pub_types: SharedDependencyTable<HashMap<String, Vec<TypeInfo>>>,
     /// Canonical nominal identities for local aliases and provider-qualified signature spellings from `pub::` imports.
     ///
     /// Identity is deliberately separate from [`ResolvedType`]: source diagnostics retain local spellings while
     /// compatibility can still distinguish identical short names owned by separate dependencies.
-    pub public_library_type_identities: NominalInventory<PublicLibraryTypeIdentity>,
+    pub public_library_type_identities: SharedDependencyTable<NominalInventory<PublicLibraryTypeIdentity>>,
     /// Internal semantic trait cache for dependency exports referenced transitively by imported signatures.
     ///
     /// This keeps trait/supertrait compatibility available for imported function signatures without making those trait
     /// names ambient in user source.
-    pub transitive_pub_traits: HashMap<String, Vec<TraitInfo>>,
+    pub transitive_pub_traits: SharedDependencyTable<HashMap<String, Vec<TraitInfo>>>,
     /// Tracks which `pub::` libraries have already seeded the internal transitive semantic caches for this checker
     /// run.
-    pub cached_pub_libraries: HashSet<String>,
+    pub cached_pub_libraries: SharedDependencyTable<HashSet<String>>,
     /// Physical type routes projected once from checked foreign leaf identities for each imported provider.
     pub foreign_pub_type_remappings: HashMap<String, HashMap<String, String>>,
     /// Per imported provider and checked API module: the type names the module's declarations spell whose meaning

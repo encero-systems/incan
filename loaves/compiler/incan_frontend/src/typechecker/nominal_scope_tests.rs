@@ -134,6 +134,38 @@ fn nominal_scope_inventory_matches_fresh_inputs() -> Result<(), Box<dyn std::err
         first_interface.snapshot.render(),
         replayed_first_interface.snapshot.render()
     );
+
+    // ---- Build-wide tables are shared only with an exact dependency closure ----
+    let second_exports = Arc::from(crate::module::exported_symbols(&second));
+    let mut second_builder = TypeChecker::default();
+    second_builder.set_current_module_path(Some(vec!["second".to_string()]));
+    second_builder
+        .check_program(&second)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let second_interface =
+        second_builder.seal_current_module_dependency_interface("second", &second, second_exports, true);
+    let mut build_tables = TypeChecker::default();
+    build_tables.append_dependency_interfaces(&[Arc::clone(&first_interface), Arc::clone(&second_interface)]);
+    let mut exact_tables = TypeChecker::default();
+    exact_tables.share_exact_dependency_interface_tables(
+        &build_tables,
+        &[Arc::clone(&first_interface), Arc::clone(&second_interface)],
+    );
+    assert!(exact_tables.shared_dependency_interface_tables);
+    let mut subset_tables = TypeChecker::default();
+    subset_tables.share_exact_dependency_interface_tables(&build_tables, &[Arc::clone(&first_interface)]);
+    assert!(!subset_tables.shared_dependency_interface_tables);
+    subset_tables.install_dependency_interfaces_directly(&[Arc::clone(&first_interface)]);
+    assert!(
+        subset_tables
+            .dependency_member_symbol_for_path(&crate::ast::ImportPath::simple(vec!["first".to_string()]), "First")
+            .is_some()
+    );
+    assert!(
+        subset_tables
+            .dependency_member_symbol_for_path(&crate::ast::ImportPath::simple(vec!["second".to_string()]), "Second")
+            .is_none()
+    );
     let consumer = program("from first import First\n\ndef read(value: First) -> int:\n    return 1\n")?;
     let dependencies = [("first", &first)];
     let mut legacy_consumer = TypeChecker::default();
