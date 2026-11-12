@@ -153,7 +153,7 @@ pub fn checked_owner_record_fields(
             Some(CheckedOwnerRecordFields {
                 name: function.name.clone(),
                 span: declaration.span,
-                declaration: checker.produced_declaration_record(declaration.span)?.clone(),
+                declaration: checker.available_declaration_record(declaration.span)?.clone(),
                 local: checker.available_local_record(declaration.span)?.clone(),
                 final_value: checker.available_final_record(declaration.span)?.clone(),
             })

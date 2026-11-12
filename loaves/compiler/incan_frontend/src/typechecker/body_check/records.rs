@@ -81,6 +81,13 @@ impl TypeChecker {
         self.produced_declaration_records.get(&owner)
     }
 
+    /// Borrow either the declaration evaluated in this activation or an independently validated selected predecessor.
+    pub(crate) fn available_declaration_record(&self, owner: Span) -> Option<&Fields> {
+        self.produced_declaration_records
+            .get(&owner)
+            .or_else(|| self.selected_declaration_records.get(&owner))
+    }
+
     /// Borrow the local record emitted directly by this activation's body-check producer.
     pub(crate) fn produced_local_record(&self, owner: Span) -> Option<&Fields> {
         self.produced_local_records.get(&owner)
@@ -235,6 +242,7 @@ impl TypeChecker {
             .expressions
             .body_ir_binding_types
             .extend(restored.final_types.bindings);
+        self.selected_declaration_records.insert(owner, fields);
         Ok(true)
     }
 }
