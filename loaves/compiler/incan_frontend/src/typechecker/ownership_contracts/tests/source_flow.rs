@@ -47,6 +47,35 @@ fn resource_probe_wrappers_retain_exact_source_boundary_refusals() -> Result<(),
     Ok(())
 }
 
+/// An ordinary value parameter can take a fresh model constructor because its checked field binding authenticates
+/// both the nominal allocation and its inputs. A constructor containing a non-Copy place remains refused.
+#[test]
+fn ordinary_calls_accept_only_authenticated_fresh_model_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "model Label:\n    pub name: str\nclass Graph:\n    pub labels: list[Label]\n    pub def add(mut self, label: Label) -> None:\n        self.labels.append(label)\n    pub def read_view(self) -> Borrowed[Graph] from self:\n        return self\ndef main() -> None:\n    mut graph = Graph(labels=[])\n    graph.add(Label(name=\"editor\"))\n    reader = graph.read_view()\n    println(reader.labels[0].name)\n",
+    )?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    assert!(
+        accepted
+            .type_info
+            .protocols
+            .explicit_input_flow
+            .iter()
+            .any(|(owner, flow)| owner.declaration_name == "main" && matches!(flow, InputFlow::Checked { .. }))
+    );
+
+    let refused = "model Label:\n    pub name: str\nclass Graph:\n    pub labels: list[Label]\n    pub def add(mut self, label: Label) -> None:\n        self.labels.append(label)\n    pub def read_view(self) -> Borrowed[Graph] from self:\n        return self\ndef main() -> None:\n    name = \"editor\"\n    mut graph = Graph(labels=[])\n    graph.add(Label(name=name))\n    reader = graph.read_view()\n    println(reader.labels[0].name)\n";
+    let checker = checked(refused)?;
+    assert!(
+        checker
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0123")),
+        "unsupported constructor admitted: {refused}"
+    );
+    Ok(())
+}
+
 /// Local modes keep their callable owner through settlement, and an ordinary following function does not
 /// inherit a previous body's ownership profile, including in the legacy cold-baseline comparison route.
 #[test]
