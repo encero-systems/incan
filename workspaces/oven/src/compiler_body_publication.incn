@@ -33,7 +33,6 @@ from compiler_source_projection import (
     SourceProjection,
     SourceProjectionRecord,
     declaration_index_key,
-    owner_source_key,
     project_source,
 )
 from engine_capture import CapturedInput, InputRole
@@ -300,7 +299,7 @@ pub def prepare_compiled_bodies(
         for declaration in declarations:
             local_reads.append(request(declaration))
         for dependency in value.dependency_reads:
-            match dependency_read_key(origin, dependency, editable_packages):
+            match dependency_read_key(unit, origin, dependency, editable_packages)?:
                 Some(key) => local_reads.append(request(key))
                 None => pass
             match dependency_invalidation_key(unit, origin, dependency)?:
@@ -321,7 +320,7 @@ pub def prepare_compiled_bodies(
         for declaration in declarations:
             final_reads.append(request(declaration))
         for dependency in value.dependency_reads:
-            match dependency_read_key(origin, dependency, editable_packages):
+            match dependency_read_key(unit, origin, dependency, editable_packages)?:
                 Some(key) => final_reads.append(request(key))
                 None => pass
             match dependency_invalidation_key(unit, origin, dependency)?:
@@ -400,17 +399,18 @@ def module_declarations(values: list[CompiledBodyValue], origin: str, module: st
 
 
 def dependency_read_key(
+    unit: UnitDescription,
     origin: str,
     dependency: CompiledBodyDependencyRead,
     editable_packages: list[str],
-) -> Option[RecordKey]:
+) -> Result[Option[RecordKey], str]:
     """Select the producer declaration for a project read or the existing editable-package source witness."""
     match dependency.package:
         Some(package) =>
             if package in editable_packages:
-                return Some(owner_source_key(package, dependency.module, dependency.name))
-            return None
-        None => return Some(project_declaration_slot(origin, dependency.module, dependency.name))
+                return Ok(Some(dependency_owner_record(unit, package, dependency.module, dependency.name)?.key))
+            return Ok(None)
+        None => return Ok(Some(project_declaration_slot(origin, dependency.module, dependency.name)))
 
 
 def dependency_invalidation_key(
