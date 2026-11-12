@@ -4,7 +4,12 @@ from std.fs import Path
 from std.environ import get_or
 from std.io import BytesIO
 from std.testing import fail
-from codegen import compiled_arguments, native_executable_arguments, rust_executable_arguments, rust_incremental_arguments
+from codegen import (
+    compiled_arguments,
+    native_executable_arguments,
+    rust_executable_arguments,
+    rust_incremental_arguments,
+)
 from codegen import rust_iteration_enabled
 from darwin_executable import normalized_macho
 from files import make_directory, read, write
@@ -341,20 +346,33 @@ def verify_incremental_policy(root: Path) -> Result[None, str]:
 
 
 def verify_macho_uuid_normalization() -> Result[None, str]:
-    """Different linker UUIDs normalize to one stable, idempotent executable payload."""
+    """Different linker UUIDs and prior signatures normalize to one stable, idempotent executable payload."""
     header = b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01\x00\x00\x00\x00\x02\x00\x00\x00\x01\x00\x00\x00\x18\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
     command = b"\x1b\x00\x00\x00\x18\x00\x00\x00"
     first = normalized_macho(macho_fixture(header, command, b"first-uuid-value"))?
     second = normalized_macho(macho_fixture(header, command, b"other-uuid-value"))?
     assert first == second
     assert normalized_macho(first)? == first
+    signed_header = b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01\x00\x00\x00\x00\x02\x00\x00\x00\x02\x00\x00\x00(\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+    signature_command = b"\x1d\x00\x00\x00\x10\x00\x00\x00H\x00\x00\x00\x10\x00\x00\x00"
+    first_signed = macho_fixture(signed_header, command, b"first-uuid-value", signature_command, b"first-signature!")
+    second_signed = macho_fixture(signed_header, command, b"other-uuid-value", signature_command, b"other-signature!")
+    first_normalized = normalized_macho(first_signed)?
+    second_normalized = normalized_macho(second_signed)?
+    assert first_normalized[40:56] == second_normalized[40:56]
     return Ok(None)
 
 
-def macho_fixture(header: bytes, command: bytes, uuid: bytes) -> bytes:
+def macho_fixture(
+    header: bytes,
+    command: bytes,
+    uuid: bytes,
+    signature_command: bytes = b"",
+    signature: bytes = b"",
+) -> bytes:
     """Assemble the small Mach-O byte fixture without relying on byte-sequence addition."""
     buffer = BytesIO(b"")
-    for value in [header, command, uuid, b"payload"]:
+    for value in [header, command, uuid, signature_command, signature, b"payload"]:
         _ = buffer.write_bytes(value)
     return buffer.getvalue()
 
