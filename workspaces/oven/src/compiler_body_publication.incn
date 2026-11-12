@@ -30,9 +30,10 @@ from pub::internal_models.records import (
     RecordReads,
     RecordRequest,
     RecordSelection,
+    ReadWitness,
     encode_record_key,
 )
-from compiler_graph_records import prepare_evaluation
+from compiler_graph_records import prepare_evaluation, reusable_evaluation
 from compiler_body_fallbacks import fallback_reasons
 from compiler_plan_values import LOWERING_PROFILE
 from compiler_body_values import SelectedBodyRecord
@@ -42,6 +43,7 @@ from compiler_source_projection import (
     declaration_index_key,
     owner_source_key,
     project_source,
+    signature_record,
 )
 from engine_capture import CapturedInput, InputRole
 from files import discard_file
@@ -58,6 +60,7 @@ model LoweringBody:
     final: bytes
     body_ir: bytes
     retained: bool = false
+    signature_reads: list[RecordKey] = []
 
 
 pub enum OwnerRecordFault(str):
@@ -171,11 +174,12 @@ pub def prepare_captured_source_inputs(
                         changed.append(projection.declarations.key)
                     prepared = put(prepared, declaration_key, declaration_value)
                     for owner in projection.owners:
-                        owner_key = encode_record_key(owner.key)?
-                        owner_value = owner.text.encode("utf-8")
-                        if get(selected, owner_key).map_err((error) => error.message())? != Some(owner_value):
-                            changed.append(owner.key)
-                        prepared = put(prepared, owner_key, owner_value)
+                        for record in [owner, signature_record(owner)]:
+                            owner_key = encode_record_key(record.key)?
+                            owner_value = record.text.encode("utf-8")
+                            if get(selected, owner_key).map_err((error) => error.message())? != Some(owner_value):
+                                changed.append(record.key)
+                            prepared = put(prepared, owner_key, owner_value)
     return Ok(PreparedSourceInputs(transaction=prepared, keys=changed))
 
 
@@ -259,10 +263,11 @@ pub def prepare_compiled_bodies(
             prepared = put(prepared, declaration_key, declaration_value)
             source.add(declaration_key, declaration_value)
             for owner in projection.owners:
-                owner_key = encode_record_key(owner.key)?
-                owner_value = owner.text.encode("utf-8")
-                prepared = put(prepared, owner_key, owner_value)
-                source.add(owner_key, owner_value)
+                for record in [owner, signature_record(owner)]:
+                    owner_key = encode_record_key(record.key)?
+                    owner_value = record.text.encode("utf-8")
+                    prepared = put(prepared, owner_key, owner_value)
+                    source.add(owner_key, owner_value)
             modules.append(value.module)
     for fallback in outputs.fallbacks:
         if fallback.module not in modules:
@@ -276,10 +281,11 @@ pub def prepare_compiled_bodies(
             prepared = put(prepared, declaration_key, declaration_value)
             source.add(declaration_key, declaration_value)
             for owner in projection.owners:
-                owner_key = encode_record_key(owner.key)?
-                owner_value = owner.text.encode("utf-8")
-                prepared = put(prepared, owner_key, owner_value)
-                source.add(owner_key, owner_value)
+                for record in [owner, signature_record(owner)]:
+                    owner_key = encode_record_key(record.key)?
+                    owner_value = record.text.encode("utf-8")
+                    prepared = put(prepared, owner_key, owner_value)
+                    source.add(owner_key, owner_value)
             modules.append(fallback.module)
     editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
     for value in outputs.values:
@@ -287,7 +293,8 @@ pub def prepare_compiled_bodies(
             match dependency.package:
                 Some(package) =>
                     if package in editable_packages:
-                        owner = dependency_owner_record(unit, package, dependency.module, dependency.name)?
+                        owner = signature_record(dependency_owner_record(unit, package, dependency.module, dependency.name)?)
+                        prepared = put(prepared, encode_record_key(owner.key)?, owner.text.encode("utf-8"))
                         source.add(encode_record_key(owner.key)?, owner.text.encode("utf-8"))
                 None =>
                     slot = project_declaration_slot(origin, dependency.module, dependency.name)
@@ -300,6 +307,11 @@ pub def prepare_compiled_bodies(
                     declaration_value = dependency_projection.declarations.text.encode("utf-8")
                     prepared = put(prepared, declaration_key, declaration_value)
                     source.add(declaration_key, declaration_value)
+                    signature = project_signature_record(unit, origin, dependency.module, dependency.name)?
+                    signature_key = encode_record_key(signature.key)?
+                    signature_value = signature.text.encode("utf-8")
+                    prepared = put(prepared, signature_key, signature_value)
+                    source.add(signature_key, signature_value)
     for value in outputs.values:
         declaration_key = encode_record_key(
             body_key("declaration", origin, value.identity, value.name, root(value.declaration)?),
@@ -338,6 +350,9 @@ pub def prepare_compiled_bodies(
             match dependency_invalidation_key(unit, origin, dependency)?:
                 Some(key) => local_reads.append(request(key))
                 None => pass
+            match dependency_signature_key(unit, origin, dependency, editable_packages)?:
+                Some(key) => local_reads.append(request(key))
+                None => pass
         local_receipt = prepared_receipt(source, scope, local_key, local_reads)?
         local = prepare_evaluation(
             prepared,
@@ -357,6 +372,9 @@ pub def prepare_compiled_bodies(
                 Some(key) => final_reads.append(request(key))
                 None => pass
             match dependency_invalidation_key(unit, origin, dependency)?:
+                Some(key) => final_reads.append(request(key))
+                None => pass
+            match dependency_signature_key(unit, origin, dependency, editable_packages)?:
                 Some(key) => final_reads.append(request(key))
                 None => pass
         final_receipt = prepared_receipt(source, scope, final_key, final_reads)?
@@ -396,7 +414,24 @@ def lowering_witnesses(
     origin: str,
 ) -> Result[list[LoweringBody], str]:
     """Carry only graph-selected inputs with unchanged current owner/header bytes; never invent fresh checker facts."""
-    mut witnesses = [LoweringBody(identity=value.identity, module=value.module, final=value.final, body_ir=value.body_ir) for value in fresh]
+    mut witnesses: list[LoweringBody] = []
+    editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
+    for value in fresh:
+        mut signatures = module_declarations(fresh, origin, value.module)?
+        for dependency in value.dependency_reads:
+            match dependency_read_key(unit, origin, dependency, editable_packages)?:
+                Some(key) => signatures.append(key)
+                None => pass
+            match dependency_signature_key(unit, origin, dependency, editable_packages)?:
+                Some(key) => signatures.append(key)
+                None => pass
+            match dependency_invalidation_key(unit, origin, dependency)?:
+                Some(key) => signatures.append(key)
+                None => pass
+        witnesses.append(LoweringBody(
+            identity=value.identity, module=value.module, final=value.final, body_ir=value.body_ir,
+            signature_reads=signatures,
+        ))
     for record in retained:
         if record.identity in [value.identity for value in witnesses]:
             continue
@@ -419,8 +454,26 @@ def lowering_witnesses(
             if get(prior, encode_record_key(binding.key)?).map_err((error) => error.message())? != Some(binding.text.encode("utf-8")):
                 return Err("retained Body IR has changed current source inputs")
         source.add(encode_record_key(key)?, record.body_ir)
+        local_key = body_key("local", origin, record.identity, "checked", root(record.local)?)
+        local = match reusable_evaluation(prior, local_key, CHECKER_PROFILE)?:
+            None => return Err("retained lowering owner has no witnessed checker inputs")
+            Some(value) => value
+        mut signatures: list[RecordKey] = []
+        for witness in local.receipt.witnesses:
+            match witness:
+                ReadWitness.Found(found, _) =>
+                    input = found.request.key
+                    if input.family in ["declaration", "declaration-slot", "declaration-signature", "declaration-index"]:
+                        encoded = encode_record_key(input)?
+                        value = match get(prior, encoded).map_err((error) => error.message())?:
+                            None => return Err("retained lowering signature input is absent")
+                            Some(value) => value
+                        source.add(encoded, value)
+                        signatures.append(input)
+                _ => return Err("retained lowering owner has an unsupported checker witness")
         witnesses.append(LoweringBody(
             identity=record.identity, module=decoded.source, final=record.final, body_ir=record.body_ir, retained=true,
+            signature_reads=signatures,
         ))
     return Ok(witnesses)
 
@@ -470,7 +523,8 @@ def prepare_lowering_records(
         body_ir_key = body_key("body-ir", origin, identity, "checked", root(body.final)?)
         demand_key = body_key("lowering-demand", origin, identity, function, key)
         demand_value = lowering_demand(product)?
-        demand_receipt = prepared_receipt(staged_source, scope, demand_key, [request(body_ir_key)])?
+        signature_reads = [request(key) for key in body.signature_reads]
+        demand_receipt = prepared_receipt(staged_source, scope, demand_key, [request(body_ir_key)] + signature_reads)?
         check_reused_output(selected, event, demand_key, demand_value)?
         demand = prepare_evaluation(
             prepared,
@@ -483,7 +537,7 @@ def prepare_lowering_records(
         staged_source.add(encode_record_key(demand_key)?, demand_value)
         plan_key = body_key("plan-function", origin, identity, "body:" + function, key)
         check_reused_output(selected, event, plan_key, product)?
-        plan_receipt = prepared_receipt(staged_source, scope, plan_key, [request(demand_key)])?
+        plan_receipt = prepared_receipt(staged_source, scope, plan_key, [request(demand_key)] + signature_reads)?
         plan = prepare_evaluation(
             prepared,
             "plan-function-" + identity,
@@ -711,9 +765,24 @@ def dependency_read_key(
     match dependency.package:
         Some(package) =>
             if package in editable_packages:
-                return Ok(Some(dependency_owner_record(unit, package, dependency.module, dependency.name)?.key))
+                return Ok(Some(signature_record(dependency_owner_record(unit, package, dependency.module, dependency.name)?).key))
             return Ok(None)
         None => return Ok(Some(project_declaration_slot(origin, dependency.module, dependency.name)))
+
+
+def project_signature_record(unit: UnitDescription, origin: str, module: str, name: str) -> Result[SourceProjectionRecord, str]:
+    """Bind a checked project callee to its body-independent source header under the same logical owner."""
+    projection = source_projection(unit, origin, project_dependency_module(unit, module)?)?
+    return Ok(signature_record(owner_record(projection, name).map_err((error) => owner_record_message(error, name))?))
+
+
+def dependency_signature_key(
+    unit: UnitDescription, origin: str, dependency: CompiledBodyDependencyRead, editable_packages: list[str],
+) -> Result[Option[RecordKey], str]:
+    """Expose each editable callee's signature as a direct checker and lowering invalidation dependency."""
+    match dependency.package:
+        None => return Ok(Some(project_signature_record(unit, origin, dependency.module, dependency.name)?.key))
+        Some(_) => return Ok(None)
 
 
 def dependency_invalidation_key(

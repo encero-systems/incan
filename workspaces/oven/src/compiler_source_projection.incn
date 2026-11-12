@@ -151,6 +151,13 @@ pub def declaration_index_key(origin: str, path: str) -> RecordKey:
     return source_key("declaration-index", origin, path, "module")
 
 
+pub def signature_record(owner: &SourceProjectionRecord) -> SourceProjectionRecord:
+    """Project one declaration's header without its implementation, preserving its kind-qualified source owner."""
+    mut key = owner.key
+    key.family = "declaration-signature"
+    return SourceProjectionRecord(key=key, text=declaration_surface(owner.text), start=owner.start, end=owner.end)
+
+
 pub def publish_source_projection(
     selected: Snapshot,
     projection: SourceProjection,
@@ -166,9 +173,10 @@ pub def publish_source_projection(
     transaction = put(transaction, declaration_key, projection.declarations.text.encode("utf-8"))
     published.append(declaration_key)
     for owner in projection.owners:
-        key = encode_record_key(owner.key)?
-        transaction = put(transaction, key, owner.text.encode("utf-8"))
-        published.append(key)
+        for record in [owner, signature_record(owner)]:
+            key = encode_record_key(record.key)?
+            transaction = put(transaction, key, record.text.encode("utf-8"))
+            published.append(key)
     snapshot = commit(transaction).map_err((error) => error.message())?
     return Ok(PublishedSourceProjection(snapshot=snapshot, keys=published))
 

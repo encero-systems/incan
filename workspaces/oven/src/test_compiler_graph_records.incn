@@ -57,7 +57,7 @@ from compiler_body_values import (
 )
 from compiler_body_publication import prepare_compiled_bodies, publish_compiled_bodies, retained_owner_record
 from compiler_body_fallbacks import fallback_reasons
-from compiler_source_projection import project_source, publish_source_projection
+from compiler_source_projection import project_source, publish_source_projection, signature_record
 from publication import publish_binary
 from scratch import scratch_directory
 from unit import UnitDescription, UnitLoaf
@@ -225,6 +225,7 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     mut changed = 0
     for index in range(len(before.owners)):
         assert before.owners[index].key == after.owners[index].key
+        assert signature_record(before.owners[index]).digest() == signature_record(after.owners[index]).digest()
         if before.owners[index].digest() != after.owners[index].digest():
             changed += 1
     assert changed == 1
@@ -235,7 +236,7 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
 
     selected = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_source_projection(selected, before)?
-    assert len(published.keys) == 5
+    assert len(published.keys) == 8
     for key in published.keys:
         assert get(published.snapshot, key).map_err((error) => error.message())? is not None
     return Ok(None)
@@ -502,13 +503,11 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
 
     provider_body = project_source("provider", "lib", provider_source.replace("return 1", "return 2"))?
     provider_body_edit = publish_source_projection(published.snapshot, provider_body)?
-    assert invalid_body_owners(provider_body_edit.snapshot, [provider_body.owners[0].key], CHECKER_PROFILE)? == [
-        identity,
-    ]
+    assert invalid_body_owners(provider_body_edit.snapshot, [signature_record(provider_body.owners[0]).key], CHECKER_PROFILE)? == []
 
     provider_signature = project_source("provider", "lib", provider_source.replace("value() -> int", "value() -> str"))?
     provider_signature_edit = publish_source_projection(published.snapshot, provider_signature)?
-    assert invalid_body_owners(provider_signature_edit.snapshot, [provider_signature.owners[0].key], CHECKER_PROFILE)? == [
+    assert invalid_body_owners(provider_signature_edit.snapshot, [signature_record(provider_signature.owners[0]).key], CHECKER_PROFILE)? == [
         identity,
     ]
 
