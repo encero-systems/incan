@@ -56,6 +56,18 @@ fn produce_local(
 }
 
 impl TypeChecker {
+    /// Complete one owner trace with the checker-record outcome decided after all producer boundaries settle.
+    pub(crate) fn record_body_check_outcome(&self, owner: Span, outcome: &'static str) {
+        if let Some(span) = self.body_check_traces.get(&owner) {
+            span.record("outcome", outcome);
+        }
+    }
+
+    /// Report whether this activation restored the selected local body instead of checking statements afresh.
+    pub(crate) fn restored_body_record(&self, owner: Span) -> bool {
+        self.selected_local_records.contains_key(&owner)
+    }
+
     /// Publish the local record emitted by one just-completed callable producer. The index is returned by that exact
     /// invocation, so this boundary never searches the settled body inventory or observes a sibling owner.
     pub(in crate::typechecker) fn produce_local_record(&mut self, program: &Program, owner: Span, index: usize) {
