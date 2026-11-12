@@ -359,9 +359,9 @@ def source_projection(unit: UnitDescription, origin: str, module: str) -> Result
 
 
 def owner_record(projection: SourceProjection, name: str) -> Result[SourceProjectionRecord, str]:
-    """Select one compiled free function's source record by its source spelling."""
+    """Select one compiled owner's source record across callable and kind-qualified declaration facets."""
     for owner in projection.owners:
-        if owner.key.facet == name:
+        if owner.key.facet == name or owner.key.facet.endswith(":" + name):
             return Ok(owner)
     return Err("compiled body output has no matching owner source: " + name)
 
