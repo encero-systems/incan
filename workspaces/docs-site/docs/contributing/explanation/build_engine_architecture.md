@@ -883,6 +883,14 @@ Qualification still fails the artifact contract. A fresh cold build of the same 
 improvement, the qualification constant remains false and Oven's one-body edit is not run or claimed. This is a
 failed E6 proof, not permission to weaken the development artifact contract.
 
+The executable comparison localizes the byte difference to development linker metadata rather than emitted
+instructions: the disassemblies and Mach-O section sizes match, while each binary's symbol table records different
+`OSO` object paths containing its Oven store staging directory, process identifier and rustc object suffix. Those
+strings change the symbol-string-table size, Mach-O UUID, load-command offsets and ad-hoc signature. The remaining
+design question is therefore: must an admitted development executable retain this session-specific `OSO` provenance,
+or may the executable normalize or omit it while preserving the unpacked debug companions? Enabling either linker
+normalization or stripping before that answer would silently change the development-debugging contract.
+
 #### Native phase diagnostic at `0be358dd8` and the 100 ms path
 
 The one-body Oven edit measured at `0be358dd8` took 2.907 s across the stable native phases: 1.855 s in the rustc front end, 0.869 s in aggregate codegen and 0.183 s in the linker. The native collector reported 16 CGUs and `all_on_success` for every one. The trace does not assign rustc's aggregate LLVM duration to an individual CGU; it records each actual CGU's name, item count and size estimate separately. On hello, the same retained compiler-unit input and common output path produced byte-identical binaries under the released and instrumented source drivers. Its source-driver split was 19.24 ms front end, 5.87 ms codegen and 43.76 ms link.
