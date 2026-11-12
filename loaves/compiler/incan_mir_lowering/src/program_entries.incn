@@ -95,12 +95,29 @@ pub def lower_ordinary_bodies(
     shared_scalar_bodies = Arc.new(scalar_bodies.clone())
     mut completed: list[ModuleFrames] = []
     mut workers: list[JoinHandle[Result[list[ModuleFrames], str]]] = []
+    mut module_weights: list[int] = []
+    mut remaining_weight = 0
+    for owner in owners:
+        mut weight = 1
+        match module_bodies.get(owner):
+            Some(positions) =>
+                if len(positions) > weight:
+                    weight = len(positions)
+            None => pass
+        module_weights.append(weight)
+        remaining_weight += weight
     mut start = 0
-    chunk_size = (len(owners) + 3) // 4
+    mut workers_left = 4
+    if len(owners) < workers_left:
+        workers_left = len(owners)
     while start < len(owners):
-        mut end = start + chunk_size
-        if end > len(owners):
-            end = len(owners)
+        target_weight = (remaining_weight + workers_left - 1) // workers_left
+        mut selected_weight = 0
+        mut end = start
+        maximum_end = len(owners) - workers_left + 1
+        while end < maximum_end and (end == start or selected_weight < target_weight):
+            selected_weight += module_weights[end]
+            end += 1
         mut selected_positions: list[list[int]] = []
         mut selected_sources: list[str] = []
         mut selected_files: list[str] = []
@@ -147,6 +164,8 @@ pub def lower_ordinary_bodies(
                 ),
             ),
         )
+        remaining_weight -= selected_weight
+        workers_left -= 1
         start = end
     mut reversed: list[list[ModuleFrames]] = []
     while len(workers) > 0:
