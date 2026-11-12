@@ -9,6 +9,10 @@ pub(super) fn type_fields(ty: &ResolvedType, fields: &mut Vec<String>) -> Result
     match ty {
         ResolvedType::Int => fields.push("int".into()),
         ResolvedType::Float => fields.push("float".into()),
+        ResolvedType::Numeric(id) => {
+            fields.push("numeric".into());
+            fields.push(incan_lang::lang::types::numerics::as_str(*id).into());
+        }
         ResolvedType::Bool => fields.push("bool".into()),
         ResolvedType::Str => fields.push("str".into()),
         ResolvedType::Bytes => fields.push("bytes".into()),
@@ -58,6 +62,13 @@ fn read_type_at(fields: &mut std::slice::Iter<'_, String>, depth: usize) -> Resu
     Ok(match next(fields)? {
         "int" => ResolvedType::Int,
         "float" => ResolvedType::Float,
+        "numeric" => {
+            let name = next(fields)?;
+            let id = incan_lang::lang::types::numerics::from_str(name)
+                .filter(|id| incan_lang::lang::types::numerics::as_str(*id) == name)
+                .ok_or(NodeBindingError::Unsupported("numeric type"))?;
+            ResolvedType::Numeric(id)
+        }
         "bool" => ResolvedType::Bool,
         "str" => ResolvedType::Str,
         "bytes" => ResolvedType::Bytes,
