@@ -42,14 +42,24 @@ pub(super) struct GraphBodyOutput {
 
 impl GraphBodyOutput {
     /// Prepare an inert collector unless Oven explicitly requested one output path.
-    pub(super) fn prepare(path: Option<PathBuf>, project_root: PathBuf) -> Self {
-        Self {
+    pub(super) fn prepare(path: Option<PathBuf>, project_root: PathBuf) -> Result<Self, String> {
+        let project_root = if path.is_some() {
+            project_root.canonicalize().map_err(|error| {
+                format!(
+                    "cannot resolve graph body project root {}: {error}",
+                    project_root.display()
+                )
+            })?
+        } else {
+            project_root
+        };
+        Ok(Self {
             path,
             project_root,
             values: Vec::new(),
             fallbacks: Vec::new(),
             error: None,
-        }
+        })
     }
 
     /// Capture only values already emitted by all three producer boundaries for this checked module.
@@ -275,4 +285,32 @@ fn publish(path: &Path, encoded: &[u8]) -> Result<(), String> {
     drop(output);
     std::fs::rename(&temporary, path)
         .map_err(|error| format!("cannot publish compiled graph output {}: {error}", path.display()))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::GraphBodyOutput;
+
+    /// Explicit sidecar roots resolve aliases and refuse missing roots; an inactive collector needs neither.
+    #[test]
+    fn sidecar_root_resolves_aliases_and_refuses_missing_roots() -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!("incan-graph-root-{}", std::process::id()));
+        std::fs::create_dir(&root)?;
+        let actual = root.join("actual");
+        let alias = root.join("alias");
+        std::fs::create_dir(&actual)?;
+        std::os::unix::fs::symlink(&actual, &alias)?;
+        let output = Some(root.join("bodies"));
+        let collector = GraphBodyOutput::prepare(output.clone(), alias)?;
+        assert_eq!(collector.project_root, actual.canonicalize()?);
+        let missing = root.join("missing");
+        let refused = match GraphBodyOutput::prepare(output, missing.clone()) {
+            Ok(_) => return Err("an explicit missing graph body root was accepted".into()),
+            Err(message) => message,
+        };
+        assert!(refused.contains("cannot resolve graph body project root"));
+        assert!(GraphBodyOutput::prepare(None, missing).is_ok());
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
 }
