@@ -16,6 +16,7 @@ from release_support import (
     FAMILIES,
     BaselineReport,
     Counts,
+    ReleaseTrace,
     append_bytes,
     append_timing_file,
     check_baseline,
@@ -252,13 +253,9 @@ def test_reference_cache_store_moves_then_reuses_complete_evidence() -> Result[N
     timings = temporary.path().joinpath("timings.tsv")
     worker_timings = temporary.path().joinpath("reference-timings.tsv")
     timings.write_text("source-closure\t1.0\n", "utf-8", "strict", None).map_err((error) => error.message())?
-    worker_timings.write_text("reference-contracts\t2.0\n", "utf-8", "strict", None).map_err(
-        (error) => error.message(),
-    )?
+    worker_timings.write_text("reference-contracts\t2.0\n", "utf-8", "strict", None).map_err((error) => error.message())?
     append_timing_file(timings, worker_timings)?
-    assert timings.read_text("utf-8", "strict").map_err((error) => error.message())? == (
-        "source-closure\t1.0\nreference-contracts\t2.0\n"
-    )
+    assert timings.read_text("utf-8", "strict").map_err((error) => error.message())? == ("source-closure\t1.0\nreference-contracts\t2.0\n")
     return Ok(None)
 
 
@@ -317,6 +314,31 @@ def test_tree_measurement_walks_regular_files_once_and_records_bytes() -> Result
     return Ok(None)
 
 
+def test_release_trace_uses_invocation_records_and_phase_parent_links() -> Result[None, str]:
+    """The release trace is directly consumable as invocation JSONL and parents every step to its active phase."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    directory = temporary.path().joinpath("trace")
+    mut trace = ReleaseTrace.open(directory)?
+    trace.phase("checkout")?
+    step = trace.begin("materialize-source")?
+    trace.finish(step)?
+    trace.complete()?
+    paths = directory.glob("*.jsonl").map_err((error) => error.message())?
+    assert len(paths) == 1
+    lines = [line for line in paths[0].read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n") if line != ""]
+    assert len(lines) == 5
+    records = [JsonValue.parse(line).map_err((error) => error.message())? for line in lines]
+    assert json_text(records[0], "schema")? == "incan.invocations/1"
+    assert json_text(records[0], "kind")? == "process"
+    assert json_text(records[1], "function")? == "checkout"
+    assert json_text(records[2], "function")? == "materialize-source"
+    phase_id = json_text(records[1], "id")?
+    assert json_text(records[2], "parent")? == phase_id
+    assert json_text(records[3], "id")? == json_text(records[2], "id")?
+    assert json_text(records[4], "id")? == phase_id
+    return Ok(None)
+
+
 def test_installed_verification_uses_only_the_clean_checkout() -> Result[None, str]:
     """An ignored launching-checkout fixture cannot enter verification through the selected program source."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
@@ -360,6 +382,11 @@ def candidate_refusal(reference: &BaselineReport, candidate: &BaselineReport) ->
     match require_candidate_census(reference, candidate):
         Ok(_) => return "accepted"
         Err(message) => return message
+
+
+def json_text(value: JsonValue, key: str) -> Result[str, str]:
+    """Read one required string field from a trace test record."""
+    return value.require(key).and_then((field) => field.expect_str()).map_err((error) => error.message())
 
 
 def make_tree_writable(root: Path) -> Result[None, str]:

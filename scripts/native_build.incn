@@ -10,6 +10,8 @@ from release_support import (
     STANDARD_PACKAGES,
     TOOLCHAIN_DIRECTORY,
     ReservedStep,
+    ReleaseSpan,
+    ReleaseTrace,
     Step,
     append_timing,
     digest,
@@ -41,6 +43,7 @@ pub model NativeContext:
     pub jobs: int
     pub memory: int
     pub timeout_seconds: int
+    pub trace: Option[ReleaseTrace] = None
 
 
 pub model ShippedTools:
@@ -550,6 +553,7 @@ def compile_library_step(
             directory=Some(context.repo),
             log=context.evidence.joinpath(f"{phase}.log"),
             timeout_seconds=context.timeout_seconds,
+            trace=context.trace,
         ),
     )
 
@@ -621,6 +625,7 @@ def helper_json(
 ) -> Result[JsonValue, str]:
     """Run the native-description helper and parse its sole JSON document."""
     started = Instant.now()
+    span = begin_native_trace(context.trace, phase)?
     mut command = Command.new(helper.0)
     command.current_dir(context.repo.0)
     for argument in arguments:
@@ -638,6 +643,7 @@ def helper_json(
         .write_text(stdout + stderr, "utf-8", "strict", None)
         .map_err((error) => error.message())?
     append_timing(context.timings, phase, started.elapsed().as_secs_f64())?
+    finish_native_trace(context.trace, span)?
     if not output.status.success():
         log = context.evidence.joinpath(f"{phase}.log")
         return Err(f"{phase} failed; log: {log.0}\n{log_tail(log)}")
@@ -684,7 +690,22 @@ def step(
         directory=Some(directory),
         log=log,
         timeout_seconds=context.timeout_seconds,
+        trace=context.trace,
     )
+
+
+def begin_native_trace(trace: Option[ReleaseTrace], name: str) -> Result[Option[ReleaseSpan], str]:
+    """Open a directly executed native-helper span when release tracing is active."""
+    match trace:
+        Some(selected) => return Ok(Some(selected.begin(name)?))
+        None => return Ok(None)
+
+
+def finish_native_trace(trace: Option[ReleaseTrace], span: Option[ReleaseSpan]) -> Result[None, str]:
+    """Close a directly executed native-helper span when release tracing is active."""
+    match (trace, span):
+        (Some(selected), Some(opened)) => return selected.finish(opened)
+        _ => return Ok(None)
 
 
 def tool_build_plan(context: NativeContext, name: str, rebuild: bool, phase: str) -> Result[NativeBuildPlan, str]:
