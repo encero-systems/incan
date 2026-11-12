@@ -9,11 +9,12 @@ from checker_records import (
     CompiledBodyFallback,
     CompiledBodyOutputs,
     CompiledBodyValue,
+    CompiledNamespaceValue,
     decode_record,
     record_root,
 )
 
-const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-output/7"
+const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-output/8"
 const FRAME_PREFIX_BYTES: int = 8
 const MAX_FRAME_BYTES: int = 67108864
 const MAX_FIELDS: int = 4096
@@ -23,6 +24,7 @@ const MAX_METADATA_BYTES: int = 65536
 pub enum CompiledBodyOutput:
     """One independently bounded compiler output frame, never a whole-program transport envelope."""
 
+    Namespace(CompiledNamespaceValue)
     Value(CompiledBodyValue)
     Fallback(CompiledBodyFallback)
 
@@ -34,10 +36,16 @@ pub def encode_compiled_body_outputs(outputs: CompiledBodyOutputs) -> Result[lis
     The returned list preserves canonical value-then-fallback order, but its aggregate byte length is deliberately
     unbounded: the compiler writes and Oven reads one frame at a time.
     """
-    if len(outputs.values) + len(outputs.fallbacks) > MAX_FIELDS:
+    if len(outputs.namespaces) + len(outputs.values) + len(outputs.fallbacks) > MAX_FIELDS:
         return Err(CodecFault.Limit)
     mut frames: list[bytes] = []
     mut previous = ""
+    for namespace in outputs.namespaces:
+        if namespace.module == "" or namespace.module <= previous:
+            return Err(CodecFault.Malformed)
+        frames.append(encode_compiled_namespace_value(namespace)?)
+        previous = namespace.module
+    previous = ""
     for value in outputs.values:
         order = value.module + "\n" + value.identity
         if value.module == "" or value.name == "" or value.identity == "" or order <= previous:
@@ -85,11 +93,34 @@ pub def decode_compiled_body_payload(encoded: bytes) -> Result[CompiledBodyOutpu
     if len(fields) < 2 or text_field(fields[0])? != COMPILED_TRANSPORT_SCHEMA:
         return Err(CodecFault.Malformed)
     kind = text_field(fields[1])?
+    if kind == "namespace":
+        return Ok(CompiledBodyOutput.Namespace(decode_compiled_namespace_value(fields)?))
     if kind == "value":
         return Ok(CompiledBodyOutput.Value(decode_compiled_body_value(fields)?))
     if kind == "fallback":
         return Ok(CompiledBodyOutput.Fallback(decode_compiled_body_fallback(fields)?))
     return Err(CodecFault.Malformed)
+
+
+def encode_compiled_namespace_value(value: CompiledNamespaceValue) -> Result[bytes, CodecFault]:
+    """Encode one complete namespace record without interpreting its compiler-owned payloads."""
+    if value.module == "" or len(value.interface) == 0 or len(value.body_ir) == 0 or len(value.dependencies) > MAX_FIELDS:
+        return Err(CodecFault.Malformed)
+    mut fields = [
+        COMPILED_TRANSPORT_SCHEMA.encode(),
+        b"namespace",
+        value.module.encode(),
+        value.interface,
+        value.body_ir,
+        str(len(value.dependencies)).encode(),
+    ]
+    mut previous = ""
+    for dependency in value.dependencies:
+        if dependency == "" or dependency <= previous:
+            return Err(CodecFault.Malformed)
+        fields.append(dependency.encode())
+        previous = dependency
+    return binary_frame(fields)
 
 
 def encode_compiled_body_value(value: CompiledBodyValue) -> Result[bytes, CodecFault]:
@@ -178,6 +209,32 @@ def decode_compiled_body_value(fields: list[bytes]) -> Result[CompiledBodyValue,
     if value.module == "" or value.name == "" or value.identity == "":
         return Err(CodecFault.Malformed)
     validate_compiled_body_value(value)?
+    return Ok(value)
+
+
+def decode_compiled_namespace_value(fields: list[bytes]) -> Result[CompiledNamespaceValue, CodecFault]:
+    """Restore one bounded namespace value and its canonical imported-module paths."""
+    if len(fields) < 6:
+        return Err(CodecFault.Malformed)
+    count = decimal(text_field(fields[5])?)?
+    if count > MAX_FIELDS or len(fields) != 6 + count:
+        return Err(CodecFault.Malformed)
+    mut dependencies: list[str] = []
+    mut previous = ""
+    for field in fields[6:]:
+        dependency = text_field(field)?
+        if dependency == "" or dependency <= previous:
+            return Err(CodecFault.Malformed)
+        dependencies.append(dependency)
+        previous = dependency
+    value = CompiledNamespaceValue(
+        module=text_field(fields[2])?,
+        interface=fields[3],
+        body_ir=fields[4],
+        dependencies=dependencies,
+    )
+    if value.module == "" or len(value.interface) == 0 or len(value.body_ir) == 0:
+        return Err(CodecFault.Malformed)
     return Ok(value)
 
 

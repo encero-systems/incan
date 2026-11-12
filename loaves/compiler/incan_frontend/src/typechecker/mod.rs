@@ -179,7 +179,8 @@ use incan_lang::numeric_values::numeric_type_losslessly_widens_to;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
 pub use dependency_interface::{
-    DependencyInterfacePreparationCache, ModuleDependencyInterface, ModuleDependencyInterfaceSnapshot,
+    CheckedNamespaceInterface, DependencyInterfacePreparationCache, ModuleDependencyInterface,
+    ModuleDependencyInterfaceSnapshot,
 };
 
 /// Immutable public-export projections for source dependencies, keyed by the same canonical module names as the

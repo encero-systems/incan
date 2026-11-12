@@ -408,6 +408,63 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
             body_ir: Some(frame),
         }))
     }
+
+    /// Read one engine-selected namespace page and decode both compiler-owned payloads before exposing it.
+    fn read_namespace(
+        &self,
+        source: &str,
+    ) -> Result<
+        Option<incan_frontend::checker_records::GraphNamespaceRecord>,
+        incan_frontend::checker_records::RecordAdapterFault,
+    > {
+        const MAX_PAGE_BYTES: u64 = 64 * 1024 * 1024;
+        let key = format!("namespace-{}", hex::encode(Sha256::digest(source.as_bytes())));
+        let path = self.root.join(key);
+        let metadata = match std::fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                    format!("cannot inspect graph namespace page {}: {error}", path.display()),
+                ));
+            }
+        };
+        if !metadata.is_file() || metadata.len() > MAX_PAGE_BYTES {
+            return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                "graph namespace page is not a bounded regular file".into(),
+            ));
+        }
+        let encoded = std::fs::read(&path).map_err(|error| {
+            incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
+                "cannot read graph namespace page {}: {error}",
+                path.display()
+            ))
+        })?;
+        let record = internal_models::decode_graph_namespace_value(&encoded).map_err(|error| {
+            incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
+                "graph namespace page refused: {error:?}"
+            ))
+        })?;
+        if record.module != source {
+            return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
+                "graph namespace page disagrees with its requested source".into(),
+            ));
+        }
+        let checked = incan_frontend::typechecker::CheckedNamespaceInterface::from_bytes(&record.interface)
+            .and_then(|interface| interface.installable())
+            .map_err(incan_frontend::checker_records::RecordAdapterFault::InvalidField)?;
+        let body_ir =
+            incan_semantics_core::executable_representation::decode_module(&record.body_ir).map_err(|error| {
+                incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
+                    "graph namespace Body IR refused: {error}"
+                ))
+            })?;
+        Ok(Some(incan_frontend::checker_records::GraphNamespaceRecord {
+            source: record.module,
+            interface: checked,
+            body_ir,
+        }))
+    }
 }
 
 /// Bind the engine's keyed graph-record page directory without reading an aggregate inventory.

@@ -11,13 +11,16 @@ from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get,
 from pub::internal_models import (
     CompiledBodyDependencyRead,
     CompiledBodyFallback,
+    CompiledNamespaceValue,
     CompiledBodyValue,
     ProducerRank,
     ProducerStage,
     CompiledBodyOutput,
     CompiledBodyOutputs,
+    GraphNamespaceValue,
     compiled_body_frame_size,
     decode_compiled_body_payload,
+    encode_graph_namespace_value,
     record_root,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE
@@ -83,6 +86,8 @@ class CompiledBodyFrames:
     remaining: u64
     count: int = 0
     fallback_phase: bool = false
+    owner_phase: bool = false
+    previous_namespace: str = ""
     previous_value: str = ""
     previous_fallback: str = ""
 
@@ -119,7 +124,12 @@ class CompiledBodyFrames:
     def validate_order(mut self, output: CompiledBodyOutput) -> Result[None, str]:
         """Retain canonical value-then-fallback ordering without a whole-program decoder."""
         match output:
+            CompiledBodyOutput.Namespace(value) =>
+                if self.owner_phase or self.fallback_phase or value.module <= self.previous_namespace:
+                    return Err("compiled namespace frames are not in canonical order")
+                self.previous_namespace = value.module
             CompiledBodyOutput.Value(value) =>
+                self.owner_phase = true
                 if self.fallback_phase:
                     return Err("compiled body value follows a fallback frame")
                 order = value.module + "\n" + value.identity
@@ -127,6 +137,7 @@ class CompiledBodyFrames:
                     return Err("compiled body value frames are not in canonical order")
                 self.previous_value = order
             CompiledBodyOutput.Fallback(fallback) =>
+                self.owner_phase = true
                 self.fallback_phase = true
                 identity = match fallback.identity:
                     Some(value) => value
@@ -143,9 +154,11 @@ def read_compiled_body_outputs(path: Path) -> Result[CompiledBodyOutputs, str]:
     mut reader = CompiledBodyFrames.open(path)?
     mut values: list[CompiledBodyValue] = []
     mut fallbacks: list[CompiledBodyFallback] = []
+    mut namespaces: list[CompiledNamespaceValue] = []
     while true:
         match reader.next()?:
-            None => return Ok(CompiledBodyOutputs(values=values, fallbacks=fallbacks))
+            None => return Ok(CompiledBodyOutputs(namespaces=namespaces, values=values, fallbacks=fallbacks))
+            Some(CompiledBodyOutput.Namespace(value)) => namespaces.append(value)
             Some(CompiledBodyOutput.Value(value)) => values.append(value)
             Some(CompiledBodyOutput.Fallback(fallback)) =>
                 identity = match fallback.identity:
@@ -345,6 +358,23 @@ pub def prepare_compiled_bodies(
     mut source = PreparedBodyRecordSource.open(scope)
     mut prepared = transaction
     mut modules: list[str] = []
+    for namespace in outputs.namespaces:
+        if namespace.module not in modules:
+            projection = source_projection(unit, origin, namespace.module)?
+            header_key = encode_record_key(projection.header.key)?
+            header_value = projection.header.text.encode("utf-8")
+            prepared = put(prepared, header_key, header_value)
+            source.add(header_key, header_value)
+            declaration_key = encode_record_key(projection.declarations.key)?
+            declaration_value = projection.declarations.text.encode("utf-8")
+            prepared = put(prepared, declaration_key, declaration_value)
+            source.add(declaration_key, declaration_value)
+            for owner in projection.owners:
+                owner_key = encode_record_key(owner.key)?
+                owner_value = owner.text.encode("utf-8")
+                prepared = put(prepared, owner_key, owner_value)
+                source.add(owner_key, owner_value)
+            modules.append(namespace.module)
     for value in outputs.values:
         if value.module not in modules:
             projection = source_projection(unit, origin, value.module)?
@@ -429,6 +459,26 @@ pub def prepare_compiled_bodies(
 
     # 3. A cold whole check stages the same graph values later edited activations replace independently.
     mut published = 0
+    for namespace in outputs.namespaces:
+        projection = source_projection(unit, origin, namespace.module)?
+        key = namespace_key(origin, namespace.module)
+        mut reads = [request(projection.header.key), request(projection.declarations.key)]
+        for owner in projection.owners:
+            reads.append(request(owner.key))
+        for dependency in namespace.dependencies:
+            reads.append(request(declaration_index_key(origin, dependency)))
+        value = encode_graph_namespace_value(
+            GraphNamespaceValue(module=namespace.module, interface=namespace.interface, body_ir=namespace.body_ir),
+        ).map_err((error) => f"compiled namespace output refused: {error:?}")?
+        receipt = prepared_receipt(source, scope, key, reads)?
+        namespace_output = prepare_evaluation(
+            prepared,
+            "compiled-namespace-" + namespace.module,
+            ProducerRank(namespace=0, stage=ProducerStage.Signature, dependency=0),
+            value,
+            receipt,
+        )?
+        prepared = namespace_output.transaction
     for value in outputs.values:
         projection = source_projection(unit, origin, value.module)?
         owner = compiled_owner_source(projection, value.module, value.name, value.identity)?
@@ -936,6 +986,18 @@ def body_key(family: str, origin: str, identity: str, facet: str, context: str) 
         identity=identity,
         facet=facet,
         context=context,
+    )
+
+
+def namespace_key(origin: str, module: str) -> RecordKey:
+    """Name one composite editable namespace under its logical source projection."""
+    return RecordKey(
+        family="namespace",
+        identity_profile=IDENTITY_PROFILE,
+        origin=origin,
+        identity=module,
+        facet="checked",
+        context="interface-body-ir-plan",
     )
 
 

@@ -25,10 +25,25 @@ pub struct GraphBodyRecord {
     pub body_ir: Option<incan_semantics_core::executable_representation::EncodedOwnerRepresentation>,
 }
 
+/// One graph-admitted editable namespace, already decoded through its checked-interface and kernel codecs.
+#[derive(Debug, Clone)]
+pub struct GraphNamespaceRecord {
+    /// Project-relative logical source path used by the source-projection record.
+    pub source: String,
+    /// Immutable public checker tables installed for downstream editable namespaces.
+    pub interface: Arc<crate::typechecker::ModuleDependencyInterface>,
+    /// Complete checked Body IR contribution used instead of this module's transient
+    /// [`crate::typechecker::TypeCheckInfo`].
+    pub body_ir: incan_semantics_core::body_ir::BodyIrModule,
+}
+
 /// Keyed source of independently bounded graph body pages.
 pub trait GraphBodyRecordSource: std::fmt::Debug + Send + Sync {
     /// Read and authenticate the page for one exact stable owner identity, returning absence without scanning peers.
     fn read(&self, identity: &str) -> Result<Option<GraphBodyRecord>, RecordAdapterFault>;
+
+    /// Read and authenticate one complete editable namespace page by its project-relative source projection.
+    fn read_namespace(&self, source: &str) -> Result<Option<GraphNamespaceRecord>, RecordAdapterFault>;
 }
 
 /// Immutable eager fixtures or a keyed page source shared by module checkers in one compilation session.
@@ -125,6 +140,14 @@ impl GraphBodyRecords {
         }
         match &self.source {
             Some(source) => source.read(identity),
+            None => Ok(None),
+        }
+    }
+
+    /// Read one complete namespace selected by the engine for this exact source projection.
+    pub fn namespace(&self, source: &str) -> Result<Option<GraphNamespaceRecord>, RecordAdapterFault> {
+        match &self.source {
+            Some(source_records) => source_records.read_namespace(source),
             None => Ok(None),
         }
     }

@@ -8,6 +8,7 @@ pub const CHECKER_PROFILE: str = "incan.checker-free-functions/15"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/2"
+const GRAPH_NAMESPACE_SCHEMA: str = "incan.namespace-graph-transport/1"
 # One selected-input request carries bounded checker records plus native owner frames; bound that request at 64 MiB
 # while individual checker records retain their narrower 64 KiB limit.
 const MAX_GRAPH_TRANSPORT_BYTES: int = 67108864
@@ -61,6 +62,14 @@ pub model GraphBodyFields:
     pub body_ir: bytes
 
 
+pub model GraphNamespaceValue:
+    """One graph-selected editable namespace with its installable interface and complete Body IR module."""
+
+    pub module: str
+    pub interface: bytes
+    pub body_ir: bytes
+
+
 pub model CompiledBodyValue:
     """One compiler-produced checker triple and kernel-owned Body IR frame with its projected source owner."""
 
@@ -94,9 +103,19 @@ pub model CompiledBodyFallback:
     pub reason: str
 
 
-pub model CompiledBodyOutputs:
-    """Every record-eligible value and explicit full-source fallback awaiting independent binary framing."""
+pub model CompiledNamespaceValue:
+    """One installable checked interface and complete kernel Body IR module for an editable source namespace."""
 
+    pub module: str
+    pub interface: bytes
+    pub body_ir: bytes
+    pub dependencies: list[str]
+
+
+pub model CompiledBodyOutputs:
+    """Every namespace, owner value and explicit full-source fallback awaiting independent binary framing."""
+
+    pub namespaces: list[CompiledNamespaceValue] = []
     pub values: list[CompiledBodyValue]
     pub fallbacks: list[CompiledBodyFallback]
 
@@ -421,6 +440,27 @@ pub def decode_graph_body_page(
             body_ir=body_ir,
         ),
     )
+
+
+pub def encode_graph_namespace_value(value: GraphNamespaceValue) -> Result[bytes, CodecFault]:
+    """Encode one bounded namespace page without projecting either compiler-owned payload."""
+    if value.module == "" or len(value.interface) == 0 or len(value.body_ir) == 0:
+        return Err(CodecFault.Malformed)
+    return encode_transport_tokens(
+        [GRAPH_NAMESPACE_SCHEMA, value.module, hexlify(value.interface), hexlify(value.body_ir)],
+    )
+
+
+pub def decode_graph_namespace_value(encoded: bytes) -> Result[GraphNamespaceValue, CodecFault]:
+    """Decode one complete namespace page and refuse empty or trailing fields."""
+    tokens = transport_frames(encoded)?
+    if len(tokens) != 4 or tokens[0] != GRAPH_NAMESPACE_SCHEMA or tokens[1] == "":
+        return Err(CodecFault.Malformed)
+    interface = unhexlify(tokens[2]).map_err((_) => CodecFault.Malformed)?
+    body_ir = unhexlify(tokens[3]).map_err((_) => CodecFault.Malformed)?
+    if len(interface) == 0 or len(body_ir) == 0:
+        return Err(CodecFault.Malformed)
+    return Ok(GraphNamespaceValue(module=tokens[1], interface=interface, body_ir=body_ir))
 
 
 pub def record_root(encoded: bytes) -> Result[str, CodecFault]:

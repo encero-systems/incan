@@ -23,6 +23,14 @@ struct PendingBodyValue {
     dependency_reads: Vec<internal_models::CompiledBodyDependencyRead>,
 }
 
+/// One complete namespace value awaiting its whole-module Body IR frame.
+struct PendingNamespaceValue {
+    module: String,
+    interface: Vec<u8>,
+    body_ir: Vec<u8>,
+    dependencies: Vec<String>,
+}
+
 /// One checked owner excluded from record reuse while retaining the reason for the full-source path.
 struct PendingBodyFallback {
     module: String,
@@ -36,6 +44,7 @@ pub(super) struct GraphBodyOutput {
     path: Option<PathBuf>,
     project_root: PathBuf,
     values: Vec<PendingBodyValue>,
+    namespaces: Vec<PendingNamespaceValue>,
     fallbacks: Vec<PendingBodyFallback>,
     error: Option<String>,
 }
@@ -57,17 +66,18 @@ impl GraphBodyOutput {
             path,
             project_root,
             values: Vec::new(),
+            namespaces: Vec::new(),
             fallbacks: Vec::new(),
             error: None,
         })
     }
 
     /// Capture only values already emitted by all three producer boundaries for this checked module.
-    pub(super) fn observe(&mut self, module: &ParsedModule, checker: &TypeChecker) {
+    pub(super) fn observe(&mut self, module: &ParsedModule, checker: &TypeChecker, dependencies: &[String]) {
         if self.path.is_none() || self.error.is_some() {
             return;
         }
-        let result = self.capture(module, checker);
+        let result = self.capture(module, checker, dependencies);
         if let Err(error) = result {
             self.error = Some(error);
         }
@@ -78,11 +88,24 @@ impl GraphBodyOutput {
     /// Analysis visits authored modules and dependency modules together. Only paths beneath `project_root` belong to
     /// this publication; a dependency's checked bodies remain authenticated dependency facts and must never make a
     /// successful project build fail.
-    fn capture(&mut self, module: &ParsedModule, checker: &TypeChecker) -> Result<(), String> {
+    fn capture(&mut self, module: &ParsedModule, checker: &TypeChecker, dependencies: &[String]) -> Result<(), String> {
         let Ok(module_path) = module.file_path.strip_prefix(&self.project_root) else {
             return Ok(());
         };
         let module_path = module_path.to_string_lossy().into_owned();
+        if let Some(interface) = incan_frontend::typechecker::CheckedNamespaceInterface::from_checked(
+            &module.name,
+            &module.path_segments,
+            &module.ast,
+            checker,
+        )? {
+            self.namespaces.push(PendingNamespaceValue {
+                module: module_path.clone(),
+                interface: interface.to_bytes()?,
+                body_ir: Vec::new(),
+                dependencies: dependencies.to_vec(),
+            });
+        }
         for output in
             incan_frontend::checker_records::checked_owner_record_outputs(&module.ast, checker, &module.path_segments)?
         {
@@ -125,6 +148,10 @@ impl GraphBodyOutput {
                 continue;
             };
             let module_path = module_path.to_string_lossy().into_owned();
+            if let Some(namespace) = self.namespaces.iter_mut().find(|value| value.module == module_path) {
+                namespace.body_ir = incan_semantics_core::executable_representation::encode_module(lowered)
+                    .map_err(|error| format!("Body IR namespace frame output refused: {error}"))?;
+            }
             for body in &lowered.bodies {
                 let Some(pending) = self
                     .values
@@ -148,6 +175,12 @@ impl GraphBodyOutput {
                 value.identity, value.module
             ));
         }
+        if let Some(value) = self.namespaces.iter().find(|value| value.body_ir.is_empty()) {
+            return Err(format!(
+                "compiled graph output has no Body IR namespace frame for {}",
+                value.module
+            ));
+        }
         Ok(())
     }
 
@@ -169,6 +202,7 @@ impl GraphBodyOutput {
         self.fallbacks.sort_by(|left, right| {
             (&left.module, &left.name, &left.identity).cmp(&(&right.module, &right.name, &right.identity))
         });
+        self.namespaces.sort_by(|left, right| left.module.cmp(&right.module));
         let body_ir_bytes: usize = self.values.iter().map(|value| value.body_ir.len()).sum();
         let values: Vec<internal_models::CompiledBodyValue> = self
             .values
@@ -194,9 +228,23 @@ impl GraphBodyOutput {
                 reason: fallback.reason,
             })
             .collect();
+        let namespaces: Vec<internal_models::CompiledNamespaceValue> = self
+            .namespaces
+            .into_iter()
+            .map(|value| internal_models::CompiledNamespaceValue {
+                module: value.module,
+                interface: value.interface,
+                body_ir: value.body_ir,
+                dependencies: value.dependencies,
+            })
+            .collect();
         let body_count = values.len();
-        let outputs = internal_models::CompiledBodyOutputs { values, fallbacks };
-        let frames = internal_models::encode_compiled_body_outputs(&outputs)
+        let outputs = internal_models::CompiledBodyOutputs {
+            namespaces,
+            values,
+            fallbacks,
+        };
+        let frames = internal_models::encode_compiled_body_outputs(outputs)
             .map_err(|error| {
                 format!(
                     "compiled graph output refused: {error:?} ({body_count} owner frames, {body_ir_bytes} raw Body IR bytes)"

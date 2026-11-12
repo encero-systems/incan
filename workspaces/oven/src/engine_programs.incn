@@ -10,7 +10,13 @@ from bakery import find, fact_file
 from bakery_records import Fact
 from bakery_roots import register_root
 from compiler_body_publication import prepare_captured_source_inputs, prepare_compiled_bodies
-from compiler_body_values import body_owners_reading, encode_body_inventory, select_body_inventory_except
+from compiler_body_values import (
+    body_owners_reading,
+    encode_body_inventory,
+    invalid_namespace_modules,
+    select_body_inventory_except,
+    select_namespace_inventory_except,
+)
 from compiler_plan_values import select_plan_inventory_except, plan_owners_reading
 from engine_epochs import record_text, load_epoch
 from features import FeatureRequest
@@ -144,8 +150,10 @@ pub def obtain(
     graph = snapshot(store).map_err((error) => error.message())?
     projected = prepare_captured_source_inputs(graph, begin(graph), ready, epoch.inputs)?
     invalid = body_owners_reading(graph, projected.keys, CHECKER_PROFILE)?
+    invalid_namespaces = invalid_namespace_modules(graph, projected.keys, CHECKER_PROFILE)?
     retained_bodies = select_body_inventory_except(graph, CHECKER_PROFILE, invalid)?
     mut selected_bodies = encode_body_inventory(retained_bodies)?
+    selected_bodies.extend(select_namespace_inventory_except(graph, CHECKER_PROFILE, invalid_namespaces)?)
     # Lowering revalidates its exact checked inputs; a changed raw source slice may still produce equal meaning.
     invalid_plans = plan_owners_reading(graph, projected.keys)?
     selected_bodies.extend(select_plan_inventory_except(graph, invalid_plans)?)

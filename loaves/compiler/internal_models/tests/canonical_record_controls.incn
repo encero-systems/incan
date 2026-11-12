@@ -10,6 +10,7 @@ from checker_records import (
     CompiledBodyDependencyRead,
     CompiledBodyOutputs,
     CompiledBodyValue,
+    CompiledNamespaceValue,
     GraphBodyValue,
     decode_graph_body_values,
     encode_record,
@@ -107,11 +108,22 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         identity=None,
         reason="checked owner has no stable declaration identity",
     )
-    encoded = encode_compiled_body_outputs(CompiledBodyOutputs(values=[value], fallbacks=[fallback, identityless])).map_err(
-        (_) => "compiled output encode",
-    )?
-    assert len(encoded) == 3
+    namespace = CompiledNamespaceValue(
+        module="src/main.incn",
+        interface=b"checked-interface",
+        body_ir=b"whole-module-frame",
+        dependencies=["src/helper.incn", "src/provider.incn"],
+    )
+    encoded = encode_compiled_body_outputs(
+        CompiledBodyOutputs(namespaces=[namespace], values=[value], fallbacks=[fallback, identityless]),
+    ).map_err((_) => "compiled output encode")?
+    assert len(encoded) == 4
     match decode_compiled_body_frame(encoded[0]).map_err((_) => "compiled value decode")?:
+        CompiledBodyOutput.Namespace(decoded) =>
+            assert decoded.module == namespace.module and decoded.interface == namespace.interface
+            assert decoded.body_ir == namespace.body_ir and decoded.dependencies == namespace.dependencies
+        _ => return Err("compiled namespace decoded as another output kind")
+    match decode_compiled_body_frame(encoded[1]).map_err((_) => "compiled value decode")?:
         CompiledBodyOutput.Value(decoded) =>
             assert decoded.module == value.module and decoded.name == value.name and decoded.identity == value.identity
             assert decoded.dependency_reads == value.dependency_reads
@@ -121,13 +133,13 @@ def compiled_output_controls(source: str) -> Result[None, str]:
                 and decoded.final == value.final
                 and decoded.body_ir == value.body_ir
             )
-        CompiledBodyOutput.Fallback(_) => return Err("compiled value decoded as a fallback")
-    match decode_compiled_body_frame(encoded[1]).map_err((_) => "compiled fallback decode")?:
+        _ => return Err("compiled value decoded as another output kind")
+    match decode_compiled_body_frame(encoded[2]).map_err((_) => "compiled fallback decode")?:
         CompiledBodyOutput.Fallback(decoded) => assert decoded == fallback
-        CompiledBodyOutput.Value(_) => return Err("compiled fallback decoded as a value")
-    match decode_compiled_body_frame(encoded[2]).map_err((_) => "identityless fallback decode")?:
+        _ => return Err("compiled fallback decoded as another output kind")
+    match decode_compiled_body_frame(encoded[3]).map_err((_) => "identityless fallback decode")?:
         CompiledBodyOutput.Fallback(decoded) => assert decoded == identityless
-        CompiledBodyOutput.Value(_) => return Err("identityless fallback decoded as a value")
+        _ => return Err("identityless fallback decoded as another output kind")
     compiled_output_size_controls(declaration, local, from_native_final_fields(final_rows).map_err((_) => "final")?)?
     return Ok(None)
 
