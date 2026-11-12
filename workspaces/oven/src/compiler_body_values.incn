@@ -156,23 +156,32 @@ pub def body_ir_producer_work(
     mut representation_evaluations = 0
     mut body_ir_evaluations = 0
     while len(pending) > 0:
-        readers = readers_of(selected, pending, profile)?
-        pending = []
-        for reader in readers:
-            encoded = encode_record_key(reader)?
-            if encoded in visited:
-                continue
-            visited.add(encoded)
-            if reader.family not in ["local", "final", "body-ir-seed", "representation", "body-ir"]:
-                continue
-            if reusable_evaluation(selected, reader, profile)? is not None:
-                continue
-            pending.append(reader)
-            match reader.family:
-                "body-ir-seed" => seed_evaluations += 1
-                "representation" => representation_evaluations += 1
-                "body-ir" => body_ir_evaluations += 1
-                _ => pass
+        mut next: list[RecordKey] = []
+        for target in pending:
+            readers = readers_of(selected, [target], profile)?
+            expected = next_body_ir_families(target.family)
+            mut linked = len(expected) == 0
+            for reader in readers:
+                if reader.family in expected:
+                    linked = true
+                encoded = encode_record_key(reader)?
+                if encoded in visited:
+                    continue
+                visited.add(encoded)
+                if reader.family not in ["local", "final", "body-ir-seed", "representation", "body-ir"]:
+                    continue
+                if reusable_evaluation(selected, reader, profile)? is not None:
+                    continue
+                next.append(reader)
+                match reader.family:
+                    "body-ir-seed" => seed_evaluations += 1
+                    "representation" => representation_evaluations += 1
+                    "body-ir" => body_ir_evaluations += 1
+                    _ => pass
+            if not linked:
+                encoded = encode_record_key(target)?
+                return Err(f"Body IR producer chain is unavailable after {encoded}; expected {expected}")
+        pending = next
     return Ok(
         BodyIrProducerWork(
             seed_evaluations=seed_evaluations,
@@ -180,6 +189,16 @@ pub def body_ir_producer_work(
             body_ir_evaluations=body_ir_evaluations,
         ),
     )
+
+
+def next_body_ir_families(family: str) -> list[str]:
+    """Name the required downstream stage without accepting a legacy final-to-Body-IR shortcut."""
+    match family:
+        "local" => return ["final"]
+        "final" => return ["body-ir-seed"]
+        "body-ir-seed" => return ["representation", "body-ir"]
+        "representation" => return ["representation", "body-ir"]
+        _ => return []
 
 
 pub def publish_body_values(

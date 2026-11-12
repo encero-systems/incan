@@ -174,6 +174,12 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
         b"final value",
         final_receipt,
     )?
+    final_key = family_key("final", "run44-body")
+    match body_ir_producer_work(body.snapshot, [final_key], "profile"):
+        Err(error) =>
+            assert "Body IR producer chain is unavailable" in error, error
+            assert "body-ir-seed" in error, error
+        Ok(work) => assert False, f"missing Body IR producer chain selected {work.seed_evaluations} seeds"
     seed_key = family_key("body-ir-seed", "run44-body")
     seed_receipt = fixture_receipt(body.snapshot, seed_key, record_request(family_key("final", "run44-body")))?
     seed = publish_evaluation(
@@ -246,7 +252,6 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
     changed_body = commit(
         put(begin(body_ir.snapshot), encode_record_key(final_request.key)?, b"changed final input"),
     ).map_err((error) => error.message())?
-    final_key = family_key("final", "run44-body")
     changed_final_receipt = fixture_receipt(changed_body, final_key, final_request)?
     changed_final = publish_evaluation(
         changed_body,
