@@ -106,6 +106,7 @@ enum SemanticEdit(str):
     Dependency = "dependency"
     NamespaceBody = "namespace-body-only"
     NamespaceSignature = "namespace-signature"
+    NamespaceModel = "namespace-model"
 
 
 @derive(Eq)
@@ -695,6 +696,54 @@ def semantic_edit_cases() -> list[MatrixCase]:
             expected_module_checks=2,
             expected_body_ir_modules=2,
             expected_lowered_modules=2,
+        ),
+        MatrixCase(
+            edit=SemanticEdit.NamespaceModel,
+            fixture=MatrixFixture.Namespaces,
+            target="main.incn",
+            base={"main.incn": fixture_source(
+                [
+                    "from provider import value",
+                    "from independent import stable",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(value())",
+                    "    println(stable())",
+                ],
+            ), "provider.incn": fixture_source(["pub def value() -> str:", "    return \"hello\""]), "independent.incn": fixture_source(
+                [
+                    "pub model Marker:",
+                    "    pub value: int",
+                    "",
+                    "",
+                    "pub def stable() -> int:",
+                    "    return 7",
+                ],
+            )},
+            edited={"main.incn": fixture_source(
+                [
+                    "from provider import value",
+                    "from independent import stable",
+                    "",
+                    "",
+                    "def main() -> None:",
+                    "    println(value())",
+                    "    println(stable())",
+                ],
+            ), "provider.incn": fixture_source(["pub def value() -> str:", "    return \"hullo\""]), "independent.incn": fixture_source(
+                [
+                    "pub model Marker:",
+                    "    pub value: int",
+                    "",
+                    "",
+                    "pub def stable() -> int:",
+                    "    return 7",
+                ],
+            )},
+            expected_module_checks=1,
+            expected_body_ir_modules=1,
+            expected_lowered_modules=1,
         ),
     ]
 
