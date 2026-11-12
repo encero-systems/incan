@@ -1,0 +1,92 @@
+"""Loss-check the complete native interface for ordinary scalar programs through the existing function codec."""
+
+from rust::serde import Serialize, Deserialize
+from rust::serde_json import to_string, from_str, Error as JsonError
+from _plan import Plan, ExternalFunction
+from _types import source_span
+from function_records import encode_product, decode_product
+from layout_records import encode_models, decode_models, encode_enums, decode_enums, encode_zip_carriers, decode_zip_carriers
+
+
+@derive(Serialize, Deserialize)
+model StoredPlan:
+    """Every nonempty field admitted by the bounded ordinary-program profile."""
+
+    schema: int
+    functions: list[str]
+    programs: list[str]
+    models: list[str]
+    enums: list[str]
+    zip_carriers: list[str]
+    file: str
+    line: int
+    column: int
+
+
+@derive(Serialize, Deserialize)
+model StoredEntry:
+    """The standalone program-entry contribution selected from an already checked main function."""
+
+    schema: str
+    entry: str
+    inputs: list[str]
+
+
+pub def encode_entry_binding(entry: str, inputs: list[str]) -> Result[str, str]:
+    """Encode the entry selection independently of the function's instructions and physical source positions."""
+    return to_string(StoredEntry(schema="incan.plan-entry/1", entry=entry, inputs=inputs)).map_err((error) => str(error))
+
+
+pub def encode_record_plan(plan: &Plan) -> Result[str, str]:
+    """Encode one complete scalar plan or explicitly refuse a field the codec cannot preserve."""
+    counts: list[int] = [
+        len(plan.statics), len(plan.exports), len(plan.tests), len(plan.generic_models), len(plan.generic_enums),
+    ]
+    fields = ["statics", "exports", "tests", "generic models", "generic enums"]
+    for index in range(len(counts)):
+        if counts[index] != 0:
+            return Err(f"native-interface refuses {fields[index]}: {counts[index]}")
+    if len(plan.functions) == 0:
+        return Err("native-interface refuses an empty plan")
+    mut functions: list[str] = []
+    empty_runtime: list[ExternalFunction] = []
+    for index in range(len(plan.functions)):
+        if index == 0:
+            functions.append(encode_product(plan.functions[index], plan.externals)?)
+        else:
+            functions.append(encode_product(plan.functions[index], empty_runtime)?)
+    stored = StoredPlan(
+        schema=1, functions=functions, programs=plan.programs,
+        models=encode_models(plan.models)?, enums=encode_enums(plan.enums)?, zip_carriers=encode_zip_carriers(plan.zip_carriers)?,
+        file=str(plan.span.file), line=plan.span.line, column=plan.span.column,
+    )
+    encoded = to_string(stored).map_err((error) => str(error))?
+    if decode_record_plan(encoded)? != plan.clone():
+        return Err("native-interface codec changed complete native plan facts")
+    return Ok(encoded)
+
+
+pub def decode_record_plan(encoded: str) -> Result[Plan, str]:
+    """Restore one exact bounded native plan without resolving names or lowering a body."""
+    stored = read_plan(encoded).map_err((error) => str(error))?
+    if stored.schema != 1 or len(stored.functions) == 0:
+        return Err("unsupported native-interface schema")
+    first, externals = decode_product(stored.functions[0])?
+    mut functions = [first]
+    for encoded_function in stored.functions[1:]:
+        function, extra = decode_product(encoded_function)?
+        if len(extra) != 0:
+            return Err("native-interface has duplicate external inventories")
+        functions.append(function)
+    return Ok(
+        Plan(
+            models=decode_models(stored.models)?, enums=decode_enums(stored.enums)?,
+            functions=functions, externals=externals, programs=stored.programs, zip_carriers=decode_zip_carriers(stored.zip_carriers)?,
+            span=source_span(file=stored.file, line=stored.line, column=stored.column),
+        ),
+    )
+
+
+def read_plan(encoded: str) -> Result[StoredPlan, JsonError]:
+    """Bind the native generic decoder to the versioned interface model."""
+    return from_str(encoded)

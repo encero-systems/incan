@@ -1,0 +1,36 @@
+"""Complete native-interface round trips include SDK layouts and selected entries, not only function instructions."""
+
+from _plan import Plan, Function, ModelDeclaration, EnumDeclaration, EnumVariant, Carrier
+from _types import PlanType, ListLeaf, source_span
+from _body import Local, BasicBlock, Terminator, TerminatorKind, Parameter
+from record_codec import encode_record_plan, decode_record_plan
+from pub::internal_models.checked_types import CheckedType, CheckedPrimitiveType
+
+
+pub def test_complete_plan_round_trip() -> Result[None, str]:
+    """Concrete collection fields and typed enum witnesses survive the exact complete-plan loss check."""
+    span = source_span(file="sdk_layout.incn", line=4, column=2)
+    function = Function(
+        name="main", parameters=[], return_type=PlanType.Unit,
+        locals=[Local(ty=PlanType.Unit, span=span)],
+        blocks=[BasicBlock(statements=[], terminator=Terminator(kind=TerminatorKind.Return, span=span), cleanup=false, span=span)],
+        span=span,
+    )
+    mut plan = Plan(enums=[], models=[], functions=[function], externals=[], programs=["main"], span=span)
+    plan.models.append(ModelDeclaration(
+        name="SDKRecord", public=true,
+        fields=[Parameter(name="ids", ty=PlanType.List(ListLeaf.Int, 1), span=span)],
+        field_public=[true], derives=["Clone"], span=span, source_name="SDKRecord", library_item="sdk::SDKRecord",
+    ))
+    plan.enums.append(EnumDeclaration(
+        name="OptionalText", public=false,
+        variants=[EnumVariant(name="None", fields=[]), EnumVariant(name="Some", fields=[PlanType.String])],
+        derives=[], span=span, carrier=Carrier.Option,
+        semantic_key=Some(CheckedType.Generic("Option", [CheckedType.Primitive(CheckedPrimitiveType.Str)])),
+    ))
+    assert decode_record_plan(encode_record_plan(plan)?)? == plan
+    plan.tests.append("unsupported entry")
+    match encode_record_plan(plan):
+        Ok(_) => assert false, "native-interface dropped a collected test entry"
+        Err(_) => pass
+    return Ok(None)

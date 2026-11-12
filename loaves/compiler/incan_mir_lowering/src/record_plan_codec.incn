@@ -1,0 +1,3 @@
+"""Expose the single native-interface codec from its plan-model home."""
+
+pub from pub::incan_mir_plan import encode_record_plan, decode_record_plan, encode_entry_binding
