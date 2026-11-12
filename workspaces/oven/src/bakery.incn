@@ -415,7 +415,11 @@ def view_unit_directory(store: Path, fact: Fact, destination: Path, prefix: str 
     mut files = fact.files
     if prefix != "":
         files = [file for file in fact.files if file.path.startswith(prefix + "/")]
-    if not destination.is_symlink() and destination.is_dir() and all_same(store, files, destination, prefix):
+    mut same_identity = prefix != ""
+    if prefix == "" and destination.joinpath(VIEW_RECORD).is_file():
+        marker = read_json(destination.joinpath(VIEW_RECORD))?
+        same_identity = required_text(marker, "identity")? == fact.identity
+    if same_identity and not destination.is_symlink() and destination.is_dir() and all_same(store, files, destination, prefix):
         return Ok(None)
     make_directory(destination.parent())?
     staged = Path(f"{destination.0}.view-{id()}")
