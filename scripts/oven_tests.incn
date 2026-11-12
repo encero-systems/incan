@@ -9,7 +9,9 @@ be excluded on its own:
 2. `OVEN test --profile release` for every `loaves/*/*/tests/test_*.incn`, from its Loaf.
 
 Each invocation writes its own log under `EVIDENCE/oven-tests/`. `oven-tests.log` joins them in the order above, so
-it does not depend on scheduling. The passing ids must equal `workspaces/contracts/oven-tests.txt`.
+it does not depend on scheduling. The passing ids must equal `workspaces/contracts/oven-tests.txt`. Oven-project tests
+inherit the release Bakery, except that an input-mutation oracle receives a scratch-local Bakery. Compiler-Loaf tests
+share one evidence-local Bakery because their native library bindings are mutable gate state, not release-build units.
 
 At most N invocations run at once: `--jobs N`, else the core count. Each invocation also reserves memory, and one starts
 only while the reservations fit the memory they share: `--memory GIB`, else physical memory less a headroom. Every Oven
@@ -192,7 +194,7 @@ def run(options: Options) -> Result[str, str]:
     return report(options.evidence, summary, succeeded)
 
 
-pub def invocations(root: Path, _evidence: Path, logs: Path) -> Result[list[Invocation], str]:
+pub def invocations(root: Path, evidence: Path, logs: Path) -> Result[list[Invocation], str]:
     """The step's invocations in their fixed order, each with its memory reservation and its own numbered log."""
     mut planned: list[Invocation] = []
     oven = root.joinpath("workspaces/oven")
@@ -202,10 +204,11 @@ pub def invocations(root: Path, _evidence: Path, logs: Path) -> Result[list[Invo
     for source in sources:
         if not source.is_file():
             return Err("Oven test sources are absent")
-        project, isolated_source = isolated_oven_project(root, _evidence, len(planned), source)?
+        project, isolated_source = isolated_oven_project(root, evidence, len(planned), source)?
         unit = ["test", isolated_source.0]
         alone = source.name() in NEEDS_SETTLED_INSTALLATION
-        environment = invocation_environment(source, get_or("OVEN_TEST_PRIVATE_BAKERY", ""))
+        scratch = project.parent().parent()
+        environment = invocation_environment(source, scratch.joinpath("bakery").0)
         planned.append(
             invocation(
                 unit,
@@ -215,16 +218,27 @@ pub def invocations(root: Path, _evidence: Path, logs: Path) -> Result[list[Invo
                 len(planned),
                 source,
                 alone,
-                Some(project.parent().parent()),
+                Some(scratch),
                 environment,
             ),
         )
     compiler = root.joinpath("loaves/compiler").0 + "/"
+    loaf_environment = {"INCAN_BAKERY": evidence.joinpath("oven-loaf-bakery").0}
     for source in loaf_tests(root.joinpath("loaves"))?:
         # Compiler Loaves link native support, which an installed bundle ships for the release profile only.
         loaf = source.parent().parent()
         arguments = ["test", source.0, "--profile", "release"]
-        planned.append(invocation(arguments, loaf.0, reservation_of(source, compiler), logs, len(planned), source))
+        planned.append(
+            invocation(
+                arguments,
+                loaf.0,
+                reservation_of(source, compiler),
+                logs,
+                len(planned),
+                source,
+                environment=loaf_environment,
+            ),
+        )
     return Ok(planned)
 
 
@@ -252,10 +266,10 @@ def isolated_oven_project(root: Path, evidence: Path, position: int, source: Pat
     return Ok((project, project.joinpath("src").joinpath(source.name())))
 
 
-pub def invocation_environment(source: Path, private_bakery: str) -> Dict[str, str]:
-    """Select a caller-owned private Bakery only for a test whose oracle mutates native inputs."""
-    if private_bakery != "" and source.name() in NEEDS_PRIVATE_BAKERY:
-        return {"INCAN_BAKERY": private_bakery}
+pub def invocation_environment(source: Path, scratch_bakery: str) -> Dict[str, str]:
+    """Select a scratch-local Bakery only for a test whose oracle mutates native inputs."""
+    if source.name() in NEEDS_PRIVATE_BAKERY:
+        return {"INCAN_BAKERY": scratch_bakery}
     return {}
 
 

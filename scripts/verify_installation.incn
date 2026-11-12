@@ -504,8 +504,6 @@ def build_runner(installation: Installation) -> Result[Path, str]:
 
 def run_oven_tests(installation: Installation) -> Result[None, str]:
     """Run the stable Oven and Loaf Incan-test inventory through the installed toolchain and release Bakery."""
-    mut environment = release_bakery_environment(installation)
-    environment["OVEN_TEST_PRIVATE_BAKERY"] = installation.home.joinpath("bakery").0
     return require_step(
         Step(
             name="oven-tests",
@@ -519,7 +517,7 @@ def run_oven_tests(installation: Installation) -> Result[None, str]:
                 "--jobs",
                 str(installation.jobs),
             ],
-            environment=environment,
+            environment=release_bakery_environment(installation),
             remove_environment=["RUSTC_BOOTSTRAP"],
             directory=Some(installation.root),
             log=installation.run.joinpath("oven-tests-command.log"),

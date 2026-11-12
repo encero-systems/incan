@@ -203,7 +203,6 @@ def test_dependency_freshness_uses_only_the_private_bakery() -> Result[None, str
     source = Path("/r/test_dependency_freshness.incn")
     selected = invocation_environment(source, "/private/bakery")
     assert len(selected) == 1 and selected["INCAN_BAKERY"] == "/private/bakery"
-    assert len(invocation_environment(source, "")) == 0
     assert len(invocation_environment(Path("/r/test_bakery.incn"), "/private/bakery")) == 0
     return Ok(None)
 
@@ -239,6 +238,16 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
         loaf_b.0,
         loaf_a.0,
         loaf_a.0,
+    ]
+    loaf_bakery = evidence.joinpath("oven-loaf-bakery").0
+    assert len(planned[0].environment) == 0
+    assert len(planned[1].environment) == 0
+    assert [item.environment["INCAN_BAKERY"] for item in planned[2:]] == [
+        loaf_bakery,
+        loaf_bakery,
+        loaf_bakery,
+        loaf_bakery,
+        loaf_bakery,
     ]
     assert oven_test_state_root(root, "").0 == root.joinpath(".agents/state/release-oven-tests").0
     assert oven_test_state_root(root, "/outside/oven-tests").0 == "/outside/oven-tests"
