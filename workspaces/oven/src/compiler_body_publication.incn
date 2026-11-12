@@ -28,10 +28,10 @@ from pub::internal_models.records import (
     encode_record_key,
 )
 from compiler_graph_records import prepare_evaluation
-from compiler_source_projection import SourceProjection, SourceProjectionRecord, project_source
+from compiler_source_projection import SourceProjection, SourceProjectionRecord, owner_source_key, project_source
 from engine_capture import CapturedInput, InputRole
 from files import discard_file
-from unit import UnitDescription
+from unit import UnitDescription, dependency_source_roots
 
 const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
 
@@ -115,31 +115,56 @@ pub def prepare_captured_source_inputs(
     inputs: list[CapturedInput],
 ) -> Result[PreparedSourceInputs, str]:
     """Stage captured source projections and report only keys whose semantic values differ from the selected view."""
-    origin = source_origin(unit)
-    prefix = unit.project_root + "/"
     mut prepared = transaction
     mut changed: list[RecordKey] = []
     for input in inputs:
-        if (
-            input.path.startswith(prefix)
-            and input.path.endswith(".incn")
-            and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]
-        ):
-            logical = input.path[len(prefix):]
-            source = Path(input.path).read_text("utf-8", "strict").map_err((error) => error.message())?
-            projection = project_source(origin, logical, source)?
-            header_key = encode_record_key(projection.header.key)?
-            header_value = projection.header.text.encode("utf-8")
-            if get(selected, header_key).map_err((error) => error.message())? != Some(header_value):
-                changed.append(projection.header.key)
-            prepared = put(prepared, header_key, header_value)
-            for owner in projection.owners:
-                owner_key = encode_record_key(owner.key)?
-                owner_value = owner.text.encode("utf-8")
-                if get(selected, owner_key).map_err((error) => error.message())? != Some(owner_value):
-                    changed.append(owner.key)
-                prepared = put(prepared, owner_key, owner_value)
+        if input.path.endswith(".incn") and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]:
+            match captured_source_identity(unit, input.path):
+                None => continue
+                Some(identity) =>
+                    source = Path(input.path).read_text("utf-8", "strict").map_err((error) => error.message())?
+                    projection = project_source(identity[0], identity[1], source)?
+                    header_key = encode_record_key(projection.header.key)?
+                    header_value = projection.header.text.encode("utf-8")
+                    if get(selected, header_key).map_err((error) => error.message())? != Some(header_value):
+                        changed.append(projection.header.key)
+                    prepared = put(prepared, header_key, header_value)
+                    for owner in projection.owners:
+                        owner_key = encode_record_key(owner.key)?
+                        owner_value = owner.text.encode("utf-8")
+                        if get(selected, owner_key).map_err((error) => error.message())? != Some(owner_value):
+                            changed.append(owner.key)
+                        prepared = put(prepared, owner_key, owner_value)
     return Ok(PreparedSourceInputs(transaction=prepared, keys=changed))
+
+
+def captured_source_identity(unit: UnitDescription, path: str) -> Option[Tuple[str, str]]:
+    """Map one captured source to its package-owned logical module identity without retaining checkout location."""
+    mut normalized = ""
+    match Path(path).resolve():
+        Err(_) => return None
+        Ok(resolved) => normalized = resolved.0
+    for dependency in dependency_source_roots(unit):
+        prefix = dependency[1] + "/"
+        if normalized.startswith(prefix):
+            return Some((dependency[0], logical_module(normalized[len(prefix):])))
+    prefix = unit.project_root + "/"
+    if normalized.startswith(prefix):
+        return Some((source_origin(unit), normalized[len(prefix):]))
+    return None
+
+
+def logical_module(relative: str) -> str:
+    """Canonicalize an editable dependency source path the same way source-module resolution names its module."""
+    mut without_extension = relative
+    if without_extension.endswith(".incn"):
+        without_extension = without_extension[:len(without_extension) - len(".incn")]
+    mut parts = without_extension.split("/")
+    if len(parts) > 0 and parts[len(parts) - 1] in ["mod", "__init__"]:
+        parts = parts[:len(parts) - 1]
+    elif len(parts) > 1 and parts[len(parts) - 1] == "prelude":
+        parts = parts[:len(parts) - 1]
+    return "/".join(parts)
 
 
 pub def publish_compiled_bodies(
@@ -204,6 +229,12 @@ pub def prepare_compiled_bodies(
                 prepared = put(prepared, owner_key, owner_value)
                 source.add(owner_key, owner_value)
             modules.append(fallback.module)
+    editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
+    for value in outputs.values:
+        for dependency in value.dependency_reads:
+            if dependency.package in editable_packages:
+                owner = dependency_owner_record(unit, dependency.package, dependency.module, dependency.name)?
+                source.add(encode_record_key(owner.key)?, owner.text.encode("utf-8"))
     for value in outputs.values:
         declaration_key = encode_record_key(
             body_key("declaration", origin, value.identity, value.name, root(value.declaration)?),
@@ -232,6 +263,9 @@ pub def prepare_compiled_bodies(
         mut local_reads = [request(owner.key), request(projection.header.key)]
         for declaration in declarations:
             local_reads.append(request(declaration))
+        for dependency in value.dependency_reads:
+            if dependency.package in editable_packages:
+                local_reads.append(request(owner_source_key(dependency.package, dependency.module, dependency.name)))
         local_receipt = prepared_receipt(source, scope, local_key, local_reads)?
         local = prepare_evaluation(
             prepared,
@@ -246,6 +280,9 @@ pub def prepare_compiled_bodies(
         mut final_reads = [request(owner.key), request(projection.header.key), request(local_key)]
         for declaration in declarations:
             final_reads.append(request(declaration))
+        for dependency in value.dependency_reads:
+            if dependency.package in editable_packages:
+                final_reads.append(request(owner_source_key(dependency.package, dependency.module, dependency.name)))
         final_receipt = prepared_receipt(source, scope, final_key, final_reads)?
         final = prepare_evaluation(
             prepared,
@@ -283,6 +320,30 @@ def owner_record(projection: SourceProjection, name: str) -> Result[SourceProjec
         if owner.key.facet == name:
             return Ok(owner)
     return Err("compiled body output has no matching owner source: " + name)
+
+
+def dependency_owner_record(
+    unit: UnitDescription,
+    package: str,
+    module: str,
+    name: str,
+) -> Result[SourceProjectionRecord, str]:
+    """Read one compiler-witnessed editable dependency owner from its described logical module root."""
+    mut root = ""
+    for dependency in dependency_source_roots(unit):
+        if dependency[0] == package:
+            root = dependency[1]
+    if root == "":
+        return Err("compiled body output names an unselected editable dependency: " + package)
+    base = Path(root).joinpath(module)
+    mut candidates = [Path(base.0 + ".incn"), base.joinpath("mod.incn"), base.joinpath("__init__.incn")]
+    if "/" in module:
+        candidates.append(base.joinpath("prelude.incn"))
+    for candidate in candidates:
+        if candidate.is_file():
+            source = candidate.read_text("utf-8", "strict").map_err((error) => error.message())?
+            return owner_record(project_source(package, module, source)?, name)
+    return Err(f"compiled body output dependency module is absent: {package}:{module}")
 
 
 def module_declarations(values: list[CompiledBodyValue], origin: str, module: str) -> Result[list[RecordKey], str]:

@@ -76,7 +76,7 @@ Trust controls only whether unattended preparation and the language server may r
 
 `PATH` names an Incan entry source. Arguments after `--` are passed to the program. `--argv0 TEXT` sets the program's argument zero. Repeatable `--program-entry PATH` adds program entries. The compiled program inherits stdin, stdout and stderr; its exit status is the command's exit status.
 
-With `INCAN_ENGINE=records`, `PATH` must name one ordinary program source file or a project directory with a conventional `src/main.incn` entry, the profile must be `debug` or `release`, and editable path dependencies, vocabulary entries, foreign headers, feature-selection flags, substitutions and additional program entries are refused. Build and run select the same compiled unit. The program runs only after successful capture and native selection. `--engine-report` retains a proof report and prints one JSON line before any program output. Without that flag, proof reporting adds no console output. The flag is refused in legacy mode.
+With `INCAN_ENGINE=records`, `PATH` must name one ordinary program source file or a project directory with a conventional `src/main.incn` entry, the profile must be `debug` or `release`, and vocabulary entries, foreign headers, feature-selection flags, substitutions and additional program entries are refused. Editable Incan path dependencies are captured with the program. Build and run select the same compiled unit. The program runs only after successful capture and native selection. `--engine-report` retains a proof report and prints one JSON line before any program output. Without that flag, proof reporting adds no console output. The flag is refused in legacy mode.
 
 ## `oven check`
 
@@ -257,10 +257,11 @@ Requires `INCAN_ENGINE=records`. `ID` is the 32-character lowercase hexadecimal 
 
 | Field | JSON type | Contract |
 | --- | --- | --- |
-| `schema` | String | `incan.engine.proofs/1`. |
+| `schema` | String | `incan.engine.proofs/2`. |
 | `run` | String | The run id. |
 | `granularity` | String | `unit-record`. |
 | `unit_evaluations` | Integer | Whole-unit producer evaluations performed for this request; a compiled-unit hit is zero. |
+| `body_evaluations` | Integer | Previously published body owners invalidated by this request's changed source records. |
 | `native_bakes` | Integer | Successful native units published by this request. |
 | `source_stats`, `source_reads`, `source_hashes`, `source_listings` | Integers | Editable-input operations counted by request capture, including configuration and the toolchain pin. |
 | `frozen_stats`, `frozen_reads`, `frozen_hashes` | Integers | Frozen-input operations counted by request capture. These counters do not count compiler reads of admitted facts. |
