@@ -153,8 +153,23 @@ impl TypeChecker {
         self.selected_dependency_interfaces = interfaces;
     }
 
-    /// Give a fresh module checker read access to the graph tables populated once by orchestration.
-    pub fn share_dependency_interface_tables(&mut self, source: &TypeChecker) {
+    /// Give a fresh module checker read access to the graph tables populated once by orchestration when they are its
+    /// exact dependency closure.
+    ///
+    /// The orchestration table grows as modules seal. A checker whose closure is only a subset must install its exact
+    /// handles instead; sharing the build-wide superset would expose declarations from unrelated sibling modules.
+    pub fn share_exact_dependency_interface_tables(
+        &mut self,
+        source: &TypeChecker,
+        interfaces: &[Arc<ModuleDependencyInterface>],
+    ) {
+        let exact = source.dependency_exports.len() == interfaces.len()
+            && interfaces
+                .iter()
+                .all(|interface| source.dependency_exports.contains_key(&interface.module_name));
+        if !exact {
+            return;
+        }
         self.dependency_member_symbols = source.dependency_member_symbols.clone();
         self.dependency_member_type_aliases = source.dependency_member_type_aliases.clone();
         self.dependency_registry_definitions = source.dependency_registry_definitions.clone();

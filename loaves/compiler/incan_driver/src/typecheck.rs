@@ -107,7 +107,7 @@ pub fn typecheck_modules(
     let mut dependency_tables = typechecker::TypeChecker::new();
     dependency_tables.set_loaves(Arc::clone(loaves));
     dependency_tables.set_dependency_interface_preparation_cache(dependency_preparations.clone());
-    let configured_checker = |module: &ParsedModule, shared_tables: Option<&typechecker::TypeChecker>| {
+    let configured_checker = |module: &ParsedModule| {
         let mut checker = typechecker::TypeChecker::new();
         checker.set_declared_crate_names(declared.clone());
         checker.set_current_module_path(Some(module.path_segments.clone()));
@@ -122,9 +122,6 @@ pub fn typecheck_modules(
         }
         if let Some(products) = body_reuse.get(&module.file_path) {
             checker.set_callable_body_reuse(products.clone());
-        }
-        if let Some(tables) = shared_tables {
-            checker.share_dependency_interface_tables(tables);
         }
         checker
     };
@@ -163,7 +160,8 @@ pub fn typecheck_modules(
         warnings_out.extend(parser_warning_diagnostics(module));
 
         let check_result = {
-            let mut checker = configured_checker(module, Some(&dependency_tables));
+            let mut checker = configured_checker(module);
+            checker.share_exact_dependency_interface_tables(&dependency_tables, &interfaces_for_module);
             checker.select_dependency_interfaces(interfaces_for_module);
 
             // A standard package checks its complete source before publishing its public checked facade.
@@ -229,7 +227,8 @@ pub fn typecheck_modules(
                         .filter(|dep_idx| !component_indexes.contains(dep_idx))
                         .filter_map(|dep_idx| dependency_interfaces[*dep_idx].as_ref().map(Arc::clone))
                         .collect::<Vec<_>>();
-                    let mut builder = configured_checker(&modules[component_indexes[0]], Some(&dependency_tables));
+                    let mut builder = configured_checker(&modules[component_indexes[0]]);
+                    builder.share_exact_dependency_interface_tables(&dependency_tables, &external_interfaces);
                     builder.install_dependency_interfaces_directly(&external_interfaces);
                     let component = component_indexes
                         .iter()
