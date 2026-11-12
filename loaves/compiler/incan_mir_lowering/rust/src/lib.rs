@@ -1,7 +1,8 @@
 //! Native invocation-span guards for the Incan-authored MIR lowering pipeline.
 //!
 //! Incan owns stage selection and guard lifetimes. This facet exists only because tracing callsites are Rust macros;
-//! it does not own lowering orchestration or compiler behavior.
+//! it does not own lowering orchestration or compiler behavior. The macro-call limitation is tracked in
+//! `workspaces/docs-site/docs/release_notes/0_2.md`; remove this facet when Incan can enter tracing spans directly.
 
 use tracing::span::EnteredSpan;
 
