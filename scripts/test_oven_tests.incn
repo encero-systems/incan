@@ -25,6 +25,8 @@ from oven_tests import (
 from verify_installation import VerificationPhase, verification_phase_plans, verification_trace_environment
 
 const GIB: int = 1073741824
+
+
 def test_jobs_follow_the_configured_count_then_the_cores() -> Result[None, str]:
     """A positive configured count wins; otherwise the cores decide, and at least one runs."""
     assert default_jobs("3", 18) == 3
@@ -220,6 +222,7 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
     assert oven_test_state_root(root, "/outside/oven-tests").0 == "/outside/oven-tests"
     assert [item.reservation for item in planned] == [4 * GIB, 4 * GIB, 6 * GIB, 6 * GIB, 4 * GIB, 4 * GIB, 4 * GIB]
     assert [item.alone for item in planned] == [false, false, false, false, false, false, false]
+    assert [item.scratch is not None for item in planned] == [true, true, false, false, false, false, false]
     assert oven_a.joinpath("src/test_beta.incn").is_file()
     assert oven_b.joinpath("src/test_alpha.incn").is_file()
     assert oven_a.joinpath("tests/fixture.txt").is_file()
@@ -248,8 +251,14 @@ def test_joined_log_keeps_invocation_order_whatever_the_schedule() -> Result[Non
     mut planned: list[Invocation] = []
     for index in range(7):
         log = logs.joinpath(log_name(index, Path(f"/r/test_{index}.incn")))
-        planned.append(Invocation(arguments=[f"line {index}"], directory=root.0, reservation=GIB, log=log))
+        scratch = root.joinpath(f"scratch-{index}")
+        scratch.mkdir(true, true).map_err((error) => error.message())?
+        scratch.joinpath("target").write_text("built\n", "utf-8", "strict", None).map_err((error) => error.message())?
+        planned.append(
+            Invocation(arguments=[f"line {index}"], directory=root.0, reservation=GIB, log=log, scratch=Some(scratch)),
+        )
     assert run_all("/bin/echo", planned, 5, 3 * GIB)?
+    assert len(root.glob("scratch-*").map_err((error) => error.message())?) == 0
     joined = join_logs(planned, root.joinpath("joined.log"))?
     assert joined == "line 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\n"
     assert not run_all("/usr/bin/false", planned, 4, 0)?
