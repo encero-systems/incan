@@ -47,6 +47,7 @@ pub fn decode_module(bytes: &[u8]) -> Result<BodyIrModule, ExecutableRepresentat
 pub fn encode_owner(
     module: &CompilerNodeId,
     source: &str,
+    identity: &str,
     body: &Body,
 ) -> Result<Vec<u8>, ExecutableRepresentationError> {
     /// Postcard encodes the borrowed fields identically to [`EncodedOwnerRepresentation`] without cloning the body.
@@ -55,12 +56,14 @@ pub fn encode_owner(
         version: u32,
         module: &'owner CompilerNodeId,
         source: &'owner str,
+        identity: &'owner str,
         body: &'owner Body,
     }
     postcard::to_allocvec(&BorrowedOwnerFrame {
         version: EXECUTABLE_REPRESENTATION_VERSION,
         module,
         source,
+        identity,
         body,
     })
     .map_err(|error| ExecutableRepresentationError::Malformed {

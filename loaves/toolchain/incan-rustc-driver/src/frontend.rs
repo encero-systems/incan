@@ -261,13 +261,7 @@ fn read_graph_body_records(path: &Path) -> Result<incan_frontend::checker_record
         .map(|record| {
             let frame = incan_semantics_core::executable_representation::decode_owner(&record.body_ir)
                 .map_err(|error| format!("graph Body IR owner frame refused: {error}"))?;
-            if frame.source.is_empty()
-                || frame
-                    .body
-                    .canonical
-                    .as_ref()
-                    .is_none_or(|identity| identity.render_compact() != record.identity)
-            {
+            if frame.source.is_empty() || frame.identity != record.identity {
                 return Err("graph Body IR owner frame disagrees with its selected identity".to_owned());
             }
             Ok(incan_frontend::checker_records::GraphBodyRecord {

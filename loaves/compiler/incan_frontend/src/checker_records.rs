@@ -32,6 +32,8 @@ pub struct GraphBodyRecords(Arc<BTreeMap<String, GraphBodyRecord>>);
 pub struct CheckedOwnerRecordFields {
     /// Source spelling used to match the independently projected owner source record.
     pub name: String,
+    /// Current physical owner span used only to pair this fresh record output with its native Body IR frame.
+    pub span: crate::ast::Span,
     /// Declaration-family field primitives.
     pub declaration: Vec<Vec<String>>,
     /// Pending local-family field primitives.
@@ -121,6 +123,7 @@ pub fn checked_owner_record_fields(
             };
             Some(CheckedOwnerRecordFields {
                 name: function.name.clone(),
+                span: declaration.span,
                 declaration: checker.produced_declaration_record(declaration.span)?.clone(),
                 local: checker.available_local_record(declaration.span)?.clone(),
                 final_value: checker.available_final_record(declaration.span)?.clone(),

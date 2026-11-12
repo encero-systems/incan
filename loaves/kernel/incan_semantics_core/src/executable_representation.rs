@@ -134,6 +134,8 @@ pub struct EncodedOwnerRepresentation {
     pub module: CompilerNodeId,
     /// Project-relative logical source path that supplied this owner.
     pub source: String,
+    /// Position-free declaration identity used by the compiler record graph.
+    pub identity: String,
     /// The complete checked executable owner.
     pub body: Body,
 }

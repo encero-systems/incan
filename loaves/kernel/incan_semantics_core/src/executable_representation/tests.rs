@@ -23,14 +23,18 @@ mod public_contexts;
 fn executable_owner_frame_round_trips_the_native_body_and_provenance() -> Result<(), Box<dyn std::error::Error>> {
     let owner = body("retained", 4);
     let module = CompilerNodeId::module("probe::lib");
-    let encoded = encode_owner(&module, "src/lib.incn", &owner)?;
+    let encoded = encode_owner(&module, "src/lib.incn", "function:probe::lib::retained", &owner)?;
     let decoded = decode_owner(&encoded)?;
 
     assert_eq!(decoded.version, EXECUTABLE_REPRESENTATION_VERSION);
     assert_eq!(decoded.module, module);
     assert_eq!(decoded.source, "src/lib.incn");
+    assert_eq!(decoded.identity, "function:probe::lib::retained");
     assert_eq!(decoded.body, owner);
-    assert_eq!(encode_owner(&decoded.module, &decoded.source, &decoded.body)?, encoded);
+    assert_eq!(
+        encode_owner(&decoded.module, &decoded.source, &decoded.identity, &decoded.body)?,
+        encoded
+    );
     Ok(())
 }
 
