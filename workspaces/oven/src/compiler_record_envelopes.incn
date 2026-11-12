@@ -142,8 +142,9 @@ def stage_order(stage: ProducerStage) -> int:
         ProducerStage.CheckBody => return 4
         ProducerStage.BodyIr => return 5
         ProducerStage.Instance => return 6
-        ProducerStage.PlanFunction => return 7
-        ProducerStage.NativeInterface => return 8
+        ProducerStage.LoweringDemand => return 7
+        ProducerStage.PlanFunction => return 8
+        ProducerStage.NativeInterface => return 9
 
 
 def rooted(family: str, root: str) -> str:

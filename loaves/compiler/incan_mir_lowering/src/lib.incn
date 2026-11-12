@@ -1,6 +1,7 @@
 """Public facade for the checked Body-IR-to-native-plan lowering Loaf."""
 
 from assertions import lower_assertion
+pub from record_plan_outputs import publish_plan_records
 from rust::incan_semantics_core::body_ir import NativeUnionDeclaration
 from rust::incan_semantics_core import CompilerNodeId
 from async_ import future_type, validate_futures, construct_future, await_future, async_entry, evaluator_name
@@ -151,6 +152,8 @@ pub model SourceInputs:
     # Producer-owned checked inputs and consumed signatures; absence preserves ordinary lowering.
     pub scalar_products: Option[str] = None
     pub scalar_bodies: list[tuple[CompilerNodeId, str]] = []
+    # Request-local producer evidence; absence keeps ordinary lowering and emits no report files.
+    pub record_report: Option[str] = None
 
 
 pub def unit_plan(
@@ -173,6 +176,7 @@ pub def unit_plan(
         inputs.overflow_checks,
         inputs.scalar_products,
         inputs.scalar_bodies,
+        inputs.record_report,
     )
 
 

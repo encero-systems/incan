@@ -36,6 +36,12 @@ pub def prepare_report(
             produced.epoch_reads,
         ), "frozen_stats": JsonValue.int(frozen.stats), "frozen_reads": JsonValue.int(frozen.reads), "frozen_hashes": JsonValue.int(
             frozen.hashes,
+        ), "plan_function_evaluations": JsonValue.int(
+            produced.plan_function_evaluations,
+        ), "plan_function_reuses": JsonValue.int(produced.plan_function_reuses), "lowering_demand_evaluations": JsonValue.int(
+            produced.lowering_demand_evaluations,
+        ), "lowering_demand_reuses": JsonValue.int(produced.lowering_demand_reuses), "native_interface_evaluations": JsonValue.int(
+            produced.native_interface_evaluations,
         )},
     )
     selected = snapshot(store).map_err((error) => error.message())?
