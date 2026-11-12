@@ -89,7 +89,12 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         local=local_bytes,
         final=final_bytes,
         body_ir=b"owner-frame",
-        dependency_reads=[CompiledBodyDependencyRead(package="provider", module="lib", name="value")],
+        dependency_reads=[CompiledBodyDependencyRead(
+            package=Some("provider"),
+            module="lib",
+            name="value",
+            identity="provider|module:lib|value|function|module|0|() -> int",
+        )],
     )
     fallback = CompiledBodyFallback(
         module="src/main.incn",
