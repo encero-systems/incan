@@ -883,13 +883,16 @@ Qualification still fails the artifact contract. A fresh cold build of the same 
 improvement, the qualification constant remains false and Oven's one-body edit is not run or claimed. This is a
 failed E6 proof, not permission to weaken the development artifact contract.
 
-The executable comparison localizes the byte difference to development linker metadata rather than emitted
-instructions: the disassemblies and Mach-O section sizes match, while each binary's symbol table records different
+The executable comparison localized the byte difference to development linker metadata rather than emitted
+instructions: the disassemblies and Mach-O section sizes matched, while each binary's symbol table recorded different
 `OSO` object paths containing its Oven store staging directory, process identifier and rustc object suffix. Those
-strings change the symbol-string-table size, Mach-O UUID, load-command offsets and ad-hoc signature. The remaining
-design question is therefore: must an admitted development executable retain this session-specific `OSO` provenance,
-or may the executable normalize or omit it while preserving the unpacked debug companions? Enabling either linker
-normalization or stripping before that answer would silently change the development-debugging contract.
+strings changed the symbol-string-table size, Mach-O UUID, load-command offsets and ad-hoc signature.
+
+Development executables retain that debug map. Before invoking Darwin's linker, the adapter places every object input
+under the home's native store by its SHA-256 digest and passes the resulting immutable paths to the otherwise unchanged
+link invocation. Incremental reuse and a cold build therefore expose the same `OSO` bytes for the same objects, and
+the named objects remain available to the debugger rather than being removed with a staging directory. Post-link
+normalization and stripping are not part of the admitted artifact contract.
 
 #### Native phase diagnostic at `0be358dd8` and the 100 ms path
 

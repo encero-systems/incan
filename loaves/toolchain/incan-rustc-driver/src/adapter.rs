@@ -23,6 +23,7 @@ mod active_plan;
 mod callbacks;
 mod library_verification;
 mod rustc_queries;
+pub(crate) mod stable_link;
 
 pub(crate) use active_plan::PlanReader;
 use library_verification::*;
@@ -158,12 +159,19 @@ pub fn compile(
         args.push(format!("{name}={}", path.display()));
     }
     let search = crate::native_search::dependencies(&all, dependency_search_paths);
-    if shared_store.is_some() {
+    if let Some(store) = shared_store {
         args.extend(["-Cprefer-dynamic".into(), "-Crpath".into()]);
         // Rustc already constructs the native Darwin invocation; bypass the C driver's extra process for edits.
+        // The adapter interposes its own executable only to give every object a content-derived store path before
+        // forwarding the otherwise unchanged argument vector to ld. Darwin records those paths in the debug map.
         let darwin = identity.target.ends_with("-apple-darwin");
         if darwin {
-            args.push("-Clinker=/usr/bin/ld".into());
+            let linker = std::env::current_exe().map_err(|error| {
+                DriverError::Invocation(format!("cannot locate stable development linker: {error}"))
+            })?;
+            args.push(format!("-Clinker={}", linker.display()));
+            args.push("-Clinker-flavor=ld".into());
+            args.push(format!("-Clink-arg={}{}", stable_link::STORE_ARGUMENT, store.display()));
         }
         // The executable is linked in the store and run from a copy elsewhere, so its libraries are also found
         // through absolute search paths, which do not depend on where the copy lives.
