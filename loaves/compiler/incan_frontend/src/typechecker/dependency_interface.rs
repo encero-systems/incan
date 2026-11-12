@@ -26,9 +26,9 @@ pub struct CheckedNamespaceInterface {
 }
 
 impl CheckedNamespaceInterface {
-    const SCHEMA: u32 = 1;
+    const SCHEMA: u32 = 2;
 
-    /// Capture an installable public function namespace from one accepted editable module.
+    /// Capture an installable public function-and-model namespace from one accepted editable module.
     ///
     /// Other declaration families remain on ordinary checking until their frozen-manifest tables have an exact
     /// namespace installer. A miss is explicit and never publishes a partial interface.
@@ -41,7 +41,7 @@ impl CheckedNamespaceInterface {
         if program.declarations.iter().any(|declaration| {
             !matches!(
                 declaration.node,
-                Declaration::Function(_) | Declaration::Import(_) | Declaration::Docstring(_)
+                Declaration::Function(_) | Declaration::Model(_) | Declaration::Import(_) | Declaration::Docstring(_)
             )
         }) {
             return Ok(None);
@@ -57,28 +57,28 @@ impl CheckedNamespaceInterface {
         if api.declarations.is_empty() && !imports_project_namespace {
             return Ok(None);
         }
-        if api
-            .declarations
-            .iter()
-            .any(|declaration| !matches!(declaration, crate::api_metadata::ApiDeclaration::Function(_)))
-        {
+        if api.declarations.iter().any(|declaration| {
+            !matches!(
+                declaration,
+                crate::api_metadata::ApiDeclaration::Function(_) | crate::api_metadata::ApiDeclaration::Model(_)
+            )
+        }) {
             return Ok(None);
         }
         let mut identities = std::collections::BTreeMap::new();
         for declaration in &api.declarations {
-            let crate::api_metadata::ApiDeclaration::Function(function) = declaration else {
+            let Some(name) = namespace_declaration_name(declaration) else {
                 return Ok(None);
             };
-            let Some(symbol_id) = checker.symbols.lookup(&function.name) else {
-                return Err(format!("checked namespace function `{}` has no symbol", function.name));
+            let Some(symbol_id) = checker.symbols.lookup(name) else {
+                return Err(format!("checked namespace declaration `{name}` has no symbol"));
             };
             let Some(identity) = checker.symbols.identity_of(symbol_id) else {
                 return Err(format!(
-                    "checked namespace function `{}` has no canonical identity",
-                    function.name
+                    "checked namespace declaration `{name}` has no canonical identity"
                 ));
             };
-            if identities.insert(function.name.clone(), identity.clone()).is_some() {
+            if identities.insert(name.to_owned(), identity.clone()).is_some() {
                 return Ok(None);
             }
         }
@@ -123,33 +123,31 @@ impl CheckedNamespaceInterface {
         let mut callables = HashMap::new();
         let mut symbol_rows = Vec::new();
         for declaration in &self.api.declarations {
-            let crate::api_metadata::ApiDeclaration::Function(function) = declaration else {
-                return Err("checked namespace interface contains an unsupported declaration".into());
-            };
+            let name = namespace_declaration_name(declaration)
+                .ok_or("checked namespace interface contains an unsupported declaration")?;
             let identity = self
                 .identities
-                .get(&function.name)
-                .ok_or_else(|| format!("checked namespace function `{}` has no identity", function.name))?
+                .get(name)
+                .ok_or_else(|| format!("checked namespace declaration `{name}` has no identity"))?
                 .clone();
             let kind = converter
                 .symbol_kind_from_api_declaration(None, declaration)
-                .ok_or_else(|| format!("checked namespace function `{}` has no semantic symbol", function.name))?;
-            let SymbolKind::Function(function_info) = &kind else {
-                return Err("checked namespace function decoded as a non-function symbol".into());
-            };
-            callables.insert(
-                identity.clone(),
-                DeclarationCallableTypes {
-                    params: function_info.params.clone(),
-                    return_type: function_info.return_type.clone(),
-                },
-            );
-            symbols.insert(function.name.clone(), kind.clone());
+                .ok_or_else(|| format!("checked namespace declaration `{name}` has no semantic symbol"))?;
+            if let SymbolKind::Function(function_info) = &kind {
+                callables.insert(
+                    identity.clone(),
+                    DeclarationCallableTypes {
+                        params: function_info.params.clone(),
+                        return_type: function_info.return_type.clone(),
+                    },
+                );
+            }
+            symbols.insert(name.to_owned(), kind.clone());
             symbol_rows.push((
                 Symbol {
-                    name: function.name.clone(),
+                    name: name.to_owned(),
                     kind,
-                    span: function.anchor.span,
+                    span: namespace_declaration_span(declaration),
                     scope: 0,
                 },
                 Some(identity),
@@ -159,12 +157,7 @@ impl CheckedNamespaceInterface {
             .api
             .declarations
             .iter()
-            .map(|declaration| match declaration {
-                crate::api_metadata::ApiDeclaration::Function(function) => {
-                    Ok(ExportedSymbol::Function(function.name.clone()))
-                }
-                _ => Err("checked namespace interface contains an unsupported export".to_owned()),
-            })
+            .map(namespace_export)
             .collect::<Result<Vec<_>, _>>()?;
         let symbols = Arc::new(symbols);
         let identities = Arc::new(
@@ -226,19 +219,44 @@ impl CheckedNamespaceInterface {
             return Err("checked namespace interface has mismatched authority".into());
         }
         for declaration in &self.api.declarations {
-            let crate::api_metadata::ApiDeclaration::Function(function) = declaration else {
+            let Some(name) = namespace_declaration_name(declaration) else {
                 return Err("checked namespace interface contains an unsupported declaration".into());
             };
-            let Some(identity) = self.identities.get(&function.name) else {
+            let Some(identity) = self.identities.get(name) else {
                 return Err("checked namespace interface is missing a declaration identity".into());
             };
-            if identity.declaration_name != function.name
-                || identity.origin != SymbolOrigin::Module(self.module_path.clone())
-            {
+            if identity.declaration_name != name || identity.origin != SymbolOrigin::Module(self.module_path.clone()) {
                 return Err("checked namespace interface declaration identity disagrees with its module".into());
             }
         }
         Ok(())
+    }
+}
+
+/// Return the declaration spelling shared by the frozen API row, symbol table and stable identity map.
+fn namespace_declaration_name(declaration: &crate::api_metadata::ApiDeclaration) -> Option<&str> {
+    match declaration {
+        crate::api_metadata::ApiDeclaration::Function(item) => Some(&item.name),
+        crate::api_metadata::ApiDeclaration::Model(item) => Some(&item.name),
+        _ => None,
+    }
+}
+
+/// Return the checked source anchor shared by every currently supported namespace declaration.
+fn namespace_declaration_span(declaration: &crate::api_metadata::ApiDeclaration) -> crate::ast::Span {
+    match declaration {
+        crate::api_metadata::ApiDeclaration::Function(item) => item.anchor.span,
+        crate::api_metadata::ApiDeclaration::Model(item) => item.anchor.span,
+        _ => crate::ast::Span::default(),
+    }
+}
+
+/// Project one supported frozen API row into the source module's public export table.
+fn namespace_export(declaration: &crate::api_metadata::ApiDeclaration) -> Result<ExportedSymbol, String> {
+    match declaration {
+        crate::api_metadata::ApiDeclaration::Function(item) => Ok(ExportedSymbol::Function(item.name.clone())),
+        crate::api_metadata::ApiDeclaration::Model(item) => Ok(ExportedSymbol::Type(item.name.clone())),
+        _ => Err("checked namespace interface contains an unsupported export".to_owned()),
     }
 }
 
