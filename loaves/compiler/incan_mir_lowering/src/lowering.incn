@@ -514,6 +514,8 @@ pub def resume_unit_plan(
         externals,
         instances,
     )?
+    drop(roots_stage)
+    statics_stage = statics_and_roots()
     mut resolved_statics = lower_computed_statics(
         context.as_ref(),
         program,
@@ -531,7 +533,7 @@ pub def resume_unit_plan(
     for cell in resolved_statics:
         statics.append(cell)
     requirements = selected_runtime_requirements(context.as_ref(), externals, functions)?
-    drop(roots_stage)
+    drop(statics_stage)
     if len(requirements) != 0:
         return Ok(
             UnitPlanning.NeedsRuntime(
