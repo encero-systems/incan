@@ -105,7 +105,7 @@ impl CallableBodyProducts {
             .iter()
             .map(|entry| {
                 let reads = entry.reads.iter().map(|read| &read.checked).collect::<Vec<_>>();
-                let witness = serde_json::to_string(&(&entry.fingerprints, reads))
+                let witness = incan_semantics_core::semantic_digest::semantic_digest(&(&entry.fingerprints, reads))
                     .map_err(|error| invalid(&error.to_string()))?;
                 Ok((entry.body.direct_call_id.clone(), witness))
             })

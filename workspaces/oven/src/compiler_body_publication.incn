@@ -2,10 +2,14 @@
 
 from std.fs import Path
 from std.encoding.hex import hexlify
+from std.json import JsonValue, parse
 from std.primitives.hash import sha256
+from rust::incan_semantics_core import encode_incan_symbol_identity
+from rust::incan_semantics_core::executable_representation import decode_owner
 from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, put
 from pub::internal_models import (
     CompiledBodyDependencyRead,
+    CompiledBodyFallback,
     CompiledBodyValue,
     ProducerRank,
     ProducerStage,
@@ -29,10 +33,14 @@ from pub::internal_models.records import (
     encode_record_key,
 )
 from compiler_graph_records import prepare_evaluation
+from compiler_body_fallbacks import fallback_reasons
+from compiler_plan_values import LOWERING_PROFILE
+from compiler_body_values import SelectedBodyRecord
 from compiler_source_projection import (
     SourceProjection,
     SourceProjectionRecord,
     declaration_index_key,
+    owner_source_key,
     project_source,
 )
 from engine_capture import CapturedInput, InputRole
@@ -40,6 +48,16 @@ from files import discard_file
 from unit import UnitDescription, dependency_source_roots
 
 const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
+
+
+model LoweringBody:
+    """An actual fresh or graph-selected owner witness; retained owners are never claimed as fresh checker output."""
+
+    identity: str
+    module: str
+    final: bytes
+    body_ir: bytes
+    retained: bool = false
 
 
 pub model PublishedCompiledBodies:
@@ -72,6 +90,11 @@ class PreparedBodyRecordSource with RecordSource:
     pub def add(mut self, key: str, value: bytes) -> None:
         """Make one exact pending value available to later producers in the same transaction."""
         self.values[key] = value
+
+    pub def for_profile(self, profile: str) -> PreparedBodyRecordSource:
+        """Bind the same staged values to the next producer profile without weakening its read-scope check."""
+        scope = ReadScope(snapshot=self.scope.snapshot, profile=profile)
+        return PreparedBodyRecordSource(scope=scope, values=self.values)
 
     def read(self, scope: ReadScope, request: RecordRequest) -> RecordRead:
         """Return one staged field with content evidence, or fail when publication order left it unavailable."""
@@ -193,6 +216,9 @@ pub def prepare_compiled_bodies(
     transaction: Transaction,
     unit: UnitDescription,
     output: Path,
+    plan_output: Option[Path] = None,
+    selected: Option[Snapshot] = None,
+    retained: list[SelectedBodyRecord] = [],
 ) -> Result[PreparedCompiledBodies, str]:
     """
     Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
@@ -346,8 +372,231 @@ pub def prepare_compiled_bodies(
             body_ir_receipt,
         )?
         prepared = body_ir.transaction
+        source.add(encode_record_key(body_ir_key)?, value.body_ir)
         published += 1
+    if let Some(report) = plan_output:
+        witnesses = lowering_witnesses(outputs.values, retained, source, selected, unit, origin)?
+        prepared = prepare_lowering_records(prepared, source, witnesses, outputs.fallbacks, origin, report, unit, selected)?
     return Ok(PreparedCompiledBodies(transaction=prepared, bodies=published, fallbacks=len(outputs.fallbacks)))
+
+
+def lowering_witnesses(
+    fresh: list[CompiledBodyValue],
+    retained: list[SelectedBodyRecord],
+    mut source: PreparedBodyRecordSource,
+    selected: Option[Snapshot],
+    unit: UnitDescription,
+    origin: str,
+) -> Result[list[LoweringBody], str]:
+    """Carry only graph-selected inputs with unchanged current owner/header bytes; never invent fresh checker facts."""
+    mut witnesses = [LoweringBody(identity=value.identity, module=value.module, final=value.final, body_ir=value.body_ir) for value in fresh]
+    for record in retained:
+        if record.identity in [value.identity for value in witnesses]:
+            continue
+        decoded = decode_owner(record.body_ir).map_err((error) => str(error))?
+        if decoded.identity != record.identity:
+            return Err("retained Body IR disagrees with its graph owner")
+        key = body_key("body-ir", origin, record.identity, "checked", root(record.final)?)
+        prior = match selected:
+            None => return Err("retained Body IR has no selected graph")
+            Some(value) => value
+        if get(prior, encode_record_key(key)?).map_err((error) => error.message())? != Some(record.body_ir):
+            return Err("retained Body IR differs from the selected graph")
+        projection = source_projection(unit, origin, decoded.source)?
+        owner = owner_record(projection, str(decoded.body.name))?
+        for binding in [projection.header, owner]:
+            if get(prior, encode_record_key(binding.key)?).map_err((error) => error.message())? != Some(binding.text.encode("utf-8")):
+                return Err("retained Body IR has changed current source inputs")
+        source.add(encode_record_key(key)?, record.body_ir)
+        witnesses.append(LoweringBody(
+            identity=record.identity, module=decoded.source, final=record.final, body_ir=record.body_ir, retained=true,
+        ))
+    return Ok(witnesses)
+
+
+def prepare_lowering_records(
+    transaction: Transaction,
+    mut source: PreparedBodyRecordSource,
+    values: list[LoweringBody],
+    fallbacks: list[CompiledBodyFallback],
+    origin: str,
+    report: Path,
+    unit: UnitDescription,
+    selected: Option[Snapshot],
+) -> Result[Transaction, str]:
+    """Stage evaluated lowering-demand and plan-function values through their exact Body IR witnesses."""
+    if not report.is_dir():
+        return Err("successful records compile did not publish lowering outputs")
+    scope = ReadScope(snapshot=transaction.id, profile=LOWERING_PROFILE)
+    mut staged_source = source.for_profile(LOWERING_PROFILE)
+    mut prepared = transaction
+    mut events: list[JsonValue] = []
+    for path in sorted([path.0 for path in report.iterdir().map_err((error) => error.message())?]):
+        entry = Path(path)
+        if not entry.is_file() or not path.endswith(".event"):
+            continue
+        event = parse(entry.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
+            (error) => f"lowering output refused: {error.message()}",
+        )?
+        if event.require("schema").map_err((error) => error.message())?.expect_int().map_err(
+            (error) => error.message(),
+        )? != 2:
+            return Err("lowering output has an unsupported schema")
+        events.append(event)
+    mut plan_keys: list[RecordKey] = []
+    # Scalar demand and plan suppliers settle before the entry-binding contribution reads main's demand.
+    for event in events:
+        if is_entry_event(event)?:
+            continue
+        event_identity = required_event_text(event, "identity")?
+        key = required_event_text(event, "key")?
+        function = required_event_text(event, "function")?
+        product = required_event_text(event, "product")?.encode("utf-8")
+        body = body_value(values, fallbacks, event_identity)?
+        if body.retained and not event.require("reused").and_then((field) => field.expect_bool()).map_err((error) => error.message())?:
+            return Err("a fresh plan product requires a fresh graph Body IR witness")
+        identity = body.identity
+        body_ir_key = body_key("body-ir", origin, identity, "checked", root(body.final)?)
+        demand_key = body_key("lowering-demand", origin, identity, function, key)
+        demand_value = lowering_demand(product)?
+        demand_receipt = prepared_receipt(staged_source, scope, demand_key, [request(body_ir_key)])?
+        check_reused_output(selected, event, demand_key, demand_value)?
+        demand = prepare_evaluation(
+            prepared,
+            "lowering-demand-" + identity,
+            ProducerRank(namespace=0, stage=ProducerStage.LoweringDemand, dependency=0),
+            demand_value,
+            demand_receipt,
+        )?
+        prepared = demand.transaction
+        staged_source.add(encode_record_key(demand_key)?, demand_value)
+        plan_key = body_key("plan-function", origin, identity, "body:" + function, key)
+        check_reused_output(selected, event, plan_key, product)?
+        plan_receipt = prepared_receipt(staged_source, scope, plan_key, [request(demand_key)])?
+        plan = prepare_evaluation(
+            prepared,
+            "plan-function-" + identity,
+            ProducerRank(namespace=0, stage=ProducerStage.PlanFunction, dependency=0),
+            product,
+            plan_receipt,
+        )?
+        prepared = plan.transaction
+        staged_source.add(encode_record_key(plan_key)?, product)
+        plan_keys.append(plan_key)
+    for event in events:
+        if not is_entry_event(event)?:
+            continue
+        body = body_value(values, fallbacks, required_event_text(event, "identity")?)?
+        demand_key = body_key("lowering-demand", origin, body.identity, "main", required_event_text(event, "demand")?)
+        key = body_key("plan-function", origin, body.identity, "entry", required_event_text(event, "key")?)
+        product = required_event_text(event, "product")?.encode("utf-8")
+        check_reused_output(selected, event, key, product)?
+        receipt = prepared_receipt(staged_source, scope, key, [request(demand_key)])?
+        entry = prepare_evaluation(
+            prepared, "plan-entry-" + body.identity,
+            ProducerRank(namespace=0, stage=ProducerStage.PlanFunction, dependency=1), product, receipt,
+        )?
+        prepared = entry.transaction
+        staged_source.add(encode_record_key(key)?, product)
+        plan_keys.append(key)
+    return prepare_native_interface(prepared, staged_source, scope, unit, origin, values, report, plan_keys)
+
+
+def is_entry_event(event: JsonValue) -> Result[bool, str]:
+    """Distinguish the compiler-owned entry role from an authored function whose name happens to be entry."""
+    match event.get("role"):
+        None => return Ok(false)
+        Some(role) =>
+            if role.expect_str().map_err((error) => error.message())? != "entry":
+                return Err("unsupported plan-function role")
+            return Ok(true)
+
+
+def lowering_demand(product: bytes) -> Result[bytes, str]:
+    """Retain the actual checked inputs and exact runtime signatures discovered by existing scalar lowering."""
+    record = parse(product.decode().map_err((_) => "invalid scalar record UTF-8")?).map_err((error) => error.message())?
+    native = parse(required_event_text(record, "function")?).map_err((error) => error.message())?
+    value = JsonValue.object({
+        "schema": JsonValue.string("incan.lowering-demand/2"),
+        "inputs": record.require("inputs").map_err((error) => error.message())?,
+        "runtime": native.require("runtime").map_err((error) => error.message())?,
+    })
+    return Ok(value.to_json().map_err((error) => error.message())?.encode("utf-8"))
+
+
+def check_reused_output(selected: Option[Snapshot], event: JsonValue, key: RecordKey, value: bytes) -> Result[None, str]:
+    """A compiler reuse event must reproduce the exact value previously selected from the graph."""
+    reused = event.require("reused").and_then((value) => value.expect_bool()).map_err((error) => error.message())?
+    if reused:
+        prior = match selected:
+            Some(value) => value
+            None => return Err("a reused lowering record has no selected graph snapshot")
+        if get(prior, encode_record_key(key)?).map_err((error) => error.message())? != Some(value):
+            return Err("a reused lowering record differs from its selected graph authority")
+    return Ok(None)
+
+
+def prepare_native_interface(
+    transaction: Transaction,
+    mut source: PreparedBodyRecordSource,
+    scope: ReadScope,
+    unit: UnitDescription,
+    origin: str,
+    bodies: list[LoweringBody],
+    report: Path,
+    plans: list[RecordKey],
+) -> Result[Transaction, str]:
+    """Witness the complete loss-checked native plan against its exact function members and current source positions."""
+    path = report.joinpath("native-interface.json")
+    document = parse(path.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
+        (error) => error.message(),
+    )?
+    if required_event_text(document, "schema")? != "incan.native-interface/1":
+        return Err("native-interface has an unsupported schema")
+    key = body_key("native-interface", origin, origin, unit.profile, unit.checked_context.unwrap_or(""))
+    mut reads = [request(plan) for plan in plans]
+    mut modules: list[str] = []
+    for body in bodies:
+        if body.module not in modules:
+            projection = source_projection(unit, origin, body.module)?
+            reads.append(request(projection.header.key))
+            for owner in projection.owners:
+                reads.append(request(owner.key))
+            modules.append(body.module)
+    receipt = prepared_receipt(source, scope, key, reads)?
+    prepared = prepare_evaluation(
+        transaction, "native-interface-" + origin,
+        ProducerRank(namespace=0, stage=ProducerStage.NativeInterface, dependency=0),
+        required_event_text(document, "plan")?.encode("utf-8"), receipt,
+    )?
+    return Ok(prepared.transaction)
+
+
+def required_event_text(event: JsonValue, key: str) -> Result[str, str]:
+    """Read one required lowering-event text field without accepting coercion."""
+    return event.require(key).map_err((error) => error.message())?.expect_str().map_err((error) => error.message())
+
+
+def body_value(
+    values: list[LoweringBody],
+    fallbacks: list[CompiledBodyFallback],
+    identity: str,
+) -> Result[LoweringBody, str]:
+    """Authenticate one lowering event against graph-eligible Body IR, retaining an exact checker fallback reason."""
+    mut available: list[str] = []
+    for value in values:
+        decoded = decode_owner(value.body_ir).map_err((error) => f"cannot decode graph-eligible Body IR owner: {error}")?
+        if decoded.identity != value.identity:
+            return Err("graph-eligible Body IR owner disagrees with its stable publication identity")
+        match decoded.body.canonical:
+            Some(canonical) =>
+                encoded = encode_incan_symbol_identity(canonical)
+                available.append(encoded)
+                if encoded == identity:
+                    return Ok(value)
+            None => pass
+    reasons = "; ".join(fallback_reasons(fallbacks))
+    return Err(f"lowering output owner {identity} is absent from graph-eligible Body IR: {available}; checker-record fallbacks: {reasons}")
 
 
 def source_projection(unit: UnitDescription, origin: str, module: str) -> Result[SourceProjection, str]:

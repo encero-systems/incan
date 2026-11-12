@@ -55,7 +55,7 @@ from compiler_body_values import (
     select_body_inventory,
     select_body_values,
 )
-from compiler_body_publication import publish_compiled_bodies
+from compiler_body_publication import prepare_compiled_bodies, publish_compiled_bodies
 from compiler_body_fallbacks import fallback_reasons
 from compiler_source_projection import project_source, publish_source_projection
 from publication import publish_binary
@@ -437,6 +437,39 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     assert fallback_reasons([
         CompiledBodyFallback(module="src/main.incn", name="other", identity=None, reason="exact producer refusal"),
     ]) == ["src/main.incn::other: exact producer refusal"]
+
+    fallback_output = scratch.path().joinpath("fallback-body-output")
+    publish_binary(
+        fallback_output,
+        encode_compiled_body_outputs(
+            CompiledBodyOutputs(
+                values=[],
+                fallbacks=[
+                    CompiledBodyFallback(
+                        module="src/main.incn",
+                        name="other",
+                        identity=fallback_identity,
+                        reason="local record output refused: Unsupported(\"fixture\")",
+                    ),
+                ],
+            ),
+        ).map_err((error) => f"{error:?}")?,
+    )?
+    report = scratch.path().joinpath("fallback-plan-report")
+    report.mkdir(true, true).map_err((error) => error.message())?
+    report
+        .joinpath("other.event")
+        .write_text(
+            f"{{\"schema\":2,\"reused\":false,\"identity\":\"{fallback_identity}\",\"key\":\"plan\",\"function\":\"other\",\"product\":\"native\",\"runtime_requirements\":0}}",
+            "utf-8",
+            "strict",
+            None,
+        )
+        .map_err((error) => error.message())?
+    match prepare_compiled_bodies(begin(published.snapshot), unit, fallback_output, Some(report)):
+        Ok(_) => assert false, "a checker-record fallback authenticated a lowering record"
+        Err(message) =>
+            assert message.contains("src/main.incn::other: local record output refused: Unsupported(\"fixture\")"), message
     selected = select_body_inventory(published.snapshot, CHECKER_PROFILE)?
     assert len(selected) == 1 and selected[0].identity == identity
     pages = encode_body_inventory(selected)?

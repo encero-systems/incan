@@ -188,6 +188,7 @@ pub def unit_plan(
     overflow_checks: bool = true,
     scalar_products: Option[str] = None,
     scalar_bodies: list[tuple[CompilerNodeId, str]] = [],
+    record_report: Option[str] = None,
 ) -> Result[UnitPlanning, str]:
     """Lower one checked unit by kind; test entries come from session collection, never from naming heuristics here."""
     if kind != "program" and kind != "library" and kind != "test":
@@ -207,6 +208,7 @@ pub def unit_plan(
         package_versions,
         scalar_products,
         scalar_index,
+        record_report,
     )
 
 
@@ -250,6 +252,7 @@ def lowered_plan(
     package_versions: BTreeMap[str, str],
     scalar_products: Option[str],
     scalar_bodies: BTreeMap[CompilerNodeId, str],
+    record_report: Option[str],
 ) -> Result[UnitPlanning, str]:
     """Lower a checked unit once, preserving ordinary frames when exact runtime declarations need resolution."""
     trace_key: str = "INCAN_TRACE_LOWERING"
@@ -325,6 +328,7 @@ def lowered_plan(
         scalar_products,
         scalar_bodies,
         overflow_checks,
+        record_report,
     )?
     mut statics = lower_computed_statics(
         context.as_ref(),
@@ -954,6 +958,7 @@ def lower_plan_frames(
         trace,
         None,
         empty_scalar_bodies,
+        None,
     )?
     original_nominal_count = len(context.nominal_declarations)
     match lower_requested_frames(

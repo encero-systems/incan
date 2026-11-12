@@ -7,6 +7,7 @@ main = "src/main.incn"
 
 [dependencies]
 incan_loaf_names = { loaf = "incan_loaf_names", path = "../../loaves/kernel/incan_loaf_names" }
+incan_semantics_core = { loaf = "incan_semantics_core", path = "../../loaves/kernel/incan_semantics_core" }
 toml = { loaf = "crates-io/toml", version = "0.9", default-features = true }
 incan_platform = { path = "../../loaves/platform" }
 incan_worker_host = { path = "../../loaves/compiler/incan_worker_host" }
