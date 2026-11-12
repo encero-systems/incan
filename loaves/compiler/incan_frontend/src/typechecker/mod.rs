@@ -565,6 +565,8 @@ pub struct TypeChecker {
     /// Graph-admitted local/final pairs keyed by compiler-owned stable declaration identity. This transport remains
     /// separate from scalar callable-body products and is consulted only at the record-scoped body boundary.
     graph_body_records: crate::checker_records::GraphBodyRecords,
+    /// Per-owner body-check spans retained until checker-record publication classifies the completed owner.
+    body_check_traces: std::collections::BTreeMap<Span, tracing::Span>,
     /// Callable bodies that produced a checked lazy result and therefore need retained-result ownership analysis.
     /// The marker is consumed when that body's flow is finalized; it never becomes a published semantic fact.
     lazy_result_bodies: HashSet<CanonicalSymbolId>,
