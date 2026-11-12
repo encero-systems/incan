@@ -435,34 +435,6 @@ impl Positions {
         Ok(positions)
     }
 
-    /// Bind a graph-eligible free function with the lexical scope ordinal assigned by whole-module collection.
-    /// Seed activation receives declaration headers but never evaluates sibling bodies; counting those declarations
-    /// preserves the compiler-owned parameter identity without importing a sibling's local semantic tables.
-    fn for_body_ir_seed(
-        checker: &TypeChecker,
-        program: &Program,
-        owner: Span,
-        fields: &Fields,
-    ) -> Result<Self, NodeBindingError> {
-        let mut positions = Self::for_decoded_local(checker, program, owner, fields)?;
-        let ordinal = program
-            .declarations
-            .iter()
-            .position(|declaration| declaration.span == owner)
-            .map(|index| ScopeDiscriminant(index + 1))
-            .ok_or(NodeBindingError::MissingOwner)?;
-        for identity in positions.identities.values_mut() {
-            if identity.kind == SemanticSourceTargetKind::Parameter
-                && identity.origin == checker.symbols.declaration_origin()
-                && identity.declaration_span.start >= owner.start
-                && identity.declaration_span.end <= owner.end
-            {
-                identity.scope_discriminant = Some(ordinal);
-            }
-        }
-        Ok(positions)
-    }
-
     /// Only a checked declaration or an explicitly admitted builtin can become a persistent reference.
     fn identity(&self, canonical: &CanonicalSymbolId) -> Result<String, NodeBindingError> {
         if let Some((stable, _)) = self.identities.iter().find(|(_, current)| *current == canonical) {

@@ -390,6 +390,9 @@ pub(crate) fn restore_body_ir_inputs(
         .find(|item| matches!(&item.node, crate::ast::Declaration::Function(function) if function.name == name))
         .map(|item| item.span)
         .ok_or(NodeBindingError::MissingOwner)?;
+    if program.declarations.first().map(|declaration| declaration.span) != Some(owner) {
+        return Err(NodeBindingError::Unsupported("Body IR seed owner source position"));
+    }
     let mut checker = TypeChecker::new();
     checker.reset_program_check(&program, false);
     checker.collect_program_check_declarations(&program);
@@ -446,7 +449,7 @@ pub(crate) fn restore_body_ir_inputs(
     if header.len() == 4 {
         header.insert(3, "final".into());
     }
-    let positions = Positions::for_body_ir_seed(&checker, &program, owner, &final_value)
+    let positions = Positions::for_decoded_local(&checker, &program, owner, &final_value)
         .map_err(|error| NodeBindingError::InvalidField(format!("Body IR final positions: {error:?}")))?;
     let restored = restore(&positions, &program, owner, &final_value)
         .map_err(|error| NodeBindingError::InvalidField(format!("Body IR final restore: {error:?}")))?;

@@ -90,11 +90,12 @@ pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[No
 
 
 pub def test_local_envelopes_persist_and_sweep_in_rank_order() -> Result[None, str]:
-    """Persist the three compiler-owned activation roots and evaluate local/final outputs once in certified order."""
+    """Persist compiler-owned roots and evaluate local/final/seed outputs once in certified order."""
     before = store_snapshot(memory_root()).map_err((error) => error.message())?
     first = activation("local", "first", 1)
     second = activation("local", "second", 0)
     final_record = activation("final", "first", 2)
+    seed_record = activation("body-ir-seed", "first", 0)
     persisted = persist_activation(before, DemandPage(keys=[first.ready.output]), first.prepared, first.ready)?
     demand = decode_demand_page(required(before=persisted.snapshot, key=persisted.demand_key)?)?
     prepared = decode_prepared_inputs(required(before=persisted.snapshot, key=persisted.prepared_key)?)?
@@ -103,12 +104,13 @@ pub def test_local_envelopes_persist_and_sweep_in_rank_order() -> Result[None, s
     assert encode_prepared_inputs(prepared)? == encode_prepared_inputs(first.prepared)?
     assert encode_ready_work(ready)? == encode_ready_work(first.ready)?
 
-    mut sweep = RankedCheckingSweep.schedule([final_record, first, second])?
+    mut sweep = RankedCheckingSweep.schedule([seed_record, final_record, first, second])?
     assert selected_identity(sweep.next()) == "second"
     assert selected_identity(sweep.next()) == "first"
     assert selected_family(sweep.next()) == "final"
+    assert selected_family(sweep.next()) == "body-ir-seed"
     assert selected_identity(sweep.next()) == ""
-    assert sweep.evaluation_count() == 3
+    assert sweep.evaluation_count() == 4
     return Ok(None)
 
 
@@ -755,8 +757,11 @@ def family_key(family: str, identity: str) -> RecordKey:
 
 
 def activation(family: str, identity: str, dependency: int) -> RankedActivation:
-    """Create one complete checking-family activation with no environment reads."""
+    """Create one complete compiler-record activation with no environment reads."""
     output = family_key(family, identity)
+    stage = match family:
+        "body-ir-seed" => ProducerStage.BodyIrSeed
+        _ => ProducerStage.CheckBody
     snapshot = InputSnapshot(root=RecordRoot(digest="snapshot"))
     profile = ProducerProfile(identity=RecordRoot(digest="profile"))
     prepared = PreparedInputs(
@@ -765,13 +770,13 @@ def activation(family: str, identity: str, dependency: int) -> RankedActivation:
         profile=profile,
         required_reads=[],
         rank_certificate=RankCertificate(
-            rank=ProducerRank(namespace=0, stage=ProducerStage.CheckBody, dependency=dependency),
+            rank=ProducerRank(namespace=0, stage=stage, dependency=dependency),
             evidence=RecordRoot(digest=f"rank-{dependency}"),
         ),
         selector_witnesses=RecordRoot(digest=f"selectors-{dependency}"),
     )
     return RankedActivation(
-        ready=ReadyWork(output=output, stage=ProducerStage.CheckBody, profile=profile),
+        ready=ReadyWork(output=output, stage=stage, profile=profile),
         prepared=prepared,
     )
 

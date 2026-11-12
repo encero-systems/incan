@@ -33,8 +33,66 @@ fn evaluate(value: incan_worker_host::Evaluate, home: &str) -> Result<RecordMess
     match activation.ready.output.family.as_str() {
         "local" => evaluate_local(activation, snapshot, home),
         "final" => evaluate_final(activation, snapshot, home),
+        "body-ir-seed" => evaluate_body_ir_seed(activation, snapshot, home),
         family => Err(format!("unsupported-producer:{family}:{}", value.work_root)),
     }
+}
+
+/// Restore one settled owner and enter the existing compiler-owned free-function lowering operation.
+fn evaluate_body_ir_seed(
+    activation: incan_worker_host::ResolvedCheckingActivation,
+    snapshot: String,
+    home: &str,
+) -> Result<RecordMessage, String> {
+    let inputs = incan_worker_host::read_body_ir_seed_activation(activation).map_err(|error| error.to_string())?;
+    let declarations = environment_values(
+        inputs.declarations,
+        inputs.declaration_names,
+        inputs.declaration_identities,
+    )?;
+    let module_path = source_module_path(&inputs.source_path)?;
+    let identity = inputs
+        .r#final
+        .first()
+        .and_then(|header| header.get(1))
+        .cloned()
+        .ok_or("Body IR seed final identity is absent")?;
+    let encoded = incan_frontend::checker_records::produce_body_ir_seed(
+        &inputs.source,
+        &inputs.source_path,
+        &module_path,
+        &inputs.owner,
+        &identity,
+        inputs.r#final,
+        declarations,
+    )
+    .map_err(|error| format!("Body IR seed producer refused: {error:?}"))?;
+    let semantic = format!("sha256:{}", digest(&encoded));
+    let produced =
+        incan_worker_host::stage_checking_result(home.to_owned(), snapshot, &encoded, inputs.receipt, &semantic)
+            .map_err(|error| error.to_string())?;
+    Ok(RecordMessage::Produced(produced))
+}
+
+/// Derive the compiler's logical module segments for the initial graph-eligible `src` source layout.
+fn source_module_path(source_path: &str) -> Result<Vec<String>, String> {
+    let path = std::path::Path::new(source_path);
+    let mut components = path
+        .components()
+        .map(|component| component.as_os_str().to_str().map(str::to_owned))
+        .collect::<Option<Vec<_>>>()
+        .ok_or("Body IR seed source path is not UTF-8")?;
+    if components.first().map(String::as_str) != Some("src") || components.len() < 2 {
+        return Err("Body IR seed source path is outside the initial src layout".to_owned());
+    }
+    components.remove(0);
+    let last = components.last_mut().ok_or("Body IR seed source module is absent")?;
+    *last = std::path::Path::new(last)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(str::to_owned)
+        .ok_or("Body IR seed source module is invalid")?;
+    Ok(incan_frontend::module::canonicalize_source_module_segments(&components))
 }
 
 /// Resolve one prepared local activation, enter the frontend's single-owner scope and return content roots.
@@ -121,4 +179,23 @@ fn fault(fault_root: String) -> RecordMessage {
 /// Return a lowercase SHA-256 content root for one staged response payload.
 fn digest(value: &[u8]) -> String {
     format!("{:x}", Sha256::digest(value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::source_module_path;
+
+    #[test]
+    fn body_ir_seed_source_paths_preserve_compiler_module_identity() -> Result<(), String> {
+        if source_module_path("src/main.incn")? != ["main"] {
+            return Err("main seed module identity changed".to_owned());
+        }
+        if source_module_path("src/models/mod.incn")? != ["models"] {
+            return Err("directory seed module identity changed".to_owned());
+        }
+        if source_module_path("generated/main.incn").is_ok() {
+            return Err("seed activation accepted a source outside the initial src layout".to_owned());
+        }
+        Ok(())
+    }
 }

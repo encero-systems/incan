@@ -19,7 +19,7 @@ from pub::internal_models import (
 
 
 pub model RankedActivation:
-    """One checking-family evaluation paired with the certified rank that orders it."""
+    """One record-scoped compiler evaluation paired with the certified rank that orders it."""
 
     pub ready: ReadyWork
     pub prepared: PreparedInputs
@@ -38,17 +38,17 @@ pub model PersistedActivation:
 
 
 pub class RankedCheckingSweep:
-    """A single-owner local/final frontier that yields every certified activation exactly once."""
+    """A record-scoped compiler frontier that yields every certified activation exactly once."""
 
     pending: list[RankedActivation]
     evaluations: int = 0
 
     @staticmethod
     pub def schedule(activations: list[RankedActivation]) -> Result[RankedCheckingSweep, str]:
-        """Admit only complete checking-family activations whose output, snapshot and profile bindings agree."""
+        """Admit only complete checking/seed activations whose output, snapshot and profile bindings agree."""
         for activation in activations:
             if not valid_activation(activation):
-                return Err("ranked checking sweep requires matching prepared CheckBody work")
+                return Err("ranked checking sweep requires matching prepared compiler-record work")
         return Ok(RankedCheckingSweep(pending=activations))
 
     pub def next(mut self) -> Option[RankedActivation]:
@@ -108,11 +108,15 @@ pub def persist_activation(
 
 
 def valid_activation(value: RankedActivation) -> bool:
-    """Whether one local/final activation has one output, snapshot, profile and CheckBody rank authority."""
+    """Whether one admitted family has matching output, snapshot, profile and stage rank authority."""
+    family_stage = match value.ready.output.family:
+        "local" => ProducerStage.CheckBody
+        "final" => ProducerStage.CheckBody
+        "body-ir-seed" => ProducerStage.BodyIrSeed
+        _ => return false
     return (
-        (value.ready.output.family == "local" or value.ready.output.family == "final")
-        and value.ready.stage == ProducerStage.CheckBody
-        and value.prepared.rank_certificate.rank.stage == ProducerStage.CheckBody
+        value.ready.stage == family_stage
+        and value.prepared.rank_certificate.rank.stage == family_stage
         and value.ready.output == value.prepared.output
         and value.ready.profile.identity.digest == value.prepared.profile.identity.digest
         and value.prepared.snapshot.root.digest != ""

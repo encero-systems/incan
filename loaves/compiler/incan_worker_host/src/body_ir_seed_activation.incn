@@ -1,0 +1,103 @@
+"""Resolve one Body IR seed activation into decoded final, source, and declaration inputs."""
+
+from pub::internal_models import prepared_reader
+from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, decode_record, native_fields
+from pub::internal_models.records import ReadReceipt, ReadScope, RecordRead
+from checked_activation import ResolvedCheckingActivation
+
+
+pub model BodyIrSeedActivationInputs:
+    """Scoped values passed to the frontend's free-function seed entry, plus their completed read receipt."""
+
+    pub source: str
+    pub source_path: str
+    pub owner: str
+    pub final: list[list[str]]
+    pub declarations: list[list[list[str]]]
+    pub declaration_names: list[str]
+    pub declaration_identities: list[str]
+    pub receipt: ReadReceipt
+
+
+pub def read_body_ir_seed_activation(activation: ResolvedCheckingActivation) -> Result[BodyIrSeedActivationInputs, str]:
+    """Read exactly the activation's witnessed source, final, declaration, and dependency facts."""
+    resolved = activation.snapshot
+    ready = activation.ready
+    prepared = activation.prepared
+    snapshot = prepared.snapshot
+    mut reader = prepared_reader(ready, snapshot, prepared).map_err((_) => "invalid Body IR seed preparation")?
+    scope = ReadScope(snapshot=snapshot.root.digest, profile=ready.profile.identity.digest)
+    record_source = resolved.record_source(scope)
+    mut module_header: Option[str] = None
+    mut owner_source: Option[str] = None
+    mut source_path = ""
+    mut owner = ""
+    mut final_fields: Option[list[list[str]]] = None
+    mut declarations: list[list[list[str]]] = []
+    mut declaration_names: list[str] = []
+    mut declaration_identities: list[str] = []
+    for request in prepared.required_reads:
+        found = match reader.read(record_source, request):
+            RecordRead.Found(value) => value.value
+            RecordRead.Deleted(_) => return Err("Body IR seed input was deleted")
+            RecordRead.Absent(_) => return Err("Body IR seed input is absent")
+            RecordRead.Members(_) => return Err("Body IR seed input cannot be a member page")
+            RecordRead.Failed(_) => return Err("Body IR seed record read failed")
+
+        if (
+            request.key.family == "module-header"
+            and request.key.facet == "module"
+            and request.key.origin == ready.output.origin
+        ):
+            if module_header is not None:
+                return Err("Body IR seed activation requires one own module header")
+            module_header = Some(found.decode().map_err((_) => "Body IR seed module header is not UTF-8")?)
+        elif request.key.family == "owner-source" and request.key.origin == ready.output.origin:
+            if owner_source is not None:
+                return Err("Body IR seed activation requires one own owner source")
+            owner_source = Some(found.decode().map_err((_) => "Body IR seed owner source is not UTF-8")?)
+            source_path = request.key.identity
+            owner = request.key.facet
+        elif (
+            request.key.family == "final"
+            and request.key.identity == ready.output.identity
+            and request.key.context != ""
+        ):
+            if final_fields is not None:
+                return Err("Body IR seed activation has more than one own final input")
+            record = decode_record(found, CHECKER_PROFILE, request.key.identity, request.key.context).map_err(
+                (_) => "Body IR seed final record is invalid",
+            )?
+            if record.family != CheckedFamily.Final:
+                return Err("Body IR seed activation requires a final-family input")
+            final_fields = Some(native_fields(record).map_err((_) => "Body IR seed final fields are invalid")?)
+        elif request.key.family == "declaration" and request.key.context != "":
+            record = decode_record(found, CHECKER_PROFILE, request.key.identity, request.key.context).map_err(
+                (_) => "Body IR seed declaration record is invalid",
+            )?
+            if record.family != CheckedFamily.Declaration:
+                return Err("Body IR seed activation requires declaration-family environment values")
+            declarations.append(native_fields(record).map_err((_) => "Body IR seed declaration fields are invalid")?)
+            declaration_names.append(request.key.facet)
+            declaration_identities.append(request.key.identity)
+        elif request.key.family in ["owner-source", "declaration-slot", "declaration-index"]:
+            # Dependency witnesses are already reflected by the settled final record and still remain receipt reads.
+            pass
+        else:
+            return Err("Body IR seed activation prepared an unsupported input family")
+    completed = reader.finish().map_err((_) => "Body IR seed activation read receipt is incomplete")?
+    match (module_header, owner_source, final_fields):
+        (Some(header_value), Some(source_value), Some(final_value)) =>
+            return Ok(
+                BodyIrSeedActivationInputs(
+                    source=header_value + source_value,
+                    source_path=source_path,
+                    owner=owner,
+                    final=final_value,
+                    declarations=declarations,
+                    declaration_names=declaration_names,
+                    declaration_identities=declaration_identities,
+                    receipt=completed,
+                ),
+            )
+        _ => return Err("Body IR seed activation is missing module header, owner source, or final input")

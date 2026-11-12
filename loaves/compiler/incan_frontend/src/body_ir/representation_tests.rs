@@ -37,7 +37,7 @@ fn record_scoped_free_function_seeds_match_module_oracle() -> Result<(), Box<dyn
     for (source, selected) in [
         ("def chosen(value: int) -> int:\n    return value + 1\n", "chosen"),
         (
-            "def sibling(value: int) -> int:\n    return value + 1\ndef chosen(value: int) -> int:\n    return sibling(value)\n",
+            "def chosen(value: int) -> int:\n    return sibling(value)\ndef sibling(value: int) -> int:\n    return value + 1\n",
             "chosen",
         ),
         (
@@ -124,6 +124,33 @@ fn record_scoped_free_function_seed_refuses_unscoped_source_layouts() -> Result<
     match result {
         Err(crate::checker_records::RecordAdapterFault::Unsupported("Body IR seed source declaration kind")) => Ok(()),
         other => Err(format!("unexpected Body IR seed layout result: {other:?}").into()),
+    }
+}
+
+/// Later source owners retain absolute spans and lexical ordinals that the initial owner-source projection does not
+/// carry, so they remain an explicit fallback rather than receiving a position-dependent seed.
+#[test]
+fn record_scoped_free_function_seed_refuses_later_source_owners() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def sibling(value: int) -> int:\n    return value + 1\ndef chosen(value: int) -> int:\n    return sibling(value)\n";
+    let declaration = crate::checker_records::fixture_record(source, "chosen", true)?;
+    let final_value = crate::checker_records::fixture_record(source, "chosen", false)?;
+    let identity = declaration
+        .first()
+        .and_then(|header| header.get(1))
+        .cloned()
+        .ok_or("fixture declaration identity is absent")?;
+    let result = crate::checker_records::produce_body_ir_seed(
+        source,
+        "case.incn",
+        &[],
+        "chosen",
+        &identity,
+        final_value,
+        vec![("chosen".into(), identity.clone(), declaration)],
+    );
+    match result {
+        Err(crate::checker_records::RecordAdapterFault::Unsupported("Body IR seed owner source position")) => Ok(()),
+        other => Err(format!("unexpected Body IR seed owner-position result: {other:?}").into()),
     }
 }
 
