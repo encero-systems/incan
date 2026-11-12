@@ -44,6 +44,14 @@ from rust::std::collections import BTreeMap
 from rust::std::mem import drop
 from rust::std::sync import Arc
 from rust::std::marker import Send, Sync
+from rust::incan_mir_lowering_trace import (
+    context_preparation,
+    ordinary_frames,
+    plan_publication,
+    runtime_resolution_resume,
+    specialization_and_instance_queue,
+    statics_and_roots,
+)
 from nominal_instances import NominalInstance, specialize_nominals_with_instances
 from checked_json import lower_checked_deserialize
 from string_conversion import lower_string_conversions
@@ -255,6 +263,7 @@ def lowered_plan(
     trace_key: str = "INCAN_TRACE_LOWERING"
     trace = native_environment(trace_key).is_some()
     # 1. Validate the checked inputs and prepare their shared layouts.
+    context_stage = context_preparation()
     source_files = source_file_index(modules, files)?
     empty_templates = index_constructors([], source_files, package_versions)
     source_context, template_constructors, owners, specialized_context, nominal_instances, template_references = plan_contexts(
@@ -278,11 +287,13 @@ def lowered_plan(
     )?
     constructors = Arc.new(with_generic_constructor_arities(constructor_table, template_constructors))
     mut intrinsics = initial_intrinsics
+    drop(context_stage)
     mut models: list[ModelDeclaration] = []
     mut enums: list[EnumDeclaration] = []
     mut functions: list[Function] = []
     mut externals: list[ExternalFunction] = []
     mut instances: list[Instance] = []
+    roots_stage = statics_and_roots()
     initial_program = initial_plan_roots(
         constructors,
         context.as_ref(),
@@ -299,10 +310,12 @@ def lowered_plan(
         externals,
         instances,
     )?
+    drop(roots_stage)
     mut program = initial_program
     mut emitted_frames = no_emitted_frames()
     # 2. Lower ordinary frames and static initializers exactly once.
     mut retained_nominals = nominal_instances
+    frames_stage = ordinary_frames()
     lower_ordinary_bodies(
         context,
         shared_source_context,
@@ -326,6 +339,8 @@ def lowered_plan(
         scalar_bodies,
         overflow_checks,
     )?
+    drop(frames_stage)
+    statics_stage = statics_and_roots()
     mut statics = lower_computed_statics(
         context.as_ref(),
         program,
@@ -339,6 +354,7 @@ def lowered_plan(
         instances,
     )?
     requirements = selected_runtime_requirements(context.as_ref(), externals, functions)?
+    drop(statics_stage)
     if len(requirements) != 0:
         return Ok(
             UnitPlanning.NeedsRuntime(
@@ -412,6 +428,8 @@ pub def resume_unit_plan(
     overflow_checks: bool = true,
 ) -> Result[UnitPlanning, str]:
     """Resume preserved ordinary frames against the exact runtime declaration closure the frontend resolved."""
+    resume_stage = runtime_resolution_resume()
+    context_stage = context_preparation()
     trace_key: str = "INCAN_TRACE_LOWERING"
     trace = native_environment(trace_key).is_some()
     validate_plan_inputs(modules, sources, files, entry, continuation.context.as_ref())?
@@ -476,6 +494,8 @@ pub def resume_unit_plan(
     extend_constructor_index(Arc.make_mut(constructors), context.as_ref().nominal_declarations)
     extend_generic_constructor_arities(Arc.make_mut(constructors), template_constructors.as_ref())
     extend_constructor_authority(Arc.make_mut(constructors), source_files, package_versions)
+    drop(context_stage)
+    roots_stage = statics_and_roots()
     extend_unions(unions, context.as_ref())
     intrinsics = intrinsic_declarations(constructors.as_ref(), context.as_ref(), entry_file, intrinsics)?
     resume_plan_roots(
@@ -511,6 +531,7 @@ pub def resume_unit_plan(
     for cell in resolved_statics:
         statics.append(cell)
     requirements = selected_runtime_requirements(context.as_ref(), externals, functions)?
+    drop(roots_stage)
     if len(requirements) != 0:
         return Ok(
             UnitPlanning.NeedsRuntime(
@@ -540,6 +561,7 @@ pub def resume_unit_plan(
                 requirements,
             ),
         )
+    drop(resume_stage)
     return finish_unit_plan(
         template_constructors,
         constructors,
@@ -610,6 +632,7 @@ def finish_unit_plan(
     trace: bool,
 ) -> Result[UnitPlanning, str]:
     """Drain instances from preserved ordinary frames, finalize their layouts and publish one complete plan."""
+    specialization_stage = specialization_and_instance_queue()
     mut retained_program = program
     original_nominal_count = len(context.as_ref().nominal_declarations)
     trace_lowering(trace, "generic instances")
@@ -690,8 +713,10 @@ def finish_unit_plan(
         intrinsics,
         kind,
     )?
+    drop(specialization_stage)
 
     # ---- Completed publication ----
+    publication_stage = plan_publication()
     mut exports: list[PlanExport] = []
     mut templates: list[GenericModelDeclaration] = []
     mut enum_templates: list[GenericEnumDeclaration] = []
@@ -735,6 +760,7 @@ def finish_unit_plan(
         enum_templates,
         zip_carriers,
     )?
+    drop(publication_stage)
     return Ok(UnitPlanning.Complete(planned))
 
 

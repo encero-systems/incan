@@ -2,9 +2,18 @@
 name = "incan_mir_lowering"
 version = "0.6.0-dev.8"
 
+[rust]
+name = "incan_mir_lowering_trace"
+type = "lib"
+edition = "2024"
+
+[rust.source]
+root = "rust"
+
 [dependencies]
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1" }
 serde_json = { loaf = "crates-io/serde_json", version = "1" }
+tracing = { loaf = "crates-io/tracing", version = "0.1" }
 incan_mir_plan = { path = "../incan_mir_plan" }
 internal_models = { path = "../internal_models" }
 

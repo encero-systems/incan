@@ -24,9 +24,11 @@ from rust::incan_semantics_core::body_ir import Body as RustBody, BodyIrModule a
 from classes import function_name, is_program_entry, body_module_identity
 from program_context import ProgramContext, body_at
 from rust::std::collections import BTreeMap
+from rust::std::mem import drop
 from rust::std::panic import resume_unwind
 from rust::std::sync import Arc
 from rust::std::thread import JoinHandle, spawn
+from rust::incan_mir_lowering_trace import merge as trace_merge
 from rust::serde_json import to_string as native_json
 from scalar_store import scalar_inputs, retained_scalar, retain_scalar
 from table_views import borrowed_at
@@ -181,6 +183,7 @@ pub def lower_ordinary_bodies(
             )
     mut names = function_names()
     mut signatures = external_index()
+    merge_stage = trace_merge()
     for result in completed:
         for message in result.traces:
             println(message)
@@ -189,6 +192,7 @@ pub def lower_ordinary_bodies(
         merge_instance_requests(instances, result.instances)
         for position in result.positions:
             emitted_frames.record(body_at(context.as_ref().bodies, position), position)
+    drop(merge_stage)
     return Ok(None)
 
 
