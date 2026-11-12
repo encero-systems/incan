@@ -472,7 +472,8 @@ def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
 def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
     """Build the source compiler, then rebuild checking interfaces and shipped providers through it."""
     driver_started = Instant.now()
-    relink(
+    driver_span = run.trace.begin("driver-build")?
+    driver_result = relink(
         Relink(
             repo=run.paths.source,
             bootstrap=run.paths.lane.joinpath("bootstrap"),
@@ -483,7 +484,9 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
             refresh=false,
             log=run.paths.output.joinpath("driver-build.log"),
         ),
-    )?
+    )
+    run.trace.finish(driver_span)?
+    driver_result?
     append_timing(run.paths.output.joinpath("timings.tsv"), "driver-build", driver_started.elapsed().as_secs_f64())?
     context = native_context(run, candidate.oven, run.paths.home)
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
@@ -644,7 +647,7 @@ def installed_verification(run: ReleaseRun, candidate: Candidate) -> Result[Path
     environment["INCAN_RELEASE_ARCHIVE"] = run.paths.bundle.joinpath("toolchain.tar.zst").0
     environment["INCAN_BUILDER_HOME"] = run.paths.home.0
     environment["INCAN_BUILDER_SOURCE"] = run.paths.source.0
-    require_release_step(
+    require_linked_release_step(
         run,
         release_step(
             run,
@@ -918,6 +921,17 @@ def require_release_step(run: ReleaseRun, child: Step) -> Result[None, str]:
     if code != 0:
         return Err(f"{name} failed with status {code}; log: {log.0}\n{log_tail(log)}")
     return Ok(None)
+
+
+def require_linked_release_step(run: ReleaseRun, mut child: Step) -> Result[None, str]:
+    """Run one release child below a span whose identity its process can inherit for nested trace records."""
+    span = run.trace.begin(child.name)?
+    child.environment["INCAN_RELEASE_TRACE_DIR"] = run.paths.output.joinpath("trace").0
+    child.environment["INCAN_RELEASE_TRACE_PARENT"] = span.id
+    child.trace = None
+    outcome = require_release_step(run, child)
+    run.trace.finish(span)?
+    return outcome
 
 
 def require_release_step_at(run: ReleaseRun, timings: Path, child: Step) -> Result[None, str]:

@@ -19,13 +19,16 @@ from oven_tests import (
 from release_support import (
     FAMILIES,
     BaselineReport,
+    ReleaseTrace,
     TOOLCHAIN_DIRECTORY,
     Step,
     append_timing,
     baseline_summary,
     check_baseline,
+    begin_step_trace,
     counts_json,
     digest,
+    finish_step_trace,
     parse_verification_options,
     require_step,
     run_step,
@@ -99,15 +102,25 @@ pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, st
     4. Preserve every committed PASS key and all per-phase evidence.
     """
     installation = prepare(output, jobs, timeout_seconds)?
+    trace = verification_release_trace()?
 
     # 1. Installed records may name only this installation and never a builder path.
     mut phase_started = Instant.now()
-    audit_relocation(installation.home, [get_or("INCAN_BUILDER_HOME", ""), get_or("INCAN_BUILDER_SOURCE", "")])?
+    relocation_span = begin_step_trace(trace, "relocation")?
+    relocation_result = audit_relocation(
+        installation.home,
+        [get_or("INCAN_BUILDER_HOME", ""), get_or("INCAN_BUILDER_SOURCE", "")],
+    )
+    finish_step_trace(trace, relocation_span)?
+    relocation_result?
     retain_phase_timing(installation, "relocation", phase_started)?
 
     # 2. A checkout runner proves the installed compiler can read the current source contracts.
     phase_started = Instant.now()
-    runner = build_runner(installation)?
+    runner_span = begin_step_trace(trace, "runner-build")?
+    runner_result = build_runner(installation)
+    finish_step_trace(trace, runner_span)?
+    runner = runner_result?
     retain_phase_timing(installation, "runner-build", phase_started)?
 
     # 3. Independent projects and scratch roots share only the content-addressed installed home.
@@ -130,6 +143,17 @@ def retain_phase_timing(installation: Installation, phase: str, started: Instant
     return append_timing(installation.run.joinpath("phase-timings.tsv"), phase, started.elapsed().as_secs_f64())
 
 
+def verification_release_trace() -> Result[Option[ReleaseTrace], str]:
+    """Join the outer release trace only when both its directory and installed-CI parent are supplied."""
+    directory = get_or("INCAN_RELEASE_TRACE_DIR", "")
+    parent = get_or("INCAN_RELEASE_TRACE_PARENT", "")
+    if directory == "" and parent == "":
+        return Ok(None)
+    if directory == "" or parent == "":
+        return Err("installed verification needs both INCAN_RELEASE_TRACE_DIR and INCAN_RELEASE_TRACE_PARENT")
+    return Ok(Some(ReleaseTrace.linked(Path(directory), parent, "scripts/verify_installation.incn")?))
+
+
 def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tuple[BaselineReport, int], str]:
     """Run independent installed gates under one host-memory budget and recover their typed results."""
     plans = verification_phase_plans(installation.jobs)
@@ -141,9 +165,7 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
         name = verification_phase_name(plan.phase)
         trace_environment = verification_trace_environment(installation.run, name, retain_traces)
         if retain_traces:
-            Path(trace_environment["INCAN_TRACE_DIR"])
-                .mkdir(true, true)
-                .map_err((error) => error.message())?
+            Path(trace_environment["INCAN_TRACE_DIR"]).mkdir(true, true).map_err((error) => error.message())?
         invocations.append(
             Invocation(
                 arguments=[
@@ -192,10 +214,7 @@ pub def verification_trace_environment(run: Path, phase: str, enabled: bool) -> 
     if not enabled:
         return {}
     stem = run.joinpath("traces").joinpath(phase)
-    return {
-        "INCAN_TRACE_DIR": stem.joinpath("compiler").0,
-        "INCAN_NATIVE_TIMING": "1",
-    }
+    return {"INCAN_TRACE_DIR": stem.joinpath("compiler").0, "INCAN_NATIVE_TIMING": "1"}
 
 
 pub def verification_phase_plans(jobs: int) -> list[VerificationPhasePlan]:
@@ -240,6 +259,21 @@ def run_phase(arguments: list[str]) -> Result[None, str]:
     timeout_seconds = phase_positive(arguments[4], "timeout")?
     installation = phase_installation(run, jobs, timeout_seconds)?
     started = Instant.now()
+    trace = verification_release_trace()?
+    name = verification_phase_name(phase)
+    span = begin_step_trace(trace, name)?
+    outcome = run_selected_phase(installation, runner, phase)
+    finish_step_trace(trace, span)?
+    outcome?
+    installation.run
+        .joinpath(f"phase-timing-{name}.txt")
+        .write_text(str(started.elapsed().as_secs_f64()) + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    return Ok(None)
+
+
+def run_selected_phase(installation: Installation, runner: Path, phase: VerificationPhase) -> Result[None, str]:
+    """Run one closed installed-verification gate after its process-level trace span is open."""
     match phase:
         VerificationPhase.Oven => run_oven_tests(installation)?
         VerificationPhase.RustFacets =>
@@ -252,15 +286,11 @@ def run_phase(arguments: list[str]) -> Result[None, str]:
         VerificationPhase.Lsp => verify_lsp(installation, runner)?
         VerificationPhase.Census => _ = run_contracts(installation, runner)?
         VerificationPhase.Memory => measure_memory(installation)?
-    installation.run
-        .joinpath(f"phase-timing-{verification_phase_name(phase)}.txt")
-        .write_text(str(started.elapsed().as_secs_f64()) + "\n", "utf-8", "strict", None)
-        .map_err((error) => error.message())?
     return Ok(None)
 
 
 def parse_verification_phase(text: str) -> Result[VerificationPhase, str]:
-    """Parse only the five internal verification phase spellings."""
+    """Parse only the six internal verification phase spellings."""
     match text:
         "oven" => return Ok(VerificationPhase.Oven)
         "rust-facets" => return Ok(VerificationPhase.RustFacets)

@@ -90,6 +90,7 @@ model ReleaseTraceState:
     path: Path
     started: Instant
     process: int
+    inherited_parent: str
     next_id: int = 1
     active_phase: str = ""
 
@@ -108,23 +109,14 @@ pub model ReleaseTrace:
     @staticmethod
     pub def open(directory: Path) -> Result[ReleaseTrace, str]:
         """Create one process-owned invocation stream and publish its clock origin before any spans."""
-        directory.mkdir(true, true).map_err((error) => error.message())?
-        epoch = epoch_nanoseconds()?
-        process = int(id())
-        path = directory.joinpath(f"{process}-{epoch}.jsonl")
-        process_record = JsonValue.object(
-            {"schema": JsonValue.string("incan.invocations/1"), "kind": JsonValue.string("process"), "pid": JsonValue.int(
-                process,
-            ), "epoch_ns": JsonValue.int(epoch), "parent": JsonValue.null(), "executable": JsonValue.string(
-                "scripts/release.incn",
-            ), "thread": JsonValue.string("main"), "time_ns": JsonValue.int(0)},
-        )
-        path
-            .write_text(process_record.to_json().map_err((error) => error.message())? + "\n", "utf-8", "strict", None)
-            .map_err((error) => error.message())?
-        return Ok(
-            ReleaseTrace(state=Rc.new(RefCell.new(ReleaseTraceState(path=path, started=Instant.now(), process=process)))),
-        )
+        return Ok(ReleaseTrace(state=open_release_trace_state(directory, "", "scripts/release.incn")?))
+
+    @staticmethod
+    pub def linked(directory: Path, parent: str, executable: str) -> Result[ReleaseTrace, str]:
+        """Create one process-owned stream whose root spans attach to a span in another process."""
+        if parent == "":
+            return Err("a linked release trace needs a parent span identity")
+        return Ok(ReleaseTrace(state=open_release_trace_state(directory, parent, executable)?))
 
     pub def phase(self, name: str) -> Result[None, str]:
         """Close the preceding release phase and open one root phase span."""
@@ -132,15 +124,18 @@ pub model ReleaseTrace:
         mut state = held.deref_mut()
         if state.active_phase != "":
             trace_write_end(state, state.active_phase)?
-        span = trace_begin(state, name, "")?
+        span = trace_begin(state, name, state.inherited_parent)?
         state.active_phase = span.id
         return Ok(None)
 
     pub def begin(self, name: str) -> Result[ReleaseSpan, str]:
-        """Open one step below the phase active at its start."""
+        """Open one step below the active phase or the inherited cross-process parent."""
         mut held = self.state.as_ref().borrow_mut()
         mut state = held.deref_mut()
-        return trace_begin(state, name, state.active_phase)
+        mut parent = str(state.inherited_parent)
+        if state.active_phase != "":
+            parent = state.active_phase
+        return trace_begin(state, name, parent)
 
     pub def finish(self, span: ReleaseSpan) -> Result[None, str]:
         """Close one previously opened step span."""
@@ -148,13 +143,43 @@ pub model ReleaseTrace:
         return trace_write_end(held.deref_mut(), span.id)
 
     pub def complete(self) -> Result[None, str]:
-        """Close the final phase so a successful trace contains no unfinished release spans."""
+        """Close the final process-owned phase without closing an inherited parent span."""
         mut held = self.state.as_ref().borrow_mut()
         mut state = held.deref_mut()
         if state.active_phase != "":
             trace_write_end(state, state.active_phase)?
             state.active_phase = ""
         return Ok(None)
+
+
+def open_release_trace_state(
+    directory: Path,
+    parent: str,
+    executable: str,
+) -> Result[Rc[RefCell[ReleaseTraceState]], str]:
+    """Open one unique invocation stream and return its private shared state."""
+    directory.mkdir(true, true).map_err((error) => error.message())?
+    epoch = epoch_nanoseconds()?
+    process = int(id())
+    path = directory.joinpath(f"{process}-{epoch}.jsonl")
+    mut parent_value = JsonValue.null()
+    if parent != "":
+        parent_value = JsonValue.string(parent)
+    process_record = JsonValue.object(
+        {"schema": JsonValue.string("incan.invocations/1"), "kind": JsonValue.string("process"), "pid": JsonValue.int(
+            process,
+        ), "epoch_ns": JsonValue.int(epoch), "parent": parent_value, "executable": JsonValue.string(executable), "thread": JsonValue.string(
+            "main",
+        ), "time_ns": JsonValue.int(0)},
+    )
+    path
+        .write_text(process_record.to_json().map_err((error) => error.message())? + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    return Ok(
+        Rc.new(
+            RefCell.new(ReleaseTraceState(path=path, started=Instant.now(), process=process, inherited_parent=parent)),
+        ),
+    )
 
 
 def trace_begin(mut state: &mut ReleaseTraceState, name: str, parent: str) -> Result[ReleaseSpan, str]:
@@ -769,14 +794,14 @@ def start_step(step: Step) -> Result[Child, str]:
     return command.spawn().map_err((error) => f"cannot start {step.name}: {error}")
 
 
-def begin_step_trace(trace: Option[ReleaseTrace], name: str) -> Result[Option[ReleaseSpan], str]:
+pub def begin_step_trace(trace: Option[ReleaseTrace], name: str) -> Result[Option[ReleaseSpan], str]:
     """Open a step span only when its caller supplied a release trace."""
     match trace:
         Some(selected) => return Ok(Some(selected.begin(name)?))
         None => return Ok(None)
 
 
-def finish_step_trace(trace: Option[ReleaseTrace], span: Option[ReleaseSpan]) -> Result[None, str]:
+pub def finish_step_trace(trace: Option[ReleaseTrace], span: Option[ReleaseSpan]) -> Result[None, str]:
     """Close a step span only when both halves of its optional trace context exist."""
     match (trace, span):
         (Some(selected), Some(opened)) => return selected.finish(opened)
