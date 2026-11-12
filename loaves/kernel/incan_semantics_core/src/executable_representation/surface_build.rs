@@ -27,12 +27,7 @@ pub fn build_surface(
 ) -> Result<Vec<u8>, ExecutableRepresentationError> {
     let candidates = checked_candidates(modules, library, public);
     let mut declarations = uncovered_owned_declarations(library, &candidates);
-    let eligible = if package_test_roots.is_empty() {
-        public
-    } else {
-        &candidates
-    };
-    let mut admitted = project_declarations(modules, library, eligible, unrepresentable, &mut declarations)?;
+    let mut admitted = project_declarations(modules, library, &candidates, unrepresentable, &mut declarations)?;
     record_trait_slots(&admitted, &mut declarations);
     record_type_context_members(&admitted, &mut declarations);
     retain_only_satisfiable(library, &mut admitted, &mut declarations);
