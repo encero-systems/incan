@@ -1,6 +1,8 @@
 use super::*;
 use crate::{lexer, parser, typechecker};
 
+mod public_namespaces;
+
 fn metadata_for(source: &str) -> Result<CheckedApiMetadata, Vec<crate::diagnostics::CompileError>> {
     let tokens = lexer::lex(source)?;
     let program = parser::parse(&tokens)?;
@@ -996,53 +998,6 @@ pub from crate.widgets import Widget as PublicWidget
         alias.target_path,
         vec!["crate".to_string(), "widgets".to_string(), "Widget".to_string()]
     );
-    Ok(())
-}
-
-#[test]
-fn checked_api_materializes_public_namespace_members_and_children_issue948() -> Result<(), String> {
-    let mut index = metadata_for("pub def build() -> int:\n  return 1\n").map_err(|errors| format!("{errors:?}"))?;
-    index.module_path = vec!["hyperquant".to_string(), "index".to_string()];
-    let mut package = CheckedApiMetadataPackage {
-        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
-        package: None,
-        modules: vec![index],
-        public_namespaces: Vec::new(),
-    };
-
-    materialize_checked_api_public_namespaces(&mut package).map_err(|error| error.to_string())?;
-
-    let parent = checked_api_public_namespace(&package, &["hyperquant".to_string()])
-        .ok_or_else(|| "missing parent namespace".to_string())?;
-    assert_eq!(parent.child_modules, vec!["index".to_string()]);
-    assert_eq!(parent.members.len(), 1);
-    assert_eq!(parent.members[0].name, "build");
-    assert_eq!(
-        parent.members[0].source_path,
-        vec!["hyperquant".to_string(), "index".to_string(), "build".to_string()]
-    );
-    Ok(())
-}
-
-#[test]
-fn checked_api_rejects_duplicate_logical_source_modules_issue948() -> Result<(), String> {
-    let mut first = metadata_for("pub def left() -> int:\n  return 1\n").map_err(|errors| format!("{errors:?}"))?;
-    first.module_path = vec!["hyperquant".to_string()];
-    let mut second = metadata_for("pub def right() -> int:\n  return 2\n").map_err(|errors| format!("{errors:?}"))?;
-    second.module_path = vec!["hyperquant".to_string()];
-    let mut package = CheckedApiMetadataPackage {
-        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
-        package: None,
-        modules: vec![first, second],
-        public_namespaces: Vec::new(),
-    };
-
-    let Err(error) = materialize_checked_api_public_namespaces(&mut package) else {
-        return Err("duplicate logical modules unexpectedly produced a public namespace graph".to_string());
-    };
-
-    assert!(error.to_string().contains("multiple source files"));
-    assert!(error.to_string().contains("hyperquant"));
     Ok(())
 }
 
