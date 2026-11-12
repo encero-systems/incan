@@ -35,6 +35,8 @@ static COMPILATION: Mutex<()> = Mutex::new(());
 static PLAN: Mutex<Option<Arc<PlanReader>>> = Mutex::new(None);
 /// Typed errors raised while loading metadata or source locations survive rustc's fatal-error boundary.
 static FAILURE: Mutex<Option<PlanError>> = Mutex::new(None);
+/// Qualification found behavior-correct but byte-different dev executables; BE-15 keeps reuse off until that closes.
+const NATIVE_INCREMENTAL_QUALIFIED: bool = false;
 
 /// Stable name of rustc's empty synthetic input; authored source spans are loaded separately from the native plan.
 const SYNTHETIC_SOURCE_NAME: &str = "source";
@@ -171,6 +173,33 @@ pub fn compile(
         args.extend(sysroot_linkage(identity));
     }
     args.extend_from_slice(rustc_args);
+    if NATIVE_INCREMENTAL_QUALIFIED && kind == UnitKind::Program && overflow_checks {
+        if let Some(report) = plan_record_report {
+            args.retain(|argument| !argument.starts_with("-Cmetadata=incan-unit-"));
+            let parent = report
+                .parent()
+                .ok_or_else(|| DriverError::Invocation("native plan report has no private unit directory".into()))?;
+            let compiler = incan_semantics_core::semantic_digest::semantic_digest(&identity.toolchain)
+                .map_err(|error| DriverError::Invocation(format!("cannot fingerprint compiler identity: {error}")))?;
+            let incremental = parent.join(format!(
+                ".{crate_name}.{}.rustc-incremental",
+                compiler.trim_start_matches("sha256:")
+            ));
+            std::fs::create_dir_all(&incremental).map_err(|error| {
+                DriverError::Invocation(format!("cannot create private incremental directory: {error}"))
+            })?;
+            let metadata = incan_semantics_core::semantic_digest::semantic_digest(&vec![
+                crate_name.to_owned(),
+                identity.toolchain.clone(),
+                identity.target.clone(),
+            ])
+            .map_err(|error| DriverError::Invocation(format!("cannot fingerprint crate identity: {error}")))?;
+            args.push("-C".into());
+            args.push(format!("metadata={}", metadata.trim_start_matches("sha256:")));
+            args.push("-C".into());
+            args.push(format!("incremental={}", incremental.display()));
+        }
+    }
     timing.mark("native_arguments");
     let mut callbacks = Callbacks {
         features,
