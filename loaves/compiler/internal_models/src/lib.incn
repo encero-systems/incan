@@ -129,6 +129,7 @@ pub from checker_records import (
     GraphBodyValue,
     GraphBodyFields,
     CompiledBodyValue,
+    CompiledBodyDependencyRead,
     CompiledBodyFallback,
     CompiledBodyOutputs,
     from_native_fields,

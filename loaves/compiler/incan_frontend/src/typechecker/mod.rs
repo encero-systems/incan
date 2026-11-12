@@ -542,11 +542,13 @@ pub struct TypeChecker {
     checked_declarations: Vec<std::sync::Arc<body_check::CheckedBodyView>>,
     /// Declaration-family records emitted at their settlement boundary, before any module product observes them.
     produced_declaration_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    declaration_record_refusals: std::collections::BTreeMap<Span, canonical_nodes::NodeBindingError>,
     /// Producer-validated declaration records selected for this source revision and retained for publication without
     /// pretending the declaration producer ran in this invocation.
     selected_declaration_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
     /// Local-family records emitted at the direct statement-check boundary, before any settlement or module observer.
     produced_local_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
+    local_record_refusals: std::collections::BTreeMap<Span, canonical_nodes::NodeBindingError>,
     /// Producer-validated local records selected for this source revision without counting them as evaluations.
     selected_local_records: std::collections::BTreeMap<Span, body_check::records::Fields>,
     /// Codec-validated settled values restored through the ordinary checked-body assembly and retained for graph

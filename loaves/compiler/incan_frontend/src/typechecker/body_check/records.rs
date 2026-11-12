@@ -72,6 +72,7 @@ impl TypeChecker {
             }
             Err(error) => {
                 tracing::debug!(target: "incan::invocation", ?owner, ?error, "local record production refused");
+                self.local_record_refusals.insert(owner, error);
             }
         }
     }
@@ -88,6 +89,11 @@ impl TypeChecker {
             .or_else(|| self.selected_declaration_records.get(&owner))
     }
 
+    /// Clone the explicit refusal returned by this activation's direct declaration producer.
+    pub(crate) fn declaration_record_refusal(&self, owner: Span) -> Option<NodeBindingError> {
+        self.declaration_record_refusals.get(&owner).cloned()
+    }
+
     /// Borrow the local record emitted directly by this activation's body-check producer.
     pub(crate) fn produced_local_record(&self, owner: Span) -> Option<&Fields> {
         self.produced_local_records.get(&owner)
@@ -98,6 +104,11 @@ impl TypeChecker {
         self.produced_local_records
             .get(&owner)
             .or_else(|| self.selected_local_records.get(&owner))
+    }
+
+    /// Clone the explicit refusal returned by this activation's direct local producer.
+    pub(crate) fn local_record_refusal(&self, owner: Span) -> Option<NodeBindingError> {
+        self.local_record_refusals.get(&owner).cloned()
     }
 
     /// Retain one selected local value for republishing without treating selection as producer execution.
@@ -269,11 +280,16 @@ impl Positions {
             .iter()
             .map(|(canonical, stable)| (stable.render_compact(), canonical.clone()))
             .collect::<BTreeMap<_, _>>();
+        // Imported package bindings are authenticated by their admitted Loaf manifest before checking. Retain those
+        // exact canonical identities alongside builtins so a body record can name the dependency declaration it read.
         for index in 0..checker.symbols.all_symbols().len() {
             let Some(canonical) = checker.symbols.identity_of(index) else {
                 continue;
             };
-            if canonical.origin != incan_semantics_core::SymbolOrigin::Builtin {
+            if !matches!(
+                canonical.origin,
+                incan_semantics_core::SymbolOrigin::Builtin | incan_semantics_core::SymbolOrigin::Package { .. }
+            ) {
                 continue;
             }
             if let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None) {

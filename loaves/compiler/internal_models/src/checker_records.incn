@@ -8,7 +8,7 @@ pub const CHECKER_PROFILE: str = "incan.checker-free-functions/11"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/2"
-const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/3"
+const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/4"
 # One whole-program transport carries all bounded checker records plus native owner frames; bound the aggregate at
 # 64 MiB while individual checker records retain their narrower 64 KiB limit.
 const MAX_GRAPH_TRANSPORT_BYTES: int = 67108864
@@ -72,6 +72,16 @@ pub model CompiledBodyValue:
     pub local: bytes
     pub final: bytes
     pub body_ir: bytes
+    pub dependency_reads: list[CompiledBodyDependencyRead] = []
+
+
+@derive(Eq)
+pub model CompiledBodyDependencyRead:
+    """One exact package declaration source record witnessed by a compiled owner."""
+
+    pub package: str
+    pub module: str
+    pub name: str
 
 
 @derive(Eq)
@@ -431,7 +441,15 @@ pub def encode_compiled_body_outputs(outputs: CompiledBodyOutputs) -> Result[byt
             hexlify(value.local),
             hexlify(value.final),
             hexlify(value.body_ir),
+            str(len(value.dependency_reads)),
         ]
+        mut previous_read = ""
+        for read in value.dependency_reads:
+            read_order = read.package + "\n" + read.module + "\n" + read.name
+            if read.package == "" or read.module == "" or read.name == "" or read_order <= previous_read:
+                return Err(CodecFault.Malformed)
+            tokens += [read.package, read.module, read.name]
+            previous_read = read_order
         previous = order
     previous = ""
     for fallback in outputs.fallbacks:
@@ -460,12 +478,32 @@ pub def decode_compiled_body_outputs(encoded: bytes) -> Result[CompiledBodyOutpu
         return Err(CodecFault.Malformed)
     count = decimal(tokens[1])?
     fallback_count = decimal(tokens[2])?
-    if count + fallback_count > MAX_FIELDS or len(tokens) != 3 + count * 7 + fallback_count * 4:
+    if count + fallback_count > MAX_FIELDS:
         return Err(CodecFault.Malformed)
     mut values: list[CompiledBodyValue] = []
     mut previous = ""
     mut offset = 3
     for _ in range(count):
+        if offset + 8 > len(tokens):
+            return Err(CodecFault.Malformed)
+        dependency_count = decimal(tokens[offset + 7])?
+        if dependency_count > MAX_FIELDS or offset + 8 + dependency_count * 3 > len(tokens):
+            return Err(CodecFault.Malformed)
+        mut dependency_reads: list[CompiledBodyDependencyRead] = []
+        mut previous_read = ""
+        mut dependency_offset = offset + 8
+        for _ in range(dependency_count):
+            read = CompiledBodyDependencyRead(
+                package=tokens[dependency_offset],
+                module=tokens[dependency_offset + 1],
+                name=tokens[dependency_offset + 2],
+            )
+            read_order = read.package + "\n" + read.module + "\n" + read.name
+            if read.package == "" or read.module == "" or read.name == "" or read_order <= previous_read:
+                return Err(CodecFault.Malformed)
+            dependency_reads.append(read)
+            previous_read = read_order
+            dependency_offset += 3
         value = CompiledBodyValue(
             module=tokens[offset],
             name=tokens[offset + 1],
@@ -474,6 +512,7 @@ pub def decode_compiled_body_outputs(encoded: bytes) -> Result[CompiledBodyOutpu
             local=unhexlify(tokens[offset + 4]).map_err((_) => CodecFault.Malformed)?,
             final=unhexlify(tokens[offset + 5]).map_err((_) => CodecFault.Malformed)?,
             body_ir=unhexlify(tokens[offset + 6]).map_err((_) => CodecFault.Malformed)?,
+            dependency_reads=dependency_reads,
         )
         order = value.module + "\n" + value.identity
         if value.module == "" or value.name == "" or value.identity == "" or order <= previous:
@@ -481,8 +520,10 @@ pub def decode_compiled_body_outputs(encoded: bytes) -> Result[CompiledBodyOutpu
         validate_compiled_body_value(value)?
         values.append(value)
         previous = order
-        offset += 7
+        offset = dependency_offset
     mut fallbacks: list[CompiledBodyFallback] = []
+    if len(tokens) != offset + fallback_count * 4:
+        return Err(CodecFault.Malformed)
     previous = ""
     for _ in range(fallback_count):
         fallback = CompiledBodyFallback(

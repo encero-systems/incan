@@ -7,6 +7,7 @@ from checker_records import (
     CheckedRecord,
     CodecFault,
     CompiledBodyFallback,
+    CompiledBodyDependencyRead,
     CompiledBodyOutputs,
     CompiledBodyValue,
     GraphBodyValue,
@@ -88,6 +89,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         local=local_bytes,
         final=final_bytes,
         body_ir=b"owner-frame",
+        dependency_reads=[CompiledBodyDependencyRead(package="provider", module="lib", name="value")],
     )
     fallback = CompiledBodyFallback(
         module="src/main.incn",
@@ -105,6 +107,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         and decoded.values[0].name == value.name
         and decoded.values[0].identity == value.identity
     )
+    assert decoded.values[0].dependency_reads == value.dependency_reads
     assert (
         decoded.values[0].declaration == value.declaration
         and decoded.values[0].local == value.local
