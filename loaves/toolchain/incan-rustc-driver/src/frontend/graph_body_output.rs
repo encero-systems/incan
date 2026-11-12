@@ -20,6 +20,7 @@ struct PendingBodyValue {
     local: Vec<u8>,
     final_value: Vec<u8>,
     body_ir: Vec<u8>,
+    dependency_reads: Vec<internal_models::CompiledBodyDependencyRead>,
 }
 
 /// One checked owner excluded from record reuse while retaining the reason for the full-source path.
@@ -72,16 +73,29 @@ impl GraphBodyOutput {
             return Ok(());
         };
         let module_path = module_path.to_string_lossy().into_owned();
-        for fields in incan_frontend::checker_records::checked_owner_record_fields(&module.ast, checker) {
-            let identity = header_identity(&fields.local)?;
-            match encoded_body_value(&module_path, &identity, &fields) {
-                Ok(value) => self.values.push(value),
-                Err(reason) => self.fallbacks.push(PendingBodyFallback {
-                    module: module_path.clone(),
-                    name: fields.name,
-                    identity,
-                    reason,
-                }),
+        for output in
+            incan_frontend::checker_records::checked_owner_record_outputs(&module.ast, checker, &module.path_segments)?
+        {
+            match output {
+                incan_frontend::checker_records::CheckedOwnerRecordOutput::Value(fields) => {
+                    match encoded_body_value(&module_path, &fields) {
+                        Ok(value) => self.values.push(value),
+                        Err(reason) => self.fallbacks.push(PendingBodyFallback {
+                            module: module_path.clone(),
+                            name: fields.name,
+                            identity: fields.identity,
+                            reason,
+                        }),
+                    }
+                }
+                incan_frontend::checker_records::CheckedOwnerRecordOutput::Fallback(fallback) => {
+                    self.fallbacks.push(PendingBodyFallback {
+                        module: module_path.clone(),
+                        name: fallback.name,
+                        identity: fallback.identity,
+                        reason: fallback.reason,
+                    });
+                }
             }
         }
         Ok(())
@@ -156,6 +170,7 @@ impl GraphBodyOutput {
                 local: value.local,
                 r#final: value.final_value,
                 body_ir: value.body_ir,
+                dependency_reads: value.dependency_reads,
             })
             .collect();
         let fallbacks: Vec<internal_models::CompiledBodyFallback> = self
@@ -183,7 +198,6 @@ impl GraphBodyOutput {
 /// Convert one compiler-produced owner independently so a codec limitation cannot refuse its successful build.
 fn encoded_body_value(
     module: &str,
-    identity: &str,
     fields: &incan_frontend::checker_records::CheckedOwnerRecordFields,
 ) -> Result<PendingBodyValue, String> {
     let declaration = internal_models::from_native_fields(&fields.declaration)
@@ -195,27 +209,41 @@ fn encoded_body_value(
     let final_value = internal_models::from_native_final_fields(&fields.final_value)
         .and_then(internal_models::encode_record)
         .map_err(|error| format!("final record output refused: {error:?}"))?;
+    let mut dependency_reads = fields
+        .dependency_reads
+        .iter()
+        .map(|read| internal_models::CompiledBodyDependencyRead {
+            package: read.package.clone(),
+            module: dependency_module(&read.module_path),
+            name: read.declaration_name.clone(),
+        })
+        .collect::<Vec<_>>();
+    dependency_reads.sort_by(|left, right| {
+        (&left.package, &left.module, &left.name).cmp(&(&right.package, &right.module, &right.name))
+    });
+    dependency_reads.dedup_by(|left, right| {
+        left.package == right.package && left.module == right.module && left.name == right.name
+    });
     Ok(PendingBodyValue {
         module: module.to_owned(),
         name: fields.name.clone(),
         span: fields.span,
-        identity: identity.to_owned(),
+        identity: fields.identity.clone(),
         declaration,
         local,
         final_value,
         body_ir: Vec::new(),
+        dependency_reads,
     })
 }
 
-/// Read the stable owner identity from the native field header without interpreting any semantic field.
-fn header_identity(fields: &[Vec<String>]) -> Result<String, String> {
-    fields
-        .first()
-        .filter(|header| header.first().is_some_and(|field| field == "header"))
-        .and_then(|header| header.get(1))
-        .filter(|identity| !identity.is_empty())
-        .cloned()
-        .ok_or_else(|| "checked graph output is missing its owner identity".to_owned())
+/// Render the compiler's canonical package module path in the logical source-key spelling shared with Oven.
+fn dependency_module(module_path: &[String]) -> String {
+    match module_path {
+        [] => "lib".to_owned(),
+        [root] if root == "main" => "lib".to_owned(),
+        _ => module_path.join("/"),
+    }
 }
 
 /// Replace one sidecar atomically so a failed invocation cannot leave a partially encoded output.

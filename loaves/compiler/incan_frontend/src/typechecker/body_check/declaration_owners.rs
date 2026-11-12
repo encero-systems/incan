@@ -282,8 +282,14 @@ impl TypeChecker {
             if checked.local.kind == LocalOwnerKind::Declaration {
                 let owner = checked.owner();
                 self.checked_declarations.push(checked);
-                if let Ok(fields) = records::produce_declaration(self, program, owner) {
-                    self.produced_declaration_records.insert(owner, fields);
+                match records::produce_declaration(self, program, owner) {
+                    Ok(fields) => {
+                        self.produced_declaration_records.insert(owner, fields);
+                    }
+                    Err(error) => {
+                        tracing::debug!(target: "incan::invocation", ?owner, ?error, "declaration record production refused");
+                        self.declaration_record_refusals.insert(owner, error);
+                    }
                 }
             } else {
                 let owner = checked.owner();
