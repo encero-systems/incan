@@ -33,6 +33,16 @@ model ScalarRecordEvent:
     runtime_requirements: int
 
 
+@derive(Serialize, Deserialize)
+model ScalarRecordRefusal:
+    """One request-local refusal to represent an ordinarily lowered function as a scalar record."""
+
+    schema: int
+    identity: str
+    function: str
+    refusal: str
+
+
 pub def scalar_inputs(body: str, name: str, span: SourceSpan, overflow_checks: bool, reads: str) -> list[str]:
     """Bind a native product to its checked body, consumed signatures, physical frame and diagnostic provenance."""
     return [
@@ -115,6 +125,28 @@ pub def report_scalar(
         )
         text = to_string(event).map_err((error) => str(error))?
         path = Path(root).joinpath(digest.replace("sha256:", "") + ".event")
+        path.parent().mkdir(true, true).map_err((error) => error.message())?
+        path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def report_scalar_refusal(
+    directory: Option[str],
+    identity: str,
+    function: str,
+    refusal: str,
+) -> Result[None, str]:
+    """Retain an explicit record refusal without changing the ordinary lowering verdict."""
+    if let Some(root) = directory:
+        report = ScalarRecordRefusal(
+            schema=2,
+            identity=identity,
+            function=function,
+            refusal=refusal,
+        )
+        text = to_string(report).map_err((error) => str(error))?
+        digest = fingerprint([identity, function, refusal])?.replace("sha256:", "")
+        path = Path(root).joinpath(digest + ".refusal")
         path.parent().mkdir(true, true).map_err((error) => error.message())?
         path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
     return Ok(None)

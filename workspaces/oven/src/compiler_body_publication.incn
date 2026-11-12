@@ -458,7 +458,27 @@ def prepare_lowering_records(
         prepared = entry.transaction
         staged_source.add(encode_record_key(key)?, product)
         plan_keys.append(key)
+    if not report.joinpath("native-interface.json").is_file():
+        require_plan_refusal(report)?
+        return Ok(prepared)
     return prepare_native_interface(prepared, staged_source, scope, unit, origin, values, report, plan_keys)
+
+
+def require_plan_refusal(report: Path) -> Result[None, str]:
+    """Accept an incomplete native interface only when lowering retained an explicit per-function refusal."""
+    for entry in report.iterdir().map_err((error) => error.message())?:
+        if entry.is_file() and entry.name().endswith(".refusal"):
+            document = parse(entry.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
+                (error) => error.message(),
+            )?
+            if document.require("schema").and_then((field) => field.expect_int()).map_err(
+                (error) => error.message(),
+            )? != 2:
+                return Err("lowering refusal has an unsupported schema")
+            _ = required_event_text(document, "function")?
+            _ = required_event_text(document, "refusal")?
+            return Ok(None)
+    return Err("successful records compile omitted its native interface without a lowering refusal")
 
 
 def is_entry_event(event: JsonValue) -> Result[bool, str]:

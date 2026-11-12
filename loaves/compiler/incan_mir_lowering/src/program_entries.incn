@@ -29,7 +29,14 @@ from rust::std::sync import Arc
 from rust::std::thread import JoinHandle, spawn
 from rust::serde_json import to_string as native_json
 from rust::incan_semantics_core::semantic_digest import semantic_digest as native_digest
-from scalar_store import scalar_inputs, record_scalar_inputs, retained_scalar, retain_scalar, report_scalar
+from scalar_store import (
+    scalar_inputs,
+    record_scalar_inputs,
+    retained_scalar,
+    retain_scalar,
+    report_scalar,
+    report_scalar_refusal,
+)
 from record_positions import relative_body_positions
 from std.fs import Path
 from table_views import borrowed_at
@@ -445,10 +452,21 @@ def lower_ordinary_frame(
     mut record_identity = ""
     if record_report is not None:
         match body.canonical:
-            None => return Err("lowering-demand refused: body has no stable declaration identity")
+            None =>
+                report_scalar_refusal(
+                    record_report,
+                    record_identity,
+                    evaluator_name(context, body),
+                    "body has no stable declaration identity",
+                )?
             Some(identity) => record_identity = encode_incan_symbol_identity(identity)
         if inputs is None:
-            return Err("lowering-demand refused: checker supplied no complete scalar body witness")
+            report_scalar_refusal(
+                record_report,
+                record_identity,
+                evaluator_name(context, body),
+                "checker supplied no complete scalar body witness",
+            )?
     original_intrinsics = len(intrinsics)
     if let Some(directory) = products:
         if let Some(witness) = inputs:
@@ -474,12 +492,17 @@ def lower_ordinary_frame(
                     Ok(_) =>
                         report_scalar(record_report, directory, witness, record_identity, function.name, false, len(runtime))?
                     Err(reason) =>
-                        # The ordinary compiler already has its complete lowered function. Only a records request
-                        # demands that the optional scalar product be representable and publishable.
+                        # The ordinary compiler already has its complete lowered function. Record the optional
+                        # product's refusal without changing that ordinary verdict.
                         if record_report is not None:
-                            return Err(reason)
-    elif record_report is not None:
-        return Err("plan-function refused: lowering produced pending instances, synthesized frames, or intrinsic changes")
+                            report_scalar_refusal(record_report, record_identity, function.name, reason)?
+    elif record_report is not None and inputs is not None:
+        report_scalar_refusal(
+            record_report,
+            record_identity,
+            function.name,
+            "lowering produced pending instances, synthesized frames, or intrinsic changes",
+        )?
     return Ok((function, runtime, pending, synthesized))
 
 

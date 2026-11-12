@@ -9,10 +9,13 @@ from record_plan_codec import encode_record_plan, encode_entry_binding
 
 pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[None, str]:
     """Publish loss-checked plan output and a reusable ordinary-entry binding before native compilation."""
-    encoded = encode_record_plan(plan)?
-    events = scalar_events(Path(report))?
+    report_path = Path(report)
+    events = scalar_events(report_path)?
     if len(events) != len(plan.functions):
+        if has_scalar_refusal(report_path)?:
+            return Ok(None)
         return Err("native-interface refuses generated functions without graph body witnesses")
+    encoded = encode_record_plan(plan)?
     for function in plan.functions:
         matches = [event for event in events if text(event, "function").unwrap_or("") == function.name]
         if len(matches) != 1:
@@ -54,6 +57,23 @@ pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[
         "entry": JsonValue.string(key),
     }))?
     return Ok(None)
+
+
+def has_scalar_refusal(report: Path) -> Result[bool, str]:
+    """Require incomplete native-interface publication to carry an explicit scalar-record refusal."""
+    for path in report.iterdir().map_err((error) => error.message())?:
+        if path.is_file() and path.name().endswith(".refusal"):
+            refusal = parse(path.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
+                (error) => error.message(),
+            )?
+            if refusal.require("schema").and_then((field) => field.expect_int()).map_err(
+                (error) => error.message(),
+            )? != 2:
+                return Err("scalar record refusal has an unsupported schema")
+            _ = text(refusal, "function")?
+            _ = text(refusal, "refusal")?
+            return Ok(true)
+    return Ok(false)
 
 
 def ordinary_entry(plan: &Plan) -> Result[str, str]:
