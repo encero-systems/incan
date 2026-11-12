@@ -108,6 +108,15 @@ model RunningStep:
     child: Rc[RefCell[Child]]
 
 
+pub model BackgroundStep:
+    """One child retained across release phases until its explicit join or cancellation."""
+
+    pub name: str
+    pub log: Path
+    pub started: Instant
+    pub child: Rc[RefCell[Child]]
+
+
 pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, str]:
     """Parse release identity, retention, proof, and process budgets without reading process state."""
     mut positional: list[str] = []
@@ -468,6 +477,41 @@ pub def run_step(step: Step) -> Result[int, str]:
                 sleep(Duration.from_millis(20))
 
 
+pub def start_background_step(step: Step) -> Result[BackgroundStep, str]:
+    """Start one described step and retain its log and child for a later release-phase join."""
+    name = str(step.name)
+    log = step.log.clone()
+    child = start_step(step)?
+    return Ok(
+        BackgroundStep(
+            name=name,
+            log=log,
+            started=Instant.now(),
+            child=Rc.new(RefCell.new(child)),
+        ),
+    )
+
+
+pub def finish_background_step(step: BackgroundStep, timeout_seconds: int) -> Result[tuple[int, float], str]:
+    """Join one background step under its caller-owned deadline and return status plus wall duration."""
+    loop:
+        match step.child.borrow_mut().try_wait().map_err((error) => f"cannot wait for {step.name}: {error}")?:
+            Some(status) => return Ok((status_code(status), step.started.elapsed().as_secs_f64()))
+            None =>
+                if timeout_seconds > 0 and step.started.elapsed().as_secs() >= timeout_seconds:
+                    _ = step.child.borrow_mut().kill()
+                    _ = step.child.borrow_mut().wait()
+                    return Err(f"{step.name} timed out after {timeout_seconds}s; log: {step.log.0}")
+                sleep(Duration.from_millis(20))
+
+
+pub def cancel_background_step(step: BackgroundStep) -> Result[None, str]:
+    """Stop and reap a background step when an earlier release phase has already refused the run."""
+    _ = step.child.borrow_mut().kill()
+    _ = step.child.borrow_mut().wait().map_err((error) => f"cannot reap {step.name}: {error}")?
+    return Ok(None)
+
+
 pub def run_reserved_steps(
     planned: list[ReservedStep],
     jobs: int,
@@ -576,6 +620,43 @@ pub def append_timing(path: Path, phase: str, elapsed_seconds: float) -> Result[
         text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
     text += f"{phase}\t{elapsed_seconds}\n"
     return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def append_timing_file(destination: Path, source: Path) -> Result[None, str]:
+    """Append a completed worker's timing rows after its exclusive writer has exited."""
+    mut text = destination.read_text("utf-8", "strict").map_err((error) => error.message())?
+    text += source.read_text("utf-8", "strict").map_err((error) => error.message())?
+    return destination.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def reference_census_jobs(release_jobs: int) -> int:
+    """Give the overlapped seed census at most half the release workers while always admitting one."""
+    if release_jobs <= 2:
+        return 1
+    return release_jobs // 2
+
+
+pub def reference_worker_arguments(
+    source: Path,
+    output: Path,
+    seed_home: Path,
+    seed_lsp: Path,
+    release_jobs: int,
+    timeout_seconds: int,
+) -> list[str]:
+    """Describe the internal Incan worker that owns the complete seed census and its private timings."""
+    return [
+        "run",
+        source.joinpath("scripts/release.incn").0,
+        "--",
+        "--reference-census",
+        source.0,
+        output.0,
+        seed_home.0,
+        seed_lsp.0,
+        str(reference_census_jobs(release_jobs)),
+        str(timeout_seconds),
+    ]
 
 
 pub def append_bytes(path: Path, tree: str, bytes: int) -> Result[None, str]:

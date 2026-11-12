@@ -25,12 +25,15 @@ from oven_tests import host_memory, shared_memory
 from release_support import (
     FAMILIES,
     TOOLCHAIN_DIRECTORY,
+    BackgroundStep,
     BaselineReport,
     Counts,
     ReleaseOptions,
     Step,
     append_bytes,
     append_timing,
+    append_timing_file,
+    cancel_background_step,
     check_baseline,
     counts_json,
     digest,
@@ -38,11 +41,14 @@ from release_support import (
     parse_release_options,
     reference_cache_identity,
     reference_cache_root,
+    reference_worker_arguments,
     reuse_reference_log,
     require_candidate_census,
     release_receipt,
     release_rust_cache_root,
     run_step,
+    start_background_step,
+    finish_background_step,
     shared_relocated_sysroot,
     store_reference_log,
     tree_bytes,
@@ -102,6 +108,12 @@ pub model ReleaseTreeBytes:
 def main() -> None:
     """Run release qualification, reporting argument refusals as status 2 and release refusals as status 1."""
     arguments = args().unwrap_or([])
+    if len(arguments) > 1 and arguments[1] == "--reference-census":
+        match run_reference_worker(arguments[2:]):
+            Ok(_) => exit(0)
+            Err(message) =>
+                write_stderr(message + "\n")
+                exit(1)
     match parse_release_options(arguments[1:]):
         Ok(options) =>
             match release(options):
@@ -124,7 +136,7 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     2. Build the source support closure without an installed runtime provider.
     3. Build and select the candidate compiler, runtime, and standard Loaves.
     4. Build and pack the shipped Oven and language server.
-    5. Measure the seed census that defines the integration inventory and passing outcomes.
+    5. Join the seed census that defines the integration inventory and passing outcomes.
     6. Install the bundle into a second home, then measure memory and the candidate census once in that context.
     7. When requested, rebuild DD-0010's six named artifacts and require byte identity.
     """
@@ -136,27 +148,56 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     phase(run, "seed-home")?
     prepare_candidate_home(run)?
 
-    # 2. The seed compiles the support helper; that helper publishes one fresh source support generation.
-    phase(run, "source-closure")?
-    mut candidate = build_source_closure(run)?
+    # 2. The seed census starts once its only inputs exist, yielding workers while candidate production proceeds.
+    reference = match start_reference_census(run):
+        Ok(started) => started
+        Err(message) =>
+            phase(run, "reference-verification")?
+            return Err(message)
+    match phase(run, "source-closure"):
+        Ok(_) => pass
+        Err(message) =>
+            _ = cancel_background_step(reference)
+            return Err(message)
+    mut candidate = match build_source_closure(run):
+        Ok(built) => built
+        Err(message) =>
+            _ = cancel_background_step(reference)
+            return Err(message)
 
     # 3. Candidate compiler selection precedes runtime and standard production through that compiler.
-    phase(run, "candidate-compiler")?
-    candidate = build_candidate_compiler(run, candidate)?
+    match phase(run, "candidate-compiler"):
+        Ok(_) => pass
+        Err(message) =>
+            _ = cancel_background_step(reference)
+            return Err(message)
+    candidate = match build_candidate_compiler(run, candidate):
+        Ok(built) => built
+        Err(message) =>
+            _ = cancel_background_step(reference)
+            return Err(message)
 
     # 4. Shipped tools and archive are all built from the selected source and candidate home.
-    phase(run, "bundle")?
-    candidate = build_bundle(run, candidate)?
+    match phase(run, "bundle"):
+        Ok(_) => pass
+        Err(message) =>
+            _ = cancel_background_step(reference)
+            return Err(message)
+    candidate = match build_bundle(run, candidate):
+        Ok(built) => built
+        Err(message) =>
+            _ = cancel_background_step(reference)
+            return Err(message)
 
     # 5. The seed defines the independent case inventory and outcomes the installed candidate must retain.
     phase(run, "reference-verification")?
-    reference = reference_census(run)?
+    reference_log = finish_reference_census(run, reference)?
 
     # 6. The fresh installation owns the candidate census and the release's one memory measurement.
     phase(run, "installed-verification")?
     installed = installed_verification(run, candidate)?
     candidate_report = candidate_census(run, installed)?
-    compare_reference(run, reference, candidate_report)?
+    compare_reference(run, reference_log, candidate_report)?
 
     # 7. Fixed-point work is an explicit release gate because it intentionally doubles native production.
     if run.options.prove_fixed_point:
@@ -164,6 +205,100 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
         prove_fixed_point(candidate.context)?
     complete_receipt(run, candidate_report.counts)?
     return Ok(run.paths.output.joinpath("receipt.json"))
+
+
+def start_reference_census(run: ReleaseRun) -> Result[BackgroundStep, str]:
+    """Start the seed census worker with bounded case concurrency and phase-private timing output."""
+    run.paths.output
+        .joinpath("reference-timings.tsv")
+        .write_text("", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    worker = release_step(
+        run,
+        "reference-worker",
+        run.seed_oven.0,
+        reference_worker_arguments(
+            run.paths.source,
+            run.paths.output,
+            run.seed_home,
+            run.seed_lsp,
+            run.options.jobs,
+            run.options.timeout_seconds,
+        ),
+        run.paths.source,
+        build_environment(run, run.seed_home, run.seed_oven),
+        20,
+    )
+    return start_background_step(worker)
+
+
+def finish_reference_census(run: ReleaseRun, worker: BackgroundStep) -> Result[Path, str]:
+    """Join the seed census, merge its complete timings and preserve its original refusal text."""
+    outcome = finish_background_step(worker, run.options.timeout_seconds * 20)
+    append_timing_file(
+        run.paths.output.joinpath("timings.tsv"),
+        run.paths.output.joinpath("reference-timings.tsv"),
+    )?
+    status, elapsed = outcome?
+    append_timing(run.paths.output.joinpath("timings.tsv"), "reference-overlap", elapsed)?
+    if status != 0:
+        log = run.paths.output.joinpath("reference-worker.log")
+        message = log.read_text("utf-8", "replace").map_err((error) => error.message())?.strip()
+        if message != "":
+            return Err(message)
+        return Err(f"reference worker failed with status {status}; log: {log.0}")
+    return Ok(run.paths.output.joinpath("reference-contracts.log"))
+
+
+def run_reference_worker(arguments: list[str]) -> Result[None, str]:
+    """Reconstruct the immutable seed census context in a child that can overlap candidate production."""
+    if len(arguments) != 6:
+        return Err("internal reference census needs SOURCE OUTPUT SEED_HOME SEED_LSP JOBS TIMEOUT")
+    source = Path(arguments[0]).resolve().map_err((error) => error.message())?
+    output = Path(arguments[1]).resolve().map_err((error) => error.message())?
+    seed_home = Path(arguments[2]).resolve().map_err((error) => error.message())?
+    jobs = positive_worker_value(arguments[4], "jobs")?
+    timeout_seconds = positive_worker_value(arguments[5], "timeout")?
+    paths = ReleasePaths(
+        output=output,
+        source=source,
+        lane=output.joinpath("lane"),
+        home=output.joinpath("build-home"),
+        toolchain=output.joinpath("build-home").joinpath(TOOLCHAIN_DIRECTORY),
+        bundle=output.joinpath("bundle"),
+    )
+    run = ReleaseRun(
+        root=source,
+        options=ReleaseOptions(
+            source_sha="0000000000000000000000000000000000000000",
+            output=output,
+            keep_trees=false,
+            prove_fixed_point=false,
+            jobs=jobs,
+            timeout_seconds=timeout_seconds,
+        ),
+        paths=paths,
+        seed_home=seed_home,
+        seed_oven=seed_home.joinpath("bin/incan"),
+        seed_lsp=Path(arguments[3]),
+        target="",
+        started=Instant.now(),
+    )
+    _ = reference_census(run, output.joinpath("reference-timings.tsv"))?
+    return Ok(None)
+
+
+def positive_worker_value(text: str, name: str) -> Result[int, str]:
+    """Parse one positive internal worker value without accepting signs or whitespace."""
+    if text == "":
+        return Err(f"reference census {name} must be positive")
+    for character in text:
+        if character not in "0123456789":
+            return Err(f"reference census {name} must be positive")
+    value = int(text)
+    if value < 1:
+        return Err(f"reference census {name} must be positive")
+    return Ok(value)
 
 
 def prepare_release(options: ReleaseOptions) -> Result[ReleaseRun, str]:
@@ -372,7 +507,7 @@ def build_bundle(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str
     return Ok(Candidate(context=context, oven=bundle_oven, lsp=bundle_lsp))
 
 
-def reference_census(run: ReleaseRun) -> Result[Path, str]:
+def reference_census(run: ReleaseRun, timings: Path) -> Result[Path, str]:
     """Reuse or measure the released seed against the same content-identified committed contract tree."""
     project = run.paths.source.joinpath("workspaces/contracts")
     log = run.paths.output.joinpath("reference-contracts.log")
@@ -390,14 +525,15 @@ def reference_census(run: ReleaseRun) -> Result[Path, str]:
             Ok(_) =>
                 reuse_reference_log(cached, log)?
                 append_timing(
-                    run.paths.output.joinpath("timings.tsv"),
+                    timings,
                     "reference-cache-hit",
                     cache_started.elapsed().as_secs_f64(),
                 )?
                 return Ok(log)
             Err(_) => pass
-    require_release_step(
+    require_release_step_at(
         run,
+        timings,
         release_step(
             run,
             "reference-runner-build",
@@ -410,8 +546,9 @@ def reference_census(run: ReleaseRun) -> Result[Path, str]:
     runner = project.joinpath("target/incan/release/bin/contracts")
     mut environment = build_environment(run, run.seed_home, run.seed_oven)
     environment["INCAN_LSP"] = run.seed_lsp.0
-    code = timed_release_step(
+    code = timed_release_step_at(
         run,
+        timings,
         census_step(run, "reference-contracts", runner, run.seed_oven, environment, log, false),
     )?
     if code > 1:
@@ -420,7 +557,7 @@ def reference_census(run: ReleaseRun) -> Result[Path, str]:
     cache_started = Instant.now()
     store_reference_log(log, cached)?
     append_timing(
-        run.paths.output.joinpath("timings.tsv"),
+        timings,
         "reference-cache-store",
         cache_started.elapsed().as_secs_f64(),
     )?
@@ -734,11 +871,16 @@ def release_step(
 
 def timed_release_step(run: ReleaseRun, child: Step) -> Result[int, str]:
     """Run one release phase and append its wall duration even when the child refuses."""
+    return timed_release_step_at(run, run.paths.output.joinpath("timings.tsv"), child)
+
+
+def timed_release_step_at(run: ReleaseRun, timings: Path, child: Step) -> Result[int, str]:
+    """Run one release child while directing its timing row to an exclusive writer's file."""
     name = str(child.name)
     log = child.log.clone()
     started = Instant.now()
     outcome = run_step(child)
-    append_timing(run.paths.output.joinpath("timings.tsv"), name, started.elapsed().as_secs_f64())?
+    append_timing(timings, name, started.elapsed().as_secs_f64())?
     code = match outcome:
         Ok(observed) => observed
         Err(message) => return Err(f"{message}\n{log_tail(log)}")
@@ -751,6 +893,16 @@ def require_release_step(run: ReleaseRun, child: Step) -> Result[None, str]:
     name = str(child.name)
     log = child.log.clone()
     code = timed_release_step(run, child)?
+    if code != 0:
+        return Err(f"{name} failed with status {code}; log: {log.0}\n{log_tail(log)}")
+    return Ok(None)
+
+
+def require_release_step_at(run: ReleaseRun, timings: Path, child: Step) -> Result[None, str]:
+    """Require one release child while retaining its duration in the selected exclusive timing file."""
+    name = str(child.name)
+    log = child.log.clone()
+    code = timed_release_step_at(run, timings, child)?
     if code != 0:
         return Err(f"{name} failed with status {code}; log: {log.0}\n{log_tail(log)}")
     return Ok(None)
