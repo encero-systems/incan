@@ -29,6 +29,8 @@ use incan_semantics_core::SymbolOrigin;
 pub struct TypecheckedModules {
     /// One result per input module, in input order.
     pub type_infos: Vec<TypeCheckInfo>,
+    /// Whole-module Body IR selected with an installable namespace interface, aligned with `type_infos`.
+    pub namespace_bodies: Vec<Option<incan_semantics_core::body_ir::BodyIrModule>>,
     /// Non-fatal parser and typechecker diagnostics, for reports that expose them.
     ///
     /// Ordered by module, then by parser-before-typechecker within each module, so a machine-readable report is
@@ -72,6 +74,7 @@ pub fn typecheck_modules(
     let mut diagnostics_out = Vec::new();
     let mut warnings_out = Vec::new();
     let mut type_infos = Vec::with_capacity(modules.len());
+    let mut namespace_bodies = Vec::with_capacity(modules.len());
     let mut dependency_interfaces = vec![None::<Arc<ModuleDependencyInterface>>; modules.len()];
     let cycle_peers = import_cycle_peers(modules, own_standard_package);
     let related_sources = modules
@@ -125,6 +128,31 @@ pub fn typecheck_modules(
         checker
     };
 
+    let namespace_records = modules
+        .iter()
+        .map(|module| {
+            let source = module
+                .file_path
+                .strip_prefix(&unit.project_root)
+                .ok()
+                .map(|path| path.to_string_lossy().into_owned());
+            match source {
+                Some(source) => graph_body_records
+                    .namespace(&source)
+                    .map_err(|error| format!("graph namespace `{source}` refused: {error:?}")),
+                None => Ok(None),
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|message| {
+            CliDiagnosticFailure::single(
+                "",
+                "",
+                diagnostics::CompileError::new(message, Default::default()),
+                diagnostics::DiagnosticPhase::Typecheck,
+            )
+        })?;
+
     for (idx, module) in modules.iter().enumerate() {
         let dep_indexes = imported_module_dep_indexes_for(modules, idx, &module_idx_by_key, own_standard_package);
         let deps_for_module = dep_indexes
@@ -145,6 +173,20 @@ pub fn typecheck_modules(
             .map(|dep_idx| dependency_interfaces[*dep_idx].as_ref().map(Arc::clone))
             .collect::<Option<Vec<_>>>()
             .unwrap_or_default();
+        // The graph authenticated every imported declaration-index witness before selecting this namespace. The
+        // module therefore does not need its providers to have appeared earlier in the source-order module list:
+        // its complete checked interface and Body IR are already sufficient for this module and its consumers.
+        if cycle_peers[idx].is_empty()
+            && let Some(record) = &namespace_records[idx]
+            && record.interface.module_name == module.name
+            && record.interface.module_path == module.path_segments
+        {
+            warnings_out.extend(parser_warning_diagnostics(module));
+            dependency_interfaces[idx] = Some(Arc::clone(&record.interface));
+            type_infos.push(TypeCheckInfo::default());
+            namespace_bodies.push(Some(record.body_ir.clone()));
+            continue;
+        }
         let _module_trace = tracing::trace_span!(
             target: "incan::invocation",
             "incan_driver::typecheck_module",
@@ -211,6 +253,7 @@ pub fn typecheck_modules(
         match check_result {
             Ok((type_info, interface)) => {
                 type_infos.push(type_info);
+                namespace_bodies.push(None);
                 if let Some(interface) = interface {
                     dependency_interfaces[idx] = Some(interface);
                 }
@@ -264,6 +307,7 @@ pub fn typecheck_modules(
     if diagnostics_out.is_empty() {
         Ok(TypecheckedModules {
             type_infos,
+            namespace_bodies,
             warnings: warnings_out,
         })
     } else {

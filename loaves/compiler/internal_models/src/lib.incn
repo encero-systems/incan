@@ -128,17 +128,21 @@ pub from activation_envelopes import (
 pub from checker_records import (
     GraphBodyValue,
     GraphBodyFields,
+    GraphNamespaceValue,
     CompiledBodyValue,
     CompiledBodyDependencyRead,
     CompiledBodyFallback,
+    CompiledNamespaceValue,
     CompiledBodyOutputs,
     from_native_fields,
     from_native_final_fields,
     from_native_local_fields,
     encode_record,
     encode_graph_body_values,
+    encode_graph_namespace_value,
     decode_graph_body_page,
     decode_graph_body_values,
+    decode_graph_namespace_value,
     record_root,
 )
 pub from compiled_body_frames import (
