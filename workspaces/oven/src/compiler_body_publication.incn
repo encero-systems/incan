@@ -431,7 +431,7 @@ pub def prepare_compiled_bodies(
     mut published = 0
     for value in outputs.values:
         projection = source_projection(unit, origin, value.module)?
-        owner = compiled_owner_source(projection, value.module, value.name)?
+        owner = compiled_owner_source(projection, value.module, value.name, value.identity)?
         declarations = module_declarations(outputs.values, origin, value.module)?
         local_key = body_key("local", origin, value.identity, "checked", root(value.local)?)
         mut local_reads = [request(owner.key), request(projection.header.key), request(projection.declarations.key)]
@@ -545,7 +545,7 @@ def lowering_witnesses(
         if get(prior, encode_record_key(key)?).map_err((error) => error.message())? != Some(record.body_ir):
             return Err("retained Body IR differs from the selected graph")
         projection = source_projection(unit, origin, decoded.source)?
-        owner = match compiled_owner_source(projection, decoded.source, str(decoded.body.name)):
+        owner = match compiled_owner_source(projection, decoded.source, str(decoded.body.name), record.identity):
             Ok(value) => value
             Err(reason) =>
                 # A removed or renamed owner remains valid history in the selected graph, but it is not a witness

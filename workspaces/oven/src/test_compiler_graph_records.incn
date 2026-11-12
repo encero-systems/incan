@@ -257,6 +257,12 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     assert default_owner.start < default_owner.end
     assert compiler_source_projection.compiled_owner_source(default_projection, "src/default.incn", "context")?.key == default_owner.key
     assert compiler_source_projection.compiled_owner_source(default_projection, "src/default.incn", "other")?.key == field_owner.key
+    assert compiler_source_projection.compiled_owner_source(
+        default_projection,
+        "src/default.incn",
+        "context",
+        "member/context:src::default::context#in(model:src::default::RecordKey)[0]",
+    )?.key == default_owner.key
     projected_default = publish_source_projection(published.snapshot, default_projection)?
     declaration = family_key("declaration", "model-record-key")
     declared_default = commit(
