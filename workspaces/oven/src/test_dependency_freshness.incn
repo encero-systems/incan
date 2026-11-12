@@ -548,12 +548,25 @@ def fixture_source(lines: list[str]) -> str:
 
 
 def verify_checked_product_context(scratch: Path) -> Result[None, str]:
-    """Unchanged library and program preparation retain one stable selection for prior checked products."""
-    setup = fixture(scratch)?
+    """Unchanged semantic inputs retain one selection; unrelated frozen toolchain files do not rekey it."""
+    mut setup = fixture(scratch)?
+    toolchain_search = scratch.joinpath("toolchain").joinpath("search")
+    unrelated = toolchain_search.joinpath("libunrelated.rlib")
+    write(unrelated, "unrelated toolchain payload one")?
+    selected_search = scratch.joinpath("toolchain").joinpath("selected-search")
+    selected = selected_search.joinpath("libselected.rlib")
+    write(selected, "selected toolchain payload")?
+    setup.toolchain.search = [toolchain_search.0]
     mut library = setup.unit
     library.kind = "library"
     library.loaves = []
+    library.search = [selected_search.0]
+    count_work(scratch.joinpath("toolchain").0 + "/")
     first_library = prepare_linked(library, setup.toolchain)?
+    observed = finish_counting()
+    assert observed.identities == 0, "frozen toolchain search artifacts were observed again"
+    write(unrelated, "unrelated toolchain payload two")?
+    write(selected, "selected toolchain payload two")?
     second_library = prepare_linked(library, setup.toolchain)?
     assert first_library.checked_context is not None
     assert first_library.checked_context == second_library.checked_context

@@ -165,22 +165,36 @@ def located(directory: Path, path: str) -> Result[Path, str]:
 
 
 def native_search_inputs(unit: UnitDescription, toolchain: Toolchain) -> Result[list[str], str]:
-    """Witness transitive native artifacts, including in-place rewrites that leave directory metadata unchanged."""
+    """Witness project-selected native search artifacts outside the already-admitted frozen toolchain generation."""
     mut ledger = load_ledger(unit_ledger(unit.project_root, "checked-native"), SETTLE_SECONDS, "")
     providers = [Path(loaf.dir).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0 for loaf in unit.loaves]
+    installed = installed_toolchain_root(toolchain)?
     mut inputs: list[str] = []
     directories = unique(
-        [Path(path).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0 for path in unit.search + toolchain.search],
+        [Path(path).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0 for path in unit.search],
     )
     for path in directories:
         directory = Path(path)
-        if directory.0 not in providers:
+        if directory.0 not in providers and not within(directory, installed):
             for file in ledger.sources(directory, false)?:
                 if native_artifact(file):
                     inputs.append(file)
                     inputs.append(artifact_identity(Path(file))?)
     ledger.save()?
     return Ok(inputs)
+
+
+def installed_toolchain_root(toolchain: Toolchain) -> Result[Path, str]:
+    """Locate the admitted installation from its driver, accepting synthetic fixtures that keep the driver at root."""
+    mut root = Path(toolchain.driver).parent()
+    if root.name() == "bin":
+        root = root.parent()
+    return root.resolve().map_err((error) => f"cannot resolve {error.message()}")
+
+
+def within(path: Path, root: Path) -> bool:
+    """Whether an absolute path belongs to one directory tree, with a component boundary."""
+    return path.0 == root.0 or path.0.startswith(root.0 + "/")
 
 
 def native_artifact(path: str) -> bool:
