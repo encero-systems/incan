@@ -22,8 +22,7 @@ from std.encoding._shared import (
 )
 from std.fs import Path
 from std.io import BytesIO, _BytesIO
-from std.primitives import encode_utf8
-from rust::std::string import String as RustString
+from std.primitives import decode_utf8 as _decode_utf8, encode_utf8 as _encode_utf8
 
 const _STD_ALPHABET: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 const _HEX_ALPHABET: str = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
@@ -262,9 +261,9 @@ def _decode_base32(text: str, alphabet: str, lower_alphabet: str, lenient: bool)
         while len(padded) % 8 != 0:
             padded += "="
 
-    encoded = encode_utf8(padded)
-    alphabet_bytes = encode_utf8(alphabet)
-    lower_alphabet_bytes = encode_utf8(lower_alphabet)
+    encoded = _encode_utf8(padded)
+    alphabet_bytes = _encode_utf8(alphabet)
+    lower_alphabet_bytes = _encode_utf8(lower_alphabet)
     pad_count = _trailing_padding(encoded)
     if not _valid_padding_count(pad_count):
         return Err(
@@ -298,14 +297,13 @@ def _decode_base32(text: str, alphabet: str, lower_alphabet: str, lenient: bool)
 
 def _clean_input(text: &str, lenient: bool) -> str:
     """Return text unchanged for strict mode or without ASCII whitespace in lenient mode."""
-    if not lenient:
-        return RustString.from(text)
     mut out: list[u8] = []
-    for code in encode_utf8(text):
-        if code != 9 and code != 10 and code != 13 and code != 32:
+    for code in _encode_utf8(text):
+        if not lenient or (code != 9 and code != 10 and code != 13 and code != 32):
             byte: u8 = code.wrapping_resize()
             out.append(byte)
-    return RustString.from_utf8_lossy(out).into_owned()
+    _, cleaned = _decode_utf8(out, false)
+    return cleaned
 
 
 def _decode_byte(

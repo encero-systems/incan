@@ -9,8 +9,7 @@ interchangeable.
 """
 
 from std.encoding._shared import EncodingError, _encoding_error
-from std.primitives import encode_utf8
-from rust::std::string import String as RustString
+from std.primitives import decode_utf8 as _decode_utf8, encode_utf8 as _encode_utf8
 
 const _CHARSET: str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 const _GENERATOR: FrozenList[int] = [996825010, 642813549, 513874426, 1027748829, 705979059]
@@ -134,7 +133,7 @@ pub def decode(text: str) -> Result[Decoded, EncodingError]:
     _validate_hrp(hrp)?
 
     mut values: list[int] = []
-    encoded = encode_utf8(normalized)
+    encoded = _encode_utf8(normalized)
     for index in range(separator + 1, len(encoded)):
         values.append(_charset_value_byte(int(encoded[index]), index)?)
 
@@ -288,7 +287,7 @@ def _polymod(values: list[int]) -> int:
 
 def _charset_value_byte(code: int, position: int) -> Result[int, EncodingError]:
     """Map one Bech32 data character to its five-bit value."""
-    charset = encode_utf8(_CHARSET)
+    charset = _encode_utf8(_CHARSET)
     for index in range(len(charset)):
         if int(charset[index]) == code:
             return Ok(index)
@@ -344,13 +343,14 @@ def _has_consistent_case(value: str) -> bool:
 def _lower_ascii(value: &str) -> str:
     """Lowercase ASCII letters while leaving all other characters unchanged."""
     mut out: list[u8] = []
-    for code in encode_utf8(value):
+    for code in _encode_utf8(value):
         mut lowered = code
         if code >= 65 and code <= 90:
             lowered = code + 32
         byte: u8 = lowered.wrapping_resize()
         out.append(byte)
-    return RustString.from_utf8_lossy(out).into_owned()
+    _, lowered_text = _decode_utf8(out, false)
+    return lowered_text
 
 
 def _is_lower_ascii(ch: str) -> bool:

@@ -24,8 +24,7 @@ from std.encoding._shared import (
 )
 from std.fs import Path
 from std.io import _BytesIO
-from std.primitives import encode_utf8, hexlify as _primitive_hexlify
-from rust::std::string import String as RustString
+from std.primitives import decode_utf8 as _decode_utf8, encode_utf8 as _encode_utf8, hexlify as _primitive_hexlify
 # Source/sink helpers
 
 
@@ -218,7 +217,7 @@ def _decode_text(text: str) -> Result[bytes, EncodingError]:
 
 def _decode_pairs(text: &str) -> Result[bytes, EncodingError]:
     """Decode already length-checked hexadecimal pairs from one UTF-8 byte projection."""
-    encoded = encode_utf8(text)
+    encoded = _encode_utf8(text)
     mut out: list[u8] = []
     for pair_index in range(len(text) // 2):
         index = pair_index * 2
@@ -256,8 +255,9 @@ def _invalid_hex_character(text: &str, position: int) -> EncodingError:
 def _strip_ascii_whitespace(value: &str) -> str:
     """Remove ASCII whitespace in one byte pass while preserving every other UTF-8 sequence."""
     mut out: list[u8] = []
-    for code in encode_utf8(value):
+    for code in _encode_utf8(value):
         if code != 9 and code != 10 and code != 13 and code != 32:
             byte: u8 = code.wrapping_resize()
             out.append(byte)
-    return RustString.from_utf8_lossy(out).into_owned()
+    _, cleaned = _decode_utf8(out, false)
+    return cleaned
