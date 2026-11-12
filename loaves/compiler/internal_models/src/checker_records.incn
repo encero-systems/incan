@@ -4,7 +4,7 @@ from std.encoding.hex import hexlify, unhexlify
 from std.hash import sha256
 
 pub const CHECKER_SCHEMA: str = "incan.checker-fields/9"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/11"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/12"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/2"
@@ -209,6 +209,7 @@ def validate(record: CheckedRecord) -> Result[None, CodecFault]:
         # Field names are versioned schema vocabulary, never native field offsets or Debug spellings.
         if field.family not in [
             "type",
+            "type-identity",
             "binding",
             "binding-type",
             "reference",
@@ -668,6 +669,12 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
         if field.selector not in ["expr", "body-expr", "assignment", "destination"]:
             return Err(CodecFault.Unsupported(field.selector))
         end = type_end(values, 0, 0)?
+    # One checked nominal/native identity at a structural component of an expression's resolved type.
+    elif field.family == "type-identity":
+        if field.node == "" or len(values) != 1 or values[0] == "":
+            return Err(CodecFault.Malformed)
+        validate_type_identity_path(field.selector)?
+        end = 1
     # A binding's type: the binding, then its type.
     elif field.family == "binding-type":
         if field.node == "" or len(values) == 0 or values[0] == "":
@@ -797,6 +804,18 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
         return Err(CodecFault.Unsupported(field.family))
     if end != len(values):
         return Err(CodecFault.Malformed)
+    return Ok(None)
+
+
+def validate_type_identity_path(path: str) -> Result[None, CodecFault]:
+    """Accept the canonical root marker or at most 32 dot-separated canonical component indices."""
+    if path == "root":
+        return Ok(None)
+    components = path.split(".")
+    if len(components) == 0 or len(components) > 32:
+        return Err(CodecFault.Malformed)
+    for component in components:
+        _ = decimal(component)?
     return Ok(None)
 
 

@@ -263,6 +263,7 @@ impl TypeChecker {
 struct Positions {
     nodes: SemanticNodeBindings,
     identities: BTreeMap<String, CanonicalSymbolId>,
+    type_identities: BTreeMap<String, CanonicalSymbolId>,
 }
 
 impl Positions {
@@ -294,6 +295,41 @@ impl Positions {
             }
             if let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None) {
                 identities.insert(stable.render_compact(), canonical.clone());
+            }
+        }
+        let mut type_identities: BTreeMap<String, CanonicalSymbolId> = checker
+            .symbols
+            .all_symbols()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, _)| checker.symbols.identity_of(index))
+            .filter(|canonical| {
+                canonical.scope_discriminant.is_none()
+                    && ((canonical.origin == checker.symbols.declaration_origin()
+                        && matches!(
+                            canonical.kind,
+                            SemanticSourceTargetKind::Model
+                                | SemanticSourceTargetKind::Class
+                                | SemanticSourceTargetKind::Newtype
+                                | SemanticSourceTargetKind::Rusttype
+                                | SemanticSourceTargetKind::Enum
+                                | SemanticSourceTargetKind::TypeAlias
+                                | SemanticSourceTargetKind::Trait
+                        ))
+                        || (canonical.kind == SemanticSourceTargetKind::RustItem
+                            && matches!(canonical.origin, incan_semantics_core::SymbolOrigin::RustCrate(_))))
+            })
+            .filter_map(|canonical| {
+                StableDeclarationId::from_canonical(canonical, None, None)
+                    .map(|stable| (stable.render_compact(), canonical.clone()))
+            })
+            .collect();
+        for identity in checker.public_library_type_identities.values() {
+            let Some(canonical) = &identity.canonical else {
+                continue;
+            };
+            if let Some(stable) = StableDeclarationId::from_canonical(canonical, None, None) {
+                type_identities.insert(stable.render_compact(), canonical.clone());
             }
         }
         let nested = checker
@@ -344,7 +380,11 @@ impl Positions {
         for (canonical, stable) in nodes.binding_identities(declaration_bindings.iter().chain(nested).chain(raw))? {
             identities.insert(stable.render_compact(), canonical);
         }
-        Ok(Self { nodes, identities })
+        Ok(Self {
+            nodes,
+            identities,
+            type_identities,
+        })
     }
 
     /// Bind one fresh local output's lexical identities without publishing it into the checker's pending queue.
@@ -406,10 +446,32 @@ impl Positions {
         Err(NodeBindingError::Unsupported("unadmitted declaration reference"))
     }
 
+    /// Resolve a checked expression-type leaf through an admitted source/package identity or one imported Rust type.
+    fn type_identity(&self, canonical: &CanonicalSymbolId) -> Result<String, NodeBindingError> {
+        if let Some((stable, _)) = self
+            .identities
+            .iter()
+            .chain(&self.type_identities)
+            .find(|(_, current)| *current == canonical)
+        {
+            return Ok(stable.clone());
+        }
+        Err(NodeBindingError::Unsupported("unadmitted expression type identity"))
+    }
+
     /// Current scope indices and spans are supplied by this activation's binding map, never parsed from a key.
     fn canonical(&self, identity: &str) -> Result<CanonicalSymbolId, NodeBindingError> {
         self.identities
             .get(identity)
+            .cloned()
+            .ok_or(NodeBindingError::MissingNode)
+    }
+
+    /// Rebind one record-carried type identity without admitting it as a callable or value reference.
+    fn canonical_type(&self, identity: &str) -> Result<CanonicalSymbolId, NodeBindingError> {
+        self.identities
+            .get(identity)
+            .or_else(|| self.type_identities.get(identity))
             .cloned()
             .ok_or(NodeBindingError::MissingNode)
     }
@@ -769,7 +831,46 @@ fn project_expressions(positions: &Positions, local: &BodyLocal, fields: &mut Fi
         row.extend(target.module_path.iter().cloned());
         fields.push(row);
     }
+    for (span, identities) in &expressions.expression_type_identities {
+        for (path, identity) in identities {
+            fields.push(vec![
+                "type-identity".into(),
+                positions.nodes.anchor(*span)?.path,
+                type_identity_path(path),
+                positions.type_identity(identity)?,
+            ]);
+        }
+    }
     Ok(())
+}
+
+/// Encode one nested type-component path as a canonical field selector; `root` names the expression type itself.
+fn type_identity_path(path: &[usize]) -> String {
+    if path.is_empty() {
+        return "root".into();
+    }
+    path.iter().map(usize::to_string).collect::<Vec<_>>().join(".")
+}
+
+/// Decode the exact canonical component path emitted by [`type_identity_path`].
+fn read_type_identity_path(path: &str) -> Result<Vec<usize>, NodeBindingError> {
+    if path == "root" {
+        return Ok(Vec::new());
+    }
+    let components = path.split('.').collect::<Vec<_>>();
+    if components.is_empty() || components.len() > 32 {
+        return Err(NodeBindingError::MissingNode);
+    }
+    components
+        .into_iter()
+        .map(|component| {
+            let index = component.parse::<usize>().map_err(|_| NodeBindingError::MissingNode)?;
+            if component != index.to_string() {
+                return Err(NodeBindingError::MissingNode);
+            }
+            Ok(index)
+        })
+        .collect()
 }
 
 /// Recreate every supported local map directly from the selected field's typed primitives.
@@ -856,6 +957,20 @@ fn restore_local(
                 .expressions
                 .ident_kinds
                 .insert(span, super::super::type_info::IdentKind::Value);
+        }
+        "type-identity" if row.len() == 4 => {
+            let path = read_type_identity_path(&row[2])?;
+            let identity = positions.canonical_type(next(&mut values)?)?;
+            if local
+                .expressions
+                .expression_type_identities
+                .entry(span)
+                .or_default()
+                .insert(path, identity)
+                .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
         }
         "builtin" if row[2] == "call" => {
             let builtin =
