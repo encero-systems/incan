@@ -990,7 +990,7 @@ def release_service_result(mut channel: Channel, request: bytes) -> Result[None,
 
 
 def launch_service(binary: str, root: Path, identity: Identity) -> Result[Process, str]:
-    """Launch only this test's internal service child, retaining its handle for cleanup and exit assertions."""
+    """Launch this test's service against installed standard inputs, independent of the source-build override."""
     return spawn_detached(
         binary,
         [
@@ -1002,6 +1002,7 @@ def launch_service(binary: str, root: Path, identity: Identity) -> Result[Proces
             identity.compiler_generation,
             "1",
         ],
+        {"INCAN_STDLIB": ""},
     )
 
 
