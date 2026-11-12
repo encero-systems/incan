@@ -1,6 +1,7 @@
 //! Selected owner projections for the Incan checker-record codec. This is a bootstrap conversion, not a store.
 
 mod diagnostics;
+mod function_calls;
 mod input_flow;
 mod inputs;
 mod mutation;
@@ -263,6 +264,7 @@ impl TypeChecker {
 struct Positions {
     nodes: SemanticNodeBindings,
     identities: BTreeMap<String, CanonicalSymbolId>,
+    caller: Option<super::super::type_info::CBindingRawCallOwner>,
 }
 
 impl Positions {
@@ -344,7 +346,24 @@ impl Positions {
         for (canonical, stable) in nodes.binding_identities(declaration_bindings.iter().chain(nested).chain(raw))? {
             identities.insert(stable.render_compact(), canonical);
         }
-        Ok(Self { nodes, identities })
+        let caller = program.declarations.iter().find_map(|declaration| {
+            if declaration.span != owner {
+                return None;
+            }
+            let crate::ast::Declaration::Function(function) = &declaration.node else {
+                return None;
+            };
+            Some(super::super::type_info::CBindingRawCallOwner {
+                name: function.name.clone(),
+                visibility: function.visibility,
+                declaration_span: owner,
+            })
+        });
+        Ok(Self {
+            nodes,
+            identities,
+            caller,
+        })
     }
 
     /// Bind one fresh local output's lexical identities without publishing it into the checker's pending queue.
@@ -483,6 +502,7 @@ fn restore(
             None,
         );
     }
+    function_calls::restore(positions, &mut rebound.local)?;
     rebound.finish(&header[3])
 }
 
@@ -535,6 +555,7 @@ fn restore_pending(positions: &Positions, owner: Span, fields: &Fields) -> Resul
         return Err(NodeBindingError::InvalidField("missing pending status".into()));
     }
     local.mutation.restore_flow_graphs(&mut local.protocols);
+    function_calls::restore(positions, &mut local)?;
     Ok(local)
 }
 
