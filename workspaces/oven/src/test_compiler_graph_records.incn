@@ -226,35 +226,37 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     edited = original.replace("return 1", "return 3")
     before = project_source("package", "src/main.incn", original)?
     after = project_source("package", "src/main.incn", edited)?
-
     assert before.header.text == "from std import env\n\ntype Count = int\n\n"
     assert before.header.digest() == after.header.digest()
-    assert len(before.owners) == 3 and len(after.owners) == 3
+    assert len(before.owners) == 4 and len(after.owners) == 4, f"owner counts: {len(before.owners)}, {len(after.owners)}"
     mut changed = 0
     for index in range(len(before.owners)):
         assert before.owners[index].key == after.owners[index].key
         assert signature_record(before.owners[index]).digest() == signature_record(after.owners[index]).digest()
         if before.owners[index].digest() != after.owners[index].digest():
             changed += 1
-    assert changed == 1
-    assert before.owners[0].text.startswith("model Item")
-    assert before.owners[1].text.startswith("def first")
-    assert before.owners[2].text.startswith("def second")
+    assert changed == 1, f"changed owners: {changed}"
+    assert before.owners[0].text.startswith("model Item"), before.owners[0].text
+    assert before.owners[1].text.strip().startswith("value: Count"), before.owners[1].text
+    assert before.owners[2].text.startswith("def first"), before.owners[2].text
+    assert before.owners[3].text.startswith("def second"), before.owners[3].text
     assert before.owners[0].start < before.owners[0].end
 
     selected = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_source_projection(selected, before)?
-    assert len(published.keys) == 8
+    assert len(published.keys) == 10
     for key in published.keys:
         assert get(published.snapshot, key).map_err((error) => error.message())? is not None
 
-    default_source = "@derive(Eq)\npub model RecordKey:\n    \"\"\"One decorated record with independently witnessed field defaults.\"\"\"\n\n    pub context: str = \"base\"\n    pub other: int = 1\n\n    pub def rendered(self) -> str:\n        return self.context\n"
+    default_source = "@derive(Eq)\npub model RecordKey:\n    \"\"\"One decorated record with independently witnessed fields.\"\"\"\n\n    pub context: str = \"base\"\n    pub other: int\n\n    pub def rendered(self) -> str:\n        return self.context\n"
     default_projection = project_source("package", "src/default.incn", default_source)?
     default_owner = projected_owner(default_projection, "default:model:RecordKey:context")?
+    field_owner = projected_owner(default_projection, "field:model:RecordKey:other")?
     model_owner = projected_owner(default_projection, "model:RecordKey")?
     assert default_owner.text == "\"base\""
     assert default_owner.start < default_owner.end
     assert compiler_source_projection.compiled_owner_source(default_projection, "src/default.incn", "context")?.key == default_owner.key
+    assert compiler_source_projection.compiled_owner_source(default_projection, "src/default.incn", "other")?.key == field_owner.key
     projected_default = publish_source_projection(published.snapshot, default_projection)?
     declaration = family_key("declaration", "model-record-key")
     declared_default = commit(
@@ -283,9 +285,10 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     changed_field_projection = project_source(
         "package",
         "src/default.incn",
-        default_source.replace("other: int = 1", "other: int = 2"),
+        default_source.replace("other: int", "other: str"),
     )?
     assert projected_owner(changed_field_projection, "default:model:RecordKey:context")?.digest() == default_owner.digest()
+    assert projected_owner(changed_field_projection, "field:model:RecordKey:other")?.digest() != field_owner.digest()
     changed_field_source = publish_source_projection(complete_default, changed_field_projection)?
     assert invalid_body_owners(changed_field_source.snapshot, [model_owner.key], "profile")? == []
 

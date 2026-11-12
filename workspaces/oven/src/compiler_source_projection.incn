@@ -115,6 +115,8 @@ class SourceProjector:
                             end=end,
                         ),
                     )
+                    for field in field_records(boundary.owner, text, boundary.start, self.origin, self.path):
+                        owners.append(field)
                     for default in field_default_records(boundary.owner, text, boundary.start, self.origin, self.path):
                         owners.append(default)
         return Ok(
@@ -166,6 +168,9 @@ pub def compiled_owner_source(
     match default:
         Some(owner) => return Ok(owner)
         None => pass
+    for owner in projection.owners:
+        if owner.key.facet.startswith("field:") and owner.key.facet.endswith(":" + name):
+            return Ok(owner)
     for owner in projection.owners:
         if owner.key.facet.endswith(":" + name):
             return Ok(owner)
@@ -294,6 +299,51 @@ def field_default_records(
                     ),
                 )
     return records
+
+
+def field_records(
+    declaration: str,
+    source: str,
+    source_start: int,
+    origin: str,
+    path: str,
+) -> list[SourceProjectionRecord]:
+    """Project each direct nominal field independently, including fields without a default expression."""
+    starts = direct_member_starts(source)
+    mut records: list[SourceProjectionRecord] = []
+    for index in range(len(starts)):
+        start = starts[index]
+        mut end = len(source)
+        if index + 1 < len(starts):
+            end = starts[index + 1]
+        member = source[start:end]
+        match field_name(member):
+            None => pass
+            Some(field) =>
+                records.append(
+                    SourceProjectionRecord(
+                        key=source_key("owner-source", origin, path, "field:" + declaration + ":" + field),
+                        text=member,
+                        start=source_start + start,
+                        end=source_start + end,
+                    ),
+                )
+    return records
+
+
+def field_name(member: str) -> Option[str]:
+    """Return one direct field name without mistaking a method or nested declaration for a field."""
+    first = member.split("\n")[0]
+    mut header = first.strip()
+    if header.startswith("pub "):
+        header = header[4:]
+    colon = character_index(header, ":")
+    if colon <= 0:
+        return None
+    field = identifier_prefix(header[:colon].strip())
+    if field == "" or field != header[:colon].strip():
+        return None
+    return Some(field)
 
 
 def direct_member_starts(source: str) -> list[int]:
