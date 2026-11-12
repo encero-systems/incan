@@ -449,11 +449,11 @@ impl TypeChecker {
         self.dependency_semantics_pending = false;
         self.dependency_method_input_contracts.clear();
         self.hash_key_inference.type_params.clear();
-        self.foreign_pub_type_remappings.clear();
-        self.pub_library_declaration_scopes.clear();
         let selected_interfaces = self.take_exact_dependency_interfaces(dependencies);
         self.dependency_exports = dependency_exports;
         if selected_interfaces.is_none() {
+            self.foreign_pub_type_remappings.clear();
+            self.pub_library_declaration_scopes.clear();
             self.transitive_pub_types.clear();
             self.public_library_type_identities.clear();
             self.transitive_pub_traits.clear();
@@ -561,11 +561,11 @@ impl TypeChecker {
         self.dependency_semantics_pending = false;
         self.dependency_method_input_contracts.clear();
         self.hash_key_inference.type_params.clear();
-        self.foreign_pub_type_remappings.clear();
-        self.pub_library_declaration_scopes.clear();
         let selected_interfaces = self.take_exact_dependency_interfaces(dependencies);
         self.dependency_exports = dependency_exports;
         if selected_interfaces.is_none() {
+            self.foreign_pub_type_remappings.clear();
+            self.pub_library_declaration_scopes.clear();
             self.transitive_pub_types.clear();
             self.public_library_type_identities.clear();
             self.transitive_pub_traits.clear();

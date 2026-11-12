@@ -189,10 +189,6 @@ impl TypeChecker {
         self.dependency_derivable_trait_identities = source.dependency_derivable_trait_identities.clone();
         self.dependency_module_traits = source.dependency_module_traits.clone();
         self.dependency_trait_rust_derive_paths = source.dependency_trait_rust_derive_paths.clone();
-        self.transitive_pub_types = source.transitive_pub_types.clone();
-        self.public_library_type_identities = source.public_library_type_identities.clone();
-        self.transitive_pub_traits = source.transitive_pub_traits.clone();
-        self.cached_pub_libraries = source.cached_pub_libraries.clone();
         self.shared_dependency_interface_tables = true;
     }
 
@@ -635,12 +631,6 @@ impl TypeChecker {
             self.dependency_registry_definitions
                 .insert(name.clone(), definitions.clone());
         }
-        self.dependency_registry_consts.extend(
-            interface
-                .registry_consts
-                .iter()
-                .map(|(key, value)| (key.clone(), value.clone())),
-        );
         self.dependency_member_partial_projections
             .insert(name.clone(), Arc::clone(&interface.member_partial_projections));
         self.dependency_direct_member_symbols
@@ -649,6 +639,25 @@ impl TypeChecker {
             .insert(name.clone(), Arc::clone(&interface.direct_member_type_aliases));
         self.dependency_direct_member_identities
             .insert(name.clone(), Arc::clone(&interface.direct_member_identities));
+        self.dependency_member_reexports
+            .insert(name.clone(), Arc::clone(&interface.member_reexports));
+        self.body_ir_dependency_pub_reexports
+            .insert(name.clone(), Arc::clone(&interface.body_ir_pub_reexports));
+        self.dependency_module_path_segments
+            .insert(name.clone(), interface.module_path.clone());
+        self.dependency_direct_member_partial_projections
+            .insert(name, Arc::clone(&interface.direct_member_partial_projections));
+        self.install_dependency_interface_context(interface);
+    }
+
+    /// Replay global nominal and semantic caches whose values depend on the receiving checker.
+    fn install_dependency_interface_context(&mut self, interface: &ModuleDependencyInterface) {
+        self.dependency_registry_consts.extend(
+            interface
+                .registry_consts
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
         self.declaration_nominal_scopes.extend(
             interface
                 .declaration_nominal_scopes
@@ -667,14 +676,6 @@ impl TypeChecker {
                 .iter()
                 .map(|(key, value)| (key.clone(), value.clone())),
         );
-        self.dependency_member_reexports
-            .insert(name.clone(), Arc::clone(&interface.member_reexports));
-        self.body_ir_dependency_pub_reexports
-            .insert(name.clone(), Arc::clone(&interface.body_ir_pub_reexports));
-        self.dependency_module_path_segments
-            .insert(name.clone(), interface.module_path.clone());
-        self.dependency_direct_member_partial_projections
-            .insert(name, Arc::clone(&interface.direct_member_partial_projections));
         self.dependency_derivable_modules.extend(
             interface
                 .derivable_modules
@@ -699,6 +700,16 @@ impl TypeChecker {
                 .iter()
                 .map(|(key, value)| (key.clone(), value.clone())),
         );
+        self.install_dependency_interface_semantic_context(interface);
+    }
+
+    /// Replay checker-global semantic context without copying the already shared dependency-owned tables.
+    ///
+    /// The build-wide table checker has observed every provider collected so far. Its compiled-library caches carry
+    /// that observation order and are not an immutable projection of this module's selected closure. Rebuilding these
+    /// globals from the selected interfaces keeps carrier identity local while the large module-keyed tables remain
+    /// shared.
+    fn install_dependency_interface_semantic_context(&mut self, interface: &ModuleDependencyInterface) {
         for (name, values) in interface.transitive_public_types.iter() {
             self.transitive_pub_types
                 .entry(name.clone())
@@ -739,7 +750,11 @@ impl TypeChecker {
     /// Dependency symbol rows are replayed in provider and declaration order because checker-wide semantic scans use
     /// the historical arena even though ordinary lookup resolves through immutable module-keyed tables.
     pub fn install_dependency_interfaces_directly(&mut self, interfaces: &[Arc<ModuleDependencyInterface>]) {
-        if !self.shared_dependency_interface_tables {
+        if self.shared_dependency_interface_tables {
+            for interface in interfaces {
+                self.install_dependency_interface_semantic_context(interface);
+            }
+        } else {
             self.install_dependency_interfaces(interfaces);
         }
         let _trace = tracing::trace_span!(

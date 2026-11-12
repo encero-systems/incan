@@ -146,12 +146,34 @@ fn nominal_scope_inventory_matches_fresh_inputs() -> Result<(), Box<dyn std::err
         second_builder.seal_current_module_dependency_interface("second", &second, second_exports, true);
     let mut build_tables = TypeChecker::default();
     build_tables.append_dependency_interfaces(&[Arc::clone(&first_interface), Arc::clone(&second_interface)]);
+    build_tables.type_aliases.insert(
+        "SharedAlias".to_string(),
+        super::TypeAliasTarget {
+            type_params: Vec::new(),
+            target: ResolvedType::Int,
+            nominal_identities: BTreeMap::new(),
+        },
+    );
+    build_tables.nominal_type_param_bounds.insert(
+        super::nominal_type_param_bounds::NominalDeclarationKey::Binding(
+            vec!["shared".to_string()],
+            "Bounded".to_string(),
+        ),
+        Vec::new(),
+    );
     let mut exact_tables = TypeChecker::default();
     exact_tables.share_exact_dependency_interface_tables(
         &build_tables,
         &[Arc::clone(&first_interface), Arc::clone(&second_interface)],
     );
     assert!(exact_tables.shared_dependency_interface_tables);
+    assert!(!exact_tables.declaration_nominal_scopes.is_empty());
+    assert!(exact_tables.transitive_pub_types.is_empty());
+    assert!(!exact_tables.type_aliases.contains_key("SharedAlias"));
+    assert!(exact_tables.nominal_type_param_bounds.is_empty());
+    exact_tables.install_dependency_interfaces_directly(&[Arc::clone(&first_interface), Arc::clone(&second_interface)]);
+    assert!(!exact_tables.declaration_nominal_scopes.is_empty());
+    assert!(!exact_tables.transitive_pub_types.is_empty());
     let mut subset_tables = TypeChecker::default();
     subset_tables.share_exact_dependency_interface_tables(&build_tables, &[Arc::clone(&first_interface)]);
     assert!(!subset_tables.shared_dependency_interface_tables);
