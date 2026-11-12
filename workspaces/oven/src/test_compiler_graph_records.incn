@@ -49,6 +49,7 @@ from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily,
 from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
 from compiler_body_values import (
+    body_ir_producer_work,
     encode_body_inventory,
     invalid_body_owners,
     publish_body_values,
@@ -173,10 +174,49 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
         b"final value",
         final_receipt,
     )?
-    body_ir_key = family_key("body-ir", "run44-body")
-    body_ir_receipt = fixture_receipt(body.snapshot, body_ir_key, record_request(family_key("final", "run44-body")))?
-    body_ir = publish_evaluation(
+    seed_key = family_key("body-ir-seed", "run44-body")
+    seed_receipt = fixture_receipt(body.snapshot, seed_key, record_request(family_key("final", "run44-body")))?
+    seed = publish_evaluation(
         body.snapshot,
+        "run44-body-ir-seed-claim",
+        ProducerRank(namespace=2, stage=ProducerStage.BodyIrSeed, dependency=0),
+        b"owner-seed",
+        seed_receipt,
+    )?
+    return_representation_key = representation_key("run44-body", "return-carriers")
+    return_representation_receipt = fixture_receipt(
+        seed.snapshot,
+        return_representation_key,
+        record_request(seed_key),
+    )?
+    return_representation = publish_evaluation(
+        seed.snapshot,
+        "run44-return-representation-claim",
+        ProducerRank(namespace=2, stage=ProducerStage.Representation, dependency=0),
+        b"return-summary",
+        return_representation_receipt,
+    )?
+    layout_representation_key = representation_key("run44-body", "layout")
+    layout_representation_receipt = fixture_receipt(
+        return_representation.snapshot,
+        layout_representation_key,
+        local_request,
+    )?
+    layout_representation = publish_evaluation(
+        return_representation.snapshot,
+        "run44-layout-representation-claim",
+        ProducerRank(namespace=2, stage=ProducerStage.Representation, dependency=1),
+        b"layout-summary",
+        layout_representation_receipt,
+    )?
+    body_ir_key = family_key("body-ir", "run44-body")
+    body_ir_receipt = fixture_receipt_many(
+        layout_representation.snapshot,
+        body_ir_key,
+        [record_request(return_representation_key), record_request(layout_representation_key)],
+    )?
+    body_ir = publish_evaluation(
+        layout_representation.snapshot,
         "run44-body-ir-claim",
         ProducerRank(namespace=2, stage=ProducerStage.BodyIr, dependency=0),
         b"owner-frame",
@@ -199,9 +239,57 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
     assert inventory[0].local == b"local value"
     assert inventory[0].final == b"final value"
     assert inventory[0].body_ir == b"owner-frame"
-    changed_body = commit(put(begin(body_ir.snapshot), encode_record_key(final_request.key)?, b"changed final input")).map_err(
-        (error) => error.message(),
+    unchanged_work = body_ir_producer_work(body_ir.snapshot, [], "profile")?
+    assert unchanged_work.seed_evaluations == 0
+    assert unchanged_work.representation_evaluations == 0
+    assert unchanged_work.body_ir_evaluations == 0
+    changed_body = commit(
+        put(begin(body_ir.snapshot), encode_record_key(final_request.key)?, b"changed final input"),
+    ).map_err((error) => error.message())?
+    final_key = family_key("final", "run44-body")
+    changed_final_receipt = fixture_receipt(changed_body, final_key, final_request)?
+    changed_final = publish_evaluation(
+        changed_body,
+        "run44-changed-final-claim",
+        ProducerRank(namespace=2, stage=ProducerStage.CheckBody, dependency=2),
+        b"changed final value",
+        changed_final_receipt,
     )?
+    seed_work = body_ir_producer_work(changed_final.snapshot, [final_key], "profile")?
+    assert seed_work.seed_evaluations == 1, f"seed evaluations: {seed_work.seed_evaluations}"
+    assert seed_work.representation_evaluations == 0
+    assert seed_work.body_ir_evaluations == 0
+
+    changed_seed_receipt = fixture_receipt(changed_final.snapshot, seed_key, record_request(final_key))?
+    changed_seed = publish_evaluation(
+        changed_final.snapshot,
+        "run44-changed-seed-claim",
+        ProducerRank(namespace=2, stage=ProducerStage.BodyIrSeed, dependency=0),
+        b"changed owner seed",
+        changed_seed_receipt,
+    )?
+    representation_work = body_ir_producer_work(changed_seed.snapshot, [seed_key], "profile")?
+    assert representation_work.seed_evaluations == 0
+    assert representation_work.representation_evaluations == 1, f"representation evaluations: {representation_work.representation_evaluations}"
+    assert representation_work.body_ir_evaluations == 0
+
+    changed_representation_receipt = fixture_receipt(
+        changed_seed.snapshot,
+        return_representation_key,
+        record_request(seed_key),
+    )?
+    changed_representation = publish_evaluation(
+        changed_seed.snapshot,
+        "run44-changed-return-representation-claim",
+        ProducerRank(namespace=2, stage=ProducerStage.Representation, dependency=0),
+        b"changed return summary",
+        changed_representation_receipt,
+    )?
+    body_work = body_ir_producer_work(changed_representation.snapshot, [return_representation_key], "profile")?
+    assert body_work.seed_evaluations == 0
+    assert body_work.representation_evaluations == 0
+    assert body_work.body_ir_evaluations == 1, f"Body IR evaluations: {body_work.body_ir_evaluations}"
+    assert reusable_evaluation(changed_representation.snapshot, layout_representation_key, "profile")? is not None
     assert select_body_values(
         changed_body,
         family_key("local", "run44-body"),
@@ -558,6 +646,18 @@ def publish_owner_pair(
 def record_request(key: RecordKey) -> RecordRequest:
     """Read one complete logical record through its canonical field selection."""
     return RecordRequest(key=key, selection=RecordSelection.Field("value"))
+
+
+def representation_key(identity: str, pass_name: str) -> RecordKey:
+    """Name one independently witnessed representation pass for the fixture owner."""
+    return RecordKey(
+        family="representation",
+        identity_profile="identity/1",
+        origin="package",
+        identity=identity,
+        facet=pass_name,
+        context="",
+    )
 
 
 def projected_owner(

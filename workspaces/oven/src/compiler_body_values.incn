@@ -4,7 +4,7 @@ from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot
 from pub::internal_models import GraphBodyValue, ProducerRank, encode_graph_body_values
-from pub::internal_models.records import ReadReceipt, RecordKey
+from pub::internal_models.records import ReadReceipt, RecordKey, encode_record_key
 from compiler_graph_records import (
     PublishedEvaluation,
     ReusableRecord,
@@ -44,6 +44,14 @@ pub model SelectedBodyPage:
 
     pub key: str
     pub value: bytes
+
+
+pub model BodyIrProducerWork:
+    """Exact producer evaluations selected by changed witnessed inputs after transitive early cutoff."""
+
+    pub seed_evaluations: int
+    pub representation_evaluations: int
+    pub body_ir_evaluations: int
 
 
 pub def select_body_values(
@@ -128,6 +136,50 @@ pub def body_owners_reading(selected: Snapshot, changed: list[RecordKey], profil
         if reader.family in ["local", "final", "body-ir"]:
             owners.add(reader.identity)
     return Ok(sorted([owner for owner in owners]))
+
+
+pub def body_ir_producer_work(
+    selected: Snapshot,
+    changed: list[RecordKey],
+    profile: str,
+) -> Result[BodyIrProducerWork, str]:
+    """
+    Select the transitive dirty Body IR producer closure from authenticated reverse edges.
+
+    An invalid checker value participates in traversal but is not counted as Body IR work. A seed, representation or
+    final Body IR value enters the result only when its own completed receipt no longer validates in `selected`.
+    Equal or unrelated values therefore cut off propagation before another producer activation is counted.
+    """
+    mut pending = changed
+    mut visited: set[str] = set()
+    mut seed_evaluations = 0
+    mut representation_evaluations = 0
+    mut body_ir_evaluations = 0
+    while len(pending) > 0:
+        readers = readers_of(selected, pending, profile)?
+        pending = []
+        for reader in readers:
+            encoded = encode_record_key(reader)?
+            if encoded in visited:
+                continue
+            visited.add(encoded)
+            if reader.family not in ["local", "final", "body-ir-seed", "representation", "body-ir"]:
+                continue
+            if reusable_evaluation(selected, reader, profile)? is not None:
+                continue
+            pending.append(reader)
+            match reader.family:
+                "body-ir-seed" => seed_evaluations += 1
+                "representation" => representation_evaluations += 1
+                "body-ir" => body_ir_evaluations += 1
+                _ => pass
+    return Ok(
+        BodyIrProducerWork(
+            seed_evaluations=seed_evaluations,
+            representation_evaluations=representation_evaluations,
+            body_ir_evaluations=body_ir_evaluations,
+        ),
+    )
 
 
 pub def publish_body_values(
