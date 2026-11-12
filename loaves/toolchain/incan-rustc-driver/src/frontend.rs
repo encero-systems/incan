@@ -176,6 +176,10 @@ pub(crate) struct Dependencies {
     graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
     /// Optional invocation output for freshly produced checker values; it is not a compilation input.
     graph_body_output: Option<PathBuf>,
+    /// Request-local directory for actual plan-function producer evaluations and reuses.
+    plan_record_report: Option<PathBuf>,
+    /// Bakery-selected plan-function products; private target caches are never record authority.
+    plan_record_products: Option<PathBuf>,
 }
 
 impl Dependencies {
@@ -216,6 +220,8 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     let mut shared_native = None;
     let mut graph_body_records = incan_frontend::checker_records::GraphBodyRecords::default();
     let mut graph_body_output = None;
+    let mut plan_record_report = None;
+    let mut plan_record_products = None;
     let mut remaining = arguments.iter();
     while let Some(option) = remaining.next() {
         if option == "--library" {
@@ -228,6 +234,8 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
             "--shared-native" => shared_native = Some(PathBuf::from(value)),
             "--graph-body-records" => graph_body_records = read_graph_body_records(Path::new(value))?,
             "--graph-body-output" => graph_body_output = Some(PathBuf::from(value)),
+            "--plan-record-report" => plan_record_report = Some(PathBuf::from(value)),
+            "--plan-record-products" => plan_record_products = Some(PathBuf::from(value)),
             _ => return Err(format!("unknown native source option {option}")),
         }
     }
@@ -247,6 +255,8 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         shared_native,
         graph_body_records,
         graph_body_output,
+        plan_record_report,
+        plan_record_products,
     })
 }
 
@@ -447,6 +457,7 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
         &receipt,
         &mut Vec::new(),
         None,
+        None,
     )?;
     print!(
         "{}",
@@ -569,7 +580,11 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     // The grant comes only from the description, read after the identity check and the bootstrap refusal.
     let access = unit.toolchain_access.clone();
     let rust = dependencies.rust_facts(&unit, Path::new(&arguments[3]));
-    let native_products = callable_products::native_directory(&unit);
+    let native_products = dependencies
+        .plan_record_products
+        .as_ref()
+        .map(|path| path.to_string_lossy().into_owned())
+        .or_else(|| callable_products::native_directory(&unit));
     let mut program = check_compilation_source(
         unit,
         rust,
@@ -590,8 +605,19 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         &receipt,
         &mut published_unions,
         native_products,
+        dependencies
+            .plan_record_report
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned()),
     )?;
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
+    if let (Some(products), Some(report)) = (&dependencies.plan_record_products, &dependencies.plan_record_report) {
+        incan_mir_lowering::publish_plan_records(
+            &plan,
+            products.to_string_lossy().into_owned(),
+            report.to_string_lossy().into_owned(),
+        )?;
+    }
 
     // ---- Exact native dependencies, including checked Loaf implementation layouts ----
     let native_externs =
@@ -683,6 +709,7 @@ fn lower_compilation_plan(
     receipt: &RefusalReceipt,
     published_unions: &mut Vec<NativeUnionDeclaration>,
     native_products: Option<String>,
+    plan_record_report: Option<String>,
 ) -> Result<crate::plan::Plan, Box<dyn std::error::Error>> {
     tracing::debug!(target: "incan::invocation", modules = program.modules.len(),
         module_body_entries = program.modules.iter().map(|module| module.bodies.len()).sum::<usize>(),
@@ -715,6 +742,7 @@ fn lower_compilation_plan(
                     tests: program.tests.iter().map(|test| test.name.clone()).collect(),
                     package_versions: program.dependencies.package_versions.clone(),
                     overflow_checks,
+                    record_report: plan_record_report.clone(),
                 };
                 resume_unit_plan(
                     preserved,
@@ -735,6 +763,7 @@ fn lower_compilation_plan(
                     tests: program.tests.iter().map(|test| test.name.clone()).collect(),
                     package_versions: program.dependencies.package_versions.clone(),
                     overflow_checks,
+                    record_report: plan_record_report.clone(),
                 };
                 unit_plan(
                     &program.modules,
@@ -849,6 +878,7 @@ fn census_complete(
                 tests: Vec::new(),
                 package_versions: program.dependencies.package_versions.clone(),
                 overflow_checks,
+                record_report: None,
             },
             program.entry.try_into()?,
             false,
@@ -874,6 +904,7 @@ fn census_complete(
                 tests: Vec::new(),
                 package_versions: program.dependencies.package_versions.clone(),
                 overflow_checks,
+                record_report: None,
             },
             program.entry.try_into()?,
             true,
