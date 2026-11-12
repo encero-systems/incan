@@ -731,5 +731,8 @@ fn assert_canonical_record_controls() -> Result<(), Box<dyn std::error::Error>> 
         super::records::fixture_record(matched, "main", false),
         Err(NodeBindingError::Unsupported("ProtocolArtifacts.loan_free_scrutinees"))
     ));
+    let ordered = "def touch(mut items: list[int]) -> None:\n    pass\n\ndef caller() -> None:\n    items = [1]\n    touch(items)\n\ndef later() -> int:\n    return 1\n";
+    let later = super::records::fixture_record(ordered, "later", true)?;
+    super::records::verify_fixture(ordered, "later", later)?;
     Ok(())
 }
