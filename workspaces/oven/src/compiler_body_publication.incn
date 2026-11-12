@@ -158,7 +158,7 @@ pub def prepare_captured_source_inputs(
     mut changed: list[RecordKey] = []
     for input in inputs:
         if input.path.endswith(".incn") and input.role in [InputRole.Root, InputRole.Member, InputRole.Resolved]:
-            match captured_source_identity(unit, input.path):
+            match captured_source_identity(unit, input.path)?:
                 None => continue
                 Some(identity) =>
                     source = Path(input.path).read_text("utf-8", "strict").map_err((error) => error.message())?
@@ -183,20 +183,27 @@ pub def prepare_captured_source_inputs(
     return Ok(PreparedSourceInputs(transaction=prepared, keys=changed))
 
 
-def captured_source_identity(unit: UnitDescription, path: str) -> Option[Tuple[str, str]]:
-    """Map one captured source to its package-owned logical module identity without retaining checkout location."""
+def captured_source_identity(unit: UnitDescription, path: str) -> Result[Option[Tuple[str, str]], str]:
+    """Compare physical input and root paths so symlinked checkouts cannot omit changed source witnesses."""
     mut normalized = ""
     match Path(path).resolve():
-        Err(_) => return None
+        Err(_) => return Ok(None)
         Ok(resolved) => normalized = resolved.0
     for dependency in dependency_source_roots(unit):
-        prefix = dependency[1] + "/"
-        if normalized.startswith(prefix):
-            return Some((dependency[0], logical_module(normalized[len(prefix):])))
-    prefix = unit.project_root + "/"
-    if normalized.startswith(prefix):
-        return Some((source_origin(unit), normalized[len(prefix):]))
-    return None
+        if let Some(relative) = captured_relative_path(normalized, dependency[1])?:
+            return Ok(Some((dependency[0], logical_module(relative))))
+    if let Some(relative) = captured_relative_path(normalized, unit.project_root)?:
+        return Ok(Some((source_origin(unit), relative)))
+    return Ok(None)
+
+
+def captured_relative_path(path: str, root: str) -> Result[Option[str], str]:
+    """Resolve the described root with the input's path policy; an unreadable root must refuse reuse."""
+    physical = Path(root).resolve().map_err((error) => f"cannot resolve captured source root {root}: {error.message()}")?
+    prefix = physical.0 + "/"
+    if path.startswith(prefix):
+        return Ok(Some(path[len(prefix):]))
+    return Ok(None)
 
 
 def logical_module(relative: str) -> str:

@@ -55,7 +55,15 @@ from compiler_body_values import (
     select_body_inventory,
     select_body_values,
 )
-from compiler_body_publication import prepare_compiled_bodies, publish_compiled_bodies, retained_owner_record
+from compiler_body_publication import (
+    prepare_captured_source_inputs,
+    prepare_compiled_bodies,
+    publish_compiled_bodies,
+    retained_owner_record,
+)
+from engine_capture import CapturedInput, InputRole
+from observation import file_metadata
+from std.fs import Path
 from compiler_body_fallbacks import fallback_reasons
 from compiler_source_projection import project_source, publish_source_projection, signature_record
 from publication import publish_binary
@@ -354,7 +362,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         .joinpath("lib.incn")
         .write_text(provider_source, "utf-8", "strict", None)
         .map_err((error) => error.message())?
-    unit = UnitDescription(
+    mut unit = UnitDescription(
         source=source.0,
         project_root=root.0,
         source_root=source.parent().0,
@@ -545,6 +553,35 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     changed = edited.owners[0].key
     projected = publish_source_projection(published.snapshot, edited)?
     assert invalid_body_owners(projected.snapshot, [changed], CHECKER_PROFILE)? == [identity]
+    return verify_linked_capture(unit, scratch.path())
+
+
+def verify_linked_capture(mut unit: UnitDescription, root: Path) -> Result[None, str]:
+    """Physical source paths must retain project and dependency identities through symlinked described roots."""
+    project = root.joinpath("linked-project")
+    project.symlink_to(Path(unit.project_root)).map_err((error) => error.message())?
+    provider = root.joinpath("linked-provider")
+    provider.symlink_to(root.joinpath("provider/src")).map_err((error) => error.message())?
+    unit.project_root = project.0
+    unit.loaves[0].source_root = Some(provider.0)
+    mut inputs: list[CapturedInput] = []
+    for path in [project.joinpath("src/main.incn"), provider.joinpath("lib.incn")]:
+        metadata = match file_metadata(path)?:
+            Some(value) => value
+            None => return Err("linked source fixture is missing")
+        inputs.append(CapturedInput(
+            path=path.0,
+            role=InputRole.Resolved,
+            metadata=metadata,
+            digest="capture-fixture",
+            settled=false,
+        ))
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    prepared = prepare_captured_source_inputs(empty, begin(empty), unit, inputs)?
+    declarations = [key for key in prepared.keys if key.family == "declaration-index"]
+    assert len(declarations) == 2, "symlinked roots dropped captured declaration witnesses"
+    assert declarations[0].origin == "app" and declarations[0].identity == "src/main.incn"
+    assert declarations[1].origin == "provider" and declarations[1].identity == "lib"
     return Ok(None)
 
 
