@@ -115,6 +115,12 @@ fn main() -> std::process::ExitCode {
 fn command() -> Result<(), Box<dyn std::error::Error>> {
     incan_driver::invocation_trace::initialize()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args
+        .iter()
+        .any(|argument| argument.starts_with(adapter::stable_link::STORE_ARGUMENT))
+    {
+        return exit_with(adapter::stable_link::run(&args)?);
+    }
     match args.first().map(String::as_str) {
         #[cfg(unix)]
         Some("--resident") => worker::serve(&args[1..]),
