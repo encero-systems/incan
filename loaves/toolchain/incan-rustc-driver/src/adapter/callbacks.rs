@@ -6,8 +6,9 @@ impl Callbacks {
     /// Replace the session's plan with one refined against native metadata; MIR building reads the replacement.
     pub(super) fn replace_plan(&mut self, tcx: TyCtxt<'_>, plan: Plan) {
         self.plan = Arc::new(plan);
+        self.reader = Arc::new(self.reader.with_plan(Arc::clone(&self.plan)));
         match PLAN.lock() {
-            Ok(mut slot) => *slot = Some(Arc::new(ActivePlan::new(Arc::clone(&self.plan)))),
+            Ok(mut slot) => *slot = Some(Arc::clone(&self.reader)),
             Err(_) => tcx.dcx().fatal(DriverError::State.to_string()),
         }
     }
@@ -37,6 +38,13 @@ impl Callbacks {
                 Ok(item) => item,
                 Err(error) => compiler.sess.dcx().fatal(error.to_string()),
             };
+            if let Some(input) = self.reader.function_input(&function.name) {
+                item.attrs.push(tracked_input_attribute(
+                    &compiler.sess.psess.attr_id_generator,
+                    input,
+                    span,
+                ));
+            }
             if !function.attributes.is_empty() {
                 item.attrs.extend(crate::native_attributes::attributes(
                     &compiler.sess.psess.attr_id_generator,
@@ -169,6 +177,18 @@ impl rustc_driver::Callbacks for Callbacks {
         {
             compiler.sess.dcx().fatal(error.to_string());
         }
+        for item in &mut krate.items {
+            let ast::ItemKind::TyAlias(alias) = &item.kind else {
+                continue;
+            };
+            if let Some(input) = self.reader.alias_input(alias.ident.name.as_str()) {
+                item.attrs.push(tracked_input_attribute(
+                    &compiler.sess.psess.attr_id_generator,
+                    input,
+                    item.span,
+                ));
+            }
+        }
 
         // ---- Callable declarations and canonical entries ----
         self.declare_callables(compiler, krate, &sources);
@@ -291,4 +311,20 @@ impl rustc_driver::Callbacks for Callbacks {
         self.codegen_started = Some(std::time::Instant::now());
         rustc_driver::Compilation::Continue
     }
+}
+
+/// Carry a complete record fingerprint in the definition's HIR owner, where overridden queries can track it.
+fn tracked_input_attribute(
+    generator: &ast::attr::AttrIdGenerator,
+    input: &super::active_plan::DefinitionInput,
+    span: rustc_span::Span,
+) -> ast::Attribute {
+    ast::attr::mk_attr_name_value_str(
+        generator,
+        ast::AttrStyle::Outer,
+        ast::Safety::Default,
+        rustc_span::Symbol::intern("doc"),
+        rustc_span::Symbol::intern(&format!("incan-native-input:{}", input.fingerprint())),
+        span,
+    )
 }
