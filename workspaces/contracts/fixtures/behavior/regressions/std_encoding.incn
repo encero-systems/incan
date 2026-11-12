@@ -51,6 +51,19 @@ def exercise() -> Result[None, EncodingError]:
     assert hex.hexlify(octets) == expected_hex
     assert hex.unhexlify(expected_hex)? == octets
 
+    match hex.unhexlify("0z"):
+        Ok(_) =>
+            assert false, "invalid hex text was accepted"
+        Err(err) =>
+            assert err.kind == "invalid_character"
+            assert err.position == 1
+    match hex.unhexlify("é0"):
+        Ok(_) =>
+            assert false, "non-ASCII hex text was accepted"
+        Err(err) =>
+            assert err.kind == "invalid_character"
+            assert err.position == 0
+
     assert base32.b32encode(b"hello") == "NBSWY3DP"
     assert base32.b32decode("NBSWY3DP")? == b"hello"
     assert base32.b32decode_lenient("nbsw y3dp")? == b"hello"
