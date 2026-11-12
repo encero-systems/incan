@@ -721,11 +721,17 @@ impl Builder<'_> {
             None if accepts_fresh_inferred
                 && !parameter.is_mut
                 && self.optional_place(expression)?.is_none()
-                && self
+                && (self
                     .checker
                     .type_info
                     .expr_type(expression.span)
-                    .is_some_and(plain_result) =>
+                    .is_some_and(plain_result)
+                    || (ordinary_callee
+                        && self
+                            .checker
+                            .type_info
+                            .constructor_field_binding(expression.span)
+                            .is_some())) =>
             {
                 self.expression(expression, incoming, true)
                     .map(|outgoing| (outgoing, None))
