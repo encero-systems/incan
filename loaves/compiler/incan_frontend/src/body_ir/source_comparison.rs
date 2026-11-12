@@ -1,6 +1,6 @@
 //! Body IR-only native ABI facts for checked standard comparison implementations.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 use incan_semantics_core::body_ir::{Body, BodyIrModule, LocalOrigin};
 use incan_semantics_core::{
@@ -43,7 +43,7 @@ pub fn required_published_defaults(modules: &[BodyIrModule]) -> BTreeSet<Canonic
 /// Retain legacy's borrowed other operand only for a concrete nominal or enum body selected for standard Eq's
 /// native slot. The checker and legacy tables remain untouched. An ordinary same-spelled member or incomplete signature
 /// grants no ABI.
-pub(super) fn retain_equality_borrows(module: &mut BodyIrModule) {
+pub(super) fn retain_equality_borrows(module: &mut BodyIrModule, selected: &HashSet<CanonicalSymbolId>) {
     for implementation in &module.trait_implementations {
         if !is_standard_slot(&implementation.method, "__eq__") || implementation.implementation == implementation.method
         {
@@ -81,7 +81,12 @@ pub(super) fn retain_equality_borrows(module: &mut BodyIrModule) {
         else {
             continue;
         };
-        if !retain_equality_body(body, &implementation.owner, name) {
+        let retained = body
+            .canonical
+            .as_ref()
+            .is_some_and(|identity| selected.contains(identity))
+            || retain_equality_body(body, &implementation.owner, name);
+        if !retained {
             continue;
         }
         if let Some(owner) = module

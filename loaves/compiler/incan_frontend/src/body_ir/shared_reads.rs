@@ -156,7 +156,7 @@ pub(super) fn retain_modules_with_selected(
     let cursor_signatures = collect_signatures(modules, context, &no_candidates);
     for module in modules.iter_mut() {
         for body in &mut module.bodies {
-            if body_is_selected(body, selected) {
+            if super::body_is_selected(body, selected) {
                 continue;
             }
             retain_cursors(body, &cursor_signatures, &field_types, &no_candidates);
@@ -200,19 +200,12 @@ pub(super) fn retain_modules_with_selected(
     let final_signatures = collect_signatures(modules, context, &no_candidates);
     for module in modules {
         for body in &mut module.bodies {
-            if body_is_selected(body, selected) {
+            if super::body_is_selected(body, selected) {
                 continue;
             }
             retain_body_calls(body, &final_signatures, &field_types, &no_candidates);
         }
     }
-}
-
-/// Report whether a body is a graph-selected final owner that must not be refined again.
-fn body_is_selected(body: &bir::Body, selected: &HashSet<CanonicalSymbolId>) -> bool {
-    body.canonical
-        .as_ref()
-        .is_some_and(|identity| selected.contains(identity))
 }
 
 /// Resolve one candidate's checked body and test it against the current shared-call hypothesis.
@@ -312,7 +305,7 @@ fn candidate_parameters(modules: &[bir::BodyIrModule], selected: &HashSet<Canoni
             .map(|partial| partial.target.clone())
             .collect::<HashSet<_>>();
         for (body_index, body) in module.bodies.iter().enumerate() {
-            if body_is_selected(body, selected) {
+            if super::body_is_selected(body, selected) {
                 continue;
             }
             let eligible = body.type_parameters.is_empty()

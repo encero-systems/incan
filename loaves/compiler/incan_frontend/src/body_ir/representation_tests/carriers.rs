@@ -129,9 +129,10 @@ pub(super) fn assert_nominal_carrier_maps_stay_shared() -> Result<(), Box<dyn st
     let source = "model Value:\n    number: int\ndef make() -> Value:\n    return Value(number=1)\ndef forward() -> Value:\n    return make()\n";
     let (program, facts, mut module) = checked_seed(source)?;
     let opaque_carriers = super::opaque_returns::collect(&module, &facts);
-    super::trait_values::retain_inputs(&mut module, &program, &facts, &[]);
-    super::trait_returns::retain_returns(&mut module, &program, &facts, &[]);
-    super::opaque_returns::retain(&mut module, &opaque_carriers);
+    let selected = std::collections::HashSet::new();
+    super::trait_values::retain_inputs(&mut module, &program, &facts, &[], &selected);
+    super::trait_returns::retain_returns(&mut module, &program, &facts, &[], &selected);
+    super::opaque_returns::retain(&mut module, &opaque_carriers, &selected);
     assert!(
         super::nominal_carriers::return_index_keeps_identity_maps_borrowed(&module),
         "the return index retained a whole canonical map per callable"
@@ -147,7 +148,7 @@ pub(super) fn assert_nominal_carrier_maps_stay_shared() -> Result<(), Box<dyn st
         })
         .collect::<Result<std::collections::BTreeMap<_, _>, &'static str>>()?;
 
-    super::nominal_carriers::retain(&mut module, &facts, &[]);
+    super::nominal_carriers::retain(&mut module, &facts, &[], &selected);
 
     for body in &module.bodies {
         let canonical = body.canonical.as_ref().ok_or("missing retained callable identity")?;
