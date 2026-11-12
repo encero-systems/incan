@@ -8,7 +8,7 @@ pub const CHECKER_PROFILE: str = "incan.checker-free-functions/11"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/2"
-const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/4"
+const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/5"
 # One whole-program transport carries all bounded checker records plus native owner frames; bound the aggregate at
 # 64 MiB while individual checker records retain their narrower 64 KiB limit.
 const MAX_GRAPH_TRANSPORT_BYTES: int = 67108864
@@ -86,11 +86,11 @@ pub model CompiledBodyDependencyRead:
 
 @derive(Eq)
 pub model CompiledBodyFallback:
-    """One checked owner that cannot enter the record fast path, with the bounded codec refusal that kept it out."""
+    """One checked owner that cannot enter the record fast path, retaining absence when identity production failed."""
 
     pub module: str
     pub name: str
-    pub identity: str
+    pub identity: Option[str]
     pub reason: str
 
 
@@ -453,20 +453,21 @@ pub def encode_compiled_body_outputs(outputs: CompiledBodyOutputs) -> Result[byt
         previous = order
     previous = ""
     for fallback in outputs.fallbacks:
-        order = fallback.module + "\n" + fallback.identity
+        identity = optional_identity(fallback.identity)
+        order = fallback.module + "\n" + fallback.name + "\n" + identity
         if (
             fallback.module == ""
             or fallback.name == ""
-            or fallback.identity == ""
             or fallback.reason == ""
             or len(fallback.reason.encode()) > MAX_RECORD_BYTES
             or order <= previous
         ):
             return Err(CodecFault.Malformed)
-        for value in outputs.values:
-            if value.module == fallback.module and value.identity == fallback.identity:
-                return Err(CodecFault.Malformed)
-        tokens += [fallback.module, fallback.name, fallback.identity, fallback.reason]
+        if identity != "":
+            for value in outputs.values:
+                if value.module == fallback.module and value.identity == identity:
+                    return Err(CodecFault.Malformed)
+        tokens += [fallback.module, fallback.name, identity, fallback.reason]
         previous = order
     return encode_transport_tokens(tokens)
 
@@ -529,26 +530,41 @@ pub def decode_compiled_body_outputs(encoded: bytes) -> Result[CompiledBodyOutpu
         fallback = CompiledBodyFallback(
             module=tokens[offset],
             name=tokens[offset + 1],
-            identity=tokens[offset + 2],
+            identity=decoded_optional_identity(tokens[offset + 2]),
             reason=tokens[offset + 3],
         )
-        order = fallback.module + "\n" + fallback.identity
+        identity = optional_identity(fallback.identity)
+        order = fallback.module + "\n" + fallback.name + "\n" + identity
         if (
             fallback.module == ""
             or fallback.name == ""
-            or fallback.identity == ""
             or fallback.reason == ""
             or len(fallback.reason.encode()) > MAX_RECORD_BYTES
             or order <= previous
         ):
             return Err(CodecFault.Malformed)
-        for value in values:
-            if value.module == fallback.module and value.identity == fallback.identity:
-                return Err(CodecFault.Malformed)
+        if identity != "":
+            for value in values:
+                if value.module == fallback.module and value.identity == identity:
+                    return Err(CodecFault.Malformed)
         fallbacks.append(fallback)
         previous = order
         offset += 4
     return Ok(CompiledBodyOutputs(values=values, fallbacks=fallbacks))
+
+
+def optional_identity(identity: Option[str]) -> str:
+    """Encode identity absence only for an explicit fallback; stable value records never admit this sentinel."""
+    match identity:
+        Some(value) => return value
+        None => return ""
+
+
+def decoded_optional_identity(identity: str) -> Option[str]:
+    """Restore the fallback-only empty sentinel without inventing a stable declaration identity."""
+    if identity == "":
+        return None
+    return Some(identity)
 
 
 pub def record_root(encoded: bytes) -> Result[str, CodecFault]:

@@ -247,11 +247,14 @@ pub def prepare_compiled_bodies(
             b"record-eligible",
         )
     for fallback in outputs.fallbacks:
-        prepared = put(
-            prepared,
-            encode_record_key(eligibility_key(origin, fallback.identity, fallback.name))?,
-            ("full-source: " + fallback.reason).encode("utf-8"),
-        )
+        match fallback.identity:
+            Some(identity) =>
+                prepared = put(
+                    prepared,
+                    encode_record_key(eligibility_key(origin, identity, fallback.name))?,
+                    ("full-source: " + fallback.reason).encode("utf-8"),
+                )
+            None => pass
 
     # 3. A cold whole check stages the same graph values later edited activations replace independently.
     mut published = 0

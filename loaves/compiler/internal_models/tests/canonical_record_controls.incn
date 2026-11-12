@@ -94,14 +94,20 @@ def compiled_output_controls(source: str) -> Result[None, str]:
     fallback = CompiledBodyFallback(
         module="src/main.incn",
         name="other",
-        identity=local.owner + "-other",
+        identity=Some(local.owner + "-other"),
         reason="local record output refused: Unsupported(\"fixture\")",
     )
-    encoded = encode_compiled_body_outputs(CompiledBodyOutputs(values=[value], fallbacks=[fallback])).map_err(
+    identityless = CompiledBodyFallback(
+        module="src/main.incn",
+        name="required_pin",
+        identity=None,
+        reason="checked owner has no stable declaration identity",
+    )
+    encoded = encode_compiled_body_outputs(CompiledBodyOutputs(values=[value], fallbacks=[fallback, identityless])).map_err(
         (_) => "compiled output encode",
     )?
     decoded = decode_compiled_body_outputs(encoded).map_err((_) => "compiled output decode")?
-    assert len(decoded.values) == 1 and len(decoded.fallbacks) == 1
+    assert len(decoded.values) == 1 and len(decoded.fallbacks) == 2
     assert (
         decoded.values[0].module == value.module
         and decoded.values[0].name == value.name
@@ -115,6 +121,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         and decoded.values[0].body_ir == value.body_ir
     )
     assert decoded.fallbacks[0] == fallback
+    assert decoded.fallbacks[1] == identityless
     return Ok(None)
 
 
