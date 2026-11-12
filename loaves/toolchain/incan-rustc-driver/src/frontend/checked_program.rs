@@ -181,18 +181,6 @@ pub(super) fn checked_modules(
     graph_body_output.attach_body_ir(&modules, &bodies[loaf_modules..])?;
     graph_body_output.publish()?;
     let cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
-    let graph = if library {
-        let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(
-            unit,
-            &session,
-            &modules,
-            &analysis,
-            &mut bodies[loaf_modules..],
-        );
-        incan_codegraph::artifact::encode_graph(&records, &unit.project_root).map_err(|error| error.to_string())?
-    } else {
-        Vec::new()
-    };
     sources.extend(modules.into_iter().map(|module| module.source));
     let program_entrypoints = program_entrypoints(unit, &bodies, &files)?;
     let entry_module = bodies.get_mut(entry).ok_or("selected Body IR entry is missing")?;
@@ -226,7 +214,6 @@ pub(super) fn checked_modules(
             dependency_modules: loaf_modules,
             reached_loaves,
             manifest,
-            graph,
             tests,
         },
         session.loaves(),
