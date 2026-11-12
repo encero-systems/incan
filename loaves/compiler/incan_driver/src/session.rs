@@ -35,6 +35,7 @@ pub struct CompilationAnalysis {
     type_info_by_path: BTreeMap<PathBuf, Arc<TypeCheckInfo>>,
     type_info_by_module_path: BTreeMap<Vec<String>, Arc<TypeCheckInfo>>,
     semantic_snapshots_by_path: BTreeMap<PathBuf, incan_semantics_core::SemanticModuleSnapshot>,
+    namespace_body_by_path: BTreeMap<PathBuf, Arc<incan_semantics_core::body_ir::BodyIrModule>>,
 }
 
 impl CompilationAnalysis {
@@ -54,6 +55,11 @@ impl CompilationAnalysis {
     /// Return portable HIR and semantic fact snapshots keyed by source path.
     pub fn semantic_snapshots(&self) -> &BTreeMap<PathBuf, incan_semantics_core::SemanticModuleSnapshot> {
         &self.semantic_snapshots_by_path
+    }
+
+    /// Return a whole-module Body IR record admitted with this source namespace.
+    pub fn namespace_body_for_path(&self, path: &Path) -> Option<&incan_semantics_core::body_ir::BodyIrModule> {
+        self.namespace_body_by_path.get(path).map(Arc::as_ref)
     }
 }
 
@@ -279,21 +285,28 @@ impl CompilationSession {
         package: Option<&str>,
         visit: &mut dyn FnMut(&ParsedModule, &TypeChecker),
     ) -> Result<CompilationAnalysis, CliDiagnosticFailure> {
-        let type_infos = self.typecheck_unit(modules, package, visit)?.type_infos;
+        let checked = self.typecheck_unit(modules, package, visit)?;
         let mut type_info_by_path = BTreeMap::new();
         let mut type_info_by_module_path = BTreeMap::new();
         let mut semantic_snapshots_by_path = BTreeMap::new();
-        for (module, type_info) in modules.iter().zip(type_infos) {
+        let mut namespace_body_by_path = BTreeMap::new();
+        for ((module, type_info), namespace_body) in
+            modules.iter().zip(checked.type_infos).zip(checked.namespace_bodies)
+        {
             let snapshot = build_semantic_module_snapshot_v0(&module.ast, &module.path_segments, &type_info);
             let type_info = Arc::new(type_info);
             type_info_by_path.insert(module.file_path.clone(), Arc::clone(&type_info));
             type_info_by_module_path.insert(module.path_segments.clone(), type_info);
             semantic_snapshots_by_path.insert(module.file_path.clone(), snapshot);
+            if let Some(body) = namespace_body {
+                namespace_body_by_path.insert(module.file_path.clone(), Arc::new(body));
+            }
         }
         Ok(CompilationAnalysis {
             type_info_by_path,
             type_info_by_module_path,
             semantic_snapshots_by_path,
+            namespace_body_by_path,
         })
     }
 

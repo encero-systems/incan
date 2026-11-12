@@ -40,10 +40,11 @@ DD-0012 makes compiler results reusable records. DD-0013 requires a producer map
     - The toolchain row is measured as a producer-profile change.
     - The Loaf-version and lowering-library edit rows belong to Loaf admission, which delivers version swaps and Rust units in a Loaf. This stage proves sibling reuse on Incan-only fixtures and the hello edit loop.
     - One unit's codegraph answer is a bounded projection through RFC 166's `GraphRead` in this stage. The whole-export renderer and the MCP pages stay with the readers stage.
+9. **An unchanged editable namespace is admitted as one frozen boundary.** Its record carries the same checked API projection a frozen Loaf manifest supplies, a complete kernel-owned Body IR module frame, and the namespace's retained native-plan contribution. The record witnesses its own source projection and the declaration indexes of the editable namespaces it imports. Admission installs the checked interface and keeps the Body IR and plan contribution without checking, rebuilding Body IR, or lowering that namespace. Per-owner records remain the refinement inside namespaces an edit does process; the composite boundary does not replace their independently reusable contributions.
 
 ## Rationale and consequences
 
-Separating contributions lets a body edit reuse callers that observed only an unchanged signature. Keeping tracked reads at compiler boundaries makes this reuse explainable without teaching the engine language semantics. The main cost is restructuring compiler operations and their reads, not adding a second checker.
+Separating contributions lets a body edit reuse callers that observed only an unchanged signature. A namespace-sized admission boundary also makes an edit's checking, Body IR, and lowering cost depend on the affected namespace closure rather than total program size. Keeping tracked reads at compiler boundaries makes both forms of reuse explainable without teaching the engine language semantics. The main cost is restructuring compiler operations and their reads, not adding a second checker.
 
 Native output remains a whole compiled unit in this stage. Per-function native recompilation is qualified separately. Producer profiles bound reuse across compiler changes.
 

@@ -46,6 +46,30 @@ pub model SelectedBodyPage:
     pub value: bytes
 
 
+pub def select_namespace_inventory_except(
+    selected: Snapshot,
+    profile: str,
+    invalid: list[str],
+) -> Result[list[SelectedBodyPage], str]:
+    """Select installable namespace records whose source and imported declaration witnesses remain current."""
+    mut pages: list[SelectedBodyPage] = []
+    for record in reusable_family_records(selected, "namespace", profile)?:
+        if record.key.identity in invalid:
+            continue
+        key = "namespace-" + hexlify(sha256.digest(record.key.identity.encode("utf-8")))
+        pages.append(SelectedBodyPage(key=key, value=record.value))
+    return Ok(pages)
+
+
+pub def invalid_namespace_modules(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[str], str]:
+    """Select namespace records reached by this request's changed source projections or imported signatures."""
+    mut modules: set[str] = set()
+    for reader in readers_of(selected, changed, profile)?:
+        if reader.family == "namespace":
+            modules.add(reader.identity)
+    return Ok(sorted([module for module in modules]))
+
+
 pub def select_body_values(
     selected: Snapshot,
     local: RecordKey,
