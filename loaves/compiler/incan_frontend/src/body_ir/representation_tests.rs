@@ -151,6 +151,47 @@ fn record_scoped_free_function_seed_refuses_unscoped_source_layouts() -> Result<
     }
 }
 
+/// A module whose complete executable inventory comes from selected final owner frames is byte-identical to the
+/// ordinary whole-module builder, including module-level representation declarations derived from those frames.
+#[test]
+fn fully_selected_function_module_matches_whole_module_oracle() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def first(value: int) -> int:\n    return value + 1\ndef second(value: int) -> int:\n    return first(value)\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let providers = ProviderOperationCatalog::new();
+    let context = BodyIrContext {
+        modules: &[],
+        provider_operations: &providers,
+        registry_package: None,
+        library_package: None,
+        include_inline_tests: false,
+    };
+    let expected = super::build_body_ir_module(&program, &[], checker.type_info(), &context);
+    let mut selected = checker.type_info().clone();
+    selected.reused_callable_bodies = program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let ast::Declaration::Function(function) = &declaration.node else {
+                return None;
+            };
+            expected
+                .bodies
+                .iter()
+                .find(|body| body.name == function.name)
+                .cloned()
+                .map(|body| (declaration.span, body))
+        })
+        .collect();
+    let actual = super::restore_selected_body_ir_module(&program, &[], &selected, &context)
+        .map_err(|refusal| format!("unexpected module restore refusal: {refusal:?}"))?;
+    assert_same_module(&expected, &actual)
+}
+
 /// Compare complete serialized bodies and ordered union layouts after independent local operations, including an
 /// empty sibling, repeated shapes and nested callable unions. Ordered values and coordinates are never removed.
 #[test]

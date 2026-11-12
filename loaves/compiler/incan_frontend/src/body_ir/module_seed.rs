@@ -2,6 +2,117 @@
 
 use super::*;
 
+/// Assemble the exact module shell around graph-selected top-level function bodies without entering source body
+/// lowering. Other declaration shapes retain module-owned products whose independent record producers do not exist
+/// yet, so they stay on the compatibility builder with a named refusal.
+pub(super) fn restore_selected_body_ir_module(
+    program: &ast::Program,
+    module_path: &[String],
+    type_info: &TypeCheckInfo,
+    context: &BodyIrContext<'_>,
+) -> Result<bir::BodyIrModule, ModuleRestoreRefusal> {
+    let owners = program
+        .declarations
+        .iter()
+        .filter(|declaration| matches!(declaration.node, ast::Declaration::Function(_)))
+        .count();
+    let restored = program
+        .declarations
+        .iter()
+        .filter(|declaration| {
+            matches!(declaration.node, ast::Declaration::Function(_))
+                && type_info.reused_callable_bodies.contains_key(&declaration.span)
+        })
+        .count();
+    if owners == 0 {
+        return Err(ModuleRestoreRefusal {
+            owners,
+            restored,
+            reason: "module has no restorable executable owner".to_owned(),
+        });
+    }
+    let mut bodies = Vec::with_capacity(owners);
+    for declaration in &program.declarations {
+        match &declaration.node {
+            ast::Declaration::Import(_) | ast::Declaration::Docstring(_) => {}
+            ast::Declaration::Function(function) if function.decorators.is_empty() => {
+                let Some(body) = type_info.reused_callable_bodies.get(&declaration.span) else {
+                    return Err(ModuleRestoreRefusal {
+                        owners,
+                        restored,
+                        reason: format!("owner `{}` has no selected final Body IR", function.name),
+                    });
+                };
+                bodies.push(body.clone());
+            }
+            ast::Declaration::Function(function) => {
+                return Err(ModuleRestoreRefusal {
+                    owners,
+                    restored,
+                    reason: format!("decorated owner `{}` retains module-owned bindings", function.name),
+                });
+            }
+            declaration => {
+                return Err(ModuleRestoreRefusal {
+                    owners,
+                    restored,
+                    reason: format!(
+                        "{} declaration retains module-owned Body IR",
+                        restorable_declaration_kind(declaration)
+                    ),
+                });
+            }
+        }
+    }
+
+    let module_identity = match context.library_package {
+        Some(package) => incan_semantics_core::package_module_identity(package, module_path),
+        None => body_ir_module_identity(module_path),
+    };
+    let DeclarationSkeletons {
+        enum_declarations,
+        nominal_declarations,
+        fieldless_enum_declarations,
+        value_enum_declarations,
+    } = collect_declaration_skeletons(program, &module_identity, type_info);
+    let mut module = bir::BodyIrModule::declarations_only(module_identity);
+    module.entrypoint_effects = entrypoint_effects::collect(program);
+    module.enum_declarations = enum_declarations;
+    module.nominal_declarations = nominal_declarations;
+    module.fieldless_enum_declarations = fieldless_enum_declarations;
+    module.value_enum_declarations = value_enum_declarations;
+    module.loaf_callables = rust_calls::declarations(type_info)
+        .into_iter()
+        .chain(runtime_nominals::members(type_info))
+        .collect();
+    module.bodies = bodies;
+    let selected = selected_body_identities(type_info);
+    retain_module_representations(&mut module, program, type_info, context.modules, &selected);
+    Ok(module)
+}
+
+/// Name the declaration family whose module-owned products keep it on ordinary construction.
+fn restorable_declaration_kind(declaration: &ast::Declaration) -> &'static str {
+    match declaration {
+        ast::Declaration::Import(_) => "import",
+        ast::Declaration::Const(_) => "const",
+        ast::Declaration::Static(_) => "static",
+        ast::Declaration::Model(_) => "model",
+        ast::Declaration::Capability(_) => "capability",
+        ast::Declaration::Class(_) => "class",
+        ast::Declaration::Trait(_) => "trait",
+        ast::Declaration::Alias(_) => "alias",
+        ast::Declaration::Partial(_) => "partial",
+        ast::Declaration::TypeAlias(_) => "type alias",
+        ast::Declaration::Newtype(_) => "newtype",
+        ast::Declaration::Enum(_) => "enum",
+        ast::Declaration::Function(_) => "function",
+        ast::Declaration::TestModule(_) => "test module",
+        ast::Declaration::VocabBlock(_) => "vocabulary",
+        ast::Declaration::Docstring(_) => "docstring",
+    }
+}
+
 /// Construct the compatibility module before representation refinement. This remains the whole-module route;
 /// separating its seed lets the cold baseline compare individual representation operations from identical inputs.
 pub(super) fn build_module_seed(

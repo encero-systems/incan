@@ -286,6 +286,42 @@ pub fn build_body_ir_module_unsettled(
     module
 }
 
+/// One reason a checked source module cannot be reconstructed from graph-selected final owner frames alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleRestoreRefusal {
+    /// Number of top-level executable owners written in this module.
+    pub owners: usize,
+    /// Number of those owners carrying a graph-selected final Body IR frame.
+    pub restored: usize,
+    /// Exact source or selection boundary that requires ordinary whole-module construction.
+    pub reason: String,
+}
+
+/// Reconstruct one function-only module from graph-selected final Body IR owners without entering the ordinary
+/// whole-module builder. Module-owned representation declarations are derived from the selected frames; any source
+/// shape whose module artifacts are not independently reconstructable remains an explicit refusal.
+pub fn restore_selected_body_ir_module(
+    program: &ast::Program,
+    module_path: &[String],
+    type_info: &TypeCheckInfo,
+    context: &BodyIrContext<'_>,
+) -> Result<bir::BodyIrModule, ModuleRestoreRefusal> {
+    module_seed::restore_selected_body_ir_module(program, module_path, type_info, context)
+}
+
+/// Build the ordinary unsettled module without graph-selected owner frames for an explicitly requested migration
+/// oracle. Production lowering never calls this unless its driver enables the comparison environment variable.
+pub fn build_fresh_body_ir_module_oracle(
+    program: &ast::Program,
+    module_path: &[String],
+    type_info: &TypeCheckInfo,
+    context: &BodyIrContext<'_>,
+) -> bir::BodyIrModule {
+    let mut fresh = type_info.clone();
+    fresh.reused_callable_bodies.clear();
+    build_body_ir_module_unsettled(program, module_path, &fresh, context)
+}
+
 /// Settle inferred shared parameters and their call operands across every authored module simultaneously. Dependency
 /// modules are immutable context whose already-published signatures may participate but cannot be refined here.
 pub fn settle_shared_reads(modules: &mut [bir::BodyIrModule], context: &[bir::BodyIrModule]) {

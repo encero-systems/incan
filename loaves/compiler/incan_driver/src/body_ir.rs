@@ -309,15 +309,60 @@ fn lower_component(
             )
             .map_err(|error| format!("Body IR free-function input baseline: {error}"))?;
         }
-        let _invocation =
-            tracing::trace_span!(target: "incan::invocation", "incan_driver::build_body_ir_module", module = index)
-                .entered();
-        let lowered = incan_frontend::body_ir::build_body_ir_module_unsettled(
+        let lowered = match incan_frontend::body_ir::restore_selected_body_ir_module(
             &module.ast,
             &module.path_segments,
             type_infos[index],
             &context,
-        );
+        ) {
+            Ok(restored) => {
+                let _invocation = tracing::trace_span!(
+                    target: "incan::invocation",
+                    "incan_driver::restore_body_ir_module",
+                    module = index,
+                    owners = restored.bodies.len()
+                )
+                .entered();
+                if std::env::var_os("INCAN_BODY_IR_MODULE_ORACLE").is_some() {
+                    let expected = incan_frontend::body_ir::build_fresh_body_ir_module_oracle(
+                        &module.ast,
+                        &module.path_segments,
+                        type_infos[index],
+                        &context,
+                    );
+                    if restored != expected {
+                        return Err(format!(
+                            "restored Body IR module disagrees with whole-module oracle: {}",
+                            module.file_path.display()
+                        ));
+                    }
+                }
+                restored
+            }
+            Err(refusal) => {
+                let _refusal = tracing::trace_span!(
+                    target: "incan::invocation",
+                    "incan_driver::refuse_body_ir_module_restore",
+                    module = index,
+                    owners = refusal.owners,
+                    restored = refusal.restored,
+                    reason = %refusal.reason
+                )
+                .entered();
+                let _invocation = tracing::trace_span!(
+                    target: "incan::invocation",
+                    "incan_driver::build_body_ir_module",
+                    module = index
+                )
+                .entered();
+                incan_frontend::body_ir::build_body_ir_module_unsettled(
+                    &module.ast,
+                    &module.path_segments,
+                    type_infos[index],
+                    &context,
+                )
+            }
+        };
         context_modules.truncate(completed);
         context_modules.push(lowered);
     }
