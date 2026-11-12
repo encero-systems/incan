@@ -17,11 +17,14 @@ from release_support import (
     BaselineReport,
     Counts,
     append_bytes,
+    append_timing_file,
     check_baseline,
     parse_release_options,
     parse_verification_options,
     reference_cache_identity,
     reference_cache_root,
+    reference_census_jobs,
+    reference_worker_arguments,
     reuse_reference_log,
     release_receipt,
     release_rust_cache_root,
@@ -74,6 +77,21 @@ def test_release_census_shares_compilation_without_dropping_a_family() -> Result
     assert arguments[0:8] == ["oven", "fixtures", "--scratch", "scratch", "--jobs", "4", "--timeout", "120"]
     assert arguments[8] == "--serial-families"
     assert arguments[9:] == [family for family in FAMILIES]
+    assert reference_census_jobs(1) == 1
+    assert reference_census_jobs(4) == 2
+    worker = reference_worker_arguments(Path("source"), Path("out"), Path("home"), Path("lsp"), 4, 120)
+    assert worker == [
+        "run",
+        "source/scripts/release.incn",
+        "--",
+        "--reference-census",
+        "source",
+        "out",
+        "home",
+        "lsp",
+        "2",
+        "120",
+    ]
     return Ok(None)
 
 
@@ -231,6 +249,16 @@ def test_reference_cache_store_moves_then_reuses_complete_evidence() -> Result[N
     assert cached.read_text("utf-8", "strict").map_err((error) => error.message())? == COMPLETE_LOG
     reuse_reference_log(cached, reused)?
     assert reused.read_text("utf-8", "strict").map_err((error) => error.message())? == COMPLETE_LOG
+    timings = temporary.path().joinpath("timings.tsv")
+    worker_timings = temporary.path().joinpath("reference-timings.tsv")
+    timings.write_text("source-closure\t1.0\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    worker_timings.write_text("reference-contracts\t2.0\n", "utf-8", "strict", None).map_err(
+        (error) => error.message(),
+    )?
+    append_timing_file(timings, worker_timings)?
+    assert timings.read_text("utf-8", "strict").map_err((error) => error.message())? == (
+        "source-closure\t1.0\nreference-contracts\t2.0\n"
+    )
     return Ok(None)
 
 
