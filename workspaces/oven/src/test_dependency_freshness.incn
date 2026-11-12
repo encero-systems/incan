@@ -107,6 +107,7 @@ enum SemanticEdit(str):
     NamespaceBody = "namespace-body-only"
     NamespaceSignature = "namespace-signature"
     NamespaceModel = "namespace-model"
+    NamespaceConst = "namespace-const"
 
 
 @derive(Eq)
@@ -745,7 +746,38 @@ def semantic_edit_cases() -> list[MatrixCase]:
             expected_body_ir_modules=1,
             expected_lowered_modules=1,
         ),
+        namespace_family_case(SemanticEdit.NamespaceConst, ["pub const LIMIT: int = 7"]),
     ]
+
+
+def namespace_family_case(edit: SemanticEdit, declarations: list[str]) -> MatrixCase:
+    """Require one unchanged declaration-family namespace to stay admitted across a sibling body edit."""
+    main = fixture_source(
+        [
+            "from provider import value",
+            "from independent import stable",
+            "",
+            "",
+            "def main() -> None:",
+            "    println(value())",
+            "    println(stable())",
+        ],
+    )
+    independent = fixture_source(declarations + ["", "", "pub def stable() -> int:", "    return 7"])
+    return MatrixCase(
+        edit=edit,
+        fixture=MatrixFixture.Namespaces,
+        target="main.incn",
+        base={"main.incn": main, "provider.incn": fixture_source(
+            ["pub def value() -> str:", "    return \"hello\""],
+        ), "independent.incn": independent},
+        edited={"main.incn": main, "provider.incn": fixture_source(
+            ["pub def value() -> str:", "    return \"hullo\""],
+        ), "independent.incn": independent},
+        expected_module_checks=1,
+        expected_body_ir_modules=1,
+        expected_lowered_modules=1,
+    )
 
 
 def fixture_source(lines: list[str]) -> str:

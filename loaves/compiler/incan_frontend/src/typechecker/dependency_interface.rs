@@ -26,9 +26,9 @@ pub struct CheckedNamespaceInterface {
 }
 
 impl CheckedNamespaceInterface {
-    const SCHEMA: u32 = 2;
+    const SCHEMA: u32 = 3;
 
-    /// Capture an installable public function-and-model namespace from one accepted editable module.
+    /// Capture an installable public function, model, and constant namespace from one accepted editable module.
     ///
     /// Other declaration families remain on ordinary checking until their frozen-manifest tables have an exact
     /// namespace installer. A miss is explicit and never publishes a partial interface.
@@ -41,7 +41,11 @@ impl CheckedNamespaceInterface {
         if program.declarations.iter().any(|declaration| {
             !matches!(
                 declaration.node,
-                Declaration::Function(_) | Declaration::Model(_) | Declaration::Import(_) | Declaration::Docstring(_)
+                Declaration::Function(_)
+                    | Declaration::Model(_)
+                    | Declaration::Const(_)
+                    | Declaration::Import(_)
+                    | Declaration::Docstring(_)
             )
         }) {
             return Ok(None);
@@ -60,7 +64,9 @@ impl CheckedNamespaceInterface {
         if api.declarations.iter().any(|declaration| {
             !matches!(
                 declaration,
-                crate::api_metadata::ApiDeclaration::Function(_) | crate::api_metadata::ApiDeclaration::Model(_)
+                crate::api_metadata::ApiDeclaration::Function(_)
+                    | crate::api_metadata::ApiDeclaration::Model(_)
+                    | crate::api_metadata::ApiDeclaration::Const(_)
             )
         }) {
             return Ok(None);
@@ -238,6 +244,7 @@ fn namespace_declaration_name(declaration: &crate::api_metadata::ApiDeclaration)
     match declaration {
         crate::api_metadata::ApiDeclaration::Function(item) => Some(&item.name),
         crate::api_metadata::ApiDeclaration::Model(item) => Some(&item.name),
+        crate::api_metadata::ApiDeclaration::Const(item) => Some(&item.name),
         _ => None,
     }
 }
@@ -247,6 +254,7 @@ fn namespace_declaration_span(declaration: &crate::api_metadata::ApiDeclaration)
     match declaration {
         crate::api_metadata::ApiDeclaration::Function(item) => item.anchor.span,
         crate::api_metadata::ApiDeclaration::Model(item) => item.anchor.span,
+        crate::api_metadata::ApiDeclaration::Const(item) => item.anchor.span,
         _ => crate::ast::Span::default(),
     }
 }
@@ -256,6 +264,7 @@ fn namespace_export(declaration: &crate::api_metadata::ApiDeclaration) -> Result
     match declaration {
         crate::api_metadata::ApiDeclaration::Function(item) => Ok(ExportedSymbol::Function(item.name.clone())),
         crate::api_metadata::ApiDeclaration::Model(item) => Ok(ExportedSymbol::Type(item.name.clone())),
+        crate::api_metadata::ApiDeclaration::Const(item) => Ok(ExportedSymbol::Const(item.name.clone())),
         _ => Err("checked namespace interface contains an unsupported export".to_owned()),
     }
 }
