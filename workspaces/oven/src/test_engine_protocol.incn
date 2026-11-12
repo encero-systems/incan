@@ -3,6 +3,7 @@
 from core_process import Process, spawn_detached
 from rust::std::thread import sleep
 from rust::std::time import Duration
+from rust::std::str import from_utf8
 from std.environ import get_or
 from std.encoding.hex import hexlify
 from std.fs import Path
@@ -161,7 +162,6 @@ pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     check_collection_before_selection()?
     check_collection_during_execution()?
     process_lifecycle()?
-    check_worker_retirement()?
     identity = Identity(
         store_id="store",
         profile="profile",
@@ -227,14 +227,17 @@ def handshake_refused(state: ServiceState, hello: Hello, uid: u32) -> bool:
         Err(_) => return true
 
 
-def check_worker_retirement() -> Result[None, str]:
+pub def test_lowering_record_worked_example() -> Result[None, str]:
     """A one-activation compiler retires, and a body edit reads frozen compiler records instead of whole manifests."""
     scratch = scratch_directory()?
     root = scratch.path()
     project = root.joinpath("project")
     project.mkdir(true, true).map_err((error) => error.message())?
     source = project.joinpath("hello.incn")
-    write(source, "def main() -> None:\n    println(\"hello\")\n")?
+    write(
+        source,
+        "def greeting() -> str:\n    return \"hello\"\n\n\ndef main() -> None:\n    println(greeting())\n",
+    )?
     trace = root.joinpath("worker.trace")
     observations = root.joinpath("observations")
     observations.mkdir(true, true).map_err((error) => error.message())?
@@ -246,6 +249,7 @@ def check_worker_retirement() -> Result[None, str]:
         .new(binary)
         .arg("run")
         .arg(source.0)
+        .arg("--engine-report")
         .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", root.joinpath("store").0)
         .env("INCAN_NATIVE_TIMING", "1")
@@ -257,15 +261,20 @@ def check_worker_retirement() -> Result[None, str]:
         .env("INCAN_TRACE_DIR", observations.0)
         .output()
         .map_err((error) => str(error))?
-    if not outcome.status.success() or outcome.stdout != b"hello\x0a" or outcome.stderr != b"":
+    outcome_text = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    if not outcome.status.success() or not outcome_text.endswith("hello\n") or outcome.stderr != b"":
         return Err(f"initial records run: status={outcome.status.code()} stdout_bytes={len(outcome.stdout)} stderr_bytes={len(outcome.stderr)}")
     initial_manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest")
     initial_record_reads = invocation_count(observations, "incan_frontend::read_compiler_records")
-    write(source, "def main() -> None:\n    println(\"hullo\")\n")?
+    write(
+        source,
+        "def greeting() -> str:\n    return \"hullo\"\n\n\ndef main() -> None:\n    println(greeting())\n",
+    )?
     edited = Command
         .new(binary)
         .arg("run")
         .arg(source.0)
+        .arg("--engine-report")
         .env("INCAN_ENGINE", "records")
         .env("INCAN_BAKERY", root.joinpath("store").0)
         .env("INCAN_NATIVE_TIMING", "1")
@@ -277,8 +286,45 @@ def check_worker_retirement() -> Result[None, str]:
         .env("INCAN_TRACE_DIR", observations.0)
         .output()
         .map_err((error) => str(error))?
-    if not edited.status.success() or edited.stdout != b"hullo\x0a" or edited.stderr != b"":
+    edited_text = from_utf8(edited.stdout).map_err((error) => str(error))?
+    if not edited.status.success() or not edited_text.endswith("hullo\n") or edited.stderr != b"":
         return Err(f"edited records run: status={edited.status.code()} stdout_bytes={len(edited.stdout)} stderr_bytes={len(edited.stderr)}")
+    edited_proof = command_proof(edited.stdout)?
+    assert proof_count(edited_proof, "plan_function_evaluations")? == 1, edited_proof.to_json().map_err((error) => error.message())?
+    assert proof_count(edited_proof, "plan_function_reuses")? == 2, edited_proof.to_json().map_err((error) => error.message())?
+    assert proof_count(edited_proof, "lowering_demand_evaluations")? == 1, edited_proof.to_json().map_err((error) => error.message())?
+    assert proof_count(edited_proof, "lowering_demand_reuses")? == 1, edited_proof.to_json().map_err((error) => error.message())?
+    assert proof_count(edited_proof, "native_interface_evaluations")? == 1, edited_proof.to_json().map_err((error) => error.message())?
+
+    # Replacing the spare blank line keeps the source coordinates fixed while proving comments are not plan inputs.
+    write(
+        source,
+        "def greeting() -> str:\n    return \"hullo\"\n\n# comment above main\ndef main() -> None:\n    println(greeting())\n",
+    )?
+    commented = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .arg("--engine-report")
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", root.joinpath("store").0)
+        .env("INCAN_NATIVE_TIMING", "1")
+        .env("OVEN_TRACE", trace.0)
+        .env("INCAN_ENGINE_TRACE", observations.0)
+        .env("INCAN_JEC_TRACE", jec.0)
+        .env("INCAN_ENGINE_RUN", "host-clock-proof")
+        .env("INCAN_ENGINE_REQUEST", "worker-order-commented")
+        .env("INCAN_TRACE_DIR", observations.0)
+        .output()
+        .map_err((error) => str(error))?
+    commented_text = from_utf8(commented.stdout).map_err((error) => str(error))?
+    if not commented.status.success() or not commented_text.endswith("hullo\n") or commented.stderr != b"":
+        return Err(
+            f"commented records run: status={commented.status.code()} stdout_bytes={len(commented.stdout)} stderr_bytes={len(commented.stderr)}",
+        )
+    commented_proof = command_proof(commented.stdout)?
+    assert proof_count(commented_proof, "plan_function_evaluations")? == 0, commented_proof.to_json().map_err((error) => error.message())?
+    assert proof_count(commented_proof, "native_interface_evaluations")? == 1, commented_proof.to_json().map_err((error) => error.message())?
     manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest") - initial_manifest_reads
     if manifest_reads != 0:
         return Err(f"one-body edit reopened {manifest_reads} whole Loaf manifests")
@@ -303,13 +349,27 @@ def check_worker_retirement() -> Result[None, str]:
     waits = len([line for line in lines if "worker_observer_joined" in line])
     detached = len([line for line in lines if "worker_observer_detached" in line])
     releases = len([line for line in lines if "worker_heap_released" in line])
-    # The edited request has its own owner generation, so both one-activation worker monitors detach independently.
-    assert waits == 0 and detached == 2 and releases == 0, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
+    # Each request has its own owner generation, so all three one-activation worker monitors detach independently.
+    assert waits == 0 and detached == 3 and releases == 0, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
     released_requests = [line for line in lines if "engine request released:" in line]
-    assert len(released_requests) == 2, "request teardown did not release its payload verification observations"
+    assert len(released_requests) == 3, "request teardown did not release its payload verification observations"
     assert "captures=0 verification=0" in released_requests[0]
     check_worker_clock(observations)?
     return Ok(None)
+
+
+def command_proof(output: bytes) -> Result[JsonValue, str]:
+    """Decode the first line emitted by `--engine-report`, leaving the following program stdout independent."""
+    text = from_utf8(output).map_err((error) => str(error))?
+    lines = text.split("\n")
+    if len(lines) < 2:
+        return Err("records command emitted no proof report")
+    return parse(lines[0]).map_err((error) => error.message())
+
+
+def proof_count(report: JsonValue, name: str) -> Result[int, str]:
+    """Read one required producer counter without accepting an absent or nonnumeric field."""
+    return report.require(name).map_err((error) => error.message())?.expect_int().map_err((error) => error.message())
 
 
 def invocation_count(directory: Path, function: str) -> int:

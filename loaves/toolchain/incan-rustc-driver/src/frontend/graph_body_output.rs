@@ -41,14 +41,24 @@ pub(super) struct GraphBodyOutput {
 
 impl GraphBodyOutput {
     /// Prepare an inert collector unless Oven explicitly requested one output path.
-    pub(super) fn prepare(path: Option<PathBuf>, project_root: PathBuf) -> Self {
-        Self {
+    pub(super) fn prepare(path: Option<PathBuf>, project_root: PathBuf) -> Result<Self, String> {
+        let project_root = if path.is_some() {
+            project_root.canonicalize().map_err(|error| {
+                format!(
+                    "cannot resolve graph body project root {}: {error}",
+                    project_root.display()
+                )
+            })?
+        } else {
+            project_root
+        };
+        Ok(Self {
             path,
             project_root,
             values: Vec::new(),
             fallbacks: Vec::new(),
             error: None,
-        }
+        })
     }
 
     /// Capture only values already emitted by all three producer boundaries for this checked module.

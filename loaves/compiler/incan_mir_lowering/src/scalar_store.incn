@@ -19,6 +19,19 @@ model ScalarRecord:
     digest: str
 
 
+@derive(Serialize, Deserialize)
+model ScalarRecordEvent:
+    """One request-local observation of an evaluated or reused plan-function product."""
+
+    schema: int
+    identity: str
+    key: str
+    function: str
+    product: str
+    reused: bool
+    runtime_requirements: int
+
+
 pub def scalar_inputs(body: str, name: str, span: SourceSpan, overflow_checks: bool, reads: str) -> list[str]:
     """Bind a native product to its checked body, consumed signatures, physical frame and diagnostic provenance."""
     return [
@@ -50,19 +63,51 @@ pub def retained_scalar(directory: str, inputs: list[str]) -> Option[tuple[Funct
                 Ok(text) => return restore_record(text, inputs)
 
 
-pub def retain_scalar(directory: str, inputs: list[str], function: &Function, runtime: &list[ExternalFunction]) -> None:
+pub def retain_scalar(directory: str, inputs: list[str], function: &Function, runtime: &list[ExternalFunction]) -> Result[None, str]:
     """
     Publish a loss-checked scalar native function without changing compilation's verdict.
 
     1. Encode and authenticate every function field against its producer inputs.
     2. Write a complete temporary record and atomically replace its destination.
     """
-    # 1. An unsupported native shape refuses this cache, retaining ordinary lowering.
-    match encoded_record(inputs, function, runtime):
-        Err(_) => return
-        Ok(text) =>
-            # 2. Publication is independent of the successful compilation's verdict.
-            _ = publish_record(directory, inputs, text)
+    # 1. Records mode must preserve an unsupported native shape as an explicit producer refusal.
+    text = encoded_record(inputs, function, runtime)?
+    # 2. The request-local transport is required input to Bakery publication, so failed writes refuse the producer.
+    return publish_record(directory, inputs, text)
+
+
+pub def report_scalar(
+    directory: Option[str],
+    products: str,
+    inputs: list[str],
+    identity: str,
+    function: str,
+    reused: bool,
+    runtime: int,
+) -> Result[None, str]:
+    """Publish one bounded product event for Bakery admission; records mode refuses incomplete transport."""
+    if let Some(root) = directory:
+        digest = fingerprint(inputs)?
+        product = scalar_path(products, inputs)?.read_text("utf-8", "strict").map_err(
+            (error) => f"cannot read plan-function product {error.message()}",
+        )?
+        # Revalidate the exact bytes before they cross from private lowering transport into Bakery publication.
+        if restore_record(product, inputs) is None:
+            return Err("plan-function product failed its lowering codec round trip")
+        event = ScalarRecordEvent(
+            schema=2,
+            identity=identity,
+            key=digest.replace("sha256:", ""),
+            function=function,
+            product=product,
+            reused=reused,
+            runtime_requirements=runtime,
+        )
+        text = to_string(event).map_err((error) => str(error))?
+        path = Path(root).joinpath(digest.replace("sha256:", "") + ".event")
+        path.parent().mkdir(true, true).map_err((error) => error.message())?
+        path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    return Ok(None)
 
 
 def encoded_record(inputs: list[str], function: &Function, runtime: &list[ExternalFunction]) -> Result[str, str]:

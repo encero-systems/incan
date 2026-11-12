@@ -151,6 +151,8 @@ pub model SourceInputs:
     # Producer-owned checked inputs and consumed signatures; absence preserves ordinary lowering.
     pub scalar_products: Option[str] = None
     pub scalar_bodies: list[tuple[CompilerNodeId, str]] = []
+    # Request-local producer evidence; absence keeps ordinary lowering and emits no report files.
+    pub record_report: Option[str] = None
 
 
 pub def unit_plan(
@@ -173,6 +175,7 @@ pub def unit_plan(
         inputs.overflow_checks,
         inputs.scalar_products,
         inputs.scalar_bodies,
+        inputs.record_report,
     )
 
 

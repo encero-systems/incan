@@ -120,6 +120,7 @@ pub def stage_name(stage: ProducerStage) -> str:
         ProducerStage.CheckBody => return "check-body"
         ProducerStage.BodyIr => return "body-ir"
         ProducerStage.Instance => return "instance"
+        ProducerStage.LoweringDemand => return "lowering-demand"
         ProducerStage.PlanFunction => return "plan-function"
         ProducerStage.NativeInterface => return "native-interface"
 
@@ -134,6 +135,7 @@ def read_stage(value: str) -> Result[ProducerStage, str]:
         "check-body" => return Ok(ProducerStage.CheckBody)
         "body-ir" => return Ok(ProducerStage.BodyIr)
         "instance" => return Ok(ProducerStage.Instance)
+        "lowering-demand" => return Ok(ProducerStage.LoweringDemand)
         "plan-function" => return Ok(ProducerStage.PlanFunction)
         "native-interface" => return Ok(ProducerStage.NativeInterface)
         _ => return Err("unknown compiler producer stage")
