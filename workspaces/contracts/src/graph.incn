@@ -4,7 +4,6 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from std.hash import file_digest
-from std.environ import get_or
 from std.json import JsonValue
 from rust::std::fs import OpenOptions, Permissions, metadata, rename, set_permissions
 from rust::std::os::unix::fs import MetadataExt, PermissionsExt, symlink
@@ -395,40 +394,42 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     source = provider.joinpath("src").joinpath("lib.incn")
     if not source.is_file():
         return Ok(None)
+    bakery = project.joinpath("target").joinpath("graph-contract-bakery")
+    environment = [f"INCAN_BAKERY={bakery.0}"]
     selection = ["--query", "defs", "checked_helper", "--format", "json"]
-    checked = invoke(incan, ["inspect", "codegraph", provider.0] + selection, project)?
+    checked = invoke(incan, ["inspect", "codegraph", provider.0] + selection, project, environment)?
     if checked.code != Some(0):
         return Err(f"provider inspection failed: {checked.stderr}")
     checked_digest = helper_digest(checked.stdout)?
     # 1. The provider's compiled Loaf carries a version-one binary graph that names no physical project root.
-    built = invoke(incan, ["build", source.0], project)?
+    built = invoke(incan, ["build", source.0], project, environment)?
     if built.code != Some(0):
         return Err(f"provider build failed: {built.stderr}")
-    consumer = invoke(incan, ["build", "src/main.incn"], project)?
+    consumer = invoke(incan, ["build", "src/main.incn"], project, environment)?
     if consumer.code != Some(0):
         return Err(f"consumer preparation failed: {consumer.stderr}")
     publications = published_graphs(project, provider)
     if len(publications) == 0:
         return Err("provider build published no graph")
     check_binary_graph(read_bytes(publications[0])?, project)?
-    compiled = invoke(incan, ["inspect", "codegraph", "."] + selection, project)?
+    compiled = invoke(incan, ["inspect", "codegraph", "."] + selection, project, environment)?
     if compiled.code != Some(0) or helper_digest(compiled.stdout)? != checked_digest:
         return Err("the inspected cross-module library body differs from its compiled publication")
     # 2. A consumer reads the published graph, though the provider's source has since become invalid.
     arguments = ["inspect", "codegraph", ".", "--query", "defs", "checked_helper"]
-    original = invoke(incan, arguments, project)?
+    original = invoke(incan, arguments, project, environment)?
     before = read(source)?
     write(source, "invalid dependency source {")?
-    published = invoke(incan, arguments, project)?
+    published = invoke(incan, arguments, project, environment)?
     if original.code != Some(0) or published.code != Some(0) or original.stdout != published.stdout:
         return Err(f"published dependency graph was rechecked from source: {published.stderr}")
     write(source, before)?
     # 3. Views are restored automatically; stored damage requires explicit verified re-admission.
     bodies = library_artifacts(project)?
-    stored = stored_payload(publications[0])?
+    stored = stored_payload(bakery, publications[0])?
     for graph in publications:
         write_bytes(graph, b"\x7f\x00\x00\x00")?
-    restored = invoke(incan, arguments, project)?
+    restored = invoke(incan, arguments, project, environment)?
     if restored.code != Some(0) or restored.stdout != original.stdout:
         return Err(f"a corrupt view in target/ reached the published graph: {restored.stderr}")
     if read_bytes(publications[0])? == b"\x7f\x00\x00\x00":
@@ -438,44 +439,56 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     replacement = project.joinpath("verified-graph-replacement")
     write_bytes(replacement, read_bytes(stored)?)?
     corrupt_fact(stored)?
-    refused = invoke(incan, arguments, project)?
+    refused = invoke(incan, arguments, project, environment)?
     if refused.code == Some(0) or "store integrity error" not in refused.stderr:
         return Err(f"stored damage was not reported: {refused.stderr}")
     # Repair belongs to the project surface: the same `incan`, started as `oven`.
-    repaired = invoke(incan, ["bakery", "repair-payload", stored.name(), replacement.0], project, [], Some("oven"))?
+    repaired = invoke(
+        incan,
+        ["bakery", "repair-payload", stored.name(), replacement.0],
+        project,
+        environment,
+        Some("oven"),
+    )?
     if repaired.code != Some(0):
         return Err(f"verified graph re-admission failed: {repaired.stderr}")
-    restored_fact = invoke(incan, arguments, project)?
+    restored_fact = invoke(incan, arguments, project, environment)?
     if restored_fact.code != Some(0) or restored_fact.stdout != original.stdout:
         return Err(f"re-admitted graph differs from its publication: {restored_fact.stderr}")
     # 4. A provider with no published graph is exported once, and a second export gives the same answer.
     for graph in publications:
         remove(graph)?
-    legacy = invoke(incan, arguments, project)?
+    legacy = invoke(incan, arguments, project, environment)?
     if library_artifacts(project)? != bodies:
         return Err("missing graph-view repair changed an unaffected compiled body")
-    repeated = invoke(incan, arguments, project)?
+    repeated = invoke(incan, arguments, project, environment)?
     stable = legacy.stdout == repeated.stdout and legacy.code == repeated.code
     if legacy.code != Some(0) or legacy.stdout != original.stdout or not stable:
         return Err(f"older artifact did not receive a stable cached graph export: {legacy.stderr}")
     # 5. A linked directory is itself damaged; repair must never follow it into another directory.
-    check_linked_view(incan, project, publications[0], arguments, original.stdout)?
+    check_linked_view(incan, project, publications[0], arguments, original.stdout, environment)?
     return Ok(None)
 
 
 def check_linked_view(
-    incan: str, project: Path, graph: Path, arguments: list[str], expected: str,
+    incan: str,
+    project: Path,
+    graph: Path,
+    arguments: list[str],
+    expected: str,
+    environment: list[str],
 ) -> Result[None, str]:
     """A linked library directory is rebuilt as a real view without repairing files in its referent."""
     directory = graph.parent()
-    temporary = TemporaryDirectory.try_new_with("graph-view-", "", Some(directory.parent()))
+    temporary = TemporaryDirectory
+        .try_new_with("graph-view-", "", Some(directory.parent()))
         .map_err((error) => error.message())?
     referent = temporary.path().joinpath("original")
     rename(directory.0, referent.0).map_err((error) => str(error))?
     symlink(referent.0, directory.0).map_err((error) => str(error))?
     bodies = library_artifacts(referent)?
     remove(referent.joinpath(graph.name()))?
-    restored = invoke(incan, arguments, project)?
+    restored = invoke(incan, arguments, project, environment)?
     if restored.code != Some(0) or restored.stdout != expected:
         return Err(f"linked library view could not be restored: {restored.stderr}")
     if directory.is_symlink() or referent.joinpath(graph.name()).is_file():
@@ -556,15 +569,9 @@ def check_rust_links(document: GraphDocument) -> Result[None, str]:
     return Ok(None)
 
 
-def stored_payload(view: Path) -> Result[Path, str]:
-    """The bakery payload a view was cloned from: payloads are named by the digest of their bytes."""
+def stored_payload(store: Path, view: Path) -> Result[Path, str]:
+    """The selected bakery payload a view was cloned from, named by the digest of its bytes."""
     digest = hexlify(file_digest(view, "sha256").map_err((error) => f"{view.0}: {error.message()}")?)
-    mut store = Path(get_or("INCAN_BAKERY", ""))
-    if store.0 == "":
-        mut home = Path(get_or("INCAN_HOME", ""))
-        if home.0 == "":
-            home = Path(get_or("HOME", "")).joinpath(".incan")
-        store = home.joinpath("bakery")
     return Ok(store.joinpath("payloads").joinpath(digest[:2]).joinpath(digest))
 
 

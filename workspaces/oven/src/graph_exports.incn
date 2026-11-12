@@ -8,8 +8,14 @@ from unit_freshness import fingerprint
 
 
 pub def export_file(digest: str) -> Result[Path, str]:
-    """Locate a disposable view of one portable export, independently of the requesting project."""
-    return Ok(home()?.joinpath("cache/codegraph-exports").joinpath(digest).joinpath("unit.incngraph"))
+    """Locate a disposable view by the selected bakery and export, independently of the requesting project."""
+    return export_view(home()?, bakery()?, digest)
+
+
+pub def export_view(home_root: Path, store: Path, digest: str) -> Result[Path, str]:
+    """Locate one export view below its home while keeping independently selected bakeries in separate namespaces."""
+    scope = fingerprint(["incan.codegraph.views/1", store.0])?
+    return Ok(home_root.joinpath("cache/codegraph-exports").joinpath(scope).joinpath(digest).joinpath("unit.incngraph"))
 
 
 pub def exported(entry: Path) -> Result[bool, str]:
