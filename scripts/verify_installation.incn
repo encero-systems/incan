@@ -503,13 +503,12 @@ def build_runner(installation: Installation) -> Result[Path, str]:
 
 
 def run_oven_tests(installation: Installation) -> Result[None, str]:
-    """Run the stable Oven and Loaf Incan-test inventory through the installed toolchain."""
+    """Run the stable Oven and Loaf Incan-test inventory through the installed toolchain and release Bakery."""
     return require_step(
-        command_step(
-            installation,
-            "oven-tests",
-            installation.oven.0,
-            [
+        Step(
+            name="oven-tests",
+            executable=installation.oven.0,
+            arguments=[
                 "run",
                 installation.root.joinpath("scripts/oven_tests.incn").0,
                 "--",
@@ -518,8 +517,11 @@ def run_oven_tests(installation: Installation) -> Result[None, str]:
                 "--jobs",
                 str(installation.jobs),
             ],
-            installation.root,
-            installation.run.joinpath("oven-tests-command.log"),
+            environment=release_bakery_environment(installation),
+            remove_environment=["RUSTC_BOOTSTRAP"],
+            directory=Some(installation.root),
+            log=installation.run.joinpath("oven-tests-command.log"),
+            timeout_seconds=installation.timeout_seconds,
         ),
     )
 
@@ -535,10 +537,7 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
     output.mkdir(true, true).map_err((error) => error.message())?
     mut planned: list[ReservedStep] = []
     mut projects: list[str] = []
-    mut environment = command_environment(installation)
-    bakery = selected_rust_facet_bakery(get_or("INCAN_BUILDER_HOME", ""))
-    if bakery != "":
-        environment["INCAN_BAKERY"] = bakery
+    environment = release_bakery_environment(installation)
     manifests = sorted(
         [path.0 for path in installation.root.joinpath("loaves").rglob("loaf.toml").map_err((error) => error.message())?],
     )
@@ -579,14 +578,23 @@ def run_rust_facets(installation: Installation) -> Result[int, str]:
     return Ok(len(projects))
 
 
-pub def selected_rust_facet_bakery(builder_home: str) -> str:
-    """Select the release builder's existing Bakery for exact-identity facet reuse, or no override outside release."""
+pub def selected_release_bakery(builder_home: str) -> str:
+    """Select the release builder's existing Bakery for exact-identity gate reuse, or no override outside release."""
     if builder_home == "":
         return ""
     bakery = Path(builder_home).joinpath("bakery")
     if not bakery.is_dir():
         return ""
     return bakery.0
+
+
+def release_bakery_environment(installation: Installation) -> Dict[str, str]:
+    """Return the installed environment with the release builder's Bakery selected when it exists."""
+    mut environment = command_environment(installation)
+    bakery = selected_release_bakery(get_or("INCAN_BUILDER_HOME", ""))
+    if bakery != "":
+        environment["INCAN_BAKERY"] = bakery
+    return environment
 
 
 def run_driver_integration(installation: Installation) -> Result[None, str]:
