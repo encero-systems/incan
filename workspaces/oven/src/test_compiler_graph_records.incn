@@ -255,14 +255,45 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     model_owner = projected_owner(default_projection, "model:RecordKey")?
     assert default_owner.text == "\"base\""
     assert default_owner.start < default_owner.end
-    assert compiler_source_projection.compiled_owner_source(default_projection, "src/default.incn", "context")?.key == default_owner.key
-    assert compiler_source_projection.compiled_owner_source(default_projection, "src/default.incn", "other")?.key == field_owner.key
     assert compiler_source_projection.compiled_owner_source(
         default_projection,
         "src/default.incn",
         "context",
         "field:package::src::default::RecordKey::context|signature",
     )?.key == default_owner.key
+    assert compiler_source_projection.compiled_owner_source(
+        default_projection,
+        "src/default.incn",
+        "other",
+        "field:package::src::default::RecordKey::other|signature",
+    )?.key == field_owner.key
+    repeated_field_source = "pub model Snapshot:\n    pub pin: int = 1\n\npub model Publication:\n    pub pin: int = 2\n\npub model PreparedPayload:\n    pub pin: int\n"
+    repeated_field_projection = project_source("package", "src/store.incn", repeated_field_source)?
+    snapshot_pin = projected_owner(repeated_field_projection, "default:model:Snapshot:pin")?
+    publication_pin = projected_owner(repeated_field_projection, "default:model:Publication:pin")?
+    prepared_pin = projected_owner(repeated_field_projection, "field:model:PreparedPayload:pin")?
+    assert compiler_source_projection.compiled_owner_source(
+        repeated_field_projection,
+        "src/store.incn",
+        "pin",
+        "field:package::src::store::Snapshot::pin|signature",
+    )?.key == snapshot_pin.key
+    assert compiler_source_projection.compiled_owner_source(
+        repeated_field_projection,
+        "src/store.incn",
+        "pin",
+        "field:package::src::store::Publication::pin|signature",
+    )?.key == publication_pin.key
+    assert compiler_source_projection.compiled_owner_source(
+        repeated_field_projection,
+        "src/store.incn",
+        "pin",
+        "field:package::src::store::PreparedPayload::pin|signature",
+    )?.key == prepared_pin.key
+    identityless = compiler_source_projection.compiled_owner_source(repeated_field_projection, "src/store.incn", "pin")
+    match identityless:
+        Ok(_) => return Err("identity-less repeated field unexpectedly selected one declaration")
+        Err(reason) => assert reason == "compiled field body has no stable declaration identity: src/store.incn:pin", reason
     projected_default = publish_source_projection(published.snapshot, default_projection)?
     declaration = family_key("declaration", "model-record-key")
     declared_default = commit(
