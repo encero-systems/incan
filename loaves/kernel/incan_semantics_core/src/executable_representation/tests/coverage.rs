@@ -265,7 +265,9 @@ fn internal_surface_diagnostic_names_missing_native_default_selection() -> Resul
 
 #[test]
 fn public_membership_and_explicit_empty_body_coverage() -> Result<(), Box<dyn std::error::Error>> {
-    let module = module(vec![body("public", 1), body("private_secret", 2)]);
+    let mut private = body("private_secret", 2);
+    private.block.stmts.push(call(identity("private_helper", 4)));
+    let module = module(vec![body("public", 1), private, body("private_helper", 4)]);
     let public = BTreeSet::from([identity("public", 1), identity("unlowered", 3)]);
     let bytes = publish(&module, &public)?;
     let reader = SurfaceReader::open(&bytes)?;
@@ -299,6 +301,12 @@ fn public_membership_and_explicit_empty_body_coverage() -> Result<(), Box<dyn st
             .index()
             .implementation
             .contains_key(&identity("private_secret", 2))
+    );
+    assert!(
+        reader
+            .index()
+            .implementation
+            .contains_key(&identity("private_helper", 4))
     );
     assert!(matches!(
         reader.index().execution_coverage(&identity("private_secret", 2))?,
