@@ -74,8 +74,9 @@ pub struct CheckedOwnerDependencyRead {
 pub struct CheckedOwnerRecordFallback {
     /// Source spelling used to match the independently projected owner source record.
     pub name: String,
-    /// Stable declaration identity used by the explicit full-source eligibility value.
-    pub identity: String,
+    /// Stable declaration identity used by the explicit full-source eligibility value, when the identity producer
+    /// itself succeeded. Its absence is an explicit fallback condition rather than a fabricated stable identity.
+    pub identity: Option<String>,
     /// Exact producer-stage refusal or missing-output invariant that excluded this owner.
     pub reason: String,
 }
@@ -194,27 +195,30 @@ pub fn checked_owner_record_outputs(
                 .function_bindings_by_span
                 .get(&declaration.span)
             else {
-                return Some(Err(format!(
-                    "checked owner `{}` has no function binding",
-                    function.name
-                )));
+                return Some(Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
+                    name: function.name.clone(),
+                    identity: None,
+                    reason: "checked owner has no function binding".into(),
+                })));
             };
             let canonical = match binding.identity.as_ref() {
                 Some(identity) => identity,
                 None => {
-                    return Some(Err(format!(
-                        "checked owner `{}` has no canonical declaration identity",
-                        function.name
-                    )));
+                    return Some(Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
+                        name: function.name.clone(),
+                        identity: None,
+                        reason: "checked owner has no canonical declaration identity".into(),
+                    })));
                 }
             };
             let identity = match checker.type_info().declarations.source_identities.get(canonical) {
                 Some(identity) => identity.render_compact(),
                 None => {
-                    return Some(Err(format!(
-                        "checked owner `{}` has no stable declaration identity",
-                        function.name
-                    )));
+                    return Some(Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
+                        name: function.name.clone(),
+                        identity: None,
+                        reason: "checked owner has no stable declaration identity".into(),
+                    })));
                 }
             };
             let semantic_owners = facts
@@ -255,7 +259,7 @@ pub fn checked_owner_record_outputs(
             if let Some(reason) = refusal {
                 return Some(Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
                     name: function.name.clone(),
-                    identity,
+                    identity: Some(identity),
                     reason,
                 })));
             }
@@ -413,7 +417,31 @@ mod tests {
             return Err("the unsupported owner unexpectedly published a reusable value".into());
         };
         assert_eq!(fallback.name, "main");
+        assert!(fallback.identity.is_some());
         assert!(fallback.reason.contains("ProtocolArtifacts.loan_free_scrutinees"));
+        Ok(())
+    }
+
+    /// A checked owner whose signature cannot produce a stable identity remains an explicit source fallback. The Rust
+    /// carrier `Rc` has no source identity, so the signature publishes no portable key.
+    #[test]
+    fn identityless_checked_owner_publishes_fallback_reason() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "from rust::std::rc import Rc\n\nmodel Guard:\n    held: int\n\ndef required_pin(pin: Option[Rc[Guard]]) -> Result[Rc[Guard], str]:\n    return Err(\"missing\")\n";
+        let program = program(source)?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".into()]));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+
+        let outputs = checked_owner_record_outputs(&program, &checker, &["main".into()])?;
+        assert_eq!(outputs.len(), 1, "a checked owner was silently omitted");
+        let CheckedOwnerRecordOutput::Fallback(fallback) = &outputs[0] else {
+            return Err("the identity-less owner unexpectedly published a reusable value".into());
+        };
+        assert_eq!(fallback.name, "required_pin");
+        assert_eq!(fallback.identity, None);
+        assert_eq!(fallback.reason, "checked owner has no stable declaration identity");
         Ok(())
     }
 }

@@ -27,7 +27,7 @@ struct PendingBodyValue {
 struct PendingBodyFallback {
     module: String,
     name: String,
-    identity: String,
+    identity: Option<String>,
     reason: String,
 }
 
@@ -83,7 +83,7 @@ impl GraphBodyOutput {
                         Err(reason) => self.fallbacks.push(PendingBodyFallback {
                             module: module_path.clone(),
                             name: fields.name,
-                            identity: fields.identity,
+                            identity: Some(fields.identity),
                             reason,
                         }),
                     }
@@ -156,8 +156,9 @@ impl GraphBodyOutput {
         }
         self.values
             .sort_by(|left, right| (&left.module, &left.identity).cmp(&(&right.module, &right.identity)));
-        self.fallbacks
-            .sort_by(|left, right| (&left.module, &left.identity).cmp(&(&right.module, &right.identity)));
+        self.fallbacks.sort_by(|left, right| {
+            (&left.module, &left.name, &left.identity).cmp(&(&right.module, &right.name, &right.identity))
+        });
         let body_ir_bytes: usize = self.values.iter().map(|value| value.body_ir.len()).sum();
         let values: Vec<internal_models::CompiledBodyValue> = self
             .values
