@@ -264,7 +264,7 @@ One row per record family. "Reads" uses P for present, D for deleted, A for abse
 | `final` | callable identity | Settlement of one body, `Final` | P own local; P callee effects | `internal_models.checker_records` (`Final`) | Never | Projection only |
 | `check-scope` | checking scope, command semantic profile | Aggregation, `CheckScope` | M scope membership; P diagnostic and status roots | `internal_models` checker records | Never | None |
 | `body-ir-seed` | executable owner | Per-owner Body IR construction, `BodyIrSeed` | P final, own source, declaration and layout facts | Kernel executable representation | Never | None |
-| `representation` | executable owner or group, pass | Return carriers, native representation and shared-read loans, `BodyIrSummary` | P seeds; P callee summaries; M call and implementation edges | Kernel executable representation | Return-flow and shared-loan cycles | None |
+| `representation` | executable owner or group, pass | Return carriers, native representation and shared-read loans, `Representation` | P seeds; P callee summaries; M call and implementation edges | Kernel executable representation | Return-flow and shared-loan cycles | None |
 | `body-ir` | executable owner | Body IR finalization, `BodyIr` | P own seed and summaries; P callee loan summaries | Kernel executable representation | Never | Delivered for graph-eligible free-function owners |
 | `instance` | generic identity, canonical arguments, context | Instance preparation, `Instance` | P frozen or local template; P substitutions; M implementation choices | Kernel executable representation | Never; recursion is a reference | None |
 | `lowering-demand` | native instance, role, lowering profile | Lowering preparation, `LoweringDemand` | P Body IR or instance; P runtime facades, layouts, frames; A/M facade and provider selectors | `incan_mir_plan` | Layout cycles inside concrete layouts | None |
@@ -275,7 +275,9 @@ One row per record family. "Reads" uses P for present, D for deleted, A for abse
 | `c-declarations` | C unit, ABI profile; per-item projections | C declarations (built with Loaf admission, E3) | P headers and options; A/M declarations | `internal_models` interop records | One translation unit | None |
 | `caller-facet` | Rust unit, referenced exports, ABI profile | Caller facet, RFC 097 (built with Loaf admission, E3) | M referenced exports; P their signatures | `internal_models` interop records | Only for a qualified foreign header group | None |
 
-The stage order is the table's order, from `Discover` to `NativeInterface`. These are the `ProducerStage` values; the line's enum has nine of them and gains the rest. The three foreign producers rank in their own unit's namespace, before the `Slot` stage of any namespace that reads them.
+The stage order is the table's order, from `Discover` to `NativeInterface`. The closed `ProducerStage` enum currently
+names eleven stages, including the distinct `BodyIrSeed`, `Representation`, and `BodyIr` stages. The three foreign
+producers rank in their own unit's namespace, before the `Signature` stage of any namespace that reads them.
 
 Each value schema is versioned, and its version is part of its producer profile. Native compilation is not a semantic producer: the engine claims it by RFC 124 identity and calls `compile_native` with a record-backed `PlanReader`.
 
