@@ -25,6 +25,23 @@ pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
             .collect(),
         owned_initializers: Vec::new(),
     });
+    let selected_leaf = leaf.clone();
+    let selected_identity = selected_leaf
+        .canonical
+        .clone()
+        .ok_or("missing selected loan identity")?;
+    let mut partially_selected = candidate.clone();
+    super::shared_reads::retain_modules_with_selected(
+        std::slice::from_mut(&mut partially_selected),
+        &[],
+        &std::collections::HashSet::from([selected_identity]),
+    );
+    let retained_selected_leaf = partially_selected
+        .bodies
+        .iter()
+        .find(|body| body.name == "leaf")
+        .ok_or("missing selected loan body")?;
+    assert_eq!(retained_selected_leaf, &selected_leaf);
     for access in [
         incan_semantics_core::IncanInputAccess::Shared,
         incan_semantics_core::IncanInputAccess::Exclusive,

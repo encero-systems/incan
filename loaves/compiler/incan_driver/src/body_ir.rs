@@ -8,7 +8,7 @@ use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::TypeCheckInfo;
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::thread;
 
 /// Maximum source components lowered at once inside one compiler invocation.
@@ -76,8 +76,13 @@ pub fn lower_authored_modules(
         .map(|module| module.ok_or("Body IR source component omitted a module"))
         .collect::<Result<Vec<_>, _>>()?;
     bodies.extend(lowered);
+    let selected = modules
+        .iter()
+        .filter_map(|module| analysis.type_info_for_path(&module.file_path))
+        .flat_map(incan_frontend::body_ir::selected_body_identities)
+        .collect::<HashSet<_>>();
     let (context, authored_bodies) = bodies.split_at_mut(authored_start);
-    incan_frontend::body_ir::settle_shared_reads(authored_bodies, context);
+    incan_frontend::body_ir::settle_shared_reads_with_selected(authored_bodies, context, &selected);
     Ok(())
 }
 
