@@ -14,6 +14,7 @@ from native_build import (
 )
 from release_support import (
     FAMILIES,
+    TOOLCHAIN_DIRECTORY,
     BaselineReport,
     Counts,
     ReleaseTrace,
@@ -40,7 +41,7 @@ from release_support import (
     tree_digest,
     verification_program,
 )
-from verify_installation import census_arguments
+from verify_installation import audit_relocation, census_arguments, require_pristine_relocation_inputs
 
 const SHA: str = "0123456789abcdef0123456789abcdef01234567"
 const COMPLETE_LOG: str = """PASS behavior/a/a
@@ -377,7 +378,7 @@ def test_release_scratch_reclamation_is_exact_and_retains_peak_evidence() -> Res
 
 
 def test_installed_verification_uses_only_the_clean_checkout() -> Result[None, str]:
-    """An ignored launching-checkout fixture cannot enter verification through the selected program source."""
+    """Verification selects the clean checkout and separates shipped portability from local observation caches."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     launching = temporary.path().joinpath("launching")
     verification = temporary.path().joinpath("verification-source")
@@ -397,6 +398,37 @@ def test_installed_verification_uses_only_the_clean_checkout() -> Result[None, s
     assert program.0 == verification.joinpath("scripts/verify_installation.incn").0
     assert ignored.is_file()
     assert not selected_source.joinpath("workspaces/contracts/fixtures/project/example/target/ignored").exists()
+
+    home = temporary.path().joinpath("home")
+    toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("toolchain.json").write_text("{}\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    native = toolchain.joinpath("native/example")
+    native.mkdir(true, true).map_err((error) => error.message())?
+    portable = native.joinpath("portable.json")
+    observations = native.joinpath("observations.json")
+    portable
+        .write_text("{\"path\": \"/builder/source.rs\"}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    observations
+        .write_text("{\"path\": \"/builder/source.rs\"}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    match require_pristine_relocation_inputs(home):
+        Ok(_) => return Err("a shipped observation cache passed relocation intake")
+        Err(message) =>
+            assert message.contains("path-keyed observations"), message
+    observations.unlink().map_err((error) => error.message())?
+    match audit_relocation(home, ["/builder"]):
+        Ok(_) => return Err("a portable release document retained a builder path")
+        Err(message) =>
+            assert message.contains("nonportable toolchain JSON"), message
+    portable
+        .write_text("{\"path\": \"builder/source.rs\"}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    observations
+        .write_text("{\"path\": \"/local/source.rs\"}\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    audit_relocation(home, ["/builder"])?
     return Ok(None)
 
 
