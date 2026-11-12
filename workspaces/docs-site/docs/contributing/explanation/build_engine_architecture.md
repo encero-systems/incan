@@ -824,8 +824,8 @@ Baselines come from the baseline measurement of 2026-10-29 (#2481, bundle 0cb030
 | Proof | Kind | Baseline | Measured | Commit | Evidence |
 | --- | --- | --- | --- | --- | --- |
 | Every override has a tracked input | Correctness | Untracked global `Plan` | Met for injected answers: authenticated function/layout fingerprints are carried by their HIR attribute maps; a two-function body edit changed only the edited function fingerprint | `cfce00a6d` plus this commit | Existing lowering-record worked example, including the symlinked signature-edit cold comparison; rustc incremental fingerprint verification |
-| Edited incremental output equals cold output and behavior | Correctness | Not covered | Blocked: edited hello behavior matched cold, but executable bytes differed (`30da9c…` incremental versus `fa3ac5…` cold); reuse remains off and Oven was not run | this commit | Development hello qualification with a fresh cold target/store |
-| CGUs actually regenerated per edit | Efficiency | Whole native unit | Hello retained all five CGU names; four work-product hashes were unchanged and one changed. Edited incremental native time was 73.77 ms versus 67.97 ms cold; Oven remains unmeasured because hello failed byte equality | this commit | Development hello incremental cache and native phase trace |
+| Edited incremental output equals cold output and behavior | Correctness | Not covered | Met for development hello: both printed `later`; `cmp` passed at SHA-256 `d906309e…`; all five identical `OSO` store paths existed | this commit | Development hello qualification with a fresh cold target/store and `nm -ap` debug-map audit |
+| CGUs actually regenerated per edit | Efficiency | Whole native unit | Hello retained all five CGU names; four work-product hashes were unchanged and one changed. Edited incremental native time was 84.72 ms versus 79.88 ms cold, so a unit this small should bypass incremental reuse | this commit | Development hello incremental cache and native phase trace |
 | Head-to-head rows: hello cold, unchanged, private-body edit, signature edit, two homes, unrelated packages ×1/×2/×4, demanded records ×1/×2/×4, graph and LSP, census, idle workers | Efficiency | Pinned integration tree under BE-28 | | | |
 | Observation overhead | Efficiency | At most 5% | One hello sample showed no regression: 73.37 ms released versus 68.88 ms source native phases; qualification remains unrun | `0be358dd8` | Retained-input native driver comparison; diagnostic only |
 
@@ -876,12 +876,12 @@ rustc's incremental verifier rejected the changed `mir_built(greeting)` result a
 the feedable `hir_attr_map` query instead closed that verifier failure. The resulting hello edit retained all five CGU
 names and four of five work-product hashes, and both executables printed the required edited value.
 
-Qualification still fails the artifact contract. A fresh cold build of the same edited source produced SHA-256
-`fa3ac51dbf3e6f9e6572c081e6010ea31b097e40de499b37577cdb5e40bc9075`; the incremental executable was
-`30da9c25d46cb68eecd2e773b7aa74373031c2583325a2cf80d049e48d0ca4c3`. The edited incremental native phase took
-73.77 ms versus 67.97 ms for the fresh cold native phase. Because hello fails byte equality and shows no native-time
-improvement, the qualification constant remains false and Oven's one-body edit is not run or claimed. This is a
-failed E6 proof, not permission to weaken the development artifact contract.
+The stable-input qualification closes that artifact failure. The edited incremental and fresh cold hello executables
+both printed `later`, passed `cmp` at SHA-256 `d906309e116f0e4b87b427b728ebc85af1e4f4c7af1a68d04c41902d5ad0834c`,
+and named the same five existing store objects in their `OSO` records. Four of the five incremental work-product
+hashes remained unchanged and one changed. The edited incremental native phase took 84.72 ms versus 79.88 ms cold;
+reuse is therefore correct for this unit but not an efficiency win at hello's size. A size cutoff must be measured on
+larger units rather than inferred from this single point.
 
 The executable comparison localized the byte difference to development linker metadata rather than emitted
 instructions: the disassemblies and Mach-O section sizes matched, while each binary's symbol table recorded different
@@ -898,7 +898,11 @@ normalization and stripping are not part of the admitted artifact contract.
 
 The one-body Oven edit measured at `0be358dd8` took 2.907 s across the stable native phases: 1.855 s in the rustc front end, 0.869 s in aggregate codegen and 0.183 s in the linker. The native collector reported 16 CGUs and `all_on_success` for every one. The trace does not assign rustc's aggregate LLVM duration to an individual CGU; it records each actual CGU's name, item count and size estimate separately. On hello, the same retained compiler-unit input and common output path produced byte-identical binaries under the released and instrumented source drivers. Its source-driver split was 19.24 ms front end, 5.87 ms codegen and 43.76 ms link.
 
-None of the three proposed shortcuts is currently a valid reuse. No CGU is proven unaffected because the injected `mir_built`, `type_of` and `fn_sig` answers have no tracked per-definition input. The linker reads all 16 regenerated objects, so its 183 ms is required by the observed inputs rather than repeated work whose equality has been established. The development executable also carries the profile-selected debug information; stripping or narrowing it would change the selected artifact contract and would contradict §5.5 rather than prove reuse. Rustc incremental therefore stays off.
+The earlier shortcuts were not valid reuse: the injected `mir_built`, `type_of` and `fn_sig` answers lacked tracked
+per-definition inputs, and stripping development debug information would have changed the artifact contract. The
+qualified path instead supplies those tracked inputs, stable CGU membership and content-addressed linker inputs while
+retaining the profile-selected debug map. A missing plan-record report or a non-development profile still bypasses
+incremental reuse.
 
 Before E2 to E5 land, the adapter can retain the stable phase/CGU evidence, keep a complete override inventory, and build the edited-versus-cold comparison harness. It cannot soundly reuse a native answer. E2 must assign stable definition and instance identities, fixed CGU membership and complete fingerprints to the affected record reach. S3 and ranked E2 must make each overridden query read the exact body, signature, layout, attribute, position/debug and native-interface records it consumes, with witnessed dependencies. E3 must supply exact external native identities and payload compatibility. E4 must clone a qualified immutable incremental seed into private scratch and schedule it with bounded lifecycle ownership. E5 supplies the private-body, signature, test, run, graph and LSP workloads that prove the reuse boundary outside a single executable.
 
