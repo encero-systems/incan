@@ -56,6 +56,7 @@ from compiler_body_values import (
     select_body_values,
 )
 from compiler_body_publication import (
+    dependency_owner,
     prepare_captured_source_inputs,
     prepare_compiled_bodies,
     publish_compiled_bodies,
@@ -272,6 +273,12 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     snapshot_pin = projected_owner(repeated_field_projection, "default:model:Snapshot:pin")?
     publication_pin = projected_owner(repeated_field_projection, "default:model:Publication:pin")?
     prepared_pin = projected_owner(repeated_field_projection, "field:model:PreparedPayload:pin")?
+    assert dependency_owner(
+        repeated_field_projection,
+        "src/store.incn",
+        "pin",
+        "field:package::src::store::Publication::pin|signature",
+    )?.key == publication_pin.key
     assert compiler_source_projection.compiled_owner_source(
         repeated_field_projection,
         "src/store.incn",
@@ -293,7 +300,8 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     identityless = compiler_source_projection.compiled_owner_source(repeated_field_projection, "src/store.incn", "pin")
     match identityless:
         Ok(_) => return Err("identity-less repeated field unexpectedly selected one declaration")
-        Err(reason) => assert reason == "compiled field body has no stable declaration identity: src/store.incn:pin", reason
+        Err(reason) =>
+            assert reason == "compiled field body has no stable declaration identity: src/store.incn:pin", reason
     projected_default = publish_source_projection(published.snapshot, default_projection)?
     declaration = family_key("declaration", "model-record-key")
     declared_default = commit(
@@ -350,11 +358,7 @@ pub def test_retained_owner_selection_skips_an_absent_owner() -> Result[None, st
 
 pub def test_retained_owner_selection_propagates_an_ambiguous_owner() -> Result[None, str]:
     """Multiple current source owners with the same logical name fail closed instead of disappearing as history."""
-    projection = project_source(
-        "app",
-        "src/main.incn",
-        "def item() -> None:\n    pass\n\nmodel item:\n    value: int\n",
-    )?
+    projection = project_source("app", "src/main.incn", "def item() -> None:\n    pass\n\nmodel item:\n    value: int\n")?
     match retained_owner_record(projection, "item"):
         Ok(_) => return Err("an ambiguous retained owner was silently selected or skipped")
         Err(message) =>
@@ -417,10 +421,17 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
         "profile",
     )? == ["first", "second"]
 
-    removed_projection = project_source("package", "src/main.incn", source.replace("def first() -> int:\n    return 1\n\n", ""))?
+    removed_projection = project_source(
+        "package",
+        "src/main.incn",
+        source.replace("def first() -> int:\n    return 1\n\n", ""),
+    )?
     assert removed_projection.declarations.text != projection.declarations.text
     removed = publish_source_projection(complete, removed_projection)?
-    assert invalid_body_owners(removed.snapshot, [removed_projection.declarations.key], "profile")? == ["first", "second"]
+    assert invalid_body_owners(removed.snapshot, [removed_projection.declarations.key], "profile")? == [
+        "first",
+        "second",
+    ]
 
     import_source = source.replace("from std import env", "from std import fs")
     import_projection = project_source("package", "src/main.incn", import_source)?
@@ -555,9 +566,9 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         context="checker-record",
     )
     assert required(published.snapshot, encode_record_key(fallback_key)?)? == b"full-source: local record output refused: Unsupported(\"fixture\")"
-    assert fallback_reasons([
-        CompiledBodyFallback(module="src/main.incn", name="other", identity=None, reason="exact producer refusal"),
-    ]) == ["src/main.incn::other: exact producer refusal"]
+    assert fallback_reasons(
+        [CompiledBodyFallback(module="src/main.incn", name="other", identity=None, reason="exact producer refusal")],
+    ) == ["src/main.incn::other: exact producer refusal"]
 
     fallback_output = scratch.path().joinpath("fallback-body-output")
     publish_binary(
@@ -588,7 +599,8 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         )
         .map_err((error) => error.message())?
     match prepare_compiled_bodies(begin(published.snapshot), unit, fallback_output, Some(report)):
-        Ok(_) => assert false, "a checker-record fallback authenticated a lowering record"
+        Ok(_) =>
+            assert false, "a checker-record fallback authenticated a lowering record"
         Err(message) =>
             assert message.contains("src/main.incn::other: local record output refused: Unsupported(\"fixture\")"), message
     selected = select_body_inventory(published.snapshot, CHECKER_PROFILE)?
@@ -601,13 +613,19 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
 
     provider_body = project_source("provider", "lib", provider_source.replace("return 1", "return 2"))?
     provider_body_edit = publish_source_projection(published.snapshot, provider_body)?
-    assert invalid_body_owners(provider_body_edit.snapshot, [signature_record(provider_body.owners[0]).key], CHECKER_PROFILE)? == []
+    assert invalid_body_owners(
+        provider_body_edit.snapshot,
+        [signature_record(provider_body.owners[0]).key],
+        CHECKER_PROFILE,
+    )? == []
 
     provider_signature = project_source("provider", "lib", provider_source.replace("value() -> int", "value() -> str"))?
     provider_signature_edit = publish_source_projection(published.snapshot, provider_signature)?
-    assert invalid_body_owners(provider_signature_edit.snapshot, [signature_record(provider_signature.owners[0]).key], CHECKER_PROFILE)? == [
-        identity,
-    ]
+    assert invalid_body_owners(
+        provider_signature_edit.snapshot,
+        [signature_record(provider_signature.owners[0]).key],
+        CHECKER_PROFILE,
+    )? == [identity]
 
     module_signature = project_source(
         "app",
@@ -631,7 +649,11 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     helper_body_edit = publish_source_projection(published.snapshot, helper_body)?
     assert invalid_body_owners(helper_body_edit.snapshot, [helper_body.owners[0].key], CHECKER_PROFILE)? == []
     changed_signature = commit(
-        put(begin(published.snapshot), encode_record_key(project_slot)?, b"app|module:helper|value|function|module|0|() -> str"),
+        put(
+            begin(published.snapshot),
+            encode_record_key(project_slot)?,
+            b"app|module:helper|value|function|module|0|() -> str",
+        ),
     ).map_err((error) => error.message())?
     assert invalid_body_owners(changed_signature, [project_slot], CHECKER_PROFILE)? == [identity]
     removed = commit(delete(begin(published.snapshot), encode_record_key(project_slot)?)).map_err(
@@ -659,13 +681,16 @@ def verify_linked_capture(mut unit: UnitDescription, root: Path) -> Result[None,
         metadata = match file_metadata(path)?:
             Some(value) => value
             None => return Err("linked source fixture is missing")
-        inputs.append(CapturedInput(
-            path=path.0,
-            role=InputRole.Resolved,
-            metadata=metadata,
-            digest="capture-fixture",
-            settled=false,
-        ))
+
+        inputs.append(
+            CapturedInput(
+                path=path.0,
+                role=InputRole.Resolved,
+                metadata=metadata,
+                digest="capture-fixture",
+                settled=false,
+            ),
+        )
     empty = store_snapshot(memory_root()).map_err((error) => error.message())?
     prepared = prepare_captured_source_inputs(empty, begin(empty), unit, inputs)?
     declarations = [key for key in prepared.keys if key.family == "declaration-index"]
