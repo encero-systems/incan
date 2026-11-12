@@ -2,11 +2,10 @@
 Run installed CI's Oven test step through an installed Oven, with isolated projects tested concurrently.
 
 Run `incan run scripts/oven_tests.incn -- OVEN EVIDENCE [--jobs N] [--memory GIB]` from a checkout. OVEN is the
-installed command; EVIDENCE is the run's evidence directory. The step runs, one source per invocation so a source can
-be excluded on its own:
+installed command; EVIDENCE is the run's evidence directory. The step runs:
 
 1. `OVEN test` for every `workspaces/oven/src/test_*.incn`, from `workspaces/oven`.
-2. `OVEN test --profile release` for every `loaves/*/*/tests/test_*.incn`, from its Loaf.
+2. `OVEN test --profile release` once for every Loaf that owns a `loaves/*/*/tests/test_*.incn`, from that Loaf.
 
 Each invocation writes its own log under `EVIDENCE/oven-tests/`. `oven-tests.log` joins them in the order above, so
 it does not depend on scheduling. The passing ids must equal `workspaces/contracts/oven-tests.txt`.
@@ -201,33 +200,34 @@ pub def invocations(root: Path, _evidence: Path, logs: Path) -> Result[list[Invo
         alone = source.name() in NEEDS_SETTLED_INSTALLATION
         planned.append(invocation(unit, project.0, PROJECT_RESERVATION_BYTES, logs, len(planned), source, alone))
     compiler = root.joinpath("loaves/compiler").0 + "/"
-    for source in loaf_tests(root.joinpath("loaves"))?:
-        # Compiler Loaves link native support, which an installed bundle ships for the release profile only.
-        loaf = source.parent().parent()
-        arguments = ["test", source.0, "--profile", "release"]
-        planned.append(invocation(arguments, loaf.0, reservation_of(source, compiler), logs, len(planned), source))
+    for loaf in loaf_test_projects(root.joinpath("loaves"))?:
+        # Compiler Loaves link native support, which an installed bundle ships for the release profile only. Testing
+        # the owner once also keeps its project test-library publication within one Oven command.
+        arguments = ["test", loaf.0, "--profile", "release"]
+        planned.append(invocation(arguments, loaf.0, reservation_of(loaf, compiler), logs, len(planned), loaf))
     return Ok(planned)
 
 
 def isolated_oven_project(root: Path, evidence: Path, position: int, source: Path) -> Result[tuple[Path, Path], str]:
     """Copy the Oven project for one source so its target generations cannot withdraw another test's live views."""
-    checkout = oven_test_state_root(root, get_or("OVEN_TEST_STATE_ROOT", "")).joinpath(evidence.name()).joinpath(
-        str(position),
-    )
+    checkout = oven_test_state_root(root, get_or("OVEN_TEST_STATE_ROOT", ""))
+        .joinpath(evidence.name())
+        .joinpath(str(position))
     project = checkout.joinpath("workspaces/oven")
     project.mkdir(true, true).map_err((error) => error.message())?
-    _ = root.joinpath("workspaces/oven/loaf.toml").copy(project.joinpath("loaf.toml"), true, false).map_err(
-        (error) => error.message(),
-    )?
-    _ = root.joinpath("workspaces/oven/src").copy(project.joinpath("src"), true, false).map_err(
-        (error) => error.message(),
-    )?
-    _ = root.joinpath("workspaces/oven/tests").copy(project.joinpath("tests"), true, false).map_err(
-        (error) => error.message(),
-    )?
-    _ = root.joinpath("workbench").copy(checkout.joinpath("workbench"), true, false).map_err(
-        (error) => error.message(),
-    )?
+    _ = root
+        .joinpath("workspaces/oven/loaf.toml")
+        .copy(project.joinpath("loaf.toml"), true, false)
+        .map_err((error) => error.message())?
+    _ = root
+        .joinpath("workspaces/oven/src")
+        .copy(project.joinpath("src"), true, false)
+        .map_err((error) => error.message())?
+    _ = root
+        .joinpath("workspaces/oven/tests")
+        .copy(project.joinpath("tests"), true, false)
+        .map_err((error) => error.message())?
+    _ = root.joinpath("workbench").copy(checkout.joinpath("workbench"), true, false).map_err((error) => error.message())?
     checkout.joinpath("loaves").symlink_to(root.joinpath("loaves")).map_err((error) => error.message())?
     return Ok((project, project.joinpath("src").joinpath(source.name())))
 
@@ -250,13 +250,7 @@ def invocation(
 ) -> Invocation:
     """One invocation whose log name orders it by its position."""
     log = logs.joinpath(log_name(position, source))
-    return Invocation(
-        arguments=arguments,
-        directory=directory,
-        reservation=reservation,
-        log=log,
-        alone=alone,
-    )
+    return Invocation(arguments=arguments, directory=directory, reservation=reservation, log=log, alone=alone)
 
 
 def reservation_of(source: Path, compiler: str) -> int:
@@ -295,6 +289,18 @@ def loaf_tests(loaves: Path) -> Result[list[Path], str]:
                 if source.is_file():
                     found.append(source)
     return Ok(sorted_paths(found))
+
+
+def loaf_test_projects(loaves: Path) -> Result[list[Path], str]:
+    """Every Loaf that owns a discovered test source, once and in the sources' byte order."""
+    mut projects: list[Path] = []
+    mut previous = ""
+    for source in loaf_tests(loaves)?:
+        project = source.parent().parent()
+        if project.0 != previous:
+            projects.append(project)
+            previous = project.0
+    return Ok(projects)
 
 
 def visible_directories(directory: Path) -> Result[list[Path], str]:

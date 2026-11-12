@@ -25,6 +25,8 @@ from oven_tests import (
 from verify_installation import VerificationPhase, verification_phase_plans, verification_trace_environment
 
 const GIB: int = 1073741824
+
+
 def test_jobs_follow_the_configured_count_then_the_cores() -> Result[None, str]:
     """A positive configured count wins; otherwise the cores decide, and at least one runs."""
     assert default_jobs("3", 18) == 3
@@ -185,7 +187,7 @@ def test_log_names_sort_in_invocation_order() -> Result[None, str]:
 
 
 def test_invocations_follow_the_declared_order_and_package_ownership() -> Result[None, str]:
-    """Private Oven projects run first, then every Loaf test from its owner, with compiler-scale reservations."""
+    """Private Oven projects run first, then each test-owning Loaf once, with compiler-scale reservations."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     root = temporary.path()
     fixture(root)?
@@ -201,31 +203,22 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
     assert [item.arguments for item in planned] == [
         ["test", oven_a.joinpath("src/test_alpha.incn").0],
         ["test", oven_b.joinpath("src/test_beta.incn").0],
-        ["test", models.joinpath("tests/test_record_scope.incn").0, "--profile", "release"],
-        ["test", lowering.joinpath("tests/test_three.incn").0, "--profile", "release"],
-        ["test", loaf_b.joinpath("tests/test_one.incn").0, "--profile", "release"],
-        ["test", loaf_a.joinpath("tests/test_one.incn").0, "--profile", "release"],
-        ["test", loaf_a.joinpath("tests/test_two.incn").0, "--profile", "release"],
+        ["test", models.0, "--profile", "release"],
+        ["test", lowering.0, "--profile", "release"],
+        ["test", loaf_b.0, "--profile", "release"],
+        ["test", loaf_a.0, "--profile", "release"],
     ]
-    assert [item.directory for item in planned] == [
-        oven_a.0,
-        oven_b.0,
-        models.0,
-        lowering.0,
-        loaf_b.0,
-        loaf_a.0,
-        loaf_a.0,
-    ]
+    assert [item.directory for item in planned] == [oven_a.0, oven_b.0, models.0, lowering.0, loaf_b.0, loaf_a.0]
     assert oven_test_state_root(root, "").0 == root.joinpath(".agents/state/release-oven-tests").0
     assert oven_test_state_root(root, "/outside/oven-tests").0 == "/outside/oven-tests"
-    assert [item.reservation for item in planned] == [4 * GIB, 4 * GIB, 6 * GIB, 6 * GIB, 4 * GIB, 4 * GIB, 4 * GIB]
-    assert [item.alone for item in planned] == [false, false, false, false, false, false, false]
+    assert [item.reservation for item in planned] == [4 * GIB, 4 * GIB, 6 * GIB, 6 * GIB, 4 * GIB, 4 * GIB]
+    assert [item.alone for item in planned] == [false, false, false, false, false, false]
     assert oven_a.joinpath("src/test_beta.incn").is_file()
     assert oven_b.joinpath("src/test_alpha.incn").is_file()
     assert oven_a.joinpath("tests/fixture.txt").is_file()
     assert oven_a.parent().parent().joinpath("workbench/app/loaf.toml").is_file()
     assert oven_a.parent().parent().joinpath("loaves").is_symlink()
-    assert planned[2].log.0 == logs.joinpath("002-test_record_scope.log").0
+    assert planned[2].log.0 == logs.joinpath("002-internal_models.log").0
     return Ok(None)
 
 
