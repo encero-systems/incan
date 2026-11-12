@@ -362,7 +362,11 @@ def lowering_witnesses(
         if get(prior, encode_record_key(key)?).map_err((error) => error.message())? != Some(record.body_ir):
             return Err("retained Body IR differs from the selected graph")
         projection = source_projection(unit, origin, decoded.source)?
-        owner = owner_record(projection, str(decoded.body.name))?
+        owner = match owner_record(projection, str(decoded.body.name)):
+            Ok(value) => value
+            # A removed or renamed owner remains valid history in the selected graph, but it is not a witness for
+            # the current compile and must not cross into this request's lowering inventory.
+            Err(_) => continue
         for binding in [projection.header, owner]:
             if get(prior, encode_record_key(binding.key)?).map_err((error) => error.message())? != Some(binding.text.encode("utf-8")):
                 return Err("retained Body IR has changed current source inputs")
