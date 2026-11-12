@@ -44,7 +44,8 @@ fn track_definition(tcx: TyCtxt<'_>, def: LocalDefId, plan: &PlanReader) {
         .and_then(|name| plan.function_input(name).or_else(|| plan.alias_input(name)))
         .or_else(|| parent.as_deref().and_then(|name| plan.function_input(name)));
     if tracked.is_some() {
-        let _ = tcx.hir_node_by_def_id(def);
+        let owner = tcx.local_def_id_to_hir_id(def).owner;
+        let _ = tcx.hir_attr_map(owner);
     }
 }
 
