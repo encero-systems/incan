@@ -12,6 +12,7 @@ from oven_tests import (
     default_jobs,
     file_lines,
     invocations,
+    invocation_environment,
     join_logs,
     log_name,
     parse_options,
@@ -194,6 +195,16 @@ def test_log_names_sort_in_invocation_order() -> Result[None, str]:
     assert log_name(0, Path("/r/test_cli.incn")) == "000-test_cli.log"
     assert log_name(42, Path("/r/test_owner.incn")) == "042-test_owner.log"
     assert log_name(1234, Path("/r/test_x.incn")) == "1234-test_x.log"
+    return Ok(None)
+
+
+def test_dependency_freshness_uses_only_the_private_bakery() -> Result[None, str]:
+    """The mutation oracle overrides the release Bakery, while ordinary tests continue to inherit it."""
+    source = Path("/r/test_dependency_freshness.incn")
+    selected = invocation_environment(source, "/private/bakery")
+    assert len(selected) == 1 and selected["INCAN_BAKERY"] == "/private/bakery"
+    assert len(invocation_environment(source, "")) == 0
+    assert len(invocation_environment(Path("/r/test_bakery.incn"), "/private/bakery")) == 0
     return Ok(None)
 
 

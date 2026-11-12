@@ -43,6 +43,9 @@ const FAILED: str = "^test_[A-Za-z0-9_]+[.]incn::test_[A-Za-z0-9_]+ (FAILED|XPAS
 # These read the installed toolchain and require it unchanged, which another invocation's first use of a native crate can
 # break, so they run after the others have finished.
 const NEEDS_SETTLED_INSTALLATION: FrozenList[str] = ["test_engine_protocol.incn"]
+# This source compares mutated dependency generations with cold builds, so sharing prior producer outputs would change
+# the oracle it is testing. Installed verification supplies a separate Bakery for it.
+const NEEDS_PRIVATE_BAKERY: FrozenList[str] = ["test_dependency_freshness.incn"]
 const USAGE: str = "usage: oven_tests.incn OVEN EVIDENCE [--jobs N] [--memory GIB]"
 # The step reports failures under the installed-verification program's name.
 const REPORTER: str = "verify-installation"
@@ -202,6 +205,7 @@ pub def invocations(root: Path, _evidence: Path, logs: Path) -> Result[list[Invo
         project, isolated_source = isolated_oven_project(root, _evidence, len(planned), source)?
         unit = ["test", isolated_source.0]
         alone = source.name() in NEEDS_SETTLED_INSTALLATION
+        environment = invocation_environment(source, get_or("OVEN_TEST_PRIVATE_BAKERY", ""))
         planned.append(
             invocation(
                 unit,
@@ -212,6 +216,7 @@ pub def invocations(root: Path, _evidence: Path, logs: Path) -> Result[list[Invo
                 source,
                 alone,
                 Some(project.parent().parent()),
+                environment,
             ),
         )
     compiler = root.joinpath("loaves/compiler").0 + "/"
@@ -247,6 +252,13 @@ def isolated_oven_project(root: Path, evidence: Path, position: int, source: Pat
     return Ok((project, project.joinpath("src").joinpath(source.name())))
 
 
+pub def invocation_environment(source: Path, private_bakery: str) -> Dict[str, str]:
+    """Select a caller-owned private Bakery only for a test whose oracle mutates native inputs."""
+    if private_bakery != "" and source.name() in NEEDS_PRIVATE_BAKERY:
+        return {"INCAN_BAKERY": private_bakery}
+    return {}
+
+
 pub def oven_test_state_root(root: Path, configured: str) -> Path:
     """Select caller-owned Oven test scratch when configured, preserving the checkout-local default otherwise."""
     if configured != "":
@@ -263,6 +275,7 @@ def invocation(
     source: Path,
     alone: bool = false,
     scratch: Option[Path] = None,
+    environment: Dict[str, str] = {},
 ) -> Invocation:
     """One invocation whose log name orders it by its position."""
     log = logs.joinpath(log_name(position, source))
@@ -271,6 +284,7 @@ def invocation(
         directory=directory,
         reservation=reservation,
         log=log,
+        environment=environment,
         alone=alone,
         scratch=scratch,
     )
