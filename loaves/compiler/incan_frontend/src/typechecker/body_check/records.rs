@@ -281,7 +281,7 @@ impl Positions {
             .iter()
             .map(|(canonical, stable)| (stable.render_compact(), canonical.clone()))
             .collect::<BTreeMap<_, _>>();
-        // Imported package bindings are authenticated by their admitted Loaf manifest before checking. Retain those
+        // Imported package and sibling-module bindings are authenticated by their declaration records. Retain those
         // exact canonical identities alongside builtins so a body record can name the dependency declaration it read.
         for index in 0..checker.symbols.all_symbols().len() {
             let Some(canonical) = checker.symbols.identity_of(index) else {
@@ -289,7 +289,9 @@ impl Positions {
             };
             if !matches!(
                 canonical.origin,
-                incan_semantics_core::SymbolOrigin::Builtin | incan_semantics_core::SymbolOrigin::Package { .. }
+                incan_semantics_core::SymbolOrigin::Builtin
+                    | incan_semantics_core::SymbolOrigin::Module(_)
+                    | incan_semantics_core::SymbolOrigin::Package { .. }
             ) {
                 continue;
             }

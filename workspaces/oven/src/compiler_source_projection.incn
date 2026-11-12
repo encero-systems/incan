@@ -22,9 +22,10 @@ pub model SourceProjectionRecord:
 
 
 pub model SourceProjection:
-    """The module context and independently reusable callable owners projected from one source file."""
+    """The module context, declaration surface and independently reusable callable owners projected from one source file."""
 
     pub header: SourceProjectionRecord
+    pub declarations: SourceProjectionRecord
     pub owners: list[SourceProjectionRecord]
 
 
@@ -86,9 +87,10 @@ class SourceProjector:
             self.boundaries.append(Boundary(start=decorated_start, owner=""))
 
     pub def projection(mut self) -> Result[SourceProjection, str]:
-        """Partition every source byte into one callable record or the shared module-header record."""
+        """Partition source owners while retaining a body-independent declaration surface for selector invalidation."""
         self.discover()
         mut header = ""
+        mut declarations = ""
         mut owners: list[SourceProjectionRecord] = []
         if len(self.boundaries) == 0:
             header = self.source
@@ -104,6 +106,7 @@ class SourceProjector:
                 if boundary.owner == "":
                     header += text
                 else:
+                    declarations += boundary.owner + "\n" + declaration_surface(text) + "\n"
                     owners.append(
                         SourceProjectionRecord(
                             key=source_key("owner-source", self.origin, self.path, boundary.owner),
@@ -117,6 +120,12 @@ class SourceProjector:
                 header=SourceProjectionRecord(
                     key=source_key("module-header", self.origin, self.path, "module"),
                     text=header,
+                    start=0,
+                    end=len(self.source),
+                ),
+                declarations=SourceProjectionRecord(
+                    key=source_key("declaration-index", self.origin, self.path, "module"),
+                    text=declarations,
                     start=0,
                     end=len(self.source),
                 ),
@@ -137,6 +146,11 @@ pub def owner_source_key(origin: str, path: str, name: str) -> RecordKey:
     return source_key("owner-source", origin, path, name)
 
 
+pub def declaration_index_key(origin: str, path: str) -> RecordKey:
+    """Name the body-independent declaration surface used to invalidate project declaration readers before checking."""
+    return source_key("declaration-index", origin, path, "module")
+
+
 pub def publish_source_projection(
     selected: Snapshot,
     projection: SourceProjection,
@@ -148,12 +162,46 @@ pub def publish_source_projection(
         projection.header.text.encode("utf-8"),
     )
     mut published = [encode_record_key(projection.header.key)?]
+    declaration_key = encode_record_key(projection.declarations.key)?
+    transaction = put(transaction, declaration_key, projection.declarations.text.encode("utf-8"))
+    published.append(declaration_key)
     for owner in projection.owners:
         key = encode_record_key(owner.key)?
         transaction = put(transaction, key, owner.text.encode("utf-8"))
         published.append(key)
     snapshot = commit(transaction).map_err((error) => error.message())?
     return Ok(PublishedSourceProjection(snapshot=snapshot, keys=published))
+
+
+def declaration_surface(source: str) -> str:
+    """Project a callable header without its body; retain complete non-callable declarations conservatively."""
+    mut callable = false
+    mut depth = 0
+    mut surface = ""
+    for line in source.split("\n"):
+        content = line.strip()
+        if not callable and not content.startswith("@"):
+            callable = callable_declaration(content)
+            if not callable:
+                return source
+        surface += line + "\n"
+        for character in line:
+            if character in "([{":
+                depth += 1
+            elif character in ")]}":
+                depth -= 1
+        if callable and depth == 0 and content.endswith(":"):
+            return surface
+    return source
+
+
+def callable_declaration(line: str) -> bool:
+    """Recognize the callable declaration forms whose indented bodies do not contribute to checked signatures."""
+    mut header = line
+    for prefix in ["pub ", "async "]:
+        if header.startswith(prefix):
+            header = header[len(prefix):]
+    return header.startswith("def ")
 
 
 def declaration_owner(line: str) -> str:

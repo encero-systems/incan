@@ -5,6 +5,7 @@ from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot, Transaction, begin, commit, get, put
 from pub::internal_models import (
+    CompiledBodyDependencyRead,
     CompiledBodyValue,
     ProducerRank,
     ProducerStage,
@@ -28,7 +29,13 @@ from pub::internal_models.records import (
     encode_record_key,
 )
 from compiler_graph_records import prepare_evaluation
-from compiler_source_projection import SourceProjection, SourceProjectionRecord, owner_source_key, project_source
+from compiler_source_projection import (
+    SourceProjection,
+    SourceProjectionRecord,
+    declaration_index_key,
+    owner_source_key,
+    project_source,
+)
 from engine_capture import CapturedInput, InputRole
 from files import discard_file
 from unit import UnitDescription, dependency_source_roots
@@ -129,6 +136,11 @@ pub def prepare_captured_source_inputs(
                     if get(selected, header_key).map_err((error) => error.message())? != Some(header_value):
                         changed.append(projection.header.key)
                     prepared = put(prepared, header_key, header_value)
+                    declaration_key = encode_record_key(projection.declarations.key)?
+                    declaration_value = projection.declarations.text.encode("utf-8")
+                    if get(selected, declaration_key).map_err((error) => error.message())? != Some(declaration_value):
+                        changed.append(projection.declarations.key)
+                    prepared = put(prepared, declaration_key, declaration_value)
                     for owner in projection.owners:
                         owner_key = encode_record_key(owner.key)?
                         owner_value = owner.text.encode("utf-8")
@@ -210,6 +222,10 @@ pub def prepare_compiled_bodies(
             header_value = projection.header.text.encode("utf-8")
             prepared = put(prepared, header_key, header_value)
             source.add(header_key, header_value)
+            declaration_key = encode_record_key(projection.declarations.key)?
+            declaration_value = projection.declarations.text.encode("utf-8")
+            prepared = put(prepared, declaration_key, declaration_value)
+            source.add(declaration_key, declaration_value)
             for owner in projection.owners:
                 owner_key = encode_record_key(owner.key)?
                 owner_value = owner.text.encode("utf-8")
@@ -223,6 +239,10 @@ pub def prepare_compiled_bodies(
             header_value = projection.header.text.encode("utf-8")
             prepared = put(prepared, header_key, header_value)
             source.add(header_key, header_value)
+            declaration_key = encode_record_key(projection.declarations.key)?
+            declaration_value = projection.declarations.text.encode("utf-8")
+            prepared = put(prepared, declaration_key, declaration_value)
+            source.add(declaration_key, declaration_value)
             for owner in projection.owners:
                 owner_key = encode_record_key(owner.key)?
                 owner_value = owner.text.encode("utf-8")
@@ -232,9 +252,22 @@ pub def prepare_compiled_bodies(
     editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
     for value in outputs.values:
         for dependency in value.dependency_reads:
-            if dependency.package in editable_packages:
-                owner = dependency_owner_record(unit, dependency.package, dependency.module, dependency.name)?
-                source.add(encode_record_key(owner.key)?, owner.text.encode("utf-8"))
+            match dependency.package:
+                Some(package) =>
+                    if package in editable_packages:
+                        owner = dependency_owner_record(unit, package, dependency.module, dependency.name)?
+                        source.add(encode_record_key(owner.key)?, owner.text.encode("utf-8"))
+                None =>
+                    slot = project_declaration_slot(origin, dependency.module, dependency.name)
+                    slot_value = dependency.identity.encode("utf-8")
+                    prepared = put(prepared, encode_record_key(slot)?, slot_value)
+                    source.add(encode_record_key(slot)?, slot_value)
+                    dependency_module = project_dependency_module(unit, dependency.module)?
+                    dependency_projection = source_projection(unit, origin, dependency_module)?
+                    declaration_key = encode_record_key(dependency_projection.declarations.key)?
+                    declaration_value = dependency_projection.declarations.text.encode("utf-8")
+                    prepared = put(prepared, declaration_key, declaration_value)
+                    source.add(declaration_key, declaration_value)
     for value in outputs.values:
         declaration_key = encode_record_key(
             body_key("declaration", origin, value.identity, value.name, root(value.declaration)?),
@@ -267,8 +300,12 @@ pub def prepare_compiled_bodies(
         for declaration in declarations:
             local_reads.append(request(declaration))
         for dependency in value.dependency_reads:
-            if dependency.package in editable_packages:
-                local_reads.append(request(owner_source_key(dependency.package, dependency.module, dependency.name)))
+            match dependency_read_key(origin, dependency, editable_packages):
+                Some(key) => local_reads.append(request(key))
+                None => pass
+            match dependency_invalidation_key(unit, origin, dependency)?:
+                Some(key) => local_reads.append(request(key))
+                None => pass
         local_receipt = prepared_receipt(source, scope, local_key, local_reads)?
         local = prepare_evaluation(
             prepared,
@@ -284,8 +321,12 @@ pub def prepare_compiled_bodies(
         for declaration in declarations:
             final_reads.append(request(declaration))
         for dependency in value.dependency_reads:
-            if dependency.package in editable_packages:
-                final_reads.append(request(owner_source_key(dependency.package, dependency.module, dependency.name)))
+            match dependency_read_key(origin, dependency, editable_packages):
+                Some(key) => final_reads.append(request(key))
+                None => pass
+            match dependency_invalidation_key(unit, origin, dependency)?:
+                Some(key) => final_reads.append(request(key))
+                None => pass
         final_receipt = prepared_receipt(source, scope, final_key, final_reads)?
         final = prepare_evaluation(
             prepared,
@@ -356,6 +397,61 @@ def module_declarations(values: list[CompiledBodyValue], origin: str, module: st
         if value.module == module:
             declarations.append(body_key("declaration", origin, value.identity, value.name, root(value.declaration)?))
     return Ok(declarations)
+
+
+def dependency_read_key(
+    origin: str,
+    dependency: CompiledBodyDependencyRead,
+    editable_packages: list[str],
+) -> Option[RecordKey]:
+    """Select the producer declaration for a project read or the existing editable-package source witness."""
+    match dependency.package:
+        Some(package) =>
+            if package in editable_packages:
+                return Some(owner_source_key(package, dependency.module, dependency.name))
+            return None
+        None => return Some(project_declaration_slot(origin, dependency.module, dependency.name))
+
+
+def dependency_invalidation_key(
+    unit: UnitDescription,
+    origin: str,
+    dependency: CompiledBodyDependencyRead,
+) -> Result[Option[RecordKey], str]:
+    """Select the captured project declaration surface that makes signature and removal edits visible before checking."""
+    if dependency.package is not None:
+        return Ok(None)
+    return Ok(Some(declaration_index_key(origin, project_dependency_module(unit, dependency.module)?)))
+
+
+def project_dependency_module(unit: UnitDescription, module: str) -> Result[str, str]:
+    """Resolve a checked project module identity to the captured source path used by source projection."""
+    base = Path(unit.source_root).joinpath(module)
+    mut candidates = [Path(base.0 + ".incn"), base.joinpath("mod.incn"), base.joinpath("__init__.incn")]
+    if "/" in module:
+        candidates.append(base.joinpath("prelude.incn"))
+    # Candidates resolve through symlinks (macOS `/var` is `/private/var`), so the root they're compared with must too.
+    root = Path(unit.project_root).resolve().map_err((error) => f"cannot resolve project root {error.message()}")?
+    prefix = root.0 + "/"
+    for candidate in candidates:
+        match candidate.resolve():
+            Ok(resolved) =>
+                if resolved.0.startswith(prefix) and candidate.is_file():
+                    return Ok(resolved.0[len(prefix):])
+            Err(_) => pass
+    return Err("compiled body output dependency module is absent: project:" + module)
+
+
+def project_declaration_slot(origin: str, module: str, name: str) -> RecordKey:
+    """Name one project declaration slot whose value is the producer's checked stable identity."""
+    return RecordKey(
+        family="declaration-slot",
+        identity_profile=IDENTITY_PROFILE,
+        origin=origin,
+        identity=module,
+        facet=name,
+        context="checked-signature",
+    )
 
 
 def body_key(family: str, origin: str, identity: str, facet: str, context: str) -> RecordKey:

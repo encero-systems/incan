@@ -217,13 +217,22 @@ fn encoded_body_value(
             package: read.package.clone(),
             module: dependency_module(&read.module_path),
             name: read.declaration_name.clone(),
+            identity: read.declaration_identity.clone(),
         })
         .collect::<Vec<_>>();
     dependency_reads.sort_by(|left, right| {
-        (&left.package, &left.module, &left.name).cmp(&(&right.package, &right.module, &right.name))
+        (&left.package, &left.module, &left.name, &left.identity).cmp(&(
+            &right.package,
+            &right.module,
+            &right.name,
+            &right.identity,
+        ))
     });
     dependency_reads.dedup_by(|left, right| {
-        left.package == right.package && left.module == right.module && left.name == right.name
+        left.package == right.package
+            && left.module == right.module
+            && left.name == right.name
+            && left.identity == right.identity
     });
     Ok(PendingBodyValue {
         module: module.to_owned(),
