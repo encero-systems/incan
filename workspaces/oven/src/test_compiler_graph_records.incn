@@ -476,6 +476,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
                         declaration=declaration,
                         local=local,
                         final=final,
+                        body_ir_seed=b"owner-seed",
                         body_ir=b"owner-frame",
                         dependency_reads=[
                             CompiledBodyDependencyRead(
@@ -533,6 +534,10 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     decoded = decode_graph_body_values(pages[0].value).map_err((error) => f"{error:?}")?
     assert len(decoded) == 1 and decoded[0].identity == identity
     assert invalid_body_owners(published.snapshot, [], CHECKER_PROFILE)? == []
+    cold_work = body_ir_producer_work(published.snapshot, [], CHECKER_PROFILE)?
+    assert cold_work.seed_evaluations == 0
+    assert cold_work.representation_evaluations == 0
+    assert cold_work.body_ir_evaluations == 0
 
     provider_body = project_source("provider", "lib", provider_source.replace("return 1", "return 2"))?
     provider_body_edit = publish_source_projection(published.snapshot, provider_body)?

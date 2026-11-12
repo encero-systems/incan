@@ -88,6 +88,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         declaration=declaration_bytes,
         local=local_bytes,
         final=final_bytes,
+        body_ir_seed=b"owner-seed",
         body_ir=b"owner-frame",
         dependency_reads=[CompiledBodyDependencyRead(
             package=Some("provider"),

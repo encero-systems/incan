@@ -8,7 +8,7 @@ pub const CHECKER_PROFILE: str = "incan.checker-free-functions/13"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/2"
-const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/6"
+const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/7"
 # One whole-program transport carries all bounded checker records plus native owner frames; bound the aggregate at
 # 64 MiB while individual checker records retain their narrower 64 KiB limit.
 const MAX_GRAPH_TRANSPORT_BYTES: int = 67108864
@@ -71,6 +71,7 @@ pub model CompiledBodyValue:
     pub declaration: bytes
     pub local: bytes
     pub final: bytes
+    pub body_ir_seed: bytes
     pub body_ir: bytes
     pub dependency_reads: list[CompiledBodyDependencyRead] = []
 
@@ -442,6 +443,7 @@ pub def encode_compiled_body_outputs(outputs: CompiledBodyOutputs) -> Result[byt
             hexlify(value.declaration),
             hexlify(value.local),
             hexlify(value.final),
+            hexlify(value.body_ir_seed),
             hexlify(value.body_ir),
             str(len(value.dependency_reads)),
         ]
@@ -488,14 +490,14 @@ pub def decode_compiled_body_outputs(encoded: bytes) -> Result[CompiledBodyOutpu
     mut previous = ""
     mut offset = 3
     for _ in range(count):
-        if offset + 8 > len(tokens):
+        if offset + 9 > len(tokens):
             return Err(CodecFault.Malformed)
-        dependency_count = decimal(tokens[offset + 7])?
-        if dependency_count > MAX_FIELDS or offset + 8 + dependency_count * 4 > len(tokens):
+        dependency_count = decimal(tokens[offset + 8])?
+        if dependency_count > MAX_FIELDS or offset + 9 + dependency_count * 4 > len(tokens):
             return Err(CodecFault.Malformed)
         mut dependency_reads: list[CompiledBodyDependencyRead] = []
         mut previous_read = ""
-        mut dependency_offset = offset + 8
+        mut dependency_offset = offset + 9
         for _ in range(dependency_count):
             read = CompiledBodyDependencyRead(
                 package=decoded_optional_identity(tokens[dependency_offset]),
@@ -516,7 +518,8 @@ pub def decode_compiled_body_outputs(encoded: bytes) -> Result[CompiledBodyOutpu
             declaration=unhexlify(tokens[offset + 3]).map_err((_) => CodecFault.Malformed)?,
             local=unhexlify(tokens[offset + 4]).map_err((_) => CodecFault.Malformed)?,
             final=unhexlify(tokens[offset + 5]).map_err((_) => CodecFault.Malformed)?,
-            body_ir=unhexlify(tokens[offset + 6]).map_err((_) => CodecFault.Malformed)?,
+            body_ir_seed=unhexlify(tokens[offset + 6]).map_err((_) => CodecFault.Malformed)?,
+            body_ir=unhexlify(tokens[offset + 7]).map_err((_) => CodecFault.Malformed)?,
             dependency_reads=dependency_reads,
         )
         order = value.module + "\n" + value.identity
@@ -586,6 +589,8 @@ def validate_compiled_body_value(value: CompiledBodyValue) -> Result[None, Codec
         GraphBodyValue(identity=value.identity, local=value.local, final=value.final, body_ir=value.body_ir),
     )?
     if declaration.family != CheckedFamily.Declaration or pair[0].owner != declaration.owner:
+        return Err(CodecFault.Malformed)
+    if len(value.body_ir_seed) == 0:
         return Err(CodecFault.Malformed)
     return Ok(None)
 

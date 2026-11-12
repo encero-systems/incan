@@ -19,6 +19,7 @@ struct PendingBodyValue {
     declaration: Vec<u8>,
     local: Vec<u8>,
     final_value: Vec<u8>,
+    body_ir_seed: Vec<u8>,
     body_ir: Vec<u8>,
     dependency_reads: Vec<internal_models::CompiledBodyDependencyRead>,
 }
@@ -73,12 +74,21 @@ impl GraphBodyOutput {
             return Ok(());
         };
         let module_path = module_path.to_string_lossy().into_owned();
-        for output in
-            incan_frontend::checker_records::checked_owner_record_outputs(&module.ast, checker, &module.path_segments)?
-        {
+        let outputs =
+            incan_frontend::checker_records::checked_owner_record_outputs(&module.ast, checker, &module.path_segments)?;
+        let declarations = outputs
+            .iter()
+            .filter_map(|output| match output {
+                incan_frontend::checker_records::CheckedOwnerRecordOutput::Value(fields) => {
+                    Some((fields.name.clone(), fields.identity.clone(), fields.declaration.clone()))
+                }
+                incan_frontend::checker_records::CheckedOwnerRecordOutput::Fallback(_) => None,
+            })
+            .collect::<Vec<_>>();
+        for output in outputs {
             match output {
                 incan_frontend::checker_records::CheckedOwnerRecordOutput::Value(fields) => {
-                    match encoded_body_value(&module_path, &fields) {
+                    match encoded_body_value(module, &module_path, &fields, declarations.clone()) {
                         Ok(value) => self.values.push(value),
                         Err(reason) => self.fallbacks.push(PendingBodyFallback {
                             module: module_path.clone(),
@@ -170,6 +180,7 @@ impl GraphBodyOutput {
                 declaration: value.declaration,
                 local: value.local,
                 r#final: value.final_value,
+                body_ir_seed: value.body_ir_seed,
                 body_ir: value.body_ir,
                 dependency_reads: value.dependency_reads,
             })
@@ -198,8 +209,10 @@ impl GraphBodyOutput {
 
 /// Convert one compiler-produced owner independently so a codec limitation cannot refuse its successful build.
 fn encoded_body_value(
+    parsed: &ParsedModule,
     module: &str,
     fields: &incan_frontend::checker_records::CheckedOwnerRecordFields,
+    declarations: Vec<(String, String, Vec<Vec<String>>)>,
 ) -> Result<PendingBodyValue, String> {
     let declaration = internal_models::from_native_fields(&fields.declaration)
         .and_then(internal_models::encode_record)
@@ -210,6 +223,16 @@ fn encoded_body_value(
     let final_value = internal_models::from_native_final_fields(&fields.final_value)
         .and_then(internal_models::encode_record)
         .map_err(|error| format!("final record output refused: {error:?}"))?;
+    let body_ir_seed = incan_frontend::checker_records::produce_body_ir_seed(
+        &parsed.source,
+        module,
+        &parsed.path_segments,
+        &fields.name,
+        &fields.identity,
+        fields.final_value.clone(),
+        declarations,
+    )
+    .map_err(|error| format!("Body IR seed output refused: {error:?}"))?;
     let mut dependency_reads = fields
         .dependency_reads
         .iter()
@@ -242,6 +265,7 @@ fn encoded_body_value(
         declaration,
         local,
         final_value,
+        body_ir_seed,
         body_ir: Vec::new(),
         dependency_reads,
     })

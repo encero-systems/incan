@@ -336,8 +336,29 @@ pub def prepare_compiled_bodies(
         )?
         prepared = final.transaction
         source.add(encode_record_key(final_key)?, value.final)
+        seed_key = body_key("body-ir-seed", origin, value.identity, "checked", root(value.final)?)
+        mut seed_reads = [request(owner.key), request(projection.header.key), request(final_key)]
+        for declaration in declarations:
+            seed_reads.append(request(declaration))
+        for dependency in value.dependency_reads:
+            match dependency_read_key(unit, origin, dependency, editable_packages)?:
+                Some(key) => seed_reads.append(request(key))
+                None => pass
+            match dependency_invalidation_key(unit, origin, dependency)?:
+                Some(key) => seed_reads.append(request(key))
+                None => pass
+        seed_receipt = prepared_receipt(source, scope, seed_key, seed_reads)?
+        seed = prepare_evaluation(
+            prepared,
+            "compiled-body-ir-seed-" + value.identity,
+            ProducerRank(namespace=0, stage=ProducerStage.BodyIrSeed, dependency=0),
+            value.body_ir_seed,
+            seed_receipt,
+        )?
+        prepared = seed.transaction
+        source.add(encode_record_key(seed_key)?, value.body_ir_seed)
         body_ir_key = body_key("body-ir", origin, value.identity, "checked", root(value.final)?)
-        body_ir_receipt = prepared_receipt(source, scope, body_ir_key, [request(final_key)])?
+        body_ir_receipt = prepared_receipt(source, scope, body_ir_key, [request(seed_key)])?
         body_ir = prepare_evaluation(
             prepared,
             "compiled-body-ir-" + value.identity,
