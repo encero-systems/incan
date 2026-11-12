@@ -17,7 +17,7 @@ pub(super) fn assert_equality_contract() -> Result<(), Box<dyn std::error::Error
     ]);
     let mut expected = candidate.clone();
     super::legacy_source_comparison::retain_equality_borrows(&mut expected);
-    super::source_comparison::retain_equality_borrows(&mut candidate);
+    super::source_comparison::retain_equality_borrows(&mut candidate, &std::collections::HashSet::new());
     assert_same_module(&expected, &candidate)?;
     assert!(candidate.nominal_declarations[0].comparison_equality.is_some());
     Ok(())

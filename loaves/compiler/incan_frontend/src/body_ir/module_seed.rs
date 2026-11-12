@@ -365,14 +365,15 @@ pub(super) fn retain_module_representations(
     program: &ast::Program,
     type_info: &TypeCheckInfo,
     context: &[bir::BodyIrModule],
+    selected: &HashSet<CanonicalSymbolId>,
 ) {
-    source_comparison::retain_equality_borrows(module);
+    source_comparison::retain_equality_borrows(module, selected);
     let opaque_carriers = opaque_returns::collect(module, type_info);
     // Retain source trait annotations before local opaque propagation replaces return types with model witnesses.
-    trait_values::retain_inputs(module, program, type_info, context);
-    trait_returns::retain_returns(module, program, type_info, context);
-    opaque_returns::retain(module, &opaque_carriers);
-    nominal_carriers::retain(module, type_info, context);
+    trait_values::retain_inputs(module, program, type_info, context, selected);
+    trait_returns::retain_returns(module, program, type_info, context, selected);
+    opaque_returns::retain(module, &opaque_carriers, selected);
+    nominal_carriers::retain(module, type_info, context, selected);
     primitive_adapters::retain(module);
     union_layouts::retain(module);
 }

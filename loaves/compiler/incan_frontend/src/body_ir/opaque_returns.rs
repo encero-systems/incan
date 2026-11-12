@@ -1,6 +1,7 @@
 //! Retain the concrete ABI of local opaque trait returns without changing legacy typecheck facts.
 
 use super::{CanonicalSymbolId, IncanType, ResolvedType, SemanticSourceTargetKind, TypeCheckInfo, bir};
+use std::collections::HashSet;
 
 /// One source function whose checked trait contract has a single proven nominal carrier.
 pub(super) struct Carrier {
@@ -47,8 +48,11 @@ pub(super) fn collect(module: &bir::BodyIrModule, type_info: &TypeCheckInfo) -> 
 
 /// Apply the checked opaque contracts captured before trait-return refinement replaces their interface carriers. The
 /// snapshot preserves exact Self-returning slots without resolving names or adding dispatch authority.
-pub(super) fn retain(module: &mut bir::BodyIrModule, carriers: &[Carrier]) {
+pub(super) fn retain(module: &mut bir::BodyIrModule, carriers: &[Carrier], selected: &HashSet<CanonicalSymbolId>) {
     for body in &mut module.bodies {
+        if super::body_is_selected(body, selected) {
+            continue;
+        }
         retain_body(body, carriers);
     }
 }

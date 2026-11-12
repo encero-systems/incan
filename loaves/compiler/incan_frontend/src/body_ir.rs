@@ -167,7 +167,8 @@ pub fn build_body_ir_module_unsettled(
     context: &BodyIrContext<'_>,
 ) -> bir::BodyIrModule {
     let mut module = build_module_seed(program, module_path, type_info, context);
-    retain_module_representations(&mut module, program, type_info, context.modules);
+    let selected = selected_body_identities(type_info);
+    retain_module_representations(&mut module, program, type_info, context.modules, &selected);
     module
 }
 
@@ -194,6 +195,13 @@ pub fn selected_body_identities(type_info: &TypeCheckInfo) -> HashSet<CanonicalS
         .values()
         .filter_map(|body| body.canonical.clone())
         .collect()
+}
+
+/// Report whether a body is a graph-selected final owner that representation passes must leave immutable.
+fn body_is_selected(body: &bir::Body, selected: &HashSet<CanonicalSymbolId>) -> bool {
+    body.canonical
+        .as_ref()
+        .is_some_and(|identity| selected.contains(identity))
 }
 
 /// The declarations-only Body IR one member of an import cycle contributes to the other members' context before its

@@ -4,7 +4,7 @@
 //! identity in each frame's existing type map. Legacy checker tables and generated source are never changed.
 
 use constructor_arguments::ConstructorCarriers;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use super::{CanonicalSymbolId, IncanType, TypeCheckInfo, ast, bir, semantic_type_from_resolved};
 use incan_lang::lang::surface::constructors::ConstructorId;
@@ -54,8 +54,13 @@ pub(super) fn retain_declared_type(ty: &mut IncanType, identities: &Identities) 
 }
 
 /// Retain source nominal identity on every admitted project's type-bearing declaration and deferred frame.
-pub(super) fn retain(module: &mut bir::BodyIrModule, facts: &TypeCheckInfo, context: &[bir::BodyIrModule]) {
-    retain_return_owners(module, context);
+pub(super) fn retain(
+    module: &mut bir::BodyIrModule,
+    facts: &TypeCheckInfo,
+    context: &[bir::BodyIrModule],
+    selected: &HashSet<CanonicalSymbolId>,
+) {
+    retain_return_owners(module, context, selected);
     let constructors = constructor_arguments::collect(module, context);
     let module_identities = super::parameter_types::retained_type_identities(facts);
     for declaration in &mut module.nominal_declarations {
@@ -93,6 +98,9 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, facts: &TypeCheckInfo, cont
         }
     }
     for body in &mut module.bodies {
+        if super::body_is_selected(body, selected) {
+            continue;
+        }
         retain_body(body, facts, &constructors);
     }
     for binding in &mut module.decorated_bindings {
@@ -727,7 +735,11 @@ type ReturnCarriers = BTreeMap<CanonicalSymbolId, ReturnCarrier>;
 
 /// Bind call-result owners before opaque return refinement needs their nominal adoptions. This phase transfers only
 /// declaration-owned identities; final carrier qualification still runs after return witnesses have settled.
-pub(super) fn retain_return_owners(module: &mut bir::BodyIrModule, context: &[bir::BodyIrModule]) {
+pub(super) fn retain_return_owners(
+    module: &mut bir::BodyIrModule,
+    context: &[bir::BodyIrModule],
+    selected: &HashSet<CanonicalSymbolId>,
+) {
     let returns = return_carriers(module, context);
     for declaration in &mut module.nominal_declarations {
         if let Some(body) = &mut declaration.field_default_body {
@@ -738,6 +750,9 @@ pub(super) fn retain_return_owners(module: &mut bir::BodyIrModule, context: &[bi
         }
     }
     for body in &mut module.bodies {
+        if super::body_is_selected(body, selected) {
+            continue;
+        }
         retain_body_return_owners(body, &returns);
     }
     for binding in &mut module.decorated_bindings {
