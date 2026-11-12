@@ -55,7 +55,7 @@ from compiler_body_values import (
     select_body_inventory,
     select_body_values,
 )
-from compiler_body_publication import prepare_compiled_bodies, publish_compiled_bodies
+from compiler_body_publication import prepare_compiled_bodies, publish_compiled_bodies, retained_owner_record
 from compiler_body_fallbacks import fallback_reasons
 from compiler_source_projection import project_source, publish_source_projection
 from publication import publish_binary
@@ -239,6 +239,28 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     for key in published.keys:
         assert get(published.snapshot, key).map_err((error) => error.message())? is not None
     return Ok(None)
+
+
+pub def test_retained_owner_selection_skips_an_absent_owner() -> Result[None, str]:
+    """A removed source owner alone turns retained Body IR into history rather than a current lowering witness."""
+    projection = project_source("app", "src/main.incn", "def other() -> None:\n    pass\n")?
+    match retained_owner_record(projection, "removed")?:
+        None => return Ok(None)
+        Some(_) => return Err("an absent retained owner remained eligible for lowering")
+
+
+pub def test_retained_owner_selection_propagates_an_ambiguous_owner() -> Result[None, str]:
+    """Multiple current source owners with the same logical name fail closed instead of disappearing as history."""
+    projection = project_source(
+        "app",
+        "src/main.incn",
+        "def item() -> None:\n    pass\n\nmodel item:\n    value: int\n",
+    )?
+    match retained_owner_record(projection, "item"):
+        Ok(_) => return Err("an ambiguous retained owner was silently selected or skipped")
+        Err(message) =>
+            assert message == "compiled body output has multiple matching owner sources: item", message
+            return Ok(None)
 
 
 pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidation() -> Result[None, str]:
