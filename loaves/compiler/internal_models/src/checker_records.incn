@@ -8,9 +8,8 @@ pub const CHECKER_PROFILE: str = "incan.checker-free-functions/15"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/2"
-const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-outputs/6"
-# One whole-program transport carries all bounded checker records plus native owner frames; bound the aggregate at
-# 64 MiB while individual checker records retain their narrower 64 KiB limit.
+# One selected-input request carries bounded checker records plus native owner frames; bound that request at 64 MiB
+# while individual checker records retain their narrower 64 KiB limit.
 const MAX_GRAPH_TRANSPORT_BYTES: int = 67108864
 
 
@@ -96,7 +95,7 @@ pub model CompiledBodyFallback:
 
 
 pub model CompiledBodyOutputs:
-    """Every record-eligible value and explicit full-source fallback from one successful compilation."""
+    """Every record-eligible value and explicit full-source fallback awaiting independent binary framing."""
 
     pub values: list[CompiledBodyValue]
     pub fallbacks: list[CompiledBodyFallback]
@@ -424,170 +423,12 @@ pub def decode_graph_body_page(
     )
 
 
-pub def encode_compiled_body_outputs(outputs: CompiledBodyOutputs) -> Result[bytes, CodecFault]:
-    """Encode eligible producer outputs and explicit full-source fallbacks after a successful native compilation."""
-    if len(outputs.values) + len(outputs.fallbacks) > MAX_FIELDS:
-        return Err(CodecFault.Limit)
-    mut tokens = [COMPILED_TRANSPORT_SCHEMA, str(len(outputs.values)), str(len(outputs.fallbacks))]
-    mut previous = ""
-    for value in outputs.values:
-        order = value.module + "\n" + value.identity
-        if value.module == "" or value.name == "" or value.identity == "" or order <= previous:
-            return Err(CodecFault.Malformed)
-        validate_compiled_body_value(value)?
-        tokens += [
-            value.module,
-            value.name,
-            value.identity,
-            hexlify(value.declaration),
-            hexlify(value.local),
-            hexlify(value.final),
-            hexlify(value.body_ir),
-            str(len(value.dependency_reads)),
-        ]
-        mut previous_read = ""
-        for read in value.dependency_reads:
-            package = optional_identity(read.package)
-            read_order = package + "\n" + read.module + "\n" + read.name + "\n" + read.identity
-            if read.module == "" or read.name == "" or read.identity == "" or read_order <= previous_read:
-                return Err(CodecFault.Malformed)
-            tokens += [package, read.module, read.name, read.identity]
-            previous_read = read_order
-        previous = order
-    previous = ""
-    for fallback in outputs.fallbacks:
-        identity = optional_identity(fallback.identity)
-        order = fallback.module + "\n" + fallback.name + "\n" + identity
-        if (
-            fallback.module == ""
-            or fallback.name == ""
-            or fallback.reason == ""
-            or len(fallback.reason.encode()) > MAX_RECORD_BYTES
-            or order <= previous
-        ):
-            return Err(CodecFault.Malformed)
-        if identity != "":
-            for value in outputs.values:
-                if value.module == fallback.module and value.identity == identity:
-                    return Err(CodecFault.Malformed)
-        tokens += [fallback.module, fallback.name, identity, fallback.reason]
-        previous = order
-    return encode_transport_tokens(tokens)
-
-
-pub def decode_compiled_body_outputs(encoded: bytes) -> Result[CompiledBodyOutputs, CodecFault]:
-    """Decode and authenticate every eligible triple and explicit full-source fallback before graph publication."""
-    tokens = transport_frames(encoded)?
-    if len(tokens) < 3 or tokens[0] != COMPILED_TRANSPORT_SCHEMA:
-        return Err(CodecFault.Malformed)
-    count = decimal(tokens[1])?
-    fallback_count = decimal(tokens[2])?
-    if count + fallback_count > MAX_FIELDS:
-        return Err(CodecFault.Malformed)
-    mut values: list[CompiledBodyValue] = []
-    mut previous = ""
-    mut offset = 3
-    for _ in range(count):
-        if offset + 8 > len(tokens):
-            return Err(CodecFault.Malformed)
-        dependency_count = decimal(tokens[offset + 7])?
-        if dependency_count > MAX_FIELDS or offset + 8 + dependency_count * 4 > len(tokens):
-            return Err(CodecFault.Malformed)
-        mut dependency_reads: list[CompiledBodyDependencyRead] = []
-        mut previous_read = ""
-        mut dependency_offset = offset + 8
-        for _ in range(dependency_count):
-            read = CompiledBodyDependencyRead(
-                package=decoded_optional_identity(tokens[dependency_offset]),
-                module=tokens[dependency_offset + 1],
-                name=tokens[dependency_offset + 2],
-                identity=tokens[dependency_offset + 3],
-            )
-            read_order = optional_identity(read.package) + "\n" + read.module + "\n" + read.name + "\n" + read.identity
-            if read.module == "" or read.name == "" or read.identity == "" or read_order <= previous_read:
-                return Err(CodecFault.Malformed)
-            dependency_reads.append(read)
-            previous_read = read_order
-            dependency_offset += 4
-        value = CompiledBodyValue(
-            module=tokens[offset],
-            name=tokens[offset + 1],
-            identity=tokens[offset + 2],
-            declaration=unhexlify(tokens[offset + 3]).map_err((_) => CodecFault.Malformed)?,
-            local=unhexlify(tokens[offset + 4]).map_err((_) => CodecFault.Malformed)?,
-            final=unhexlify(tokens[offset + 5]).map_err((_) => CodecFault.Malformed)?,
-            body_ir=unhexlify(tokens[offset + 6]).map_err((_) => CodecFault.Malformed)?,
-            dependency_reads=dependency_reads,
-        )
-        order = value.module + "\n" + value.identity
-        if value.module == "" or value.name == "" or value.identity == "" or order <= previous:
-            return Err(CodecFault.Malformed)
-        validate_compiled_body_value(value)?
-        values.append(value)
-        previous = order
-        offset = dependency_offset
-    mut fallbacks: list[CompiledBodyFallback] = []
-    if len(tokens) != offset + fallback_count * 4:
-        return Err(CodecFault.Malformed)
-    previous = ""
-    for _ in range(fallback_count):
-        fallback = CompiledBodyFallback(
-            module=tokens[offset],
-            name=tokens[offset + 1],
-            identity=decoded_optional_identity(tokens[offset + 2]),
-            reason=tokens[offset + 3],
-        )
-        identity = optional_identity(fallback.identity)
-        order = fallback.module + "\n" + fallback.name + "\n" + identity
-        if (
-            fallback.module == ""
-            or fallback.name == ""
-            or fallback.reason == ""
-            or len(fallback.reason.encode()) > MAX_RECORD_BYTES
-            or order <= previous
-        ):
-            return Err(CodecFault.Malformed)
-        if identity != "":
-            for value in values:
-                if value.module == fallback.module and value.identity == identity:
-                    return Err(CodecFault.Malformed)
-        fallbacks.append(fallback)
-        previous = order
-        offset += 4
-    return Ok(CompiledBodyOutputs(values=values, fallbacks=fallbacks))
-
-
-def optional_identity(identity: Option[str]) -> str:
-    """Encode identity absence only for an explicit fallback; stable value records never admit this sentinel."""
-    match identity:
-        Some(value) => return value
-        None => return ""
-
-
-def decoded_optional_identity(identity: str) -> Option[str]:
-    """Restore the fallback-only empty sentinel without inventing a stable declaration identity."""
-    if identity == "":
-        return None
-    return Some(identity)
-
-
 pub def record_root(encoded: bytes) -> Result[str, CodecFault]:
     """Read one validated checker record's position-free semantic root for its logical record key."""
     tokens = frames(encoded)?
     if len(tokens) < 4 or not full_digest(tokens[3]):
         return Err(CodecFault.Malformed)
     return Ok(tokens[3])
-
-
-def validate_compiled_body_value(value: CompiledBodyValue) -> Result[None, CodecFault]:
-    """Require one declaration and a matching local/final pair under the compiler-owned stable identity."""
-    declaration = decode_graph_record(value.declaration, value.identity)?
-    pair = validate_graph_body_value(
-        GraphBodyValue(identity=value.identity, local=value.local, final=value.final, body_ir=value.body_ir),
-    )?
-    if declaration.family != CheckedFamily.Declaration or pair[0].owner != declaration.owner:
-        return Err(CodecFault.Malformed)
-    return Ok(None)
 
 
 def validate_graph_body_value(value: GraphBodyValue) -> Result[list[CheckedRecord], CodecFault]:

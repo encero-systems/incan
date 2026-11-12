@@ -405,7 +405,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     output = scratch.path().joinpath("compiled-body-output")
     publish_binary(
         output,
-        encode_compiled_body_outputs(
+        compiled_output_bytes(
             CompiledBodyOutputs(
                 values=[
                     CompiledBodyValue(
@@ -472,7 +472,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     fallback_output = scratch.path().joinpath("fallback-body-output")
     publish_binary(
         fallback_output,
-        encode_compiled_body_outputs(
+        compiled_output_bytes(
             CompiledBodyOutputs(
                 values=[],
                 fallbacks=[
@@ -769,6 +769,16 @@ def activation(family: str, identity: str, dependency: int) -> RankedActivation:
         ready=ReadyWork(output=output, stage=ProducerStage.CheckBody, profile=profile),
         prepared=prepared,
     )
+
+
+def compiled_output_bytes(outputs: CompiledBodyOutputs) -> Result[bytes, str]:
+    """Join independently bounded test frames exactly as the native compiler sidecar writer does."""
+    mut encoded: list[u8] = []
+    for frame in encode_compiled_body_outputs(outputs).map_err((error) => f"{error:?}")?:
+        for byte in frame:
+            octet: u8 = byte.wrapping_resize()
+            encoded.append(octet)
+    return Ok(encoded)
 
 
 def required(before: Snapshot, key: str) -> Result[bytes, str]:

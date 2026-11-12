@@ -196,13 +196,13 @@ impl GraphBodyOutput {
             .collect();
         let body_count = values.len();
         let outputs = internal_models::CompiledBodyOutputs { values, fallbacks };
-        let encoded = internal_models::encode_compiled_body_outputs(outputs)
+        let frames = internal_models::encode_compiled_body_outputs(&outputs)
             .map_err(|error| {
                 format!(
                     "compiled graph output refused: {error:?} ({body_count} owner frames, {body_ir_bytes} raw Body IR bytes)"
                 )
             })?;
-        publish(&path, &encoded)
+        publish(&path, frames)
     }
 }
 
@@ -267,7 +267,7 @@ fn dependency_module(module_path: &[String]) -> String {
 }
 
 /// Replace one sidecar atomically so a failed invocation cannot leave a partially encoded output.
-fn publish(path: &Path, encoded: &[u8]) -> Result<(), String> {
+fn publish(path: &Path, frames: Vec<Vec<u8>>) -> Result<(), String> {
     let parent = path.parent().ok_or("compiled graph output has no parent directory")?;
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("cannot create compiled graph output {}: {error}", parent.display()))?;
@@ -278,10 +278,14 @@ fn publish(path: &Path, encoded: &[u8]) -> Result<(), String> {
         .write(true)
         .open(&temporary)
         .map_err(|error| format!("cannot open compiled graph output {}: {error}", temporary.display()))?;
+    for frame in frames {
+        output
+            .write_all(&frame)
+            .map_err(|error| format!("cannot write compiled graph output {}: {error}", temporary.display()))?;
+    }
     output
-        .write_all(encoded)
-        .and_then(|()| output.flush())
-        .map_err(|error| format!("cannot write compiled graph output {}: {error}", temporary.display()))?;
+        .flush()
+        .map_err(|error| format!("cannot flush compiled graph output {}: {error}", temporary.display()))?;
     drop(output);
     std::fs::rename(&temporary, path)
         .map_err(|error| format!("cannot publish compiled graph output {}: {error}", path.display()))
