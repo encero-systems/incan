@@ -723,16 +723,32 @@ fn lower_compilation_plan(
     if !layout_requirements.is_empty() {
         prepare_runtime_layouts(program, layout_requirements)?;
     }
-    let mut continuation = None;
-    let mut retry_indices: Option<Vec<usize>> = None;
-    loop {
+    let inputs = SourceInputs {
+        scalar_products: native_products,
+        scalar_bodies: program.cacheable_bodies.clone(),
+        sources: program.sources.clone(),
+        files: program.files.clone(),
+        tests: program.tests.iter().map(|test| test.name.clone()).collect(),
+        package_versions: program.dependencies.package_versions.clone(),
+        overflow_checks,
+        record_report: plan_record_report.clone(),
+    };
+    let mut attempt_unions = Vec::new();
+    let mut planning = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
-        let mut attempt_unions = Vec::new();
-        let planning = match continuation.take() {
-            Some(preserved) => {
-                let selected = retry_indices
-                    .take()
-                    .ok_or("lowering continuation has no resolved module delta")?;
+        unit_plan(
+            &program.modules,
+            inputs,
+            program.entry.try_into()?,
+            &kind_name,
+            &mut attempt_unions,
+        )
+    }
+    .inspect_err(|_| receipt.deterministic())?;
+    loop {
+        match planning {
+            UnitPlanning::NeedsRuntime(preserved, requirements) => {
+                let selected = satisfy_runtime_requirements(program, requirements)?;
                 let retry = lowering_retry_inputs(program, &selected)?;
                 let inputs = SourceInputs {
                     scalar_products: None,
@@ -744,41 +760,20 @@ fn lower_compilation_plan(
                     overflow_checks,
                     record_report: plan_record_report.clone(),
                 };
-                resume_unit_plan(
-                    preserved,
-                    &retry.modules,
-                    // #3022: remove this borrow when an owned model field can transfer through the Incan wrapper.
-                    &inputs,
-                    retry.entry.try_into()?,
-                    &kind_name,
-                    &mut attempt_unions,
-                )
-            }
-            None => {
-                let inputs = SourceInputs {
-                    scalar_products: native_products.clone(),
-                    scalar_bodies: program.cacheable_bodies.clone(),
-                    sources: program.sources.clone(),
-                    files: program.files.clone(),
-                    tests: program.tests.iter().map(|test| test.name.clone()).collect(),
-                    package_versions: program.dependencies.package_versions.clone(),
-                    overflow_checks,
-                    record_report: plan_record_report.clone(),
-                };
-                unit_plan(
-                    &program.modules,
-                    inputs,
-                    program.entry.try_into()?,
-                    &kind_name,
-                    &mut attempt_unions,
-                )
-            }
-        }
-        .inspect_err(|_| receipt.deterministic())?;
-        match planning {
-            UnitPlanning::NeedsRuntime(preserved, requirements) => {
-                retry_indices = Some(satisfy_runtime_requirements(program, requirements)?);
-                continuation = Some(preserved);
+                attempt_unions.clear();
+                planning = {
+                    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::resume_lowering", modules = retry.modules.len(), total_modules = program.modules.len()).entered();
+                    resume_unit_plan(
+                        preserved,
+                        &retry.modules,
+                        // #3022: remove this borrow when an owned model field can transfer through the Incan wrapper.
+                        &inputs,
+                        retry.entry.try_into()?,
+                        &kind_name,
+                        &mut attempt_unions,
+                    )
+                }
+                .inspect_err(|_| receipt.deterministic())?;
             }
             UnitPlanning::Complete(Some(plan)) => {
                 published_unions.extend(attempt_unions);
