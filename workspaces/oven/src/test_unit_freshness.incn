@@ -142,6 +142,9 @@ def verify_invocation_identity(setup: Fixture) -> Result[None, str]:
     changed.kind = "test"
     assert description_digest(changed)? != first
     changed = setup.unit
+    changed.package_test_surface = true
+    assert description_digest(changed)? != first
+    changed = setup.unit
     changed.search = ["/another/target/directory"]
     changed.search_index = Some("/another/home/search.json")
     changed.source_root = "/another/checkout/src"
@@ -748,10 +751,7 @@ pub def test_two_sources_of_one_project_test_at_once() -> Result[None, str]:
         project.joinpath("loaf.toml"),
         "[project]\nname = \"pair\"\nversion = \"0.1.0\"\n[envs.test.dependencies]\nsupport = { loaf = \"support\", path = \"../support\" }\n",
     )?
-    write(
-        support.joinpath("loaf.toml"),
-        "[project]\nname = \"support\"\nversion = \"0.1.0\"\n[rust]\ntype = \"lib\"\n",
-    )?
+    write(support.joinpath("loaf.toml"), "[project]\nname = \"support\"\nversion = \"0.1.0\"\n[rust]\ntype = \"lib\"\n")?
     write(support.joinpath("src/lib.rs"), "pub fn value() -> i64 { 7 }\n")?
     for name in ["first", "second"]:
         source = "from rust::support import value\n\n" + f"def test_{name}_case() -> None:\n    assert value() == 7\n"

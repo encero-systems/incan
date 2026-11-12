@@ -208,6 +208,8 @@ pub def description_digest(unit: UnitDescription) -> Result[str, str]:
     mut record_identity: list[str] = []
     if let Some(registry) = unit.registry_id:
         record_identity.append(f"registry-id={registry}")
+    if unit.package_test_surface:
+        record_identity.append("package-test-surface=true")
     return fingerprint(
         [json_text(facts)?] + flags + selected + declared + sorted(bindings) + sorted(unit.rust_crates) + sorted(
             unit.vocab_admissions,
