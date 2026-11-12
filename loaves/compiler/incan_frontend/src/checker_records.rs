@@ -211,6 +211,7 @@ pub fn checked_owner_record_outputs(
                 .function_bindings_by_span
                 .get(&declaration.span)
             else {
+                checker.record_body_check_outcome(declaration.span, "fallback");
                 return Some(Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
                     name: function.name.clone(),
                     identity: None,
@@ -220,6 +221,7 @@ pub fn checked_owner_record_outputs(
             let canonical = match binding.identity.as_ref() {
                 Some(identity) => identity,
                 None => {
+                    checker.record_body_check_outcome(declaration.span, "fallback");
                     return Some(Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
                         name: function.name.clone(),
                         identity: None,
@@ -230,6 +232,7 @@ pub fn checked_owner_record_outputs(
             let identity = match checker.type_info().declarations.source_identities.get(canonical) {
                 Some(identity) => identity.render_compact(),
                 None => {
+                    checker.record_body_check_outcome(declaration.span, "fallback");
                     return Some(Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
                         name: function.name.clone(),
                         identity: None,
@@ -290,6 +293,7 @@ pub fn checked_owner_record_outputs(
             dependency_reads.dedup();
             let refusal = missing_record_reason(checker, declaration.span);
             if let Some(reason) = refusal {
+                checker.record_body_check_outcome(declaration.span, "fallback");
                 return Some(Ok(CheckedOwnerRecordOutput::Fallback(CheckedOwnerRecordFallback {
                     name: function.name.clone(),
                     identity: Some(identity),
@@ -305,6 +309,11 @@ pub fn checked_owner_record_outputs(
             let Some(final_record) = checker.available_final_record(declaration.span).cloned() else {
                 return Some(Err("final record disappeared after eligibility selection".into()));
             };
+            if checker.restored_body_record(declaration.span) {
+                checker.record_body_check_outcome(declaration.span, "restored");
+            } else {
+                checker.record_body_check_outcome(declaration.span, "fresh");
+            }
             Some(Ok(CheckedOwnerRecordOutput::Value(CheckedOwnerRecordFields {
                 name: function.name.clone(),
                 span: declaration.span,
