@@ -21,8 +21,7 @@ from std.encoding._shared import (
 )
 from std.fs import Path
 from std.io import BytesIO, _BytesIO
-from std.primitives import encode_utf8
-from rust::std::string import String as RustString
+from std.primitives import decode_utf8 as _decode_utf8, encode_utf8 as _encode_utf8
 
 const _STD_ALPHABET: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 const _URLSAFE_ALPHABET: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
@@ -307,8 +306,8 @@ def _decode_base64(text: str, alphabet: str, lenient: bool) -> Result[bytes, Enc
     elif len(padded) % 4 != 0:
         return Err(_error("invalid_length", "base64 input length must be a multiple of 4", len(padded)))
 
-    encoded = encode_utf8(padded)
-    alphabet_bytes = encode_utf8(alphabet)
+    encoded = _encode_utf8(padded)
+    alphabet_bytes = _encode_utf8(alphabet)
     out = BytesIO(b"")
     for quartet_index in range(len(encoded) // 4):
         index = quartet_index * 4
@@ -348,14 +347,13 @@ def _decode_base64(text: str, alphabet: str, lenient: bool) -> Result[bytes, Enc
 
 def _clean_input(text: &str, lenient: bool) -> str:
     """Return text unchanged for strict mode or without ASCII whitespace in lenient mode."""
-    if not lenient:
-        return RustString.from(text)
     mut out: list[u8] = []
-    for code in encode_utf8(text):
-        if code != 9 and code != 10 and code != 13 and code != 32:
+    for code in _encode_utf8(text):
+        if not lenient or (code != 9 and code != 10 and code != 13 and code != 32):
             byte: u8 = code.wrapping_resize()
             out.append(byte)
-    return RustString.from_utf8_lossy(out).into_owned()
+    _, cleaned = _decode_utf8(out, false)
+    return cleaned
 
 
 def _decode_byte(code: int, alphabet: bytes, position: int) -> Result[int, EncodingError]:
