@@ -136,7 +136,7 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     2. Build the source support closure without an installed runtime provider.
     3. Build and select the candidate compiler, runtime, and standard Loaves.
     4. Build and pack the shipped Oven and language server.
-    5. Measure the seed census that defines the integration inventory and passing outcomes.
+    5. Join the seed census that defines the integration inventory and passing outcomes.
     6. Install the bundle into a second home, then measure memory and the candidate census once in that context.
     7. When requested, rebuild DD-0010's six named artifacts and require byte identity.
     """
