@@ -11,12 +11,16 @@ const MACH_HEADER_64_SIZE: int = 32
 const MACH_HEADER_64_MAGIC: int = 4277009103
 const LC_UUID: int = 27
 const LC_UUID_SIZE: int = 24
+const LC_CODE_SIGNATURE: int = 29
+const LC_CODE_SIGNATURE_SIZE: int = 16
+const SIGNING_IDENTIFIER: str = "incan.native"
 
 
 pub def normalize_release_executable(path: Path, profile: str) -> Result[None, str]:
     """Give a macOS release executable a content-derived UUID, then apply its required ad-hoc signature."""
     if OS != "macos" or profile != "release":
         return Ok(None)
+    remove_signature(path)?
     contents = path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")?
     normalized = normalized_macho(contents)?
     path.write_bytes(normalized).map_err((error) => f"{path.0}: {error.message()}")?
@@ -24,11 +28,14 @@ pub def normalize_release_executable(path: Path, profile: str) -> Result[None, s
 
 
 pub def normalized_macho(contents: bytes) -> Result[bytes, str]:
-    """Replace one 64-bit Mach-O UUID with a digest of the executable bytes after that field is cleared."""
+    """Replace one 64-bit Mach-O UUID with a digest that excludes prior UUID and code-signature bytes."""
     if len(contents) < MACH_HEADER_64_SIZE or little_u32(contents, 0)? != MACH_HEADER_64_MAGIC:
         return Err("release executable is not a little-endian 64-bit Mach-O file")
     commands = little_u32(contents, 16)?
     mut offset = MACH_HEADER_64_SIZE
+    mut uuid_offset = -1
+    mut signature_offset = -1
+    mut signature_size = 0
     for _index in range(commands):
         if offset + 8 > len(contents):
             return Err("Mach-O load-command header extends beyond the executable")
@@ -39,28 +46,42 @@ pub def normalized_macho(contents: bytes) -> Result[bytes, str]:
         if command == LC_UUID:
             if size != LC_UUID_SIZE:
                 return Err("Mach-O LC_UUID has an invalid size")
-            return replace_uuid(contents, offset + 8)
+            uuid_offset = offset + 8
+        if command == LC_CODE_SIGNATURE:
+            if size != LC_CODE_SIGNATURE_SIZE:
+                return Err("Mach-O LC_CODE_SIGNATURE has an invalid size")
+            signature_offset = little_u32(contents, offset + 8)?
+            signature_size = little_u32(contents, offset + 12)?
+            if signature_offset + signature_size > len(contents):
+                return Err("Mach-O code signature extends beyond the executable")
         offset += size
-    return Err("release executable has no LC_UUID load command")
+    if uuid_offset < 0:
+        return Err("release executable has no LC_UUID load command")
+    return replace_uuid(contents, uuid_offset, signature_offset, signature_size)
 
 
-def replace_uuid(contents: bytes, offset: int) -> Result[bytes, str]:
-    """Hash UUID-neutral bytes and write the resulting RFC-shaped identifier into the load command."""
-    buffer = BytesIO(contents)
-    buffer.seek(offset, 0).map_err((error) => error.message())?
-    buffer.write_bytes(b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00").map_err(
-        (error) => error.message(),
-    )?
-    digest = sha256.digest(buffer.getvalue())
+def replace_uuid(contents: bytes, offset: int, signature_offset: int, signature_size: int) -> Result[bytes, str]:
+    """Hash signature- and UUID-neutral bytes and write the resulting RFC-shaped identifier into the load command."""
+    digest_buffer = BytesIO(contents)
+    digest_buffer.seek(offset, 0).map_err((error) => error.message())?
+    digest_buffer
+        .write_bytes(b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00")
+        .map_err((error) => error.message())?
+    if signature_offset >= 0:
+        digest_buffer.seek(signature_offset, 0).map_err((error) => error.message())?
+        for _index in range(signature_size):
+            digest_buffer.write_bytes(b"\x00").map_err((error) => error.message())?
+    digest = sha256.digest(digest_buffer.getvalue())
     mut uuid: list[u8] = [digest[index] for index in range(16)]
     uuid[6] = ((int(uuid[6]) & 15) | 48).wrapping_resize()
     uuid[8] = ((int(uuid[8]) & 63) | 128).wrapping_resize()
     uuid_bytes = BytesIO(b"")
     for value in uuid:
         uuid_bytes.write(value, Endian.Big).map_err((error) => error.message())?
-    buffer.seek(offset, 0).map_err((error) => error.message())?
-    buffer.write_bytes(uuid_bytes.getvalue()).map_err((error) => error.message())?
-    return Ok(buffer.getvalue())
+    result = BytesIO(contents)
+    result.seek(offset, 0).map_err((error) => error.message())?
+    result.write_bytes(uuid_bytes.getvalue()).map_err((error) => error.message())?
+    return Ok(result.getvalue())
 
 
 def little_u32(contents: bytes, offset: int) -> Result[int, str]:
@@ -68,19 +89,40 @@ def little_u32(contents: bytes, offset: int) -> Result[int, str]:
     if offset < 0 or offset + 4 > len(contents):
         return Err("Mach-O integer extends beyond the executable")
     return Ok(
-        int(contents[offset])
-        + int(contents[offset + 1]) * 256
-        + int(contents[offset + 2]) * 65536
-        + int(contents[offset + 3]) * 16777216,
+        int(contents[offset]) + int(contents[offset + 1]) * 256 + int(contents[offset + 2]) * 65536 + int(
+            contents[offset + 3],
+        ) * 16777216,
     )
 
 
 def sign(path: Path) -> Result[None, str]:
-    """Apply the ad-hoc signature Apple Silicon requires after the UUID bytes have reached their final value."""
-    output = Command.new("/usr/bin/codesign").arg("--force").arg("--sign").arg("-").arg(path.0).output().map_err(
-        (error) => f"cannot sign {path.0}: {error}",
-    )?
+    """Apply a path-independent ad-hoc signature after the UUID bytes have reached their final value."""
+    output = Command
+        .new("/usr/bin/codesign")
+        .arg("--force")
+        .arg("--sign")
+        .arg("-")
+        .arg("--identifier")
+        .arg(SIGNING_IDENTIFIER)
+        .arg("--timestamp=none")
+        .arg(path.0)
+        .output()
+        .map_err((error) => f"cannot sign {path.0}: {error}")?
     if output.status.success():
         return Ok(None)
     error = RustString.from_utf8_lossy(output.stderr).into_owned()
     return Err(f"cannot sign {path.0}: {error}")
+
+
+def remove_signature(path: Path) -> Result[None, str]:
+    """Remove any linker or previous Oven signature so neither its identifier nor trailing padding enters production."""
+    output = Command
+        .new("/usr/bin/codesign")
+        .arg("--remove-signature")
+        .arg(path.0)
+        .output()
+        .map_err((error) => f"cannot remove signature from {path.0}: {error}")?
+    if output.status.success():
+        return Ok(None)
+    error = RustString.from_utf8_lossy(output.stderr).into_owned()
+    return Err(f"cannot remove signature from {path.0}: {error}")
