@@ -1,0 +1,890 @@
+"""Lossless native layout-carrier encoding; canonical source-trait tokens explicitly refuse this bounded profile."""
+
+from rust::serde import Serialize, Deserialize
+from _types import (
+    TupleElement,
+    ListLeaf,
+    SizedNumeric,
+    PlanType,
+)
+from _plan import (
+    Carrier,
+)
+from pub::internal_models.checked_types import (
+    CheckedNumericType,
+    CheckedPrimitiveType,
+    CheckedInputAccess,
+    CheckedCallableParamKind,
+    CheckedRuntimeBuiltin,
+    CheckedCallableParam,
+    CheckedType,
+)
+
+@derive(Serialize, Deserialize)
+pub enum StoredLayoutTupleElement:
+    """The complete serialized TupleElement facts admitted by this layout profile."""
+
+    Int
+    Float
+    Numeric(StoredLayoutSizedNumeric)
+    Bool
+    Unit
+    String
+    List(StoredLayoutListLeaf, int)
+    Dict(StoredLayoutListLeaf, StoredLayoutListLeaf)
+    Set(StoredLayoutListLeaf)
+    Model(int, str)
+    Enum(int, str)
+    Tuple(list[StoredLayoutTupleElement])
+    FunctionPointer(list[StoredLayoutPlanType])
+    Reference(bool, list[StoredLayoutPlanType])
+    ModelRef(int, str)
+    ModelMutRef(int, str)
+    SliceRef(list[StoredLayoutPlanType])
+    SliceMutRef(list[StoredLayoutPlanType])
+    FrozenStr
+    StaticText
+    StaticBytes
+    FrozenBytes
+    FrozenCollection(str, list[StoredLayoutPlanType])
+
+
+@derive(Serialize, Deserialize)
+pub enum StoredLayoutListLeaf:
+    """The complete serialized ListLeaf facts admitted by this layout profile."""
+
+    Int
+    Float
+    Bool
+    Str
+    Tuple(list[StoredLayoutTupleElement])
+    Model(int, str)
+    Enum(int, str)
+    U8
+    Unit
+    Decimal
+    FrozenStr
+    FrozenBytes
+    FrozenCollection(str, list[StoredLayoutPlanType])
+    FunctionPointer(list[StoredLayoutPlanType])
+    TypeToken(list[StoredLayoutPlanType])
+    List(list[StoredLayoutListLeaf], int)
+    Dict(list[StoredLayoutListLeaf])
+    Set(list[StoredLayoutListLeaf])
+    USize
+    Numeric(StoredLayoutSizedNumeric)
+    Reference(list[StoredLayoutPlanType])
+
+
+@derive(Serialize, Deserialize)
+pub enum StoredLayoutSizedNumeric:
+    """The complete serialized SizedNumeric facts admitted by this layout profile."""
+
+    I8
+    I16
+    I32
+    I128
+    U8
+    U16
+    U32
+    U64
+    U128
+    F32
+    F64
+    ISize
+    USize
+
+
+@derive(Serialize, Deserialize)
+pub enum StoredLayoutPlanType:
+    """The complete serialized PlanType facts admitted by this layout profile."""
+
+    Int
+    Float
+    I8
+    I16
+    I32
+    I128
+    ISize
+    USize
+    U8
+    U16
+    U32
+    U64
+    U128
+    F32
+    F64
+    Bool
+    Unit
+    CheckedNumeric(StoredLayoutSizedNumeric)
+    Never
+    UnitFunction
+    EnumTag
+    CheckedInt
+    Tuple(list[StoredLayoutTupleElement])
+    String
+    TupleRef(list[StoredLayoutTupleElement])
+    TupleMutRef(list[StoredLayoutTupleElement])
+    StringRef
+    ScalarRef(list[StoredLayoutPlanType])
+    ScalarMutRef(list[StoredLayoutPlanType])
+    StringMutRef
+    Decimal
+    FrozenStr
+    FrozenBytes
+    FrozenCollection(str, list[StoredLayoutPlanType])
+    FrozenCollectionRef(str, list[StoredLayoutPlanType])
+    TypeToken(list[StoredLayoutPlanType])
+    StaticText
+    StaticBytes
+    ValidationError
+    ValidationErrorRef
+    StrRef
+    StringArray(int)
+    StrArray(int)
+    StringArrayRef(int)
+    StrArrayRef(int)
+    Enum(int, str)
+    EnumRef(int, str)
+    EnumMutRef(int, str)
+    Model(int, str)
+    ModelRef(int, str)
+    ModelMutRef(int, str)
+    StringSlice
+    StrSlice
+    List(StoredLayoutListLeaf, int)
+    ListRef(StoredLayoutListLeaf, int)
+    ListMutRef(StoredLayoutListLeaf, int)
+    ListIntoIter(StoredLayoutListLeaf, int)
+    ListIntoIterMutRef(StoredLayoutListLeaf, int)
+    Set(StoredLayoutListLeaf)
+    SetRef(StoredLayoutListLeaf)
+    SetMutRef(StoredLayoutListLeaf)
+    Dict(StoredLayoutListLeaf, StoredLayoutListLeaf)
+    DictRef(StoredLayoutListLeaf, StoredLayoutListLeaf)
+    DictMutRef(StoredLayoutListLeaf, StoredLayoutListLeaf)
+    RangeValue
+    ZipIterator(StoredLayoutTupleElement, StoredLayoutTupleElement)
+    ZipIteratorRef(StoredLayoutTupleElement, StoredLayoutTupleElement)
+    ZipIteratorMutRef(StoredLayoutTupleElement, StoredLayoutTupleElement)
+    Generator(StoredLayoutListLeaf, int)
+    GeneratorMutRef(StoredLayoutListLeaf, int)
+    GeneratorYield(StoredLayoutListLeaf, int)
+    GeneratorYieldRef(StoredLayoutListLeaf, int)
+    FunctionPointer(list[StoredLayoutPlanType])
+    FunctionItem(str, list[StoredLayoutPlanType])
+    Closure(list[StoredLayoutPlanType])
+    NativeClosure(list[StoredLayoutPlanType], bool, bool)
+    NativeTraitObject(str, bool, bool)
+    SharedCallable(list[StoredLayoutPlanType])
+    ClosureOnce(list[StoredLayoutPlanType])
+    ClosureRef(list[StoredLayoutPlanType])
+    BorrowingClosure(list[StoredLayoutPlanType])
+    BorrowingClosureRef(list[StoredLayoutPlanType])
+    CallableArguments(list[StoredLayoutPlanType])
+    Future(list[StoredLayoutPlanType])
+    NativeStr
+    NativeSlice(list[StoredLayoutPlanType])
+    SliceRef(list[StoredLayoutPlanType])
+    SliceMutRef(list[StoredLayoutPlanType])
+    NativeArray(list[StoredLayoutPlanType], int)
+    NativeArrayRef(list[StoredLayoutPlanType], int)
+    NativeArrayMutRef(list[StoredLayoutPlanType], int)
+    CChar
+    RawPointer(bool, list[StoredLayoutPlanType])
+    Boxed(list[StoredLayoutPlanType])
+
+
+@derive(Serialize, Deserialize)
+pub enum StoredLayoutCarrier:
+    """The complete serialized Carrier facts admitted by this layout profile."""
+
+    Declared
+    Option
+    Result
+
+
+@derive(Serialize, Deserialize)
+pub enum StoredLayoutCheckedNumericType:
+    """The complete serialized CheckedNumericType facts admitted by this layout profile."""
+
+    I8
+    I16
+    I32
+    I64
+    I128
+    U8
+    U16
+    U32
+    U64
+    U128
+    F32
+    F64
+    ISize
+    USize
+    Bool
+
+
+@derive(Serialize, Deserialize)
+pub enum StoredLayoutCheckedPrimitiveType:
+    """The complete serialized CheckedPrimitiveType facts admitted by this layout profile."""
+
+    Int
+    Float
+    Numeric(StoredLayoutCheckedNumericType)
+    Bool
+    Str
+    Bytes
+    FrozenStr
+    FrozenBytes
+    Unit
+
+
+@derive(Serialize, Deserialize)
+pub enum StoredLayoutCheckedInputAccess:
+    """The complete serialized CheckedInputAccess facts admitted by this layout profile."""
+
+    Inferred
+    Shared
+    Exclusive
+    Owned
+    InferredShared
+
+
+@derive(Serialize, Deserialize)
+pub enum StoredLayoutCheckedCallableParamKind:
+    """The complete serialized CheckedCallableParamKind facts admitted by this layout profile."""
+
+    Normal
+    RestPositional
+    RestKeyword
+
+
+@derive(Serialize, Deserialize)
+pub enum StoredLayoutCheckedRuntimeBuiltin:
+    """The complete serialized CheckedRuntimeBuiltin facts admitted by this layout profile."""
+
+    ValidationError
+
+
+@derive(Serialize, Deserialize)
+pub model StoredLayoutCheckedCallableParam:
+    """The complete serialized CheckedCallableParam facts admitted by this layout profile."""
+
+    pub name: Option[str]
+    pub ty: StoredLayoutCheckedType
+    pub kind: StoredLayoutCheckedCallableParamKind
+    pub has_default: bool
+    pub is_partial_preset: bool
+    pub is_mut: bool
+    pub native_owned: bool
+    pub input_access: StoredLayoutCheckedInputAccess
+
+
+@derive(Serialize, Deserialize)
+pub enum StoredLayoutCheckedType:
+    """The complete serialized CheckedType facts admitted by this layout profile."""
+
+    Never
+    Primitive(StoredLayoutCheckedPrimitiveType)
+    Named(str)
+    Generic(str, list[StoredLayoutCheckedType])
+    Decimal(u8, u8)
+    Function(list[StoredLayoutCheckedCallableParam], list[StoredLayoutCheckedType])
+    TypeToken(list[StoredLayoutCheckedType])
+    Tuple(list[StoredLayoutCheckedType])
+    TypeVar(str)
+    SelfType
+    Ref(list[StoredLayoutCheckedType])
+    RefMut(list[StoredLayoutCheckedType])
+    RustInteropPath(str)
+    NativeBuiltin(StoredLayoutCheckedRuntimeBuiltin)
+    Unsupported(str)
+    Infer
+    Unknown
+    NativeArray(list[StoredLayoutCheckedType], u64)
+    NativeTraitObject(str, bool, bool)
+    NativePointer(bool, list[StoredLayoutCheckedType])
+    NativeCChar
+
+
+pub def retain_tuple_element(value: TupleElement) -> Result[StoredLayoutTupleElement, str]:
+    """Encode exact TupleElement alternatives without interpreting their meaning."""
+    match value:
+        TupleElement.Int => return Ok(StoredLayoutTupleElement.Int)
+        TupleElement.Float => return Ok(StoredLayoutTupleElement.Float)
+        TupleElement.Numeric(field0) => return Ok(StoredLayoutTupleElement.Numeric(retain_sized_numeric(field0)?))
+        TupleElement.Bool => return Ok(StoredLayoutTupleElement.Bool)
+        TupleElement.Unit => return Ok(StoredLayoutTupleElement.Unit)
+        TupleElement.String => return Ok(StoredLayoutTupleElement.String)
+        TupleElement.List(field0, field1) => return Ok(StoredLayoutTupleElement.List(retain_list_leaf(field0)?, field1))
+        TupleElement.Dict(field0, field1) => return Ok(StoredLayoutTupleElement.Dict(retain_list_leaf(field0)?, retain_list_leaf(field1)?))
+        TupleElement.Set(field0) => return Ok(StoredLayoutTupleElement.Set(retain_list_leaf(field0)?))
+        TupleElement.Model(field0, field1) => return Ok(StoredLayoutTupleElement.Model(field0, field1))
+        TupleElement.Enum(field0, field1) => return Ok(StoredLayoutTupleElement.Enum(field0, field1))
+        TupleElement.Tuple(field0) => return Ok(StoredLayoutTupleElement.Tuple([retain_tuple_element(item0)? for item0 in field0]))
+        TupleElement.FunctionPointer(field0) => return Ok(StoredLayoutTupleElement.FunctionPointer([retain_plan_type(item0)? for item0 in field0]))
+        TupleElement.Reference(field0, field1) => return Ok(StoredLayoutTupleElement.Reference(field0, [retain_plan_type(item0)? for item0 in field1]))
+        TupleElement.ModelRef(field0, field1) => return Ok(StoredLayoutTupleElement.ModelRef(field0, field1))
+        TupleElement.ModelMutRef(field0, field1) => return Ok(StoredLayoutTupleElement.ModelMutRef(field0, field1))
+        TupleElement.SliceRef(field0) => return Ok(StoredLayoutTupleElement.SliceRef([retain_plan_type(item0)? for item0 in field0]))
+        TupleElement.SliceMutRef(field0) => return Ok(StoredLayoutTupleElement.SliceMutRef([retain_plan_type(item0)? for item0 in field0]))
+        TupleElement.FrozenStr => return Ok(StoredLayoutTupleElement.FrozenStr)
+        TupleElement.StaticText => return Ok(StoredLayoutTupleElement.StaticText)
+        TupleElement.StaticBytes => return Ok(StoredLayoutTupleElement.StaticBytes)
+        TupleElement.FrozenBytes => return Ok(StoredLayoutTupleElement.FrozenBytes)
+        TupleElement.FrozenCollection(field0, field1) => return Ok(StoredLayoutTupleElement.FrozenCollection(field0, [retain_plan_type(item0)? for item0 in field1]))
+
+
+pub def restore_tuple_element(value: StoredLayoutTupleElement) -> Result[TupleElement, str]:
+    """Restore exact TupleElement alternatives without interpreting their meaning."""
+    match value:
+        StoredLayoutTupleElement.Int => return Ok(TupleElement.Int)
+        StoredLayoutTupleElement.Float => return Ok(TupleElement.Float)
+        StoredLayoutTupleElement.Numeric(field0) => return Ok(TupleElement.Numeric(restore_sized_numeric(field0)?))
+        StoredLayoutTupleElement.Bool => return Ok(TupleElement.Bool)
+        StoredLayoutTupleElement.Unit => return Ok(TupleElement.Unit)
+        StoredLayoutTupleElement.String => return Ok(TupleElement.String)
+        StoredLayoutTupleElement.List(field0, field1) => return Ok(TupleElement.List(restore_list_leaf(field0)?, field1))
+        StoredLayoutTupleElement.Dict(field0, field1) => return Ok(TupleElement.Dict(restore_list_leaf(field0)?, restore_list_leaf(field1)?))
+        StoredLayoutTupleElement.Set(field0) => return Ok(TupleElement.Set(restore_list_leaf(field0)?))
+        StoredLayoutTupleElement.Model(field0, field1) => return Ok(TupleElement.Model(field0, field1))
+        StoredLayoutTupleElement.Enum(field0, field1) => return Ok(TupleElement.Enum(field0, field1))
+        StoredLayoutTupleElement.Tuple(field0) => return Ok(TupleElement.Tuple([restore_tuple_element(item0)? for item0 in field0]))
+        StoredLayoutTupleElement.FunctionPointer(field0) => return Ok(TupleElement.FunctionPointer([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutTupleElement.Reference(field0, field1) => return Ok(TupleElement.Reference(field0, [restore_plan_type(item0)? for item0 in field1]))
+        StoredLayoutTupleElement.ModelRef(field0, field1) => return Ok(TupleElement.ModelRef(field0, field1))
+        StoredLayoutTupleElement.ModelMutRef(field0, field1) => return Ok(TupleElement.ModelMutRef(field0, field1))
+        StoredLayoutTupleElement.SliceRef(field0) => return Ok(TupleElement.SliceRef([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutTupleElement.SliceMutRef(field0) => return Ok(TupleElement.SliceMutRef([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutTupleElement.FrozenStr => return Ok(TupleElement.FrozenStr)
+        StoredLayoutTupleElement.StaticText => return Ok(TupleElement.StaticText)
+        StoredLayoutTupleElement.StaticBytes => return Ok(TupleElement.StaticBytes)
+        StoredLayoutTupleElement.FrozenBytes => return Ok(TupleElement.FrozenBytes)
+        StoredLayoutTupleElement.FrozenCollection(field0, field1) => return Ok(TupleElement.FrozenCollection(field0, [restore_plan_type(item0)? for item0 in field1]))
+
+
+pub def retain_list_leaf(value: ListLeaf) -> Result[StoredLayoutListLeaf, str]:
+    """Encode exact ListLeaf alternatives without interpreting their meaning."""
+    match value:
+        ListLeaf.Int => return Ok(StoredLayoutListLeaf.Int)
+        ListLeaf.Float => return Ok(StoredLayoutListLeaf.Float)
+        ListLeaf.Bool => return Ok(StoredLayoutListLeaf.Bool)
+        ListLeaf.Str => return Ok(StoredLayoutListLeaf.Str)
+        ListLeaf.Tuple(field0) => return Ok(StoredLayoutListLeaf.Tuple([retain_tuple_element(item0)? for item0 in field0]))
+        ListLeaf.Model(field0, field1) => return Ok(StoredLayoutListLeaf.Model(field0, field1))
+        ListLeaf.Enum(field0, field1) => return Ok(StoredLayoutListLeaf.Enum(field0, field1))
+        ListLeaf.U8 => return Ok(StoredLayoutListLeaf.U8)
+        ListLeaf.Unit => return Ok(StoredLayoutListLeaf.Unit)
+        ListLeaf.Decimal => return Ok(StoredLayoutListLeaf.Decimal)
+        ListLeaf.FrozenStr => return Ok(StoredLayoutListLeaf.FrozenStr)
+        ListLeaf.FrozenBytes => return Ok(StoredLayoutListLeaf.FrozenBytes)
+        ListLeaf.FrozenCollection(field0, field1) => return Ok(StoredLayoutListLeaf.FrozenCollection(field0, [retain_plan_type(item0)? for item0 in field1]))
+        ListLeaf.FunctionPointer(field0) => return Ok(StoredLayoutListLeaf.FunctionPointer([retain_plan_type(item0)? for item0 in field0]))
+        ListLeaf.TypeToken(field0) => return Ok(StoredLayoutListLeaf.TypeToken([retain_plan_type(item0)? for item0 in field0]))
+        ListLeaf.List(field0, field1) => return Ok(StoredLayoutListLeaf.List([retain_list_leaf(item0)? for item0 in field0], field1))
+        ListLeaf.Dict(field0) => return Ok(StoredLayoutListLeaf.Dict([retain_list_leaf(item0)? for item0 in field0]))
+        ListLeaf.Set(field0) => return Ok(StoredLayoutListLeaf.Set([retain_list_leaf(item0)? for item0 in field0]))
+        ListLeaf.USize => return Ok(StoredLayoutListLeaf.USize)
+        ListLeaf.Numeric(field0) => return Ok(StoredLayoutListLeaf.Numeric(retain_sized_numeric(field0)?))
+        ListLeaf.Reference(field0) => return Ok(StoredLayoutListLeaf.Reference([retain_plan_type(item0)? for item0 in field0]))
+
+
+pub def restore_list_leaf(value: StoredLayoutListLeaf) -> Result[ListLeaf, str]:
+    """Restore exact ListLeaf alternatives without interpreting their meaning."""
+    match value:
+        StoredLayoutListLeaf.Int => return Ok(ListLeaf.Int)
+        StoredLayoutListLeaf.Float => return Ok(ListLeaf.Float)
+        StoredLayoutListLeaf.Bool => return Ok(ListLeaf.Bool)
+        StoredLayoutListLeaf.Str => return Ok(ListLeaf.Str)
+        StoredLayoutListLeaf.Tuple(field0) => return Ok(ListLeaf.Tuple([restore_tuple_element(item0)? for item0 in field0]))
+        StoredLayoutListLeaf.Model(field0, field1) => return Ok(ListLeaf.Model(field0, field1))
+        StoredLayoutListLeaf.Enum(field0, field1) => return Ok(ListLeaf.Enum(field0, field1))
+        StoredLayoutListLeaf.U8 => return Ok(ListLeaf.U8)
+        StoredLayoutListLeaf.Unit => return Ok(ListLeaf.Unit)
+        StoredLayoutListLeaf.Decimal => return Ok(ListLeaf.Decimal)
+        StoredLayoutListLeaf.FrozenStr => return Ok(ListLeaf.FrozenStr)
+        StoredLayoutListLeaf.FrozenBytes => return Ok(ListLeaf.FrozenBytes)
+        StoredLayoutListLeaf.FrozenCollection(field0, field1) => return Ok(ListLeaf.FrozenCollection(field0, [restore_plan_type(item0)? for item0 in field1]))
+        StoredLayoutListLeaf.FunctionPointer(field0) => return Ok(ListLeaf.FunctionPointer([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutListLeaf.TypeToken(field0) => return Ok(ListLeaf.TypeToken([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutListLeaf.List(field0, field1) => return Ok(ListLeaf.List([restore_list_leaf(item0)? for item0 in field0], field1))
+        StoredLayoutListLeaf.Dict(field0) => return Ok(ListLeaf.Dict([restore_list_leaf(item0)? for item0 in field0]))
+        StoredLayoutListLeaf.Set(field0) => return Ok(ListLeaf.Set([restore_list_leaf(item0)? for item0 in field0]))
+        StoredLayoutListLeaf.USize => return Ok(ListLeaf.USize)
+        StoredLayoutListLeaf.Numeric(field0) => return Ok(ListLeaf.Numeric(restore_sized_numeric(field0)?))
+        StoredLayoutListLeaf.Reference(field0) => return Ok(ListLeaf.Reference([restore_plan_type(item0)? for item0 in field0]))
+
+
+pub def retain_sized_numeric(value: SizedNumeric) -> Result[StoredLayoutSizedNumeric, str]:
+    """Encode exact SizedNumeric alternatives without interpreting their meaning."""
+    match value:
+        SizedNumeric.I8 => return Ok(StoredLayoutSizedNumeric.I8)
+        SizedNumeric.I16 => return Ok(StoredLayoutSizedNumeric.I16)
+        SizedNumeric.I32 => return Ok(StoredLayoutSizedNumeric.I32)
+        SizedNumeric.I128 => return Ok(StoredLayoutSizedNumeric.I128)
+        SizedNumeric.U8 => return Ok(StoredLayoutSizedNumeric.U8)
+        SizedNumeric.U16 => return Ok(StoredLayoutSizedNumeric.U16)
+        SizedNumeric.U32 => return Ok(StoredLayoutSizedNumeric.U32)
+        SizedNumeric.U64 => return Ok(StoredLayoutSizedNumeric.U64)
+        SizedNumeric.U128 => return Ok(StoredLayoutSizedNumeric.U128)
+        SizedNumeric.F32 => return Ok(StoredLayoutSizedNumeric.F32)
+        SizedNumeric.F64 => return Ok(StoredLayoutSizedNumeric.F64)
+        SizedNumeric.ISize => return Ok(StoredLayoutSizedNumeric.ISize)
+        SizedNumeric.USize => return Ok(StoredLayoutSizedNumeric.USize)
+
+
+pub def restore_sized_numeric(value: StoredLayoutSizedNumeric) -> Result[SizedNumeric, str]:
+    """Restore exact SizedNumeric alternatives without interpreting their meaning."""
+    match value:
+        StoredLayoutSizedNumeric.I8 => return Ok(SizedNumeric.I8)
+        StoredLayoutSizedNumeric.I16 => return Ok(SizedNumeric.I16)
+        StoredLayoutSizedNumeric.I32 => return Ok(SizedNumeric.I32)
+        StoredLayoutSizedNumeric.I128 => return Ok(SizedNumeric.I128)
+        StoredLayoutSizedNumeric.U8 => return Ok(SizedNumeric.U8)
+        StoredLayoutSizedNumeric.U16 => return Ok(SizedNumeric.U16)
+        StoredLayoutSizedNumeric.U32 => return Ok(SizedNumeric.U32)
+        StoredLayoutSizedNumeric.U64 => return Ok(SizedNumeric.U64)
+        StoredLayoutSizedNumeric.U128 => return Ok(SizedNumeric.U128)
+        StoredLayoutSizedNumeric.F32 => return Ok(SizedNumeric.F32)
+        StoredLayoutSizedNumeric.F64 => return Ok(SizedNumeric.F64)
+        StoredLayoutSizedNumeric.ISize => return Ok(SizedNumeric.ISize)
+        StoredLayoutSizedNumeric.USize => return Ok(SizedNumeric.USize)
+
+
+pub def retain_plan_type(value: PlanType) -> Result[StoredLayoutPlanType, str]:
+    """Encode exact PlanType alternatives without interpreting their meaning."""
+    match value:
+        PlanType.Int => return Ok(StoredLayoutPlanType.Int)
+        PlanType.Float => return Ok(StoredLayoutPlanType.Float)
+        PlanType.I8 => return Ok(StoredLayoutPlanType.I8)
+        PlanType.I16 => return Ok(StoredLayoutPlanType.I16)
+        PlanType.I32 => return Ok(StoredLayoutPlanType.I32)
+        PlanType.I128 => return Ok(StoredLayoutPlanType.I128)
+        PlanType.ISize => return Ok(StoredLayoutPlanType.ISize)
+        PlanType.USize => return Ok(StoredLayoutPlanType.USize)
+        PlanType.U8 => return Ok(StoredLayoutPlanType.U8)
+        PlanType.U16 => return Ok(StoredLayoutPlanType.U16)
+        PlanType.U32 => return Ok(StoredLayoutPlanType.U32)
+        PlanType.U64 => return Ok(StoredLayoutPlanType.U64)
+        PlanType.U128 => return Ok(StoredLayoutPlanType.U128)
+        PlanType.F32 => return Ok(StoredLayoutPlanType.F32)
+        PlanType.F64 => return Ok(StoredLayoutPlanType.F64)
+        PlanType.Bool => return Ok(StoredLayoutPlanType.Bool)
+        PlanType.Unit => return Ok(StoredLayoutPlanType.Unit)
+        PlanType.CheckedNumeric(field0) => return Ok(StoredLayoutPlanType.CheckedNumeric(retain_sized_numeric(field0)?))
+        PlanType.Never => return Ok(StoredLayoutPlanType.Never)
+        PlanType.UnitFunction => return Ok(StoredLayoutPlanType.UnitFunction)
+        PlanType.EnumTag => return Ok(StoredLayoutPlanType.EnumTag)
+        PlanType.CheckedInt => return Ok(StoredLayoutPlanType.CheckedInt)
+        PlanType.Tuple(field0) => return Ok(StoredLayoutPlanType.Tuple([retain_tuple_element(item0)? for item0 in field0]))
+        PlanType.String => return Ok(StoredLayoutPlanType.String)
+        PlanType.TupleRef(field0) => return Ok(StoredLayoutPlanType.TupleRef([retain_tuple_element(item0)? for item0 in field0]))
+        PlanType.TupleMutRef(field0) => return Ok(StoredLayoutPlanType.TupleMutRef([retain_tuple_element(item0)? for item0 in field0]))
+        PlanType.StringRef => return Ok(StoredLayoutPlanType.StringRef)
+        PlanType.ScalarRef(field0) => return Ok(StoredLayoutPlanType.ScalarRef([retain_plan_type(item0)? for item0 in field0]))
+        PlanType.ScalarMutRef(field0) => return Ok(StoredLayoutPlanType.ScalarMutRef([retain_plan_type(item0)? for item0 in field0]))
+        PlanType.StringMutRef => return Ok(StoredLayoutPlanType.StringMutRef)
+        PlanType.Decimal => return Ok(StoredLayoutPlanType.Decimal)
+        PlanType.FrozenStr => return Ok(StoredLayoutPlanType.FrozenStr)
+        PlanType.FrozenBytes => return Ok(StoredLayoutPlanType.FrozenBytes)
+        PlanType.FrozenCollection(field0, field1) => return Ok(StoredLayoutPlanType.FrozenCollection(field0, [retain_plan_type(item0)? for item0 in field1]))
+        PlanType.FrozenCollectionRef(field0, field1) => return Ok(StoredLayoutPlanType.FrozenCollectionRef(field0, [retain_plan_type(item0)? for item0 in field1]))
+        PlanType.TypeToken(field0) => return Ok(StoredLayoutPlanType.TypeToken([retain_plan_type(item0)? for item0 in field0]))
+        PlanType.StaticText => return Ok(StoredLayoutPlanType.StaticText)
+        PlanType.StaticBytes => return Ok(StoredLayoutPlanType.StaticBytes)
+        PlanType.ValidationError => return Ok(StoredLayoutPlanType.ValidationError)
+        PlanType.ValidationErrorRef => return Ok(StoredLayoutPlanType.ValidationErrorRef)
+        _ => return retain_plan_type_1(value)
+
+
+def retain_plan_type_1(value: PlanType) -> Result[StoredLayoutPlanType, str]:
+    """Encode exact PlanType alternatives without interpreting their meaning."""
+    match value:
+        PlanType.StrRef => return Ok(StoredLayoutPlanType.StrRef)
+        PlanType.StringArray(field0) => return Ok(StoredLayoutPlanType.StringArray(field0))
+        PlanType.StrArray(field0) => return Ok(StoredLayoutPlanType.StrArray(field0))
+        PlanType.StringArrayRef(field0) => return Ok(StoredLayoutPlanType.StringArrayRef(field0))
+        PlanType.StrArrayRef(field0) => return Ok(StoredLayoutPlanType.StrArrayRef(field0))
+        PlanType.Enum(field0, field1) => return Ok(StoredLayoutPlanType.Enum(field0, field1))
+        PlanType.EnumRef(field0, field1) => return Ok(StoredLayoutPlanType.EnumRef(field0, field1))
+        PlanType.EnumMutRef(field0, field1) => return Ok(StoredLayoutPlanType.EnumMutRef(field0, field1))
+        PlanType.Model(field0, field1) => return Ok(StoredLayoutPlanType.Model(field0, field1))
+        PlanType.ModelRef(field0, field1) => return Ok(StoredLayoutPlanType.ModelRef(field0, field1))
+        PlanType.ModelMutRef(field0, field1) => return Ok(StoredLayoutPlanType.ModelMutRef(field0, field1))
+        PlanType.StringSlice => return Ok(StoredLayoutPlanType.StringSlice)
+        PlanType.StrSlice => return Ok(StoredLayoutPlanType.StrSlice)
+        PlanType.List(field0, field1) => return Ok(StoredLayoutPlanType.List(retain_list_leaf(field0)?, field1))
+        PlanType.ListRef(field0, field1) => return Ok(StoredLayoutPlanType.ListRef(retain_list_leaf(field0)?, field1))
+        PlanType.ListMutRef(field0, field1) => return Ok(StoredLayoutPlanType.ListMutRef(retain_list_leaf(field0)?, field1))
+        PlanType.ListIntoIter(field0, field1) => return Ok(StoredLayoutPlanType.ListIntoIter(retain_list_leaf(field0)?, field1))
+        PlanType.ListIntoIterMutRef(field0, field1) => return Ok(StoredLayoutPlanType.ListIntoIterMutRef(retain_list_leaf(field0)?, field1))
+        PlanType.Set(field0) => return Ok(StoredLayoutPlanType.Set(retain_list_leaf(field0)?))
+        PlanType.SetRef(field0) => return Ok(StoredLayoutPlanType.SetRef(retain_list_leaf(field0)?))
+        PlanType.SetMutRef(field0) => return Ok(StoredLayoutPlanType.SetMutRef(retain_list_leaf(field0)?))
+        PlanType.Dict(field0, field1) => return Ok(StoredLayoutPlanType.Dict(retain_list_leaf(field0)?, retain_list_leaf(field1)?))
+        PlanType.DictRef(field0, field1) => return Ok(StoredLayoutPlanType.DictRef(retain_list_leaf(field0)?, retain_list_leaf(field1)?))
+        PlanType.DictMutRef(field0, field1) => return Ok(StoredLayoutPlanType.DictMutRef(retain_list_leaf(field0)?, retain_list_leaf(field1)?))
+        PlanType.RangeValue => return Ok(StoredLayoutPlanType.RangeValue)
+        PlanType.ZipIterator(field0, field1) => return Ok(StoredLayoutPlanType.ZipIterator(retain_tuple_element(field0)?, retain_tuple_element(field1)?))
+        PlanType.ZipIteratorRef(field0, field1) => return Ok(StoredLayoutPlanType.ZipIteratorRef(retain_tuple_element(field0)?, retain_tuple_element(field1)?))
+        PlanType.ZipIteratorMutRef(field0, field1) => return Ok(StoredLayoutPlanType.ZipIteratorMutRef(retain_tuple_element(field0)?, retain_tuple_element(field1)?))
+        PlanType.Generator(field0, field1) => return Ok(StoredLayoutPlanType.Generator(retain_list_leaf(field0)?, field1))
+        PlanType.GeneratorMutRef(field0, field1) => return Ok(StoredLayoutPlanType.GeneratorMutRef(retain_list_leaf(field0)?, field1))
+        PlanType.GeneratorYield(field0, field1) => return Ok(StoredLayoutPlanType.GeneratorYield(retain_list_leaf(field0)?, field1))
+        PlanType.GeneratorYieldRef(field0, field1) => return Ok(StoredLayoutPlanType.GeneratorYieldRef(retain_list_leaf(field0)?, field1))
+        PlanType.FunctionPointer(field0) => return Ok(StoredLayoutPlanType.FunctionPointer([retain_plan_type(item0)? for item0 in field0]))
+        PlanType.FunctionItem(field0, field1) => return Ok(StoredLayoutPlanType.FunctionItem(field0, [retain_plan_type(item0)? for item0 in field1]))
+        PlanType.Closure(field0) => return Ok(StoredLayoutPlanType.Closure([retain_plan_type(item0)? for item0 in field0]))
+        PlanType.NativeClosure(field0, field1, field2) => return Ok(StoredLayoutPlanType.NativeClosure([retain_plan_type(item0)? for item0 in field0], field1, field2))
+        PlanType.NativeTraitObject(field0, field1, field2) => return Ok(StoredLayoutPlanType.NativeTraitObject(field0, field1, field2))
+        PlanType.SharedCallable(field0) => return Ok(StoredLayoutPlanType.SharedCallable([retain_plan_type(item0)? for item0 in field0]))
+        PlanType.ClosureOnce(field0) => return Ok(StoredLayoutPlanType.ClosureOnce([retain_plan_type(item0)? for item0 in field0]))
+        PlanType.ClosureRef(field0) => return Ok(StoredLayoutPlanType.ClosureRef([retain_plan_type(item0)? for item0 in field0]))
+        _ => return retain_plan_type_2(value)
+
+
+def retain_plan_type_2(value: PlanType) -> Result[StoredLayoutPlanType, str]:
+    """Encode exact PlanType alternatives without interpreting their meaning."""
+    match value:
+        PlanType.BorrowingClosure(field0) => return Ok(StoredLayoutPlanType.BorrowingClosure([retain_plan_type(item0)? for item0 in field0]))
+        PlanType.BorrowingClosureRef(field0) => return Ok(StoredLayoutPlanType.BorrowingClosureRef([retain_plan_type(item0)? for item0 in field0]))
+        PlanType.CallableArguments(field0) => return Ok(StoredLayoutPlanType.CallableArguments([retain_plan_type(item0)? for item0 in field0]))
+        PlanType.Future(field0) => return Ok(StoredLayoutPlanType.Future([retain_plan_type(item0)? for item0 in field0]))
+        PlanType.NativeStr => return Ok(StoredLayoutPlanType.NativeStr)
+        PlanType.NativeSlice(field0) => return Ok(StoredLayoutPlanType.NativeSlice([retain_plan_type(item0)? for item0 in field0]))
+        PlanType.SliceRef(field0) => return Ok(StoredLayoutPlanType.SliceRef([retain_plan_type(item0)? for item0 in field0]))
+        PlanType.SliceMutRef(field0) => return Ok(StoredLayoutPlanType.SliceMutRef([retain_plan_type(item0)? for item0 in field0]))
+        PlanType.NativeArray(field0, field1) => return Ok(StoredLayoutPlanType.NativeArray([retain_plan_type(item0)? for item0 in field0], field1))
+        PlanType.NativeArrayRef(field0, field1) => return Ok(StoredLayoutPlanType.NativeArrayRef([retain_plan_type(item0)? for item0 in field0], field1))
+        PlanType.NativeArrayMutRef(field0, field1) => return Ok(StoredLayoutPlanType.NativeArrayMutRef([retain_plan_type(item0)? for item0 in field0], field1))
+        PlanType.CChar => return Ok(StoredLayoutPlanType.CChar)
+        PlanType.RawPointer(field0, field1) => return Ok(StoredLayoutPlanType.RawPointer(field0, [retain_plan_type(item0)? for item0 in field1]))
+        PlanType.Boxed(field0) => return Ok(StoredLayoutPlanType.Boxed([retain_plan_type(item0)? for item0 in field0]))
+        _ => return Err("native-interface refuses an unsupported PlanType alternative")
+
+
+pub def restore_plan_type(value: StoredLayoutPlanType) -> Result[PlanType, str]:
+    """Restore exact PlanType alternatives without interpreting their meaning."""
+    match value:
+        StoredLayoutPlanType.Int => return Ok(PlanType.Int)
+        StoredLayoutPlanType.Float => return Ok(PlanType.Float)
+        StoredLayoutPlanType.I8 => return Ok(PlanType.I8)
+        StoredLayoutPlanType.I16 => return Ok(PlanType.I16)
+        StoredLayoutPlanType.I32 => return Ok(PlanType.I32)
+        StoredLayoutPlanType.I128 => return Ok(PlanType.I128)
+        StoredLayoutPlanType.ISize => return Ok(PlanType.ISize)
+        StoredLayoutPlanType.USize => return Ok(PlanType.USize)
+        StoredLayoutPlanType.U8 => return Ok(PlanType.U8)
+        StoredLayoutPlanType.U16 => return Ok(PlanType.U16)
+        StoredLayoutPlanType.U32 => return Ok(PlanType.U32)
+        StoredLayoutPlanType.U64 => return Ok(PlanType.U64)
+        StoredLayoutPlanType.U128 => return Ok(PlanType.U128)
+        StoredLayoutPlanType.F32 => return Ok(PlanType.F32)
+        StoredLayoutPlanType.F64 => return Ok(PlanType.F64)
+        StoredLayoutPlanType.Bool => return Ok(PlanType.Bool)
+        StoredLayoutPlanType.Unit => return Ok(PlanType.Unit)
+        StoredLayoutPlanType.CheckedNumeric(field0) => return Ok(PlanType.CheckedNumeric(restore_sized_numeric(field0)?))
+        StoredLayoutPlanType.Never => return Ok(PlanType.Never)
+        StoredLayoutPlanType.UnitFunction => return Ok(PlanType.UnitFunction)
+        StoredLayoutPlanType.EnumTag => return Ok(PlanType.EnumTag)
+        StoredLayoutPlanType.CheckedInt => return Ok(PlanType.CheckedInt)
+        StoredLayoutPlanType.Tuple(field0) => return Ok(PlanType.Tuple([restore_tuple_element(item0)? for item0 in field0]))
+        StoredLayoutPlanType.String => return Ok(PlanType.String)
+        StoredLayoutPlanType.TupleRef(field0) => return Ok(PlanType.TupleRef([restore_tuple_element(item0)? for item0 in field0]))
+        StoredLayoutPlanType.TupleMutRef(field0) => return Ok(PlanType.TupleMutRef([restore_tuple_element(item0)? for item0 in field0]))
+        StoredLayoutPlanType.StringRef => return Ok(PlanType.StringRef)
+        StoredLayoutPlanType.ScalarRef(field0) => return Ok(PlanType.ScalarRef([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutPlanType.ScalarMutRef(field0) => return Ok(PlanType.ScalarMutRef([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutPlanType.StringMutRef => return Ok(PlanType.StringMutRef)
+        StoredLayoutPlanType.Decimal => return Ok(PlanType.Decimal)
+        StoredLayoutPlanType.FrozenStr => return Ok(PlanType.FrozenStr)
+        StoredLayoutPlanType.FrozenBytes => return Ok(PlanType.FrozenBytes)
+        StoredLayoutPlanType.FrozenCollection(field0, field1) => return Ok(PlanType.FrozenCollection(field0, [restore_plan_type(item0)? for item0 in field1]))
+        StoredLayoutPlanType.FrozenCollectionRef(field0, field1) => return Ok(PlanType.FrozenCollectionRef(field0, [restore_plan_type(item0)? for item0 in field1]))
+        StoredLayoutPlanType.TypeToken(field0) => return Ok(PlanType.TypeToken([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutPlanType.StaticText => return Ok(PlanType.StaticText)
+        StoredLayoutPlanType.StaticBytes => return Ok(PlanType.StaticBytes)
+        StoredLayoutPlanType.ValidationError => return Ok(PlanType.ValidationError)
+        StoredLayoutPlanType.ValidationErrorRef => return Ok(PlanType.ValidationErrorRef)
+        _ => return restore_plan_type_1(value)
+
+
+def restore_plan_type_1(value: StoredLayoutPlanType) -> Result[PlanType, str]:
+    """Restore exact PlanType alternatives without interpreting their meaning."""
+    match value:
+        StoredLayoutPlanType.StrRef => return Ok(PlanType.StrRef)
+        StoredLayoutPlanType.StringArray(field0) => return Ok(PlanType.StringArray(field0))
+        StoredLayoutPlanType.StrArray(field0) => return Ok(PlanType.StrArray(field0))
+        StoredLayoutPlanType.StringArrayRef(field0) => return Ok(PlanType.StringArrayRef(field0))
+        StoredLayoutPlanType.StrArrayRef(field0) => return Ok(PlanType.StrArrayRef(field0))
+        StoredLayoutPlanType.Enum(field0, field1) => return Ok(PlanType.Enum(field0, field1))
+        StoredLayoutPlanType.EnumRef(field0, field1) => return Ok(PlanType.EnumRef(field0, field1))
+        StoredLayoutPlanType.EnumMutRef(field0, field1) => return Ok(PlanType.EnumMutRef(field0, field1))
+        StoredLayoutPlanType.Model(field0, field1) => return Ok(PlanType.Model(field0, field1))
+        StoredLayoutPlanType.ModelRef(field0, field1) => return Ok(PlanType.ModelRef(field0, field1))
+        StoredLayoutPlanType.ModelMutRef(field0, field1) => return Ok(PlanType.ModelMutRef(field0, field1))
+        StoredLayoutPlanType.StringSlice => return Ok(PlanType.StringSlice)
+        StoredLayoutPlanType.StrSlice => return Ok(PlanType.StrSlice)
+        StoredLayoutPlanType.List(field0, field1) => return Ok(PlanType.List(restore_list_leaf(field0)?, field1))
+        StoredLayoutPlanType.ListRef(field0, field1) => return Ok(PlanType.ListRef(restore_list_leaf(field0)?, field1))
+        StoredLayoutPlanType.ListMutRef(field0, field1) => return Ok(PlanType.ListMutRef(restore_list_leaf(field0)?, field1))
+        StoredLayoutPlanType.ListIntoIter(field0, field1) => return Ok(PlanType.ListIntoIter(restore_list_leaf(field0)?, field1))
+        StoredLayoutPlanType.ListIntoIterMutRef(field0, field1) => return Ok(PlanType.ListIntoIterMutRef(restore_list_leaf(field0)?, field1))
+        StoredLayoutPlanType.Set(field0) => return Ok(PlanType.Set(restore_list_leaf(field0)?))
+        StoredLayoutPlanType.SetRef(field0) => return Ok(PlanType.SetRef(restore_list_leaf(field0)?))
+        StoredLayoutPlanType.SetMutRef(field0) => return Ok(PlanType.SetMutRef(restore_list_leaf(field0)?))
+        StoredLayoutPlanType.Dict(field0, field1) => return Ok(PlanType.Dict(restore_list_leaf(field0)?, restore_list_leaf(field1)?))
+        StoredLayoutPlanType.DictRef(field0, field1) => return Ok(PlanType.DictRef(restore_list_leaf(field0)?, restore_list_leaf(field1)?))
+        StoredLayoutPlanType.DictMutRef(field0, field1) => return Ok(PlanType.DictMutRef(restore_list_leaf(field0)?, restore_list_leaf(field1)?))
+        StoredLayoutPlanType.RangeValue => return Ok(PlanType.RangeValue)
+        StoredLayoutPlanType.ZipIterator(field0, field1) => return Ok(PlanType.ZipIterator(restore_tuple_element(field0)?, restore_tuple_element(field1)?))
+        StoredLayoutPlanType.ZipIteratorRef(field0, field1) => return Ok(PlanType.ZipIteratorRef(restore_tuple_element(field0)?, restore_tuple_element(field1)?))
+        StoredLayoutPlanType.ZipIteratorMutRef(field0, field1) => return Ok(PlanType.ZipIteratorMutRef(restore_tuple_element(field0)?, restore_tuple_element(field1)?))
+        StoredLayoutPlanType.Generator(field0, field1) => return Ok(PlanType.Generator(restore_list_leaf(field0)?, field1))
+        StoredLayoutPlanType.GeneratorMutRef(field0, field1) => return Ok(PlanType.GeneratorMutRef(restore_list_leaf(field0)?, field1))
+        StoredLayoutPlanType.GeneratorYield(field0, field1) => return Ok(PlanType.GeneratorYield(restore_list_leaf(field0)?, field1))
+        StoredLayoutPlanType.GeneratorYieldRef(field0, field1) => return Ok(PlanType.GeneratorYieldRef(restore_list_leaf(field0)?, field1))
+        StoredLayoutPlanType.FunctionPointer(field0) => return Ok(PlanType.FunctionPointer([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutPlanType.FunctionItem(field0, field1) => return Ok(PlanType.FunctionItem(field0, [restore_plan_type(item0)? for item0 in field1]))
+        StoredLayoutPlanType.Closure(field0) => return Ok(PlanType.Closure([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutPlanType.NativeClosure(field0, field1, field2) => return Ok(PlanType.NativeClosure([restore_plan_type(item0)? for item0 in field0], field1, field2))
+        StoredLayoutPlanType.NativeTraitObject(field0, field1, field2) => return Ok(PlanType.NativeTraitObject(field0, field1, field2))
+        StoredLayoutPlanType.SharedCallable(field0) => return Ok(PlanType.SharedCallable([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutPlanType.ClosureOnce(field0) => return Ok(PlanType.ClosureOnce([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutPlanType.ClosureRef(field0) => return Ok(PlanType.ClosureRef([restore_plan_type(item0)? for item0 in field0]))
+        _ => return restore_plan_type_2(value)
+
+
+def restore_plan_type_2(value: StoredLayoutPlanType) -> Result[PlanType, str]:
+    """Restore exact PlanType alternatives without interpreting their meaning."""
+    match value:
+        StoredLayoutPlanType.BorrowingClosure(field0) => return Ok(PlanType.BorrowingClosure([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutPlanType.BorrowingClosureRef(field0) => return Ok(PlanType.BorrowingClosureRef([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutPlanType.CallableArguments(field0) => return Ok(PlanType.CallableArguments([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutPlanType.Future(field0) => return Ok(PlanType.Future([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutPlanType.NativeStr => return Ok(PlanType.NativeStr)
+        StoredLayoutPlanType.NativeSlice(field0) => return Ok(PlanType.NativeSlice([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutPlanType.SliceRef(field0) => return Ok(PlanType.SliceRef([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutPlanType.SliceMutRef(field0) => return Ok(PlanType.SliceMutRef([restore_plan_type(item0)? for item0 in field0]))
+        StoredLayoutPlanType.NativeArray(field0, field1) => return Ok(PlanType.NativeArray([restore_plan_type(item0)? for item0 in field0], field1))
+        StoredLayoutPlanType.NativeArrayRef(field0, field1) => return Ok(PlanType.NativeArrayRef([restore_plan_type(item0)? for item0 in field0], field1))
+        StoredLayoutPlanType.NativeArrayMutRef(field0, field1) => return Ok(PlanType.NativeArrayMutRef([restore_plan_type(item0)? for item0 in field0], field1))
+        StoredLayoutPlanType.CChar => return Ok(PlanType.CChar)
+        StoredLayoutPlanType.RawPointer(field0, field1) => return Ok(PlanType.RawPointer(field0, [restore_plan_type(item0)? for item0 in field1]))
+        StoredLayoutPlanType.Boxed(field0) => return Ok(PlanType.Boxed([restore_plan_type(item0)? for item0 in field0]))
+        _ => return Err("native-interface refuses an unsupported PlanType alternative")
+
+
+pub def retain_carrier(value: Carrier) -> Result[StoredLayoutCarrier, str]:
+    """Encode exact Carrier alternatives without interpreting their meaning."""
+    match value:
+        Carrier.Declared => return Ok(StoredLayoutCarrier.Declared)
+        Carrier.Option => return Ok(StoredLayoutCarrier.Option)
+        Carrier.Result => return Ok(StoredLayoutCarrier.Result)
+
+
+pub def restore_carrier(value: StoredLayoutCarrier) -> Result[Carrier, str]:
+    """Restore exact Carrier alternatives without interpreting their meaning."""
+    match value:
+        StoredLayoutCarrier.Declared => return Ok(Carrier.Declared)
+        StoredLayoutCarrier.Option => return Ok(Carrier.Option)
+        StoredLayoutCarrier.Result => return Ok(Carrier.Result)
+
+
+pub def retain_checked_numeric_type(value: CheckedNumericType) -> Result[StoredLayoutCheckedNumericType, str]:
+    """Encode exact CheckedNumericType alternatives without interpreting their meaning."""
+    match value:
+        CheckedNumericType.I8 => return Ok(StoredLayoutCheckedNumericType.I8)
+        CheckedNumericType.I16 => return Ok(StoredLayoutCheckedNumericType.I16)
+        CheckedNumericType.I32 => return Ok(StoredLayoutCheckedNumericType.I32)
+        CheckedNumericType.I64 => return Ok(StoredLayoutCheckedNumericType.I64)
+        CheckedNumericType.I128 => return Ok(StoredLayoutCheckedNumericType.I128)
+        CheckedNumericType.U8 => return Ok(StoredLayoutCheckedNumericType.U8)
+        CheckedNumericType.U16 => return Ok(StoredLayoutCheckedNumericType.U16)
+        CheckedNumericType.U32 => return Ok(StoredLayoutCheckedNumericType.U32)
+        CheckedNumericType.U64 => return Ok(StoredLayoutCheckedNumericType.U64)
+        CheckedNumericType.U128 => return Ok(StoredLayoutCheckedNumericType.U128)
+        CheckedNumericType.F32 => return Ok(StoredLayoutCheckedNumericType.F32)
+        CheckedNumericType.F64 => return Ok(StoredLayoutCheckedNumericType.F64)
+        CheckedNumericType.ISize => return Ok(StoredLayoutCheckedNumericType.ISize)
+        CheckedNumericType.USize => return Ok(StoredLayoutCheckedNumericType.USize)
+        CheckedNumericType.Bool => return Ok(StoredLayoutCheckedNumericType.Bool)
+
+
+pub def restore_checked_numeric_type(value: StoredLayoutCheckedNumericType) -> Result[CheckedNumericType, str]:
+    """Restore exact CheckedNumericType alternatives without interpreting their meaning."""
+    match value:
+        StoredLayoutCheckedNumericType.I8 => return Ok(CheckedNumericType.I8)
+        StoredLayoutCheckedNumericType.I16 => return Ok(CheckedNumericType.I16)
+        StoredLayoutCheckedNumericType.I32 => return Ok(CheckedNumericType.I32)
+        StoredLayoutCheckedNumericType.I64 => return Ok(CheckedNumericType.I64)
+        StoredLayoutCheckedNumericType.I128 => return Ok(CheckedNumericType.I128)
+        StoredLayoutCheckedNumericType.U8 => return Ok(CheckedNumericType.U8)
+        StoredLayoutCheckedNumericType.U16 => return Ok(CheckedNumericType.U16)
+        StoredLayoutCheckedNumericType.U32 => return Ok(CheckedNumericType.U32)
+        StoredLayoutCheckedNumericType.U64 => return Ok(CheckedNumericType.U64)
+        StoredLayoutCheckedNumericType.U128 => return Ok(CheckedNumericType.U128)
+        StoredLayoutCheckedNumericType.F32 => return Ok(CheckedNumericType.F32)
+        StoredLayoutCheckedNumericType.F64 => return Ok(CheckedNumericType.F64)
+        StoredLayoutCheckedNumericType.ISize => return Ok(CheckedNumericType.ISize)
+        StoredLayoutCheckedNumericType.USize => return Ok(CheckedNumericType.USize)
+        StoredLayoutCheckedNumericType.Bool => return Ok(CheckedNumericType.Bool)
+
+
+pub def retain_checked_primitive_type(value: CheckedPrimitiveType) -> Result[StoredLayoutCheckedPrimitiveType, str]:
+    """Encode exact CheckedPrimitiveType alternatives without interpreting their meaning."""
+    match value:
+        CheckedPrimitiveType.Int => return Ok(StoredLayoutCheckedPrimitiveType.Int)
+        CheckedPrimitiveType.Float => return Ok(StoredLayoutCheckedPrimitiveType.Float)
+        CheckedPrimitiveType.Numeric(field0) => return Ok(StoredLayoutCheckedPrimitiveType.Numeric(retain_checked_numeric_type(field0)?))
+        CheckedPrimitiveType.Bool => return Ok(StoredLayoutCheckedPrimitiveType.Bool)
+        CheckedPrimitiveType.Str => return Ok(StoredLayoutCheckedPrimitiveType.Str)
+        CheckedPrimitiveType.Bytes => return Ok(StoredLayoutCheckedPrimitiveType.Bytes)
+        CheckedPrimitiveType.FrozenStr => return Ok(StoredLayoutCheckedPrimitiveType.FrozenStr)
+        CheckedPrimitiveType.FrozenBytes => return Ok(StoredLayoutCheckedPrimitiveType.FrozenBytes)
+        CheckedPrimitiveType.Unit => return Ok(StoredLayoutCheckedPrimitiveType.Unit)
+
+
+pub def restore_checked_primitive_type(value: StoredLayoutCheckedPrimitiveType) -> Result[CheckedPrimitiveType, str]:
+    """Restore exact CheckedPrimitiveType alternatives without interpreting their meaning."""
+    match value:
+        StoredLayoutCheckedPrimitiveType.Int => return Ok(CheckedPrimitiveType.Int)
+        StoredLayoutCheckedPrimitiveType.Float => return Ok(CheckedPrimitiveType.Float)
+        StoredLayoutCheckedPrimitiveType.Numeric(field0) => return Ok(CheckedPrimitiveType.Numeric(restore_checked_numeric_type(field0)?))
+        StoredLayoutCheckedPrimitiveType.Bool => return Ok(CheckedPrimitiveType.Bool)
+        StoredLayoutCheckedPrimitiveType.Str => return Ok(CheckedPrimitiveType.Str)
+        StoredLayoutCheckedPrimitiveType.Bytes => return Ok(CheckedPrimitiveType.Bytes)
+        StoredLayoutCheckedPrimitiveType.FrozenStr => return Ok(CheckedPrimitiveType.FrozenStr)
+        StoredLayoutCheckedPrimitiveType.FrozenBytes => return Ok(CheckedPrimitiveType.FrozenBytes)
+        StoredLayoutCheckedPrimitiveType.Unit => return Ok(CheckedPrimitiveType.Unit)
+
+
+pub def retain_checked_input_access(value: CheckedInputAccess) -> Result[StoredLayoutCheckedInputAccess, str]:
+    """Encode exact CheckedInputAccess alternatives without interpreting their meaning."""
+    match value:
+        CheckedInputAccess.Inferred => return Ok(StoredLayoutCheckedInputAccess.Inferred)
+        CheckedInputAccess.Shared => return Ok(StoredLayoutCheckedInputAccess.Shared)
+        CheckedInputAccess.Exclusive => return Ok(StoredLayoutCheckedInputAccess.Exclusive)
+        CheckedInputAccess.Owned => return Ok(StoredLayoutCheckedInputAccess.Owned)
+        CheckedInputAccess.InferredShared => return Ok(StoredLayoutCheckedInputAccess.InferredShared)
+
+
+pub def restore_checked_input_access(value: StoredLayoutCheckedInputAccess) -> Result[CheckedInputAccess, str]:
+    """Restore exact CheckedInputAccess alternatives without interpreting their meaning."""
+    match value:
+        StoredLayoutCheckedInputAccess.Inferred => return Ok(CheckedInputAccess.Inferred)
+        StoredLayoutCheckedInputAccess.Shared => return Ok(CheckedInputAccess.Shared)
+        StoredLayoutCheckedInputAccess.Exclusive => return Ok(CheckedInputAccess.Exclusive)
+        StoredLayoutCheckedInputAccess.Owned => return Ok(CheckedInputAccess.Owned)
+        StoredLayoutCheckedInputAccess.InferredShared => return Ok(CheckedInputAccess.InferredShared)
+
+
+pub def retain_checked_callable_param_kind(value: CheckedCallableParamKind) -> Result[StoredLayoutCheckedCallableParamKind, str]:
+    """Encode exact CheckedCallableParamKind alternatives without interpreting their meaning."""
+    match value:
+        CheckedCallableParamKind.Normal => return Ok(StoredLayoutCheckedCallableParamKind.Normal)
+        CheckedCallableParamKind.RestPositional => return Ok(StoredLayoutCheckedCallableParamKind.RestPositional)
+        CheckedCallableParamKind.RestKeyword => return Ok(StoredLayoutCheckedCallableParamKind.RestKeyword)
+
+
+pub def restore_checked_callable_param_kind(value: StoredLayoutCheckedCallableParamKind) -> Result[CheckedCallableParamKind, str]:
+    """Restore exact CheckedCallableParamKind alternatives without interpreting their meaning."""
+    match value:
+        StoredLayoutCheckedCallableParamKind.Normal => return Ok(CheckedCallableParamKind.Normal)
+        StoredLayoutCheckedCallableParamKind.RestPositional => return Ok(CheckedCallableParamKind.RestPositional)
+        StoredLayoutCheckedCallableParamKind.RestKeyword => return Ok(CheckedCallableParamKind.RestKeyword)
+
+
+pub def retain_checked_runtime_builtin(value: CheckedRuntimeBuiltin) -> Result[StoredLayoutCheckedRuntimeBuiltin, str]:
+    """Encode exact CheckedRuntimeBuiltin alternatives without interpreting their meaning."""
+    match value:
+        CheckedRuntimeBuiltin.ValidationError => return Ok(StoredLayoutCheckedRuntimeBuiltin.ValidationError)
+
+
+pub def restore_checked_runtime_builtin(value: StoredLayoutCheckedRuntimeBuiltin) -> Result[CheckedRuntimeBuiltin, str]:
+    """Restore exact CheckedRuntimeBuiltin alternatives without interpreting their meaning."""
+    match value:
+        StoredLayoutCheckedRuntimeBuiltin.ValidationError => return Ok(CheckedRuntimeBuiltin.ValidationError)
+
+
+pub def retain_checked_callable_param(value: CheckedCallableParam) -> Result[StoredLayoutCheckedCallableParam, str]:
+    """Encode every CheckedCallableParam field in declaration order."""
+    return Ok(StoredLayoutCheckedCallableParam(
+        name=value.name,
+        ty=retain_checked_type(value.ty)?,
+        kind=retain_checked_callable_param_kind(value.kind)?,
+        has_default=value.has_default,
+        is_partial_preset=value.is_partial_preset,
+        is_mut=value.is_mut,
+        native_owned=value.native_owned,
+        input_access=retain_checked_input_access(value.input_access)?,
+    ))
+
+
+pub def restore_checked_callable_param(value: StoredLayoutCheckedCallableParam) -> Result[CheckedCallableParam, str]:
+    """Restore every CheckedCallableParam field in declaration order."""
+    return Ok(CheckedCallableParam(
+        name=value.name,
+        ty=restore_checked_type(value.ty)?,
+        kind=restore_checked_callable_param_kind(value.kind)?,
+        has_default=value.has_default,
+        is_partial_preset=value.is_partial_preset,
+        is_mut=value.is_mut,
+        native_owned=value.native_owned,
+        input_access=restore_checked_input_access(value.input_access)?,
+    ))
+
+
+pub def retain_checked_type(value: CheckedType) -> Result[StoredLayoutCheckedType, str]:
+    """Encode exact CheckedType alternatives without interpreting their meaning."""
+    match value:
+        CheckedType.Never => return Ok(StoredLayoutCheckedType.Never)
+        CheckedType.Primitive(field0) => return Ok(StoredLayoutCheckedType.Primitive(retain_checked_primitive_type(field0)?))
+        CheckedType.Named(field0) => return Ok(StoredLayoutCheckedType.Named(field0))
+        CheckedType.Generic(field0, field1) => return Ok(StoredLayoutCheckedType.Generic(field0, [retain_checked_type(item0)? for item0 in field1]))
+        CheckedType.Decimal(field0, field1) => return Ok(StoredLayoutCheckedType.Decimal(field0, field1))
+        CheckedType.Function(field0, field1) => return Ok(StoredLayoutCheckedType.Function([retain_checked_callable_param(item0)? for item0 in field0], [retain_checked_type(item0)? for item0 in field1]))
+        CheckedType.TypeToken(field0) => return Ok(StoredLayoutCheckedType.TypeToken([retain_checked_type(item0)? for item0 in field0]))
+        CheckedType.Tuple(field0) => return Ok(StoredLayoutCheckedType.Tuple([retain_checked_type(item0)? for item0 in field0]))
+        CheckedType.TypeVar(field0) => return Ok(StoredLayoutCheckedType.TypeVar(field0))
+        CheckedType.SelfType => return Ok(StoredLayoutCheckedType.SelfType)
+        CheckedType.Ref(field0) => return Ok(StoredLayoutCheckedType.Ref([retain_checked_type(item0)? for item0 in field0]))
+        CheckedType.RefMut(field0) => return Ok(StoredLayoutCheckedType.RefMut([retain_checked_type(item0)? for item0 in field0]))
+        CheckedType.RustInteropPath(field0) => return Ok(StoredLayoutCheckedType.RustInteropPath(field0))
+        CheckedType.NativeBuiltin(field0) => return Ok(StoredLayoutCheckedType.NativeBuiltin(retain_checked_runtime_builtin(field0)?))
+        CheckedType.Unsupported(field0) => return Ok(StoredLayoutCheckedType.Unsupported(field0))
+        CheckedType.Infer => return Ok(StoredLayoutCheckedType.Infer)
+        CheckedType.Unknown => return Ok(StoredLayoutCheckedType.Unknown)
+        CheckedType.NativeArray(field0, field1) => return Ok(StoredLayoutCheckedType.NativeArray([retain_checked_type(item0)? for item0 in field0], field1))
+        CheckedType.NativeTraitObject(field0, field1, field2) => return Ok(StoredLayoutCheckedType.NativeTraitObject(field0, field1, field2))
+        CheckedType.NativePointer(field0, field1) => return Ok(StoredLayoutCheckedType.NativePointer(field0, [retain_checked_type(item0)? for item0 in field1]))
+        CheckedType.NativeCChar => return Ok(StoredLayoutCheckedType.NativeCChar)
+        _ => return Err("native-interface refuses an unsupported CheckedType alternative")
+
+
+pub def restore_checked_type(value: StoredLayoutCheckedType) -> Result[CheckedType, str]:
+    """Restore exact CheckedType alternatives without interpreting their meaning."""
+    match value:
+        StoredLayoutCheckedType.Never => return Ok(CheckedType.Never)
+        StoredLayoutCheckedType.Primitive(field0) => return Ok(CheckedType.Primitive(restore_checked_primitive_type(field0)?))
+        StoredLayoutCheckedType.Named(field0) => return Ok(CheckedType.Named(field0))
+        StoredLayoutCheckedType.Generic(field0, field1) => return Ok(CheckedType.Generic(field0, [restore_checked_type(item0)? for item0 in field1]))
+        StoredLayoutCheckedType.Decimal(field0, field1) => return Ok(CheckedType.Decimal(field0, field1))
+        StoredLayoutCheckedType.Function(field0, field1) => return Ok(CheckedType.Function([restore_checked_callable_param(item0)? for item0 in field0], [restore_checked_type(item0)? for item0 in field1]))
+        StoredLayoutCheckedType.TypeToken(field0) => return Ok(CheckedType.TypeToken([restore_checked_type(item0)? for item0 in field0]))
+        StoredLayoutCheckedType.Tuple(field0) => return Ok(CheckedType.Tuple([restore_checked_type(item0)? for item0 in field0]))
+        StoredLayoutCheckedType.TypeVar(field0) => return Ok(CheckedType.TypeVar(field0))
+        StoredLayoutCheckedType.SelfType => return Ok(CheckedType.SelfType)
+        StoredLayoutCheckedType.Ref(field0) => return Ok(CheckedType.Ref([restore_checked_type(item0)? for item0 in field0]))
+        StoredLayoutCheckedType.RefMut(field0) => return Ok(CheckedType.RefMut([restore_checked_type(item0)? for item0 in field0]))
+        StoredLayoutCheckedType.RustInteropPath(field0) => return Ok(CheckedType.RustInteropPath(field0))
+        StoredLayoutCheckedType.NativeBuiltin(field0) => return Ok(CheckedType.NativeBuiltin(restore_checked_runtime_builtin(field0)?))
+        StoredLayoutCheckedType.Unsupported(field0) => return Ok(CheckedType.Unsupported(field0))
+        StoredLayoutCheckedType.Infer => return Ok(CheckedType.Infer)
+        StoredLayoutCheckedType.Unknown => return Ok(CheckedType.Unknown)
+        StoredLayoutCheckedType.NativeArray(field0, field1) => return Ok(CheckedType.NativeArray([restore_checked_type(item0)? for item0 in field0], field1))
+        StoredLayoutCheckedType.NativeTraitObject(field0, field1, field2) => return Ok(CheckedType.NativeTraitObject(field0, field1, field2))
+        StoredLayoutCheckedType.NativePointer(field0, field1) => return Ok(CheckedType.NativePointer(field0, [restore_checked_type(item0)? for item0 in field1]))
+        StoredLayoutCheckedType.NativeCChar => return Ok(CheckedType.NativeCChar)
+        _ => return Err("native-interface refuses an unsupported CheckedType alternative")

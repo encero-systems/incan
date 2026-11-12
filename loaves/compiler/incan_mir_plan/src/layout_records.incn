@@ -1,0 +1,627 @@
+"""Retain every concrete native layout field without deriving storage or semantic identities during decoding."""
+
+from rust::serde import Serialize, Deserialize
+from rust::serde_json import to_string, from_str, Error as JsonError
+from _types import SourceSpan, source_span
+from pub::internal_models.checked_types import CheckedType
+from _body import (
+    Parameter,
+    FieldLifecycle,
+    FieldMetadata,
+)
+from _plan import (
+    ZipCarrier,
+    IteratorMethods,
+    FallibleIteratorMethods,
+    NativeTraitMethod,
+    NativeTraitAdoption,
+    ModelDeclaration,
+    EnumDeclaration,
+    EnumVariant,
+)
+from layout_type_records import (
+    StoredLayoutTupleElement,
+    retain_tuple_element,
+    restore_tuple_element,
+    StoredLayoutListLeaf,
+    retain_list_leaf,
+    restore_list_leaf,
+    StoredLayoutSizedNumeric,
+    retain_sized_numeric,
+    restore_sized_numeric,
+    StoredLayoutPlanType,
+    retain_plan_type,
+    restore_plan_type,
+    StoredLayoutCarrier,
+    retain_carrier,
+    restore_carrier,
+    StoredLayoutCheckedNumericType,
+    retain_checked_numeric_type,
+    restore_checked_numeric_type,
+    StoredLayoutCheckedPrimitiveType,
+    retain_checked_primitive_type,
+    restore_checked_primitive_type,
+    StoredLayoutCheckedInputAccess,
+    retain_checked_input_access,
+    restore_checked_input_access,
+    StoredLayoutCheckedCallableParamKind,
+    retain_checked_callable_param_kind,
+    restore_checked_callable_param_kind,
+    StoredLayoutCheckedRuntimeBuiltin,
+    retain_checked_runtime_builtin,
+    restore_checked_runtime_builtin,
+    StoredLayoutCheckedCallableParam,
+    retain_checked_callable_param,
+    restore_checked_callable_param,
+    StoredLayoutCheckedType,
+    retain_checked_type,
+    restore_checked_type,
+)
+
+@derive(Serialize, Deserialize)
+model StoredSpan:
+    """Allocation-free coordinates for a concrete layout declaration or field."""
+
+    file: str
+    line: int
+    column: int
+
+
+def store_span(value: SourceSpan) -> StoredSpan:
+    """Retain all native diagnostic coordinates."""
+    return StoredSpan(file=str(value.file), line=value.line, column=value.column)
+
+
+def restore_span(value: StoredSpan) -> SourceSpan:
+    """Restore native shared-file storage through its owning constructor."""
+    return source_span(file=value.file, line=value.line, column=value.column)
+
+
+@derive(Serialize, Deserialize)
+model StoredLayoutParameter:
+    """The complete serialized Parameter facts admitted by this layout profile."""
+
+    name: str
+    ty: StoredLayoutPlanType
+    span: StoredSpan
+
+
+@derive(Serialize, Deserialize)
+model StoredLayoutFieldLifecycle:
+    """The complete serialized FieldLifecycle facts admitted by this layout profile."""
+
+    since: Option[str]
+    retire_in: Option[str]
+    message: Option[str]
+    by: Option[str]
+    issue: Option[str]
+
+
+@derive(Serialize, Deserialize)
+model StoredLayoutFieldMetadata:
+    """The complete serialized FieldMetadata facts admitted by this layout profile."""
+
+    name: str
+    record_identity: list[int]
+    record_canonical: bool
+    renamed_from: list[str]
+    renamed_from_lifecycle: Option[StoredLayoutFieldLifecycle]
+    position: int
+    default_is_empty: bool
+    stored_type: Option[str]
+    alias: Option[str]
+    description: Option[str]
+    type_name: str
+    has_default: bool
+
+
+@derive(Serialize, Deserialize)
+model StoredLayoutZipCarrier:
+    """The complete serialized ZipCarrier facts admitted by this layout profile."""
+
+    left: StoredLayoutTupleElement
+    right: StoredLayoutTupleElement
+    target: StoredLayoutPlanType
+
+
+@derive(Serialize, Deserialize)
+model StoredLayoutIteratorMethods:
+    """The complete serialized IteratorMethods facts admitted by this layout profile."""
+
+    item: StoredLayoutPlanType
+    next: str
+
+
+@derive(Serialize, Deserialize)
+model StoredLayoutFallibleIteratorMethods:
+    """The complete serialized FallibleIteratorMethods facts admitted by this layout profile."""
+
+    item: StoredLayoutPlanType
+    error: StoredLayoutPlanType
+    next: str
+
+
+@derive(Serialize, Deserialize)
+model StoredLayoutNativeTraitMethod:
+    """The complete serialized NativeTraitMethod facts admitted by this layout profile."""
+
+    name: str
+    function: str
+
+
+@derive(Serialize, Deserialize)
+model StoredLayoutNativeTraitAdoption:
+    """The complete serialized NativeTraitAdoption facts admitted by this layout profile."""
+
+    path: str
+    methods: list[StoredLayoutNativeTraitMethod]
+
+
+@derive(Serialize, Deserialize)
+model StoredLayoutModelDeclaration:
+    """The complete serialized ModelDeclaration facts admitted by this layout profile."""
+
+    name: str
+    public: bool
+    fields: list[StoredLayoutParameter]
+    field_public: list[bool]
+    derives: list[str]
+    span: StoredSpan
+    view_lifetime_count: int
+    source_name: str
+    library_item: str
+    library_type_arguments: list[StoredLayoutPlanType]
+    field_serde_names: list[str]
+    checked_deserialize: str
+    reflection_metadata: Option[list[StoredLayoutFieldMetadata]]
+    field_metadata_carrier: bool
+    comparison_methods: list[str]
+    fallible_iterator: Option[StoredLayoutFallibleIteratorMethods]
+    iterator: Option[StoredLayoutIteratorMethods]
+    callable_method: str
+    callable_signature: list[StoredLayoutPlanType]
+    string_conversion_root: str
+    string_conversion_trait: str
+    native_trait_adoptions: list[StoredLayoutNativeTraitAdoption]
+    unavailable_native_fields: list[int]
+
+
+@derive(Serialize, Deserialize)
+model StoredLayoutEnumDeclaration:
+    """The complete serialized EnumDeclaration facts admitted by this layout profile."""
+
+    name: str
+    public: bool
+    variants: list[StoredLayoutEnumVariant]
+    derives: list[str]
+    span: StoredSpan
+    view_lifetime_count: int
+    carrier: StoredLayoutCarrier
+    semantic_key: Option[StoredLayoutCheckedType]
+    source_type: str
+    member_debug: bool
+    library_item: str
+    library_type_arguments: list[StoredLayoutPlanType]
+    raw_kind: str
+    raw_values: list[str]
+    comparison_methods: list[str]
+    closure_items: list[str]
+
+
+@derive(Serialize, Deserialize)
+model StoredLayoutEnumVariant:
+    """The complete serialized EnumVariant facts admitted by this layout profile."""
+
+    name: str
+    fields: list[StoredLayoutPlanType]
+
+
+def retain_parameter(value: Parameter) -> Result[StoredLayoutParameter, str]:
+    """Encode every Parameter field in declaration order."""
+    return Ok(StoredLayoutParameter(
+        name=value.name,
+        ty=retain_plan_type(value.ty)?,
+        span=store_span(value.span),
+    ))
+
+
+def restore_parameter(value: StoredLayoutParameter) -> Result[Parameter, str]:
+    """Restore every Parameter field in declaration order."""
+    return Ok(Parameter(
+        name=value.name,
+        ty=restore_plan_type(value.ty)?,
+        span=restore_span(value.span),
+    ))
+
+
+def retain_field_lifecycle(value: FieldLifecycle) -> Result[StoredLayoutFieldLifecycle, str]:
+    """Encode every FieldLifecycle field in declaration order."""
+    return Ok(StoredLayoutFieldLifecycle(
+        since=value.since,
+        retire_in=value.retire_in,
+        message=value.message,
+        by=value.by,
+        issue=value.issue,
+    ))
+
+
+def restore_field_lifecycle(value: StoredLayoutFieldLifecycle) -> Result[FieldLifecycle, str]:
+    """Restore every FieldLifecycle field in declaration order."""
+    return Ok(FieldLifecycle(
+        since=value.since,
+        retire_in=value.retire_in,
+        message=value.message,
+        by=value.by,
+        issue=value.issue,
+    ))
+
+
+def retain_field_metadata(value: FieldMetadata) -> Result[StoredLayoutFieldMetadata, str]:
+    """Encode every FieldMetadata field in declaration order."""
+    return Ok(StoredLayoutFieldMetadata(
+        name=value.name,
+        record_identity=value.record_identity,
+        record_canonical=value.record_canonical,
+        renamed_from=value.renamed_from,
+        renamed_from_lifecycle=retain_optional_field_lifecycle(value.renamed_from_lifecycle)?,
+        position=value.position,
+        default_is_empty=value.default_is_empty,
+        stored_type=value.stored_type,
+        alias=value.alias,
+        description=value.description,
+        type_name=value.type_name,
+        has_default=value.has_default,
+    ))
+
+
+def restore_field_metadata(value: StoredLayoutFieldMetadata) -> Result[FieldMetadata, str]:
+    """Restore every FieldMetadata field in declaration order."""
+    return Ok(FieldMetadata(
+        name=value.name,
+        record_identity=value.record_identity,
+        record_canonical=value.record_canonical,
+        renamed_from=value.renamed_from,
+        renamed_from_lifecycle=restore_optional_field_lifecycle(value.renamed_from_lifecycle)?,
+        position=value.position,
+        default_is_empty=value.default_is_empty,
+        stored_type=value.stored_type,
+        alias=value.alias,
+        description=value.description,
+        type_name=value.type_name,
+        has_default=value.has_default,
+    ))
+
+
+def retain_zip_carrier(value: ZipCarrier) -> Result[StoredLayoutZipCarrier, str]:
+    """Encode every ZipCarrier field in declaration order."""
+    return Ok(StoredLayoutZipCarrier(
+        left=retain_tuple_element(value.left)?,
+        right=retain_tuple_element(value.right)?,
+        target=retain_plan_type(value.target)?,
+    ))
+
+
+def restore_zip_carrier(value: StoredLayoutZipCarrier) -> Result[ZipCarrier, str]:
+    """Restore every ZipCarrier field in declaration order."""
+    return Ok(ZipCarrier(
+        left=restore_tuple_element(value.left)?,
+        right=restore_tuple_element(value.right)?,
+        target=restore_plan_type(value.target)?,
+    ))
+
+
+def retain_iterator_methods(value: IteratorMethods) -> Result[StoredLayoutIteratorMethods, str]:
+    """Encode every IteratorMethods field in declaration order."""
+    return Ok(StoredLayoutIteratorMethods(
+        item=retain_plan_type(value.item)?,
+        next=value.next,
+    ))
+
+
+def restore_iterator_methods(value: StoredLayoutIteratorMethods) -> Result[IteratorMethods, str]:
+    """Restore every IteratorMethods field in declaration order."""
+    return Ok(IteratorMethods(
+        item=restore_plan_type(value.item)?,
+        next=value.next,
+    ))
+
+
+def retain_fallible_iterator_methods(value: FallibleIteratorMethods) -> Result[StoredLayoutFallibleIteratorMethods, str]:
+    """Encode every FallibleIteratorMethods field in declaration order."""
+    return Ok(StoredLayoutFallibleIteratorMethods(
+        item=retain_plan_type(value.item)?,
+        error=retain_plan_type(value.error)?,
+        next=value.next,
+    ))
+
+
+def restore_fallible_iterator_methods(value: StoredLayoutFallibleIteratorMethods) -> Result[FallibleIteratorMethods, str]:
+    """Restore every FallibleIteratorMethods field in declaration order."""
+    return Ok(FallibleIteratorMethods(
+        item=restore_plan_type(value.item)?,
+        error=restore_plan_type(value.error)?,
+        next=value.next,
+    ))
+
+
+def retain_native_trait_method(value: NativeTraitMethod) -> Result[StoredLayoutNativeTraitMethod, str]:
+    """Encode every NativeTraitMethod field in declaration order."""
+    return Ok(StoredLayoutNativeTraitMethod(
+        name=value.name,
+        function=value.function,
+    ))
+
+
+def restore_native_trait_method(value: StoredLayoutNativeTraitMethod) -> Result[NativeTraitMethod, str]:
+    """Restore every NativeTraitMethod field in declaration order."""
+    return Ok(NativeTraitMethod(
+        name=value.name,
+        function=value.function,
+    ))
+
+
+def retain_native_trait_adoption(value: NativeTraitAdoption) -> Result[StoredLayoutNativeTraitAdoption, str]:
+    """Encode every NativeTraitAdoption field in declaration order."""
+    return Ok(StoredLayoutNativeTraitAdoption(
+        path=value.path,
+        methods=[retain_native_trait_method(item0)? for item0 in value.methods],
+    ))
+
+
+def restore_native_trait_adoption(value: StoredLayoutNativeTraitAdoption) -> Result[NativeTraitAdoption, str]:
+    """Restore every NativeTraitAdoption field in declaration order."""
+    return Ok(NativeTraitAdoption(
+        path=value.path,
+        methods=[restore_native_trait_method(item0)? for item0 in value.methods],
+    ))
+
+
+def retain_model_declaration(value: ModelDeclaration) -> Result[StoredLayoutModelDeclaration, str]:
+    """Encode every ModelDeclaration field in declaration order."""
+    return Ok(StoredLayoutModelDeclaration(
+        name=value.name,
+        public=value.public,
+        fields=[retain_parameter(item0)? for item0 in value.fields],
+        field_public=value.field_public,
+        derives=value.derives,
+        span=store_span(value.span),
+        view_lifetime_count=value.view_lifetime_count,
+        source_name=value.source_name,
+        library_item=value.library_item,
+        library_type_arguments=[retain_plan_type(item0)? for item0 in value.library_type_arguments],
+        field_serde_names=value.field_serde_names,
+        checked_deserialize=value.checked_deserialize,
+        reflection_metadata=retain_optional_list_field_metadata(value.reflection_metadata)?,
+        field_metadata_carrier=value.field_metadata_carrier,
+        comparison_methods=value.comparison_methods,
+        fallible_iterator=retain_optional_fallible_iterator_methods(value.fallible_iterator)?,
+        iterator=retain_optional_iterator_methods(value.iterator)?,
+        callable_method=value.callable_method,
+        callable_signature=[retain_plan_type(item0)? for item0 in value.callable_signature],
+        string_conversion_root=value.string_conversion_root,
+        string_conversion_trait=value.string_conversion_trait,
+        native_trait_adoptions=[retain_native_trait_adoption(item0)? for item0 in value.native_trait_adoptions],
+        unavailable_native_fields=value.unavailable_native_fields,
+    ))
+
+
+def restore_model_declaration(value: StoredLayoutModelDeclaration) -> Result[ModelDeclaration, str]:
+    """Restore every ModelDeclaration field in declaration order."""
+    return Ok(ModelDeclaration(
+        name=value.name,
+        public=value.public,
+        fields=[restore_parameter(item0)? for item0 in value.fields],
+        field_public=value.field_public,
+        derives=value.derives,
+        span=restore_span(value.span),
+        view_lifetime_count=value.view_lifetime_count,
+        source_name=value.source_name,
+        library_item=value.library_item,
+        library_type_arguments=[restore_plan_type(item0)? for item0 in value.library_type_arguments],
+        field_serde_names=value.field_serde_names,
+        checked_deserialize=value.checked_deserialize,
+        reflection_metadata=restore_optional_list_field_metadata(value.reflection_metadata)?,
+        field_metadata_carrier=value.field_metadata_carrier,
+        comparison_methods=value.comparison_methods,
+        fallible_iterator=restore_optional_fallible_iterator_methods(value.fallible_iterator)?,
+        iterator=restore_optional_iterator_methods(value.iterator)?,
+        callable_method=value.callable_method,
+        callable_signature=[restore_plan_type(item0)? for item0 in value.callable_signature],
+        string_conversion_root=value.string_conversion_root,
+        string_conversion_trait=value.string_conversion_trait,
+        native_trait_adoptions=[restore_native_trait_adoption(item0)? for item0 in value.native_trait_adoptions],
+        unavailable_native_fields=value.unavailable_native_fields,
+    ))
+
+
+def retain_enum_declaration(value: EnumDeclaration) -> Result[StoredLayoutEnumDeclaration, str]:
+    """Encode every EnumDeclaration field in declaration order."""
+    return Ok(StoredLayoutEnumDeclaration(
+        name=value.name,
+        public=value.public,
+        variants=[retain_enum_variant(item0)? for item0 in value.variants],
+        derives=value.derives,
+        span=store_span(value.span),
+        view_lifetime_count=value.view_lifetime_count,
+        carrier=retain_carrier(value.carrier)?,
+        semantic_key=retain_optional_checked_type(value.semantic_key)?,
+        source_type=value.source_type,
+        member_debug=value.member_debug,
+        library_item=value.library_item,
+        library_type_arguments=[retain_plan_type(item0)? for item0 in value.library_type_arguments],
+        raw_kind=value.raw_kind,
+        raw_values=value.raw_values,
+        comparison_methods=value.comparison_methods,
+        closure_items=value.closure_items,
+    ))
+
+
+def restore_enum_declaration(value: StoredLayoutEnumDeclaration) -> Result[EnumDeclaration, str]:
+    """Restore every EnumDeclaration field in declaration order."""
+    return Ok(EnumDeclaration(
+        name=value.name,
+        public=value.public,
+        variants=[restore_enum_variant(item0)? for item0 in value.variants],
+        derives=value.derives,
+        span=restore_span(value.span),
+        view_lifetime_count=value.view_lifetime_count,
+        carrier=restore_carrier(value.carrier)?,
+        semantic_key=restore_optional_checked_type(value.semantic_key)?,
+        source_type=value.source_type,
+        member_debug=value.member_debug,
+        library_item=value.library_item,
+        library_type_arguments=[restore_plan_type(item0)? for item0 in value.library_type_arguments],
+        raw_kind=value.raw_kind,
+        raw_values=value.raw_values,
+        comparison_methods=value.comparison_methods,
+        closure_items=value.closure_items,
+    ))
+
+
+def retain_enum_variant(value: EnumVariant) -> Result[StoredLayoutEnumVariant, str]:
+    """Encode every EnumVariant field in declaration order."""
+    return Ok(StoredLayoutEnumVariant(
+        name=value.name,
+        fields=[retain_plan_type(item0)? for item0 in value.fields],
+    ))
+
+
+def restore_enum_variant(value: StoredLayoutEnumVariant) -> Result[EnumVariant, str]:
+    """Restore every EnumVariant field in declaration order."""
+    return Ok(EnumVariant(
+        name=value.name,
+        fields=[restore_plan_type(item0)? for item0 in value.fields],
+    ))
+
+
+def retain_optional_field_lifecycle(value: Option[FieldLifecycle]) -> Result[Option[StoredLayoutFieldLifecycle], str]:
+    """Preserve both absence and the exact present layout facts."""
+    match value:
+        None => return Ok(None)
+        Some(item) => return Ok(Some(retain_field_lifecycle(item)?))
+
+
+def restore_optional_field_lifecycle(value: Option[StoredLayoutFieldLifecycle]) -> Result[Option[FieldLifecycle], str]:
+    """Preserve both absence and the exact present layout facts."""
+    match value:
+        None => return Ok(None)
+        Some(item) => return Ok(Some(restore_field_lifecycle(item)?))
+
+
+def retain_optional_list_field_metadata(value: Option[list[FieldMetadata]]) -> Result[Option[list[StoredLayoutFieldMetadata]], str]:
+    """Preserve both absence and the exact present layout facts."""
+    match value:
+        None => return Ok(None)
+        Some(item) => return Ok(Some([retain_field_metadata(item0)? for item0 in item]))
+
+
+def restore_optional_list_field_metadata(value: Option[list[StoredLayoutFieldMetadata]]) -> Result[Option[list[FieldMetadata]], str]:
+    """Preserve both absence and the exact present layout facts."""
+    match value:
+        None => return Ok(None)
+        Some(item) => return Ok(Some([restore_field_metadata(item0)? for item0 in item]))
+
+
+def retain_optional_fallible_iterator_methods(value: Option[FallibleIteratorMethods]) -> Result[Option[StoredLayoutFallibleIteratorMethods], str]:
+    """Preserve both absence and the exact present layout facts."""
+    match value:
+        None => return Ok(None)
+        Some(item) => return Ok(Some(retain_fallible_iterator_methods(item)?))
+
+
+def restore_optional_fallible_iterator_methods(value: Option[StoredLayoutFallibleIteratorMethods]) -> Result[Option[FallibleIteratorMethods], str]:
+    """Preserve both absence and the exact present layout facts."""
+    match value:
+        None => return Ok(None)
+        Some(item) => return Ok(Some(restore_fallible_iterator_methods(item)?))
+
+
+def retain_optional_iterator_methods(value: Option[IteratorMethods]) -> Result[Option[StoredLayoutIteratorMethods], str]:
+    """Preserve both absence and the exact present layout facts."""
+    match value:
+        None => return Ok(None)
+        Some(item) => return Ok(Some(retain_iterator_methods(item)?))
+
+
+def restore_optional_iterator_methods(value: Option[StoredLayoutIteratorMethods]) -> Result[Option[IteratorMethods], str]:
+    """Preserve both absence and the exact present layout facts."""
+    match value:
+        None => return Ok(None)
+        Some(item) => return Ok(Some(restore_iterator_methods(item)?))
+
+
+def retain_optional_checked_type(value: Option[CheckedType]) -> Result[Option[StoredLayoutCheckedType], str]:
+    """Preserve both absence and the exact present layout facts."""
+    match value:
+        None => return Ok(None)
+        Some(item) => return Ok(Some(retain_checked_type(item)?))
+
+
+def restore_optional_checked_type(value: Option[StoredLayoutCheckedType]) -> Result[Option[CheckedType], str]:
+    """Preserve both absence and the exact present layout facts."""
+    match value:
+        None => return Ok(None)
+        Some(item) => return Ok(Some(restore_checked_type(item)?))
+
+
+pub def encode_models(values: &list[ModelDeclaration]) -> Result[list[str], str]:
+    """Encode complete models inventories in their native order."""
+    mut encoded: list[str] = []
+    for value in values:
+        encoded.append(to_string(retain_model_declaration(value)?).map_err((error) => str(error))?)
+    return Ok(encoded)
+
+
+pub def decode_models(values: list[str]) -> Result[list[ModelDeclaration], str]:
+    """Restore complete models inventories without checking or lowering source."""
+    mut decoded: list[ModelDeclaration] = []
+    for value in values:
+        decoded.append(restore_model_declaration(read_model_declaration(value).map_err((error) => str(error))?)?)
+    return Ok(decoded)
+
+
+def read_model_declaration(value: str) -> Result[StoredLayoutModelDeclaration, JsonError]:
+    """Bind serde's decoder to this versioned layout value."""
+    return from_str(value)
+
+
+pub def encode_enums(values: &list[EnumDeclaration]) -> Result[list[str], str]:
+    """Encode complete enums inventories in their native order."""
+    mut encoded: list[str] = []
+    for value in values:
+        encoded.append(to_string(retain_enum_declaration(value)?).map_err((error) => str(error))?)
+    return Ok(encoded)
+
+
+pub def decode_enums(values: list[str]) -> Result[list[EnumDeclaration], str]:
+    """Restore complete enums inventories without checking or lowering source."""
+    mut decoded: list[EnumDeclaration] = []
+    for value in values:
+        decoded.append(restore_enum_declaration(read_enum_declaration(value).map_err((error) => str(error))?)?)
+    return Ok(decoded)
+
+
+def read_enum_declaration(value: str) -> Result[StoredLayoutEnumDeclaration, JsonError]:
+    """Bind serde's decoder to this versioned layout value."""
+    return from_str(value)
+
+
+pub def encode_zip_carriers(values: &list[ZipCarrier]) -> Result[list[str], str]:
+    """Encode complete zip_carriers inventories in their native order."""
+    mut encoded: list[str] = []
+    for value in values:
+        encoded.append(to_string(retain_zip_carrier(value)?).map_err((error) => str(error))?)
+    return Ok(encoded)
+
+
+pub def decode_zip_carriers(values: list[str]) -> Result[list[ZipCarrier], str]:
+    """Restore complete zip_carriers inventories without checking or lowering source."""
+    mut decoded: list[ZipCarrier] = []
+    for value in values:
+        decoded.append(restore_zip_carrier(read_zip_carrier(value).map_err((error) => str(error))?)?)
+    return Ok(decoded)
+
+
+def read_zip_carrier(value: str) -> Result[StoredLayoutZipCarrier, JsonError]:
+    """Bind serde's decoder to this versioned layout value."""
+    return from_str(value)
