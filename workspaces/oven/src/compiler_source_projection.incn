@@ -166,11 +166,18 @@ pub def compiled_owner_source(
             for owner in projection.owners:
                 if owner.key.facet.startswith(prefix) and owner.key.facet.endswith(":" + declaration + ":" + name):
                     return Ok(owner)
+    else:
+        for owner in projection.owners:
+            if (
+                (owner.key.facet.startswith("default:") or owner.key.facet.startswith("field:"))
+                and owner.key.facet.endswith(":" + name)
+            ):
+                return Err(f"compiled field body has no stable declaration identity: {module}:{name}")
     mut default: Option[SourceProjectionRecord] = None
     for owner in projection.owners:
         if owner.key.facet.startswith("default:") and owner.key.facet.endswith(":" + name):
             if default is not None:
-                return Err(f"compiled body output has ambiguous default source: {module}:{name}")
+                return Err(f"compiled body output has ambiguous default source: {module}:{name}; identity={identity}")
             default = Some(owner)
     match default:
         Some(owner) => return Ok(owner)
