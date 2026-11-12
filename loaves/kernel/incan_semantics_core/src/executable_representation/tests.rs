@@ -113,7 +113,7 @@ fn publish(
         "1.2.3",
         public,
         &BTreeSet::new(),
-        false,
+        &BTreeSet::new(),
     )
 }
 

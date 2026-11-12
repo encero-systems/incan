@@ -58,6 +58,12 @@ pub struct UnitDescription {
     /// These roots remain outside the manifest's public surface and cannot be imported by ordinary consumers.
     #[serde(default)]
     pub package_test_surface: bool,
+    /// Test source files whose checked local imports select the package-private executable surface.
+    ///
+    /// Oven discovers these with the same direct test-module policy it uses for execution. The compiler reads them
+    /// only to select declarations from this library's already-checked module interfaces.
+    #[serde(default)]
+    pub package_test_sources: Vec<PathBuf>,
     /// Additional program entry sources, in selector order. Each must be a collected source module with a main.
     #[serde(default)]
     pub program_entries: Vec<PathBuf>,

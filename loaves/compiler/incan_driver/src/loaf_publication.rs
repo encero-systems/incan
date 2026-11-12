@@ -16,6 +16,7 @@ use std::sync::Arc;
 use sha2::{Digest, Sha256};
 
 use crate::error::{CliError, CliResult};
+use crate::modules::PackageTestImport;
 use crate::unit::UnitDescription;
 use exports::{LibraryReexportResolver, module_key};
 use incan_frontend::api_metadata::{
@@ -101,11 +102,13 @@ pub struct PublicationFacts {
     registry_modules: Vec<CheckedRegistryMetadataModule>,
     /// First inspected fact per exact canonical query path, shared across module visits until ABI publication.
     rust_items: BTreeMap<String, Arc<RustItemMetadata>>,
+    /// Checked local module bindings selected directly by this package's test modules.
+    package_test_imports: Vec<PackageTestImport>,
 }
 
 impl PublicationFacts {
     /// Facts for the library unit of `package`.
-    pub fn new(package: &str) -> Self {
+    pub fn new(package: &str, package_test_imports: Vec<PackageTestImport>) -> Self {
         Self {
             package: package.to_string(),
             exports_by_module: HashMap::new(),
@@ -115,6 +118,7 @@ impl PublicationFacts {
             alias_modules: Vec::new(),
             registry_modules: Vec::new(),
             rust_items: BTreeMap::new(),
+            package_test_imports,
         }
     }
 
@@ -218,7 +222,7 @@ impl PublicationFacts {
         entry: &ParsedModule,
         unit: &UnitDescription,
         model_bundles: &[CanonicalModelBundle],
-    ) -> CliResult<LibraryManifest> {
+    ) -> CliResult<(LibraryManifest, BTreeSet<incan_semantics_core::CanonicalSymbolId>)> {
         materialize_api_alias_projections(&mut self.api_modules);
         let docstring_errors = validate_checked_api_docstrings(&self.api_modules)
             .into_iter()
@@ -241,6 +245,7 @@ impl PublicationFacts {
         }
 
         // ---- Public names and their identities ----
+        let package_test_roots = self.resolve_package_test_roots(modules)?;
         let selected = LibraryReexportResolver::new(&self.exports_by_module)
             .resolve(entry)
             .map_err(|errors| {
@@ -307,7 +312,46 @@ impl PublicationFacts {
             }),
             modules: self.registry_modules,
         });
-        Ok(manifest)
+        Ok((manifest, package_test_roots))
+    }
+
+    /// Resolve each test import through its checked source module, preserving the declaration's canonical owner.
+    ///
+    /// Re-exports therefore select the original declaration rather than minting a facade root. Imports that resolve
+    /// to providers or Rust never enter `package_test_imports`, so this set contains same-package declarations only.
+    fn resolve_package_test_roots(
+        &self,
+        modules: &[ParsedModule],
+    ) -> CliResult<BTreeSet<incan_semantics_core::CanonicalSymbolId>> {
+        let resolver = LibraryReexportResolver::new(&self.exports_by_module);
+        let mut roots = BTreeSet::new();
+        for selected in &self.package_test_imports {
+            let Some(module) = modules
+                .iter()
+                .find(|module| module.path_segments == selected.module_path)
+            else {
+                continue;
+            };
+            let exports = resolver.resolve(module).map_err(|errors| {
+                let rendered = errors
+                    .iter()
+                    .map(|error| {
+                        diagnostics::format_error(module.file_path.to_string_lossy().as_ref(), &module.source, error)
+                    })
+                    .collect::<String>();
+                CliError::failure(rendered.trim_end())
+            })?;
+            roots.extend(
+                exports
+                    .into_iter()
+                    .filter(|export| selected.names.contains(&export.name))
+                    .filter_map(|export| export.identity.canonical)
+                    .filter(|identity| {
+                        matches!(&identity.origin, incan_semantics_core::SymbolOrigin::Package { library, .. } if library == &self.package)
+                    }),
+            );
+        }
+        Ok(roots)
     }
 }
 
@@ -333,16 +377,16 @@ fn retain_feature_requirements(manifest: &mut LibraryManifest, modules: &[Parsed
 /// unit's own Body IR modules) projected onto the manifest's public identities; `<name>.incngraph`, the already-encoded
 /// graph from that same checking pass; `<name>.native.json`, the unit's native closure; an indexed `<name>.rustabi`
 /// when dependency-owned native facts are needed; and `<name>.incnlib` last, so its presence means the artifact set is
-/// complete. A package-test publication may retain every private declaration as an implementation root without adding
-/// it to the manifest's public identities. `<name>` is the shared artifact stem; the manifest retains the original
-/// semantic package name.
+/// complete. `package_test_roots` adds only the same-package declarations selected by test imports and their
+/// executable closure without adding them to the manifest's public identities. `<name>` is the shared artifact stem;
+/// the manifest retains the original semantic package name.
 pub fn prepare_loaf_publication(
     dir: &Path,
     mut manifest: LibraryManifest,
     bodies: &[BodyIrModule],
     closure: &LoafNativeClosure,
     graph: &[u8],
-    retain_private_roots: bool,
+    package_test_roots: &BTreeSet<incan_semantics_core::CanonicalSymbolId>,
 ) -> CliResult<PreparedLoafPublication> {
     let name = manifest.name.clone();
 
@@ -356,7 +400,7 @@ pub fn prepare_loaf_publication(
         .filter(|body| body.first_representation_gap().is_some())
         .filter_map(|body| body.canonical.clone())
         .collect::<BTreeSet<_>>();
-    if retain_private_roots && tracing::enabled!(target: "incan::invocation", tracing::Level::DEBUG) {
+    if !package_test_roots.is_empty() && tracing::enabled!(target: "incan::invocation", tracing::Level::DEBUG) {
         for diagnostic in internal_surface_admission_diagnostics(bodies, &name, &public) {
             tracing::debug!(
                 target: "incan::invocation",
@@ -373,7 +417,7 @@ pub fn prepare_loaf_publication(
         &manifest.version,
         &public,
         &unrepresentable,
-        retain_private_roots,
+        package_test_roots,
     )
     .map_err(|error| {
         CliError::failure(format!(
@@ -413,9 +457,9 @@ pub fn write_loaf(
     bodies: &[BodyIrModule],
     closure: &LoafNativeClosure,
     graph: &[u8],
-    retain_private_roots: bool,
+    package_test_roots: &BTreeSet<incan_semantics_core::CanonicalSymbolId>,
 ) -> CliResult<()> {
-    prepare_loaf_publication(dir, manifest, bodies, closure, graph, retain_private_roots)?.write(dir)
+    prepare_loaf_publication(dir, manifest, bodies, closure, graph, package_test_roots)?.write(dir)
 }
 
 /// Publish sibling artifacts relative to their common artifact root so moving an otherwise identical build to a new

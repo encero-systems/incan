@@ -15,7 +15,7 @@ use crate::diagnostics::{CliDiagnosticFailure, render_module_warnings};
 use crate::error::{CliError, CliResult};
 use crate::session::CompilationSession;
 use crate::sources::{collect_incan_source_files, read_source_for_diagnostics};
-use incan_frontend::ast::{ImportKind, ImportPath, Program};
+use incan_frontend::ast::{Declaration, ImportKind, ImportPath, Program};
 use incan_frontend::module::{
     SourceModuleImportResolution, SourceModuleRef, canonicalize_source_module_segments,
     logical_module_segments_from_file, logical_source_import_candidates, resolve_program_source_imports,
@@ -23,6 +23,68 @@ use incan_frontend::module::{
 };
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::{diagnostics, typechecker};
+
+/// One local source module and the declarations package tests import from its checked interface.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageTestImport {
+    /// Canonical source-module path inside the package.
+    pub module_path: Vec<String>,
+    /// Source names imported by at least one package test.
+    pub names: BTreeSet<String>,
+}
+
+/// Parse package test modules only far enough to select their direct local `from` imports.
+///
+/// The library modules remain the authority for whether a path is local. Provider, standard and Rust imports never
+/// become package-private roots, and this pass does not check or lower a test body before the library exists.
+pub fn collect_package_test_imports(
+    sources: &[PathBuf],
+    session: &CompilationSession,
+    library_modules: &[ParsedModule],
+) -> Result<Vec<PackageTestImport>, CliDiagnosticFailure> {
+    let available = library_modules
+        .iter()
+        .map(|module| module.path_segments.clone())
+        .collect::<BTreeSet<_>>();
+    let mut imports = BTreeMap::<Vec<String>, BTreeSet<String>>::new();
+    for path in sources {
+        let source = read_source_for_diagnostics(&path.to_string_lossy())?;
+        let ast = session
+            .parse_source_unprojected(path, &source, true)
+            .and_then(|parsed| session.project_parsed_program(parsed))
+            .map_err(|errors| {
+                CliDiagnosticFailure::from_errors(
+                    path.to_string_lossy(),
+                    source.clone(),
+                    errors,
+                    diagnostics::DiagnosticPhase::Parse,
+                )
+            })?;
+        let current = logical_module_segments_from_file(&session.source_root, path).unwrap_or_default();
+        for declaration in &ast.declarations {
+            let Declaration::Import(import) = &declaration.node else {
+                continue;
+            };
+            let ImportKind::From { module, items } = &import.kind else {
+                continue;
+            };
+            let Some(owner) = logical_source_import_candidates(&current, module)
+                .into_iter()
+                .find(|candidate| available.contains(candidate))
+            else {
+                continue;
+            };
+            imports
+                .entry(owner)
+                .or_default()
+                .extend(items.iter().map(|item| item.name.clone()));
+        }
+    }
+    Ok(imports
+        .into_iter()
+        .map(|(module_path, names)| PackageTestImport { module_path, names })
+        .collect())
+}
 
 /// Collect one source graph through an already-resolved compilation session, preserving the entry's logical module
 /// identity. A test or alternate entry must not claim `main` and collide with an imported sibling `main.incn`.

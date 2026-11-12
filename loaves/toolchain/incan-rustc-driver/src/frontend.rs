@@ -146,6 +146,8 @@ struct CheckedProgram {
     reached_loaves: BTreeMap<String, Vec<Vec<CanonicalSymbolId>>>,
     /// A library unit's manifest, which its executable representation completes once the unit compiles (DD-0007).
     manifest: Option<LibraryManifest>,
+    /// Same-package declaration roots selected by this library's test modules.
+    package_test_roots: BTreeSet<CanonicalSymbolId>,
     /// The owning library's portable graph bytes, encoded while its checked source context is still owned here.
     graph: Vec<u8>,
     /// Session-collected tests; lowering receives their names and Oven receives their outcome policy.
@@ -308,7 +310,6 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
         return Err("a source interface cannot replace a compiled library's publication".into());
     }
     let dependencies = dependencies(&unit, &[])?;
-    let package_test_surface = unit.package_test_surface;
     let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
     let loaf_links = unit.loaves.iter().map(|loaf| native_crate_name(&loaf.name)).collect();
     let mut closure = LoafNativeClosure {
@@ -332,7 +333,7 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
         &program.modules[program.own..],
         &closure,
         &program.graph,
-        package_test_surface,
+        &program.package_test_roots,
     )
     .map_err(|error| error.to_string())?;
     Ok(())
@@ -375,7 +376,6 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         unit.kind = UnitKind::Library;
     }
     let kind = unit.kind;
-    let package_test_surface = unit.package_test_surface;
     let overflow_checks = unit.profile != "release";
     let loaves = unit.loaves.clone();
     // A library's closure publishes only the directories beyond the toolchain generation's search index.
@@ -420,7 +420,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
             &program.modules[program.own..],
             &closure,
             &program.graph,
-            package_test_surface,
+            &program.package_test_roots,
         )
         .map_err(|error| error.to_string())?;
         Some((directory, prepared))

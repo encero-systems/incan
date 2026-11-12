@@ -34,6 +34,8 @@ pub def read_unit(value: JsonValue) -> Result[UnitDescription, str]:
             search_index=optional_text(value, "search_index")?,
             rust_abi=texts(value, "rust_abi")?,
             kind=required_text(value, "kind")?,
+            package_test_surface=optional_flag(value, "package_test_surface")?,
+            package_test_sources=optional_texts(value, "package_test_sources")?,
             program_entries=texts(value, "program_entries")?,
             vocab_entry=optional_text(value, "vocab_entry")?,
             vocab=optional_text(value, "vocab")?,
@@ -81,6 +83,13 @@ def texts(value: JsonValue, name: str) -> Result[list[str], str]:
     """Require a prepared string array, preserving malformed input as a publication refusal."""
     item = value.require(name).map_err((error) => error.message())?
     return strings(item, [name]).map_err((_) => f"prepared {name} must be a string array")
+
+
+def optional_texts(value: JsonValue, name: str) -> Result[list[str], str]:
+    """Read an optional string array whose absent value is the schema's empty collection."""
+    if value.get(name) == None:
+        return Ok([])
+    return texts(value, name)
 
 
 def optional_text(value: JsonValue, name: str) -> Result[Option[str], str]:

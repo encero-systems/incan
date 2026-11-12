@@ -290,7 +290,7 @@ pub(super) fn typecheck_diagnostics_and_info(
     package_name: Option<&str>,
 ) -> CodegraphResult<CheckedCodegraphAnalysis> {
     let library = session.unit().kind == UnitKind::Library;
-    let mut publication = library.then(|| PublicationFacts::new(&session.unit().package));
+    let mut publication = library.then(|| PublicationFacts::new(&session.unit().package, Vec::new()));
     let analysis = session.analyze_unit(
         modules,
         library.then_some(session.unit().package.as_str()),
@@ -309,6 +309,7 @@ pub(super) fn typecheck_diagnostics_and_info(
                     .ok_or_else(|| CodegraphError::failure("library entry module is missing"))?;
                 facts
                     .library_manifest(modules, entry, session.unit(), &session.contract_model_bundles)
+                    .map(|(manifest, _)| manifest)
                     .map_err(CodegraphError::from)
             })
             .transpose()?

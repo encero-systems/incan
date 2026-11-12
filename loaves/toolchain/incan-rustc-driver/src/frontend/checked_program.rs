@@ -107,6 +107,12 @@ pub(super) fn checked_modules(
         collect_modules_detailed_with_session(path.clone(), &session)
     }
     .map_err(|failure| receipt.diagnostic(failure))?;
+    let package_test_imports = if unit.package_test_surface {
+        incan_driver::modules::collect_package_test_imports(&unit.package_test_sources, &session, &modules)
+            .map_err(|failure| receipt.diagnostic(failure))?
+    } else {
+        Vec::new()
+    };
     session
         .resolve_rust_facts(&modules)
         .map_err(|error| error.to_string())?;
@@ -115,7 +121,7 @@ pub(super) fn checked_modules(
     let source_package_identity =
         (unit.kind != UnitKind::Test || session.loaves().entry(package_identity).is_none()).then_some(package_identity);
     let mut callable_products = callable_products::CallableProducts::prepare(unit, &modules, &mut session);
-    let mut publication = library.then(|| PublicationFacts::new(package_identity));
+    let mut publication = library.then(|| PublicationFacts::new(package_identity, package_test_imports));
     let analysis = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::analyze_modules", modules = modules.len()).entered();
         session
@@ -132,14 +138,14 @@ pub(super) fn checked_modules(
         .position(|module| module.file_path == path)
         .ok_or("entry module is missing")?;
     validate_module_declarations(&modules, &analysis).inspect_err(|_| receipt.deterministic())?;
-    let manifest = match publication {
+    let (manifest, package_test_roots) = match publication {
         Some(publication) => {
-            let manifest = publication
+            let (manifest, roots) = publication
                 .library_manifest(&modules, &modules[entry], unit, &session.contract_model_bundles)
                 .map_err(|error| error.to_string())?;
-            Some(manifest)
+            (Some(manifest), roots)
         }
-        None => None,
+        None => (None, BTreeSet::new()),
     };
     let requested = required_loaf_identities(&modules, &analysis, source_package_identity)?;
     let string_conversion_contract = incan_frontend::body_ir::compilation_string_conversion_contract(
@@ -215,6 +221,7 @@ pub(super) fn checked_modules(
             dependency_modules: loaf_modules,
             reached_loaves,
             manifest,
+            package_test_roots,
             graph,
             tests,
         },

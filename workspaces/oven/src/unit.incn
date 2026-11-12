@@ -75,6 +75,8 @@ pub model UnitDescription:
     # A library built for its own project tests retains package-private implementation fragments without widening its
     # public manifest. Ordinary library descriptions leave this false.
     pub package_test_surface: bool = false
+    # Exact test sources whose local imports select that package-private surface.
+    pub package_test_sources: list[str] = []
     pub program_entries: list[str] = []
     pub vocab_entry: Option[str] = None
     pub vocab: Option[str] = None
@@ -130,6 +132,8 @@ pub model UnitDescription:
             fields["registry_id"] = JsonValue.string(registry)
         if self.package_test_surface:
             fields["package_test_surface"] = JsonValue.bool(true)
+        if len(self.package_test_sources) > 0:
+            fields["package_test_sources"] = texts(self.package_test_sources)
         if self.toolchain_access.declared():
             fields["toolchain_access"] = self.toolchain_access.to_json()
         if let Some(context) = self.checked_context:

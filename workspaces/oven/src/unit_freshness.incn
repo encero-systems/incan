@@ -210,6 +210,8 @@ pub def description_digest(unit: UnitDescription) -> Result[str, str]:
         record_identity.append(f"registry-id={registry}")
     if unit.package_test_surface:
         record_identity.append("package-test-surface=true")
+    if len(unit.package_test_sources) > 0:
+        record_identity.append("package-test-sources=true")
     return fingerprint(
         [json_text(facts)?] + flags + selected + declared + sorted(bindings) + sorted(unit.rust_crates) + sorted(
             unit.vocab_admissions,
@@ -272,6 +274,8 @@ def source_contents(unit: UnitDescription, mut project: Ledger) -> Result[list[s
     contents.extend(source_inputs(modules, root, project)?)
     for entry in unit.program_entries:
         contents.extend(["program-entry"] + source_inputs([declared.joinpath(entry).0], root, project)?)
+    if len(unit.package_test_sources) > 0:
+        contents.extend(["package-tests"] + source_inputs(unit.package_test_sources, root, project)?)
     if let Some(entry) = unit.vocab_entry:
         contents.extend(["vocabulary-entry"] + source_inputs([declared.joinpath(entry).0], root, project)?)
     for schema in unit.contract_models:

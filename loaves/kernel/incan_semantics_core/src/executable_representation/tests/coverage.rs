@@ -265,7 +265,53 @@ fn internal_surface_diagnostic_names_missing_native_default_selection() -> Resul
 
 #[test]
 fn public_membership_and_explicit_empty_body_coverage() -> Result<(), Box<dyn std::error::Error>> {
-    let module = module(vec![body("public", 1), body("private_secret", 2)]);
+    let mut private_root = body("private_root", 2);
+    private_root.block.stmts.push(call(identity("private_helper", 4)));
+    let mut private_helper = body("private_helper", 4);
+    let mut state_owner = identity("PrivateState", 5);
+    state_owner.kind = SemanticSourceTargetKind::Model;
+    let mut state_field = identity("value", 6);
+    state_field.origin = state_owner.origin.clone();
+    state_field.namespace = SymbolNamespace::Member;
+    state_field.kind = SemanticSourceTargetKind::Field;
+    let mut state = generic_holder_declaration(state_owner.clone(), state_field);
+    state.direct_declaration_id = CompilerNodeId::declaration_span(
+        "lib",
+        state_owner.declaration_span.start,
+        state_owner.declaration_span.end,
+    );
+    state.name = "PrivateState".into();
+    state.field_types = vec![IncanType::Primitive(IncanPrimitiveType::Bool)];
+    state.type_parameters.clear();
+    state.type_parameter_count = 0;
+    state.public = false;
+    private_helper.return_type = IncanType::Named("PrivateState".into());
+    std::sync::Arc::make_mut(&mut private_helper.named_type_identities)
+        .insert("PrivateState".into(), state_owner.clone());
+
+    let mut foreign_user = body("foreign_user", 7);
+    let foreign = CanonicalSymbolId {
+        namespace: SymbolNamespace::OrdinaryLexical,
+        origin: SymbolOrigin::Package {
+            library: "dependency".into(),
+            module_path: vec!["store".into()],
+        },
+        declaration_name: "Snapshot".into(),
+        kind: SemanticSourceTargetKind::Model,
+        scope_discriminant: None,
+        declaration_span: HirSourceSpan::new(10, 20),
+    };
+    foreign_user.return_type = IncanType::Named("Snapshot".into());
+    std::sync::Arc::make_mut(&mut foreign_user.named_type_identities).insert("Snapshot".into(), foreign.clone());
+
+    let mut module = module(vec![
+        body("public", 1),
+        private_root,
+        body("private_unreached", 3),
+        private_helper,
+        foreign_user,
+    ]);
+    module.nominal_declarations.push(state);
     let public = BTreeSet::from([identity("public", 1), identity("unlowered", 3)]);
     let bytes = publish(&module, &public)?;
     let reader = SurfaceReader::open(&bytes)?;
@@ -274,35 +320,45 @@ fn public_membership_and_explicit_empty_body_coverage() -> Result<(), Box<dyn st
         reader.index().coverage(&identity("unlowered", 3))?,
         DeclarationCoverage::Uncovered(CoverageReason::NoExecutableDeclaration)
     ));
-    assert!(
-        !bytes
-            .windows(b"private_secret".len())
-            .any(|part| part == b"private_secret")
-    );
+    assert!(!bytes.windows(b"private_root".len()).any(|part| part == b"private_root"));
     assert_eq!(
         reader.declaration(&identity("public", 1))?.direct_call_id.path(),
         "pub::probe::lib#decl.100..199"
     );
 
+    let package_test_roots = BTreeSet::from([identity("private_root", 2), identity("foreign_user", 7)]);
     let bytes = build_surface(
         std::slice::from_ref(&module),
         "probe",
         "1.2.3",
         &public,
         &BTreeSet::new(),
-        true,
+        &package_test_roots,
     )?;
     let reader = SurfaceReader::open(&bytes)?;
-    assert!(!reader.index().declarations.contains_key(&identity("private_secret", 2)));
+    assert!(!reader.index().declarations.contains_key(&identity("private_root", 2)));
+    assert!(reader.index().implementation.contains_key(&identity("private_root", 2)));
     assert!(
         reader
             .index()
             .implementation
-            .contains_key(&identity("private_secret", 2))
+            .contains_key(&identity("private_helper", 4))
     );
+    assert!(reader.index().implementation.contains_key(&state_owner));
+    assert!(
+        !reader
+            .index()
+            .implementation
+            .contains_key(&identity("private_unreached", 3))
+    );
+    assert!(!reader.index().implementation.contains_key(&foreign));
     assert!(matches!(
-        reader.index().execution_coverage(&identity("private_secret", 2))?,
+        reader.index().execution_coverage(&identity("private_root", 2))?,
         DeclarationCoverage::Covered { .. }
+    ));
+    assert!(matches!(
+        reader.index().execution_coverage(&identity("foreign_user", 7))?,
+        DeclarationCoverage::Covered { requirements, .. } if requirements.contains(&foreign)
     ));
     Ok(())
 }

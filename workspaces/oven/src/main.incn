@@ -512,7 +512,7 @@ def tested_project(options: Options) -> Result[i32, str]:
         for binary in build_rust_tests(rust_request(options)?)?:
             if run_rust_harness(Path(binary), Path(options.path))? != 0:
                 failed = true
-    library = project_test_library(options, len(sources) > 0)?
+    library = project_test_library(options, len(sources) > 0, test_modules=sources)?
     if library.code != 0:
         failed = true
     for source in sources:
@@ -536,6 +536,7 @@ def project_test_library(
     options: Options,
     requested: bool = true,
     project_root: str = "",
+    mut test_modules: list[Path] = [],
 ) -> Result[ProjectTestLibrary, str]:
     """
     Build a project's Incan library once through the ordinary Loaf producer and return its test-unit binding.
@@ -554,9 +555,12 @@ def project_test_library(
         source = Path(source_root_of(local)).joinpath("main.incn")
     if not source.is_file():
         return Ok(ProjectTestLibrary())
+    if len(test_modules) == 0:
+        test_modules = test_sources(project)?
     mut library = describe(source, options.profile, options.request, options.manifests)?
     library.kind = "library"
     library.package_test_surface = true
+    library.package_test_sources = [test_module.0 for test_module in test_modules]
     directory = dependency_artifact_dir(library.project_root, library.package, library.profile)
     output = directory.joinpath(f"lib{crate_name(library)}.rlib")
     code = compile_unit(library, toolchain_for(library)?, output)?
