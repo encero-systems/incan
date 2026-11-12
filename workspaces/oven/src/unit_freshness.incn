@@ -19,7 +19,7 @@ from toolchain import NativeCrate, Toolchain, rust_compiler
 from unit import UnitDescription
 from unit_publication import published_identity, record_payload
 from source_identity import entry_scope, source_inputs
-from compiler_facts import fact_identity
+from compiler_facts import admit_fact, fact_identity
 from rust_target import compiler_version, deployment_target, inherited_deployment_selection
 from apple_sdk import selected_sdk
 from std.environ import get_or
@@ -99,10 +99,14 @@ pub def unit_key(unit: UnitDescription, toolchain: Toolchain, compiler: str = ""
 def identified_unit(unit: UnitDescription, toolchain: Toolchain, compiler: str) -> Result[Key, str]:
     """Finish identity only when the compiler and every linked unit have admitted identities."""
     mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
-    mut selected_compiler = compiler
-    if selected_compiler == "":
-        selected_compiler = compiler_fingerprint(toolchain)?
-    return reconciled_key(unit, selected_compiler, description_digest(unit)?, project)
+    mut base_compiler = compiler
+    if base_compiler == "":
+        base_compiler = compiler_fingerprint(toolchain)?
+    selected_compiler = selected_unit_compiler(unit, toolchain, base_compiler)?
+    mut key = reconciled_key(unit, selected_compiler, description_digest(unit)?, project)?
+    # Revalidation receives the reusable base and derives the unit-specific SDK dimension once again.
+    key.compiler = base_compiler
+    return Ok(key)
 
 
 pub def reconciled_key(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
@@ -134,7 +138,8 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
 
     1. Read admitted compiler and Rust fact-cache digests.
     2. Read the identities the linked native units were produced under.
-    3. Bind the target and selected SDK settings without including their installation paths.
+    3. Bind the target and deployment selection without including installation paths. SDK contents belong only to
+       units that read or link them, through `selected_unit_compiler`.
     """
     # 1. Metadata avoids reading unchanged compiler facts but never enters the compiler identity.
     mut facts = [fact_identity(Path(toolchain.driver))?] + cache_identities(toolchain.rust_abi)?
@@ -147,7 +152,21 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
     #    The compiler's own answers are probed once per rustc installation and deployment selection.
     target = compiler_target(toolchain)?
     facts.extend([target, deployment_target(rust_compiler(toolchain), target, inherited_deployment_selection()?)?])
-    return fingerprint(facts + natives + [sdk_content_identity(toolchain.sysroot)?])
+    return fingerprint(facts + natives)
+
+
+pub def unit_compiler_identity(unit: UnitDescription, compiler: str, sdk: str) -> Result[str, str]:
+    """Bind SDK contents only to unit kinds whose compiler invocation can read them."""
+    if unit.kind not in ["program", "test"] and len(unit.c_headers) == 0:
+        return Ok(compiler)
+    return fingerprint([compiler, sdk])
+
+
+pub def selected_unit_compiler(unit: UnitDescription, toolchain: Toolchain, compiler: str) -> Result[str, str]:
+    """Read SDK identity only for a final link or C-ABI unit, then derive that unit's compiler input."""
+    if unit.kind not in ["program", "test"] and len(unit.c_headers) == 0:
+        return Ok(compiler)
+    return unit_compiler_identity(unit, compiler, sdk_content_identity(toolchain.sysroot)?)
 
 
 pub def sdk_content_identity(sysroot: str) -> Result[str, str]:
@@ -157,7 +176,13 @@ pub def sdk_content_identity(sysroot: str) -> Result[str, str]:
         sdk = get_or("SDKROOT", "")
     if sdk == "":
         return Ok("")
-    return fingerprint(cache_identities([Path(sdk).joinpath("SDKSettings.json").0])?)
+    return sdk_settings_identity(Path(sdk).joinpath("SDKSettings.json"))
+
+
+pub def sdk_settings_identity(settings: Path) -> Result[str, str]:
+    """Admit a newly selected SDK settings generation exactly where SDK-sensitive work first reads it."""
+    admit_fact(settings)?
+    return fingerprint([fact_identity(settings)?])
 
 
 def compiler_target(toolchain: Toolchain) -> Result[str, str]:

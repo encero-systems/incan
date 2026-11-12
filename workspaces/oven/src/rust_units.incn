@@ -68,6 +68,7 @@ from rust_build import (
     materialized_arguments,
     native_artifacts,
     native_compiler_fingerprint,
+    native_library_compiler_fingerprint,
     ordered,
     prepared_build,
     rust_output,
@@ -815,6 +816,7 @@ pub def rust_library_producer_key(
     mut compiler = request.native_compiler
     if compiler == "":
         compiler = native_compiler_fingerprint(request.rustc)?
+    compiler = native_library_compiler_fingerprint(library_kind(arguments)?, request.rustc, compiler)?
     return library_key(
         Path(facet.project),
         directory,
@@ -825,6 +827,14 @@ pub def rust_library_producer_key(
         toolchain,
         compiler,
     )
+
+
+def library_kind(arguments: list[str]) -> Result[str, str]:
+    """Read the crate type from the compiler arguments framed by `library_compile_arguments`."""
+    for index in range(len(arguments) - 1):
+        if arguments[index] == "--crate-type":
+            return Ok(arguments[index + 1])
+    return Err("Rust library compiler arguments have no crate type")
 
 
 pub def rust_library_graph_key(native: Key, driver: str) -> Result[Key, str]:

@@ -30,7 +30,15 @@ from rust_manifest import rust_facet
 from testing import tests_binary
 from toolchain import Toolchain, load_toolchain, toolchain_file
 from unit import UnitDescription, describe
-from unit_freshness import Key, artifact_identity, compiler_fingerprint, description_digest, ledger_name, reconciled_key
+from unit_freshness import (
+    Key,
+    artifact_identity,
+    compiler_fingerprint,
+    description_digest,
+    ledger_name,
+    reconciled_key,
+    selected_unit_compiler,
+)
 from apple_sdk import sdk_paths
 from unit_rust import prepare_native
 from installation_page import begin_command, end_command
@@ -77,9 +85,12 @@ pub model Held:
     pub watched: Watched
     pub ledger: Ledger
 
-    pub def key(mut self, compiler: str) -> Result[Key, str]:
+    pub def key(mut self, compiler: str, toolchain: Toolchain) -> Result[Key, str]:
         """Reconcile the unit's inputs against what earlier requests observed."""
-        return reconciled_key(self.unit, compiler, self.described, self.ledger)
+        selected = selected_unit_compiler(self.unit, toolchain, compiler)?
+        mut key = reconciled_key(self.unit, selected, self.described, self.ledger)?
+        key.compiler = compiler
+        return Ok(key)
 
 
 pub model Owner:
@@ -178,7 +189,7 @@ pub model Owner:
                 # 4. The executable is kept or built for the key its inputs reconcile to, as without an owner.
                 mut held = found
                 trace_boundary("unit_prepared")
-                key = held.key(self.compiler)?
+                key = held.key(self.compiler, toolchain)?
                 trace_boundary("source_key")
                 self.held[id] = held
                 return built(held.unit, toolchain, key, request, self.generation)

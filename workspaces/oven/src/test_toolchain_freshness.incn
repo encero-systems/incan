@@ -22,7 +22,7 @@ from rust_target import compiler_version, deployment_target
 from toolchain import Toolchain, load_toolchain, rust_compiler
 from toolchain_archive import portable_registry_unit, source_archive_name
 from unit_publication import record_path, record_payload
-from unit_freshness import fingerprint
+from unit_freshness import fingerprint, sdk_settings_identity, unit_compiler_identity
 from freshness_fixtures import compiler_fingerprint, fixture, reconcile, unit_key, write
 
 
@@ -47,6 +47,32 @@ pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     """
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
+    settings = scratch.path().joinpath("sdk/SDKSettings.json")
+    write(settings, "sdk one")?
+    first_sdk = sdk_settings_identity(settings)?
+    write(settings, "sdk two")?
+    assert sdk_settings_identity(settings)? != first_sdk
+    mut library = setup.unit
+    library.kind = "library"
+    library.c_headers = []
+    assert unit_compiler_identity(library, "compiler", "sdk one")? == unit_compiler_identity(
+        library,
+        "compiler",
+        "sdk two",
+    )?
+    mut program = library
+    program.kind = "program"
+    assert unit_compiler_identity(program, "compiler", "sdk one")? != unit_compiler_identity(
+        program,
+        "compiler",
+        "sdk two",
+    )?
+    mut test = library
+    test.kind = "test"
+    assert unit_compiler_identity(test, "compiler", "sdk one")? != unit_compiler_identity(test, "compiler", "sdk two")?
+    mut c_abi = library
+    c_abi.c_headers = ["include/library.h"]
+    assert unit_compiler_identity(c_abi, "compiler", "sdk one")? != unit_compiler_identity(c_abi, "compiler", "sdk two")?
     first = compiler_fingerprint(setup.toolchain)?
     mut pinned = setup.unit
     pinned.selected_toolchain = Some(setup.toolchain)

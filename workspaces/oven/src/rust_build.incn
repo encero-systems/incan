@@ -166,7 +166,7 @@ pub def native_artifacts(externs: list[NativeCrate]) -> Dict[str, list[str]]:
 
 
 pub def native_compiler_fingerprint(rustc: str) -> Result[str, str]:
-    """Identify the actual pinned compiler and SDK by content after resolving the installation's sysroot alias."""
+    """Identify the actual pinned compiler by content after resolving the installation's sysroot alias."""
     compiler = Path(rustc).resolve().map_err((error) => f"cannot resolve {error.message()}")?
     libraries = toolchain_libraries(compiler.0)?
     version = libraries.environment["INCAN_DRIVER_RUSTC_IDENTITY"]
@@ -175,10 +175,36 @@ pub def native_compiler_fingerprint(rustc: str) -> Result[str, str]:
             fingerprint(cache_identities([compiler.0])?)?,
             version,
             libraries.environment["INCAN_DRIVER_LIBRARY_DIGEST"],
-            sdk_content_identity(compiler.parent().parent().0)?,
             deployment_target(compiler.0, version, inherited_deployment_selection()?)?,
         ],
     )
+
+
+pub def linker_compiler_identity(compiler: str, sdk: str) -> Result[str, str]:
+    """Bind selected SDK contents to an otherwise SDK-independent native compiler identity."""
+    return fingerprint([compiler, sdk])
+
+
+pub def rust_library_compiler_identity(kind: str, compiler: str, sdk: str) -> Result[str, str]:
+    """Keep rlibs SDK-independent while retaining SDK identity for Rust library kinds that perform a native link."""
+    if kind in ["lib", "rlib"]:
+        return Ok(compiler)
+    return linker_compiler_identity(compiler, sdk)
+
+
+pub def native_linker_fingerprint(rustc: str) -> Result[str, str]:
+    """Identify the compiler and SDK inputs of a final Rust executable or test link."""
+    compiler = Path(rustc).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    native = native_compiler_fingerprint(compiler.0)?
+    return linker_compiler_identity(native, sdk_content_identity(compiler.parent().parent().0)?)
+
+
+pub def native_library_compiler_fingerprint(kind: str, rustc: str, compiler: str) -> Result[str, str]:
+    """Read SDK identity only when a Rust library unit emits a linked dynamic library."""
+    if kind in ["lib", "rlib"]:
+        return Ok(compiler)
+    selected = Path(rustc).resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    return rust_library_compiler_identity(kind, compiler, sdk_content_identity(selected.parent().parent().0)?)
 
 
 pub def selected_toolchain(request: RustBuild) -> Result[Toolchain, str]:

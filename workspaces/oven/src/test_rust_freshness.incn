@@ -18,7 +18,16 @@ from rust_units import (
     rust_library_graph_key,
     rust_library_producer_key,
 )
-from rust_build import BuiltUnit, RustBuild, artifact_context, facet_slot, linking, native_artifacts
+from rust_build import (
+    BuiltUnit,
+    RustBuild,
+    artifact_context,
+    facet_slot,
+    linker_compiler_identity,
+    linking,
+    native_artifacts,
+    rust_library_compiler_identity,
+)
 from rust_binaries import refuse_absolute_runtime_path
 from graph_exports import export_view
 from rust_manifest import RustFacet, package_environment
@@ -46,6 +55,17 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
         registry_aliases=[],
     )
     request = RustBuild(project="root", rustc="rustc", registry=RegistryUnits(units=[], search=[]))
+    assert rust_library_compiler_identity("rlib", "compiler", "sdk one")? == rust_library_compiler_identity(
+        "rlib",
+        "compiler",
+        "sdk two",
+    )?
+    assert rust_library_compiler_identity("proc-macro", "compiler", "sdk one")? != rust_library_compiler_identity(
+        "proc-macro",
+        "compiler",
+        "sdk two",
+    )?
+    assert linker_compiler_identity("compiler", "sdk one")? != linker_compiler_identity("compiler", "sdk two")?
     unrelated = BuiltUnit(crate_name="other", artifact="/other/library.rlib", directory="/other")
     assert linking(facet, request, {}, [])? == linking(facet, request, {"other": unrelated}, ["/other"])?
     first_workspace = invocation_facts(
