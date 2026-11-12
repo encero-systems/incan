@@ -22,6 +22,7 @@ from oven_tests import (
     summarize,
     summary_document,
     oven_test_state_root,
+    write_invocation_timings,
 )
 from verify_installation import (
     VerificationPhase,
@@ -283,6 +284,10 @@ def test_joined_log_keeps_invocation_order_whatever_the_schedule() -> Result[Non
         )
     assert run_all("/bin/echo", planned, 5, 3 * GIB)?
     assert len(root.glob("scratch-*").map_err((error) => error.message())?) == 0
+    timings = root.joinpath("timings.tsv")
+    write_invocation_timings(planned, timings)?
+    timing_rows = timings.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n")
+    assert timing_rows[0] == "log\tseconds" and len(timing_rows) == 9
     joined = join_logs(planned, root.joinpath("joined.log"))?
     assert joined == "line 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\n"
     assert not run_all("/usr/bin/false", planned, 4, 0)?

@@ -92,12 +92,13 @@ pub model Summary:
 
 
 model Running:
-    """One started invocation, its planned position and the memory it reserved."""
+    """One started invocation, its planned position, timing receipt and the memory it reserved."""
 
     position: int
     reservation: int
     timeout_seconds: int
     started: Instant
+    timing: Path
     child: Rc[RefCell[Child]]
     scratch: Option[Path]
 
@@ -186,6 +187,7 @@ def run(options: Options) -> Result[str, str]:
     ran = run_all(options.oven, [item for item in planned if not item.alone], options.jobs, options.memory)?
     ran_alone = run_all(options.oven, [item for item in planned if item.alone], 1, options.memory)?
     succeeded = ran and ran_alone
+    write_invocation_timings(planned, options.evidence.joinpath("oven-test-timings.tsv"))?
     log = options.evidence.joinpath("oven-tests.log")
     joined = join_logs(planned, log)?
     expected = read(root.joinpath("workspaces/contracts/oven-tests.txt"))?
@@ -365,6 +367,7 @@ pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory
                     reservation=reservations[index],
                     timeout_seconds=planned[index].timeout_seconds,
                     started=Instant.now(),
+                    timing=invocation_timing_path(planned[index].log),
                     child=Rc.new(RefCell.new(child)),
                     scratch=planned[index].scratch,
                 ),
@@ -374,6 +377,7 @@ pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory
         for item in active:
             match item.child.borrow_mut().try_wait().map_err((error) => str(error))?:
                 Some(status) =>
+                    retain_invocation_timing(item.timing, item.started)?
                     remove_completed_scratch(item.scratch)?
                     if not status.success():
                         failed.append(item.position)
@@ -381,6 +385,7 @@ pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory
                     if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
                         _ = item.child.borrow_mut().kill()
                         _ = item.child.borrow_mut().wait()
+                        retain_invocation_timing(item.timing, item.started)?
                         remove_completed_scratch(item.scratch)?
                         failed.append(item.position)
                     else:
@@ -389,6 +394,28 @@ pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory
             sleep(Duration.from_millis(20))
         active = running
     return Ok(sorted(failed))
+
+
+def invocation_timing_path(log: Path) -> Path:
+    """Name the private duration receipt beside one invocation's log."""
+    return Path(log.0 + ".seconds")
+
+
+def retain_invocation_timing(path: Path, started: Instant) -> Result[None, str]:
+    """Retain one child process's wall duration after the process has exited or been reaped."""
+    return path
+        .write_text(str(started.elapsed().as_secs_f64()) + "\n", "utf-8", "strict", None)
+        .map_err((error) => error.message())
+
+
+pub def write_invocation_timings(planned: list[Invocation], output: Path) -> Result[None, str]:
+    """Write fixed-order source log names and wall seconds for every completed invocation."""
+    mut rows = "log\tseconds\n"
+    for item in planned:
+        timing = invocation_timing_path(item.log)
+        seconds = timing.read_text("utf-8", "strict").map_err((error) => error.message())?.strip()
+        rows += f"{item.log.name()}\t{seconds}\n"
+    return output.write_text(rows, "utf-8", "strict", None).map_err((error) => error.message())
 
 
 def remove_completed_scratch(scratch: Option[Path]) -> Result[None, str]:
