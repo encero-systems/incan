@@ -325,7 +325,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         .map_err((error) => error.message())?
     provider_root = scratch.path().joinpath("provider").joinpath("src")
     provider_root.mkdir(true, true).map_err((error) => error.message())?
-    provider_source = "pub def value() -> int:\n    return 1\n"
+    provider_source = "pub def value() -> int:\n    return 1\n\npub enum CodecFault:\n    Invalid\n"
     provider_root
         .joinpath("lib.incn")
         .write_text(provider_source, "utf-8", "strict", None)
@@ -390,6 +390,12 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
                                 module="helper",
                                 name="value",
                                 identity="app|module:helper|value|function|module|0|() -> int",
+                            ),
+                            CompiledBodyDependencyRead(
+                                package=Some("provider"),
+                                module="lib",
+                                name="CodecFault",
+                                identity="provider|module:lib|CodecFault|enum|module|0|CodecFault",
                             ),
                             CompiledBodyDependencyRead(
                                 package=Some("provider"),
