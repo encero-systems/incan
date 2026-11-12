@@ -18,7 +18,7 @@ from rust_units import (
     rust_library_graph_key,
     rust_library_producer_key,
 )
-from rust_build import BuiltUnit, RustBuild, artifact_context, linking, native_artifacts
+from rust_build import BuiltUnit, RustBuild, artifact_context, facet_slot, linking, native_artifacts
 from rust_binaries import refuse_absolute_runtime_path
 from graph_exports import export_view
 from rust_manifest import RustFacet, package_environment
@@ -171,7 +171,7 @@ def verify_local_bakery_graph_refresh(scratch: Path) -> Result[None, str]:
         unstable=false,
         sysroot=false,
     )
-    toolchain = Toolchain(
+    mut toolchain = Toolchain(
         driver=driver.0,
         sysroot=scratch.joinpath("sysroot").0,
         rust_abi=[],
@@ -208,6 +208,53 @@ def verify_local_bakery_graph_refresh(scratch: Path) -> Result[None, str]:
     assert not changed.reused
     assert read(native_attempts)? == "xx"
     assert read(graph_attempts)? == "xxx"
+
+    # An installed producer from another compiler generation is rebuilt from source into this home's store.
+    installed_directory = scratch.joinpath("changed-output").joinpath(f"{crate_name}-{facet_slot(facet, "release")}")
+    installed_artifact = installed_directory.joinpath(
+        f"lib{crate_name}-{artifact_context(facet, declared, "release")?}.rlib",
+    )
+    toolchain.externs = [NativeCrate(name=crate_name, path=installed_artifact.0)]
+    request.toolchain = Some(toolchain)
+    request.installed = native_artifacts(toolchain.externs)
+    installed_arguments = library_compile_arguments(facet, declared, installed_directory, request, {}, [])?
+    installed_environment = package_environment(facet.project, declared, declared.crate_name)
+    installed_key = rust_library_producer_key(
+        facet,
+        installed_directory,
+        installed_arguments,
+        installed_environment,
+        request,
+        toolchain,
+    )?
+    installed_graph = installed_directory.joinpath(f"{crate_name}.incngraph")
+    installed_dependencies = installed_directory.joinpath("library.d")
+    record(
+        installed_directory.joinpath("library.oven-inputs"),
+        installed_key,
+        [installed_artifact, installed_graph, installed_dependencies],
+    )?
+    record(
+        installed_directory.joinpath("library.graph-inputs"),
+        rust_library_graph_key(installed_key, toolchain.driver)?,
+        [installed_graph],
+    )?
+    request.native_compiler = "replacement native compiler"
+    request.project = scratch.joinpath("installed-consumer").0
+    rebuilt = compile_rust_library(facet, declared, scratch.joinpath("installed-rebuild"), request, {}, [])?
+    assert not rebuilt.reused
+    assert rebuilt.artifact != installed_artifact.0
+    assert read(native_attempts)? == "xxx"
+    assert read(graph_attempts)? == "xxxx"
+
+    # Without shipped source, the stale installed producer cannot be replaced and says exactly what is missing.
+    remove(source)?
+    request.native_compiler = "another replacement native compiler"
+    match compile_rust_library(facet, declared, scratch.joinpath("missing-source"), request, {}, []):
+        Ok(_) =>
+            assert false, "stale installed support without source was rebuilt"
+        Err(error) =>
+            assert "cannot rebuild" in error and source.0 in error, error
     return Ok(None)
 
 
@@ -285,18 +332,20 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     record(stamp, key, [artifact, graph, dependencies])?
     record(installed.joinpath("library.graph-inputs"), rust_library_graph_key(key, toolchain.driver)?, [graph])?
     # The graph-wide preflight uses this same proof before any output directory or replacement producer exists.
-    preflight = require_coherent_installed_producer(facet, declared, request, built, [])?
-    assert preflight.reused and preflight.artifact == artifact.0
+    match require_coherent_installed_producer(facet, declared, request, built, [])?:
+        None =>
+            assert false, "fresh installed producer requested a rebuild"
+        Some(preflight) =>
+            assert preflight.reused and preflight.artifact == artifact.0
     request.profile = "debug"
-    debug_consumer = require_coherent_installed_producer(facet, declared, request, built, [])?
-    assert debug_consumer.reused and debug_consumer.artifact == artifact.0
+    match require_coherent_installed_producer(facet, declared, request, built, [])?:
+        None =>
+            assert false, "debug consumer requested a release producer rebuild"
+        Some(debug_consumer) =>
+            assert debug_consumer.reused and debug_consumer.artifact == artifact.0
     request.profile = "release"
     request.native_compiler = "different pinned native compiler"
-    match require_coherent_installed_producer(facet, declared, request, built, []):
-        Ok(_) =>
-            assert false, "generation preflight accepted a producer from another compiler"
-        Err(error) =>
-            assert "installed native data is stale" in error and "compiler" in error, error
+    assert require_coherent_installed_producer(facet, declared, request, built, [])? == None
     request.native_compiler = "pinned native compiler"
     # 2. The selected producer is returned, rather than creating a consumer-local library with the same identity.
     output = scratch.joinpath("must-not-build")
@@ -339,10 +388,6 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     require_installed_refusal(facet, declared, output, request, built, "replaced")?
     write(artifact, "one installed library")?
     record(stamp, key, [artifact, graph, dependencies])?
-    write(setup.dependency, "rebuilt exact native dependency")?
-    record_payload(setup.dependency, fingerprint(["rebuilt exact native dependency"])?)?
-    require_installed_refusal(facet, declared, output, request, built, "artifacts")?
-    assert not output.is_dir()
     return Ok(None)
 
 
@@ -487,12 +532,19 @@ def require_installed_refusal(
     built: Dict[str, BuiltUnit],
     cause: str,
 ) -> Result[None, str]:
-    """Require a named installed-producer refusal without falling back to a consumer-local compilation."""
-    match compile_rust_library(facet, declared, output, request, built, []):
-        Ok(_) =>
-            assert false, f"changed {cause} authorized stale installed support"
+    """Require an invalid output refusal, or a changed input to enter the local producer."""
+    rebuild = cause in ["compiler", "sources", "environment"]
+    mut local = output
+    if rebuild:
+        local = output.joinpath(cause)
+    match compile_rust_library(facet, declared, local, request, built, []):
+        Ok(unit) =>
+            assert rebuild and not unit.reused, f"changed {cause} authorized stale installed support"
         Err(error) =>
-            assert "installed native" in error and "data" in error and cause in error, error
+            if rebuild:
+                assert "installed native" not in error, f"{cause}: {error}"
+            else:
+                assert "installed native" in error and "data" in error and cause in error, f"{cause}: {error}"
     return Ok(None)
 
 
