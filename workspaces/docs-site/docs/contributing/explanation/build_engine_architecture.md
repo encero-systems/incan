@@ -829,6 +829,23 @@ Baselines come from the baseline measurement of 2026-10-29 (#2481, bundle 0cb030
 | Head-to-head rows: hello cold, unchanged, private-body edit, signature edit, two homes, unrelated packages ×1/×2/×4, demanded records ×1/×2/×4, graph and LSP, census, idle workers | Efficiency | Pinned integration tree under BE-28 | | | |
 | Observation overhead | Efficiency | At most 5% | One hello sample showed no regression: 73.37 ms released versus 68.88 ms source native phases; qualification remains unrun | `0be358dd8` | Retained-input native driver comparison; diagnostic only |
 
+#### Native override audit at `c3c2cba07`
+
+The adapter installs three local query providers in `adapter/callbacks.rs`. All three currently enter through the
+process-global `PLAN` slot; none reads a tracked per-definition compiler input.
+
+| Override | Definitions selected | Plan reads in the answer | Other answer inputs | Tracking consequence |
+| --- | --- | --- | --- | --- |
+| `mir_built` | Root planned functions and their synthesized closure, generator and coroutine definitions | The complete selected `Function`; matching external records for const-generic calls; the plan's source-name index for planned callees | Source spans, resolved Rust types, layouts, callees and language items | The query key is only `LocalDefId`; the selected function record and external witnesses are invisible to rustc's dependency graph. |
+| `type_of` | Root type aliases that represent standard carriers or admitted native model/enum layouts | The matching enum or model declaration, carrier selection, native item path and native type arguments | Resolved native ADT, trait-object and generic-argument metadata | The alias's declaration record has no tracked input; every lookup scans the whole global model/enum inventory. |
+| `fn_sig` | Every local definition, changing only planned root functions | The selected function's generic-loan sites and retained-result source | rustc's declared signature and native-loan rewriting | Even a default answer first reads the global plan; a planned answer has no tracked signature-record input. |
+
+`mir_built` also reaches `active_plan()` from callee and terminator construction. Those reads select exact external
+signatures and source-local definitions after the provider has started, so tracking only the top-level `Function`
+would still be incomplete. A safe reader must bind the function product and all runtime requirements authenticated by
+that product, while alias queries need their own layout records. Until those inputs are carried into the corresponding
+HIR owner/query dependency, incremental reuse remains disabled for the unit.
+
 #### Native phase diagnostic at `0be358dd8` and the 100 ms path
 
 The one-body Oven edit measured at `0be358dd8` took 2.907 s across the stable native phases: 1.855 s in the rustc front end, 0.869 s in aggregate codegen and 0.183 s in the linker. The native collector reported 16 CGUs and `all_on_success` for every one. The trace does not assign rustc's aggregate LLVM duration to an individual CGU; it records each actual CGU's name, item count and size estimate separately. On hello, the same retained compiler-unit input and common output path produced byte-identical binaries under the released and instrumented source drivers. Its source-driver split was 19.24 ms front end, 5.87 ms codegen and 43.76 ms link.
