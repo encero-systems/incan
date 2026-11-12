@@ -96,14 +96,14 @@ pub def socket_prefix(directory: str) -> Result[str, str]:
     The short, depth-independent path prefix of the sockets that belong to the private `directory`.
 
     1. Make `directory` private; the user who owns it owns its sockets.
-    2. Make that user's private endpoint directory: `incan-<uid>` under the user runtime directory, or under `/tmp`.
+    2. Make that user's private endpoint directory: `i-<uid>` under the user runtime directory, or under `/tmp`.
     3. Name the sockets by a digest of `directory`, so different homes never share one.
     """
     # 1. The directory the sockets belong to is private to its user before anything is named after it.
     prepare_directory(directory)?
     uid = owner_of(directory)?
     # 2. The endpoint directory belongs to the same user and nobody else can enter it.
-    endpoints = f"{endpoint_root()}/incan-{uid}"
+    endpoints = f"{endpoint_root()}/i-{uid}"
     prepare_endpoints(endpoints, uid)?
     # 3. A digest of the directory keeps the sockets of every home apart at a fixed length.
     return Ok(f"{endpoints}/{fingerprint([directory])?[0:DIRECTORY_DIGITS]}-")
