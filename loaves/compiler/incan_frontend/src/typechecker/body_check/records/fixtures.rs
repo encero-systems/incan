@@ -371,6 +371,7 @@ pub(crate) fn produce_final_record(
 /// the final record restores only the selected owner's local facts and finalized types.
 pub(crate) fn restore_body_ir_inputs(
     source: &str,
+    module_path: &[String],
     name: &str,
     mut final_value: Fields,
     declarations: Vec<(String, String, Fields)>,
@@ -384,6 +385,9 @@ pub(crate) fn restore_body_ir_inputs(
         .map(|item| item.span)
         .ok_or(NodeBindingError::MissingOwner)?;
     let mut checker = TypeChecker::new();
+    if !module_path.is_empty() {
+        checker.set_current_module_path(Some(module_path.to_vec()));
+    }
     checker.reset_program_check(&program, false);
     checker.collect_program_check_declarations(&program);
     checker.record_program_header_facts();

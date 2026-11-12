@@ -201,8 +201,13 @@ pub fn produce_body_ir_seed(
     final_value: Vec<Vec<String>>,
     declarations: Vec<(String, String, Vec<Vec<String>>)>,
 ) -> Result<Vec<u8>, RecordAdapterFault> {
-    let (program, owner, info) =
-        crate::typechecker::body_check::records::restore_body_ir_inputs(source, name, final_value, declarations)?;
+    let (program, owner, info) = crate::typechecker::body_check::records::restore_body_ir_inputs(
+        source,
+        module_path,
+        name,
+        final_value,
+        declarations,
+    )?;
     crate::body_ir::produce_free_function_seed(&program, owner, source_path, module_path, identity, &info)
 }
 

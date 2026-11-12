@@ -35,7 +35,10 @@ use shared_loans::{
 #[test]
 fn record_scoped_free_function_seeds_match_module_oracle() -> Result<(), Box<dyn std::error::Error>> {
     for (source, selected) in [
-        ("def chosen(value: int) -> int:\n    return value + 1\n", "chosen"),
+        (
+            "def before(value: int) -> int:\n    return value\ndef qualified_chosen(value: int) -> int:\n    return value + 1\n",
+            "qualified_chosen",
+        ),
         (
             "def chosen(value: int) -> int:\n    return sibling(value)\ndef sibling(value: int) -> int:\n    return value + 1\n",
             "chosen",
@@ -57,13 +60,21 @@ fn record_scoped_free_function_seeds_match_module_oracle() -> Result<(), Box<dyn
             "chosen",
         ),
     ] {
+        let module_path = if selected == "qualified_chosen" {
+            vec!["records_case".to_owned()]
+        } else {
+            Vec::new()
+        };
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut checker = TypeChecker::new();
+        if !module_path.is_empty() {
+            checker.set_current_module_path(Some(module_path.to_vec()));
+        }
         checker
             .check_program(&program)
             .map_err(|errors| format!("{errors:?}"))?;
-        let outputs = crate::checker_records::checked_owner_record_outputs(&program, &checker, &[])?;
+        let outputs = crate::checker_records::checked_owner_record_outputs(&program, &checker, &module_path)?;
         let values = outputs
             .iter()
             .filter_map(|output| match output {
@@ -74,7 +85,7 @@ fn record_scoped_free_function_seeds_match_module_oracle() -> Result<(), Box<dyn
         let selected_value = values
             .iter()
             .find(|value| value.name == selected)
-            .ok_or("selected seed fixture owner is not record eligible")?;
+            .ok_or_else(|| format!("selected seed fixture owner is not record eligible: {outputs:?}"))?;
         let declarations = values
             .iter()
             .map(|value| (value.name.clone(), value.identity.clone(), value.declaration.clone()))
@@ -82,7 +93,7 @@ fn record_scoped_free_function_seeds_match_module_oracle() -> Result<(), Box<dyn
         let encoded = crate::checker_records::produce_body_ir_seed(
             source,
             "case.incn",
-            &[],
+            &module_path,
             selected,
             &selected_value.identity,
             selected_value.final_value.clone(),
@@ -97,7 +108,7 @@ fn record_scoped_free_function_seeds_match_module_oracle() -> Result<(), Box<dyn
             library_package: None,
             include_inline_tests: false,
         };
-        let mut expected = super::build_module_seed(&program, &[], checker.type_info(), &context)
+        let mut expected = super::build_module_seed(&program, &module_path, checker.type_info(), &context)
             .bodies
             .into_iter()
             .find(|body| body.name == selected)
