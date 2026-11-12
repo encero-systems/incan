@@ -4,7 +4,7 @@ from std.encoding.hex import hexlify, unhexlify
 from std.hash import sha256
 
 pub const CHECKER_SCHEMA: str = "incan.checker-fields/9"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/13"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/15"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
 const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/2"

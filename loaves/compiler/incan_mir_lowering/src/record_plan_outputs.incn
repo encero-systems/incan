@@ -1,0 +1,111 @@
+"""Retain the existing scalar plan's entry selection and complete native interface as record producer outputs."""
+
+from std.fs import Path
+from std.json import JsonValue, parse
+from pub::incan_mir_plan import Plan, PlanType
+from rust::incan_semantics_core::semantic_digest import semantic_digest
+from record_plan_codec import encode_record_plan, encode_entry_binding
+
+
+pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[None, str]:
+    """Publish loss-checked plan output and a reusable ordinary-entry binding before native compilation."""
+    report_path = Path(report)
+    events = scalar_events(report_path)?
+    if len(events) != len(plan.functions):
+        if has_scalar_refusal(report_path)?:
+            return Ok(None)
+        return Err("native-interface refuses generated functions without graph body witnesses")
+    encoded = encode_record_plan(plan)?
+    for function in plan.functions:
+        matches = [event for event in events if text(event, "function").unwrap_or("") == function.name]
+        if len(matches) != 1:
+            return Err("native-interface has an unwitnessed or ambiguous plan-function member")
+    main = ordinary_entry(plan)?
+    mut selected = JsonValue.null()
+    for event in events:
+        if text(event, "function")? == main:
+            selected = event
+    if selected.is_null():
+        return Err("plan-function(entry) has no witnessed main function")
+    generation = Path(products).joinpath("producer-profile").read_text("utf-8", "strict").map_err(
+        (error) => error.message(),
+    )?
+    mut selection = "implicit-main"
+    if len(plan.programs) != 0:
+        selection = "selected-main"
+    inputs = ["incan.plan-entry/1", generation, main, selection, text(selected, "key")?]
+    key = semantic_digest(inputs).map_err((error) => str(error))?.replace("sha256:", "")
+    path = Path(products).joinpath(key + ".incnentry")
+    value = encode_entry_binding(main, inputs)?
+    mut reused = false
+    if path.is_file():
+        prior = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+        if prior != value:
+            return Err("selected plan-function(entry) disagrees with its complete inputs")
+        reused = true
+    else:
+        path.write_text(value, "utf-8", "strict", None).map_err((error) => error.message())?
+    entry = JsonValue.object({
+        "schema": JsonValue.int(2), "identity": JsonValue.string(text(selected, "identity")?),
+        "key": JsonValue.string(key), "function": JsonValue.string("entry"), "role": JsonValue.string("entry"),
+        "demand": JsonValue.string(text(selected, "key")?), "product": JsonValue.string(value),
+        "runtime_requirements": JsonValue.int(0), "reused": JsonValue.bool(reused),
+    })
+    write(Path(report).joinpath(key + ".event"), entry)?
+    write(Path(report).joinpath("native-interface.json"), JsonValue.object({
+        "schema": JsonValue.string("incan.native-interface/1"), "plan": JsonValue.string(encoded),
+        "entry": JsonValue.string(key),
+    }))?
+    return Ok(None)
+
+
+def has_scalar_refusal(report: Path) -> Result[bool, str]:
+    """Require incomplete native-interface publication to carry an explicit scalar-record refusal."""
+    for path in report.iterdir().map_err((error) => error.message())?:
+        if path.is_file() and path.name().endswith(".refusal"):
+            refusal = parse(path.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
+                (error) => error.message(),
+            )?
+            if refusal.require("schema").and_then((field) => field.expect_int()).map_err(
+                (error) => error.message(),
+            )? != 2:
+                return Err("scalar record refusal has an unsupported schema")
+            _ = text(refusal, "function")?
+            _ = text(refusal, "refusal")?
+            return Ok(true)
+    return Ok(false)
+
+
+def ordinary_entry(plan: &Plan) -> Result[str, str]:
+    """Select the same standalone synchronous unit main admitted by existing lowering; other entry roles refuse."""
+    if len(plan.programs) != 0 and plan.programs != ["main"]:
+        return Err("plan-function(entry) refuses a non-standalone program selection")
+    for function in plan.functions:
+        if function.name == "main":
+            if len(function.parameters) != 0 or function.return_type != PlanType.Unit or function.is_async:
+                return Err("plan-function(entry) currently requires a synchronous unit main")
+            return Ok(function.name)
+    return Err("plan-function(entry) has no standalone main")
+
+
+def scalar_events(report: Path) -> Result[list[JsonValue], str]:
+    """Read each actual scalar producer output in deterministic key order."""
+    mut events: list[JsonValue] = []
+    for path in sorted([str(path.0) for path in report.iterdir().map_err((error) => error.message())?]):
+        if path.endswith(".event"):
+            event = parse(Path(path).read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
+                (error) => error.message(),
+            )?
+            events.append(event)
+    return Ok(events)
+
+
+def text(value: JsonValue, key: str) -> Result[str, str]:
+    """Require one typed compiler-event field."""
+    return value.require(key).and_then((field) => field.expect_str()).map_err((error) => error.message())
+
+
+def write(path: Path, value: JsonValue) -> Result[None, str]:
+    """Retain one complete invocation-local output; failure refuses publication."""
+    encoded = value.to_json().map_err((error) => error.message())?
+    return path.write_text(encoded, "utf-8", "strict", None).map_err((error) => error.message())

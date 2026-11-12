@@ -28,7 +28,17 @@ from rust::std::panic import resume_unwind
 from rust::std::sync import Arc
 from rust::std::thread import JoinHandle, spawn
 from rust::serde_json import to_string as native_json
-from scalar_store import scalar_inputs, retained_scalar, retain_scalar
+from rust::incan_semantics_core::semantic_digest import semantic_digest as native_digest
+from scalar_store import (
+    scalar_inputs,
+    record_scalar_inputs,
+    retained_scalar,
+    retain_scalar,
+    report_scalar,
+    report_scalar_refusal,
+)
+from record_positions import relative_body_positions
+from std.fs import Path
 from table_views import borrowed_at
 from decorator_caches import DecoratorFrame
 from traits import is_lazy_method_body
@@ -85,6 +95,7 @@ pub def lower_ordinary_bodies(
     scalar_products: Option[str],
     scalar_bodies: &BTreeMap[CompilerNodeId, str],
     overflow_checks: bool,
+    record_report: Option[str],
 ) -> Result[None, str]:
     """Lower four contiguous module ranges over one prepared context per worker, then merge in module order."""
     mut module_bodies: BTreeMap[str, list[int]] = BTreeMap.new()
@@ -149,6 +160,7 @@ pub def lower_ordinary_bodies(
                     products,
                     worker_scalar_bodies,
                     overflow_checks,
+                    record_report,
                 ),
             ),
         )
@@ -182,6 +194,7 @@ pub def lower_ordinary_bodies(
                 trace,
                 scalar_products,
                 scalar_bodies,
+                record_report,
             )
     mut names = function_names()
     mut signatures = external_index()
@@ -212,6 +225,7 @@ def lower_module_frames(
     scalar_products: Option[str],
     scalar_bodies: Arc[BTreeMap[CompilerNodeId, str]],
     overflow_checks: bool,
+    record_report: Option[str],
 ) -> Result[list[ModuleFrames], str]:
     """Prepare immutable layout views once, then lower a contiguous module range without shared mutable output."""
     template_constructors = index_constructors(
@@ -245,6 +259,7 @@ def lower_module_frames(
                 trace,
                 scalar_products,
                 scalar_bodies.as_ref(),
+                record_report,
             )?,
         )
     return Ok(completed)
@@ -264,6 +279,7 @@ def lower_selected_module(
     trace: bool,
     scalar_products: Option[str],
     scalar_bodies: &BTreeMap[CompilerNodeId, str],
+    record_report: Option[str],
 ) -> Result[ModuleFrames, str]:
     """Lower one module against worker-local immutable layout views and return mergeable output."""
     mut functions: list[Function] = []
@@ -290,6 +306,7 @@ def lower_selected_module(
             intrinsics,
             scalar_products,
             scalar_bodies,
+            record_report,
         ).map_err((reason) => reason + diagnostic_owner)?
         merge_instance_requests(instances, pending)
         if len(named_functions(names, functions, function.name)) != 0:
@@ -343,6 +360,7 @@ pub def lower_ordinary_bodies_serial(
     trace: bool,
     scalar_products: Option[str],
     scalar_bodies: &BTreeMap[CompilerNodeId, str],
+    record_report: Option[str] = None,
 ) -> Result[None, str]:
     """
     Lower selected source frames in module order, retaining synthesized callees and checked instance requests.
@@ -381,6 +399,7 @@ pub def lower_ordinary_bodies_serial(
                 intrinsics,
                 scalar_products,
                 scalar_bodies,
+                record_report,
             ).map_err((reason) => reason + diagnostic_owner)?
             merge_instance_requests(instances, pending)
             # Frames any helper appended since the last check are named first, so the check covers every frame.
@@ -426,14 +445,34 @@ def lower_ordinary_frame(
     mut intrinsics: list[EnumDeclaration],
     products: Option[str],
     admitted: &BTreeMap[CompilerNodeId, str],
+    record_report: Option[str],
 ) -> Result[tuple[Function, list[ExternalFunction], list[Instance], list[Function]], str]:
     """Read only producer-admitted scalar products, or lower normally and retain an exact witnessed result."""
-    inputs = ordinary_product_inputs(context, body, source, file, program.overflow_checks, products, admitted)
+    inputs = ordinary_product_inputs(context, body, source, file, program.overflow_checks, products, admitted, record_report is not None)
+    mut record_identity = ""
+    if record_report is not None:
+        match body.canonical:
+            None =>
+                report_scalar_refusal(
+                    record_report,
+                    record_identity,
+                    evaluator_name(context, body),
+                    "body has no stable declaration identity",
+                )?
+            Some(identity) => record_identity = encode_incan_symbol_identity(identity)
+        if inputs is None:
+            report_scalar_refusal(
+                record_report,
+                record_identity,
+                evaluator_name(context, body),
+                "checker supplied no complete scalar body witness",
+            )?
     original_intrinsics = len(intrinsics)
     if let Some(directory) = products:
         if let Some(witness) = inputs:
-            if let Some(product) = retained_scalar(directory, witness):
+            if let Some(product) = retained_scalar(directory, witness, Some(location(body.span, source, file))):
                 function, runtime = product
+                report_scalar(record_report, directory, witness, record_identity, function.name, true, len(runtime))?
                 return Ok((function, runtime, [], []))
     function, runtime, pending, synthesized = lower_function(
         context,
@@ -449,7 +488,21 @@ def lower_ordinary_frame(
     if len(pending) == 0 and len(synthesized) == 0 and len(intrinsics) == original_intrinsics:
         if let Some(directory) = products:
             if let Some(witness) = inputs:
-                retain_scalar(directory, witness, function, runtime)
+                match retain_scalar(directory, witness, function, runtime):
+                    Ok(_) =>
+                        report_scalar(record_report, directory, witness, record_identity, function.name, false, len(runtime))?
+                    Err(reason) =>
+                        # The ordinary compiler already has its complete lowered function. Record the optional
+                        # product's refusal without changing that ordinary verdict.
+                        if record_report is not None:
+                            report_scalar_refusal(record_report, record_identity, function.name, reason)?
+    elif record_report is not None and inputs is not None:
+        report_scalar_refusal(
+            record_report,
+            record_identity,
+            function.name,
+            "lowering produced pending instances, synthesized frames, or intrinsic changes",
+        )?
     return Ok((function, runtime, pending, synthesized))
 
 
@@ -461,6 +514,7 @@ def ordinary_product_inputs(
     overflow_checks: bool,
     products: Option[str],
     admitted: &BTreeMap[CompilerNodeId, str],
+    records: bool,
 ) -> Option[list[str]]:
     """Retain exact checked input only for frames whose complete read witnesses the source producer proved."""
     if products is None:
@@ -473,6 +527,19 @@ def ordinary_product_inputs(
                 Ok(input) =>
                     span = location(body.span, source, file)
                     name = evaluator_name(context, body)
+                    if records:
+                        meaning = match native_digest(body):
+                            Ok(value) => value
+                            Err(_) => return None
+                        positions = match relative_body_positions(input, source, file, span):
+                            Ok(value) => value
+                            Err(_) => return None
+                        generation = match Path(products.unwrap_or("")).joinpath("producer-profile").read_text("utf-8", "strict"):
+                            Ok(value) => value
+                            Err(_) => return None
+                        mut inputs = record_scalar_inputs(meaning, name, span, overflow_checks, str(witness), positions)
+                        inputs.append(generation)
+                        return Some(inputs)
                     return Some(scalar_inputs(input, name, span, overflow_checks, str(witness)))
 
 

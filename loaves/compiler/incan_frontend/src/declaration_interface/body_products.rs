@@ -105,7 +105,7 @@ impl CallableBodyProducts {
             .iter()
             .map(|entry| {
                 let reads = entry.reads.iter().map(|read| &read.checked).collect::<Vec<_>>();
-                let witness = serde_json::to_string(&(&entry.fingerprints, reads))
+                let witness = incan_semantics_core::semantic_digest::semantic_digest(&(&entry.fingerprints, reads))
                     .map_err(|error| invalid(&error.to_string()))?;
                 Ok((entry.body.direct_call_id.clone(), witness))
             })
@@ -343,6 +343,11 @@ impl CallableBodyInputs {
             let Some(record) = checker.produced_declaration_record(declaration.span) else {
                 continue;
             };
+            let mut local = checker
+                .available_local_record(declaration.span)
+                .cloned()
+                .unwrap_or_default();
+            normalize_local_record(&mut local);
             declarations.push(BodyInput {
                 header,
                 span: declaration.span,
@@ -350,10 +355,7 @@ impl CallableBodyInputs {
                 source: source_slice(source, declaration.span)?.to_owned(),
                 reads: capture_reads(reads, &checked_reads, &headers)?,
                 declaration: record.clone(),
-                local: checker
-                    .available_local_record(declaration.span)
-                    .cloned()
-                    .unwrap_or_default(),
+                local,
             });
         }
 
@@ -451,6 +453,20 @@ impl CallableBodyInputs {
         };
         products.validate()?;
         Ok(products)
+    }
+}
+
+/// Keep private callable products independent of the graph transport's explicit family discriminator.
+fn normalize_local_record(rows: &mut [Vec<String>]) {
+    let Some(header) = rows.first_mut() else {
+        return;
+    };
+    if header.len() == 5
+        && header[0] == "header"
+        && header[3] == "local"
+        && header[4] == crate::checker_records::GRAPH_BODY_RECORD_PROFILE
+    {
+        header.remove(3);
     }
 }
 

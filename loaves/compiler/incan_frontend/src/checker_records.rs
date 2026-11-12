@@ -9,7 +9,7 @@ use incan_semantics_core::stable_identity::StableDeclarationId;
 pub use crate::typechecker::canonical_nodes::NodeBindingError as RecordAdapterFault;
 
 /// Exact canonical checker profile carried by graph body values and any cache capable of supplying their owners.
-pub const GRAPH_BODY_RECORD_PROFILE: &str = "incan.checker-free-functions/13";
+pub const GRAPH_BODY_RECORD_PROFILE: &str = "incan.checker-free-functions/15";
 
 /// One graph-admitted body pair keyed by the compiler-owned stable declaration identity encoded in both records.
 #[derive(Debug, Clone)]
@@ -56,11 +56,11 @@ pub struct CheckedOwnerRecordFields {
     pub local: Vec<Vec<String>>,
     /// Settled final-family field primitives.
     pub final_value: Vec<Vec<String>>,
-    /// Exact package declaration source records read by this owner, derived from checked semantic facts.
+    /// Exact project and package declaration records read by this owner, derived from checked semantic facts.
     pub dependency_reads: Vec<CheckedOwnerDependencyRead>,
 }
 
-/// Package-owned declaration source read by one checked owner.
+/// Project or package declaration source read by one checked owner.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CheckedOwnerDependencyRead {
     /// Canonical package identity, or `None` for another module in the current project.
@@ -258,6 +258,7 @@ pub fn checked_owner_record_outputs(
             let mut dependency_reads = semantic_owner
                 .into_iter()
                 .flat_map(|owner| dependencies.reachable_from([owner.clone()]))
+                .filter(|dependency| dependency != canonical)
                 .filter_map(|dependency| match &dependency.origin {
                     incan_semantics_core::SymbolOrigin::Package { library, module_path } => {
                         StableDeclarationId::from_canonical(&dependency, None, None).map(|stable| {
@@ -269,18 +270,19 @@ pub fn checked_owner_record_outputs(
                             }
                         })
                     }
-                    incan_semantics_core::SymbolOrigin::Module(dependency_module)
-                        if dependency_module.as_slice() != module_path =>
-                    {
-                        StableDeclarationId::from_canonical(&dependency, None, None).map(|stable| {
-                            CheckedOwnerDependencyRead {
-                                package: None,
-                                module_path: dependency_module.clone(),
-                                declaration_name: dependency.declaration_name.clone(),
-                                declaration_identity: stable.render_compact(),
-                            }
-                        })
-                    }
+                    incan_semantics_core::SymbolOrigin::Module(dependency_module) => checker
+                        .type_info()
+                        .declarations
+                        .source_identities
+                        .get(&dependency)
+                        .cloned()
+                        .or_else(|| StableDeclarationId::from_canonical(&dependency, None, None))
+                        .map(|stable| CheckedOwnerDependencyRead {
+                            package: None,
+                            module_path: dependency_module.clone(),
+                            declaration_name: dependency.declaration_name.clone(),
+                            declaration_identity: stable.render_compact(),
+                        }),
                     _ => None,
                 })
                 .collect::<Vec<_>>();
@@ -341,6 +343,7 @@ fn missing_record_reason(checker: &crate::typechecker::TypeChecker, owner: crate
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::sync::Arc;
 
     use super::{CheckedOwnerDependencyRead, CheckedOwnerRecordOutput, checked_owner_record_outputs};
@@ -436,7 +439,37 @@ mod tests {
         ] {
             reusable_ordinary_calls(source)?;
         }
+        let base = "def value() -> int:\n    return 1\n\ndef main() -> None:\n    println(value())\n";
+        let signature = local_callee_identity(base)?;
+        assert_eq!(signature, local_callee_identity(&base.replace("return 1", "return 2"))?);
+        assert_ne!(
+            signature,
+            local_callee_identity(&base.replace("-> int", "-> str").replace("return 1", "return \"one\""))?
+        );
         Ok(())
+    }
+
+    /// A local call publishes exactly its callee's checked signature identity, independently of the callee's body.
+    fn local_callee_identity(source: &str) -> Result<String, Box<dyn std::error::Error>> {
+        let parsed = program(source)?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".into()]));
+        checker.check_program(&parsed).map_err(|errors| format!("{errors:?}"))?;
+        let outputs = checked_owner_record_outputs(&parsed, &checker, &["main".into()])?;
+        let mut values = BTreeMap::new();
+        for output in outputs {
+            let CheckedOwnerRecordOutput::Value(value) = output else {
+                return Err("local callee signature fixture fell back".into());
+            };
+            values.insert(value.name.clone(), value);
+        }
+        let callee = values.get("value").ok_or("missing callee")?;
+        let caller = values.get("main").ok_or("missing caller")?;
+        assert_eq!(caller.dependency_reads.len(), 1);
+        let read = caller.dependency_reads.first().ok_or("missing callee read")?;
+        assert_eq!(read.package, None);
+        assert_eq!(read.declaration_identity, callee.identity);
+        Ok(read.declaration_identity.clone())
     }
 
     /// Builtins and nested ordinary calls retain their complete tooling provenance when a shifted owner reuses

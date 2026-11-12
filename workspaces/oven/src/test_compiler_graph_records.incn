@@ -55,9 +55,9 @@ from compiler_body_values import (
     select_body_inventory,
     select_body_values,
 )
-from compiler_body_publication import publish_compiled_bodies
+from compiler_body_publication import prepare_compiled_bodies, publish_compiled_bodies, retained_owner_record
 from compiler_body_fallbacks import fallback_reasons
-from compiler_source_projection import project_source, publish_source_projection
+from compiler_source_projection import project_source, publish_source_projection, signature_record
 from publication import publish_binary
 from scratch import scratch_directory
 from unit import UnitDescription, UnitLoaf
@@ -225,6 +225,7 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     mut changed = 0
     for index in range(len(before.owners)):
         assert before.owners[index].key == after.owners[index].key
+        assert signature_record(before.owners[index]).digest() == signature_record(after.owners[index]).digest()
         if before.owners[index].digest() != after.owners[index].digest():
             changed += 1
     assert changed == 1
@@ -235,10 +236,32 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
 
     selected = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_source_projection(selected, before)?
-    assert len(published.keys) == 5
+    assert len(published.keys) == 8
     for key in published.keys:
         assert get(published.snapshot, key).map_err((error) => error.message())? is not None
     return Ok(None)
+
+
+pub def test_retained_owner_selection_skips_an_absent_owner() -> Result[None, str]:
+    """A removed source owner alone turns retained Body IR into history rather than a current lowering witness."""
+    projection = project_source("app", "src/main.incn", "def other() -> None:\n    pass\n")?
+    match retained_owner_record(projection, "removed")?:
+        None => return Ok(None)
+        Some(_) => return Err("an absent retained owner remained eligible for lowering")
+
+
+pub def test_retained_owner_selection_propagates_an_ambiguous_owner() -> Result[None, str]:
+    """Multiple current source owners with the same logical name fail closed instead of disappearing as history."""
+    projection = project_source(
+        "app",
+        "src/main.incn",
+        "def item() -> None:\n    pass\n\nmodel item:\n    value: int\n",
+    )?
+    match retained_owner_record(projection, "item"):
+        Ok(_) => return Err("an ambiguous retained owner was silently selected or skipped")
+        Err(message) =>
+            assert message == "compiled body output has multiple matching owner sources: item", message
+            return Ok(None)
 
 
 pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidation() -> Result[None, str]:
@@ -437,6 +460,39 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     assert fallback_reasons([
         CompiledBodyFallback(module="src/main.incn", name="other", identity=None, reason="exact producer refusal"),
     ]) == ["src/main.incn::other: exact producer refusal"]
+
+    fallback_output = scratch.path().joinpath("fallback-body-output")
+    publish_binary(
+        fallback_output,
+        encode_compiled_body_outputs(
+            CompiledBodyOutputs(
+                values=[],
+                fallbacks=[
+                    CompiledBodyFallback(
+                        module="src/main.incn",
+                        name="other",
+                        identity=fallback_identity,
+                        reason="local record output refused: Unsupported(\"fixture\")",
+                    ),
+                ],
+            ),
+        ).map_err((error) => f"{error:?}")?,
+    )?
+    report = scratch.path().joinpath("fallback-plan-report")
+    report.mkdir(true, true).map_err((error) => error.message())?
+    report
+        .joinpath("other.event")
+        .write_text(
+            f"{{\"schema\":2,\"reused\":false,\"identity\":\"{fallback_identity}\",\"key\":\"plan\",\"function\":\"other\",\"product\":\"native\",\"runtime_requirements\":0}}",
+            "utf-8",
+            "strict",
+            None,
+        )
+        .map_err((error) => error.message())?
+    match prepare_compiled_bodies(begin(published.snapshot), unit, fallback_output, Some(report)):
+        Ok(_) => assert false, "a checker-record fallback authenticated a lowering record"
+        Err(message) =>
+            assert message.contains("src/main.incn::other: local record output refused: Unsupported(\"fixture\")"), message
     selected = select_body_inventory(published.snapshot, CHECKER_PROFILE)?
     assert len(selected) == 1 and selected[0].identity == identity
     pages = encode_body_inventory(selected)?
@@ -447,13 +503,21 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
 
     provider_body = project_source("provider", "lib", provider_source.replace("return 1", "return 2"))?
     provider_body_edit = publish_source_projection(published.snapshot, provider_body)?
-    assert invalid_body_owners(provider_body_edit.snapshot, [provider_body.owners[0].key], CHECKER_PROFILE)? == [
-        identity,
-    ]
+    assert invalid_body_owners(provider_body_edit.snapshot, [signature_record(provider_body.owners[0]).key], CHECKER_PROFILE)? == []
 
     provider_signature = project_source("provider", "lib", provider_source.replace("value() -> int", "value() -> str"))?
     provider_signature_edit = publish_source_projection(published.snapshot, provider_signature)?
-    assert invalid_body_owners(provider_signature_edit.snapshot, [provider_signature.owners[0].key], CHECKER_PROFILE)? == [
+    assert invalid_body_owners(provider_signature_edit.snapshot, [signature_record(provider_signature.owners[0]).key], CHECKER_PROFILE)? == [
+        identity,
+    ]
+
+    module_signature = project_source(
+        "app",
+        "src/main.incn",
+        source_text.replace("def other() -> None:\n    pass", "def other() -> int:\n    return 1"),
+    )?
+    module_signature_edit = publish_source_projection(published.snapshot, module_signature)?
+    assert invalid_body_owners(module_signature_edit.snapshot, [module_signature.declarations.key], CHECKER_PROFILE)? == [
         identity,
     ]
 

@@ -22,7 +22,7 @@ The [record-scope cases](./tests/test_record_scope.incn) and [canonical controls
 
 ## Ownership record profile
 
-`incan.checker-free-functions/13` and `incan.checker-fields/9` distinguish declaration ownership annotations from body-owned access facts. These versions describe checker records; profile 13 additionally binds the selected final Body IR owner frame, retains checked expression-type identities and witnesses project-module reads through the producer declaration's checked stable identity. The executable representation keeps its own independent version.
+`incan.checker-free-functions/15` and `incan.checker-fields/9` distinguish declaration ownership annotations from body-owned access facts. These versions describe checker records; profile 15 binds the selected final Body IR owner frame, retains checked expression-type identities and witnesses both the module's body-independent declaration index and checked project-module callee signatures. Declaration changes therefore invalidate every body in their own module before retained records are selected, even when a compiler path does not report a same-module callee read. The executable representation keeps its own independent version.
 
 Graph-selected Body IR values are opaque kernel executable-owner frames at representation version 55. The record graph authenticates and transports those bytes, while `incan_semantics_core` alone encodes and interprets the native `Body`. `body_ir_declarations.incn` remains a transitional adapter test surface and is not a durable Body IR authority.
 

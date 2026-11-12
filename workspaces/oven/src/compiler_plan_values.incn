@@ -1,0 +1,46 @@
+"""Select Bakery-admitted lowering products for one graph-record compiler activation."""
+
+from pub::incan_platform.store import Snapshot
+from pub::internal_models.records import RecordKey
+from compiler_body_values import SelectedBodyPage
+from compiler_graph_records import reusable_family_records, readers_of
+
+pub const LOWERING_PROFILE: str = "incan.lowering-records/3"
+
+
+pub def plan_owners_reading(selected: Snapshot, changed: list[RecordKey]) -> Result[list[str], str]:
+    """Exclude plans whose own signature witnesses changed while permitting equal-meaning body edits to cut off."""
+    mut owners: set[str] = set()
+    for reader in readers_of(selected, changed, LOWERING_PROFILE)?:
+        if reader.family in ["lowering-demand", "plan-function"]:
+            owners.add(reader.identity)
+    return Ok(sorted([owner for owner in owners]))
+
+
+pub def select_plan_inventory_except(
+    selected: Snapshot,
+    invalid: list[str],
+) -> Result[list[SelectedBodyPage], str]:
+    """Materialize only witnessed plan functions whose stable declaration owner was not invalidated by this edit."""
+    mut pages: list[SelectedBodyPage] = []
+    for record in reusable_family_records(selected, "plan-function", LOWERING_PROFILE)?:
+        if record.key.identity in invalid:
+            continue
+        key = record.key.context
+        if not canonical_digest(key):
+            return Err("selected plan-function record has a noncanonical product key")
+        mut extension = ".incnfunction"
+        if record.key.facet == "entry":
+            extension = ".incnentry"
+        pages.append(SelectedBodyPage(key=key + extension, value=record.value))
+    return Ok(pages)
+
+
+def canonical_digest(value: str) -> bool:
+    """Accept the lowercase SHA-256 spelling used by the lowering codec as a safe page filename."""
+    if len(value) != 64:
+        return false
+    mut remaining = value
+    for digit in ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]:
+        remaining = remaining.replace(digit, "")
+    return remaining == ""
