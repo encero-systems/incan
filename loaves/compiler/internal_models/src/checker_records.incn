@@ -387,19 +387,29 @@ pub def decode_graph_body_values(encoded: bytes) -> Result[list[GraphBodyFields]
         local_bytes = unhexlify(tokens[offset + 1]).map_err((_) => CodecFault.Malformed)?
         final_bytes = unhexlify(tokens[offset + 2]).map_err((_) => CodecFault.Malformed)?
         body_ir = unhexlify(tokens[offset + 3]).map_err((_) => CodecFault.Malformed)?
-        value = GraphBodyValue(identity=identity, local=local_bytes, final=final_bytes, body_ir=body_ir)
-        records = validate_graph_body_value(value)?
-        selected.append(
-            GraphBodyFields(
-                identity=identity,
-                local=native_fields(records[0])?,
-                final_fields=native_fields(records[1])?,
-                body_ir=body_ir,
-            ),
-        )
+        selected.append(decode_graph_body_page(identity, local_bytes, final_bytes, body_ir)?)
         previous = identity
         offset += 4
     return Ok(selected)
+
+
+pub def decode_graph_body_page(
+    identity: str,
+    local: bytes,
+    final: bytes,
+    body_ir: bytes,
+) -> Result[GraphBodyFields, CodecFault]:
+    """Authenticate one already unframed owner page while the native #3036 framing workaround remains removable."""
+    value = GraphBodyValue(identity=identity, local=local, final=final, body_ir=body_ir)
+    records = validate_graph_body_value(value)?
+    return Ok(
+        GraphBodyFields(
+            identity=identity,
+            local=native_fields(records[0])?,
+            final_fields=native_fields(records[1])?,
+            body_ir=body_ir,
+        ),
+    )
 
 
 pub def encode_compiled_body_outputs(outputs: CompiledBodyOutputs) -> Result[bytes, CodecFault]:

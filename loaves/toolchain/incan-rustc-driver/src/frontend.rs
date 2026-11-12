@@ -256,6 +256,74 @@ struct GraphBodyRecordPages {
     root: PathBuf,
 }
 
+/// Raw values from one graph body transport page after bounded native framing and hex decoding.
+struct EncodedGraphBodyPage {
+    identity: String,
+    local: Vec<u8>,
+    final_value: Vec<u8>,
+    body_ir: Vec<u8>,
+}
+
+/// Decode the outer page framing natively until #3036 permits the canonical Incan bytes decoder to handle dynamic
+/// slices without making a retained owner take seconds. The Incan codec still authenticates both checker records.
+fn decode_graph_body_page_transport(encoded: &[u8]) -> Result<EncodedGraphBodyPage, String> {
+    let frames = graph_body_page_frames(encoded)?;
+    if frames.len() != 6 || frames[0] != b"incan.checker-graph-transport/2" || frames[1] != b"1" {
+        return Err("graph body page has an unsupported transport header".into());
+    }
+    let identity = std::str::from_utf8(frames[2])
+        .map_err(|error| format!("graph body page identity is not UTF-8: {error}"))?
+        .to_owned();
+    let local = hex::decode(frames[3]).map_err(|error| format!("graph body local record is not hex: {error}"))?;
+    let final_value = hex::decode(frames[4]).map_err(|error| format!("graph body final record is not hex: {error}"))?;
+    let body_ir = hex::decode(frames[5]).map_err(|error| format!("graph Body IR frame is not hex: {error}"))?;
+    Ok(EncodedGraphBodyPage {
+        identity,
+        local,
+        final_value,
+        body_ir,
+    })
+}
+
+/// Split canonical byte-length frames in one bounded page without interpreting their schema-owned payloads.
+fn graph_body_page_frames(encoded: &[u8]) -> Result<Vec<&[u8]>, String> {
+    const MAX_PAGE_BYTES: usize = 64 * 1024 * 1024;
+    if encoded.len() > MAX_PAGE_BYTES {
+        return Err("graph body page exceeds its transport bound".into());
+    }
+    let mut frames = Vec::new();
+    let mut offset = 0;
+    while offset < encoded.len() {
+        let relative_end = encoded[offset..]
+            .iter()
+            .position(|byte| *byte == b':')
+            .ok_or_else(|| "graph body page has an unterminated frame length".to_string())?;
+        let end = offset + relative_end;
+        let prefix = &encoded[offset..end];
+        if prefix.is_empty() || prefix.len() > 8 || (prefix.len() > 1 && prefix[0] == b'0') {
+            return Err("graph body page has a noncanonical frame length".into());
+        }
+        let mut size = 0usize;
+        for digit in prefix {
+            if !digit.is_ascii_digit() {
+                return Err("graph body page has a nondecimal frame length".into());
+            }
+            size = size
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(usize::from(*digit - b'0')))
+                .ok_or_else(|| "graph body page frame length overflowed".to_string())?;
+        }
+        offset = end + 1;
+        let frame_end = offset
+            .checked_add(size)
+            .filter(|frame_end| *frame_end <= encoded.len())
+            .ok_or_else(|| "graph body page has a truncated frame".to_string())?;
+        frames.push(&encoded[offset..frame_end]);
+        offset = frame_end;
+    }
+    Ok(frames)
+}
+
 impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordPages {
     /// Read only the page addressed by this stable owner; absence keeps that owner on the ordinary checking path.
     fn read(
@@ -287,17 +355,23 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
                 path.display()
             ))
         })?;
-        let mut decoded = internal_models::decode_graph_body_values(&encoded).map_err(|error| {
+        let page = decode_graph_body_page_transport(&encoded).map_err(|error| {
             incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
-                "graph body page refused: {error:?}"
+                "graph body page refused: {error}"
             ))
         })?;
-        if decoded.len() != 1 || decoded[0].identity != identity {
+        if page.identity != identity {
             return Err(incan_frontend::checker_records::RecordAdapterFault::InvalidField(
                 "graph body page disagrees with its requested identity".into(),
             ));
         }
-        let record = decoded.remove(0);
+        let record =
+            internal_models::decode_graph_body_page(page.identity, &page.local, &page.final_value, &page.body_ir)
+                .map_err(|error| {
+                    incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
+                        "graph body page refused: {error:?}"
+                    ))
+                })?;
         let frame =
             incan_semantics_core::executable_representation::decode_owner(&record.body_ir).map_err(|error| {
                 incan_frontend::checker_records::RecordAdapterFault::InvalidField(format!(
@@ -854,7 +928,7 @@ fn macro_externs(
 
 #[cfg(test)]
 mod graph_body_page_tests {
-    use super::GraphBodyRecordPages;
+    use super::{GraphBodyRecordPages, decode_graph_body_page_transport};
     use incan_frontend::checker_records::GraphBodyRecordSource;
     use sha2::{Digest, Sha256};
 
@@ -873,6 +947,23 @@ mod graph_body_page_tests {
         assert!(source.read("unrelated-owner").is_err());
 
         std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn native_page_framing_preserves_each_schema_owned_value() -> Result<(), Box<dyn std::error::Error>> {
+        let tokens = ["incan.checker-graph-transport/2", "1", "owner", "00", "ff", "6162"];
+        let encoded = tokens
+            .iter()
+            .map(|token| format!("{}:{token}", token.len()))
+            .collect::<String>();
+
+        let page = decode_graph_body_page_transport(encoded.as_bytes())?;
+
+        assert_eq!(page.identity, "owner");
+        assert_eq!(page.local, [0]);
+        assert_eq!(page.final_value, [255]);
+        assert_eq!(page.body_ir, b"ab");
         Ok(())
     }
 }
