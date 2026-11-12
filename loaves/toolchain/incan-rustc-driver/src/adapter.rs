@@ -24,7 +24,7 @@ mod callbacks;
 mod library_verification;
 mod rustc_queries;
 
-pub(crate) use active_plan::ActivePlan;
+pub(crate) use active_plan::PlanReader;
 use library_verification::*;
 pub(crate) use rustc_queries::*;
 
@@ -32,7 +32,7 @@ pub(crate) use rustc_queries::*;
 static COMPILATION: Mutex<()> = Mutex::new(());
 /// Query providers are function pointers, so the invocation's source-owned plan has an explicit scoped slot, with its
 /// name index.
-static PLAN: Mutex<Option<Arc<ActivePlan>>> = Mutex::new(None);
+static PLAN: Mutex<Option<Arc<PlanReader>>> = Mutex::new(None);
 /// Typed errors raised while loading metadata or source locations survive rustc's fatal-error boundary.
 static FAILURE: Mutex<Option<PlanError>> = Mutex::new(None);
 
@@ -72,6 +72,8 @@ struct Callbacks {
     /// A program has no consumers of its item paths, so its callables may live in per-file modules. A library's paths
     /// are published, and a test harness selects each test by its module path.
     partition: bool,
+    /// Record-backed native definitions and their complete per-definition tracked inputs.
+    reader: Arc<PlanReader>,
 }
 
 /// Compile a plan supplied directly by an Incan caller function into a native binary.
@@ -100,6 +102,7 @@ pub fn compile(
     kind: UnitKind,
     overflow_checks: bool,
     library_facades: Vec<crate::library_exports::LibraryFacade>,
+    plan_record_report: Option<&Path>,
 ) -> Result<(), DriverError> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
     let mut timing = crate::native_timing::Timing::requested();
@@ -142,7 +145,9 @@ pub fn compile(
 
     // ---- Fresh rustc session and planned MIR ----
     let plan = Arc::new(plan);
-    *PLAN.lock().map_err(|_| DriverError::State)? = Some(Arc::new(ActivePlan::new(Arc::clone(&plan))));
+    let reader = Arc::new(PlanReader::new(Arc::clone(&plan), plan_record_report).map_err(DriverError::Invocation)?);
+    reader.write_fingerprint_report()?;
+    *PLAN.lock().map_err(|_| DriverError::State)? = Some(Arc::clone(&reader));
     *FAILURE.lock().map_err(|_| DriverError::State)? = None;
     let mut args = compilation_arguments(crate_name, output, identity, kind, overflow_checks);
     let all = externs.iter().chain(&shared).cloned().collect::<Vec<_>>();
@@ -179,6 +184,7 @@ pub fn compile(
         rustc_started: std::time::Instant::now(),
         codegen_started: None,
         partition: kind == UnitKind::Program,
+        reader,
     };
     let capture = crate::native_timing::Capture::begin();
     let result = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks));
