@@ -326,7 +326,8 @@ pub def run_all(oven: str, planned: list[Invocation], jobs: int, memory: int) ->
 pub def stop_resident_owners(oven: str, log: Path) -> Result[bool, str]:
     """Ask every resident project owner in the installed test home to stop before settled-installation tests run."""
     planned = Invocation(arguments=["owner", "stop"], directory="", reservation=0, log=log)
-    mut child = start(oven, planned)?
+    project_command = Path(oven).parent().joinpath("oven").0
+    mut child = start(project_command, planned)?
     status = child.wait().map_err((error) => f"cannot stop resident owners: {error}")?
     return Ok(status.success())
 

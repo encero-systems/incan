@@ -259,7 +259,10 @@ def test_joined_log_keeps_invocation_order_whatever_the_schedule() -> Result[Non
     assert run_all("/usr/bin/printenv", [environment], 1, 0)?
     assert environment_log.read_text("utf-8", "strict").map_err((error) => error.message())? == "visible\n"
     owner_log = logs.joinpath("owners-stop.log")
-    assert stop_resident_owners("/bin/echo", owner_log)?
+    installed_bin = root.joinpath("installed/bin")
+    installed_bin.mkdir(true, true).map_err((error) => error.message())?
+    installed_bin.joinpath("oven").symlink_to(Path("/bin/echo")).map_err((error) => error.message())?
+    assert stop_resident_owners(installed_bin.joinpath("incan").0, owner_log)?
     assert owner_log.read_text("utf-8", "strict").map_err((error) => error.message())? == "owner stop\n"
     return Ok(None)
 
