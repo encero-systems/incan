@@ -12,6 +12,7 @@ from record_service import (
     CompilerFaultKind, InputSnapshot, PreparedInputs, ProducerProfile, ProducerRank, ProducerStage,
     RankCertificate, ReadyWork, RecordRoot, prepared_reader,
 )
+from activation_envelopes import decode_ready_work, encode_ready_work
 
 
 class Source with RecordSource:
@@ -250,6 +251,17 @@ def preparation_controls(scope: ReadScope, request: RecordRequest, found: Select
     match prepared_reader(wrong_stage, snapshot, prepared):
         Err(CompilerFaultKind.InvalidPreparation) => pass
         _ => assert false
+    for stage in [ProducerStage.BodyIrSeed, ProducerStage.Representation]:
+        work = ReadyWork(output=request.key, stage=stage, profile=profile)
+        match encode_ready_work(work):
+            Ok(encoded) =>
+                match decode_ready_work(encoded):
+                    Ok(decoded) =>
+                        assert decoded.output == request.key
+                        assert decoded.stage == stage
+                        assert decoded.profile.identity.digest == profile.identity.digest
+                    Err(_) => assert false
+            Err(_) => assert false
 
 
 def field_controls(scope: ReadScope, payload: RecordRequest) -> None:
