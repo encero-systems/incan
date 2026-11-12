@@ -511,6 +511,16 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         identity,
     ]
 
+    module_signature = project_source(
+        "app",
+        "src/main.incn",
+        source_text.replace("def other() -> None:\n    pass", "def other() -> int:\n    return 1"),
+    )?
+    module_signature_edit = publish_source_projection(published.snapshot, module_signature)?
+    assert invalid_body_owners(module_signature_edit.snapshot, [module_signature.declarations.key], CHECKER_PROFILE)? == [
+        identity,
+    ]
+
     project_slot = RecordKey(
         family="declaration-slot",
         identity_profile="incan.stable-declaration/1",
