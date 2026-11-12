@@ -214,9 +214,22 @@ pub(super) fn checked_modules(
 
     // ---- The program's own modules ----
     lower_authored_modules(&modules, &analysis, &session, &mut bodies, &mut files)?;
-    graph_body_output.attach_body_ir(&modules, &bodies[loaf_modules..])?;
+    let mut cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
+    cacheable_bodies.extend(analysis.namespace_lowering_inputs().iter().cloned());
+    for body in bodies[loaf_modules..].iter().flat_map(|module| &module.bodies) {
+        if cacheable_bodies
+            .iter()
+            .any(|(identity, _)| identity == &body.direct_call_id)
+        {
+            continue;
+        }
+        let mut witnessed = body.clone();
+        let witness = incan_semantics_core::semantic_digest::body_semantic_digest(&mut witnessed)
+            .map_err(|error| format!("cannot witness namespace Body IR for lowering: {error}"))?;
+        cacheable_bodies.push((body.direct_call_id.clone(), format!("namespace-body:{witness}")));
+    }
+    graph_body_output.attach_body_ir(&modules, &bodies[loaf_modules..], &cacheable_bodies)?;
     graph_body_output.publish()?;
-    let cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
     let graph = if library && collect_codegraph {
         let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(
             unit,

@@ -35,6 +35,8 @@ pub struct GraphNamespaceRecord {
     /// Complete checked Body IR contribution used instead of this module's transient
     /// [`crate::typechecker::TypeCheckInfo`].
     pub body_ir: incan_semantics_core::body_ir::BodyIrModule,
+    /// Stable Body IR owner ids paired with the lowering witnesses authenticated by this namespace's cold check.
+    pub lowering_inputs: Vec<(incan_semantics_core::CompilerNodeId, String)>,
 }
 
 /// Keyed source of independently bounded graph body pages.
