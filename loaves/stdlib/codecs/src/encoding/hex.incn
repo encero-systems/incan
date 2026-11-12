@@ -106,7 +106,15 @@ pub def b16encode(data: bytes) -> str:
     Returns:
         Two uppercase hexadecimal characters for each input byte.
     """
-    return hexlify(data).upper()
+    # The primitive is linear. Six whole-string replacements retain that bound without scalar indexing.
+    text = hexlify(data)
+    return text
+        .replace("a", "A")
+        .replace("b", "B")
+        .replace("c", "C")
+        .replace("d", "D")
+        .replace("e", "E")
+        .replace("f", "F")
 
 
 pub def b16decode(text: str) -> Result[bytes, EncodingError]:
