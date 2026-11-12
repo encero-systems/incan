@@ -110,7 +110,7 @@ pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, st
     runner = build_runner(installation)?
     retain_phase_timing(installation, "runner-build", phase_started)?
 
-    # 3. Independent projects and scratch roots share only the content-addressed installed home.
+    # 3. Independent projects and scratch roots run concurrently before the warm-preparation LSP contract.
     phase_started = Instant.now()
     report, suites = run_concurrent_gates(installation, runner)?
     retain_phase_timing(installation, "concurrent-gates", phase_started)?
@@ -131,47 +131,48 @@ def retain_phase_timing(installation: Installation, phase: str, started: Instant
 
 
 def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tuple[BaselineReport, int], str]:
-    """Run independent installed gates under one host-memory budget and recover their typed results."""
+    """Run installed gates in dependency-safe waves under one host-memory budget, then recover their typed results."""
     plans = verification_phase_plans(installation.jobs)
-    mut invocations: list[Invocation] = []
     compiler = installation.home.joinpath("bin/incan")
     program = installation.root.joinpath("scripts/verify_installation.incn")
     retain_traces = get_or("INCAN_VERIFY_TRACES", "") == "1"
-    for plan in plans:
-        name = verification_phase_name(plan.phase)
-        trace_environment = verification_trace_environment(installation.run, name, retain_traces)
-        if retain_traces:
-            Path(trace_environment["INCAN_TRACE_DIR"])
-                .mkdir(true, true)
-                .map_err((error) => error.message())?
-        invocations.append(
-            Invocation(
-                arguments=[
-                    "run",
-                    program.0,
-                    "--",
-                    "--phase",
-                    name,
-                    installation.run.0,
-                    runner.0,
-                    str(installation.jobs),
-                    str(installation.timeout_seconds),
-                ],
-                directory=installation.root.0,
-                reservation=plan.reservation,
-                log=installation.run.joinpath(f"phase-{name}.log"),
-                environment=trace_environment,
-                timeout_seconds=installation.timeout_seconds * 20,
-            ),
-        )
     memory = shared_memory(host_memory())
-    failed = run_all_failures(compiler.0, invocations, len(invocations), memory)?
-    if len(failed) > 0:
-        return Err(
-            "installed verification phase failures: " + ", ".join(
-                [verification_phase_name(plans[index].phase) for index in failed],
-            ),
-        )
+    for wave in verification_phase_waves(installation.jobs):
+        mut invocations: list[Invocation] = []
+        for plan in wave:
+            name = verification_phase_name(plan.phase)
+            trace_environment = verification_trace_environment(installation.run, name, retain_traces)
+            if retain_traces:
+                Path(trace_environment["INCAN_TRACE_DIR"])
+                    .mkdir(true, true)
+                    .map_err((error) => error.message())?
+            invocations.append(
+                Invocation(
+                    arguments=[
+                        "run",
+                        program.0,
+                        "--",
+                        "--phase",
+                        name,
+                        installation.run.0,
+                        runner.0,
+                        str(installation.jobs),
+                        str(installation.timeout_seconds),
+                    ],
+                    directory=installation.root.0,
+                    reservation=plan.reservation,
+                    log=installation.run.joinpath(f"phase-{name}.log"),
+                    environment=trace_environment,
+                    timeout_seconds=installation.timeout_seconds * 20,
+                ),
+            )
+        failed = run_all_failures(compiler.0, invocations, len(invocations), memory)?
+        if len(failed) > 0:
+            return Err(
+                "installed verification phase failures: " + ", ".join(
+                    [verification_phase_name(wave[index].phase) for index in failed],
+                ),
+            )
     for plan in plans:
         name = verification_phase_name(plan.phase)
         timing = installation.run.joinpath(f"phase-timing-{name}.txt")
@@ -208,6 +209,20 @@ pub def verification_phase_plans(jobs: int) -> list[VerificationPhasePlan]:
         VerificationPhasePlan(phase=VerificationPhase.Lsp, reservation=SMALL_PROJECT_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.Census, reservation=workers * LOWERING_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.Memory, reservation=LOWERING_RESERVATION_BYTES),
+    ]
+
+
+pub def verification_phase_waves(jobs: int) -> list[list[VerificationPhasePlan]]:
+    """
+    Run production and census gates concurrently, then check LSP warm preparation after shared-home activity settles.
+
+    A cold isolated LSP phase prepares its registry closure correctly, while overlapping the other installed gates can
+    expose a closure JSON decode in the warm inspection. The second wave preserves that contract instead of masking it.
+    """
+    plans = verification_phase_plans(jobs)
+    return [
+        [plan for plan in plans if plan.phase != VerificationPhase.Lsp],
+        [plan for plan in plans if plan.phase == VerificationPhase.Lsp],
     ]
 
 

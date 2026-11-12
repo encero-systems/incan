@@ -22,7 +22,12 @@ from oven_tests import (
     summary_document,
     oven_test_state_root,
 )
-from verify_installation import VerificationPhase, verification_phase_plans, verification_trace_environment
+from verify_installation import (
+    VerificationPhase,
+    verification_phase_plans,
+    verification_phase_waves,
+    verification_trace_environment,
+)
 
 const GIB: int = 1073741824
 def test_jobs_follow_the_configured_count_then_the_cores() -> Result[None, str]:
@@ -88,7 +93,7 @@ def test_an_oversized_reservation_runs_alone_and_zero_memory_bounds_nothing() ->
 
 
 def test_verification_phases_reserve_their_complete_parallel_work() -> Result[None, str]:
-    """Concurrent gates reserve every requested facet or census worker and fixed project-scale phases."""
+    """Concurrent gates reserve complete work while the warm-preparation LSP contract runs after shared-home activity."""
     plans = verification_phase_plans(6)
     assert [plan.phase for plan in plans] == [
         VerificationPhase.Oven,
@@ -103,6 +108,17 @@ def test_verification_phases_reserve_their_complete_parallel_work() -> Result[No
     assert verification_phase_plans(0)[0].reservation == 4 * GIB
     assert verification_phase_plans(0)[1].reservation == 2 * GIB
     assert verification_phase_plans(0)[4].reservation == 6 * GIB
+    waves = verification_phase_waves(6)
+    assert [[plan.phase for plan in wave] for wave in waves] == [
+        [
+            VerificationPhase.Oven,
+            VerificationPhase.RustFacets,
+            VerificationPhase.DriverIntegration,
+            VerificationPhase.Census,
+            VerificationPhase.Memory,
+        ],
+        [VerificationPhase.Lsp],
+    ]
     assert len(verification_trace_environment(Path("/evidence"), "census", false)) == 0
     traces = verification_trace_environment(Path("/evidence"), "census", true)
     assert traces["INCAN_TRACE_DIR"] == "/evidence/traces/census/compiler"
