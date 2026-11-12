@@ -883,6 +883,12 @@ hashes remained unchanged and one changed. The edited incremental native phase t
 reuse is therefore correct for this unit but not an efficiency win at hello's size. A size cutoff must be measured on
 larger units rather than inferred from this single point.
 
+The retained Oven `output_index_key` edit could not reach native qualification at this revision. Three attempts—using
+a fresh bakery, the run-15 bakery, and a copied run-14 proof bakery—were refused at the same compiled-graph transport
+boundary before native code generation: 210 owner frames and 45,892,428 raw Body IR bytes. Consequently this run has
+no honest Oven regenerated-CGU count, native before/after timing, or edited-versus-cold comparison. Raising the
+unrelated graph-transport limit is outside this qualification change; the Oven row remains open.
+
 The executable comparison localized the byte difference to development linker metadata rather than emitted
 instructions: the disassemblies and Mach-O section sizes matched, while each binary's symbol table recorded different
 `OSO` object paths containing its Oven store staging directory, process identifier and rustc object suffix. Those
