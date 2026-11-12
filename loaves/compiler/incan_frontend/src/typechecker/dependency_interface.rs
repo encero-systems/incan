@@ -47,9 +47,9 @@ impl CheckedNamespaceInterface {
             return Ok(None);
         }
         let mut api = crate::api_metadata::collect_checked_api_metadata(program, checker, module_path.to_vec());
-        api.declarations.retain(|declaration| {
-            !matches!(declaration, crate::api_metadata::ApiDeclaration::Alias(alias) if !alias.is_public)
-        });
+        api.declarations.retain(
+            |declaration| !matches!(declaration, crate::api_metadata::ApiDeclaration::Alias(alias) if !alias.is_public),
+        );
         let imports_project_namespace = program
             .declarations
             .iter()
