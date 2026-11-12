@@ -28,7 +28,7 @@ Incan 0.6 removes generated Rust crates and Cargo artifact coordinates. The libr
 
 Standard packages are ordinary Loaves exposed through the dedicated virtual `std` namespace. That namespace is the distinction in how consumers address them; it does not grant a different artifact contract or compiler consumption path.
 
-A Loaf publishes checked declarations, caller-instantiable bodies, compiled code, its native dependency closure and inspection facts together. All consumers use canonical declaration identities from one index; standard packages take the same route as ordinary dependencies.
+A Loaf publishes checked declarations, caller-instantiable bodies, compiled code and its native dependency closure together. It may publish inspection facts on explicit request. All consumers use canonical declaration identities from one index; standard packages take the same route as ordinary dependencies.
 
 A checked source interface may supply declarations and governed bodies before native compilation, but grants no compiled callable or native layout. A release toolchain requires complete compiled Loaves.
 
@@ -41,6 +41,7 @@ Runtime dependency selection is demand-driven. An incomplete plan identifies its
 - The provider plan, the library-manifest index, the SDK inventory with its components, profiles and bootstrap grants, the standard source publication, and the generated-crate artifact record are replaced by the artifact and the index.
 - Ordinary dependency preparation remains eager (DD-0005); an explicitly selected checked source interface supplies only its checked declarations and governed bodies, and a consumer requiring its compiled items refuses until native compilation completes.
 - The checker sees the standard library only through manifests, the same contract every dependency already meets.
+- Incan native compilation omits graph collection. Inspection and explicit graph publication share a checked export cache keyed by exact source, compiler and dependency inputs; native and graph proofs remain separate.
 
 ## Non-goals
 
