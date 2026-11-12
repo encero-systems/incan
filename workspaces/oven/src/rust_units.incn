@@ -193,7 +193,10 @@ def schedule_rust_dependencies(
     2. Admit ready facets under CPU and memory reservations and give each the completed dependency receipt.
     3. Integrate terminal receipts in the parent; failures block only their dependents and retain per-unit logs.
     """
-    dependencies = [facet for facet in facets if not (facet.project == root.0 and facet.domain == DependencyDomain.Target)]
+    dependencies = [facet for facet in facets if not (
+        facet.project == root.0
+        and facet.domain == DependencyDomain.Target
+    )]
     if len(dependencies) < 2:
         return Ok(None)
     directory = output.joinpath(f"scheduler-{id()}")
@@ -271,6 +274,7 @@ def start_scheduled_unit(
     executable = match scheduler_executable():
         Some(found) => found
         None => return Err("the Rust unit scheduler has no Oven executable")
+
     mut command = Command.new(executable)
     command.arg("__rust-unit").arg(facet.key()).arg(inputs.0).arg(result.0).arg(request.project)
     command.arg("--profile").arg(request.profile)
@@ -298,12 +302,7 @@ def scheduler_executable() -> Option[str]:
         Ok(found) => return Some(str(found.to_string_lossy().into_owned()))
 
 
-pub def scheduled_unit(
-    request: RustBuild,
-    facet_key: str,
-    inputs: Path,
-    result: Path,
-) -> Result[i32, str]:
+pub def scheduled_unit(request: RustBuild, facet_key: str, inputs: Path, result: Path) -> Result[i32, str]:
     """Compile exactly one parent-admitted facet against its completed dependency receipt."""
     mut request = prepared_build(request)?
     root = Path(request.project).resolve().map_err((error) => f"cannot resolve {error.message()}")?
@@ -323,6 +322,7 @@ pub def scheduled_unit(
     facet = match selected:
         None => return Err(f"scheduled Rust facet is absent: {facet_key}")
         Some(found) => found
+
     built = read_receipt(inputs, true)?
     search = ordered_search_before(facets, facet_key, built)
     declared = rust_facet(facet.project, true, request.manifests)?
@@ -333,11 +333,7 @@ pub def scheduled_unit(
     return Ok(0)
 
 
-def ordered_search_before(
-    facets: list[LocalFacet],
-    selected: str,
-    built: Dict[str, BuiltUnit],
-) -> list[str]:
+def ordered_search_before(facets: list[LocalFacet], selected: str, built: Dict[str, BuiltUnit]) -> list[str]:
     """Recreate the serial search order before one selected facet from completed keyed receipts."""
     mut search: list[str] = []
     for facet in facets:
@@ -945,6 +941,21 @@ def compile_local_rust_library(
                             search=reached_search,
                         ),
                     )
+    if let Some(refreshed) = refresh_baked_rust_graph(
+        facet,
+        declared,
+        directory,
+        arguments,
+        environment,
+        request,
+        toolchain,
+        store,
+        name,
+        context,
+        reached_search,
+        linked,
+    )?:
+        return Ok(refreshed)
     # 3. Compile with rustc's dependency evidence; nothing is baked unless every input held still.
     artifact = compile_rust_producer(facet, declared, directory, arguments, environment, request, toolchain)?
     key = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
@@ -977,6 +988,74 @@ def compile_local_rust_library(
                     search=reached_search,
                 ),
             )
+
+
+def refresh_baked_rust_graph(
+    facet: LocalFacet,
+    declared: RustFacet,
+    directory: Path,
+    arguments: list[str],
+    environment: Dict[str, str],
+    request: RustBuild,
+    toolchain: Toolchain,
+    store: Path,
+    name: str,
+    context: str,
+    reached_search: list[str],
+    linked: list[str],
+) -> Result[Option[BuiltUnit], str]:
+    """
+    Reuse a bakery native producer when only its checked-graph observer changed.
+
+    The portable proof must still cover the exact native key and every prior output before an analysis-only graph
+    refresh runs. The refreshed graph is sealed under the current graph-producer identity; a changed native input
+    returns `None` so the caller performs an ordinary compilation.
+    """
+    selected = library_artifact(directory, declared.crate_name, context, declared.kind)?
+    artifact = match selected:
+        Some(path) => path
+        None => return Ok(None)
+
+    graph = directory.joinpath(f"{declared.crate_name}.incngraph")
+    dependencies = directory.joinpath("library.d")
+    outputs = [artifact, graph, dependencies]
+    native = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
+    if native.refusal != "" or not portable_reusable(directory, native, outputs)?:
+        return Ok(None)
+
+    retain_rust_library_graph(facet, declared, artifact, arguments, environment, request, toolchain, native)?
+    current = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
+    if current.digest != native.digest:
+        return Err(f"Rust producer inputs changed while refreshing {declared.crate_name}'s baked graph")
+    record_portable(directory, native, outputs)?
+    identity = rust_library_graph_key(native, toolchain.driver)?.digest
+    portable = directory.joinpath("library.portable-inputs")
+    seal_rust(
+        store,
+        identity,
+        name,
+        native.digest,
+        native.provenance,
+        directory,
+        outputs,
+        [portable],
+        facet.project,
+        linked,
+    )?
+    trace(
+        f"unit {declared.crate_name} rust: reused native identity={native.digest}; refreshed graph identity={identity}",
+    )
+    return Ok(
+        Some(
+            BuiltUnit(
+                crate_name=declared.crate_name,
+                artifact=artifact.0,
+                directory=directory.0,
+                reused=true,
+                search=reached_search,
+            ),
+        ),
+    )
 
 
 def baked_identity(

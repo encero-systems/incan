@@ -26,7 +26,7 @@ from registry_units import RegistryUnits
 from loaf_local_graph import LocalEdge, LocalFacet
 from rust_activation import DependencyDomain
 from rust_target import decoded
-from toolchain import NativeCrate
+from toolchain import NativeCrate, Toolchain
 from unit_publication import admit_payload, record_path, record_payload
 from unit_freshness import Key, artifact_identity, record, fingerprint
 from freshness_fixtures import Pass, fixture, make_executable, write
@@ -102,6 +102,7 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
     linked = rust_pass(setup, "another compiler", "alloc")?.key
     assert linked != compiler
     verify_absolute_binary_runpath_refusal()
+    verify_local_bakery_graph_refresh(scratch.path().joinpath("local-bakery"))?
     verify_installed_rust_producer(scratch.path().joinpath("installed"))?
     verify_graph_export_scoping(scratch.path().joinpath("graph-views"))?
     return Ok(None)
@@ -116,6 +117,98 @@ def verify_absolute_binary_runpath_refusal() -> None:
     assert refused.refusal == "unit identity refused: absolute runtime search path"
     assert native_arguments("release") == ["-Copt-level=3"]
     assert rust_arguments("release") == ["-C", "opt-level=3", "-C", "debuginfo=0"]
+
+
+def verify_local_bakery_graph_refresh(scratch: Path) -> Result[None, str]:
+    """
+    Reuse one local native producer across graph-observer generations, then rebuild it after a source edit.
+
+    1. Compile a synthetic Rust library with counted native and graph compilers.
+    2. Change only the graph observer and require a graph refresh without another native compilation.
+    3. Change an observed source and require both native compilation and graph production again.
+    """
+    source = scratch.joinpath("shared/src/lib.rs")
+    rustc = scratch.joinpath("rustc")
+    driver = scratch.joinpath("driver")
+    native_attempts = scratch.joinpath("native-attempts")
+    graph_attempts = scratch.joinpath("graph-attempts")
+    write(source, "pub fn value() -> u32 { 1 }\n")?
+
+    mut rustc_script = "#!/bin/sh\nset -eu\n" + f"printf x >> '{native_attempts.0}'\n"
+    rustc_script += "output=''\ncrate=''\nsource=''\ndependencies=''\nsuffix=''\nprevious=''\n"
+    rustc_script += "for argument in \"$@\"; do\n"
+    rustc_script += "  case \"$previous\" in --out-dir) output=\"$argument\";; --crate-name) crate=\"$argument\";; esac\n"
+    rustc_script += "  case \"$argument\" in dep-info=*) dependencies=${argument#dep-info=};; extra-filename=*) suffix=${argument#extra-filename=};; *.rs) source=\"$argument\";; esac\n"
+    rustc_script += "  previous=\"$argument\"\ndone\nmkdir -p \"$output\"\n"
+    rustc_script += "printf native > \"$output/lib${crate}${suffix}.rlib\"\n"
+    rustc_script += "printf '%s: %s\\n\\n%s:\\n' \"$dependencies\" \"$source\" \"$source\" > \"$dependencies\"\n"
+    write(rustc, rustc_script)?
+    make_executable(rustc)?
+
+    mut graph_script = "#!/bin/sh\nset -eu\n"
+    graph_script += "[ \"$1\" = --rust-compile-codegraph ] || [ \"$1\" = --rust-codegraph ] || exit 2\n"
+    graph_script += f"printf x >> '{graph_attempts.0}'\nprintf graph > \"$2\"\n"
+    write(driver, graph_script)?
+    make_executable(driver)?
+
+    crate_name = "shared_" + fingerprint([scratch.0])?[:12]
+    facet = LocalFacet(
+        project=scratch.joinpath("shared").0,
+        domain=DependencyDomain.Target,
+        features=[],
+        local=[],
+        registry=[],
+        registry_aliases=[],
+    )
+    declared = RustFacet(
+        crate_name=crate_name,
+        kind="lib",
+        edition="2024",
+        library=source.0,
+        binaries=[],
+        package=crate_name,
+        version="0.1.0",
+        unstable=false,
+        sysroot=false,
+    )
+    toolchain = Toolchain(
+        driver=driver.0,
+        sysroot=scratch.joinpath("sysroot").0,
+        rust_abi=[],
+        externs=[],
+        search=[],
+        registry_units="",
+        target="aarch64-apple-darwin",
+    )
+    mut request = RustBuild(
+        project=scratch.joinpath("first-consumer").0,
+        profile="release",
+        rustc=rustc.0,
+        registry=RegistryUnits(units=[], search=[]),
+        toolchain=Some(toolchain),
+        manifests=ManifestReader(),
+        native_compiler="pinned native compiler",
+    )
+
+    first = compile_rust_library(facet, declared, scratch.joinpath("first-output"), request, {}, [])?
+    assert not first.reused
+    assert read(native_attempts)? == "x"
+    assert read(graph_attempts)? == "x"
+
+    write(driver, graph_script + "# changed graph observer\n")?
+    request.project = scratch.joinpath("second-consumer").0
+    second = compile_rust_library(facet, declared, scratch.joinpath("second-output"), request, {}, [])?
+    assert second.reused
+    assert read(native_attempts)? == "x"
+    assert read(graph_attempts)? == "xx"
+
+    write(source, "pub fn value() -> u32 { 2 }\n")?
+    request.project = scratch.joinpath("changed-consumer").0
+    changed = compile_rust_library(facet, declared, scratch.joinpath("changed-output"), request, {}, [])?
+    assert not changed.reused
+    assert read(native_attempts)? == "xx"
+    assert read(graph_attempts)? == "xxx"
+    return Ok(None)
 
 
 def verify_graph_export_scoping(scratch: Path) -> Result[None, str]:
