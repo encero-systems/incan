@@ -154,11 +154,19 @@ pub def compiled_owner_source(
     projection: SourceProjection,
     module: str,
     name: str,
+    identity: str = "",
 ) -> Result[SourceProjectionRecord, str]:
     """Map one compiler body name to its exact owner or unambiguous declaration-qualified default expression."""
     for owner in projection.owners:
         if owner.key.facet == name:
             return Ok(owner)
+    declaration = stable_member_declaration(identity)
+    if declaration != "":
+        for prefix in ["default:", "field:"]:
+            qualified = prefix + declaration + ":" + name
+            for owner in projection.owners:
+                if owner.key.facet == qualified:
+                    return Ok(owner)
     mut default: Option[SourceProjectionRecord] = None
     for owner in projection.owners:
         if owner.key.facet.startswith("default:") and owner.key.facet.endswith(":" + name):
@@ -175,6 +183,18 @@ pub def compiled_owner_source(
         if owner.key.facet.endswith(":" + name):
             return Ok(owner)
     return Err(f"compiled body output has no matching owner source: {module}:{name}")
+
+
+def stable_member_declaration(identity: str) -> str:
+    """Recover the enclosing nominal declaration spelling from one compiler-owned nested stable identity."""
+    nested = identity.split("#in(")
+    if len(nested) < 2:
+        return ""
+    owner = nested[len(nested) - 1].split(")")[0]
+    parts = owner.split(":")
+    if len(parts) < 2 or parts[len(parts) - 1] == "":
+        return ""
+    return parts[0] + ":" + parts[len(parts) - 1]
 
 
 pub def declaration_index_key(origin: str, path: str) -> RecordKey:
