@@ -6,6 +6,9 @@ use std::sync::Arc;
 
 pub use crate::typechecker::canonical_nodes::NodeBindingError as RecordAdapterFault;
 
+/// Exact canonical checker profile carried by graph body values and any cache capable of supplying their owners.
+pub const GRAPH_BODY_RECORD_PROFILE: &str = "incan.checker-free-functions/11";
+
 /// One graph-admitted body pair keyed by the compiler-owned stable declaration identity encoded in both records.
 #[derive(Debug, Clone)]
 pub struct GraphBodyRecord {
@@ -16,7 +19,7 @@ pub struct GraphBodyRecord {
     /// Settled final-family field primitives restored through the ordinary checked-body assembly.
     pub final_value: Vec<Vec<String>>,
     /// Kernel-decoded v55 executable owner frame, when the graph selected a complete Body IR value with the checker
-    /// pair. The checker validates its current canonical owner and physical source span before exposing it to Body IR.
+    /// pair. The checker validates its stable owner identity and declaration name before exposing it to Body IR.
     pub body_ir: Option<incan_semantics_core::executable_representation::EncodedOwnerRepresentation>,
 }
 

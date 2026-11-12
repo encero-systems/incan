@@ -48,7 +48,7 @@ fn produce_local(
             "header".into(),
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
-            "incan.checker-free-functions/11".into(),
+            crate::checker_records::GRAPH_BODY_RECORD_PROFILE.into(),
         ],
     );
     Ok(fields)
@@ -161,9 +161,7 @@ impl TypeChecker {
             .body_ir
             .as_ref()
             .filter(|frame| {
-                frame.identity == canonical.render_compact()
-                    && frame.body.span == owner
-                    && frame.body.name == canonical.declaration_name
+                frame.identity == canonical.render_compact() && frame.body.name == canonical.declaration_name
             })
             .map(|frame| frame.body.clone());
         let mut diagnostic_positions = DiagnosticPositions::new(program, self.symbols.declaration_origin());
@@ -414,7 +412,7 @@ fn restore(
         .first()
         .filter(|header| header.len() == 5)
         .ok_or(NodeBindingError::MissingOwner)?;
-    if header[0] != "header" || header[4] != "incan.checker-free-functions/11" {
+    if header[0] != "header" || header[4] != crate::checker_records::GRAPH_BODY_RECORD_PROFILE {
         return Err(NodeBindingError::Unsupported("record profile"));
     }
     if header[1] != positions.nodes.owner().render_compact() {
@@ -475,7 +473,7 @@ fn restore_pending(positions: &Positions, owner: Span, fields: &Fields) -> Resul
         || header[1] != positions.nodes.owner().render_compact()
         || header[2] != positions.nodes.root()
         || header[3] != "local"
-        || header[4] != "incan.checker-free-functions/11"
+        || header[4] != crate::checker_records::GRAPH_BODY_RECORD_PROFILE
     {
         return Err(NodeBindingError::Unsupported("local record header"));
     }

@@ -33,7 +33,7 @@ pub(crate) fn produce_declaration(
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
             "declaration".into(),
-            "incan.checker-free-functions/11".into(),
+            crate::checker_records::GRAPH_BODY_RECORD_PROFILE.into(),
         ],
     );
     Ok(fields)
@@ -85,7 +85,7 @@ pub(super) fn encode_final(
             "header".into(),
             positions.nodes.owner().render_compact(),
             positions.nodes.root().to_owned(),
-            "incan.checker-free-functions/11".into(),
+            crate::checker_records::GRAPH_BODY_RECORD_PROFILE.into(),
         ],
     );
     Ok(fields)
