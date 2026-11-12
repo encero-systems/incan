@@ -1,0 +1,8 @@
+"""Retain the compiler's exact checker-record fallback reasons when a later producer refuses an owner."""
+
+from pub::internal_models import CompiledBodyFallback
+
+
+pub def fallback_reasons(fallbacks: list[CompiledBodyFallback]) -> list[str]:
+    """Describe every excluded owner without equating a stable checker key with an emitted native symbol."""
+    return [f"{fallback.module}::{fallback.name}: {fallback.reason}" for fallback in fallbacks]

@@ -56,6 +56,7 @@ from compiler_body_values import (
     select_body_values,
 )
 from compiler_body_publication import publish_compiled_bodies
+from compiler_body_fallbacks import fallback_reasons
 from compiler_source_projection import project_source, publish_source_projection
 from publication import publish_binary
 from scratch import scratch_directory
@@ -433,6 +434,9 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         context="checker-record",
     )
     assert required(published.snapshot, encode_record_key(fallback_key)?)? == b"full-source: local record output refused: Unsupported(\"fixture\")"
+    assert fallback_reasons([
+        CompiledBodyFallback(module="src/main.incn", name="other", identity=None, reason="exact producer refusal"),
+    ]) == ["src/main.incn::other: exact producer refusal"]
     selected = select_body_inventory(published.snapshot, CHECKER_PROFILE)?
     assert len(selected) == 1 and selected[0].identity == identity
     pages = encode_body_inventory(selected)?
