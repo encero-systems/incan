@@ -7,7 +7,7 @@ use std::sync::Arc;
 pub use crate::typechecker::canonical_nodes::NodeBindingError as RecordAdapterFault;
 
 /// Exact canonical checker profile carried by graph body values and any cache capable of supplying their owners.
-pub const GRAPH_BODY_RECORD_PROFILE: &str = "incan.checker-free-functions/11";
+pub const GRAPH_BODY_RECORD_PROFILE: &str = "incan.checker-free-functions/12";
 
 /// One graph-admitted body pair keyed by the compiler-owned stable declaration identity encoded in both records.
 #[derive(Debug, Clone)]
@@ -141,6 +141,18 @@ pub fn fixture_record(source: &str, name: &str, declaration: bool) -> Result<Vec
 /// baseline. Returns rendered current diagnostics. This test sink is neither a production source nor a reuse counter.
 pub fn verify_fixture(source: &str, name: &str, fields: Vec<Vec<String>>) -> Result<Vec<String>, RecordAdapterFault> {
     crate::typechecker::body_check::records::verify_fixture(source, name, fields)
+}
+
+/// Test-only cold comparison for a fixture whose nominal facts come from one admitted Loaf dependency.
+#[cfg(test)]
+fn verify_fixture_with_loaves(
+    source: &str,
+    name: &str,
+    fields: Vec<Vec<String>>,
+    loaves: Arc<crate::loaf_index::LoafIndex>,
+    module_path: Vec<String>,
+) -> Result<Vec<String>, RecordAdapterFault> {
+    crate::typechecker::body_check::records::verify_fixture_with_loaves(source, name, fields, loaves, module_path)
 }
 
 /// Enter one local producer from decoded declaration and environment values, then discard its private checker.
@@ -325,8 +337,8 @@ mod tests {
     }
 
     /// Build one checked provider artifact so the consumer reads a real package declaration identity.
-    fn provider_index() -> Result<(Arc<LoafIndex>, tempfile::TempDir), Box<dyn std::error::Error>> {
-        let provider = program("pub def value() -> int:\n    return 41\n")?;
+    fn provider_index(source: &str) -> Result<(Arc<LoafIndex>, tempfile::TempDir), Box<dyn std::error::Error>> {
+        let provider = program(source)?;
         let mut checker = TypeChecker::new();
         checker.set_current_package_identity(Some("provider".into()));
         checker.set_current_module_path(Some(vec!["lib".into()]));
@@ -344,7 +356,7 @@ mod tests {
     /// A program owner that calls an editable dependency publishes itself and the exact declaration record it read.
     #[test]
     fn program_owner_publishes_exact_package_declaration_read() -> Result<(), Box<dyn std::error::Error>> {
-        let (loaves, _directory) = provider_index()?;
+        let (loaves, _directory) = provider_index("pub def value() -> int:\n    return 41\n")?;
         let source = "from pub::provider import value\n\ndef main() -> int:\n    return value()\n";
         let consumer = program(source)?;
         let mut checker = TypeChecker::new();
@@ -396,6 +408,37 @@ mod tests {
                 module_path: vec!["lib".into()],
                 declaration_name: "value".into(),
             }]
+        );
+        Ok(())
+    }
+
+    /// A nominal expression retains its canonical type identity without excluding an otherwise reusable owner.
+    #[test]
+    fn nominal_expression_type_identities_publish_reusable_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let (loaves, _directory) = provider_index(
+            "pub model Choice:\n    pub value: int\n\npub def value() -> Choice:\n    return Choice(value=41)\n",
+        )?;
+        let source = "from pub::provider import value\n\ndef keep() -> int:\n    choice = value()\n    return 1\n";
+        let program = program(source)?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".into()]));
+        checker.set_loaves(loaves.clone());
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+
+        let outputs = checked_owner_record_outputs(&program, &checker, &["main".into()])?;
+        assert_eq!(outputs.len(), 1, "the nominal owner was silently omitted");
+        let CheckedOwnerRecordOutput::Value(owner) = &outputs[0] else {
+            let CheckedOwnerRecordOutput::Fallback(fallback) = &outputs[0] else {
+                return Err("the nominal expression owner had no publication decision".into());
+            };
+            return Err(format!("the nominal expression owner fell back: {}", fallback.reason).into());
+        };
+        assert_eq!(owner.name, "keep");
+        assert!(
+            super::verify_fixture_with_loaves(source, "keep", owner.final_value.clone(), loaves, vec!["main".into()],)?
+                .is_empty()
         );
         Ok(())
     }

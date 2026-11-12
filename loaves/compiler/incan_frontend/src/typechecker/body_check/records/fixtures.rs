@@ -25,6 +25,31 @@ pub(crate) fn fixture_record(source: &str, name: &str, declaration: bool) -> Res
 /// fields and compare every native field. The cold checker supplies expected values only, never reconstructed ones.
 pub(crate) fn verify_fixture(source: &str, name: &str, mut fields: Fields) -> Result<Vec<String>, NodeBindingError> {
     let (program, checker, owner) = fixture(source, name)?;
+    verify_checked_fixture(source, &mut fields, program, checker, owner)
+}
+
+/// Test baseline for an owner that reads one admitted Loaf dependency; the dependency artifact and module identity
+/// are installed before the independent cold check, then the ordinary native comparison proves the decoded fields.
+#[cfg(test)]
+pub(crate) fn verify_fixture_with_loaves(
+    source: &str,
+    name: &str,
+    mut fields: Fields,
+    loaves: std::sync::Arc<crate::loaf_index::LoafIndex>,
+    module_path: Vec<String>,
+) -> Result<Vec<String>, NodeBindingError> {
+    let (program, checker, owner) = fixture_with_context(source, name, Some((loaves, module_path)))?;
+    verify_checked_fixture(source, &mut fields, program, checker, owner)
+}
+
+/// Reconstruct one independently checked owner and compare every native field with its cold checked value.
+fn verify_checked_fixture(
+    source: &str,
+    fields: &mut Fields,
+    program: Program,
+    checker: TypeChecker,
+    owner: Span,
+) -> Result<Vec<String>, NodeBindingError> {
     let header = fields.first_mut().ok_or(NodeBindingError::MissingOwner)?;
     if header.is_empty() || header[0] != "header" {
         return Err(NodeBindingError::MissingOwner);
@@ -119,10 +144,23 @@ pub(super) fn default_writers(
 
 /// Independent full checking belongs only to the fixture baseline. Canonical production conversion never invokes it.
 pub(super) fn fixture(source: &str, name: &str) -> Result<(Program, TypeChecker, Span), NodeBindingError> {
+    fixture_with_context(source, name, None)
+}
+
+/// Independently check one fixture after installing only the explicit package and module context it requires.
+fn fixture_with_context(
+    source: &str,
+    name: &str,
+    context: Option<(std::sync::Arc<crate::loaf_index::LoafIndex>, Vec<String>)>,
+) -> Result<(Program, TypeChecker, Span), NodeBindingError> {
     let tokens = crate::lexer::lex(source).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
     let program = crate::parser::parse(&tokens).map_err(|_| NodeBindingError::Unsupported("fixture syntax"))?;
     let owner = program.declarations.iter().find(|declaration| matches!(&declaration.node, crate::ast::Declaration::Function(function) if function.name == name)).map(|declaration| declaration.span).ok_or(NodeBindingError::MissingOwner)?;
     let mut checker = TypeChecker::new();
+    if let Some((loaves, module_path)) = context {
+        checker.set_current_module_path(Some(module_path));
+        checker.set_loaves(loaves);
+    }
     let _ = checker.check_program(&program);
     Ok((program, checker, owner))
 }
