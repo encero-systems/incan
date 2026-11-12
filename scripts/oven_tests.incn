@@ -74,6 +74,8 @@ pub model Invocation:
     pub timeout_seconds: int = 0
     # Runs by itself after the others, because it requires an installation that has stopped changing.
     pub alone: bool = false
+    # A private project removed only after this invocation's process has exited and its external log is durable.
+    pub scratch: Option[Path] = None
 
 
 pub model Summary:
@@ -93,6 +95,7 @@ model Running:
     timeout_seconds: int
     started: Instant
     child: Rc[RefCell[Child]]
+    scratch: Option[Path]
 
 
 def main() -> None:
@@ -199,7 +202,18 @@ pub def invocations(root: Path, _evidence: Path, logs: Path) -> Result[list[Invo
         project, isolated_source = isolated_oven_project(root, _evidence, len(planned), source)?
         unit = ["test", isolated_source.0]
         alone = source.name() in NEEDS_SETTLED_INSTALLATION
-        planned.append(invocation(unit, project.0, PROJECT_RESERVATION_BYTES, logs, len(planned), source, alone))
+        planned.append(
+            invocation(
+                unit,
+                project.0,
+                PROJECT_RESERVATION_BYTES,
+                logs,
+                len(planned),
+                source,
+                alone,
+                Some(project.parent().parent()),
+            ),
+        )
     compiler = root.joinpath("loaves/compiler").0 + "/"
     for source in loaf_tests(root.joinpath("loaves"))?:
         # Compiler Loaves link native support, which an installed bundle ships for the release profile only.
@@ -211,23 +225,24 @@ pub def invocations(root: Path, _evidence: Path, logs: Path) -> Result[list[Invo
 
 def isolated_oven_project(root: Path, evidence: Path, position: int, source: Path) -> Result[tuple[Path, Path], str]:
     """Copy the Oven project for one source so its target generations cannot withdraw another test's live views."""
-    checkout = oven_test_state_root(root, get_or("OVEN_TEST_STATE_ROOT", "")).joinpath(evidence.name()).joinpath(
-        str(position),
-    )
+    checkout = oven_test_state_root(root, get_or("OVEN_TEST_STATE_ROOT", ""))
+        .joinpath(evidence.name())
+        .joinpath(str(position))
     project = checkout.joinpath("workspaces/oven")
     project.mkdir(true, true).map_err((error) => error.message())?
-    _ = root.joinpath("workspaces/oven/loaf.toml").copy(project.joinpath("loaf.toml"), true, false).map_err(
-        (error) => error.message(),
-    )?
-    _ = root.joinpath("workspaces/oven/src").copy(project.joinpath("src"), true, false).map_err(
-        (error) => error.message(),
-    )?
-    _ = root.joinpath("workspaces/oven/tests").copy(project.joinpath("tests"), true, false).map_err(
-        (error) => error.message(),
-    )?
-    _ = root.joinpath("workbench").copy(checkout.joinpath("workbench"), true, false).map_err(
-        (error) => error.message(),
-    )?
+    _ = root
+        .joinpath("workspaces/oven/loaf.toml")
+        .copy(project.joinpath("loaf.toml"), true, false)
+        .map_err((error) => error.message())?
+    _ = root
+        .joinpath("workspaces/oven/src")
+        .copy(project.joinpath("src"), true, false)
+        .map_err((error) => error.message())?
+    _ = root
+        .joinpath("workspaces/oven/tests")
+        .copy(project.joinpath("tests"), true, false)
+        .map_err((error) => error.message())?
+    _ = root.joinpath("workbench").copy(checkout.joinpath("workbench"), true, false).map_err((error) => error.message())?
     checkout.joinpath("loaves").symlink_to(root.joinpath("loaves")).map_err((error) => error.message())?
     return Ok((project, project.joinpath("src").joinpath(source.name())))
 
@@ -247,6 +262,7 @@ def invocation(
     position: int,
     source: Path,
     alone: bool = false,
+    scratch: Option[Path] = None,
 ) -> Invocation:
     """One invocation whose log name orders it by its position."""
     log = logs.joinpath(log_name(position, source))
@@ -256,6 +272,7 @@ def invocation(
         reservation=reservation,
         log=log,
         alone=alone,
+        scratch=scratch,
     )
 
 
@@ -333,6 +350,7 @@ pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory
                     timeout_seconds=planned[index].timeout_seconds,
                     started=Instant.now(),
                     child=Rc.new(RefCell.new(child)),
+                    scratch=planned[index].scratch,
                 ),
             )
         waiting = [index for index in waiting if index not in chosen]
@@ -340,12 +358,14 @@ pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory
         for item in active:
             match item.child.borrow_mut().try_wait().map_err((error) => str(error))?:
                 Some(status) =>
+                    remove_completed_scratch(item.scratch)?
                     if not status.success():
                         failed.append(item.position)
                 None =>
                     if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
                         _ = item.child.borrow_mut().kill()
                         _ = item.child.borrow_mut().wait()
+                        remove_completed_scratch(item.scratch)?
                         failed.append(item.position)
                     else:
                         running.append(item)
@@ -353,6 +373,18 @@ pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory
             sleep(Duration.from_millis(20))
         active = running
     return Ok(sorted(failed))
+
+
+def remove_completed_scratch(scratch: Option[Path]) -> Result[None, str]:
+    """Remove one private test project only after its child has exited and its file-backed log is complete."""
+    match scratch:
+        None => return Ok(None)
+        Some(path) =>
+            if path.exists() or path.is_symlink():
+                path
+                    .remove_tree()
+                    .map_err((error) => f"cannot remove completed Oven test scratch {path.0}: {error.message()}")?
+            return Ok(None)
 
 
 pub def admitted(reservations: list[int], waiting: list[int], held: list[int], jobs: int, memory: int) -> list[int]:
