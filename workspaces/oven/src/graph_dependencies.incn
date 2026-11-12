@@ -8,9 +8,9 @@ from std.toml import TomlValue
 from features import FeatureRequest
 from files import json_text, parse_json, read
 from graph_cache import GraphUnit, cache_file, is_unchecked, tree_inputs
-from graph_incan import inspect_incan, interface_directory
+from graph_incan import inspect_incan, inspect_incan_with_unit, interface_directory, publish_prepared_graph
 from graph_queries import nested, text
-from bakery import bakery, find, reached, viewed_fact
+from bakery import bakery, find, reached, restore_recorded_view, viewed_fact
 from home import dependency_artifact_dir
 from intake import ManifestReader, library_source, read_project
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
@@ -423,47 +423,52 @@ def compiled_directory(
     version: str,
 ) -> Result[Option[Path], str]:
     """
-    An Incan dependency's published graph is admitted only beside its Incan manifest, never from bootstrap-emitted Rust.
+    Admit an Incan dependency's native publication independently of its optional inspection graph.
 
     The candidates are the artifact directories of the root project and of the dependency's own project, and the
-    directory its library was built into. The first that holds a graph and an interface must be a complete, matching
-    compiled Loaf.
+    directory its library was built into. Prefer a current view carrying a requested graph; otherwise retain the
+    native interface while inspection exports the graph from source.
     """
-    mut candidates = [
+    mut candidates: list[Path] = []
+    if key in built:
+        candidates.append(Path(built[key].directory))
+    candidates = candidates + [
         dependency_artifact_dir(request.project, package, request.profile),
         dependency_artifact_dir(project, package, request.profile),
     ]
-    if key in built:
-        candidates.append(Path(built[key].directory))
+    mut selected: Option[Path] = None
     for candidate in candidates:
         mut directory = candidate
         if let Some(fact) = viewed_fact(candidate)?:
             directory = fact
-        if (
-            directory.joinpath(f"{artifact_stem(package)}.incnlib").is_file()
-            and directory.joinpath(f"{artifact_stem(package)}.incngraph").is_file()
-        ):
+        graph = directory.joinpath(f"{artifact_stem(package)}.incngraph")
+        if graph.is_file():
+            _ = restore_recorded_view(graph)?
+        if (directory.joinpath(f"{artifact_stem(package)}.incnlib").is_file() and graph.is_file()):
             verify_compiled_loaf(directory, package, version, features)?
             return Ok(Some(directory))
-    return Ok(None)
+        if directory.joinpath(f"{artifact_stem(package)}.incnlib").is_file():
+            verify_compiled_loaf(directory, package, version, features)?
+            selected = Some(directory)
+    return Ok(selected)
 
 
 def verify_compiled_loaf(directory: Path, package: str, version: str, features: list[str]) -> Result[None, str]:
     """
     Refuse a compiled Loaf that is incomplete, is not the selected dependency, or was built for other features.
 
-    1. The rest of the artifact set is beside the graph.
+    1. The native artifact set is complete, with or without a graph.
     2. Its manifest names this package and version, and has its native ABI cache when it declares one.
     3. Its active features are the ones selected.
     """
-    # 1. A graph beside a partial artifact set would let a consumer rely on a Loaf that cannot be linked.
+    # 1. A partial native artifact set grants neither declarations nor executable vocabulary workers.
     for name in [
         f"lib{native_crate_name(package)}.rlib",
         f"{artifact_stem(package)}.incnbody",
         f"{artifact_stem(package)}.native.json",
     ]:
         if not directory.joinpath(name).is_file():
-            return Err(f"{package}: incomplete compiled Loaf beside its graph")
+            return Err(f"{package}: incomplete compiled Loaf")
     # 2. The Loaf is the package and version selected, and carries the native ABI cache it declares.
     manifest = parse_json(read(directory.joinpath(f"{artifact_stem(package)}.incnlib"))?)?
     if text(manifest, "name") != package or text(manifest, "version") != version:
@@ -471,9 +476,9 @@ def verify_compiled_loaf(directory: Path, package: str, version: str, features: 
     declares_cache = text(nested(manifest, "rust_abi"), "cache_digest") != ""
     if declares_cache and not directory.joinpath(f"{artifact_stem(package)}.rustabi").is_file():
         return Err(f"{package}: missing native ABI cache beside its manifest")
-    # 3. The Loaf was built for the features this consumer selects, so its graph describes the code it will link.
+    # 3. The Loaf was built for the features this consumer selects.
     if sorted(active_features(manifest)?) != sorted(features):
-        return Err(f"{package}: compiled Loaf graph has a different feature projection")
+        return Err(f"{package}: compiled Loaf has a different feature projection")
     return Ok(None)
 
 
@@ -510,6 +515,7 @@ def checked_units(
         declared = rust_facet(facet.project, false, request.manifests)?
         package = declared.package
         own = inspect_root and facet.project == request.project and facet.domain == DependencyDomain.Target
+        mut native_directory: Option[Path] = None
         # 1. A dependency with a compiled Loaf contributes the graph it published, and its interface joins the others.
         if not own:
             published = compiled_directory(
@@ -524,16 +530,20 @@ def checked_units(
             match published:
                 Some(directory) =>
                     interfaces[package] = directory
+                    native_directory = Some(directory)
                     graph = directory.joinpath(f"{artifact_stem(package)}.incngraph")
-                    root = Path(facet.project)
-                    paths.append(GraphUnit(path=graph, root=root, package=package, version=declared.version))
-                    continue
+                    if graph.is_file():
+                        root = Path(facet.project)
+                        paths.append(GraphUnit(path=graph, root=root, package=package, version=declared.version))
+                        continue
                 None => pass
         # 2. Any other facet with an Incan library is checked from source, against the interfaces checked before it.
-        if published_only:
+        if published_only and own:
             continue
         source = library_source(Path(facet.project), request.manifests)?
         if not source.is_file():
+            if native_directory != None:
+                return Err(f"{package}: no published graph or source; publish the library with --codegraph")
             continue
         loaves = unit_loaves(facet, interfaces, request.manifests)?
         natives = unit_natives(facet, built, request, loaves)?
@@ -542,7 +552,7 @@ def checked_units(
         mut selected: list[LocalFacet] = []
         if facet.domain == DependencyDomain.Target:
             selected = facets
-        path = inspect_incan(
+        path, ready = inspect_incan_with_unit(
             source,
             request.profile,
             toolchain,
@@ -556,11 +566,17 @@ def checked_units(
             facets=selected,
         )?
         trace(f"graph checked {package}: {started.elapsed().as_millis()} ms")
-        if not is_unchecked(path):
-            interfaces[package] = interface_directory(path)
+        mut selected_path = path
+        match native_directory:
+            Some(directory) =>
+                if publish_prepared_graph(ready, toolchain, directory, path)?:
+                    selected_path = directory.joinpath(f"{artifact_stem(package)}.incngraph")
+            None =>
+                if not is_unchecked(path):
+                    interfaces[package] = interface_directory(path)
         paths.append(
             GraphUnit(
-                path=path,
+                path=selected_path,
                 root=Path(facet.project),
                 package=package,
                 version=declared.version,

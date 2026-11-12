@@ -86,6 +86,7 @@ pub(super) fn checked_modules(
     receipt: &RefusalReceipt,
     graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
     graph_body_output: Option<PathBuf>,
+    collect_codegraph: bool,
 ) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
     let path = unit
@@ -181,7 +182,7 @@ pub(super) fn checked_modules(
     graph_body_output.attach_body_ir(&modules, &bodies[loaf_modules..])?;
     graph_body_output.publish()?;
     let cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
-    let graph = if library {
+    let graph = if library && collect_codegraph {
         let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(
             unit,
             &session,
@@ -189,9 +190,9 @@ pub(super) fn checked_modules(
             &analysis,
             &mut bodies[loaf_modules..],
         );
-        incan_codegraph::artifact::encode_graph(&records, &unit.project_root).map_err(|error| error.to_string())?
+        Some(incan_codegraph::artifact::encode_graph(&records, &unit.project_root).map_err(|error| error.to_string())?)
     } else {
-        Vec::new()
+        None
     };
     sources.extend(modules.into_iter().map(|module| module.source));
     let program_entrypoints = program_entrypoints(unit, &bodies, &files)?;
