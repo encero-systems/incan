@@ -697,6 +697,11 @@ fn assert_canonical_record_fields() -> Result<(), Box<dyn std::error::Error>> {
 /// Refused and warning-only owners retain their own status, recipe fields and current rendered source positions;
 /// a match's unrepresented loan-free-subject fact refuses the initial canonical profile.
 fn assert_canonical_record_controls() -> Result<(), Box<dyn std::error::Error>> {
+    let exact_numeric = "def preserve(value: i32) -> i32:\n    return value\n";
+    for declaration in [true, false] {
+        let fields = super::records::fixture_record(exact_numeric, "preserve", declaration)?;
+        super::records::verify_fixture(exact_numeric, "preserve", fields)?;
+    }
     let refused = "def main() -> int:\n    return \"wrong\"\n";
     let warning = "def main() -> None:\n    println(\"hello\")\n    return\n    println(\"unreachable\")\n";
     for source in [refused, warning] {
