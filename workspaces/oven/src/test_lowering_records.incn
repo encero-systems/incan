@@ -34,6 +34,8 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     assert partition_for(edited_fingerprints, "greeting")? == partition_for(initial_fingerprints, "greeting")?
     assert partition_for(edited_fingerprints, "main")? == partition_for(initial_fingerprints, "main")?
     diagnostic = edited.to_json().map_err((error) => error.message())?
+    assert proof_count(edited, "body_evaluations")? == 1, diagnostic
+    assert proof_count(edited, "body_ir_evaluations")? == 1, diagnostic
     assert proof_count(edited, "plan_function_evaluations")? == 1, diagnostic
     assert proof_count(edited, "plan_function_reuses")? == 2, diagnostic
     assert proof_count(edited, "lowering_demand_evaluations")? == 1, diagnostic
