@@ -1016,6 +1016,43 @@ fn restore_local(
                 return Err(NodeBindingError::MissingNode);
             }
         }
+        "constructor" if row[2] == "field-binding" => {
+            let field_count = read_number(&mut values)?;
+            let argument_count = read_number(&mut values)?;
+            if field_count > row.len() || argument_count > values.len() {
+                return Err(NodeBindingError::MissingNode);
+            }
+            let argument_slots = (0..argument_count)
+                .map(|_| read_number(&mut values))
+                .collect::<Result<Vec<_>, _>>()?;
+            let default_count = read_number(&mut values)?;
+            if default_count > values.len() {
+                return Err(NodeBindingError::MissingNode);
+            }
+            let defaulted_slots = (0..default_count)
+                .map(|_| read_number(&mut values))
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut occupied = argument_slots.clone();
+            occupied.extend(defaulted_slots.iter().copied());
+            occupied.sort_unstable();
+            if occupied != (0..field_count).collect::<Vec<_>>()
+                || !defaulted_slots.windows(2).all(|pair| pair[0] < pair[1])
+                || local
+                    .calls
+                    .constructor_field_bindings
+                    .insert(
+                        span,
+                        super::super::type_info::ConstructorFieldBinding {
+                            argument_slots,
+                            defaulted_slots,
+                            field_count,
+                        },
+                    )
+                    .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
         "requirement" if row[2] == "constructor-field" => {
             let field = positions.canonical(next(&mut values)?)?;
             let owner = positions.canonical_type(next(&mut values)?)?;
@@ -1089,6 +1126,16 @@ fn restore_local(
         return Err(NodeBindingError::MissingNode);
     }
     Ok(())
+}
+
+/// Decode one canonical nonnegative integer without accepting padded or signed spellings.
+fn read_number(values: &mut std::slice::Iter<'_, String>) -> Result<usize, NodeBindingError> {
+    let text = next(values)?;
+    let number = text.parse::<usize>().map_err(|_| NodeBindingError::MissingNode)?;
+    if number.to_string() != text {
+        return Err(NodeBindingError::MissingNode);
+    }
+    Ok(number)
 }
 
 /// Resolve an ordinary activation identity or one admitted by an earlier builtin method field in the same record.
