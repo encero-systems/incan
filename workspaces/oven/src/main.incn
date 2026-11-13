@@ -16,7 +16,7 @@ from store_status import parse_status, status_command
 from features import FeatureRequest
 from home import dependency_artifact_dir
 from intake import read_project, source_root_of, ManifestReader
-from unit import describe, project_root_of
+from unit import describe, project_root_of, retired_refusal
 from unit_rust import compile_incan_library, compile_library_unit, describe_native, prepare_native, toolchain_for
 from incan_units import check_unit, compile_unit, make_unit, program_binary, report_dependencies, run_program
 from unit_compiler import crate_name, run_compiler
@@ -454,6 +454,9 @@ def enclosing_loaf(directory: Path) -> Result[Path, str]:
     while true:
         if current.joinpath("loaf.toml").is_file():
             return Ok(current)
+        match retired_refusal(current):
+            Some(reason) => return Err(reason)
+            None => pass
         parent = current.parent()
         if parent.0 == current.0 or parent.0 == "":
             break

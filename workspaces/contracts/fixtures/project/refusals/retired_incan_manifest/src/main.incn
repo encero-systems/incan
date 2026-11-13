@@ -1,9 +1,11 @@
-# behavior: a directory holding the retired `incan.toml` and no `loaf.toml` stops project discovery with an error that names the file and asks for the rename, for check, run, test and build, rather than being stepped over to an enclosing project (#1008)
+# behavior: a directory holding the retired `incan.toml` and no `loaf.toml` stops project discovery with an error that names the file and asks for the rename, for check, run, test and build, by source file or by directory, rather than being stepped over to an enclosing project (#1008)
 # cli-commands:
 #   oven check legacy/src/main.incn
 #   oven run legacy/src/main.incn
 #   oven test legacy/tests/test_legacy.incn
 #   oven build legacy/src/main.incn
+#   oven run legacy
+#   oven build legacy/src
 # expect-exit: 1
 # expect-stderr-contains:
 #   legacy/incan.toml

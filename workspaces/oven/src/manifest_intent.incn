@@ -267,6 +267,7 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
                 "there is no SDK selection: standard packages are ambient, and a unit reaches every one it uses",
             ),
         )
+    refuse_moved_tables(root, manifest)?
     allowed(root, list(ROOT_TABLES), manifest, [])?
     if "project" not in root:
         return Err(refusal(manifest, ["project"], IntakeErrorKind.Missing, "project identity is required"))
@@ -486,7 +487,30 @@ def dependency_replacement(alias: str, value: TomlValue, manifest: str, field: l
             package = text(entry["crate"], manifest, field + ["crate"])?
         if "version" in entry:
             version = text(entry["version"], manifest, field + ["version"])?
+        if "features" in entry:
+            names = string_list(entry["features"], manifest, field + ["features"])?
+            quoted = ", ".join([f"\"{name}\"" for name in names])
+            return Ok(f"{alias} = {{ loaf = \"crates-io/{package}\", version = \"{version}\", features = [{quoted}] }}")
     return Ok(f"{alias} = {{ loaf = \"crates-io/{package}\", version = \"{version}\" }}")
+
+
+def refuse_moved_tables(root: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:
+    """Refuse a 0.5.1 table whose content has another table now, naming that table."""
+    if "rust-dev-dependencies" in root:
+        field = ["rust-dev-dependencies"]
+        entries = table(root["rust-dev-dependencies"], manifest, field)?
+        alias = first_key(entries)
+        mut detail = "use [envs.test.dependencies]"
+        if alias in entries:
+            replacement = dependency_replacement(alias, entries[alias], manifest, field + [alias])?
+            detail = f"use [envs.test.dependencies] {replacement}"
+        return Err(refusal(manifest, field, IntakeErrorKind.Unsupported, detail))
+    if "oven" in root:
+        oven = table(root["oven"], manifest, ["oven"])?
+        if "interop" in oven:
+            detail = "[oven.interop] is refused; declare C interop under [interop.c]"
+            return Err(refusal(manifest, ["oven", "interop"], IntakeErrorKind.Unsupported, detail))
+    return Ok(None)
 
 
 def string_list(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:
