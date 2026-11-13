@@ -223,6 +223,7 @@ pub fn checked_owner_record_outputs(
 ) -> Result<Vec<CheckedOwnerRecordOutput>, String> {
     let facts = checker.type_info().semantic_fact_store(module_path);
     let dependencies = incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores([&facts]);
+    let stable_contexts = stable_dependency_contexts(&facts);
     program
         .declarations
         .iter()
@@ -299,7 +300,7 @@ pub fn checked_owner_record_outputs(
                         })
                     }
                     incan_semantics_core::SymbolOrigin::Module(dependency_module) => checker
-                        .stable_dependency_identity(&dependency)
+                        .stable_dependency_identity_with_context(&dependency, stable_contexts.get(&dependency))
                         .map(|stable| CheckedOwnerDependencyRead {
                             package: None,
                             module_path: dependency_module.clone(),
@@ -353,8 +354,20 @@ impl crate::typechecker::TypeChecker {
         &self,
         dependency: &incan_semantics_core::CanonicalSymbolId,
     ) -> Option<StableDeclarationId> {
+        self.stable_dependency_identity_with_context(dependency, None)
+    }
+
+    /// Resolve one dependency with the exact enclosing declaration retained at its checked reference site.
+    fn stable_dependency_identity_with_context(
+        &self,
+        dependency: &incan_semantics_core::CanonicalSymbolId,
+        context: Option<&incan_semantics_core::CanonicalStableDeclarationContext>,
+    ) -> Option<StableDeclarationId> {
         if let Some(identity) = self.type_info().declarations.source_identities.get(dependency).cloned() {
             return Some(identity);
+        }
+        if let Some(context) = context {
+            return stable_member_identity(dependency, &context.owner, context.binding_ordinal);
         }
         if let Some(owner) = self
             .type_info()
@@ -362,7 +375,7 @@ impl crate::typechecker::TypeChecker {
             .compiler_generated_member_identities
             .get(dependency)
         {
-            return stable_member_identity(dependency, owner);
+            return stable_member_identity(dependency, owner, 0);
         }
         let owner = self
             .symbols
@@ -378,7 +391,7 @@ impl crate::typechecker::TypeChecker {
                     .flatten()
             });
         if let Some(owner) = owner {
-            return stable_member_identity(dependency, owner);
+            return stable_member_identity(dependency, owner, 0);
         }
         StableDeclarationId::from_canonical(dependency, None, None)
     }
@@ -388,13 +401,39 @@ impl crate::typechecker::TypeChecker {
 fn stable_member_identity(
     member: &incan_semantics_core::CanonicalSymbolId,
     owner: &incan_semantics_core::CanonicalSymbolId,
+    binding_ordinal: u32,
 ) -> Option<StableDeclarationId> {
     let owner = StableDeclarationId::from_canonical(owner, None, None)?;
-    let context = StableDeclarationContext {
-        owner,
-        binding_ordinal: 0,
-    };
+    let context = StableDeclarationContext { owner, binding_ordinal };
     StableDeclarationId::from_canonical(member, None, Some(context))
+}
+
+/// Join each canonical reference target to its unique checked stable context; disagreement stays absent.
+fn stable_dependency_contexts(
+    facts: &incan_semantics_core::SemanticFactStore,
+) -> BTreeMap<incan_semantics_core::CanonicalSymbolId, incan_semantics_core::CanonicalStableDeclarationContext> {
+    let mut grouped = BTreeMap::<_, BTreeSet<_>>::new();
+    for subject in facts.subjects() {
+        let identities = facts.symbol_identities_for(subject).collect::<BTreeSet<_>>();
+        if identities.len() != 1 {
+            continue;
+        }
+        let Some(identity) = identities.into_iter().next() else {
+            continue;
+        };
+        grouped
+            .entry(identity.clone())
+            .or_default()
+            .extend(facts.stable_declaration_contexts_for(subject).cloned());
+    }
+    grouped
+        .into_iter()
+        .filter_map(|(identity, contexts)| {
+            (contexts.len() == 1)
+                .then(|| contexts.into_iter().next().map(|context| (identity, context)))
+                .flatten()
+        })
+        .collect()
 }
 
 /// Test canonical member provenance carried by one checked nominal type; spelling is never consulted.
@@ -643,6 +682,16 @@ mod tests {
             .cloned()
             .ok_or("missing ProgramOutcome identity")?;
         let dependency = owner.generated_member("transaction", incan_semantics_core::SemanticSourceTargetKind::Field);
+        let context = incan_semantics_core::CanonicalStableDeclarationContext {
+            owner: owner.clone(),
+            binding_ordinal: 0,
+        };
+        assert_eq!(
+            checker
+                .stable_dependency_identity_with_context(&dependency, Some(&context))
+                .map(|identity| identity.render_compact()),
+            Some("member/field:engine_programs::transaction#in(model:engine_programs::ProgramOutcome)[0]".into())
+        );
         checker
             .type_info
             .record_compiler_generated_member_identity(dependency.clone(), owner);
