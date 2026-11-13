@@ -742,6 +742,10 @@ fn assert_canonical_record_controls() -> Result<(), Box<dyn std::error::Error>> 
     let matched = "def main() -> int:\n    match 1:\n        1 => return 2\n        _ => return 3\n";
     let fields = super::records::fixture_record(matched, "main", false)?;
     super::records::verify_fixture(matched, "main", fields)?;
+    let field =
+        "model Document:\n    value: str\n\ndef required_text(value: Document) -> str:\n    return value.value\n";
+    let fields = super::records::fixture_record(field, "required_text", false)?;
+    super::records::verify_fixture(field, "required_text", fields)?;
     let ordered = "def touch(mut items: list[int]) -> None:\n    pass\n\ndef caller() -> None:\n    items = [1]\n    touch(items)\n\ndef later() -> int:\n    return 1\n";
     let later = super::records::fixture_record(ordered, "later", true)?;
     super::records::verify_fixture(ordered, "later", later)?;

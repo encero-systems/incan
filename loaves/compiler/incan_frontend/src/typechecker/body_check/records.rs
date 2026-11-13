@@ -18,6 +18,7 @@ use super::super::diagnostic_values::DiagnosticPositions;
 use super::{BodyCheckInput, BodyLocal, CheckedBodyView, LocalOwnerKind, TypeChecker};
 use crate::ast::{Program, Span};
 
+use incan_semantics_core::stable_identity::StableDeclarationContext;
 use incan_semantics_core::stable_identity::StableDeclarationId;
 use incan_semantics_core::{CanonicalSymbolId, ScopeDiscriminant, SemanticSourceTargetKind, SymbolNamespace};
 use types::{next, parameter_fields, read_parameters, read_type, type_fields};
@@ -499,6 +500,15 @@ impl Positions {
             return Ok(stable.clone());
         }
         Err(NodeBindingError::Unsupported("unadmitted expression type identity"))
+    }
+
+    /// Project one checked member through its exact declaring nominal instead of guessing from the member spelling.
+    fn contextual_identity(
+        &self,
+        canonical: &CanonicalSymbolId,
+        context: &incan_semantics_core::CanonicalStableDeclarationContext,
+    ) -> Result<String, NodeBindingError> {
+        stable_member_identity(canonical, &context.owner, context.binding_ordinal)
     }
 
     /// Current scope indices and spans are supplied by this activation's binding map, never parsed from a key.
@@ -988,6 +998,9 @@ fn restore_local(
                 .resolved_write_types
                 .insert((span, row[2].clone()), read_type(&mut values)?);
         }
+        "identity-context" if row[2] == "reference" => {
+            restore_identity_context(positions, local, record_identities, span, &mut values)?;
+        }
         "reference" if row[2] == "read" => {
             let identity = next(&mut values)?;
             let canonical = restored_identity(positions, record_identities, identity)?;
@@ -1157,6 +1170,64 @@ fn read_number(values: &mut std::slice::Iter<'_, String>) -> Result<usize, NodeB
         return Err(NodeBindingError::MissingNode);
     }
     Ok(number)
+}
+
+/// Restore one member reference's exact declaring nominal before its later reference row consumes the identity.
+fn restore_identity_context(
+    positions: &Positions,
+    local: &mut BodyLocal,
+    record_identities: &mut BTreeMap<String, CanonicalSymbolId>,
+    span: Span,
+    values: &mut std::slice::Iter<'_, String>,
+) -> Result<(), NodeBindingError> {
+    let identity = next(values)?.to_owned();
+    let owner = positions.canonical_type(next(values)?)?;
+    let binding_ordinal = u32::try_from(read_number(values)?).map_err(|_| NodeBindingError::MissingNode)?;
+    let kind_text = next(values)?;
+    let kind = SemanticSourceTargetKind::from_kind_str(kind_text);
+    if kind.as_str() != kind_text
+        || !matches!(
+            kind,
+            SemanticSourceTargetKind::Field
+                | SemanticSourceTargetKind::Method
+                | SemanticSourceTargetKind::Property
+                | SemanticSourceTargetKind::Variant
+        )
+    {
+        return Err(NodeBindingError::MissingNode);
+    }
+    let name = next(values)?;
+    let canonical = positions
+        .canonical(&identity)
+        .unwrap_or_else(|_| owner.generated_member(name, kind.clone()));
+    if canonical.declaration_name != name
+        || canonical.kind != kind
+        || stable_member_identity(&canonical, &owner, binding_ordinal)? != identity
+        || record_identities.insert(identity, canonical).is_some()
+        || local
+            .references
+            .stable_declaration_contexts
+            .insert(
+                span,
+                incan_semantics_core::CanonicalStableDeclarationContext { owner, binding_ordinal },
+            )
+            .is_some()
+    {
+        return Err(NodeBindingError::MissingNode);
+    }
+    Ok(())
+}
+
+/// Bind one member to its checked enclosing declaration and collision-local ordinal.
+fn stable_member_identity(
+    member: &CanonicalSymbolId,
+    owner: &CanonicalSymbolId,
+    binding_ordinal: u32,
+) -> Result<String, NodeBindingError> {
+    let owner = StableDeclarationId::from_canonical(owner, None, None).ok_or(NodeBindingError::MissingOwner)?;
+    StableDeclarationId::from_canonical(member, None, Some(StableDeclarationContext { owner, binding_ordinal }))
+        .map(|identity| identity.render_compact())
+        .ok_or(NodeBindingError::MissingOwner)
 }
 
 /// Resolve an ordinary activation identity or one admitted by an earlier builtin method field in the same record.

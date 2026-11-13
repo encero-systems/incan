@@ -106,11 +106,28 @@ pub(super) fn project_references(
     fields: &mut Fields,
 ) -> Result<(), NodeBindingError> {
     for (span, canonical) in &local.references.resolved_identities {
+        let identity = match local.references.stable_declaration_contexts.get(span) {
+            Some(context) => {
+                let identity = positions.contextual_identity(canonical, context)?;
+                fields.push(vec![
+                    "identity-context".into(),
+                    positions.nodes.anchor(*span)?.path,
+                    "reference".into(),
+                    identity.clone(),
+                    positions.type_identity(&context.owner)?,
+                    context.binding_ordinal.to_string(),
+                    canonical.kind.as_str().into(),
+                    canonical.declaration_name.clone(),
+                ]);
+                identity
+            }
+            None => positions.identity(canonical)?,
+        };
         fields.push(vec![
             "reference".into(),
             positions.nodes.anchor(*span)?.path,
             "read".into(),
-            positions.identity(canonical)?,
+            identity,
         ]);
     }
     for ((span, name), canonical) in &local.references.resolved_write_identities {
