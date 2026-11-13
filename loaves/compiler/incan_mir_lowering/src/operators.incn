@@ -54,6 +54,7 @@ from model_construction import checked_aggregate
 from operand_borrows import borrow_text_operand
 from list_values import list_borrow, value_operand
 from list_methods import materialized_receiver
+from element_borrows import shared_element_place
 from matches import enum_operand
 from carrier_operands import lower_union_isinstance
 from sequence_builtins import source_operand_type
@@ -315,10 +316,14 @@ def none_constant(value: &RustOperand) -> bool:
 
 
 def enum_comparison_place(mut builder: Builder, operand: &RustOperand, span: SourceSpan) -> Result[Place, str]:
-    """Materialize an indexed checked value once before borrowing its discriminant; structural values keep their place."""
+    """Retain an indexed checked value for a shared discriminant read; structural values keep their place."""
     match operand:
         RustOperand.Place(read) =>
             if is_element_place(builder, read.place)?:
+                if read.fact == OwnershipFact.Borrow:
+                    match shared_element_place(builder, read.place, span)?:
+                        Some(place) => return Ok(place)
+                        None => pass
                 return materialized_receiver(builder, read.place, span)
             return scalar_place(builder, read.place, span)
         _ => return Err("unsupported Body IR nonplace enum comparison")
@@ -499,6 +504,9 @@ def comparison_collection_place(mut builder: Builder, value: &RustOperand, span:
             if read.fact != OwnershipFact.Borrow:
                 return Err("unsupported Body IR collection equality without retained shared read")
             if is_element_place(builder, read.place)?:
+                match shared_element_place(builder, read.place, span)?:
+                    Some(place) => return Ok(place)
+                    None => pass
                 return materialized_receiver(builder, read.place, span)
             place = scalar_place(builder, read.place, span)?
             ty = place_type(builder.locals, place)

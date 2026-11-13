@@ -9,16 +9,17 @@ Each expected line of the program (`main.incn`) is a program step, the step's re
 | `observe` | `observe` -> `traverse`, a cursor over `get` children | 0 | `get(&self) -> Option<&Item>` is a shared receiver borrow; `item` and `current` are lent |
 | `is_table` | `Holder.observe` -> private `is_table(self.item)` | 0 | `is_table` is only ever a direct callee, so it takes `&Item`; the field is lent |
 | `inspect` | `inspect` -> `classify` -> `is_table` | 0 | the private helpers take `&Item` and the public entry lends its parameter |
-| `shapes` | format, enum match, index, iteration, string comparison/membership and unrelated body forms | 0 | each operation observes its input; unrelated aggregates, results and closures do not change that ownership proof |
+| `shapes` | format, enum match, index, indexed text and byte field reads, helper/comparison/method reads, nested iteration, string comparison/membership and unrelated body forms | 0 | each operation observes its input; the byte case mirrors Crumb's field identity read and a read after an indexed field write sees current element storage, while unrelated aggregates, results and closures do not change that ownership proof |
+| `indexed items` | `for item in envelopes[0].items`, where the nested list contains one three-node tree | +3 = 3 | the indexed nested list is lent without a preliminary copy; the loop variable is an independent snapshot and therefore copies its one tree exactly once |
 | `ref local` | `Holder.view`: `current: &Item = self.item` | 0 | a reference-typed local is a borrow, never a materialization |
 | `walk` | `Holder.walk`: cursor started from `self.item` | 0 | the cursor is proven shared and the owner is not read again in the body |
-| `selected` | `Reader.read` -> `select`, ending in `current.clone()` | +1 = 1 | the explicit clone copies the `Integer(7)` leaf; the walk to it lends |
-| `owned child` | `take_child`: `current = child` from `child()` | +2 = 3 | `child()` returns an owned `Item` (`get(key).cloned()`), copying the `project` subtree; the cursor stays owned |
-| `snapshot` | `Holder.snapshot`: `current = self.item`, then the field is replaced | +3 = 6 | the owner is written after the read, so the read materializes a copy of the whole tree |
+| `selected` | `Reader.read` -> `select`, ending in `current.clone()` | +1 = 4 | the explicit clone copies the `Integer(7)` leaf; the walk to it lends |
+| `owned child` | `take_child`: `current = child` from `child()` | +2 = 6 | `child()` returns an owned `Item` (`get(key).cloned()`), copying the `project` subtree; the cursor stays owned |
+| `snapshot` | `Holder.snapshot`: `current = self.item`, then the field is replaced | +3 = 9 | the owner is written after the read, so the read materializes a copy of the whole tree |
 | `ref param` | `is_table_ref(item: &Item)` directly and through `check_ref` | 0 | a declared reference parameter borrows its argument, in a return too |
 | `ref traverse` | `traverse_ref(item: &Item, ...)` reassigning its cursor | 0 | `current = child` keeps the borrowed shape |
 | `callback` | `callback()` returns `is_table_callback`, called on a fresh tree | 0 | the escaping classifier keeps the owned ABI, so the temporary is moved in |
-| `pair` | `observe_pair` -> `classify_pair(item, item)` | +3 = 9 | overlapping arguments keep `classify_pair` owned; the first `item` is not its last use and is copied whole, the second is moved |
+| `pair` | `observe_pair` -> `classify_pair(item, item)` | +3 = 12 | overlapping arguments keep `classify_pair` owned; the first `item` is not its last use and is copied whole, the second is moved |
 | `select` | `select_owned`: the cursor is returned | 0 | a returned cursor is an escape, so `item` and `current` stay owned and move |
 | `clear` | `clear`: `current.clear()`, then `child_count()` is 0 | 0 | `clear(&mut self)` is not a shared contract, so the parameter stays owned and moves |
 | `trait callback` | `Factory.callback` default returns `is_table_callback`, called once | 0 | the same escaping classifier, reached through a trait default |

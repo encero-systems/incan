@@ -1,4 +1,4 @@
-# behavior: private helpers that only read a Rust tree value or a source model wrapping it walk from a field, parameter, helper chain, cursor, format, enum match, indexed list, builtin iteration and bodies with unrelated aggregates, results and closures without copying the tree (the crate's clone counter stays at 0); an explicit clone counts once; a child taken as an owned value counts its subtree; a snapshot taken before the owner is replaced counts the whole tree; a tree handed to functions declared over a reference, to a returned callable, to a trait default's callable, to a returned cursor, to a helper that clears it and to a walk over a reference parameter adds nothing; a helper handed the same tree twice costs one copy of it; forwarding an explicit exclusive reference mutates the original tree without copying it
+# behavior: private helpers that only read a Rust tree value or a source model wrapping it walk from a field, parameter, helper chain, cursor, format, enum match, indexed list, indexed model field, builtin iteration and bodies with unrelated aggregates, results and closures without copying the tree (the crate's clone counter stays at 0); an explicit clone counts once; a child taken as an owned value counts its subtree; a snapshot taken before the owner is replaced counts the whole tree; a tree handed to functions declared over a reference, to a returned callable, to a trait default's callable, to a returned cursor, to a helper that clears it and to a walk over a reference parameter adds nothing; a helper handed the same tree twice costs one copy of it; forwarding an explicit exclusive reference mutates the original tree without copying it
 # expect-stdout:
 #   observe true clones 0
 #   is_table true clones 0
@@ -6,23 +6,29 @@
 #   format true clones 0
 #   match true clones 0
 #   index true clones 0
-#   iteration true true clones 0
-#   helpers true clones 0
-#   unrelated true clones 0
-#   model true true clones 0
-#   ref local true clones 0
-#   walk true clones 0
-#   selected true clones 1
-#   owned child true clones 3
-#   snapshot false replaced true clones 6
-#   ref param true true clones 6
-#   ref traverse true clones 6
-#   callback true clones 6
-#   pair true clones 9
-#   select true clones 9
-#   clear 0 clones 9
-#   trait callback true clones 9
-#   exclusive forward 0 clones 9
+#   indexed field 7 clones 0
+#   indexed bytes 6 clones 0
+#   indexed current true clones 0
+#   indexed len 1 clones 0
+#   indexed iteration 3 clones 0
+#   indexed items true clones 3
+#   iteration true true clones 3
+#   helpers true clones 3
+#   unrelated true clones 3
+#   model true true clones 3
+#   ref local true clones 3
+#   walk true clones 3
+#   selected true clones 4
+#   owned child true clones 6
+#   snapshot false replaced true clones 9
+#   ref param true true clones 9
+#   ref traverse true clones 9
+#   callback true clones 9
+#   pair true clones 12
+#   select true clones 12
+#   clear 0 clones 12
+#   trait callback true clones 12
+#   exclusive forward 0 clones 12
 
 # `Clone for Item` counts one per node it copies; `../README.md` derives every expected count.
 
@@ -32,6 +38,13 @@ from rust::borrow_fixture import Item, clones, document
 model Envelope:
     item: Item
     values: list[int]
+    items: list[Item]
+    label: str
+
+
+model ByteEnvelope:
+    identity: bytes
+    tree: Item
 
 
 def read_envelope(envelope: Envelope) -> bool:
@@ -75,6 +88,46 @@ def matched(item: Item) -> bool:
 
 def indexed(items: list[Item]) -> bool:
     return items[0].is_table()
+
+
+def indexed_field(envelopes: list[Envelope]) -> int:
+    return len(envelopes[0].label)
+
+
+def indexed_identity(envelopes: list[ByteEnvelope]) -> int:
+    return len(envelopes[0].identity)
+
+
+def label_length(label: str) -> int:
+    return len(label)
+
+
+def indexed_current(envelopes: list[Envelope]) -> bool:
+    return (
+        label_length(envelopes[0].label) == 7
+        and envelopes[0].label == "current"
+        and envelopes[0].item.is_table()
+    )
+
+
+def indexed_values(envelopes: list[Envelope]) -> int:
+    mut total = 0
+    for value in envelopes[0].values:
+        total += value
+    return total
+
+
+def indexed_item_count(envelopes: list[Envelope]) -> int:
+    """Count a selected nested owner without materializing that owner or its items."""
+    return len(envelopes[0].items)
+
+
+def indexed_items(envelopes: list[Envelope]) -> bool:
+    """Iterate the selected nested owner through its current checked list-element loan."""
+    for item in envelopes[0].items:
+        if item.is_table():
+            return true
+    return false
 
 
 def iterated(envelope: Envelope) -> bool:
@@ -226,7 +279,20 @@ def main() -> None:
     println(f"format {formatted(document())} clones {clones()}")
     println(f"match {matched(document())} clones {clones()}")
     println(f"index {indexed([document()])} clones {clones()}")
-    envelope = Envelope(item=document(), values=[1, 2])
+    # A fresh owner isolates the indexed read from any copy needed to preserve a later use of a local.
+    println(
+        f"indexed field {indexed_field([Envelope(item=document(), values=[1, 2], items=[], label="payload")])} clones {clones()}",
+    )
+    println(
+        f"indexed bytes {indexed_identity([ByteEnvelope(identity=b"ABCDEF", tree=document())])} clones {clones()}",
+    )
+    mut envelopes = [Envelope(item=document(), values=[1, 2], items=[document()], label="before")]
+    envelopes[0].label = "current"
+    println(f"indexed current {indexed_current(envelopes)} clones {clones()}")
+    println(f"indexed len {indexed_item_count(envelopes)} clones {clones()}")
+    println(f"indexed iteration {indexed_values(envelopes)} clones {clones()}")
+    println(f"indexed items {indexed_items(envelopes)} clones {clones()}")
+    envelope = Envelope(item=document(), values=[1, 2], items=[], label="payload")
     first_iteration = iterated(envelope)
     second_iteration = iterated(envelope)
     println(f"iteration {first_iteration} {second_iteration} clones {clones()}")
