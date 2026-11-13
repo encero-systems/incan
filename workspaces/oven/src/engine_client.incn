@@ -67,7 +67,8 @@ pub def execute(
     identity = identity_for(store, compiler)?
     mut channel = connect(store, identity).map_err(detail)?
     record_work(Operation.EngineConnect, source.0, connecting)
-    channel.transport.wait_at_most(600)
+    # A native build may legitimately outlive a fixed read deadline; service ownership still bounds its lifetime.
+    channel.transport.wait_at_most(0)
     submitted = begin_work()
     send(
         channel,
