@@ -341,7 +341,7 @@ pub def build_oven_with_standard_profile(
     profile: StandardProfile,
     reserve_project: bool,
 ) -> Result[Path, str]:
-    """Reserve any retained tool child, then start Oven with the first dependency-ready standard wave."""
+    """Reserve any retained tool child, then build Oven beside the selected standard profile's waves."""
     if reserve_project:
         match overlapping_project_capacity(context.jobs, context.memory):
             Some((jobs, memory)) =>
@@ -361,29 +361,29 @@ def build_oven_and_standard_profile(
     phase_prefix: str,
     profile: StandardProfile,
 ) -> Result[Path, str]:
-    """Start Oven beside independent standard compilation and publish every successful output."""
-    selected = standard_profile_name(profile)
-    standards = context.evidence.joinpath(f"{phase_prefix}standards")
-    standards.mkdir(true, true).map_err((error) => error.message())?
-    admitted = standards.joinpath(f"{selected}-admitted.txt")
-    admitted.write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
-    build_standard_package(context, helper, STANDARD_PACKAGES[0], selected, admitted, phase_prefix)?
+    """
+    Build the release-profile Oven beside every wave of the debug standard providers.
 
-    waves = standard_build_waves()
-    mut packages: list[PreparedStandardPackage] = []
-    for package in waves[0]:
-        packages.append(prepare_standard_package(context, helper, package, selected, admitted, phase_prefix)?)
+    Oven reads only the release providers published before this phase, so it starts at once and no debug wave waits
+    for it. Without capacity for a second project child the two run one after the other.
+    """
+    if profile != StandardProfile.Debug:
+        return Err("Oven overlaps only the debug standard providers it does not read")
     oven = tool_build_plan(context, "oven", true, "oven-build")?
-    mut planned = [ReservedStep(child=package.child, reservation=STANDARD_RESERVATION_BYTES) for package in packages]
-    planned.append(ReservedStep(child=oven.child, reservation=oven.reservation))
-    require_reserved_success(context, planned)?
-
-    for package in packages:
-        complete_standard_package(context, helper, package, admitted)?
-    for index in range(1, len(waves)):
-        build_standard_wave(context, helper, waves[index], selected, admitted, phase_prefix)?
-    completed_oven = complete_build_plan(oven)?
-    return Ok(completed_oven)
+    match overlapping_project_capacity(context.jobs, context.memory):
+        None =>
+            build_standard_packages(context, helper, phase_prefix, [profile])?
+            run_build_plans(context, [oven])?
+            return complete_build_plan(oven)
+        Some((jobs, memory)) =>
+            pending = PendingToolBuild(plan=oven, worker=start_background_step(oven.child)?)
+            reserved = reserve_project_capacity(context, jobs, memory)
+            match build_standard_packages(reserved, helper, phase_prefix, [profile]):
+                Ok(_) => pass
+                Err(message) =>
+                    _ = cancel_background_step(pending.worker)
+                    return Err(message)
+            return finish_tool_build(context, pending)
 
 
 pub def require_unique_runtime_root(context: NativeContext) -> Result[None, str]:
