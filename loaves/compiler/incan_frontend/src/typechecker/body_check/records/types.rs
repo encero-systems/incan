@@ -16,6 +16,7 @@ pub(super) fn type_fields(ty: &ResolvedType, fields: &mut Vec<String>) -> Result
         ResolvedType::Bool => fields.push("bool".into()),
         ResolvedType::Str => fields.push("str".into()),
         ResolvedType::Bytes => fields.push("bytes".into()),
+        ResolvedType::RustPath(path) if !path.is_empty() => fields.extend(["rust-path".into(), path.clone()]),
         ResolvedType::Unit => fields.push("unit".into()),
         ResolvedType::Unknown => fields.push("unknown".into()),
         ResolvedType::Named(name) if !name.is_empty() => fields.extend(["named".into(), name.clone()]),
@@ -78,6 +79,13 @@ fn read_type_at(fields: &mut std::slice::Iter<'_, String>, depth: usize) -> Resu
         "bool" => ResolvedType::Bool,
         "str" => ResolvedType::Str,
         "bytes" => ResolvedType::Bytes,
+        "rust-path" => {
+            let path = next(fields)?;
+            if path.is_empty() {
+                return Err(NodeBindingError::Unsupported("empty Rust path"));
+            }
+            ResolvedType::RustPath(path.into())
+        }
         "unit" => ResolvedType::Unit,
         "unknown" => ResolvedType::Unknown,
         "named" => {

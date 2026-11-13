@@ -5,6 +5,41 @@ use std::collections::BTreeMap;
 use super::super::{BodyLocal, Positions, fixture};
 use super::{InputFlow, Reader, restore};
 
+/// A local Rust-derived value retains its exact native carrier independently of its projected source type.
+#[test]
+fn native_value_types_roundtrip_by_local_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def keep(value: int) -> int:\n    retained = value\n    return retained\n";
+    let (program, checker, owner) = fixture(source, "keep")?;
+    let mut local = checker
+        .checked_body(owner)
+        .ok_or("missing checked body")?
+        .local
+        .as_ref()
+        .clone();
+    let identity = local
+        .references
+        .resolved_write_identities
+        .iter()
+        .find(|((_, name), _)| name == "retained")
+        .map(|(_, identity)| identity.clone())
+        .ok_or("missing retained local identity")?;
+    let native = crate::symbols::ResolvedType::RustPath("serde_json::Value".into());
+    local.rust.value_native_types.insert(identity.clone(), native.clone());
+    let positions = Positions::for_local(&checker, &program, owner, &local)?;
+    let fields = super::super::local_fields(&positions, &local)?;
+    let row = fields
+        .iter()
+        .find(|row| row[0] == "native-value" && row[2] == "type")
+        .ok_or("missing native value type row")?;
+    let mut restored = BodyLocal {
+        owner,
+        ..BodyLocal::default()
+    };
+    super::super::restore_local(&positions, &mut restored, &mut BTreeMap::new(), row)?;
+    assert_eq!(restored.rust.value_native_types.get(&identity), Some(&native));
+    Ok(())
+}
+
 /// A graph with an invalid entry restores only as its exact recomputed refusal, never as successful analysis.
 #[test]
 fn invalid_graph_restore_requires_the_exact_analysis_fault() -> Result<(), Box<dyn std::error::Error>> {
