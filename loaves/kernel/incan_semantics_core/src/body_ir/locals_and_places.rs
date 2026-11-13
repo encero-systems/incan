@@ -310,7 +310,7 @@ impl PlaceElem {
 ///
 /// Every place-read carries its own [`OwnershipFact`] and last-use marker directly (see [`PlaceOperand`]) — this is
 /// the Duckborrower fact for that read, exposed as compiler-owned data rather than left for a backend to re-derive
-/// from generated Rust.
+/// from lowered code.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Operand {
     /// A read of a place, annotated with its ownership decision.

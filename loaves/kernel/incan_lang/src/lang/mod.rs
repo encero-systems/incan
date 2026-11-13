@@ -20,7 +20,7 @@
 //! ```
 //!
 //! ## See also
-//! - `cargo run -p incan_lang --bin generate_lang_reference` writes
+//! - `incan build loaves/kernel/incan_lang`, then the `generate_lang_reference` binary it produces, writes
 //!   `workspaces/docs-site/docs/language/reference/language.md` from these registries. Do not edit that Markdown by
 //!   hand; change the tables here and re-run the binary.
 

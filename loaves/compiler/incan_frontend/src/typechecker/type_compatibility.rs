@@ -195,7 +195,7 @@ impl TypeChecker {
 
     /// Whether a value of type `actual` is a value of the enclosing declaration's type parameter `type_param` (#1561).
     ///
-    /// A value of a concrete type is not one: `return 0` from `def f[T](x: T) -> T` is refused, as the generated Rust
+    /// A value of a concrete type is not one: `return 0` from `def f[T](x: T) -> T` is refused, as rustc
     /// refuses it, because a caller may pick any type for `T`. Only a value of that same parameter is, together with a
     /// borrowed one (`&T`, which the destination copies), a value whose type is still to be inferred (an unresolved
     /// callee type parameter) and a union whose members all are. An unknown value, left to the error that made it
@@ -218,7 +218,7 @@ impl TypeChecker {
     /// itself) can be used where `expected` is required (#1561).
     ///
     /// Inside its declaration a type parameter is one type the declaration does not choose, so a value of it is not a
-    /// value of a concrete type: `return x` from `def f[T](x: T) -> int` is refused, as the generated Rust refuses it.
+    /// value of a concrete type: `return x` from `def f[T](x: T) -> int` is refused, as rustc refuses it.
     /// A bound makes it a value of a trait the bound implies (`T with Shape` where a `Shape` is expected). A
     /// `CallableN` bound does not make it a function value, since an adopting model meets the bound too; a bound on
     /// a trait the checker cannot see (a Rust `Fn` marker) may, and is left to the Rust compiler. A union takes the

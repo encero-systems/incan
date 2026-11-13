@@ -232,7 +232,7 @@ Before spawning workers, identify:
 For milestone, RFC-wide, or compiler-boundary work, also write an `## Acceptance Contract` section into `STATE_ROOT/overview.md` before implementation starts. Include:
 
 - the local/direct behavior that must work,
-- import, reexport/facade, package-consumer, test-batch, dependency, vocab, or generated-Rust boundaries that can observe the behavior,
+- import, reexport/facade, package-consumer, test-batch, dependency, or vocab boundaries that can observe the behavior,
 - downstream acceptance lanes such as IncQL when the surface is exercised there,
 - performance or progress-output expectations when the change touches prewarm, test runner, metadata, or CI paths,
 - docs, rustdocs, generated-reference, release-note, or RFC lifecycle gates,

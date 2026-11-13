@@ -64,7 +64,7 @@ pub struct Body {
     /// Unlike `param_locals`, this keeps the direct-consumer binding contract: parameter identity, source span,
     /// resolved type, and whether omission requires a call-time computation, uses a construction-time partial
     /// preset, or must refuse because v0 cannot evaluate the source default. A target must consume this field rather
-    /// than reconstructing defaults from AST/HIR/typechecker state or generated Rust.
+    /// than reconstructing defaults from AST/HIR/typechecker state.
     pub params: Vec<CallableParam>,
     /// Locals bound to this body's parameters, in parameter order.
     ///
@@ -79,7 +79,7 @@ pub struct Body {
     /// for deterministic snapshots — [`crate::types::AbiV0RuntimeRequirement`] does not derive `Ord`, so lowering
     /// relies on deterministic traversal order rather than sorting. Lets a later target profile decide
     /// hosted-only / alloc-requiring / panic-requiring / potentially freestanding-compatible without inferring
-    /// facts from generated Rust helper calls.
+    /// facts from helper-call shapes.
     pub runtime_requirements: Vec<AbiV0RuntimeRequirement>,
     /// Panic-interaction facts recorded for this body, without committing to a stable public panic strategy.
     pub panic_facts: Vec<PanicFact>,

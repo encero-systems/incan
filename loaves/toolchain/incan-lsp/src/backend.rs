@@ -120,7 +120,7 @@ pub struct DocumentState {
     api_metadata_previews: Vec<ApiMetadataPreview>,
     /// Compiler-owned registry memberships used for hover and navigation without reinterpreting decorators.
     registry_previews: Vec<RegistryPreview>,
-    /// Checked C binding declarations and raw-call links used for hover and navigation without reading generated Rust.
+    /// Checked C binding declarations and raw-call links used for hover and navigation.
     c_binding_previews: Vec<CBindingPreview>,
     /// Imported DSL surfaces from loaded `pub::` library manifests, used for scoped symbol LSP affordances.
     library_imported_dsl_surfaces: parser::ImportedLibraryDslSurfaces,

@@ -605,7 +605,7 @@ impl TypeChecker {
     /// Imported Rust trait signatures are useful for parameter planning even when Rust metadata cannot prove the
     /// receiver trait edge. Some generic Rust methods, however, return an unbound Rust type parameter such as `T`;
     /// that is not an Incan type variable and must not leak into source typing as `rust::T`. Keep those call results
-    /// permissive until the Rust compiler infers the concrete type from the emitted Rust context.
+    /// permissive until the Rust compiler infers the concrete type from the call's context.
     pub(super) fn validate_rust_trait_method_call(&mut self, call: RustTraitMethodCall<'_>) -> ResolvedType {
         if !self.validate_rust_method_type_arg_arity(call.method, &call.sig.type_params, call.type_args, call.span) {
             return ResolvedType::Unknown;

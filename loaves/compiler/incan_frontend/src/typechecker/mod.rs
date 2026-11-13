@@ -879,7 +879,7 @@ pub struct TypeChecker {
     body_ir_dependency_pub_reexports: HashMap<String, Arc<HashMap<String, (ImportPath, String)>>>,
     /// True module path segments for a registered dependency, keyed by its flattened cache name.
     ///
-    /// The cache name is the underscore-joined spelling that also names the emitted Rust module, so it is not
+    /// The cache name is the underscore-joined spelling that also names the native Rust module, so it is not
     /// injective: the path `pkg.helpers` and a module literally named `pkg_helpers` flatten to one string. An origin
     /// built from whichever candidate matched would therefore reflect the spelling that asked rather than the module
     /// that answered, and two spellings of one module would yield two identities. Registering the real segments

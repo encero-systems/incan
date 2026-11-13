@@ -3,7 +3,7 @@
 //! Body IR v0 is the backend-facing, target-agnostic representation of one function/method body. It sits between
 //! typechecked source (AST + [`crate::SemanticFactStore`] / declaration-level [`crate::HirModule`]) and the
 //! target-specific native lowering in `loaves/compiler/incan_mir_lowering` — it must be consumable by a backend
-//! without that backend needing to read generated-Rust semantics or private compiler internals.
+//! without that backend needing to read private compiler internals.
 //!
 //! Body IR v0 deliberately models a **normalized** statement/control-flow vocabulary rather than a flattened
 //! basic-block CFG: `while`/`for` desugar into a single canonical `Loop` + conditional `Break` shape during
@@ -202,7 +202,7 @@ impl BodyIrModule {
     /// Resolve a canonical callable identity to the body that declares it, when this module owns the declaration.
     ///
     /// This is the consumer seam for [`CanonicalSymbolId`]: a backend asks *which declaration was selected* and gets
-    /// the declaration itself or nothing. It never consults the *reference site's* spelling or an emitted Rust name,
+    /// the declaration itself or nothing. It never consults the *reference site's* spelling or a native symbol name,
     /// so a consumer cannot dispatch on the text at a call site.
     ///
     /// Matching is on the complete checker-minted canonical identity. The declared name deliberately does not

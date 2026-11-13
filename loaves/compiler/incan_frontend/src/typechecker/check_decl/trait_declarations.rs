@@ -371,7 +371,7 @@ impl TypeChecker {
     /// `representation` is the set of source annotations that give the declaration its storage: a newtype's
     /// underlying type, an enum's variant payloads. A model or class is not checked here because lowering records
     /// such a parameter as phantom and emission carries it in a marker; a newtype and an enum have no field to add
-    /// one to, so the shape is refused at its declaration instead of failing in the generated Rust (#1370).
+    /// one to, so the shape is refused at its declaration instead of failing in rustc (#1370).
     pub(super) fn validate_type_params_stored<'a>(
         &mut self,
         owner: StoredTypeParamOwner,

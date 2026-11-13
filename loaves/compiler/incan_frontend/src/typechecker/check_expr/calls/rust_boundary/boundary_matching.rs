@@ -58,7 +58,7 @@ impl TypeChecker {
     /// Return whether a borrowed Rust parameter is a dynamically-dispatched trait object.
     ///
     /// Trait-object compatibility is established from checked Rust metadata, but Rust still requires the reference
-    /// syntax at the call site. Recording it here keeps typechecking and generated-Rust ownership in agreement.
+    /// syntax at the call site. Recording it here keeps typechecking and native ownership in agreement.
     pub(super) fn rust_display_is_trait_object(rust_ty: &str) -> bool {
         rust_ty.trim_start().starts_with("dyn ")
     }

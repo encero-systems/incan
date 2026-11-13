@@ -1,7 +1,7 @@
 //! Frontend bridge into Incan HIR v0.
 //!
 //! This module builds the first declaration-level HIR snapshot from parsed AST plus `TypeCheckInfo`. It does not lower
-//! bodies or replace the Rust-source backend; it gives the v0.5 middle-end a deterministic shape to grow from.
+//! bodies; Body IR does. It gives the middle end a deterministic declaration-level shape.
 
 use crate::ast::{self, Declaration};
 use crate::typechecker::TypeCheckInfo;

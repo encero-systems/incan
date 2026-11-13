@@ -151,7 +151,7 @@ impl TypeChecker {
     /// Remove an invalid namespace prefix from a Rust slice display.
     ///
     /// Some rust-analyzer callback-bound displays report `crate::[T]` (or its already-expanded `dependency::[T]`
-    /// form). Rust slices are never namespaced; retaining that prefix makes generated Rust invalid.
+    /// form). Rust slices are never namespaced; retaining that prefix names no Rust type.
     pub(super) fn strip_invalid_rust_slice_namespace(display: &str) -> String {
         let mut normalized = String::with_capacity(display.len());
         let mut remaining = display;

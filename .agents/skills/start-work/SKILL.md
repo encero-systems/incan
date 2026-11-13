@@ -134,12 +134,12 @@ Do not improvise ad hoc multi-agent coordination inside this skill. This skill i
 
 ### Step 6: Draft the initial acceptance contract
 
-If the issue, RFC, or task touches milestone scope, release scope, compiler boundaries, package imports, vocab, formatter, test runner, generated Rust, Rust metadata, or downstream-facing behavior, draft the initial acceptance contract before proposing next steps.
+If the issue, RFC, or task touches milestone scope, release scope, compiler boundaries, package imports, vocab, formatter, test runner, Rust metadata, or downstream-facing behavior, draft the initial acceptance contract before proposing next steps.
 
 The contract should name:
 
 - direct/local behavior that must work,
-- import, reexport/facade, package-consumer, dependency-owned type, test-batch, vocab, formatter, generated-Rust, or Rust-metadata boundaries that can observe the behavior,
+- import, reexport/facade, package-consumer, dependency-owned type, test-batch, vocab, formatter, or Rust-metadata boundaries that can observe the behavior,
 - downstream acceptance lanes such as IncQL when relevant,
 - docs/generated-reference/rustdoc/release-note gates,
 - performance or progress-output expectations when relevant.

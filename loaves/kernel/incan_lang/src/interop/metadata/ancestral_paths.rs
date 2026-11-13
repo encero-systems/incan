@@ -22,7 +22,7 @@ pub(super) const STD_REEXPORT_ROOTS: &[(&str, &str)] = &[
 ];
 
 /// Prelude spellings of the items in [`STD_REEXPORT_ROOTS`], as rust-analyzer displays them inside the crate that
-/// defines them and as generated Rust commonly writes them.
+/// defines them and as Rust source commonly writes them.
 pub(super) const PRELUDE_ROOTS: &[(&str, &str)] = &[
     ("Box", "alloc::boxed::Box"),
     ("Option", "core::option::Option"),

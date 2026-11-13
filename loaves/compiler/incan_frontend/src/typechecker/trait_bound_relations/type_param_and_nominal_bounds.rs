@@ -240,7 +240,7 @@ impl TypeChecker {
     /// `Ord: Eq + PartialOrd` do (#1561).
     ///
     /// A module that names the builtin without importing it binds a stub that declares no supertraits, so `T with Ord`
-    /// did not meet a callee's `T with Eq`, although the generated Rust bound does. The relation is the one the derive
+    /// did not meet a callee's `T with Eq`, although the native Rust bound does. The relation is the one the derive
     /// table records for `@derive(Eq)` and `@derive(Ord)`, which bring exactly those traits with them.
     pub(super) fn builtin_comparison_bound_implies(&self, active: &TypeBoundInfo, required: &TypeBoundInfo) -> bool {
         let Some(active_derive) = [TraitId::Eq, TraitId::Ord]

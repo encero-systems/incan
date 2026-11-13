@@ -52,7 +52,7 @@ pub struct RustInteropArtifacts {
     /// Native carriers of Rust-derived local values before source reference and collection projection.
     pub value_native_types: HashMap<CanonicalSymbolId, ResolvedType>,
     /// Validated synchronous diverging Rust import calls, keyed by full call span. Body IR alone consumes the
-    /// selected foreign path; legacy reference identities and Rust emission facts remain unchanged (#1698).
+    /// selected foreign path; legacy reference identities remain unchanged (#1698).
     pub(crate) body_ir_diverging_import_calls: HashMap<crate::ast::Span, Vec<String>>,
     /// Source-proven receiver and returned-borrow relationships keyed by the exact checked method-call span.
     /// Unknown metadata never authorizes a shared alias; lowering must not reconstruct this from method names.

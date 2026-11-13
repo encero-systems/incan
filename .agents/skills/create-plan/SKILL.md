@@ -51,7 +51,7 @@ For milestone, RFC-wide, release, or compiler-boundary work, define the acceptan
 Include:
 
 - the direct/local behavior under test;
-- each boundary that can observe the same behavior: import, reexport/facade, package consumer, dependency-owned type, test batch, vocab/desugarer, formatter, generated Rust, or Rust metadata;
+- each boundary that can observe the same behavior: import, reexport/facade, package consumer, dependency-owned type, test batch, vocab/desugarer, formatter, or Rust metadata;
 - downstream acceptance lanes such as IncQL when the changed surface is exercised there;
 - performance/progress expectations when touching prewarm, metadata, test runner, CI, or cache behavior;
 - docs, rustdocs, generated references, release notes, and RFC lifecycle work;

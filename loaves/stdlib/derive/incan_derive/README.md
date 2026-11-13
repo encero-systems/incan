@@ -123,7 +123,7 @@ You should never need to use these macros directly - the compiler handles it.
 
 ### Toolchain-locked boundary
 
-`incan_derive` is an implementation companion for generated Rust. Changes to macro names, generated helper methods, and trait wiring should follow the compiler and the stdlib facets together. If a behavior becomes part of the user-facing language contract, document it in the Incan language or stdlib docs first; keep this crate focused on the Rust expansion required to implement that contract.
+`incan_derive` is an implementation companion for the compiler's native declarations. Changes to macro names, generated helper methods, and trait wiring should follow the compiler and the stdlib facets together. If a behavior becomes part of the user-facing language contract, document it in the Incan language or stdlib docs first; keep this crate focused on the Rust expansion required to implement that contract.
 
 ## Development
 

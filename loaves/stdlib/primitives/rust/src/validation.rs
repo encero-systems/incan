@@ -80,7 +80,7 @@ impl Display for ValidationErrors {
     }
 }
 
-/// Builder used by generated Rust to collect field validation failures.
+/// Builder used by compiled Incan code to collect field validation failures.
 #[derive(Debug, Clone)]
 pub struct ValidationErrorsBuilder {
     target: String,

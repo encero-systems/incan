@@ -219,7 +219,7 @@ impl TypeChecker {
         }
     }
 
-    /// Answer for a builtin collection from what its generated Rust type implements.
+    /// Answer for a builtin collection from what its native Rust type implements.
     ///
     /// A `list` is a `Vec`, a `set` a `HashSet` and a `dict` a `HashMap`: none is `Copy`, each has an empty `Default`,
     /// and the hashed ones are neither ordered nor hashable. `Option`, `Result` and tuples follow their type arguments,

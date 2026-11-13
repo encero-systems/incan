@@ -115,7 +115,7 @@ pub struct AuthorityProvenance {
 /// This is deliberately generic over capability publishers and provider operations: both the capability and the
 /// requesting operation are named by [`CanonicalSymbolId`], so the stdlib, a library-defined domain capability, and a
 /// provider operation all produce the same fact. A consumer can act on an allowed or denied decision without
-/// consulting source text or emitted Rust, which is what lets a provider backend avoid inventing its own grant model.
+/// consulting source text, which is what lets a provider backend avoid inventing its own grant model.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct AuthorityDecision {
     /// The capability whose authority was requested.

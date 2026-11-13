@@ -636,7 +636,7 @@ fn resolve_local_dep_index(
 
 /// Register every collected module's real path segments with a checker before typechecking.
 ///
-/// The dependency cache is keyed by the flattened, underscore-joined module name, which also names the emitted Rust
+/// The dependency cache is keyed by the flattened, underscore-joined module name, which also names the native Rust
 /// module and is therefore not injective: `pkg.helpers` and a module literally named `pkg_helpers` flatten to one
 /// string. Supplying the true segments lets a canonical identity name the module that answered rather than the
 /// spelling that asked. Mirrors the pair `IrCodegen::add_module_with_path_segments` already carries for emission.

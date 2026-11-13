@@ -1,7 +1,7 @@
 //! Checked typed-registry metadata shared by inspection and package artifacts.
 //!
 //! This module deliberately converts the typechecker's RFC 113 artifacts rather than parsing decorators, source
-//! comments, generated Rust, or runtime registry values. Runtime entries remain process-local; these records are the
+//! comments, or runtime registry values. Runtime entries remain process-local; these records are the
 //! complete checked projection used by package tooling.
 
 use std::collections::{BTreeMap, BTreeSet};

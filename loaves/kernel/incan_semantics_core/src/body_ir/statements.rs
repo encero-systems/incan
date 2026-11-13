@@ -4,7 +4,7 @@ use super::*;
 
 /// Compiler-owned runtime/helper operation: a source operator whose meaning is a call into the runtime rather than
 /// a machine instruction. Represented here as an explicit Body IR operation rather than inferred later from
-/// generated Rust call shapes.
+/// native call shapes.
 ///
 /// Every membership operation states a runtime requirement Body IR needs and the runtime must satisfy. Each variant's
 /// [`Self::as_str`] name is that requirement's name; it is not a promise that a Rust function of exactly that signature
@@ -625,7 +625,7 @@ pub enum StatementKind {
     ///
     /// Modeled as a single compiler-owned primitive rather than decomposed into explicit `is_err`/`unwrap`-style
     /// calls, matching the same #653-criterion-3 rationale as [`Callee::Helper`]: this operation is a
-    /// compiler-owned semantic, not something to be inferred later from generated Rust call shapes, and full
+    /// compiler-owned semantic, not something to be inferred later from native call shapes, and full
     /// call-target resolution for a manual decomposition is out of scope for v0 (see the module docs). Unlike
     /// [`Callee::Helper`] this needs no runtime-helper requirement: the conversion is Rust's own `From`/`Into`
     /// machinery, not a compiler-provided function call.

@@ -254,10 +254,10 @@ pub fn split_module_qualified_nominal_name(name: &str) -> Option<(Vec<String>, &
     Some((module_path, declaration_name))
 }
 
-/// Separator used in generated Rust symbols for source overload implementations.
+/// Separator used in native symbols for source overload implementations.
 const OVERLOAD_EMITTED_NAME_SEPARATOR: &str = "_overload_";
 
-/// Build the generated Rust symbol name for one overload implementation.
+/// Build the native symbol name for one overload implementation.
 pub fn overload_emitted_name(source_name: &str, hash: u64) -> String {
     format!("{source_name}{OVERLOAD_EMITTED_NAME_SEPARATOR}{hash:016x}")
 }

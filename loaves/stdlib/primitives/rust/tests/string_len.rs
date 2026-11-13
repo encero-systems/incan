@@ -1,4 +1,4 @@
-//! Generated-Rust runtime coverage for Incan string length.
+//! Runtime coverage for Incan string length.
 
 /// The runtime wrapper delegates to the shared Unicode-scalar contract for owned and borrowed strings.
 #[test]

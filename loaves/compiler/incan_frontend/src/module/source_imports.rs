@@ -114,7 +114,7 @@ pub fn resolve_source_module_import(
 /// Resolve one import declaration while retaining the importing source-file identity when it is known.
 ///
 /// A located local module that is the importing file is classified as [`SourceModuleImportResolution::SelfImport`].
-/// This keeps accidental self imports from entering the source graph and becoming recursive generated Rust.
+/// This keeps accidental self imports from entering the source graph and becoming a recursive module.
 pub fn resolve_source_module_import_from_source_file(
     base_dir: &Path,
     source_root: Option<&Path>,
