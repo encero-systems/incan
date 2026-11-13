@@ -135,6 +135,9 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     if toolchain.registry_lock != "":
         write_json(stage.joinpath("registry/selected.json"), shipped_lock(Path(toolchain.registry_lock), shipped)?)?
         description = replaced(description, "registry_lock", JsonValue.string("registry/selected.json"))?
+    # The installed compiler keeps the capabilities it was relinked with.
+    if toolchain.codegraph_on_request:
+        description = replaced(description, "codegraph_on_request", JsonValue.bool(true))?
     write_json(stage.joinpath("toolchain.json"), description)?
     # 5. The stage becomes one archive that holds the files the links point at, not the links.
     return archive(stage, output)

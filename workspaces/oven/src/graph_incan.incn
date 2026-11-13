@@ -11,6 +11,7 @@ from graph_cache import content_facts, interface_inputs, is_unchecked, publish_u
 from graph_exports import claim_export, export_file, exported, pending_export, publish_export as admit_export
 from publication import publish, publish_binary
 from unit_freshness import (
+    artifact_files,
     compiler_fingerprint,
     description_digest,
     cache_identities,
@@ -158,12 +159,18 @@ pub def publish_prepared_graph(
     directory: Path,
     cached: Path,
 ) -> Result[bool, str]:
-    """Publish a checked export beside the exact current native view, with an independent graph proof."""
+    """Publish a checked export beside an exact bakery view or direct-release publication, with an independent proof."""
     if is_unchecked(cached):
         return Err(f"{ready.package}: cannot publish an unchecked graph")
     key = unit_key(ready, toolchain)?
     marker = directory.joinpath("fact.json")
-    if not marker.is_file() or required_text(read_json(marker)?, "identity")? != key.digest:
+    release = directory.joinpath(".oven-inputs.sha256")
+    mut current_native = false
+    if marker.is_file():
+        current_native = required_text(read_json(marker)?, "identity")? == key.digest
+    elif release.is_file():
+        current_native = staleness(artifact_files(directory, ready.package)?, release, key)? == ""
+    if not current_native:
         return Ok(false)
     graph = directory.joinpath(f"{artifact_stem(ready.package)}.incngraph")
     stamp = directory.joinpath(".oven-codegraph.sha256")
