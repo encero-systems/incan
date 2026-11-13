@@ -315,6 +315,7 @@ def verify_incremental_policy(root: Path) -> Result[None, str]:
     assert "-Cstrip=debuginfo" in native_executable_arguments("release")
     assert "strip=debuginfo" in rust_executable_arguments("release")
     if OS == "macos":
+        assert "-Clink-arg=-no_deduplicate" in native_executable_arguments("debug")
         assert "-Clink-arg=-Wl,-reproducible" in native_executable_arguments("release")
         assert "link-arg=-Wl,-reproducible" in rust_executable_arguments("release")
         assert "-Clink-arg=-Wl,-no_adhoc_codesign" in native_executable_arguments("release")
