@@ -1,0 +1,10 @@
+[project]
+name = "requires_incan_refuses_execution"
+version = "0.1.0"
+requires-incan = ">=0.4, <0.5"
+
+[project.scripts]
+main = "src/main.incn"
+
+[envs.ci]
+scripts.show = ["echo", "ran"]

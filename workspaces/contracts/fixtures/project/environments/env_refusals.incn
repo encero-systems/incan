@@ -1,0 +1,13 @@
+# behavior: `oven env` refuses an unknown environment or script, and a missing operand, before running anything, as 0.5.1 did (#3140).
+# cli-commands:
+#   oven env show missing
+#   oven env run missing show
+#   oven env run dev missing
+# expect-stdout:
+# expect-stderr-contains:
+#   is not configured
+# expect-exit: 1
+
+def main() -> None:
+    """A project without declared environments."""
+    pass

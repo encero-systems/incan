@@ -1,0 +1,17 @@
+# behavior: A project whose `requires-incan` the active toolchain does not satisfy is refused before any execution command compiles or runs anything, as in 0.5.1 (RFC 073, #3140).
+# cli-commands:
+#   oven run src/main.incn
+#   run src/main.incn
+#   oven check src/main.incn
+#   oven build src/main.incn
+#   test src/main.incn
+#   oven env run ci show
+# expect-stdout:
+# expect-stderr-contains:
+#   does not satisfy requires-incan >=0.4, <0.5
+#   project.requires-incan: >=0.4, <0.5
+# expect-exit: 1
+
+def main() -> None:
+    """A program the refused commands never compile."""
+    println("never printed")

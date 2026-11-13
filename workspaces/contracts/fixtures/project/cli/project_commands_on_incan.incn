@@ -1,10 +1,12 @@
-# behavior: 0.5.1's `incan new`, `incan init`, `incan version BUMP` and `incan workspace` fail before running and name the Oven command that replaces them (RFC 118, #3139).
+# behavior: 0.5.1's `incan new`, `incan init`, `incan version BUMP`, `incan workspace` and `incan env` fail before running and name the Oven command that replaces them (RFC 118, #3139).
 # cli-commands:
 #   new demo
 #   init
 #   version patch
 #   version --set 1.0.0
 #   workspace inspect
+#   env list
+#   env run ci test
 # expect-stdout:
 # expect-stderr-contains:
 #   is an Oven command: run `oven
