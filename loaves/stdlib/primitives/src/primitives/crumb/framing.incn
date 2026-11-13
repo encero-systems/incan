@@ -1,5 +1,12 @@
 """Exact U/Z and bounded L/F framing, independent of any Crumb record codec."""
 
+from rust::incan_std_primitives::crumb import (
+    Encoded as NativeEncoded,
+    encode_integer_unsigned as native_encode_integer_unsigned,
+    encode_native_signed as native_encode_signed,
+    encode_native_unsigned as native_encode_unsigned,
+    frame as native_frame,
+)
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.values import IntegerValue
@@ -86,12 +93,12 @@ pub class Reader:
 
 pub def encode_native_unsigned(value: u128, mut budget: Budget) -> Result[bytes, CrumbError]:
     """Encode one native unsigned value as shortest U without decimal formatting."""
-    return encode_wide_unsigned(WideInteger.from_unsigned(value), budget)
+    return _charged(native_encode_unsigned(value), budget)
 
 
 pub def encode_native_signed(value: i128, mut budget: Budget) -> Result[bytes, CrumbError]:
     """Encode one native signed value through Z without decimal formatting."""
-    return encode_wide_unsigned(WideInteger.from_signed(value).zigzag(budget)?, budget)
+    return _charged(native_encode_signed(value), budget)
 
 
 pub def encode_integer(value: IntegerValue, mut budget: Budget) -> Result[bytes, CrumbError]:
@@ -99,7 +106,7 @@ pub def encode_integer(value: IntegerValue, mut budget: Budget) -> Result[bytes,
     match value:
         IntegerValue.Signed(number) => return encode_native_signed(number, budget)
         IntegerValue.Unsigned(number) =>
-            return encode_wide_unsigned(WideInteger.from_unsigned(number).zigzag(budget)?, budget)
+            return _charged(native_encode_integer_unsigned(number), budget)
 
 
 pub def encode_wide_unsigned(value: WideInteger, mut budget: Budget) -> Result[bytes, CrumbError]:
@@ -135,15 +142,14 @@ pub def decode_native_signed(groups: list[int], mut budget: Budget) -> Result[i1
 
 pub def frame(data: bytes, mut budget: Budget) -> Result[bytes, CrumbError]:
     """Encode F with exact byte length; charge the payload copy before creating it."""
-    prefix = encode_native_unsigned(len(data).wrapping_resize[u128](), budget)?
-    budget.charge_bytes(len(prefix))?
-    budget.charge_bytes(len(data))?
-    mut output: list[u8] = []
-    for byte in prefix:
-        output.append(byte.saturating_resize[u8]())
-    for byte in data:
-        output.append(byte.saturating_resize[u8]())
-    return Ok(output)
+    return _charged(native_frame(data), budget)
+
+
+def _charged(encoded: NativeEncoded, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Apply the codec contract's exact logical work charges before returning native bytes."""
+    budget.charge_bytes(encoded.byte_charge.saturating_resize[int]())?
+    budget.charge_elements(encoded.element_charge.saturating_resize[int]())?
+    return Ok(encoded.data)
 
 
 def _pack_groups(groups: list[int], mut budget: Budget) -> Result[bytes, CrumbError]:
