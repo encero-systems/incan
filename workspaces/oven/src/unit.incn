@@ -167,10 +167,37 @@ def optional_text(value: Option[str]) -> JsonValue:
 
 
 pub def project_root_of(source: Path) -> Option[Path]:
-    """The nearest directory at or above `source`'s directory that holds a `loaf.toml`."""
+    """
+    The nearest directory at or above `source`'s directory that holds a `loaf.toml`. Discovery stops at a directory
+    that holds only the retired `incan.toml`; `discovered_project` reports that stop.
+    """
     for manifest in manifest_candidates(source):
         if manifest.is_file():
             return Some(manifest.parent())
+        if retired_manifest(manifest.parent()) is not None:
+            return None
+    return None
+
+
+pub def discovered_project(source: Path) -> Result[Option[Path], str]:
+    """The project `source` belongs to, refusing a directory on the way that holds `incan.toml` and no `loaf.toml`."""
+    for manifest in manifest_candidates(source):
+        if manifest.is_file():
+            return Ok(Some(manifest.parent()))
+        match retired_manifest(manifest.parent()):
+            Some(retired) =>
+                return Err(
+                    f"{retired.0}: `incan.toml` is not a project manifest; rename it to loaf.toml once its tables satisfy the Loaf schema",
+                )
+            None => pass
+    return Ok(None)
+
+
+def retired_manifest(directory: Path) -> Option[Path]:
+    """A directory's `incan.toml` when it holds no `loaf.toml`: the 0.5 manifest, which is never read."""
+    retired = directory.joinpath("incan.toml")
+    if retired.is_file() and not directory.joinpath("loaf.toml").is_file():
+        return Some(retired)
     return None
 
 
@@ -255,7 +282,7 @@ def described(
         return Err(f"{entry.0}: no such source file")
     if direct:
         return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader, selected_standard)?))
-    match project_root_of(entry):
+    match discovered_project(entry)?:
         None => return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader, selected_standard)?))
         Some(found) =>
             graph = intake(found, reader).map_err((error) => error.message())?
