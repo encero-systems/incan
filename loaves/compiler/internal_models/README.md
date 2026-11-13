@@ -9,7 +9,7 @@
 | `record_scope` | Revision-bound reads over one pinned snapshot: full record keys, selections, read evidence, witnesses, faults and the one complete receipt. Sources own bytes; the scope owns read evidence. |
 | `records` | The public read boundary over `record_scope`. |
 | `record_service` | The DD-0013 compiler producer interface over those reads: stages, ranks, preparation and evaluation. |
-| `checker_records` | The canonical checker record schema, its bounded field codec and its semantic digest, for the initial free-function profile. |
+| `checker_records` | The canonical checker record schema, its bounded Crumb rows and its content and semantic digests, for the initial free-function profile. |
 
 ## Contract
 
@@ -24,7 +24,7 @@ The [record-scope cases](./tests/test_record_scope.incn) and [canonical controls
 
 `incan.checker-free-functions/17` and `incan.checker-fields/10` distinguish declaration ownership annotations from body-owned access facts and encode each checked owner as one Crumb row. These versions describe checker records; profile 17 binds the selected final Body IR owner frame, retains checked expression-type identities and witnesses both the module's body-independent declaration index and checked project-module callee signatures. Declaration changes therefore invalidate every body in their own module before retained records are selected, even when a compiler path does not report a same-module callee read. The executable representation keeps its own independent version.
 
-Graph body and namespace values are Crumb rows whose Body IR fields remain opaque kernel executable-owner frames at representation version 55. The record graph authenticates and transports those bytes, while `incan_semantics_core` alone encodes and interprets the native `Body`. `body_ir_declarations.incn` remains a transitional adapter test surface and is not a durable Body IR authority.
+Graph body, graph namespace and compiled-output values are Crumb rows whose Body IR fields remain opaque kernel executable-owner frames at representation version 55. Compiled outputs retain only their eight-byte outer streaming delimiter; the payload is exactly one model row, with no second field codec or legacy reader. The record graph authenticates and transports those bytes, while `incan_semantics_core` alone encodes and interprets the native `Body`. `body_ir_declarations.incn` remains a transitional adapter test surface and is not a durable Body IR authority.
 
 | Field family | Retained information |
 | --- | --- |
