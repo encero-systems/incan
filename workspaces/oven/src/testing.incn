@@ -105,8 +105,10 @@ pub def run_rust_harness(binary: Path, project: Path) -> Result[i32, str]:
 pub model TestCase:
     """One collected test: where reports name it, its native entry and executable, and its markers."""
 
-    # The module as listings and reports name it, relative to the selected directory.
+    # The module as listings name it, relative to the selected directory, and as reports name it, relative to the
+    # working directory.
     pub file: str
+    pub path: str = ""
     # The module's file name, as console lines name it.
     pub label: str
     pub name: str
@@ -141,7 +143,7 @@ pub model TestCase:
         return names
 
 
-pub def collected_cases(binary: Path, file: str, label: str) -> Result[list[TestCase], str]:
+pub def collected_cases(binary: Path, file: str, label: str, path: str = "") -> Result[list[TestCase], str]:
     """The tests the compiler collected into `binary`, in its order; reading its report never runs a test."""
     document = parse_json(read(test_report(binary))?)?
     tests = array(document, []).map_err((_) => "compiler test report must be an array")?
@@ -150,6 +152,7 @@ pub def collected_cases(binary: Path, file: str, label: str) -> Result[list[Test
         mut test_case = TestCase(
             file=file,
             label=label,
+            path=path,
             name=text_field(test, "name", []).map_err((_) => "compiler test report has no name")?,
             native=text_field(test, "native", []).map_err((_) => "compiler test report has no native entry")?,
             binary=binary.0,
@@ -233,6 +236,8 @@ pub def run_session(cases: list[TestCase], runner: RunnerOptions, compiled: i32)
     if runner.list:
         for test_case in selected:
             println(f"{test_case.file}::{test_case.name}")
+        if len(selected) == 0 and compiled == 0:
+            println("No tests collected")
         if len(selected) == 0 and runner.fail_on_empty:
             return Ok(1)
         return Ok(compiled)
@@ -481,7 +486,7 @@ def timed_out(test_case: TestCase, item: Running, elapsed: int, limit: int) -> R
 def outcome_of(test_case: TestCase, status: Status, reason: str, elapsed: int) -> Outcome:
     """An outcome for `test_case`, named as its reports name it."""
     return Outcome(
-        file=test_case.file,
+        file=reported_path(test_case),
         label=test_case.label,
         name=test_case.name,
         status=status,
@@ -489,6 +494,13 @@ def outcome_of(test_case: TestCase, status: Status, reason: str, elapsed: int) -
         duration_ms=elapsed,
         markers=test_case.markers(),
     )
+
+
+def reported_path(test_case: TestCase) -> str:
+    """The module as reports name it: relative to the working directory, else as listings name it."""
+    if test_case.path != "":
+        return test_case.path
+    return test_case.file
 
 
 def print_finished(finished: Finished, runner: RunnerOptions) -> None:

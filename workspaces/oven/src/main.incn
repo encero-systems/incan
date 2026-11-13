@@ -595,7 +595,14 @@ def project_cases(options: Options, runner: RunnerOptions) -> Result[Collected, 
 
 
 def module_cases(options: Options, runner: RunnerOptions, sources: list[Path], root: Path) -> Result[Collected, str]:
-    """Compile each test module and collect its tests, named relative to `root`; a failed module keeps its status."""
+    """
+    Compile each test module and collect its tests: listings name a module below `root`, and reports below the working
+    directory. A failed module keeps its compilation status.
+    """
+    mut here = root
+    match Path.cwd():
+        Ok(directory) => here = directory
+        Err(_) => pass
     mut collected = Collected()
     for source in sources:
         mut selected = options
@@ -605,7 +612,8 @@ def module_cases(options: Options, runner: RunnerOptions, sources: list[Path], r
             if collected.compiled == 0:
                 collected.compiled = code
             continue
-        for test_case in collected_cases(binary, relative_name(source, root), source.name())?:
+        reported = relative_name(source, here)
+        for test_case in collected_cases(binary, relative_name(source, root), source.name(), reported)?:
             collected.cases.append(test_case)
     return Ok(collected)
 
