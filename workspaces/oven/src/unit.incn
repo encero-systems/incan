@@ -174,6 +174,25 @@ pub def project_root_of(source: Path) -> Option[Path]:
     return None
 
 
+pub def retired_manifest_of(source: Path) -> Option[Path]:
+    """
+    The retired `incan.toml` that claims `source`: the nearest directory at or above it that holds one and no
+    `loaf.toml`. Discovery stops there instead of walking past it to an ancestor project.
+    """
+    mut directory = source.parent()
+    while true:
+        if directory.joinpath("loaf.toml").is_file():
+            return None
+        retired = directory.joinpath("incan.toml")
+        if retired.is_file():
+            return Some(retired)
+        parent = directory.parent()
+        if parent.0 == directory.0 or parent.0 in ["", "."]:
+            return None
+        directory = parent
+    return None
+
+
 pub def manifest_candidates(source: Path) -> list[Path]:
     """Where the manifest of `source` is looked up, nearest first: `loaf.toml` in its directory and each one above."""
     mut candidates: list[Path] = []
@@ -234,6 +253,12 @@ def described(
         return Err(f"{entry.0}: no such source file")
     if direct:
         return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader)?))
+    match retired_manifest_of(entry):
+        Some(retired) =>
+            return Err(
+                f"{retired.0}: `incan.toml` is not a project manifest; rename it to `loaf.toml` once its tables satisfy the Loaf schema",
+            )
+        None => pass
     match project_root_of(entry):
         None => return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader)?))
         Some(found) =>
