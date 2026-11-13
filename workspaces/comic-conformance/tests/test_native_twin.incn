@@ -2,7 +2,9 @@
 
 from rust::incan_std_primitives::crumb import evaluate_semantic_case
 from std.fs import Path
-from case_data import CaseOperation
+from std.primitives.crumb import Budget
+from std.primitives.crumb.identity import member_identity
+from case_data import CaseOperation, text
 from corpus import load
 
 
@@ -20,8 +22,19 @@ def test_native_semantic_codec_covers_all_444_corpus_cases() -> Result[None, str
         outcome = evaluate_semantic_case(item.operation.value(), document)
         encoded_nanoseconds += outcome.encode_ns
         decoded_nanoseconds += outcome.decode_ns
-        if outcome.kind == 0u8 and outcome.encoded == outcome.decoded:
-            completed += 1
+        match item.operation:
+            CaseOperation.MemberIdentity =>
+                mut budget = Budget
+                    .create(bytes=1048576, elements=1048576, depth=128)
+                    .map_err((error) => error.message())?
+                incan = member_identity(text(item.document, "earliest_name")?, budget).map_err(
+                    (error) => error.message(),
+                )?
+                if outcome.kind == 0u8 and outcome.encoded == incan and outcome.decoded == incan:
+                    completed += 1
+            _ =>
+                if outcome.kind == 0u8:
+                    return Err(f"native operation has no independent twin assertion: {item.operation.value()}")
     assert len(corpus.cases) == 444
     assert binary == 188
     assert completed == 444, f"native semantic corpus completed {completed}/444; encode_ns={encoded_nanoseconds}; decode_ns={decoded_nanoseconds}"
