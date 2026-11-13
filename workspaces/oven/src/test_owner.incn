@@ -189,6 +189,9 @@ pub def test_a_deep_home_still_has_a_bindable_endpoint() -> Result[None, str]:
     bindable(socket)?
     assert not socket.startswith(deep.0)
     assert socket_prefix(deep.0)? == prefix
+    alias = scratch.path().joinpath("linked-deep")
+    alias.symlink_to(deep).map_err((error) => error.message())?
+    assert socket_prefix(alias.0)? == prefix
     assert socket_prefix(scratch.path().0)? != prefix
     worker = slot_endpoint(deep, "0123456789abcdef", 0)?
     bindable(worker.socket)?
