@@ -702,6 +702,11 @@ fn assert_canonical_record_controls() -> Result<(), Box<dyn std::error::Error>> 
         let fields = super::records::fixture_record(exact_numeric, "preserve", declaration)?;
         super::records::verify_fixture(exact_numeric, "preserve", fields)?;
     }
+    let dictionary = "def preserve(values: dict[str, list[str]]) -> dict[str, list[str]]:\n    return values\n";
+    for declaration in [true, false] {
+        let fields = super::records::fixture_record(dictionary, "preserve", declaration)?;
+        super::records::verify_fixture(dictionary, "preserve", fields)?;
+    }
     let constructor = "model Box:\n    value: int\n\ndef make() -> Box:\n    return Box(value=1)\n";
     let fields = super::records::fixture_record(constructor, "make", false)?;
     super::records::verify_fixture(constructor, "make", fields)?;
