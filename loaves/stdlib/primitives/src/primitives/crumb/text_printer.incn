@@ -1,11 +1,11 @@
 """Canonical COMIC printing from inert typed descriptions and values."""
 
 from rust::std::primitive import f32 as RustF32, f64 as RustF64
+from rust::incan_std_primitives::crumb import binary_literal as native_binary_literal, quote_text, spaces as native_spaces
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.native_numbers import integer_spelling
 from crate.primitives.crumb.registrations import KindRegistration
 from crate.primitives.crumb.text_syntax import description_at, last_segment, type_spelling
-from crate.primitives.crumb.text_controls import bidirectional_escape
 from crate.primitives.crumb.text_types import (
     TextContext,
     TextDescription,
@@ -17,7 +17,6 @@ from crate.primitives.crumb.text_types import (
 )
 from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, NominalKind, TypeNode, VariantShape
 from crate.primitives.crumb.values import MapEntry, Metadata, MetadataEntry, Value, ValueField
-from crate.primitives.hex import hexlify
 from crate.primitives.text import decode_utf8, encode_utf8
 
 
@@ -620,66 +619,17 @@ def float_spelling(width: int, bits: bytes) -> Result[str, TextError]:
 
 def quoted(value: str) -> str:
     """Escape controls, quotes, backslashes and bidirectional controls without normalization."""
-    mut result = "\""
-    for character in value:
-        if character == "\\":
-            result += "\\\\"
-        elif character == "\"":
-            result += "\\\""
-        elif character == "\n":
-            result += "\\n"
-        elif character == "\t":
-            result += "\\t"
-        elif character == "\r":
-            result += "\\r"
-        else:
-            result += escaped_control(character)
-    return result + "\""
-
-
-def escaped_control(character: str) -> str:
-    """Write corpus-covered controls and every bidirectional control as lowercase Unicode escapes."""
-    if let Some(escape) = bidirectional_escape(character):
-        return escape
-    encoded = hexlify(encode_utf8(character))
-    if len(encoded) == 2 and (encoded[0:1] == "0" or encoded[0:1] == "1" or encoded == "7f"):
-        mut digits = encoded
-        if digits.startswith("0"):
-            digits = digits[1:]
-        return "\\u{" + digits + "}"
-    if encoded >= "c280" and encoded <= "c29f":
-        return "\\u{" + encoded[2:] + "}"
-    return character
+    return quote_text(value)
 
 
 def binary_literal(data: bytes) -> str:
     """Write printable ASCII directly and every other byte as exact lowercase hexadecimal."""
-    printable = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
-    mut result = "b\""
-    for value in data:
-        if value == 34u8:
-            result += "\\\""
-        elif value == 92u8:
-            result += "\\\\"
-        elif value >= 32u8 and value <= 126u8:
-            result += printable[int(value) - 32]
-        else:
-            result += "\\x" + byte_hex(value)
-    return result + "\""
-
-
-def byte_hex(value: int) -> str:
-    """Return one byte as exactly two lowercase hexadecimal digits."""
-    digits = "0123456789abcdef"
-    return digits[value // 16] + digits[value % 16]
+    return native_binary_literal(data)
 
 
 def spaces(count: int) -> str:
     """Create deterministic four-space indentation without formatter state."""
-    mut result = ""
-    for _ in range(count):
-        result += " "
-    return result
+    return native_spaces(count.saturating_resize[i64]())
 
 
 def print_position() -> TextPosition:

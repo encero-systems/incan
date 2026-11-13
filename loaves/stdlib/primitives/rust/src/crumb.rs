@@ -55,6 +55,80 @@ impl Buffer {
     }
 }
 
+/// Canonically quote text without generated repeated-string concatenation.
+pub fn quote_text(value: String) -> String {
+    let mut output = String::with_capacity(value.len() + 2);
+    output.push('"');
+    for character in value.chars() {
+        match character {
+            '\\' => output.push_str("\\\\"),
+            '"' => output.push_str("\\\""),
+            '\n' => output.push_str("\\n"),
+            '\t' => output.push_str("\\t"),
+            '\r' => output.push_str("\\r"),
+            '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => push_unicode_escape(&mut output, character as u32),
+            '\0'..='\u{1f}' | '\u{7f}'..='\u{9f}' => push_unicode_escape(&mut output, character as u32),
+            _ => output.push(character),
+        }
+    }
+    output.push('"');
+    output
+}
+
+/// Canonically quote arbitrary bytes with printable ASCII preserved.
+pub fn binary_literal(data: Vec<u8>) -> String {
+    let mut output = String::with_capacity(data.len() + 3);
+    output.push_str("b\"");
+    for byte in data {
+        match byte {
+            b'"' => output.push_str("\\\""),
+            b'\\' => output.push_str("\\\\"),
+            32..=126 => output.push(char::from(byte)),
+            _ => {
+                output.push_str("\\x");
+                output.push(hex_digit(byte >> 4));
+                output.push(hex_digit(byte & 0x0f));
+            }
+        }
+    }
+    output.push('"');
+    output
+}
+
+/// Produce deterministic indentation in one allocation.
+pub fn spaces(count: i64) -> String {
+    if count <= 0 {
+        String::new()
+    } else {
+        " ".repeat(count as usize)
+    }
+}
+
+fn push_unicode_escape(output: &mut String, value: u32) {
+    output.push_str("\\u{");
+    let mut shift = if value >= 0x1000 {
+        12
+    } else if value >= 0x100 {
+        8
+    } else if value >= 0x10 {
+        4
+    } else {
+        0
+    };
+    loop {
+        output.push(hex_digit(((value >> shift) & 0x0f) as u8));
+        if shift == 0 {
+            break;
+        }
+        shift -= 4;
+    }
+    output.push('}');
+}
+
+fn hex_digit(value: u8) -> char {
+    char::from(if value < 10 { b'0' + value } else { b'a' + value - 10 })
+}
+
 impl Reader {
     pub fn new(data: Vec<u8>) -> Self {
         Self { data, offset: 0 }
@@ -308,7 +382,10 @@ fn top_bits(value: u128) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Buffer, Reader, encode_integer_unsigned, encode_native_signed, encode_native_unsigned, frame};
+    use super::{
+        Buffer, Reader, binary_literal, encode_integer_unsigned, encode_native_signed, encode_native_unsigned, frame,
+        quote_text, spaces,
+    };
 
     #[test]
     fn native_boundaries_match_crumb_framing() {
@@ -348,5 +425,18 @@ mod tests {
         buffer.append(vec![2, 3]);
         assert_eq!(buffer.len(), 3);
         assert_eq!(buffer.finish(), [1, 2, 3]);
+    }
+
+    #[test]
+    fn text_literals_preserve_canonical_escaping() {
+        assert_eq!(
+            quote_text("a\n\0\u{85}\u{202e}\\\"".to_string()),
+            "\"a\\n\\u{0}\\u{85}\\u{202e}\\\\\\\"\""
+        );
+        assert_eq!(
+            binary_literal(vec![b'a', b'"', b'\\', 0, 0xff]),
+            "b\"a\\\"\\\\\\x00\\xff\""
+        );
+        assert_eq!(spaces(4), "    ");
     }
 }
