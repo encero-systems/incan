@@ -32,6 +32,7 @@ from protocol import (
     Reply,
     WorkerCommand,
     completion,
+    import_request_document,
     encode_ready,
     encode_reply,
     ready,
@@ -171,6 +172,7 @@ def served_record(mut host: WorkerHost) -> Result[RecordMessage, str]:
     match next_activation(host):
         Some(WorkerActivation.Record(request)) => return Ok(request)
         Some(WorkerActivation.Compile(_)) => return Err("the host substituted a compile request")
+        Some(WorkerActivation.Imports(_)) => return Err("the host substituted an import exchange")
         None => return Err("the host retired instead of serving a record request")
 
 
@@ -260,6 +262,9 @@ pub def test_replies_keep_the_protocol_bytes() -> Result[None, str]:
     )
     expected = f"{{\"arguments\":[\"--fmt\",\"/p/unit.json\",\"src/main.incn\",\"--check\"],\"cwd\":\"/p\",\"generation\":\"{GENERATION}\",\"schema\":\"{SCHEMA}\",\"stderr\":\"/p/r.err\",\"stdout\":\"/p/r.out\"}}"
     assert request.to_json().map_err((error) => error.message())? == expected
+    staged = import_request_document(GENERATION, "/p/provisional.json", "/p", "/p/r.out", "/p/r.err")
+    staged_text = f"{{\"cwd\":\"/p\",\"exchange\":\"imports\",\"generation\":\"{GENERATION}\",\"schema\":\"{SCHEMA}\",\"stderr\":\"/p/r.err\",\"stdout\":\"/p/r.out\",\"unit\":\"/p/provisional.json\"}}"
+    assert staged.to_json().map_err((error) => error.message())? == staged_text
     # Only a request that requires teardown after its activation names that lifetime.
     retiring = request_document(
         GENERATION,

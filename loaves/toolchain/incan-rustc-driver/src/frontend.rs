@@ -448,6 +448,7 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
         receipt.clone(),
         dependencies.graph_body_records,
         dependencies.graph_body_output,
+        None,
     )?;
     lower_compilation_plan(
         &mut program,
@@ -516,6 +517,7 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
             &RefusalReceipt(None),
             dependencies.graph_body_records,
             None,
+            None,
         )
     })?;
     let manifest = program
@@ -540,11 +542,32 @@ pub(crate) fn compile_resident(arguments: &[String]) -> Result<(), Box<dyn std::
     compile_unit(arguments, true)
 }
 
+/// Continue a staged import activation with Oven's final description while reusing its retained parsed source graph.
+pub(crate) fn compile_resident_imports(
+    arguments: &[String],
+    activation: crate::rust_imports::ImportActivation,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let unit = arguments
+        .first()
+        .ok_or("staged unit compilation has no final description")?;
+    let modules = activation.finish(Path::new(unit))?;
+    compile_unit_with_modules(arguments, true, Some(modules))
+}
+
 /// Compile one unit with the invocation's immutable-input retention policy; source checking and native execution
 /// remain fresh for both short-lived and resident callers. A leading `--certify PATH` option names where a refusal
 /// that unchanged inputs reproduce writes its receipt. Checking, lowering and native compilation retain their
 /// separate refusal boundaries; only successful compilation publishes library artifacts.
 fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std::error::Error>> {
+    compile_unit_with_modules(arguments, resident, None)
+}
+
+/// Compile with an optional source graph retained by the staged import exchange.
+fn compile_unit_with_modules(
+    arguments: &[String],
+    resident: bool,
+    retained_modules: Option<Vec<ParsedModule>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err(
             "usage: --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [--rustc-arg ARG] [--library] [--shared-native DIR] [--graph-body-records PATH] [--graph-body-output PATH]"
@@ -592,6 +615,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         receipt.clone(),
         dependencies.graph_body_records.clone(),
         dependencies.graph_body_output.clone(),
+        retained_modules,
     )?;
     if census_complete(&mut program, kind, overflow_checks)? {
         return Ok(());
@@ -685,11 +709,20 @@ fn check_compilation_source(
     receipt: RefusalReceipt,
     graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
     graph_body_output: Option<PathBuf>,
+    retained_modules: Option<Vec<ParsedModule>>,
 ) -> Result<CheckedProgram, Box<dyn std::error::Error>> {
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(&unit, &rust, resident, &receipt, graph_body_records, graph_body_output)
+        checked_modules(
+            &unit,
+            &rust,
+            resident,
+            &receipt,
+            graph_body_records,
+            graph_body_output,
+            retained_modules,
+        )
     });
     match checked {
         Ok(program) => Ok(program),

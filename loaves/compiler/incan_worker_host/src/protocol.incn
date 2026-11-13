@@ -43,6 +43,17 @@ pub model CompileRequest:
     pub retire_after: bool = false
 
 
+pub model ImportRequest:
+    """A staged unit activation before Oven has selected the Rust artifacts its parsed imports require."""
+
+    # The provisional unit description whose source graph the compiler parses and retains.
+    pub unit: str
+    # The final activation's request-local console files and working directory; all absolute.
+    pub stdout: str
+    pub stderr: str
+    pub cwd: str
+
+
 pub enum Fault:
     """Why an activation ended without the command's own status."""
 
@@ -67,6 +78,7 @@ pub enum Admission:
     """What a received document is to this worker."""
 
     Admitted(CompileRequest)
+    ImportExchange(ImportRequest)
     Refused(str)
     # A request of another protocol or compiler generation, which this worker never serves.
     Incompatible
@@ -87,6 +99,10 @@ pub def admit(payload: bytes, generation: str) -> Admission:
         Ok(found) =>
             if not text_is(found, "schema", SCHEMA) or not text_is(found, "generation", generation):
                 return Admission.Incompatible
+            if text_is(found, "exchange", "imports"):
+                match import_request_of(found):
+                    Ok(request) => return Admission.ImportExchange(request)
+                    Err(reason) => return Admission.Refused(reason)
             match request_of(found):
                 Ok(request) => return Admission.Admitted(request)
                 Err(reason) => return Admission.Refused(reason)
@@ -119,6 +135,19 @@ def request_of(document: JsonValue) -> Result[CompileRequest, str]:
             stderr=absolute_field(document, "stderr")?,
             cwd=absolute_field(document, "cwd")?,
             retire_after=retirement_requested(document)?,
+        ),
+    )
+
+
+def import_request_of(document: JsonValue) -> Result[ImportRequest, str]:
+    """A staged import request with one absolute provisional unit and the final activation's fixed process context."""
+    unit = absolute_field(document, "unit")?
+    return Ok(
+        ImportRequest(
+            unit=unit,
+            stdout=absolute_field(document, "stdout")?,
+            stderr=absolute_field(document, "stderr")?,
+            cwd=absolute_field(document, "cwd")?,
         ),
     )
 
@@ -266,6 +295,55 @@ pub def request_document(
     if retire_after:
         fields["retire_after"] = JsonValue.bool(true)
     return JsonValue.object(fields)
+
+
+pub def import_request_document(
+    generation: str,
+    unit: str,
+    directory: str,
+    stdout: str,
+    stderr: str,
+) -> JsonValue:
+    """Begin one staged import exchange while fixing the source descriptor, console sinks and working directory."""
+    mut fields: Dict[str, JsonValue] = {}
+    fields["schema"] = JsonValue.string(SCHEMA)
+    fields["generation"] = JsonValue.string(generation)
+    fields["exchange"] = JsonValue.string("imports")
+    fields["unit"] = JsonValue.string(unit)
+    fields["cwd"] = JsonValue.string(directory)
+    fields["stdout"] = JsonValue.string(stdout)
+    fields["stderr"] = JsonValue.string(stderr)
+    return JsonValue.object(fields)
+
+
+pub def encode_import_requirements(generation: str, requirements: bytes) -> Result[bytes, str]:
+    """Encode the compiler's typed import requirement array as the first reply of a staged exchange."""
+    parsed = decoded(requirements)?
+    if parsed.as_array() is None:
+        return Err("compiler import requirements are not an array")
+    mut fields: Dict[str, JsonValue] = {}
+    fields["schema"] = JsonValue.string(SCHEMA)
+    fields["generation"] = JsonValue.string(generation)
+    fields["exchange"] = JsonValue.string("requirements")
+    fields["requirements"] = parsed
+    return Ok(encoded(JsonValue.object(fields)))
+
+
+pub def import_continuation(payload: bytes, generation: str, staged: ImportRequest) -> Result[Option[CompileRequest], str]:
+    """Accept Oven's cancellation or final unit invocation while preserving the staged activation's process context."""
+    document = decoded(payload)?
+    if not text_is(document, "schema", SCHEMA) or not text_is(document, "generation", generation):
+        return Err(MISMATCH)
+    if text_is(document, "exchange", "cancel"):
+        return Ok(None)
+    if not text_is(document, "exchange", "compile"):
+        return Err("compiler import exchange requires a final compile request or cancellation")
+    request = request_of(document)?
+    if request.command != WorkerCommand.Unit:
+        return Err("compiler import exchange can continue only as a unit compilation")
+    if request.cwd != staged.cwd or request.stdout != staged.stdout or request.stderr != staged.stderr:
+        return Err("compiler import exchange changed its process context")
+    return Ok(Some(request))
 
 
 pub def completion(document: JsonValue) -> Result[int, str]:

@@ -17,7 +17,9 @@ use std::io::PipeWriter;
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
 
-use incan_worker_host::{ActivationOutcome, CallerWatch, CompileRequest, WorkerActivation, WorkerCommand};
+use incan_worker_host::{
+    ActivationOutcome, CallerWatch, CompileRequest, ImportRequest, WorkerActivation, WorkerCommand, WorkerHost,
+};
 
 mod console;
 
@@ -45,6 +47,14 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
                 incan_worker_host::complete(&mut host, outcome, footprint());
                 timing.mark("worker_completed");
             }
+            WorkerActivation::Imports(request) => {
+                let watch = incan_worker_host::caller_watch(&mut host).map(|watch| Abandonment::watch(watch, false));
+                if let Some(outcome) = activate_imports(&mut host, &request) {
+                    drop(watch);
+                    release_free_memory();
+                    incan_worker_host::complete(&mut host, outcome, footprint());
+                }
+            }
             WorkerActivation::Record(request) => {
                 let reply = crate::compiler_record_service::activate(request, &home);
                 release_free_memory();
@@ -53,6 +63,43 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
         }
     }
     Ok(())
+}
+
+/// Parse and retain a provisional source graph, exchange its requirements for Oven's final unit, then compile it.
+/// `None` means Oven cancelled and the host already settled the activation.
+fn activate_imports(host: &mut WorkerHost, request: &ImportRequest) -> Option<ActivationOutcome> {
+    let console = match console::Capture::open(
+        Path::new(&request.stdout),
+        Path::new(&request.stderr),
+        Path::new(&request.cwd),
+    ) {
+        Ok(console) => console,
+        Err(error) => return Some(ActivationOutcome::Unavailable(error.to_string())),
+    };
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let activation = crate::rust_imports::prepare(Path::new(&request.unit))?;
+        let requirements = activation.requirements()?;
+        let Some(final_request) = incan_worker_host::continue_imports(host, &requirements)? else {
+            return Ok(None);
+        };
+        crate::frontend::compile_resident_imports(&final_request.arguments, activation)?;
+        Ok::<_, Box<dyn std::error::Error>>(Some(0))
+    }));
+    let ended = match outcome {
+        Ok(Ok(Some(code))) => Some(ActivationOutcome::Exited(code)),
+        Ok(Ok(None)) => None,
+        Ok(Err(error)) => Some(ActivationOutcome::Exited(crate::report(error.as_ref()).into())),
+        Err(_) => {
+            crate::adapter::recover();
+            Some(ActivationOutcome::Panicked)
+        }
+    };
+    if let Err(error) = console.restore() {
+        return Some(ActivationOutcome::UnsafeCleanup(format!(
+            "compiler console restore failed: {error}"
+        )));
+    }
+    ended
 }
 
 /// Run one admitted request with its caller's console files and working directory. The reported status is the one

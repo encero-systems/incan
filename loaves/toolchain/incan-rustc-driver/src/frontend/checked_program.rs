@@ -89,6 +89,7 @@ pub(super) fn checked_modules(
     receipt: &RefusalReceipt,
     graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
     graph_body_output: Option<PathBuf>,
+    retained_modules: Option<Vec<ParsedModule>>,
 ) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
     let path = unit
@@ -107,12 +108,15 @@ pub(super) fn checked_modules(
         .map_err(|error| error.to_string())?;
     session.set_graph_body_records(graph_body_records);
     let library = unit.kind == UnitKind::Library;
-    let modules = if library {
-        collect_library_modules_detailed_with_session(path.clone(), &session)
-    } else {
-        collect_modules_detailed_with_session(path.clone(), &session)
-    }
-    .map_err(|failure| receipt.diagnostic(failure))?;
+    let modules = match retained_modules {
+        Some(modules) => modules,
+        None => if library {
+            collect_library_modules_detailed_with_session(path.clone(), &session)
+        } else {
+            collect_modules_detailed_with_session(path.clone(), &session)
+        }
+        .map_err(|failure| receipt.diagnostic(failure))?,
+    };
     session
         .resolve_rust_facts(&modules)
         .map_err(|error| error.to_string())?;

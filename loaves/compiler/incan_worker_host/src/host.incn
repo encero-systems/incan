@@ -29,7 +29,18 @@ from lifecycle import (
     Retirement,
     lifecycle,
 )
-from protocol import Admission, CompileRequest, MISMATCH, Reply, admit, encode_ready, encode_reply
+from protocol import (
+    Admission,
+    CompileRequest,
+    ImportRequest,
+    MISMATCH,
+    Reply,
+    admit,
+    encode_import_requirements,
+    encode_ready,
+    encode_reply,
+    import_continuation,
+)
 from record_protocol import (
     RecordAdmission,
     RecordMessage,
@@ -79,6 +90,7 @@ pub enum WorkerActivation:
     """One admitted compile command or record request, never both protocols for one activation."""
 
     Compile(CompileRequest)
+    Imports(ImportRequest)
     Record(RecordMessage)
 
 
@@ -94,6 +106,7 @@ pub class WorkerHost:
     policy: Lifecycle
     active: Option[Connection] = None
     active_record: Option[RecordMessage] = None
+    active_imports: Option[ImportRequest] = None
     retire_after: bool = false
     observer: Option[Emitter] = None
     activation_clock: Option[Clock] = None
@@ -152,7 +165,31 @@ pub class WorkerHost:
         if self.active_record is not None:
             self.protocol_fault()
             return
+        if self.active_imports is not None:
+            self.protocol_fault()
+            return
         self.settle(outcome, footprint)
+
+    pub def continue_imports(mut self, requirements: bytes) -> Result[Option[CompileRequest], str]:
+        """Send typed requirements and admit Oven's final compile request without ending the retained activation."""
+        staged = match self.active_imports:
+            Some(request) => request
+            None => return Err("the compiler worker has no staged import activation")
+        caller = match self.active:
+            Some(connection) => connection
+            None => return Err("the compiler worker staged import caller has gone")
+        mut exchange = caller
+        exchange.send(encode_import_requirements(self.generation, requirements)?)?
+        payload = exchange.receive()?
+        continued = import_continuation(payload, self.generation, staged)?
+        self.active_imports = None
+        match continued:
+            Some(request) =>
+                self.retire_after = request.retire_after
+                return Ok(Some(request))
+            None =>
+                self.settle(ActivationOutcome.Exited(0), -1)
+                return Ok(None)
 
     pub def complete_record(mut self, reply: RecordMessage, footprint: int) -> None:
         """Answer one record request only with a member of that request's closed reply set."""
@@ -186,6 +223,7 @@ pub class WorkerHost:
             None => pass
         self.active = None
         self.active_record = None
+        self.active_imports = None
 
     def settle_record(mut self, reply: RecordMessage, footprint: int) -> None:
         """Apply ordinary worker lifetime policy, then send the already validated typed record reply."""
@@ -199,6 +237,7 @@ pub class WorkerHost:
             None => pass
         self.active = None
         self.active_record = None
+        self.active_imports = None
 
     pub def protocol_fault(mut self) -> None:
         """End the unsafe worker and close its caller without inventing a reply from another request's set."""
@@ -209,6 +248,7 @@ pub class WorkerHost:
             None => pass
         self.active = None
         self.active_record = None
+        self.active_imports = None
 
     def finish_observation(mut self) -> None:
         """Flush one activation before its reply, so the caller's request span encloses the worker record."""
@@ -314,6 +354,12 @@ pub class WorkerHost:
                                 self.active = Some(caller)
                                 self.retire_after = request.retire_after
                                 return Some(WorkerActivation.Compile(request))
+                            Admission.ImportExchange(request) =>
+                                self.activation_clock = trace_begin(self.observer is not None)
+                                self.active = Some(caller)
+                                self.active_imports = Some(request)
+                                self.retire_after = false
+                                return Some(WorkerActivation.Imports(request))
 
     def served_peer(self, caller: Connection) -> bool:
         """Whether the OS reports the caller as the user this worker serves."""
@@ -417,6 +463,9 @@ pub def next_request(mut host: WorkerHost) -> Option[CompileRequest]:
     """The next request for the compiler entry to run, or `None` once the worker has retired and should exit."""
     match host.next():
         Some(WorkerActivation.Compile(request)) => return Some(request)
+        Some(WorkerActivation.Imports(_)) =>
+            host.protocol_fault()
+            return None
         Some(WorkerActivation.Record(_)) =>
             host.protocol_fault()
             return None
@@ -439,6 +488,11 @@ pub def complete(mut host: WorkerHost, outcome: ActivationOutcome, footprint: in
 pub def complete_record(mut host: WorkerHost, reply: RecordMessage, footprint: int) -> None:
     """Validate and answer the open record activation, applying the worker's ordinary lifetime policy."""
     host.complete_record(reply, footprint)
+
+
+pub def continue_imports(mut host: WorkerHost, requirements: bytes) -> Result[Option[CompileRequest], str]:
+    """Continue the open staged import activation with Oven's authoritative final unit or cancellation."""
+    return host.continue_imports(requirements)
 
 
 pub def caller_watch(mut host: WorkerHost) -> Option[CallerWatch]:
