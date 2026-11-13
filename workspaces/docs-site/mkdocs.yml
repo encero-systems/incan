@@ -335,6 +335,7 @@ nav:
           - Benchmarks & profiling (repository): contributing/how-to/benchmarks_and_profiling.md
           - Trace compiler invocations: contributing/how-to/trace-compiler-invocations.md
           - Profile native compilation: contributing/how-to/profile-native-compilation.md
+          - Build and verify a release locally: contributing/how-to/build-a-release-locally.md
           - Oven Alpha benchmark protocol: contributing/how-to/oven_alpha_benchmark.md
           - CI & automation (repository): contributing/how-to/ci_and_automation.md
           - Writing RFCs: contributing/how-to/writing_rfcs.md
