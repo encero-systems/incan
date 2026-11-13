@@ -362,12 +362,10 @@ impl crate::typechecker::TypeChecker {
             .iter()
             .enumerate()
             .find_map(|(index, symbol)| {
-                let crate::symbols::SymbolKind::Type(crate::symbols::TypeInfo::Enum(info)) = &symbol.kind else {
+                let crate::symbols::SymbolKind::Type(info) = &symbol.kind else {
                     return None;
                 };
-                info.variant_identities
-                    .values()
-                    .any(|identity| identity == dependency)
+                nominal_type_owns_member(info, dependency)
                     .then(|| self.symbols.identity_of(index))
                     .flatten()
             });
@@ -380,6 +378,27 @@ impl crate::typechecker::TypeChecker {
             return StableDeclarationId::from_canonical(dependency, None, Some(context));
         }
         StableDeclarationId::from_canonical(dependency, None, None)
+    }
+}
+
+/// Test canonical member provenance carried by one checked nominal type; spelling is never consulted.
+fn nominal_type_owns_member(
+    info: &crate::symbols::TypeInfo,
+    dependency: &incan_semantics_core::CanonicalSymbolId,
+) -> bool {
+    match info {
+        crate::symbols::TypeInfo::Class(info) => info
+            .fields
+            .values()
+            .any(|field| field.identity.as_ref() == Some(dependency)),
+        crate::symbols::TypeInfo::Model(info) => info
+            .fields
+            .values()
+            .any(|field| field.identity.as_ref() == Some(dependency)),
+        crate::symbols::TypeInfo::Enum(info) => info.variant_identities.values().any(|identity| identity == dependency),
+        crate::symbols::TypeInfo::Builtin
+        | crate::symbols::TypeInfo::TypeAlias
+        | crate::symbols::TypeInfo::Newtype(_) => false,
     }
 }
 
@@ -517,9 +536,9 @@ mod tests {
     /// An editable sibling enum variant keeps the provider enum as its stable owner, even when another top-level
     /// declaration has the variant's spelling.
     #[test]
-    fn sibling_enum_variant_stable_dependency_identity_keeps_owner() -> Result<(), Box<dyn std::error::Error>> {
+    fn sibling_nominal_member_stable_dependency_identity_keeps_owner() -> Result<(), Box<dyn std::error::Error>> {
         let provider = program(
-            "pub model Cancelled:\n    reason: str\n\npub enum CompletionStatus:\n    Success\n    Failed\n    Cancelled\n",
+            "pub model Cancelled:\n    reason: str\n\npub model First:\n    pub transaction: str\n\npub model Second:\n    pub transaction: str\n\npub enum CompletionStatus:\n    Success\n    Failed\n    Cancelled\n",
         )?;
         let module_path = vec!["engine_messages".into()];
         let mut provider_checker = TypeChecker::new();
@@ -539,7 +558,7 @@ mod tests {
             .ok_or("provider namespace was not publishable")?;
 
         let consumer = program(
-            "from engine_messages import CompletionStatus\n\ndef selected() -> CompletionStatus:\n    return CompletionStatus.Failed\n\ndef cancelled() -> CompletionStatus:\n    return CompletionStatus.Cancelled\n",
+            "from engine_messages import CompletionStatus, First, Second\n\ndef selected() -> CompletionStatus:\n    return CompletionStatus.Failed\n\ndef cancelled() -> CompletionStatus:\n    return CompletionStatus.Cancelled\n\ndef first(value: First) -> str:\n    return value.transaction\n\ndef second(value: Second) -> str:\n    return value.transaction\n",
         )?;
         let mut checker = TypeChecker::new();
         checker.set_current_module_path(Some(vec!["main".into()]));
@@ -553,14 +572,22 @@ mod tests {
             .symbols
             .all_symbols()
             .iter()
-            .filter_map(|symbol| {
-                let crate::symbols::SymbolKind::Type(crate::symbols::TypeInfo::Enum(info)) = &symbol.kind else {
-                    return None;
-                };
-                Some(info.variant_identities.values())
+            .flat_map(|symbol| match &symbol.kind {
+                crate::symbols::SymbolKind::Type(crate::symbols::TypeInfo::Enum(info)) => {
+                    info.variant_identities.values().collect::<Vec<_>>()
+                }
+                crate::symbols::SymbolKind::Type(crate::symbols::TypeInfo::Model(info)) => info
+                    .fields
+                    .values()
+                    .filter_map(|field| field.identity.as_ref())
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
             })
-            .flatten()
-            .filter(|identity| identity.declaration_name == "Failed" || identity.declaration_name == "Cancelled")
+            .filter(|identity| {
+                identity.declaration_name == "Failed"
+                    || identity.declaration_name == "Cancelled"
+                    || identity.declaration_name == "transaction"
+            })
             .map(|identity| {
                 checker
                     .stable_dependency_identity(identity)
@@ -573,6 +600,8 @@ mod tests {
         assert_eq!(
             reads,
             vec![
+                "member/field:engine_messages::transaction#in(model:engine_messages::First)[0]",
+                "member/field:engine_messages::transaction#in(model:engine_messages::Second)[0]",
                 "member/variant:engine_messages::Cancelled#in(enum:engine_messages::CompletionStatus)[0]",
                 "member/variant:engine_messages::Failed#in(enum:engine_messages::CompletionStatus)[0]",
             ]
