@@ -223,6 +223,8 @@ def unit_help(surface: str, command: str) -> str:
             "  --program-entry PATH   Add a program entry to a program build; repeatable.",
             "  --engine-report        Retain and print unit counters with INCAN_ENGINE=records.",
             "  --locked               Refuse a missing or stale oven.lock.",
+            "  --report json          Print a JSON build report: version, artifacts, outcome and time.",
+            "  --report-output PATH   Write the build report to PATH instead of stdout.",
         ],
         f"{surface} build src/main.incn --profile debug",
     )

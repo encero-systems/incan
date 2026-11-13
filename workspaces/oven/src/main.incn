@@ -61,6 +61,7 @@ from environments import command_admission, env_command, parse_env
 from explanations import explained_json, parse_explain
 from doctor import doctor, parse_tools
 from feature_inspection import inspect_features, parse_features
+from build_report import parse_report, reported_build
 from pub::incan_platform.trace import WorkObserver
 from pub::incan_platform.store.files import observe_work
 from trace_adapter import finish as finish_trace
@@ -151,6 +152,12 @@ def dispatch(command: str, rest: list[str]) -> None:
             Ok(selection) =>
                 if selected(selection):
                     finish(command, run_members(invoked(), command, selection))
+    if command == "build":
+        match parse_report(rest):
+            Err(reason) => syntax_error(command, reason)
+            Ok(report) =>
+                if report.format is not None:
+                    finish(command, reported_build(invoked(), report, expected_artifacts(report.remaining)))
     if command == "env":
         match parse_env(rest):
             Err(reason) => syntax_error(command, reason)
@@ -1038,3 +1045,25 @@ def owner(arguments: list[str]) -> None:
     match stop_owners():
         Err(reason) => fail(f"oven owner: {reason}", 1)
         Ok(stopped) => println(f"stopped {stopped} owners")
+
+
+def expected_artifacts(arguments: list[str]) -> list[str]:
+    """
+    The artifacts a build of an Incan source writes, for its report: a library's `.rlib` or a program's executable.
+    A build that cannot be described here reports none; the build itself reports why it failed.
+    """
+    own, _passed = program_arguments(arguments)
+    match parse_options(own):
+        Err(_) => return []
+        Ok(options) =>
+            match build_source(Path(options.path), options.manifests):
+                Ok(Some(source)) =>
+                    match describe(source, options.profile, options.request, options.manifests):
+                        Err(_) => return []
+                        Ok(unit) =>
+                            if source.name() == "lib.incn":
+                                directory = dependency_artifact_dir(unit.project_root, unit.package, unit.profile)
+                                return [directory.joinpath(f"lib{crate_name(unit)}.rlib").0]
+                            return [program_binary(unit).0]
+                Ok(None) => return []
+                Err(_) => return []
