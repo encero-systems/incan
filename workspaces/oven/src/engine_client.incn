@@ -66,7 +66,9 @@ pub def execute(
     identity = identity_for(store, compiler)?
     mut channel = connect(store, identity).map_err(detail)?
     record_work(Operation.EngineConnect, source.0, connecting)
-    channel.transport.wait_at_most(600)
+    # A build takes as long as its admitted compiler and publication work takes. The service owns cancellation and
+    # liveness; a client-side read deadline would turn valid long work into a truncated protocol frame.
+    channel.transport.wait_at_most(0)
     submitted = begin_work()
     send(
         channel,
