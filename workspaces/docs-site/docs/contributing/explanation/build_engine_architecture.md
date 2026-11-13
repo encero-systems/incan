@@ -183,6 +183,12 @@ The `scoped_reader` offers keyed lookup, `read_many`, bounded field access, payl
 
 Native units take their full RFC 124 identity before claiming. Command names, request ids, view ids and temporary paths never enter it. External identity equals unit identity on the stock rustc route. Codegen-unit membership hashes full identities into a fixed partition count that is part of the profile. Rustc incremental stays off until every overridden query has a tracked per-definition fingerprint; when qualified, incremental state is an immutable seed cloned into private scratch, never semantic authority.
 
+### Apple SDK identity boundary
+
+An Apple SDK is an input only to work that actually reads it. Incan and Rust library compilation uses the pinned compiler identity, deployment selection, source, invocation and linked artifacts, but not the selected SDK. Final Incan program and test links, debug shared-library/carrier links, final Rust binary and test links, dynamically linked Rust libraries (including proc macros), and units that declare C headers additionally include the content identity of `SDKSettings.json`. SDK discovery and hashing therefore do not run for statically linked library-only work. A new Xcode installation can reuse static libraries while it must relink executable, dynamic-library and C-ABI outputs.
+
+This boundary was checked on macOS by compiling the same paths and arguments first with Command Line Tools SDK 27.0 and then with Xcode SDK 27.2. `incan_lang` and the `incan_std_testing` Rust facet produced byte-identical rlibs. The `incan_stdlib_testing` Incan library produced byte-identical `.incnbody`, `.incnlib`, `.native.json`, `.rustabi` and rlib artifacts. A small executable differed only at the expected final-link boundary: its `LC_BUILD_VERSION` SDK field changed from 27.0 to 27.2. The comparison deliberately reused one working directory and output path; an earlier comparison with different working directories demonstrated that rustc embeds that directory in metadata and is not a valid SDK-only experiment.
+
 Interfaces outlive their implementation language. Wire schemas and durable records carry typed identities and scoped handles, never Rust layouts or pointers.
 
 ### Producer-map design
