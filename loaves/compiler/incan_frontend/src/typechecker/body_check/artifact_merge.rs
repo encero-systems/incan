@@ -78,10 +78,12 @@ pub(super) fn append_expressions(target: &mut ExpressionArtifacts, local: Expres
 pub(super) fn append_references(target: &mut ReferenceArtifacts, local: ReferenceArtifacts) {
     let ReferenceArtifacts {
         resolved_identities,
+        stable_declaration_contexts,
         resolved_write_identities,
         resolved_write_types,
     } = local;
     target.resolved_identities.extend(resolved_identities);
+    target.stable_declaration_contexts.extend(stable_declaration_contexts);
     target.resolved_write_identities.extend(resolved_write_identities);
     target.resolved_write_types.extend(resolved_write_types);
 }

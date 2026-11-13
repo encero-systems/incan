@@ -36,7 +36,7 @@ impl TypeChecker {
                 let info = info.clone();
                 let subst = type_param_subst_map(&model.type_params, type_args.unwrap_or_default());
                 if let Some(identity) = info.identity.clone() {
-                    self.type_info.record_resolved_identity(span, identity);
+                    self.record_nominal_member_identity(type_name, span, identity);
                 }
                 if self.private_field_is_inaccessible(type_name, &info) {
                     self.errors
@@ -53,7 +53,7 @@ impl TypeChecker {
                 let info = info.clone();
                 let subst = type_param_subst_map(&class.type_params, type_args.unwrap_or_default());
                 if let Some(identity) = info.identity.clone() {
-                    self.type_info.record_resolved_identity(span, identity);
+                    self.record_nominal_member_identity(type_name, span, identity);
                 }
                 if self.private_field_is_inaccessible(type_name, &info) {
                     self.errors
@@ -68,7 +68,7 @@ impl TypeChecker {
                 let resolved = self.resolve_nominal_enum_field_type(type_name, type_args, field, enum_info)?;
                 let identity = enum_info.variant_identities.get(field).cloned();
                 if let Some(identity) = identity {
-                    self.type_info.record_resolved_identity(span, identity);
+                    self.record_nominal_member_identity(type_name, span, identity);
                 }
                 return Some(resolved);
             }
@@ -103,6 +103,32 @@ impl TypeChecker {
         };
 
         Some(field_info)
+    }
+
+    /// Retain both the selected member and its declaring nominal at this exact reference site.
+    fn record_nominal_member_identity(&mut self, type_name: &str, span: Span, identity: CanonicalSymbolId) {
+        let owner = self
+            .type_info
+            .declarations
+            .named_type_identities
+            .get(type_name)
+            .or_else(|| {
+                self.symbols
+                    .lookup(type_name)
+                    .and_then(|symbol| self.symbols.identity_of(symbol))
+            })
+            .or_else(|| self.public_library_type_identities.get(type_name)?.canonical.as_ref())
+            .cloned();
+        self.type_info.record_resolved_identity(span, identity);
+        if let Some(owner) = owner {
+            self.type_info.references.stable_declaration_contexts.insert(
+                span,
+                incan_semantics_core::CanonicalStableDeclarationContext {
+                    owner,
+                    binding_ordinal: 0,
+                },
+            );
+        }
     }
 
     /// Resolve a declared enum variant or value conversion constructor without mutating checking state.
