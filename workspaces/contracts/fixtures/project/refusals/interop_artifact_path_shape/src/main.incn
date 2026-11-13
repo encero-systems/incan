@@ -1,0 +1,9 @@
+# behavior: a static artifact's path must name a `lib<name>.a` archive inside the package (#3136)
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   `interop/lib/bridge.lib` is not a static archive named `lib<name>.a`
+
+def main() -> None:
+    println("unreachable")
