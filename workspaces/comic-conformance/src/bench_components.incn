@@ -6,6 +6,7 @@ from std.primitives.crumb.column_value_dictionary import build_keys
 from std.primitives.crumb.hashes import seal_hash, value_hash
 from std.primitives.crumb.registrations import KindRegistry
 from std.primitives.crumb.description_dictionary import admit_dictionary
+from std.primitives.crumb.framing import encode_native_signed
 from std.primitives.crumb.types import ScalarKind, TypeNode
 from std.primitives.crumb.values import Projection, Value
 from bench_codecs import budget, report
@@ -41,6 +42,14 @@ pub def components(workload: str, count: int) -> Result[None, str]:
     if charge.charge_bytes(1).is_ok() or charge.charge_elements(1).is_ok():
         return Err("charge loop did not exhaust exactly its allowance")
     report("two_budget_charges_per_record", charge_at.elapsed().as_secs_f64(), count, 0, count)
+    mut number_budget = budget()?
+    numbers_at = Instant.now()
+    mut number_bytes = 0
+    number_iterations = count * 1000
+    for index in range(number_iterations):
+        value = ((index % 4096) - 2048).saturating_resize[i128]()
+        number_bytes += len(encode_native_signed(value, number_budget).map_err((e) => e.message())?)
+    report("native_integer_frames", numbers_at.elapsed().as_secs_f64(), number_iterations, number_bytes, number_bytes)
     mut hash_budget = budget()?
     hashes_at = Instant.now()
     mut digest_bytes = 0
