@@ -703,10 +703,8 @@ fn assert_canonical_record_controls() -> Result<(), Box<dyn std::error::Error>> 
         super::records::verify_fixture(exact_numeric, "preserve", fields)?;
     }
     let constructor = "model Box:\n    value: int\n\ndef make() -> Box:\n    return Box(value=1)\n";
-    assert!(matches!(
-        super::records::fixture_record(constructor, "make", false),
-        Err(NodeBindingError::Unsupported("identifier kind"))
-    ));
+    let fields = super::records::fixture_record(constructor, "make", false)?;
+    super::records::verify_fixture(constructor, "make", fields)?;
     let refused = "def main() -> int:\n    return \"wrong\"\n";
     let warning = "def main() -> None:\n    println(\"hello\")\n    return\n    println(\"unreachable\")\n";
     for source in [refused, warning] {

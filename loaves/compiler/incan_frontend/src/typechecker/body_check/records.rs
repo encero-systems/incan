@@ -855,7 +855,13 @@ fn project_expressions(positions: &Positions, local: &BodyLocal, fields: &mut Fi
     for (span, kind) in &expressions.ident_kinds {
         let tag = match kind {
             super::super::type_info::IdentKind::Value => "value",
-            _ => return Err(NodeBindingError::Unsupported("identifier kind")),
+            super::super::type_info::IdentKind::Static => "static",
+            super::super::type_info::IdentKind::TypeName => "type-name",
+            super::super::type_info::IdentKind::Variant => "variant",
+            super::super::type_info::IdentKind::Module => "module",
+            super::super::type_info::IdentKind::RustImport => "rust-import",
+            super::super::type_info::IdentKind::RustValue => "rust-value",
+            super::super::type_info::IdentKind::Trait => "trait",
         };
         fields.push(vec![
             "identifier".into(),
@@ -996,11 +1002,21 @@ fn restore_local(
         "binding" if row[2] == "declaration" => {
             local.nested.insert(span, positions.canonical(next(&mut values)?)?);
         }
-        "identifier" if row[2] == "kind" && next(&mut values)? == "value" => {
-            local
-                .expressions
-                .ident_kinds
-                .insert(span, super::super::type_info::IdentKind::Value);
+        "identifier" if row[2] == "kind" => {
+            let kind = match next(&mut values)? {
+                "value" => super::super::type_info::IdentKind::Value,
+                "static" => super::super::type_info::IdentKind::Static,
+                "type-name" => super::super::type_info::IdentKind::TypeName,
+                "variant" => super::super::type_info::IdentKind::Variant,
+                "module" => super::super::type_info::IdentKind::Module,
+                "rust-import" => super::super::type_info::IdentKind::RustImport,
+                "rust-value" => super::super::type_info::IdentKind::RustValue,
+                "trait" => super::super::type_info::IdentKind::Trait,
+                _ => return Err(NodeBindingError::MissingNode),
+            };
+            if local.expressions.ident_kinds.insert(span, kind).is_some() {
+                return Err(NodeBindingError::MissingNode);
+            }
         }
         "type-identity" if row.len() == 4 => {
             let path = read_type_identity_path(&row[2])?;
