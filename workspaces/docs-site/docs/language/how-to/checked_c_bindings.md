@@ -58,6 +58,39 @@ incan check src/main.incn --format json
 
 A successful check verifies the supported source contract; it does not establish an Android or iOS package. Dev.8 does not accept `--interop-target`, `inspect interop-plan`, interop bake or stage commands.
 
+## Build and link your own C
+
+Declare the C library in the same `loaf.toml` with a [`[c]` facet](../../tooling/reference/project_configuration.md#c), which makes the Loaf a Clove:
+
+```toml
+[c]
+library = "shim"
+public-headers = ["include/shim.h"]
+include = ["include"]
+
+[[c.compile]]
+sources = ["csrc/*.c"]
+```
+
+Link it from a binding by the Loaf's name:
+
+```incan
+binding Shim:
+    header = "include/shim.h"
+    link = c.loaf_library("my_project")
+
+    symbol scale(value: c.i32) -> c.i32:
+        native = "shim_scale"
+```
+
+Build with the host compiler:
+
+```sh
+INCAN_C_COMPILER=host incan run src/main.incn
+```
+
+The build compiles the C into `libshim.a` and links it; an unchanged library is reused. A path dependency that carries a `[c]` table is linked the same way, by its own Loaf name. `INCAN_C_COMPILER=host` is a local development override: the archive depends on the host compiler and is never published.
+
 ## Diagnose a refusal
 
 Compare the source's native symbol, scalar types, field order and resource contracts with the header. Keep errors explicit at the facade boundary. Missing native artifacts require a compatible installed closure; there is no automatic package or SDK discovery.
