@@ -12,6 +12,7 @@ from project_scaffold import INIT_USAGE, NEW_USAGE, VALUE_OPTIONS as SCAFFOLD_VA
 from project_version import VERSION_USAGE, version_help
 from workspace import INSPECT_USAGE as WORKSPACE_USAGE, inspect_help as workspace_help
 from environments import ENV_USAGE, env_help
+from doctor import DOCTOR_USAGE, doctor_help
 
 # The project commands both surfaces run follow the invoked surface's name.
 const RUN_OPERANDS: str = "run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
@@ -68,6 +69,7 @@ pub def usage(surface: str) -> str:
             MCP_USAGE,
             PACK_USAGE,
             INSTALL_USAGE,
+            DOCTOR_USAGE,
         ],
     )
 
@@ -123,6 +125,8 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
         return Some(mcp_help())
     elif command in ["new", "init"] and requested(arguments, list(SCAFFOLD_VALUE_OPTIONS)):
         return Some(scaffold_help(command))
+    elif command == "tools" and nested_help(arguments, "doctor", ["--format"]):
+        return Some(doctor_help())
     elif command == "env" and env_help_requested(arguments):
         return Some(env_help())
     elif command == "workspace" and nested_help(arguments, "inspect", ["--format", "--member", "-p", "--exclude"]):

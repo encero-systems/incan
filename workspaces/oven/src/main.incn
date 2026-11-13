@@ -59,6 +59,7 @@ from project_version import change_version, parse_version_request
 from workspace import inspect_workspace, parse_selection, run_members, selected
 from environments import command_admission, env_command, parse_env
 from explanations import explained_json, parse_explain
+from doctor import doctor, parse_tools
 from pub::incan_platform.trace import WorkObserver
 from pub::incan_platform.store.files import observe_work
 from trace_adapter import finish as finish_trace
@@ -169,6 +170,11 @@ def dispatch(command: str, rest: list[str]) -> None:
         match serve_engine(rest):
             Ok(_) => return
             Err(reason) => fail(f"incan engine: refusal {refusal_code(reason.kind)}: {reason.detail}", 1)
+        return
+    if command == "tools":
+        match parse_tools(rest):
+            Err(reason) => argument_error("tools", reason)
+            Ok(format) => finish("tools", doctor(format))
         return
     if command == "explain":
         explain(rest)
