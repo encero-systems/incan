@@ -273,6 +273,22 @@ LIBRARY
 
 `KIND` is `program`, `library` or `test`. Packages are listed by name in ascending order. Under each package, every declaration that entered it from the unit or from another package is listed as its kind and canonical path, for example `function pub::incan_stdlib_codecs::encoding::hex::hexlify`. The `via` line lists the declarations that requested it, starting at the requested root, and is omitted when the declaration is itself a root. `ORIGIN` is `checked source`, `a selected comparison default`, `a selected primitive adapter`, or `runtime operation NAME at FILE:LINE:COLUMN`, with `FILE` relative to the project. A package that a requested but uncovered root selects is listed with `selected by an uncovered root; no declaration is loaded`. Declared dependencies and standard packages the closure does not reach are not listed; [`oven describe-unit`](#oven-describe-unit) lists everything available. A failure exits `1` with the same diagnostic a build reports.
 
+## `oven inspect interop-plan`
+
+`oven inspect interop-plan [--target TRIPLE] [--format text|json] [PATH]` prints what a build for `TRIPLE` (default: the host) links for C interop, from the manifests of the project at or above `PATH` (default `.`) and its path dependencies, without building. For each project it lists its [`[c]` facet](project_configuration.md#c) (library, public headers, and each configuration with its resolved definitions), the static archives the target declares under [`[interop.c]`](project_configuration.md#interopc) in link order, its binding relations and its headers. The text report is:
+
+```text
+target TRIPLE
+project NAME
+  clove library LIBRARY: public headers HEADER, ...
+    configuration NAME: DEFINITION ...
+  static archive NAME: PATH (links as LINK), before DEPENDENCY, ...
+  binding MODULE.NAME: ARTIFACT, ...
+  header HEADER
+```
+
+`--format json` prints `incan.interop-plan/1` with the same facts, each archive's `identity` (`sha256:` of its bytes, or `missing`) and `origin`, and for each configuration the profiles it was compiled for with their unit identities.
+
 ## `incan mcp`
 
 Serves the selected project's graph through newline-delimited JSON-RPC on stdin/stdout. Closing stdin ends the server. Protocol methods, tools, resources and errors are specified in the [MCP reference](agent_context_cli.md#mcp-transport).

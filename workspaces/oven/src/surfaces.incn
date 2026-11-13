@@ -18,7 +18,7 @@ pub const OVEN: str = "oven"
 pub const INCAN: str = "incan"
 # Commands only `oven` runs; `inspect` is split by its subcommand below.
 const OVEN_COMMANDS: FrozenList[str] = ["describe-unit", "owner", "bakery", "lock", "trust"]
-const OVEN_INSPECTIONS: FrozenList[str] = ["dependencies", "run", "features"]
+const OVEN_INSPECTIONS: FrozenList[str] = ["dependencies", "interop-plan", "run", "features"]
 # Oven commands 0.5.1 ran as `incan` commands; on `incan` they name their Oven spelling instead of being unknown.
 const MOVED_FROM_INCAN: FrozenList[str] = ["new", "init", "workspace", "env"]
 # Commands only `incan` runs.
