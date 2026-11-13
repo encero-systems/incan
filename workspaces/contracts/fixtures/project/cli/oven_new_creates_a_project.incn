@@ -1,0 +1,20 @@
+# behavior: `oven new NAME` and `oven new --dir PATH` create a Loaf with its manifest, main program, starter test, README and .gitignore, the project 0.5.1's `incan new` created (#3139).
+# cli-commands:
+#   oven new demo --yes --force --description A_demo --author A --license MIT
+#   oven new --dir demo --yes --force --description A_demo --author A --license MIT
+# expect-stdout:
+#   Created project 'demo' at demo
+#
+#     loaf.toml              Project manifest
+#     src/main.incn          Entry point
+#     tests/test_main.incn   Starter test
+#
+#   Run it:     incan run src/main.incn
+#   Test it:    incan test tests/test_main.incn
+#   Release it: incan build src/main.incn --profile release
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """Provide the project case's source; `oven new` writes a separate project beside it."""
+    pass

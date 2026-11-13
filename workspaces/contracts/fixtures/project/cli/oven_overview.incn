@@ -16,6 +16,9 @@
 #   oven owner stop
 #   oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
 #   oven inspect dependencies PATH [UNIT OPTIONS]
+#   oven new [NAME] [--dir PATH] [--description TEXT] [--author AUTHOR] [--license LICENSE] [--force] [--yes]
+#   oven init [PATH] [--name NAME] [--version VERSION] [--description TEXT] [--author AUTHOR] [--license LICENSE] [--force] [--detect] [--yes]
+#   oven version [BUMP | --set VERSION] [--dry-run] [--keep-prerelease] [--project PATH]
 #   Reference: https://incan.io/latest/tooling/reference/cli_reference/
 # expect-exit: 0
 
