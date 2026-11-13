@@ -131,11 +131,15 @@ An `Owned` result can declare a source relationship: the owned value retains a d
 A `Borrowed[T]` or `Reference[T]` result with a source clause is a returned view: the caller receives shared or exclusive access to the source place itself.
 
 ```incan
+class Address:
+    pub city: str
+
+
 class Customer:
     pub name: str
     pub address: Address
 
-    def edit_address(mut self) -> Reference[Address] from self.address:
+    pub def edit_address(mut self) -> Reference[Address] from self.address:
         return self.address
 ```
 
@@ -162,6 +166,10 @@ A model or class type parameter can be instantiated with `Borrowed[T]` or `Refer
 For a type parameter with a trait bound, `Borrowed[T]` satisfies the bound when `T` satisfies it and every method available through the trait and its supertraits has a `self` receiver. `Reference[T]` also satisfies a bound that includes `mut self` methods. A method call through either view dispatches to the referent and retains the view's source dependency.
 
 ```incan
+class GraphState:
+    pub size: int
+
+
 class Cursor[S]:
     pub selection: S
 
@@ -178,7 +186,7 @@ def select(reader: Borrowed[GraphState], key: int) -> Selection[Borrowed[GraphSt
     return Selection[Borrowed[GraphState]](reader=reader, key=key)
 ```
 
-The result's one named source must justify every borrowed component. A field such as `reader: GraphState` has owned `GraphState` storage; passing a borrowed reader to it is refused. A field declared directly as `reader: Borrowed[GraphState]` is also refused. A carrying field must use a type parameter, and the enclosing type must instantiate that parameter with the required ownership mode.
+The result's one named source must justify every borrowed component. A field such as `reader: GraphState` has owned `GraphState` storage; passing a borrowed reader to it is refused. A generic carrying field must use a type parameter, and the enclosing type must instantiate that parameter with the required ownership mode.
 
 A `Result[Borrowed[T], E]` or `Result[Reference[T], E]` result with a source clause carries a returned view in its success payload. The source rules of returned views apply to that payload.
 
@@ -187,13 +195,13 @@ class SampleBuffer:
     pub capacity: int
     pub samples: list[int]
 
-    def append(mut self, sample: int) -> Result[Reference[Self], str] from self:
+    pub def append(mut self, sample: int) -> Result[Reference[Self], str] from self:
         if len(self.samples) >= self.capacity:
             return Err("full")
         self.samples.append(sample)
         return Ok(self)
 
-    def append_all(mut self, samples: Borrowed[list[int]]) -> Result[Reference[Self], str] from self:
+    pub def append_all(mut self, samples: Borrowed[list[int]]) -> Result[Reference[Self], str] from self:
         for sample in samples:
             self.append(sample)?
         return Ok(self)
@@ -256,6 +264,68 @@ def score(tag: Borrowed[Tag]) -> int:
 ```
 
 At a call site, unpacking the call into new names takes the views out: each name in a borrowed position is a view of the caller's substituted place, and the call's loan lasts while those names are used. Each other name owns its element. Binding the whole tuple to one local holds the loan while the local is used.
+
+## View types
+
+A `class`, `model`, `enum` or newtype with a field or payload whose type holds a borrow is a view type. The borrow can be written directly as `Borrowed[T]`, `BorrowedMut[T]` or `Reference[T]`, or held by another view type. Each value of a view type carries exactly one source dependency, and the call that produces it names that source with its `from` clause. Storing the value in another field, container, result or closure preserves the dependency and makes the containing type a view type.
+
+A view value cannot outlive its source and prevents conflicting access to that source until its last dependent use. A view type has no automatic `Walk` or `Reconstruct` implementation. Published signatures preserve its source dependency, and crossing `await`, `yield` or a task boundary follows the ordinary rules for that borrow.
+
+A stored borrow and its produced view can use one source:
+
+```incan
+class Reader:
+    pub values: list[int]
+
+
+class Selection:
+    pub reader: Borrowed[Reader]
+
+
+def select(reader: Borrowed[Reader]) -> Selection from reader:
+    return Selection(reader=reader)
+
+
+def main() -> None:
+    reader = Reader(values=[1])
+    selection = select(reader)
+    println(selection.reader.values[0])
+```
+
+Returning a view of local storage under another declared source is refused with `INCAN-T0124`:
+
+```incan
+class Reader:
+    pub values: list[int]
+
+
+class Selection:
+    pub reader: Borrowed[Reader]
+
+
+class Catalog:
+    pub marker: int
+
+    def invalid(self) -> Selection from self:
+        reader = Reader(values=[1])
+        return Selection(reader=reader)  # refused: INCAN-T0124, reader is not the declared source
+```
+
+Building one view from independent sources is refused with `INCAN-T0124`:
+
+```incan
+class Reader:
+    pub values: list[int]
+
+
+class Selection:
+    pub left: Borrowed[Reader]
+    pub right: Borrowed[Reader]
+
+
+def select(left: Borrowed[Reader], right: Borrowed[Reader]) -> Selection from left:
+    return Selection(left=left, right=right)  # refused: INCAN-T0124, right is an independent source
+```
 
 ## Closures
 
@@ -351,12 +421,7 @@ def update(mut value: Owned[int]) -> int:
 
 `INCAN-T0124` reports a missing or invalid result source: no source clause on a borrowed result, a root outside the callable's parameters or receiver, a source that cannot grant the result's access, a return that does not come from the source, and borrowed components that need independent sources.
 
-`INCAN-T0123` reports an ownership boundary that the contract cannot express or prove: a stored field declared with an ownership mode, an ownership annotation used as a constructor, a borrow that would outlive its source, a callable annotation or native lifetime relationship that cannot represent a dependency, and suspension whose lifetime or thread-safety requirements cannot be proved. The program is refused; no copy, lease or weaker mode is substituted.
-
-```incan
-model Page:
-    title: Borrowed[str]  # refused: INCAN-T0123, a field cannot name the storage it borrows
-```
+`INCAN-T0123` reports an ownership boundary that the contract cannot express or prove: an ownership annotation used as a constructor, a borrow that would outlive its source, a callable annotation or native lifetime relationship that cannot represent a dependency, and suspension whose lifetime or thread-safety requirements cannot be proved. The program is refused; no copy, lease or weaker mode is substituted.
 
 ## Place-binding migration warning
 
