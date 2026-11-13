@@ -32,6 +32,7 @@ pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCa
         "member_identity" => member_identity(&parsed),
         "nominal_identity" => nominal_identity(&parsed),
         "type_selector" => type_selector(&parsed),
+        "shape_admission" => shape_admission(&parsed),
         _ => None,
     };
     let encode_ns = elapsed_ns(encode_started);
@@ -246,6 +247,35 @@ fn append_base128(output: &mut Vec<u8>, mut value: usize) {
     }
 }
 
+/// Encode the written-shape admission result without consulting expected corpus fields.
+fn shape_admission(document: &Value) -> Option<Vec<u8>> {
+    let fields = document.get("written")?.get("fields")?.as_array()?;
+    let mut previous: Option<&str> = None;
+    let mut seen = std::collections::BTreeSet::new();
+    for (index, field) in fields.iter().enumerate() {
+        let identity = field.get("id")?.as_str()?;
+        if identity.len() != 12 || decode_hex(identity).is_none() {
+            return Some(admission_refusal("IdentityWidth", &format!("/fields/{index}/id")));
+        }
+        if !seen.insert(identity) {
+            return Some(admission_refusal("DuplicateIdentity", &format!("/fields/{identity}")));
+        }
+        if previous.is_some_and(|value| value >= identity) {
+            return Some(admission_refusal("IdentityOrder", "/fields"));
+        }
+        previous = Some(identity);
+    }
+    Some(vec![0])
+}
+
+/// Encode one typed admission refusal as a stable kind and path pair.
+fn admission_refusal(kind: &str, path: &str) -> Vec<u8> {
+    let mut result = vec![1];
+    append_frame(&mut result, kind.as_bytes());
+    append_frame(&mut result, path.as_bytes());
+    result
+}
+
 impl SemanticCase {
     /// Preserve an explicit unsupported state without placeholder bytes or timings.
     fn unsupported() -> Self {
@@ -293,6 +323,13 @@ mod tests {
         );
         assert_eq!(selector.kind, 0);
         assert_eq!(selector.encoded, selector.decoded);
+
+        let admission = evaluate_semantic_case(
+            "shape_admission".to_string(),
+            "{\"written\":{\"fields\":[{\"id\":\"82244417\"}]}}".to_string(),
+        );
+        assert_eq!(admission.kind, 0);
+        assert_eq!(admission.encoded[0], 1);
 
         let unsupported = evaluate_semantic_case("binary_decode".to_string(), "{\"id\":\"red\"}".to_string());
         assert_eq!(unsupported.kind, 1);
