@@ -290,6 +290,7 @@ pub fn checked_owner_record_outputs(
                 .into_iter()
                 .flat_map(|owner| dependencies.reachable_dependencies_from([owner.clone()]))
                 .filter(|dependency| &dependency.target != canonical)
+                .filter(|dependency| projectable_source_dependency(&dependency.target))
                 .filter_map(|dependency| match &dependency.target.origin {
                     incan_semantics_core::SymbolOrigin::Package { library, module_path } => {
                         StableDeclarationId::from_canonical(&dependency.target, None, None).map(|stable| {
@@ -353,6 +354,21 @@ pub fn checked_owner_record_outputs(
             })))
         })
         .collect()
+}
+
+/// Only declarations with independent source projections cross a checked owner's publication boundary.
+fn projectable_source_dependency(dependency: &incan_semantics_core::CanonicalSymbolId) -> bool {
+    !matches!(
+        dependency.kind,
+        incan_semantics_core::SemanticSourceTargetKind::Local
+            | incan_semantics_core::SemanticSourceTargetKind::Parameter
+            | incan_semantics_core::SemanticSourceTargetKind::Receiver
+            | incan_semantics_core::SemanticSourceTargetKind::GenericBinder
+            | incan_semantics_core::SemanticSourceTargetKind::Module
+            | incan_semantics_core::SemanticSourceTargetKind::RustItem
+            | incan_semantics_core::SemanticSourceTargetKind::Builtin
+            | incan_semantics_core::SemanticSourceTargetKind::Other(_)
+    )
 }
 
 impl crate::typechecker::TypeChecker {
@@ -707,6 +723,28 @@ mod tests {
                 .stable_dependency_identity(&dependency)
                 .map(|identity| identity.render_compact()),
             Some("member/field:engine_programs::transaction#in(model:engine_programs::ProgramOutcome)[0]".into())
+        );
+        Ok(())
+    }
+
+    /// A body-local parameter read, as in Oven's `apple_sdk.retained_sdk`, is not an external source dependency.
+    #[test]
+    fn body_parameter_reads_stay_inside_their_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def retained_sdk(basis: str) -> Result[str, str]:\n    if basis != \"selected\":\n        return Err(\"the developer selection changed\")\n    return Ok(basis)\n";
+        let program = program(source)?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["apple_sdk".into()]));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let outputs = checked_owner_record_outputs(&program, &checker, &["apple_sdk".into()])?;
+        let CheckedOwnerRecordOutput::Value(owner) = &outputs[0] else {
+            return Err("retained_sdk did not publish a checked owner".into());
+        };
+        assert!(
+            owner.dependency_reads.is_empty(),
+            "body-local parameter escaped as a source dependency: {:?}",
+            owner.dependency_reads
         );
         Ok(())
     }
