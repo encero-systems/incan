@@ -776,11 +776,15 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
         if field.node != "" or field.selector == "" or values != ["checked"]:
             return Err(CodecFault.Malformed)
         end = 1
-    # An empty native-call inventory, recorded on no node.
+    # Native call refinements retain the exact checked carrier type at their source node. A final empty marker remains
+    # explicit so absence cannot be confused with a producer that omitted the family.
     elif field.family == "native-call":
-        if field.node != "" or field.selector != "empty" or values != ["true"]:
+        if field.selector in ["argument-type", "result-type"] and field.node != "":
+            end = type_end(values, 0, 0)?
+        elif field.node == "" and field.selector == "empty" and values == ["true"]:
+            end = 1
+        else:
             return Err(CodecFault.Unsupported("native-call"))
-        end = 1
     # Final types: an empty marker, or the type of an expression or a binding.
     elif field.family == "final-type":
         if field.selector == "empty" and values == ["true"]:

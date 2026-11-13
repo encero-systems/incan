@@ -1010,6 +1010,16 @@ fn restore_local(
                 return Err(NodeBindingError::MissingNode);
             }
         }
+        "native-call" if matches!(row[2].as_str(), "argument-type" | "result-type") => {
+            let map = if row[2] == "argument-type" {
+                &mut local.calls.body_ir_native_argument_types
+            } else {
+                &mut local.calls.body_ir_call_result_types
+            };
+            if map.insert(span, read_type(&mut values)?).is_some() {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
         "identity-context" if row[2] == "reference" => {
             restore_identity_context(positions, local, record_identities, span, &mut values)?;
         }
