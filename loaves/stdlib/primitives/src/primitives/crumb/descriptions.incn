@@ -4,7 +4,12 @@ from crate.primitives.crumb.admission import allows_absence
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.hashes import description_hash
-from crate.primitives.crumb.registrations import KindRegistry
+from crate.primitives.crumb.registrations import (
+    CachedAdmission,
+    CachedAdmissionField,
+    CachedAdmissionVariant,
+    KindRegistry,
+)
 from crate.primitives.crumb.encoding_buffer import EncodingBuffer
 from crate.primitives.crumb.selectors import parse_key, parse_type
 from crate.primitives.crumb.metadata_values import (
@@ -70,8 +75,12 @@ pub model StoredDescription:
 
 pub def admit(source: Description, registry: KindRegistry, mut budget: Budget) -> Result[StoredDescription, CrumbError]:
     """Check the entire D tree before extracting core facts; retain every uninterpreted property."""
+    if let Some(cached) = cached_registry_admission(source, registry, budget)?:
+        return Ok(cached)
+    bytes_before, elements_before = budget.codec_allowance()
     digest = description_hash(source.metadata, budget)?
-    kind = registry.shape(text(get(source.metadata, "kind", budget)?)?, budget)?
+    kind_name = text(get(source.metadata, "kind", budget)?)?
+    kind = registry.shape(kind_name, budget)?
     key = binary(get(source.metadata, "nominal", budget)?)?
     selector = parse_key(key, kind, budget)?
     text(get(source.metadata, "path", budget)?)?
@@ -83,17 +92,172 @@ pub def admit(source: Description, registry: KindRegistry, mut budget: Budget) -
     else:
         variants = admit_variants(items(get(source.metadata, "variants", budget)?)?, budget)?
     charge_copy(source.metadata, budget)?
-    return Ok(
-        StoredDescription(
-            source=source,
-            kind=kind,
-            key=key,
-            selector=selector,
-            digest=digest.digest,
-            fields=fields,
-            variants=variants,
-        ),
+    admitted = StoredDescription(
+        source=source,
+        kind=kind,
+        key=key,
+        selector=selector,
+        digest=digest.digest,
+        fields=fields,
+        variants=variants,
     )
+    if kind_name == "Record" or kind_name == "Enum":
+        bytes_after, elements_after = budget.codec_allowance()
+        store_registry_admission(
+            registry,
+            CachedAdmission(
+                metadata=source.metadata,
+                kind=admitted.kind,
+                key=admitted.key,
+                selector=admitted.selector,
+                digest=admitted.digest,
+                fields=cache_fields(admitted.fields),
+                variants=cache_variants(admitted.variants),
+                byte_charge=bytes_before - bytes_after,
+                element_charge=elements_before - elements_after,
+                metadata_depth=metadata_depth(source.metadata),
+            ),
+        )
+    return Ok(admitted)
+
+
+def cached_registry_admission(
+    source: Description,
+    registry: KindRegistry,
+    mut budget: Budget,
+) -> Result[Option[StoredDescription], CrumbError]:
+    """Replay the persistent registry cache only after exact metadata equality proves it unchanged."""
+    current = registry.take_admission()
+    match current:
+        None => return Ok(None)
+        Some(cached) =>
+            registry.restore_admission(Some(cached))
+            if not same_metadata(cached.metadata, source.metadata):
+                return Ok(None)
+            budget.charge_bytes(cached.byte_charge)?
+            budget.charge_elements(cached.element_charge)?
+            for _ in range(cached.metadata_depth):
+                budget.enter()?
+            for _ in range(cached.metadata_depth):
+                budget.leave()?
+            return Ok(
+                Some(
+                    StoredDescription(
+                        source=source,
+                        kind=cached.kind,
+                        key=cached.key,
+                        selector=cached.selector,
+                        digest=cached.digest,
+                        fields=restore_fields(cached.fields),
+                        variants=restore_variants(cached.variants),
+                    ),
+                ),
+            )
+
+
+def store_registry_admission(registry: KindRegistry, cached: CachedAdmission) -> None:
+    """Retain the most recent complete core admission on the persistent registry carrier."""
+    registry.restore_admission(Some(cached))
+
+
+def cache_fields(fields: list[StoredField]) -> list[CachedAdmissionField]:
+    mut result: list[CachedAdmissionField] = []
+    for field in fields:
+        result.append(
+            CachedAdmissionField(
+                position=field.position,
+                metadata=field.metadata,
+                shape=field.shape,
+                required_before=field.required_before,
+                eligible_before=field.eligible_before,
+            ),
+        )
+    return result
+
+
+def restore_fields(fields: list[CachedAdmissionField]) -> list[StoredField]:
+    mut result: list[StoredField] = []
+    for field in fields:
+        result.append(
+            StoredField(
+                position=field.position,
+                metadata=field.metadata,
+                shape=field.shape,
+                required_before=field.required_before,
+                eligible_before=field.eligible_before,
+            ),
+        )
+    return result
+
+
+def cache_variants(variants: list[StoredVariant]) -> list[CachedAdmissionVariant]:
+    mut result: list[CachedAdmissionVariant] = []
+    for variant in variants:
+        result.append(
+            CachedAdmissionVariant(
+                position=variant.position,
+                identity=variant.identity,
+                metadata=variant.metadata,
+                fields=cache_fields(variant.fields),
+            ),
+        )
+    return result
+
+
+def restore_variants(variants: list[CachedAdmissionVariant]) -> list[StoredVariant]:
+    mut result: list[StoredVariant] = []
+    for variant in variants:
+        result.append(
+            StoredVariant(
+                position=variant.position,
+                identity=variant.identity,
+                metadata=variant.metadata,
+                fields=restore_fields(variant.fields),
+            ),
+        )
+    return result
+
+
+def metadata_depth(value: Metadata) -> int:
+    """Return the maximum D-tree nesting needed to preserve warm-cache depth refusals."""
+    match value:
+        Metadata.List(items) =>
+            mut depth = 1
+            for item in items:
+                depth = max([depth, 1 + metadata_depth(item)])
+            return depth
+        Metadata.Map(entries) =>
+            mut depth = 1
+            for entry in entries:
+                depth = max([depth, 1 + metadata_depth(entry.value)])
+            return depth
+        _ => return 1
+
+
+def same_metadata(left: Metadata, right: Metadata) -> bool:
+    """Compare complete metadata without relying on an unchecked payload-enum PartialEq."""
+    match (left, right):
+        (Metadata.Null, Metadata.Null) => return true
+        (Metadata.Boolean(a), Metadata.Boolean(b)) => return a == b
+        (Metadata.Integer(a), Metadata.Integer(b)) => return a == b
+        (Metadata.Text(a), Metadata.Text(b)) => return a == b
+        (Metadata.Binary(a), Metadata.Binary(b)) => return a == b
+        (Metadata.Symbol(a), Metadata.Symbol(b)) => return a == b
+        (Metadata.List(a), Metadata.List(b)) =>
+            if len(a) != len(b):
+                return false
+            for index in range(len(a)):
+                if not same_metadata(a[index], b[index]):
+                    return false
+            return true
+        (Metadata.Map(a), Metadata.Map(b)) =>
+            if len(a) != len(b):
+                return false
+            for index in range(len(a)):
+                if a[index].key != b[index].key or not same_metadata(a[index].value, b[index].value):
+                    return false
+            return true
+        _ => return false
 
 
 def admit_fields(values: list[Metadata], mut budget: Budget) -> Result[list[StoredField], CrumbError]:
