@@ -273,14 +273,12 @@ def codec_fault_controls(encoded: bytes, record: CheckedRecord) -> None:
     assert fault_is(decode_record(encoded, "wrong", record.owner, record.root), "profile")
     assert fault_is(decode_record(encoded, CHECKER_PROFILE, "wrong", record.root), "owner")
     assert fault_is(decode_record(encoded, CHECKER_PROFILE, record.owner, "wrong"), "body")
-    match encoded.decode():
-        Ok(text) =>
-            assert fault_is(
-                decode_record((text + "x").encode(), CHECKER_PROFILE, record.owner, record.root),
-                "malformed",
-            )
-        Err(_) =>
-            assert false
+    mut trailing: list[u8] = []
+    for byte in encoded:
+        octet: u8 = byte.wrapping_resize()
+        trailing.append(octet)
+    trailing.append(120)
+    assert fault_is(decode_record(trailing, CHECKER_PROFILE, record.owner, record.root), "malformed")
     assert fault_is(decode_record(encoded[:len(encoded) - 1], CHECKER_PROFILE, record.owner, record.root), "malformed")
     assert fault_is(decode_record(b"01:x", CHECKER_PROFILE, record.owner, record.root), "malformed")
     assert fault_is(decode_record(b"1:\xff", CHECKER_PROFILE, record.owner, record.root), "malformed")
