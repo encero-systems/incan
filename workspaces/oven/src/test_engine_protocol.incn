@@ -163,7 +163,7 @@ pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     check_collection_during_execution()?
     process_lifecycle()?
     check_project_directory_selection()?
-    check_worker_retirement()?
+    check_worker_residency()?
     identity = Identity(
         store_id="store",
         profile="profile",
@@ -266,8 +266,8 @@ def check_project_directory_selection() -> Result[None, str]:
     return Ok(None)
 
 
-def check_worker_retirement() -> Result[None, str]:
-    """A one-activation compiler retires, and a body edit reads frozen compiler records instead of whole manifests."""
+def check_worker_residency() -> Result[None, str]:
+    """One compiler serves both activations without retaining bulk decoded manifests, and reads frozen records."""
     scratch = scratch_directory()?
     root = scratch.path()
     project = root.joinpath("project")
@@ -301,6 +301,7 @@ def check_worker_retirement() -> Result[None, str]:
         return Err(f"initial records run: status={outcome.status.code()} stderr={error}")
     initial_manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest")
     initial_record_reads = invocation_count(observations, "incan_frontend::read_compiler_records")
+    initial_records = compiler_records_read(observations)?
     write(source, "def main() -> None:\n    println(\"hullo\")\n")?
     edited = Command
         .new(binary)
@@ -326,6 +327,12 @@ def check_worker_retirement() -> Result[None, str]:
     record_reads = invocation_count(observations, "incan_frontend::read_compiler_records") - initial_record_reads
     if record_reads > 6:
         return Err(f"one-body edit reconstructed {record_reads} compiler-record groups")
+    records = compiler_records_read(observations)? - initial_records
+    if records > 86:
+        return Err(f"one-body edit opened {records} compiler records")
+    processes = invocation_processes(observations, "incan_rustc_driver::compile_unit")?
+    if processes != 1:
+        return Err(f"initial build and one-body edit used {processes} unit compiler processes")
     # Stop this test's disposable engine before the temporary directory leaves scope.
     store = root.joinpath("store")
     mut identity = service_identity(store)?
@@ -344,8 +351,8 @@ def check_worker_retirement() -> Result[None, str]:
     waits = len([line for line in lines if "worker_observer_joined" in line])
     detached = len([line for line in lines if "worker_observer_detached" in line])
     releases = len([line for line in lines if "worker_heap_released" in line])
-    # The edited request has its own owner generation, so both one-activation worker monitors detach independently.
-    assert waits == 0 and detached == 2 and releases == 0, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
+    # Both activations restore the same resident worker and release its free heap before the next request.
+    assert waits == 2 and detached == 0 and releases == 2, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
     released_requests = [line for line in lines if "engine request released:" in line]
     assert len(released_requests) == 2, "request teardown did not release its payload verification observations"
     assert "captures=0 verification=0" in released_requests[0]
@@ -377,6 +384,51 @@ def invocation_count(directory: Path, function: str) -> int:
                                     ):
                                         count += 1
     return count
+
+
+def compiler_records_read(directory: Path) -> Result[int, str]:
+    """Sum the independently addressed values opened by completed compiler-record group demands."""
+    mut count = 0
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file():
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in text.split("\n"):
+            if line == "":
+                continue
+            document = parse(line).map_err((error) => error.message())?
+            if (
+                not json_text_is(document, "kind", "begin")
+                or not json_text_is(document, "function", "incan_frontend::read_compiler_records")
+            ):
+                continue
+            fields = document.require("fields").map_err((error) => error.message())?.expect_object().map_err(
+                (error) => error.message(),
+            )?
+            count += fields["records"].expect_int().map_err((error) => error.message())?
+    return Ok(count)
+
+
+def invocation_processes(directory: Path, function: str) -> Result[int, str]:
+    """Count invocation files containing the requested compiler entry; one resident process owns one such file."""
+    mut count = 0
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file():
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        mut found = false
+        for line in text.split("\n"):
+            if line == "":
+                continue
+            document = parse(line).map_err((error) => error.message())?
+            if (
+                json_text_is(document, "kind", "begin")
+                and json_text_is(document, "function", function)
+            ):
+                found = true
+        if found:
+            count += 1
+    return Ok(count)
 
 
 def json_text_is(document: JsonValue, key: str, expected: str) -> bool:

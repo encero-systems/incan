@@ -294,7 +294,7 @@ def generation_of(toolchain: Toolchain) -> Result[str, str]:
     return generation_for(compiler_fingerprint(toolchain)?)
 
 
-def slot_endpoint(directory: Path, generation: str, slot: int) -> Result[Endpoint, str]:
+pub def slot_endpoint(directory: Path, generation: str, slot: int) -> Result[Endpoint, str]:
     """
     The private endpoint of one slot of the pool bound to the complete compiler fingerprint and inherited
     nonincidental environment. Its lock stays beside the console sinks; its sockets go to the user's endpoint

@@ -23,8 +23,9 @@ mod active_plan;
 mod callbacks;
 mod library_verification;
 mod rustc_queries;
+pub(crate) mod stable_link;
 
-pub(crate) use active_plan::ActivePlan;
+pub(crate) use active_plan::PlanReader;
 use library_verification::*;
 pub(crate) use rustc_queries::*;
 
@@ -32,9 +33,11 @@ pub(crate) use rustc_queries::*;
 static COMPILATION: Mutex<()> = Mutex::new(());
 /// Query providers are function pointers, so the invocation's source-owned plan has an explicit scoped slot, with its
 /// name index.
-static PLAN: Mutex<Option<Arc<ActivePlan>>> = Mutex::new(None);
+static PLAN: Mutex<Option<Arc<PlanReader>>> = Mutex::new(None);
 /// Typed errors raised while loading metadata or source locations survive rustc's fatal-error boundary.
 static FAILURE: Mutex<Option<PlanError>> = Mutex::new(None);
+/// Qualified development reuse requires tracked plan records and content-addressed Darwin link inputs.
+const NATIVE_INCREMENTAL_QUALIFIED: bool = true;
 
 /// Stable name of rustc's empty synthetic input; authored source spans are loaded separately from the native plan.
 const SYNTHETIC_SOURCE_NAME: &str = "source";
@@ -72,6 +75,8 @@ struct Callbacks {
     /// A program has no consumers of its item paths, so its callables may live in per-file modules. A library's paths
     /// are published, and a test harness selects each test by its module path.
     partition: bool,
+    /// Record-backed native definitions and their complete per-definition tracked inputs.
+    reader: Arc<PlanReader>,
 }
 
 /// Compile a plan supplied directly by an Incan caller function into a native binary.
@@ -100,6 +105,7 @@ pub fn compile(
     kind: UnitKind,
     overflow_checks: bool,
     library_facades: Vec<crate::library_exports::LibraryFacade>,
+    plan_record_report: Option<&Path>,
 ) -> Result<(), DriverError> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
     let mut timing = crate::native_timing::Timing::requested();
@@ -142,7 +148,9 @@ pub fn compile(
 
     // ---- Fresh rustc session and planned MIR ----
     let plan = Arc::new(plan);
-    *PLAN.lock().map_err(|_| DriverError::State)? = Some(Arc::new(ActivePlan::new(Arc::clone(&plan))));
+    let reader = Arc::new(PlanReader::new(Arc::clone(&plan), plan_record_report).map_err(DriverError::Invocation)?);
+    reader.write_fingerprint_report()?;
+    *PLAN.lock().map_err(|_| DriverError::State)? = Some(Arc::clone(&reader));
     *FAILURE.lock().map_err(|_| DriverError::State)? = None;
     let mut args = compilation_arguments(crate_name, output, identity, kind, overflow_checks);
     let all = externs.iter().chain(&shared).cloned().collect::<Vec<_>>();
@@ -151,12 +159,19 @@ pub fn compile(
         args.push(format!("{name}={}", path.display()));
     }
     let search = crate::native_search::dependencies(&all, dependency_search_paths);
-    if shared_store.is_some() {
+    if let Some(store) = shared_store {
         args.extend(["-Cprefer-dynamic".into(), "-Crpath".into()]);
         // Rustc already constructs the native Darwin invocation; bypass the C driver's extra process for edits.
+        // The adapter interposes its own executable only to give every object a content-derived store path before
+        // forwarding the otherwise unchanged argument vector to ld. Darwin records those paths in the debug map.
         let darwin = identity.target.ends_with("-apple-darwin");
         if darwin {
-            args.push("-Clinker=/usr/bin/ld".into());
+            let linker = std::env::current_exe().map_err(|error| {
+                DriverError::Invocation(format!("cannot locate stable development linker: {error}"))
+            })?;
+            args.push(format!("-Clinker={}", linker.display()));
+            args.push("-Clinker-flavor=ld".into());
+            args.push(format!("-Clink-arg={}{}", stable_link::STORE_ARGUMENT, store.display()));
         }
         // The executable is linked in the store and run from a copy elsewhere, so its libraries are also found
         // through absolute search paths, which do not depend on where the copy lives.
@@ -166,6 +181,33 @@ pub fn compile(
         args.extend(sysroot_linkage(identity));
     }
     args.extend_from_slice(rustc_args);
+    if NATIVE_INCREMENTAL_QUALIFIED && kind == UnitKind::Program && overflow_checks && reader.has_record_inputs() {
+        if let Some(report) = plan_record_report {
+            args.retain(|argument| !argument.starts_with("-Cmetadata=incan-unit-"));
+            let parent = report
+                .parent()
+                .ok_or_else(|| DriverError::Invocation("native plan report has no private unit directory".into()))?;
+            let compiler = incan_semantics_core::semantic_digest::semantic_digest(&identity.toolchain)
+                .map_err(|error| DriverError::Invocation(format!("cannot fingerprint compiler identity: {error}")))?;
+            let incremental = parent.join(format!(
+                ".{crate_name}.{}.rustc-incremental",
+                compiler.trim_start_matches("sha256:")
+            ));
+            std::fs::create_dir_all(&incremental).map_err(|error| {
+                DriverError::Invocation(format!("cannot create private incremental directory: {error}"))
+            })?;
+            let metadata = incan_semantics_core::semantic_digest::semantic_digest(&vec![
+                crate_name.to_owned(),
+                identity.toolchain.clone(),
+                identity.target.clone(),
+            ])
+            .map_err(|error| DriverError::Invocation(format!("cannot fingerprint crate identity: {error}")))?;
+            args.push("-C".into());
+            args.push(format!("metadata={}", metadata.trim_start_matches("sha256:")));
+            args.push("-C".into());
+            args.push(format!("incremental={}", incremental.display()));
+        }
+    }
     timing.mark("native_arguments");
     let mut callbacks = Callbacks {
         features,
@@ -179,6 +221,7 @@ pub fn compile(
         rustc_started: std::time::Instant::now(),
         codegen_started: None,
         partition: kind == UnitKind::Program,
+        reader,
     };
     let capture = crate::native_timing::Capture::begin();
     let result = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut callbacks));

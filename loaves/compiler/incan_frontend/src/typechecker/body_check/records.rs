@@ -122,11 +122,23 @@ impl TypeChecker {
         self.produced_final_records.get(&owner)
     }
 
-    /// Borrow either the final value evaluated in this activation or the graph-selected settled predecessor.
+    /// Borrow either the final value evaluated in this activation or a producer-validated settled predecessor.
     pub(crate) fn available_final_record(&self, owner: Span) -> Option<&Fields> {
         self.produced_final_records
             .get(&owner)
             .or_else(|| self.selected_final_records.get(&owner))
+    }
+
+    /// Stage one scalar product's settled value until its body passes the current physical-scope check.
+    pub(crate) fn retain_callable_final_record(&mut self, owner: Span, fields: Fields) {
+        self.callable_final_record_reuse.insert(owner, fields);
+    }
+
+    /// Publish the staged final value only after the matching scalar body is accepted for this activation.
+    pub(in crate::typechecker) fn select_callable_final_record(&mut self, owner: Span) {
+        if let Some(fields) = self.callable_final_record_reuse.remove(&owner) {
+            self.selected_final_records.insert(owner, fields);
+        }
     }
 
     /// Clone the explicit refusal returned by this activation's direct final producer.

@@ -131,6 +131,29 @@ pub(super) fn summary(dir: &Path, name: &str) -> Result<Option<Summary>, LoafInd
 
 /// Read one installed standard/runtime Loaf through its independently addressed records.
 pub(super) fn read(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest>, String)>, LoafIndexError> {
+    read_selected(dir, name, |_| true)
+}
+
+/// Read only the manifest records executable-resolution admission actually consults.
+///
+/// Top-level callable identities and the executable descriptor live in contract metadata. Nominal records add the
+/// public members that representation coverage must admit. Callable, alias, constant, static, vocabulary and Rust
+/// ABI values are unrelated to this demand and remain unopened.
+pub(super) fn read_execution(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest>, String)>, LoafIndexError> {
+    read_selected(dir, name, |family| {
+        matches!(
+            family,
+            "metadata" | "contract-metadata" | "model" | "class" | "trait" | "enum" | "newtype"
+        )
+    })
+}
+
+/// Read one semantic projection from a sealed Loaf group without opening unselected values.
+fn read_selected(
+    dir: &Path,
+    name: &str,
+    demanded: impl Fn(&str) -> bool,
+) -> Result<Option<(Arc<LibraryManifest>, String)>, LoafIndexError> {
     let Some(set) = installed().map_err(|reason| unreadable(dir, name, reason))? else {
         return Ok(None);
     };
@@ -154,15 +177,18 @@ pub(super) fn read(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest
     if entries.is_empty() {
         return Ok(None);
     }
+    let selected = select_records(entries, &prefix, dir, name)?
+        .into_iter()
+        .filter(|(family, _, _)| demanded(family))
+        .collect::<Vec<_>>();
+    let records = selected.len();
     let _invocation = tracing::trace_span!(
         target: "incan::invocation",
         "incan_frontend::read_compiler_records",
         loaf = name,
-        records = entries.len()
+        records
     )
     .entered();
-    let selected = select_records(entries, &prefix, dir, name)?;
-    let records = selected.len();
     let opened = {
         let _open = tracing::trace_span!(
             target: "incan::invocation",

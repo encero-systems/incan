@@ -763,6 +763,12 @@ mod tests {
             cold.produced_local_record(edited_owner),
             "the direct local producer must match the cold oracle byte for byte"
         );
+        let retained_owner = current.declarations.get(1).ok_or("missing retained owner")?.span;
+        assert_eq!(
+            warm.available_final_record(retained_owner),
+            cold.available_final_record(retained_owner),
+            "the retained body must republish its settled final record"
+        );
         assert_eq!(scalar_module(&current, &warm), scalar_module(&current, &cold));
         Ok(())
     }
