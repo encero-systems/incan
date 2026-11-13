@@ -1,0 +1,11 @@
+[project]
+name = "interop_c_declared_header_mismatch"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[interop.c]
+
+[[interop.c.targets]]
+headers = ["interop/include/magnitude.h"]
