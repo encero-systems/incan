@@ -419,7 +419,12 @@ def view_unit_directory(store: Path, fact: Fact, destination: Path, prefix: str 
     if prefix == "" and destination.joinpath(VIEW_RECORD).is_file():
         marker = read_json(destination.joinpath(VIEW_RECORD))?
         same_identity = required_text(marker, "identity")? == fact.identity
-    if same_identity and not destination.is_symlink() and destination.is_dir() and all_same(store, files, destination, prefix):
+    if (
+        same_identity
+        and not destination.is_symlink()
+        and destination.is_dir()
+        and all_same(store, files, destination, prefix)
+    ):
         return Ok(None)
     make_directory(destination.parent())?
     staged = Path(f"{destination.0}.view-{id()}")
@@ -623,6 +628,26 @@ pub def viewed_fact(directory: Path) -> Result[Option[Path], str]:
         Some(fact) =>
             repair_view(store, fact, directory)?
             return Ok(Some(directory))
+
+
+pub def restore_recorded_view(artifact: Path) -> Result[bool, str]:
+    """Restore one present, changed payload view from the Bakery digest named by its producer record."""
+    record = record_path(artifact)
+    if not artifact.is_file() or not record.is_file():
+        return Ok(false)
+    document = read_json(record)?
+    digest = required_text(document, "payload")?
+    store = bakery()?
+    source = payload_path(store, digest)
+    if not payload_intact(store, digest):
+        return Err(StoreError(kind="integrity", object=source.0, detail="unit payload is damaged").message())
+    if same_file(source, artifact):
+        return Ok(true)
+    staged = Path(f"{artifact.0}.view-{id()}")
+    clone(source, staged, false)?
+    rename(staged.0, artifact.0).map_err((error) => f"{artifact.0}: {error}")?
+    admit_view(artifact)?
+    return Ok(true)
 
 
 def repair_view(store: Path, fact: Fact, directory: Path) -> Result[None, str]:

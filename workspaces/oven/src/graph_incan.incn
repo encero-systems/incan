@@ -6,19 +6,24 @@ from std.fs import Path
 from features import FeatureRequest
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
-from files import make_directory, read, remove
+from files import make_directory, read, read_json, remove
 from graph_cache import content_facts, interface_inputs, is_unchecked, publish_unchecked
 from graph_exports import claim_export, export_file, exported, pending_export, publish_export as admit_export
 from publication import publish, publish_binary
 from unit_freshness import (
+    artifact_files,
     compiler_fingerprint,
     description_digest,
     cache_identities,
     fingerprint,
     linked_natives,
     native_identities,
+    record,
+    staleness,
+    unit_key,
     vocabulary_facts,
 )
+from json_fields import required_text
 from unit_compiler import crate_name, run_compiler, write_unit
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf, describe
@@ -45,6 +50,38 @@ pub def inspect_incan(
     reader: ManifestReader = ManifestReader(),
     facets: list[LocalFacet] = [],
 ) -> Result[Path, str]:
+    """Export one unit while keeping its prepared description private to this ordinary inspection caller."""
+    path, _ = inspect_incan_with_unit(
+        source,
+        profile,
+        toolchain,
+        built,
+        interfaces,
+        features,
+        defaults,
+        source_loaves,
+        owner,
+        registry,
+        reader,
+        facets,
+    )?
+    return Ok(path)
+
+
+pub def inspect_incan_with_unit(
+    source: Path,
+    profile: str,
+    toolchain: Toolchain,
+    built: Dict[str, NativeCrate] = {},
+    interfaces: Dict[str, Path] = {},
+    features: list[str] = [],
+    defaults: bool = true,
+    source_loaves: list[UnitLoaf] = [],
+    owner: Option[Path] = None,
+    registry: Option[RegistryUnits] = None,
+    reader: ManifestReader = ManifestReader(),
+    facets: list[LocalFacet] = [],
+) -> Result[Tuple[Path, UnitDescription], str]:
     """
     Export one unit, checked or not, once per digest; dependency interfaces stay in the inspection cache and never
     claim native artifacts.
@@ -71,8 +108,14 @@ pub def inspect_incan(
     if source.name() == "lib.incn":
         unit.kind = "library"
     ready = prepared_unit(unit, toolchain, built, interfaces, source_loaves, registry)?
-    # 2. Only portable checked exports can be shared by another requester.
-    project = Path(unit.project_root)
+    # 2. Export the prepared unit through the same cache used by explicit native-library publication.
+    path = inspect_prepared(ready, toolchain, owner)?
+    return Ok((path, ready))
+
+
+pub def inspect_prepared(ready: UnitDescription, toolchain: Toolchain, owner: Option[Path] = None) -> Result[Path, str]:
+    """Retain one prepared unit's checked graph without selecting dependencies or compiling native code."""
+    project = Path(ready.project_root)
     mut cache_root = project
     if let Some(selected) = owner:
         cache_root = selected
@@ -86,7 +129,7 @@ pub def inspect_incan(
         return Ok(entry)
     pending_entry = pending_export(entry, Path(ready.source))?
     directory = interface_directory(pending_entry)
-    interface = directory.joinpath(f"{artifact_stem(unit.package)}.incnlib")
+    interface = directory.joinpath(f"{artifact_stem(ready.package)}.incnlib")
     # 3. The compiler writes its output beside the entry's name, so a failed export leaves nothing at the entry itself.
     description = write_unit(ready, crate_name(ready), Some(cache_root))?
     output = Path(f"{pending_entry.0}.{id()}.analysis")
@@ -99,15 +142,45 @@ pub def inspect_incan(
     status = run_compiler(toolchain, arguments)?
     record_work(Operation.GraphExport, entry.parent().name(), clock)
     if status != 0:
-        return Err(f"Incan graph export failed for {unit.package}")
+        return Err(f"Incan graph export failed for {ready.package}")
     # 4. The graph, the interface and any note are published whole, a note before the entry it describes.
-    publish_export(pending_entry, interface, unit.package, output, pending, ready.kind == "library")?
+    publish_export(pending_entry, interface, ready.package, output, pending, ready.kind == "library")?
     if is_unchecked(pending_entry) or not portable:
         return Ok(pending_entry)
     current, still_portable = export_digest(ready, project, toolchain)?
     if current != entry.parent().name() or not still_portable:
         return Err("Incan graph inputs changed during export")
     return admit_export(entry, pending_entry)
+
+
+pub def publish_prepared_graph(
+    ready: UnitDescription,
+    toolchain: Toolchain,
+    directory: Path,
+    cached: Path,
+) -> Result[bool, str]:
+    """Publish a checked export beside an exact bakery view or direct-release publication, with an independent proof."""
+    if is_unchecked(cached):
+        return Err(f"{ready.package}: cannot publish an unchecked graph")
+    key = unit_key(ready, toolchain)?
+    marker = directory.joinpath("fact.json")
+    release = directory.joinpath(".oven-inputs.sha256")
+    mut current_native = false
+    if marker.is_file():
+        current_native = required_text(read_json(marker)?, "identity")? == key.digest
+    elif release.is_file():
+        current_native = staleness(artifact_files(directory, ready.package)?, release, key)? == ""
+    if not current_native:
+        return Ok(false)
+    graph = directory.joinpath(f"{artifact_stem(ready.package)}.incngraph")
+    stamp = directory.joinpath(".oven-codegraph.sha256")
+    if staleness([graph], stamp, key)? == "":
+        return Ok(true)
+    if unit_key(ready, toolchain)?.digest != key.digest:
+        return Err(f"{ready.package}: inputs changed while exporting its graph; retry the build")
+    publish_binary(graph, cached.read_bytes().map_err((error) => error.message())?)?
+    record(stamp, key, [graph])?
+    return Ok(true)
 
 
 def prepared_unit(

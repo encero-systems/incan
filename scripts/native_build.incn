@@ -76,6 +76,7 @@ model PreparedStandardPackage:
     unit: Path
     staged: Path
     parent: Path
+    requested_graph: bool
     temporary: TemporaryDirectory
     child: Step
 
@@ -159,6 +160,7 @@ pub def build_runtime(
     manifest = read_json(toolchain.joinpath("toolchain.json"))?
     driver = absolute(manifest_text(manifest, "driver")?, toolchain)
     sysroot = absolute(manifest_text(manifest, "sysroot")?, toolchain)
+    requested_graph = codegraph_on_request(manifest)?
     output = context.repo.joinpath(f"{RUNTIME_PROJECT}/target/incan/native/release")
     output.mkdir(true, true).map_err((error) => error.message())?
     unit = output.joinpath(f"{RUNTIME_NAME}.unit.json")
@@ -171,8 +173,17 @@ pub def build_runtime(
     )?
     write_json(unit, runtime_unit(prepared, source_interfaces)?)?
     identify(context, helper, unit, false, f"{phase_prefix}runtime-identify")?
-    compile_library(context, driver, sysroot, unit, RUNTIME_NAME, output, f"{phase_prefix}runtime-build")?
+    compile_library(
+        context,
+        driver,
+        sysroot,
+        unit,
+        RUNTIME_NAME,
+        output,
+        f"{phase_prefix}runtime-build",
+    )?
     publish(context, helper, unit, output, false, f"{phase_prefix}runtime-publish")?
+    require_requested_codegraph(requested_graph, output, RUNTIME_NAME)?
     if not install:
         return Ok(output.joinpath(f"lib{RUNTIME_NAME}.rlib"))
     return install_runtime(context, helper, unit, output)
@@ -562,6 +573,7 @@ def prepare_standard_package(
     manifest = read_json(toolchain.joinpath("toolchain.json"))?
     driver = absolute(manifest_text(manifest, "driver")?, toolchain)
     sysroot = absolute(manifest_text(manifest, "sysroot")?, toolchain)
+    requested_graph = codegraph_on_request(manifest)?
     parent = toolchain.joinpath(f"loaves/{name}")
     parent.mkdir(true, true).map_err((error) => error.message())?
     temporary = TemporaryDirectory.try_new_with(f".{profile}.", "", Some(parent)).map_err((error) => error.message())?
@@ -586,6 +598,7 @@ def prepare_standard_package(
             unit=unit,
             staged=staged,
             parent=parent,
+            requested_graph=requested_graph,
             temporary=temporary,
             child=compile_library_step(context, driver, sysroot, unit, name, staged, phase)?,
         ),
@@ -598,8 +611,9 @@ def complete_standard_package(
     package: PreparedStandardPackage,
     admitted: Path,
 ) -> Result[None, str]:
-    """Publish and select one fully compiled standard unit, then admit it for dependent descriptions."""
+    """Publish and select one fully compiled standard unit, prove its requested graph, and admit it to consumers."""
     publish(context, helper, package.unit, package.staged, false, f"std-{package.package}-{package.profile}-publish")?
+    require_requested_codegraph(package.requested_graph, package.staged, package.name)?
     output = package.parent.joinpath(package.profile)
     replace_directory(package.temporary, output)?
     if package.profile == "release":
@@ -641,7 +655,7 @@ def compile_library_step(
     output: Path,
     phase: str,
 ) -> Result[Step, str]:
-    """Describe one native library compiler child without starting it, so independent units may share a scheduler."""
+    """Describe one native library compiler child that retains its graph from the same checked activation."""
     arguments_file = Path(f"{unit.0}.arguments")
     flags = lines(arguments_file.read_text("utf-8", "strict").map_err((error) => error.message())?)
     arguments = ["--unit", unit.0, name, output.joinpath(f"lib{name}.rlib").0, sysroot.0, "--library"] + flags
@@ -716,6 +730,16 @@ def publish(
             context.evidence.joinpath(f"{phase}.log"),
         ),
     )
+
+
+def require_requested_codegraph(requested: bool, directory: Path, name: str) -> Result[None, str]:
+    """Require a requested graph retained by the native compiler's existing checked activation."""
+    if not requested:
+        return Ok(None)
+    graph = directory.joinpath(f"{name}.incngraph")
+    if not graph.is_file():
+        return Err(f"native compilation produced no requested graph: {graph.0}")
+    return Ok(None)
 
 
 def helper_json(
@@ -950,7 +974,7 @@ def append_interface(inventory: Path, name: str, directory: Path) -> Result[None
 
 
 def runtime_artifacts() -> list[str]:
-    """Return every byte-bearing runtime generation artifact in stable order."""
+    """Return the native runtime generation artifacts and its separately proved requested inspection graph."""
     return [
         f"lib{RUNTIME_NAME}.rlib",
         f"{RUNTIME_NAME}.incnlib",
@@ -1069,6 +1093,13 @@ def entries(value: JsonValue, key: str) -> Result[list[JsonValue], str]:
     match value.get(key):
         Some(found) => return found.expect_array().map_err((error) => error.message())
         None => return Ok([])
+
+
+def codegraph_on_request(value: JsonValue) -> Result[bool, str]:
+    """Use separate graph publication only after the selected compiler generation advertises support."""
+    match value.get("codegraph_on_request"):
+        None => return Ok(false)
+        Some(found) => return found.expect_bool().map_err((error) => f"codegraph_on_request: {error.message()}")
 
 
 def manifest_text(value: JsonValue, key: str) -> Result[str, str]:

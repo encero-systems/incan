@@ -382,9 +382,9 @@ def check_definition_selection(incan: str, project: Path, identifier: str) -> Re
 
 def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     """
-    An explicitly built provider ships a portable binary graph; consumers read it despite unbuilt source edits.
+    A provider ships a portable binary graph only when requested; consumers read it despite unbuilt source edits.
 
-    1. Build the provider. Its compiled Loaf carries a version-one binary graph that names no physical project root.
+    1. An ordinary build omits the graph; an explicit request publishes a version-one portable graph.
     2. A consumer reads the published graph, though the provider's source has since become invalid.
     3. A corrupt view is restored; stored damage refuses lookup until exact bytes are explicitly re-admitted.
     4. A provider with no published graph is exported once, and the export is stable.
@@ -401,10 +401,18 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     if checked.code != Some(0):
         return Err(f"provider inspection failed: {checked.stderr}")
     checked_digest = helper_digest(checked.stdout)?
-    # 1. The provider's compiled Loaf carries a version-one binary graph that names no physical project root.
+    # 1. Native compilation does not pay for inspection until publication is explicitly requested.
     built = invoke(incan, ["build", source.0], project, environment)?
     if built.code != Some(0):
         return Err(f"provider build failed: {built.stderr}")
+    if len(published_graphs(project, provider)) != 0:
+        return Err("an ordinary provider build collected an unrequested graph")
+    native_before = library_artifacts(provider)?
+    requested = invoke(incan, ["build", source.0, "--codegraph"], project, environment)?
+    if requested.code != Some(0):
+        return Err(f"provider graph publication failed: {requested.stderr}")
+    if library_artifacts(provider)? != native_before:
+        return Err("requesting a graph recompiled an unchanged native library")
     consumer = invoke(incan, ["build", "src/main.incn"], project, environment)?
     if consumer.code != Some(0):
         return Err(f"consumer preparation failed: {consumer.stderr}")
