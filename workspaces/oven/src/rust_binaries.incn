@@ -30,7 +30,7 @@ from rust_build import (
     library_arguments,
     linking,
     materialized_arguments,
-    native_compiler_fingerprint,
+    native_linker_fingerprint,
     selected_toolchain,
     toolchain_libraries,
 )
@@ -232,7 +232,7 @@ def binary_key(
     Use the same observed-source identity as libraries, refusing location-dependent embedded runtime paths. Evidence
     that is absent or stale names no identity, so the caller scans before anything is hashed.
     """
-    compiler = native_compiler_fingerprint(request.rustc)?
+    compiler = native_linker_fingerprint(request.rustc)?
     facts = arguments + [f"domain={facet.domain.value()}", f"unstable={declared.unstable}"]
     key = library_key(
         Path(facet.project),
