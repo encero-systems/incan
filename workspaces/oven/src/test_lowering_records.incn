@@ -82,6 +82,39 @@ pub def test_two_standalone_sources_share_one_store_without_body_collision() -> 
     return stop_example_engine(binary, store)
 
 
+pub def test_generic_body_edit_matches_cold_build() -> Result[None, str]:
+    """A generic body edit in a warm store reproduces the cold plan, executable and output for both instances."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("generic.incn")
+    warm_store = root.joinpath("warm-store")
+    write(source, generic_source("0"))?
+    _ = lowering_example_run(binary, source, warm_store, "1\na\n42")?
+    write(source, generic_source("1"))?
+    _ = lowering_example_run(binary, source, warm_store, "2\nb\n42")?
+    plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
+    executable = root.joinpath("target/incan/release/bin/generic").read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, warm_store)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    cold_store = root.joinpath("cold-store")
+    _ = lowering_example_run(binary, source, cold_store, "2\nb\n42")?
+    cold_plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
+    cold_executable = root.joinpath("target/incan/release/bin/generic").read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, cold_store)?
+    assert plan == cold_plan, "warm and cold generic plans differ"
+    assert executable == cold_executable, "warm and cold generic executables differ"
+    return Ok(None)
+
+
+def generic_source(index: str) -> str:
+    """A generic used at two instances beside an unrelated function, selecting the element at `index`."""
+    generic = "def pick[T](items: list[T]) -> T:\n    return items[" + index + "]\n\n\n"
+    unrelated = "def unrelated(value: int) -> int:\n    return value + 1\n\n\n"
+    entry = "def main() -> None:\n    println(pick([1, 2, 3]))\n    println(pick([\"a\", \"b\", \"c\"]))\n    println(unrelated(41))\n"
+    return generic + unrelated + entry
+
+
 def verify_signature_edit(binary: str, root: Path) -> Result[None, str]:
     """A signature edit through a symlink must recheck main and reproduce the cold plan and executable."""
     root.mkdir(true, true).map_err((error) => error.message())?
