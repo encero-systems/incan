@@ -1,8 +1,11 @@
 """Explicit profile-kind shapes and optional printing orders, without execution authority."""
 
+from rust::std::cell import RefCell
+from rust::std::rc import Rc
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
-from crate.primitives.crumb.types import NominalKind
+from crate.primitives.crumb.types import FieldShape, NominalKind, TypeNode
+from crate.primitives.crumb.values import Metadata
 
 
 pub model PropertyGroupOrder:
@@ -28,6 +31,40 @@ pub model KindRegistration:
     pub property_groups: list[PropertyGroupOrder]
 
 
+pub model CachedAdmissionField:
+    """One registry-retained core field without importing the description implementation."""
+
+    pub position: int
+    pub metadata: Metadata
+    pub shape: FieldShape
+    pub required_before: int
+    pub eligible_before: int
+
+
+pub model CachedAdmissionVariant:
+    """One registry-retained core enum variant."""
+
+    pub position: int
+    pub identity: bytes
+    pub metadata: Metadata
+    pub fields: list[CachedAdmissionField]
+
+
+pub model CachedAdmission:
+    """The last complete core admission, keyed by its retained digest and guarded by metadata equality."""
+
+    pub metadata: Metadata
+    pub kind: NominalKind
+    pub key: bytes
+    pub selector: TypeNode
+    pub digest: bytes
+    pub fields: list[CachedAdmissionField]
+    pub variants: list[CachedAdmissionVariant]
+    pub byte_charge: int
+    pub element_charge: int
+    pub metadata_depth: int
+
+
 pub class KindRegistry:
     """
     An explicitly admitted local set of profile kinds; core Record and Enum remain built in.
@@ -39,6 +76,7 @@ pub class KindRegistry:
     """
 
     entries: dict[str, KindRegistration]
+    admission: Rc[RefCell[Option[CachedAdmission]]]
 
     @staticmethod
     pub def create(registrations: list[KindRegistration], mut budget: Budget) -> Result[Self, CrumbError]:
@@ -60,7 +98,15 @@ pub class KindRegistry:
                 groups.add(group.name)
                 check_order(group.order)?
             entries[registration.kind] = registration
-        return Ok(KindRegistry(entries=entries))
+        return Ok(KindRegistry(entries=entries, admission=Rc.new(RefCell.new(None))))
+
+    pub def take_admission(self) -> Option[CachedAdmission]:
+        """Move the private core-admission cache out for one checked access."""
+        return self.admission.replace(None)
+
+    pub def restore_admission(self, cached: Option[CachedAdmission]) -> None:
+        """Restore or replace the private core-admission cache."""
+        _ = self.admission.replace(cached)
 
     pub def shape(self, kind: str, mut budget: Budget) -> Result[NominalKind, CrumbError]:
         """Resolve only a core kind or an explicitly registered profile kind."""
