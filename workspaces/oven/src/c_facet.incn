@@ -123,22 +123,22 @@ pub def resolve_configuration(facet: CFacet, name: str) -> Result[ResolvedConfig
     return Ok(ResolvedConfiguration(name=name, defines=defines, sources=sources))
 
 
-def refused(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str) -> IntakeError:
+pub def refused(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str) -> IntakeError:
     """An unlocated refusal; the caller attaches the manifest source."""
     return IntakeError(kind=kind, manifest=manifest, field=field, detail=detail, location=None)
 
 
-def as_table(value: TomlValue, manifest: str, field: list[str]) -> Result[Dict[str, TomlValue], IntakeError]:
+pub def as_table(value: TomlValue, manifest: str, field: list[str]) -> Result[Dict[str, TomlValue], IntakeError]:
     """Require a TOML table."""
     return value.as_table().map_err((error) => refused(manifest, field, IntakeErrorKind.Invalid, error.message()))
 
 
-def as_text(value: TomlValue, manifest: str, field: list[str]) -> Result[str, IntakeError]:
+pub def as_text(value: TomlValue, manifest: str, field: list[str]) -> Result[str, IntakeError]:
     """Require a TOML string."""
     return value.as_str().map_err((error) => refused(manifest, field, IntakeErrorKind.Invalid, error.message()))
 
 
-def as_texts(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:
+pub def as_texts(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:
     """Require a TOML array of strings."""
     entries = value.as_array().map_err((error) => refused(manifest, field, IntakeErrorKind.Invalid, error.message()))?
     mut items: list[str] = []
@@ -147,7 +147,7 @@ def as_texts(value: TomlValue, manifest: str, field: list[str]) -> Result[list[s
     return Ok(items)
 
 
-def known_keys(
+pub def known_keys(
     values: Dict[str, TomlValue],
     keys: list[str],
     manifest: str,

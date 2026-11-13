@@ -6,6 +6,7 @@ The compiler reads no manifest; it reads this. Its fields are the compiler's `in
 from std.fs import Path
 from std.json import JsonValue
 from clove_units import CloveUnit, clove_unit
+from c_interop import LinkedArchive, linked_archives
 from features import ActiveGraph, FeatureRequest, resolve_features
 from home import StandardPackage, dependency_artifact_dir, standard_artifact_dir, standard_packages
 from intake import LocalIntake, LocalProject, ManifestReader, intake, source_root_of
@@ -68,6 +69,9 @@ pub model UnitDescription:
     # compiled into its archive. An archive's identity is part of the description, so a rebuilt Clove rebuilds the
     # units that link it.
     pub cloves: list[CloveUnit] = []
+    # The package-owned static archives the host target's `[interop.c]` entry declares, in link order. Oven
+    # passes them to rustc; they are not part of the compiler's description.
+    pub c_archives: list[LinkedArchive] = []
     # Registry declared by this unit's own package; absent does not invent a default root key.
     pub registry_id: Option[str] = None
     pub externs: list[NativeCrate] = []
@@ -334,6 +338,7 @@ def project_unit(
             contract_models=own.intent.contract_models,
             c_headers=own.intent.c_headers,
             cloves=project_cloves(own, profile, active, projects)?,
+            c_archives=linked_archives(own.root, own.intent.c_targets)?,
             vocab_entry=own.intent.vocab_entry,
             toolchain_access=own.intent.toolchain_access,
             facets=active.facets,
