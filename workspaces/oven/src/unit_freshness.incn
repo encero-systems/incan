@@ -1,6 +1,9 @@
 """Identify units by compiled sources, effective invocation facts and recorded linked identities; guard reuse locally."""
 
 from rust::incan_loaf_names import artifact_stem, native_crate_name
+from rust::std::cell import RefCell
+from rust::std::ops import Deref, DerefMut
+from rust::std::rc import Rc
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
@@ -58,6 +61,45 @@ pub def artifact_identity(path: Path) -> Result[str, str]:
     result = observe(path)
     record_work(Operation.ArtifactIdentity, path.0, clock)
     return Ok(result?.stamp)
+
+
+model ArtifactIdentityState:
+    """Artifact generations first observed by one request."""
+
+    pub files: Dict[str, str] = {}
+
+
+pub model ArtifactIdentities:
+    """One request's shared artifact identities, revalidated before the request accepts them."""
+
+    pub state: Rc[RefCell[ArtifactIdentityState]] = Rc.new(RefCell.new(ArtifactIdentityState()))
+
+    pub def identity(self, path: Path) -> Result[str, str]:
+        """Observe one artifact only on its first use in this request."""
+        mut held = self.state.as_ref().borrow_mut()
+        return retained_artifact_identity(path, held.deref_mut())
+
+    pub def verify(self) -> Result[None, str]:
+        """Refuse any artifact whose filesystem generation changed after its retained observation."""
+        held = self.state.as_ref().borrow()
+        return verify_artifact_identities(held.deref())
+
+
+def retained_artifact_identity(path: Path, mut state: &mut ArtifactIdentityState) -> Result[str, str]:
+    """Return this request's first observed generation of `path`."""
+    if path.0 in state.files:
+        return Ok(state.files[path.0])
+    identity = artifact_identity(path)?
+    state.files[path.0] = identity
+    return Ok(identity)
+
+
+def verify_artifact_identities(state: &ArtifactIdentityState) -> Result[None, str]:
+    """Reconcile retained generations once after every checked-context consumer has finished."""
+    for path in sorted([key for key in state.files.keys()]):
+        if observe(Path(path))?.stamp != state.files[path]:
+            return Err(f"artifact changed while preparing request: {path}")
+    return Ok(None)
 
 
 pub model Key:

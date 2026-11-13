@@ -38,7 +38,7 @@ from toolchain import (
 from compiler_facts import admit_fact, verified_fact, relocate_fact, fact_identity
 from unit_rust import add_extern, compile_library_unit, prepare_linked
 from unit_publication import published_identity, record_path, record_payload, verified_payload, relocate_payload
-from unit_freshness import artifact_files, record, fingerprint
+from unit_freshness import ArtifactIdentities, artifact_files, record, fingerprint
 from engine_client import service_identity
 from engine_endpoint import connect_with
 from engine_messages import Message, Stop
@@ -82,6 +82,7 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     verify_native_alias_artifacts(scratch.path().joinpath("aliases"))?
     verify_requested_loaf_roots(scratch.path().joinpath("requested-roots"))?
     verify_checked_product_context(scratch.path().joinpath("checked-products"))?
+    verify_request_artifact_identities(scratch.path().joinpath("artifact-identities"))?
     verify_semantic_edit_matrix(scratch.path().joinpath("semantic-edit-matrix"))?
     return Ok(None)
 
@@ -561,7 +562,7 @@ def verify_checked_product_context(scratch: Path) -> Result[None, str]:
     library.kind = "library"
     library.loaves = []
     library.search = [selected_search.0]
-    count_work(scratch.joinpath("toolchain").0 + "/")
+    count_work(selected_search.0 + "/")
     first_library = prepare_linked(library, setup.toolchain)?
     observed = finish_counting()
     assert observed.identities == 0, "frozen toolchain search artifacts were observed again"
@@ -579,6 +580,26 @@ def verify_checked_product_context(scratch: Path) -> Result[None, str]:
     assert first_program.checked_context is not None
     assert first_program.checked_context == second_program.checked_context
     assert first_program.checked_products == second_program.checked_products
+    return Ok(None)
+
+
+def verify_request_artifact_identities(scratch: Path) -> Result[None, str]:
+    """One request observes each artifact once and refuses a generation changed before the request commits."""
+    artifact = scratch.joinpath("libshared.rlib")
+    write(artifact, "first generation")?
+    identities = ArtifactIdentities()
+    count_work(scratch.0 + "/")
+    first = identities.identity(artifact)?
+    assert identities.identity(artifact)? == first
+    observed = finish_counting()
+    assert observed.identities == 1, f"shared artifact was identified {observed.identities} times"
+    write(artifact, "second generation")?
+    match identities.verify():
+        Ok(_) =>
+            assert false, "an artifact changed within one request retained its first identity"
+        Err(reason) =>
+            assert artifact.0 in reason
+    assert ArtifactIdentities().identity(artifact)? != first
     return Ok(None)
 
 
