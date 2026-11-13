@@ -242,16 +242,7 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
         ["test", loaf_a.joinpath("tests/test_one.incn").0, "--profile", "release"],
         ["test", loaf_a.joinpath("tests/test_two.incn").0, "--profile", "release"],
     ]
-    assert [item.directory for item in planned] == [
-        "",
-        "",
-        "",
-        models.0,
-        lowering.0,
-        loaf_b.0,
-        loaf_a.0,
-        loaf_a.0,
-    ]
+    assert [item.directory for item in planned] == ["", "", "", models.0, lowering.0, loaf_b.0, loaf_a.0, loaf_a.0]
     assert oven_test_state_root(root, "").0 == root.joinpath(".agents/state/release-oven-tests").0
     assert oven_test_state_root(root, "/outside/oven-tests").0 == "/outside/oven-tests"
     assert [item.reservation for item in planned] == [

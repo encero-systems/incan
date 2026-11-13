@@ -11,15 +11,11 @@ from workers import Invocation, invoke_many
 
 # The largest partition file read back; a bigger one is discarded and discovered again.
 const MAX_PLAN_BYTES: int = 2_000_000
+
+
 pub def group_compilation_request(incan: str, arguments: list[str], project: Path, duration_hint: int) -> Invocation:
     """One compatible shared compilation, with no runner-imposed deadline or cached execution outcome."""
-    return Invocation(
-        program=incan,
-        arguments=arguments,
-        project=project,
-        selector=None,
-        duration_hint=duration_hint,
-    )
+    return Invocation(program=incan, arguments=arguments, project=project, selector=None, duration_hint=duration_hint)
 
 
 model Entry:
