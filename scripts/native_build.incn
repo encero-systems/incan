@@ -181,11 +181,9 @@ pub def build_runtime(
         RUNTIME_NAME,
         output,
         f"{phase_prefix}runtime-build",
-        requested_graph,
     )?
     publish(context, helper, unit, output, false, f"{phase_prefix}runtime-publish")?
-    if requested_graph:
-        publish_codegraph(context, helper, unit, output, f"{phase_prefix}runtime-codegraph")?
+    require_requested_codegraph(requested_graph, output, RUNTIME_NAME)?
     if not install:
         return Ok(output.joinpath(f"lib{RUNTIME_NAME}.rlib"))
     return install_runtime(context, helper, unit, output)
@@ -602,7 +600,7 @@ def prepare_standard_package(
             parent=parent,
             requested_graph=requested_graph,
             temporary=temporary,
-            child=compile_library_step(context, driver, sysroot, unit, name, staged, phase, requested_graph)?,
+            child=compile_library_step(context, driver, sysroot, unit, name, staged, phase)?,
         ),
     )
 
@@ -613,16 +611,9 @@ def complete_standard_package(
     package: PreparedStandardPackage,
     admitted: Path,
 ) -> Result[None, str]:
-    """Publish and select one fully compiled standard unit and requested graph, then admit it to consumers."""
+    """Publish and select one fully compiled standard unit, prove its requested graph, and admit it to consumers."""
     publish(context, helper, package.unit, package.staged, false, f"std-{package.package}-{package.profile}-publish")?
-    if package.requested_graph:
-        publish_codegraph(
-            context,
-            helper,
-            package.unit,
-            package.staged,
-            f"std-{package.package}-{package.profile}-codegraph",
-        )?
+    require_requested_codegraph(package.requested_graph, package.staged, package.name)?
     output = package.parent.joinpath(package.profile)
     replace_directory(package.temporary, output)?
     if package.profile == "release":
@@ -663,14 +654,11 @@ def compile_library_step(
     name: str,
     output: Path,
     phase: str,
-    requested_graph: bool,
 ) -> Result[Step, str]:
-    """Describe one native library compiler child without starting it, so independent units may share a scheduler."""
+    """Describe one native library compiler child that retains its graph from the same checked activation."""
     arguments_file = Path(f"{unit.0}.arguments")
     flags = lines(arguments_file.read_text("utf-8", "strict").map_err((error) => error.message())?)
-    mut arguments = ["--unit", unit.0, name, output.joinpath(f"lib{name}.rlib").0, sysroot.0, "--library"] + flags
-    if requested_graph:
-        arguments.append("--no-codegraph")
+    arguments = ["--unit", unit.0, name, output.joinpath(f"lib{name}.rlib").0, sysroot.0, "--library"] + flags
     return Ok(
         Step(
             name=phase,
@@ -694,13 +682,9 @@ def compile_library(
     name: str,
     output: Path,
     phase: str,
-    requested_graph: bool,
 ) -> Result[None, str]:
     """Compile one prepared unit through the candidate driver with its exact emitted native arguments."""
-    return require_native_step(
-        context,
-        compile_library_step(context, driver, sysroot, unit, name, output, phase, requested_graph)?,
-    )
+    return require_native_step(context, compile_library_step(context, driver, sysroot, unit, name, output, phase)?)
 
 
 def identify(context: NativeContext, helper: Path, unit: Path, metadata_only: bool, phase: str) -> Result[None, str]:
@@ -748,26 +732,14 @@ def publish(
     )
 
 
-def publish_codegraph(
-    context: NativeContext,
-    helper: Path,
-    unit: Path,
-    directory: Path,
-    phase: str,
-) -> Result[None, str]:
-    """Request one graph from the checked export producer after the exact native publication is proved."""
-    return require_native_step(
-        context,
-        step(
-            context,
-            phase,
-            helper.0,
-            [context.repo.0, "codegraph", unit.0, directory.0],
-            common_environment(context),
-            context.repo,
-            context.evidence.joinpath(f"{phase}.log"),
-        ),
-    )
+def require_requested_codegraph(requested: bool, directory: Path, name: str) -> Result[None, str]:
+    """Require a requested graph retained by the native compiler's existing checked activation."""
+    if not requested:
+        return Ok(None)
+    graph = directory.joinpath(f"{name}.incngraph")
+    if not graph.is_file():
+        return Err(f"native compilation produced no requested graph: {graph.0}")
+    return Ok(None)
 
 
 def helper_json(
