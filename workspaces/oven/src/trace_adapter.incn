@@ -36,6 +36,8 @@ model ObservationChannels:
     # A scoped contract observer uses this same producer boundary without opening an output channel.
     counting_prefix: str = ""
     counts: Dict[str, int] = {}
+    frozen_prefixes: list[str] = []
+    frozen_counts: Dict[str, int] = {}
     emitter: Option[Emitter] = None
     failure: Option[TraceError] = None
     reported: bool = false
@@ -63,7 +65,9 @@ model ObservationChannels:
     def work_clock(mut self) -> Option[Clock]:
         """Start only a requested JEC or canonical engine observation."""
         self.load()
-        return begin(self.canonical != "" or self.legacy_work != "" or self.counting_prefix != "")
+        return begin(
+            self.canonical != "" or self.legacy_work != "" or self.counting_prefix != "" or len(self.frozen_prefixes) > 0,
+        )
 
     def work(mut self, category: Operation, key: str, clock: Option[Clock], bytes: int) -> None:
         """Publish a completed operation and its requested compatibility projection."""
@@ -74,6 +78,9 @@ model ObservationChannels:
                 if self.counting_prefix != "" and key.startswith(self.counting_prefix):
                     name = category.value()
                     self.counts[name] = self.counts.get(name, 0) + 1
+                if self.is_frozen(key):
+                    name = category.value()
+                    self.frozen_counts[name] = self.frozen_counts.get(name, 0) + 1
                 if self.legacy_work != "":
                     self.export_work(started, category, key, bytes)
                 else:
@@ -114,6 +121,37 @@ model ObservationChannels:
         self.counting_prefix = ""
         self.counts = {}
         return counts
+
+    def count_frozen_work(mut self, prefixes: list[str]) -> None:
+        """Start counting operations on admitted toolchain roots and the selected Rust toolchain."""
+        self.frozen_prefixes = prefixes
+        self.frozen_counts = {}
+
+    def finish_frozen_counting(mut self) -> WorkCounts:
+        """End one request's whole frozen-input observation and release its retained table."""
+        counts = WorkCounts(
+            reads=self.frozen_counts.get("file_read", 0),
+            hashes=self.frozen_counts.get("file_hash", 0),
+            parses=self.frozen_counts.get("manifest_parse", 0),
+            decodes=self.frozen_counts.get("json_decode", 0),
+            stats=self.frozen_counts.get("file_stat", 0),
+            pages=self.frozen_counts.get("installation_page", 0),
+            identities=self.frozen_counts.get("artifact_identity", 0),
+        )
+        self.frozen_prefixes = []
+        self.frozen_counts = {}
+        return counts
+
+    def is_frozen(self, key: str) -> bool:
+        """Whether an observed locator belongs to one admitted frozen installation root."""
+        if len(self.frozen_prefixes) == 0:
+            return false
+        if "/.rustup/" in key:
+            return true
+        for prefix in self.frozen_prefixes:
+            if key.startswith(prefix):
+                return true
+        return false
 
     def reason(mut self, message: str) -> None:
         """Record reasoning once at its producer and export the requested legacy line."""
@@ -179,6 +217,16 @@ pub def count_work(prefix: str) -> None:
 pub def finish_counting() -> WorkCounts:
     """Release the scoped observer and return its measured operation counts."""
     return CHANNELS.finish_counting()
+
+
+pub def count_frozen_work(prefixes: list[str]) -> None:
+    """Observe every traced operation against one request's admitted frozen roots."""
+    CHANNELS.count_frozen_work(prefixes)
+
+
+pub def finish_frozen_counting() -> WorkCounts:
+    """Release the request's frozen-input observer and return its measured operation counts."""
+    return CHANNELS.finish_frozen_counting()
 
 
 pub def work_clock() -> Option[Clock]:

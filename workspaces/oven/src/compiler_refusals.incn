@@ -29,7 +29,7 @@ from owner_client import status_code
 from publication import publish_binary
 from toolchain import Toolchain
 from unit import UnitDescription
-from unit_freshness import Key, artifact_files, fingerprint, unit_key
+from unit_freshness import Key, artifact_available, artifact_files, fingerprint, unit_key
 from pub::incan_platform.trace import Operation
 from jec import begin, record, invocation_key
 
@@ -164,7 +164,7 @@ def complete_artifacts(unit: UnitDescription) -> Result[bool, str]:
     """A missing linked artifact is a preparation failure and must be retried even beside a source diagnostic."""
     for loaf in unit.loaves:
         for artifact in artifact_files(Path(loaf.dir), loaf.name)?:
-            if not artifact.is_file():
+            if not artifact_available(artifact):
                 return Ok(false)
     return Ok(true)
 

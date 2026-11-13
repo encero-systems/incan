@@ -6,8 +6,8 @@ cheaply as its kind allows.
   verified once at admission and cannot change after it. Capture derives their roots once from what the home admitted
   and never stats, reads or hashes anything under them.
 - **Editable inputs in reach** are the request roots, the files their recorded lookups resolve to, the paths where a
-  recorded lookup found nothing, `loaf.toml`, the lock, the vocabulary and other files `loaf.toml` declares, and the
-  toolchain pin. `build` and `bake` add the package's membership: its source root, listed with the compiler's rules.
+  recorded lookup found nothing, `loaf.toml`, the lock, the vocabulary and other files `loaf.toml` declares. `build`
+  and `bake` add the package's membership: its source root, listed with the compiler's rules.
 - **Editable inputs out of reach**, such as unrelated sibling fixtures, are never listed, checked or read.
 
 Freshness builds on the metadata observation of `observation`. A file whose device, inode, size, nanosecond
@@ -21,7 +21,6 @@ Metadata only detects change. An epoch's identity is the digest of its roots, it
 its inputs, so touching a file without changing its bytes leaves the identity as it was.
 """
 
-from rust::std::str import from_utf8
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
@@ -31,7 +30,8 @@ from home import home, standard_library_dir
 from manifest_intent import parse_document
 from loaf_local_graph import unique
 from observation import SETTLE_SECONDS, FileMetadata, children, file_metadata
-from toolchain import Toolchain, described_toolchain, toolchain_file
+from toolchain import Toolchain, load_toolchain, toolchain_file
+from installation_page import admitted_identity
 from unit import manifest_candidates
 
 const EPOCH_SCHEMA: str = "incan.engine.build-epoch/2"
@@ -319,6 +319,9 @@ pub model AdmittedHome:
     pub pin: str
     # The standard Loaves' sources.
     pub standard_library: str
+    # The immutable installation page and frozen roots already decoded from it.
+    pub admission: str
+    pub pinned: list[str]
 
     pub def frozen_roots(self) -> list[str]:
         """
@@ -347,7 +350,20 @@ pub model CaptureResult:
 
 pub def admitted_home() -> Result[AdmittedHome, str]:
     """The admitted home this Oven runs with."""
-    return Ok(AdmittedHome(home=home()?.0, pin=toolchain_file()?.0, standard_library=standard_library_dir()?.0))
+    pin = toolchain_file()?
+    toolchain = load_toolchain()?
+    admission = match admitted_identity(pin.parent())?:
+        Some(identity) => identity
+        None => return Err("toolchain installation has no admitted page")
+    return Ok(
+        AdmittedHome(
+            home=home()?.0,
+            pin=pin.0,
+            standard_library=standard_library_dir()?.0,
+            admission=admission,
+            pinned=toolchain_roots(toolchain),
+        ),
+    )
 
 
 pub def capture(
@@ -415,7 +431,6 @@ model Capture:
     recorded: Dict[str, CapturedInput] = {}
     recorded_listings: Dict[str, CapturedListing] = {}
     recorded_declarations: Dict[str, Declarations] = {}
-    recorded_admitted: list[str] = []
     recorded_witnesses: list[str] = []
 
     def remember(mut self, previous: Option[BuildEpoch]) -> None:
@@ -429,24 +444,13 @@ model Capture:
                     self.recorded_listings[listing.path] = listing
                 for declarations in epoch.declarations:
                     self.recorded_declarations[declarations.manifest] = declarations
-                self.recorded_admitted = epoch.admitted
                 self.recorded_witnesses = [witness.path for witness in epoch.witnesses()]
 
     def take_frozen_roots(mut self) -> Result[None, str]:
         """
-        Derive the frozen roots once: from the home, and from what the toolchain pin names.
-
-        1. The pin is an editable input in reach, checked metadata first.
-        2. An unchanged pin keeps the admitted roots recorded with it; a pin read now names them afresh.
+        Select the frozen roots and exact installation-page identity admitted before this request.
         """
-        # 1. The pin selects the installed toolchain; the toolchain's own files are frozen.
-        admission = self.editable(self.admitted.pin, InputRole.ToolchainPin)?
-        match admission:
-            Admission.Read(content) => self.pinned = pinned_roots(self.admitted.pin, content)?
-            Admission.Missing => return Err(f"{self.admitted.pin}: no toolchain is installed")
-            # 2. An unchanged pin names what it named before.
-            Admission.Reused => self.pinned = self.recorded_admitted
-            _ => pass
+        self.pinned = sorted(self.admitted.pinned + [self.admitted.pin, f"installation:{self.admitted.admission}"])
         self.frozen = self.admitted.frozen_roots()
         return Ok(None)
 
@@ -764,14 +768,6 @@ def stable_across_read(before: FileMetadata, after: FileMetadata) -> bool:
     """
     same_file = before.device == after.device and before.inode == after.inode and before.mode == after.mode
     return same_file and before.size == after.size and before.modified_ns == after.modified_ns
-
-
-def pinned_roots(pin: str, content: bytes) -> Result[list[str], str]:
-    """The admitted roots a toolchain pin names: compiler, Rust installation, fact caches, native closure, registry."""
-    text = str(from_utf8(content).map_err((error) => f"{pin}: {error}")?)
-    document = parse(text).map_err((error) => f"{pin}: {error.message()}")?
-    toolchain = described_toolchain(document, Path(pin).parent()).map_err((failed) => f"{pin}: {failed}")?
-    return Ok(toolchain_roots(toolchain))
 
 
 def toolchain_roots(toolchain: Toolchain) -> list[str]:

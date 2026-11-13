@@ -15,6 +15,7 @@ from sealed_set import Profile, Record, SetSpec, admit, export_set, mapped_value
 from pub::incan_platform.store import begin, commit, get, lease, put
 from store_path_conversion import snapshot
 from unit_freshness import fingerprint
+from frozen_inputs import admit_observations
 
 const PROFILE: str = "incan.registry-page/2"
 
@@ -44,6 +45,17 @@ pub def recall_catalog(key: str) -> Result[Option[Catalog], str]:
             spec = specification(key, digest)
             mapped = mapped_value(view, spec, spec.records[0], digest).map_err((error) => error.message())?
             catalog = decode(mapped).map_err((detail) => f"registry page {digest}: {detail}")?
+            mut paths: list[str] = []
+            for unit in catalog.units:
+                paths.append(unit.directory)
+                if unit.artifact != "":
+                    paths.append(unit.artifact)
+                else:
+                    paths.append(sole_library(unit).map_err((error) => error)?)
+            mut stamps: list[str] = []
+            for index in range(len(catalog.units)):
+                stamps.extend([catalog.listings[index], catalog.artifacts[index]])
+            admit_observations(paths, stamps)
             # 3. The caller validates observations within its separately measured completion boundary.
             record_work(Operation.RegistryPage, key, clock, mapped.len())
             return Ok(Some(catalog))

@@ -10,6 +10,7 @@ from manifest_vocabulary import manifest_vocabulary
 from publication import publish
 from unit import UnitDescription
 from compile_time_trust import cover_loaf, missing_stop
+from frozen_inputs import observation as frozen_observation
 
 
 pub def admit_vocabulary(unit: UnitDescription) -> Result[UnitDescription, str]:
@@ -29,7 +30,7 @@ pub def admit_vocabulary(unit: UnitDescription) -> Result[UnitDescription, str]:
         if loaf.name in ready.not_prepared_loaves:
             continue
         manifest = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib")
-        if not manifest.is_file():
+        if frozen_observation(manifest).is_none() and not manifest.is_file():
             continue
         declared = manifest_vocabulary(manifest)?
         artifact = declared.desugarer

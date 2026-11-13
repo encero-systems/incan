@@ -21,7 +21,8 @@ from json_fields import required_text
 from observation import observe, file_metadata, trace
 from pub::incan_platform.store import Snapshot, begin, commit, put, view_snapshot
 from store_path_conversion import claim, snapshot
-from toolchain import load_toolchain, toolchain_file
+from toolchain import load_toolchain, toolchain_directory
+from installation_page import admitted_identity
 from unit_freshness import compiler_fingerprint, fingerprint
 from rust_target import inherited_deployment_configuration
 from home import home
@@ -201,28 +202,40 @@ def physical_store_identity(store: Path) -> Result[str, str]:
 
 def installation_compiler(store: Path) -> Result[str, str]:
     """Admit a toolchain once per installation in the home catalog, independent of project or alternate stores."""
-    pin = toolchain_file()?
-    stamp = observe(pin)?.stamp
+    directory = toolchain_directory()?
+    admission = selected_installation(directory)?
     configuration = inherited_deployment_configuration()? + [get_or("SDKROOT", ""), get_or("INCAN_STDLIB", "")]
-    key = f"incan.engine.installation\t{fingerprint([pin.0] + configuration)?}"
+    key = f"incan.engine.installation\t{fingerprint([directory.0, admission] + configuration)?}"
     selected = snapshot(store).map_err((error) => error.message())?
-    if let Some(compiler) = admitted_compiler(selected, key, stamp)?:
+    if let Some(compiler) = admitted_compiler(selected, key, admission)?:
         return Ok(compiler)
     held = claim(store, "incan.engine.installation").map_err((error) => error.message())?
     checked = snapshot(store).map_err((error) => error.message())?
-    if let Some(compiler) = admitted_compiler(checked, key, stamp)?:
+    if let Some(compiler) = admitted_compiler(checked, key, admission)?:
         return Ok(compiler)
     compiler = compiler_fingerprint(load_toolchain()?)?
-    value = json_text(JsonValue.object({"pin": JsonValue.string(stamp), "compiler": JsonValue.string(compiler)}))?
+    value = json_text(
+        JsonValue.object({"admission": JsonValue.string(admission), "compiler": JsonValue.string(compiler)}),
+    )?
     _ = commit(put(begin(checked), key, value.encode("utf-8"))).map_err((error) => error.message())?
     return Ok(compiler)
 
 
-def admitted_compiler(selected: Snapshot, key: str, stamp: str) -> Result[Option[str], str]:
-    """Read the portable compiler identity only while its editable installation pin matches admission."""
+def selected_installation(directory: Path) -> Result[str, str]:
+    """Return the selected installation-page identity, admitting a missing installation once."""
+    if let Some(identity) = admitted_identity(directory)?:
+        return Ok(identity)
+    _ = load_toolchain()?
+    match admitted_identity(directory)?:
+        Some(identity) => return Ok(identity)
+        None => return Err("toolchain installation did not publish its admitted page")
+
+
+def admitted_compiler(selected: Snapshot, key: str, admission: str) -> Result[Option[str], str]:
+    """Read the portable compiler identity selected by the immutable installation-page identity in its key."""
     if let Some(text) = record_text(selected, key)?:
         previous = parse(text).map_err((error) => error.message())?
-        if required_text(previous, "pin")? == stamp:
+        if required_text(previous, "admission")? == admission:
             return Ok(Some(required_text(previous, "compiler")?))
     return Ok(None)
 

@@ -43,6 +43,7 @@ from callable_products import retain_callable_products
 from unit_freshness import Key, artifact_files, unit_key
 from unit_publication import record_payload
 from compiler_facts import admit_fact
+from frozen_inputs import observation as frozen_observation
 from vocabulary import prepare_vocabulary, published_workers, stage_vocabulary
 from compile_time_trust import MissingTrust, combine as combine_trust, decide, decide_registry
 
@@ -290,7 +291,7 @@ pub def prepare_linked(
     loaves = unit.loaves
     for loaf in loaves:
         # Checking-only exports supply a manifest, never a claim to an executable native artifact.
-        if loaf.name in checking_interfaces and not loaf_library(loaf).is_file():
+        if loaf.name in checking_interfaces and not available(loaf_library(loaf)):
             continue
         linked, searched = link_loaf(unit, loaf, toolchain_crates, toolchain.native_closures)?
         unit = linked
@@ -299,8 +300,11 @@ pub def prepare_linked(
                 directories.append(directory)
     # 3. The directories are sorted and distinct, as the compiler merges them with the index.
     unit.search = unique(directories)
-    for cache in unit.rust_abi:
-        admit_fact(Path(cache))?
+    # Installed ABI facts were admitted and sealed into the installation page. Synthetic and staged toolchains still
+    # need the direct admission path used by installation preparation and focused tests.
+    if len(toolchain.compiler_facts) != len(toolchain.rust_abi) + 1:
+        for cache in unit.rust_abi:
+            admit_fact(Path(cache))?
     ready = prepare_vocabulary(unit, toolchain)?
     return Ok(with_callable_products(ready, toolchain))
 
@@ -329,7 +333,13 @@ def standard_available(loaf: UnitLoaf) -> bool:
     if not loaf.standard:
         return true
     interface = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib")
-    return loaf_library(loaf).is_file() and interface.is_file()
+    library = loaf_library(loaf)
+    return available(library) and available(interface)
+
+
+def available(path: Path) -> bool:
+    """Whether a payload was admitted with the installation page or exists as an editable project artifact."""
+    return frozen_observation(path).is_some() or path.is_file()
 
 
 def loaf_library(loaf: UnitLoaf) -> Path:
@@ -345,7 +355,7 @@ def with_toolchain_crates(described: UnitDescription, toolchain: Toolchain) -> U
         if native.name not in [item.name for item in unit.externs]:
             unit.externs.append(native)
         directory = Path(native.path).parent()
-        if native.name != unit.package and directory.joinpath(f"{native.name}.incnlib").is_file():
+        if native.name != unit.package and available(directory.joinpath(f"{native.name}.incnlib")):
             if native.name not in [loaf.name for loaf in unit.loaves]:
                 unit.loaves.append(
                     UnitLoaf(key=native.name, name=native.name, dir=directory.0, standard=false, toolchain_provided=true),
@@ -383,11 +393,11 @@ def link_loaf(
     """
     linked = native_crate_name(loaf.name)
     library = loaf_library(loaf)
-    if loaf.standard and not library.is_file():
+    if loaf.standard and not available(library):
         return Ok((described, []))
     unit = add_extern(described, NativeCrate(name=linked, path=library.0))?
     closure = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.native.json")
-    if not closure.is_file():
+    if not available(closure):
         return Ok((unit, [loaf.dir]))
     document = readings.read(closure)?
     exposed = expose_macro_crates(unit, closure, document, toolchain_crates)?
@@ -467,7 +477,7 @@ def with_prepared_loaves(unit: UnitDescription, missing: list[MissingTrust]) -> 
         if not loaf.is_dependency():
             continue
         interface = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib")
-        if (not loaf_library(loaf).is_file() or not interface.is_file()) and loaf.name not in not_prepared:
+        if (not available(loaf_library(loaf)) or not available(interface)) and loaf.name not in not_prepared:
             not_prepared.append(loaf.name)
     ready.not_prepared_loaves = sorted(not_prepared)
     return ready

@@ -139,12 +139,15 @@ def native_inputs(
     The compiler and the registry closure, each facet's features, domain and sources with the identity of its registry
     artifacts, the libraries a previous build recorded, and the toolchain's native crates.
     """
-    mut inputs = [
-        NATIVE_DOMAIN,
-        artifact_identity(Path(toolchain.driver))?,
-        toolchain.sysroot,
-        artifact_identity(Path(toolchain.registry_units))?,
-    ]
+    mut driver = ""
+    if toolchain.driver_observation != "":
+        driver = toolchain.driver_observation
+    else:
+        driver = artifact_identity(Path(toolchain.driver))?
+    mut registry = toolchain.registry_units_identity
+    if registry == "":
+        registry = artifact_identity(Path(toolchain.registry_units))?
+    mut inputs = [NATIVE_DOMAIN, driver, toolchain.sysroot, registry]
     for facet in facets:
         inputs = inputs + [str(facet.features), facet.domain.value()] + tree_inputs(Path(facet.project))?
         for selected in facet.registry:

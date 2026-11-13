@@ -9,7 +9,8 @@ from loaf_local_graph import unique
 from observation import Ledger, SETTLE_SECONDS, load_ledger, trace
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf
-from unit_freshness import ArtifactIdentities, cache_identities, compiler_fingerprint, fingerprint
+from unit_freshness import ArtifactIdentities, compiler_fingerprint, fingerprint, toolchain_cache_identities
+from frozen_inputs import observation as frozen_observation
 
 const CHECKED_DOMAIN: str = "incan.oven.checked-source/2"
 
@@ -34,7 +35,7 @@ pub def retain_callable_products(unit: UnitDescription, toolchain: Toolchain) ->
     identities = ArtifactIdentities()
     description = semantic_description(unit, identities)?
     interfaces = interface_inputs(unit, ledger, identities)?
-    caches = cache_identities(unit.rust_abi)?
+    caches = toolchain_cache_identities(toolchain)?
     native_search = native_search_inputs(unit, toolchain, identities)?
     identities.verify()?
     parts = [
@@ -113,10 +114,13 @@ def interface_inputs(
         for extension in ["incnlib", "incnbody", "rustabi"]:
             path = Path(loaf.dir).joinpath(f"{loaf.name}.{extension}")
             inputs.append(extension)
-            if path.is_file():
-                inputs.append(ledger.digest(path)?)
-            else:
-                inputs.append("absent")
+            match frozen_observation(path):
+                Some(stamp) => inputs.append(stamp)
+                None =>
+                    if path.is_file():
+                        inputs.append(ledger.digest(path)?)
+                    else:
+                        inputs.append("absent")
         inputs = inputs + closure_inputs(loaf, unit, identities)?
     return Ok(inputs)
 
@@ -148,7 +152,7 @@ def binding_identity(native: NativeCrate, unit: UnitDescription, identities: Art
         for loaf in unit.loaves:
             expected = Path(loaf.dir).joinpath(f"lib{loaf.name.replace("-", "_")}.rlib")
             if (
-                expected.is_file()
+                (frozen_observation(expected).is_some() or expected.is_file())
                 and expected.resolve().map_err((error) => f"cannot resolve {error.message()}")?.0 == path.0
             ):
                 return Ok(f"loaf:{native.name}:{loaf.name}")

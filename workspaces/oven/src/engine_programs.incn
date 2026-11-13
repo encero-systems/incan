@@ -25,13 +25,13 @@ from incan_units import obtain_executable, program_binary, executable_view, view
 from json_fields import required_text
 from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, Transaction, begin, commit, put
 from store_path_conversion import snapshot
-from toolchain import load_toolchain
+from toolchain import load_toolchain, toolchain_directory
 from unit import describe
 from unit_compiler import graph_body_output_path, plan_record_counts, plan_record_report_path
 from unit_rust import prepare_native
 from unit_freshness import Key, fingerprint, unit_key
 from observation import FileMetadata, file_metadata
-from shared_link import development_link, linkage_key, library_witness, witness_current
+from shared_link import development_link, linkage_key, library_witness
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from pub::internal_models.checker_records import CHECKER_PROFILE
@@ -186,7 +186,10 @@ pub def obtain(
             ),
         )
     # 4. Source edits cannot certify a native unit for a different captured epoch.
+    installed = toolchain_directory()?.0
     for input in epoch.inputs:
+        if frozen_path(input.path, installed, toolchain.sysroot):
+            continue
         if not captured_file_current(Path(input.path), input.metadata):
             return Err("captured inputs changed before native selection; submit a new request")
     mut request_transaction = merge_request_transaction(produced.transaction, projected.transaction)
@@ -328,13 +331,10 @@ pub def restore_program(store: Path, unit: NativeUnit) -> Result[None, str]:
 
 
 def unit_record(store: Path, unit: NativeUnit) -> Result[Fact, str]:
-    """Verify the exact executable payload and any recorded native loader generations before making a view."""
+    """Verify the exact executable payload; its immutable record already admitted native loader generations."""
     fact = required_unit(store, unit.identity)?
     if executable_payload(fact, Path(unit.binary).name())? != unit.payload:
         return Err("selected native payload disagrees with its unit record")
-    if let Some(witness) = loader_witness(store, fact, unit):
-        if not witness_current(witness):
-            return Err("selected native loader inputs disagree with their unit record")
     return Ok(fact)
 
 
@@ -371,6 +371,11 @@ def captured_file_current(path: Path, recorded: FileMetadata) -> bool:
         _ => return false
 
 
+def frozen_path(path: str, installed: str, sysroot: str) -> bool:
+    """Whether an obsolete captured row belongs to an installation already admitted as immutable."""
+    return path == installed or path.startswith(installed + "/") or path == sysroot or path.startswith(sysroot + "/")
+
+
 def request_epoch(store: Path, revision: str, captured: Option[BuildEpoch], handle: str) -> Result[BuildEpoch, str]:
     """Use this activation's captured inputs, or open a previously committed capture."""
     match captured:
@@ -397,7 +402,8 @@ def standalone_selector(epoch: BuildEpoch, producer: str) -> Result[Option[str],
         return Ok(None)
     source = Path(epoch.roots[0])
     prefix = source.parent().0 + "/"
-    mut inputs = ["incan.engine.standalone-inputs/1", producer, source.name(), epoch.selection.profile]
+    mut inputs = ["incan.engine.standalone-inputs/2", producer, source.name(), epoch.selection.profile]
+    inputs.extend([f"admitted:{item}" for item in epoch.admitted])
     mut bindings: list[str] = []
     for input in epoch.inputs:
         if input.role == InputRole.ToolchainPin:

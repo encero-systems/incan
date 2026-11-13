@@ -33,7 +33,6 @@ from bakery import (
     unit_identity,
     unit_name,
     view,
-    fact_file,
     has_files_under,
 )
 from bakery_records import Fact
@@ -46,7 +45,7 @@ from unit import UnitDescription
 from unit_compiler import compile_prepared_unit, crate_name, described_by, run_compiler, write_unit
 from unit_freshness import Key, unit_key
 from unit_rust import compile_library_unit, prepare_native
-from shared_link import development_link, library_witness, linkage_key, witness_current
+from shared_link import development_link, library_witness, linkage_key
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 
@@ -195,14 +194,14 @@ pub def obtain_executable(
     label = f"unit {crate_name(unit)} {unit.kind}"
     register_root(store, unit.project_root, root_registration(unit), [identity])?
     # 1. A sealed executable of the identity starts no compiler.
-    if let Some(fact) = current_executable(store, identity, output.name(), shared)?:
+    if let Some(fact) = current_executable(store, identity)?:
         made = viewed(store, fact, output, unit.kind, shared)?
         trace(f"{label}: reused")
         return Ok(made)
     # 2. A concurrent build waits here, and then finds the fact it needs. The claim is held until this returns.
     held = claim(store, identity)?
     # 3. A bake another command finished while this one waited is used, not repeated.
-    if let Some(fact) = current_executable(store, identity, output.name(), shared)?:
+    if let Some(fact) = current_executable(store, identity)?:
         made = viewed(store, fact, output, unit.kind, shared)?
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(made)
@@ -259,15 +258,9 @@ def viewed(store: Path, fact: Fact, output: Path, kind: str, shared: bool) -> Re
     return Ok(Made(code=0, launch=output, fact=Some(fact)))
 
 
-def current_executable(store: Path, identity: str, binary: str, shared: bool) -> Result[Option[Fact], str]:
-    """The sealed fact of `identity`, while its shared libraries, if it links any, are still the ones it recorded."""
-    match find(store, identity)?:
-        None => return Ok(None)
-        Some(fact) =>
-            if shared and not current_link(store, fact, binary):
-                trace(f"bakery {identity[:12]}: dynamic native inputs changed")
-                return Ok(None)
-            return Ok(Some(fact))
+def current_executable(store: Path, identity: str) -> Result[Option[Fact], str]:
+    """The sealed fact of `identity`; its linkage key already binds the loader generations admitted at link time."""
+    return find(store, identity)
 
 
 def bake_reason(store: Path, unit: UnitDescription) -> str:
@@ -320,13 +313,6 @@ pub def view_executable(store: Path, fact: Fact, output: Path, kind: str, shared
     if has_files_under(fact, bundle):
         view_directory(store, fact, debug_bundle(output), bundle)?
     return Ok(None)
-
-
-def current_link(store: Path, fact: Fact, binary: str) -> bool:
-    """Whether a baked development executable's shared libraries are still the ones its loader witness records."""
-    match fact_file(store, fact, library_witness(Path(binary)).0):
-        None => return false
-        Some(witness) => return witness_current(witness)
 
 
 def debug_bundle(binary: Path) -> Path:

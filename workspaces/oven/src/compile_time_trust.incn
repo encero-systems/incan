@@ -112,7 +112,8 @@ pub def cover_loaf(
     if not unattended:
         return Ok(Some("explicit-request"))
     policy = load(Some(Path(project_root)))?
-    installed = installation(toolchain_directory()?)?
+    directory = toolchain_directory()?.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    installed = installation(directory)?
     return coverage(policy, loaf, source_root, artifact, Some(installed))
 
 

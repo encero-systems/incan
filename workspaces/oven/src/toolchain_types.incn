@@ -10,6 +10,8 @@ pub model NativeCrate:
 
     pub name: str
     pub path: str
+    # Producer identity admitted with an installed page; staged and synthetic toolchains leave it empty.
+    pub identity: str = ""
 
     pub def to_json(self) -> JsonValue:
         """The crate as the unit description spells it."""
@@ -25,6 +27,7 @@ pub model Toolchain:
     pub externs: list[NativeCrate]
     pub search: list[str]
     pub registry_units: str
+    pub registry_units_identity: str = ""
     # This compiler accepts `--no-codegraph`; ordinary native builds may leave inspection to an explicit request.
     pub codegraph_on_request: bool = false
     # When set, a path prefix: the compiler writes its standard output to `<prefix>.out` and its standard error to
@@ -39,8 +42,17 @@ pub model Toolchain:
     pub c_compiler: str = ""
     # Explicit target facts for synthetic or cross-target toolchains; empty selects rustc's reported host.
     pub target: str = ""
+    # Rust compiler answers admitted with the installation for ordinary default-environment selection.
+    pub rust_version: str = ""
+    pub default_deployment_target: str = ""
+    pub default_sdk_identity: str = ""
+    pub rustc_observation: str = ""
+    pub default_trusted_publishers: list[str] = []
     # Frozen standard/runtime records are owned by this exact installed pin, never by a project view or unit.
     pub compiler_records: Option[CompilerRecordPin] = None
+    # Content identities admitted with this installation, ordered as driver then Rust ABI caches.
+    pub compiler_facts: list[str] = []
+    pub driver_observation: str = ""
     # A unit-record activation cannot retain the bulk compiler's decoded caches while idle (#2481, S3).
     pub retire_worker: bool = false
 
@@ -53,11 +65,19 @@ pub model Toolchain:
             externs=self.externs,
             search=self.search,
             registry_units=self.registry_units,
+            registry_units_identity=self.registry_units_identity,
             codegraph_on_request=self.codegraph_on_request,
             registry_lock=self.registry_lock,
             c_compiler=self.c_compiler,
             target=self.target,
+            rust_version=self.rust_version,
+            default_deployment_target=self.default_deployment_target,
+            default_sdk_identity=self.default_sdk_identity,
+            rustc_observation=self.rustc_observation,
+            default_trusted_publishers=self.default_trusted_publishers,
             compiler_records=self.compiler_records,
+            compiler_facts=self.compiler_facts,
+            driver_observation=self.driver_observation,
         )
 
 
@@ -70,11 +90,20 @@ pub model InstalledCompiler:
     pub externs: list[NativeCrate]
     pub search: list[str]
     pub registry_units: str
+    pub registry_units_identity: str = ""
     pub codegraph_on_request: bool = false
     pub registry_lock: str
     pub c_compiler: str
     pub target: str
+    pub rust_version: str = ""
+    pub default_deployment_target: str = ""
+    pub default_sdk_identity: str = ""
+    pub rustc_observation: str = ""
+    pub default_trusted_publishers: list[str] = []
     pub compiler_records: Option[CompilerRecordPin] = None
+    # Content identities admitted with this installation, ordered as driver then Rust ABI caches.
+    pub compiler_facts: list[str] = []
+    pub driver_observation: str = ""
 
     pub def select(self) -> Toolchain:
         """Create fresh request-local state around this admitted compiler description."""
@@ -85,6 +114,7 @@ pub model InstalledCompiler:
             externs=self.externs,
             search=self.search,
             registry_units=self.registry_units,
+            registry_units_identity=self.registry_units_identity,
             codegraph_on_request=self.codegraph_on_request,
             console="",
             worker_generation="",
@@ -92,5 +122,12 @@ pub model InstalledCompiler:
             registry_lock=self.registry_lock,
             c_compiler=self.c_compiler,
             target=self.target,
+            rust_version=self.rust_version,
+            default_deployment_target=self.default_deployment_target,
+            default_sdk_identity=self.default_sdk_identity,
+            rustc_observation=self.rustc_observation,
+            default_trusted_publishers=self.default_trusted_publishers,
             compiler_records=self.compiler_records,
+            compiler_facts=self.compiler_facts,
+            driver_observation=self.driver_observation,
         )

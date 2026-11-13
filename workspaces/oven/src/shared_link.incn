@@ -1,13 +1,12 @@
-"""Select local debug linkage and validate every shared library before reusing a development executable."""
+"""Select local debug linkage and bind its loader generations at link time."""
 
 from std.fs import Path
-from files import read_json
 from home import home
-from json_fields import required_items, required_text
 from unit import UnitDescription
-from unit_freshness import Key, artifact_identity, fingerprint
+from unit_freshness import Key, fingerprint
 
-const SCHEMA: str = "incan.native-shared/1"
+# Version 2 admits the witness's frozen loader generations when the native unit is recorded instead of on each use.
+const LINKAGE_SCHEMA: str = "incan.native-shared-linkage/2"
 
 
 pub def development_link(unit: UnitDescription, requested: bool) -> bool:
@@ -25,8 +24,8 @@ pub def linkage_key(key: Key, shared: bool) -> Result[Key, str]:
         return Ok(key)
     return Ok(
         Key(
-            digest="sha256:" + fingerprint([SCHEMA, key.digest])?,
-            parts=key.parts + [f"linkage {SCHEMA}"],
+            digest="sha256:" + fingerprint([LINKAGE_SCHEMA, key.digest])?,
+            parts=key.parts + [f"linkage {LINKAGE_SCHEMA}"],
             codegen=key.codegen,
             provenance=key.provenance,
             descriptor=key.descriptor,
@@ -48,31 +47,3 @@ pub def shared_arguments(unit: UnitDescription, requested: bool) -> Result[list[
 pub def library_witness(binary: Path) -> Path:
     """The native compiler's exact dynamic-library generations beside a completed development executable."""
     return Path(f"{binary.0}.native-shared.json")
-
-
-pub def witness_current(witness: Path) -> bool:
-    """Admit a loader witness only while every dynamic library it records still has its recorded generation."""
-    match loaded_libraries(witness):
-        Err(_) => return false
-        Ok(libraries) =>
-            if len(libraries) == 0:
-                return false
-            # 2. Replacement, removal and in-place rewrites all invalidate the stored executable.
-            for path, expected in libraries:
-                match artifact_identity(Path(path)):
-                    Err(_) => return false
-                    Ok(actual) =>
-                        if actual != expected:
-                            return false
-            return true
-
-
-def loaded_libraries(witness: Path) -> Result[list[tuple[str, str]], str]:
-    """Read exact loader paths and identities; differently typed fields are refused without coercion."""
-    document = read_json(witness)?
-    if required_text(document, "schema")? != SCHEMA:
-        return Err("unsupported shared native witness")
-    mut libraries: list[tuple[str, str]] = []
-    for row in required_items(document, "libraries")?:
-        libraries.append((required_text(row, "path")?, required_text(row, "identity")?))
-    return Ok(libraries)

@@ -52,6 +52,7 @@ from engine_messages import (
 from engine_state import Identity, ServiceState
 from scratch import scratch_directory
 from engine_wire import Header, Refusal, RefusalKind, zero_id, decode_header, encode_header, joined, scalar
+from trace_adapter import count_work, finish_counting
 
 
 def kind(result: Result[Header, Refusal]) -> Option[RefusalKind]:
@@ -143,8 +144,12 @@ pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
     store = admission.path().joinpath("store")
     store.mkdir(true, true).map_err((error) => error.message())?
     installed = service_identity(store)?
+    prefix = toolchain_directory()?.resolve().map_err((error) => error.message())?.0 + "/"
+    count_work(prefix)
     assert snapshot(store).map_err((error) => error.message())?.generation == 0
     assert service_identity(store)?.compiler_generation == installed.compiler_generation
+    repeated = finish_counting()
+    assert repeated.stats == 0 and repeated.reads == 0 and repeated.hashes == 0, f"repeated service identity touched frozen inputs: stats={repeated.stats} reads={repeated.reads} hashes={repeated.hashes}"
     assert snapshot(store).map_err((error) => error.message())?.generation == 0
     admissions = durable_commits()
     other = admission.path().joinpath("another-store")
@@ -479,10 +484,12 @@ model InstallationReadCounts:
 
 
 def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
-    """Each service request selects the installed page without reopening its original frozen documents."""
+    """After first admission, a service request selects installed facts without touching a frozen input."""
     prefix = toolchain_directory()?.resolve().map_err((error) => error.message())?.0 + "/"
     mut events = 0
     mut reads = 0
+    mut frozen_accesses = 0
+    mut completed: Dict[str, int] = {}
     mut counts = InstallationReadCounts()
     for file in directory.iterdir().map_err((error) => error.message())?:
         for line in file.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n"):
@@ -492,11 +499,18 @@ def check_frozen_installation_reads(directory: Path) -> Result[None, str]:
             events += 1
             category = trace_text(event, "category")?
             counts.observe(event, category)?
+            process = str(trace_number(event, "process")?)
+            if category in ["file_stat", "file_read", "file_hash"]:
+                input = trace_text(event, "input")?
+                if (input.startswith(prefix) or "/.rustup/" in input) and completed.get(process, 0) > 0:
+                    frozen_accesses += 1
+                    return Err(f"service process {process} {category} touched frozen input {input}")
             if category == "file_read":
                 reads += 1
-                input = trace_text(event, "input")?
-                assert not input.startswith(prefix), f"new work bakery reopened frozen input {input}"
+            if category == "engine_unit":
+                completed[process] = completed.get(process, 0) + 1
     assert events > 0 and reads > 0, "the cold invocation must record its actual file reads"
+    assert frozen_accesses == 0
     counts.check()
     return Ok(None)
 

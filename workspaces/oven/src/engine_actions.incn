@@ -13,6 +13,9 @@ from observation import trace
 from jec import begin, record
 from pub::incan_platform.trace import Operation
 from installation_page import begin_command, end_command
+from trace_adapter import count_frozen_work, finish_frozen_counting
+from toolchain import toolchain_directory
+from home import standard_library_dir
 
 
 pub model Pending:
@@ -65,21 +68,30 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     directory = store.joinpath("engine/console")
     directory.mkdir(true, true).map_err((error) => f"cannot create directory {error.message()}")?
     producing = begin()
-    produced = obtain(
+    toolchain = toolchain_directory()?.0 + "/"
+    standard = standard_library_dir()?.0 + "/"
+    count_frozen_work([toolchain, standard])
+    produced_result = obtain(
         store,
         pending.capture.revision,
         pending.handle,
         directory.joinpath(run).0,
         Some(pending.capture.epoch),
         pending.producer,
-    )?
+    )
+    frozen = finish_frozen_counting()
+    produced = produced_result?
+    mut counters = pending.capture.counters
+    counters.frozen.stats += frozen.stats
+    counters.frozen.reads += frozen.reads
+    counters.frozen.hashes += frozen.hashes
     record(Operation.EngineUnit, pending.capture.revision, producing)
     # 2. A report is an explicit retained root, never an automatic write on an unchanged run.
     mut observation = ""
     match produced.unit:
         None =>
             if pending.proofs:
-                observation = retain(store, run, pending.capture.counters, produced)?
+                observation = retain(store, run, counters, produced)?
             return Ok(
                 Ready(
                     message=Complete(
@@ -106,7 +118,7 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
             if let Some(transaction) = selection.transaction:
                 group.append(transaction)
             if pending.proofs:
-                group.append(prepare_report(store, run, pending.capture.counters, produced)?)
+                group.append(prepare_report(store, run, counters, produced)?)
                 observation = run
             if len(group) == 0:
                 group.append(begin_selection(selection.snapshot))

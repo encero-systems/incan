@@ -20,11 +20,23 @@ model Selection:
 
     documents: Dict[str, Document] = {}
     payloads: Dict[str, InstalledPayload] = {}
+    observations: Dict[str, str] = {}
 
-    def select(mut self, documents: list[Document], payloads: list[InstalledPayload]) -> None:
+    def select(
+        mut self,
+        documents: list[Document],
+        payloads: list[InstalledPayload],
+        paths: list[str],
+        stamps: list[str],
+    ) -> None:
         """Replace the current read scope with the exact documents decoded from its admitted page."""
         self.documents = {document.path: document for document in documents}
         self.payloads = {payload.path: payload for payload in payloads}
+        self.observations = {paths[index]: stamps[index] for index in range(len(paths))}
+        for document in documents:
+            self.observations[document.path] = document.stamp
+        for payload in payloads:
+            self.observations[payload.path] = payload.admission.observation
 
     def payload(self, path: Path) -> Result[Option[PayloadAdmission], str]:
         """Name a payload admitted with its installation without reopening the payload or producer record."""
@@ -54,18 +66,31 @@ model Selection:
         record(Operation.InstallationDocument, path.0, clock)
         return Ok(Some(document.value.clone()))
 
+    def observation(self, path: Path) -> Option[str]:
+        """Return the filesystem generation admitted with one frozen document or payload."""
+        return self.observations.get(path.0)
+
+    def admit(mut self, path: str, stamp: str) -> None:
+        """Add one subordinate immutable observation to this installation selection."""
+        self.observations[path] = stamp
+
 
 static SELECTED: Selection = Selection()
 
 
-pub def select(documents: list[Document], payloads: list[InstalledPayload]) -> None:
+pub def select(
+    documents: list[Document],
+    payloads: list[InstalledPayload],
+    paths: list[str],
+    stamps: list[str],
+) -> None:
     """Install a single verified page's document projection for its ordinary readers."""
-    SELECTED.select(documents, payloads)
+    SELECTED.select(documents, payloads, paths, stamps)
 
 
 pub def clear() -> None:
     """End the selection before re-admission so producers cannot accidentally read the preceding generation."""
-    SELECTED.select([], [])
+    SELECTED.select([], [], [], [])
 
 
 pub def payload(path: Path) -> Result[Option[PayloadAdmission], str]:
@@ -76,3 +101,14 @@ pub def payload(path: Path) -> Result[Option[PayloadAdmission], str]:
 pub def read(path: Path) -> Result[Option[JsonValue], str]:
     """Read a selected installed document; other project and publication files keep their ordinary reader."""
     return SELECTED.read(path)
+
+
+pub def observation(path: Path) -> Option[str]:
+    """Return the generation already admitted for a frozen installed input, if selected."""
+    return SELECTED.observation(path)
+
+
+pub def admit_observations(paths: list[str], stamps: list[str]) -> None:
+    """Extend the selected installation with immutable observations decoded by a subordinate typed page."""
+    for index in range(len(paths)):
+        SELECTED.admit(paths[index], stamps[index])
