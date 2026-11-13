@@ -1,0 +1,426 @@
+"""
+Clove units (RFC 159): one configuration of a local Loaf's C facet compiled into a deterministic static archive.
+
+Until the Incan toolchain names a managed C toolchain release, a Clove compiles only through RFC 159's explicit,
+non-portable local override, `INCAN_C_COMPILER=host`; the unit records that the host compiler built it and is not
+publishable. Each configuration is its own unit under the root project's `target/incan/cloves`.
+"""
+
+from rust::std::env::consts import ARCH, OS
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.encoding.hex import hexlify
+from std.environ import get_or
+from std.fs import Path
+from std.hash import sha256
+from std.json import JsonValue
+from c_facet import (
+    CFacet,
+    CCompile,
+    CSourceKind,
+    ResolvedConfiguration,
+    configuration_names,
+    resolve_configuration,
+    source_kind,
+)
+from cfg_predicate import Selector, evaluate_cfg, parse_selector
+from files import json_text, read, write
+from observation import trace
+
+pub const C_COMPILER_OVERRIDE: str = "INCAN_C_COMPILER"
+const CLOVE_DOMAIN: str = "incan.clove-unit/1"
+const STAMP: str = ".oven-clove-inputs"
+
+
+pub model HostCompiler:
+    """The host C toolchain the explicit local override selects, and the identity a unit records for it."""
+
+    pub c: str
+    pub cplusplus: str
+    pub archiver: str
+    pub arguments: list[str] = []
+    # The target's platform files (the SDK the compiler is pointed at), which a compile may read.
+    pub platform_roots: list[str] = []
+    pub identity: str = ""
+
+
+pub model CloveConfigurationUnit:
+    """One compiled configuration: its resolved definitions and the archive it produced."""
+
+    pub name: str
+    pub definitions: list[str]
+    pub archive: str
+    pub identity: str
+
+    pub def to_json(self) -> JsonValue:
+        """The configuration as the unit description spells it."""
+        return JsonValue.object(
+            {"name": JsonValue.string(self.name), "definitions": JsonValue.array(
+                [JsonValue.string(item) for item in self.definitions],
+            ), "archive": JsonValue.string(self.archive), "identity": JsonValue.string(self.identity)},
+        )
+
+
+pub model CloveUnit:
+    """A Clove a unit reaches, with every configuration compiled."""
+
+    pub name: str
+    pub root: str
+    pub library: str
+    pub public_headers: list[str]
+    pub include: list[str]
+    pub cplusplus: bool
+    pub compiler: str
+    pub configurations: list[CloveConfigurationUnit]
+
+    pub def to_json(self) -> JsonValue:
+        """The Clove as the unit description spells it."""
+        return JsonValue.object(
+            {"name": JsonValue.string(self.name), "root": JsonValue.string(self.root), "library": JsonValue.string(
+                self.library,
+            ), "public_headers": JsonValue.array([JsonValue.string(item) for item in self.public_headers]), "include": JsonValue.array(
+                [JsonValue.string(item) for item in self.include],
+            ), "cplusplus": JsonValue.bool(self.cplusplus), "compiler": JsonValue.string(self.compiler), "configurations": JsonValue.array(
+                [item.to_json() for item in self.configurations],
+            )},
+        )
+
+
+model PlannedSource:
+    """One source of a configuration, with the include roots and definitions of the entry that names it."""
+
+    path: str
+    kind: CSourceKind
+    include: list[str]
+    defines: Dict[str, str]
+
+
+def fingerprint(inputs: list[str]) -> Result[str, str]:
+    """Frame each input before hashing so adjacent inputs cannot alias."""
+    text = json_text(JsonValue.array([JsonValue.string(value) for value in inputs]))?
+    return Ok(hexlify(sha256.digest(text.encode("utf-8"))))
+
+
+def content_digest(path: Path) -> Result[str, str]:
+    """A file's content digest."""
+    raw = path.read_bytes().map_err((error) => f"cannot read {path.0}: {error.message()}")?
+    return Ok(hexlify(sha256.digest(raw)))
+
+
+def run(program: str, arguments: list[str], directory: str) -> Result[str, str]:
+    """Run a host tool to completion in `directory`; a failure reports its stderr."""
+    mut command = Command.new(program)
+    command.current_dir(directory)
+    for argument in arguments:
+        command.arg(argument)
+    match command.output():
+        Err(error) => return Err(f"cannot run {program}: {error}")
+        Ok(output) =>
+            if not output.status.success():
+                stderr = RustString.from_utf8_lossy(output.stderr).into_owned()
+                return Err(f"{program} {" ".join(arguments)} failed:\n{stderr}")
+            return Ok(RustString.from_utf8_lossy(output.stdout).into_owned().strip())
+
+
+pub def host_compiler(clove: str) -> Result[HostCompiler, str]:
+    """The host compiler, only when the explicit local override selects it; otherwise the missing-release refusal."""
+    selected = get_or(str(C_COMPILER_OVERRIDE), "")
+    if selected == "":
+        return Err(
+            f"Clove `{clove}`: no C toolchain release is installed with this Incan toolchain; set {C_COMPILER_OVERRIDE}=host to compile it with the host compiler for local development (non-portable: such a unit is never publishable)",
+        )
+    if selected != "host":
+        return Err(f"{C_COMPILER_OVERRIDE}={selected}: the only local override is `host`")
+    mut compiler = HostCompiler(c="cc", cplusplus="c++", archiver="ar")
+    if OS == "macos":
+        compiler.c = run("xcrun", ["--find", "clang"], ".")?
+        compiler.cplusplus = run("xcrun", ["--find", "clang++"], ".")?
+        compiler.archiver = run("xcrun", ["--find", "libtool"], ".")?
+        sdk = run("xcrun", ["--show-sdk-path"], ".")?
+        compiler.arguments = ["-isysroot", sdk]
+        compiler.platform_roots = [Path(sdk).resolve().map_err((error) => f"{sdk}: {error.message()}")?.0]
+        if ARCH == "aarch64":
+            compiler.arguments = compiler.arguments + ["-target", "arm64-apple-macos11"]
+    version = run(compiler.c, ["--version"], ".")?
+    compiler.identity = "host:" + fingerprint(
+        [compiler.c, compiler.cplusplus, compiler.archiver, version] + compiler.arguments,
+    )?
+    return Ok(compiler)
+
+
+pub def clove_unit(name: str, root: str, facet: CFacet, profile: str, artifact_root: str) -> Result[CloveUnit, str]:
+    """Compile or reuse every configuration of one Clove, each as its own unit."""
+    compiler = host_compiler(name)?
+    mut configurations: list[CloveConfigurationUnit] = []
+    mut cplusplus = false
+    for configuration in configuration_names(facet):
+        resolved = resolve_configuration(facet, configuration).map_err((error) => f"Clove `{name}`: {error}")?
+        planned = planned_sources(name, root, facet, resolved)?
+        for source in planned:
+            if source.kind == CSourceKind.CPlusPlus:
+                cplusplus = true
+        directory = Path(artifact_root)
+            .joinpath("target/incan/cloves")
+            .joinpath(name.replace("/", "_"))
+            .joinpath(configuration)
+            .joinpath(profile)
+        configurations.append(configuration_unit(name, root, facet, resolved, planned, compiler, profile, directory)?)
+    return Ok(
+        CloveUnit(
+            name=name,
+            root=root,
+            library=facet.library,
+            public_headers=facet.public_headers,
+            include=[Path(root).joinpath(item).0 for item in facet.include],
+            cplusplus=cplusplus,
+            compiler=compiler.identity,
+            configurations=configurations,
+        ),
+    )
+
+
+def host_cfg() -> Tuple[list[str], Dict[str, list[str]]]:
+    """The host target's cfg facts, which is the only target a local Clove compiles for."""
+    mut values: Dict[str, list[str]] = {"target_arch": [str(ARCH)], "target_os": [str(OS)], "target_pointer_width": [
+        "64",
+    ]}
+    mut flags: list[str] = []
+    if str(OS) in ["macos", "linux", "ios", "android", "freebsd"]:
+        flags.append("unix")
+        values["target_family"] = ["unix"]
+    if OS == "windows":
+        flags.append("windows")
+        values["target_family"] = ["windows"]
+    return (flags, values)
+
+
+def entry_applies(entry: CCompile) -> Result[bool, str]:
+    """Whether a compile entry's target predicate holds for the host target."""
+    match entry.target:
+        None => return Ok(true)
+        Some(predicate) =>
+            match parse_selector(predicate)?:
+                Selector.Triple(triple) => return Ok(triple.startswith(str(ARCH)) and str(OS) in triple)
+                Selector.Cfg(tokens) =>
+                    flags, values = host_cfg()
+                    return evaluate_cfg(tokens, flags, values)
+
+
+def expanded(name: str, root: str, pattern: str) -> Result[list[str], str]:
+    """One authored source or one-directory glob, as the exact Loaf-relative files it names."""
+    parts = pattern.split("/")
+    leaf = parts[-1]
+    if "*" not in leaf and "?" not in leaf and "[" not in leaf:
+        if not Path(root).joinpath(pattern).is_file():
+            return Err(f"Clove `{name}`: source `{pattern}` does not exist")
+        return Ok([pattern])
+    directory = "/".join(parts[:-1])
+    mut matched: list[str] = []
+    for path in Path(root).joinpath(directory).glob(leaf).map_err((error) => f"Clove `{name}`: {error.message()}")?:
+        if path.is_file():
+            if directory == "":
+                matched.append(path.name())
+            else:
+                matched.append(f"{directory}/{path.name()}")
+    if len(matched) == 0:
+        return Err(f"Clove `{name}`: `{pattern}` matches no source file")
+    return Ok(sorted(matched))
+
+
+def planned_sources(
+    name: str,
+    root: str,
+    facet: CFacet,
+    resolved: ResolvedConfiguration,
+) -> Result[list[PlannedSource], str]:
+    """Every source one configuration compiles, in a stable order, each once."""
+    mut planned: list[PlannedSource] = []
+    mut seen: list[str] = []
+    for entry in facet.compiles:
+        if not entry_applies(entry)?:
+            continue
+        for pattern in entry.sources:
+            for path in expanded(name, root, pattern)?:
+                if path in seen:
+                    continue
+                kind = match source_kind(path):
+                    Some(found) => found
+                    None => return Err(f"Clove `{name}`: `{path}` is not a C, assembly or C++ source")
+
+                seen.append(path)
+                planned.append(PlannedSource(path=path, kind=kind, include=entry.include, defines=entry.defines))
+    for pattern in resolved.sources:
+        for path in expanded(name, root, pattern)?:
+            if path in seen:
+                continue
+            kind = match source_kind(path):
+                Some(found) => found
+                None => return Err(f"Clove `{name}`: `{path}` is not a C, assembly or C++ source")
+
+            seen.append(path)
+            planned.append(PlannedSource(path=path, kind=kind, include=[], defines={}))
+    return Ok(planned)
+
+
+def definition_texts(defines: Dict[str, str]) -> list[str]:
+    """Definitions as `NAME=VALUE`, sorted by name."""
+    return [f"{key}={defines[key]}" for key in sorted([key for key in defines.keys()])]
+
+
+def declared_identity(
+    name: str,
+    root: str,
+    facet: CFacet,
+    resolved: ResolvedConfiguration,
+    planned: list[PlannedSource],
+    compiler: HostCompiler,
+    profile: str,
+) -> Result[str, str]:
+    """Everything a configuration's archive depends on that the manifest and the planned sources name."""
+    mut inputs = [str(CLOVE_DOMAIN), name, facet.library, resolved.name, str(OS), str(ARCH), profile, compiler.identity]
+    inputs.extend(["definitions"] + definition_texts(resolved.defines))
+    inputs.extend(["include"] + facet.include)
+    match facet.std:
+        Some(standard) => inputs.extend(["std", standard])
+        None => pass
+    for source in planned:
+        inputs.extend(["source", source.path, content_digest(Path(root).joinpath(source.path))?])
+        inputs.extend(["entry-include"] + source.include + ["entry-definitions"] + definition_texts(source.defines))
+    for header in facet.public_headers:
+        path = Path(root).joinpath(header)
+        if not path.is_file():
+            return Err(f"Clove `{name}`: public header `{header}` does not exist")
+        inputs.extend(["public-header", header, content_digest(path)?])
+    return fingerprint(inputs)
+
+
+def configuration_unit(
+    name: str,
+    root: str,
+    facet: CFacet,
+    resolved: ResolvedConfiguration,
+    planned: list[PlannedSource],
+    compiler: HostCompiler,
+    profile: str,
+    directory: Path,
+) -> Result[CloveConfigurationUnit, str]:
+    """Compile a configuration into its archive, recording the identity and every file its compiles read."""
+    identity = declared_identity(name, root, facet, resolved, planned, compiler, profile)?
+    archive = directory.joinpath(f"lib{facet.library}.a")
+    stamp = directory.joinpath(str(STAMP))
+    label = f"unit {name} clove {resolved.name}"
+    reason = "no stored build"
+    read_files = compiled_archive(name, root, facet, resolved, planned, compiler, profile, directory, archive)?
+    mut lines = [identity]
+    for path in read_files:
+        lines.append(f"{path}\t{content_digest(Path(root).joinpath(path))?}")
+    write(stamp, "\n".join(lines) + "\n")?
+    trace(f"{label}: compiled ({reason})")
+    return Ok(configured(resolved, archive)?)
+
+
+def configured(resolved: ResolvedConfiguration, archive: Path) -> Result[CloveConfigurationUnit, str]:
+    """The description of a compiled configuration, identified by its archive bytes."""
+    return Ok(
+        CloveConfigurationUnit(
+            name=resolved.name,
+            definitions=definition_texts(resolved.defines),
+            archive=archive.0,
+            identity="sha256:" + content_digest(archive)?,
+        ),
+    )
+
+
+def optimization(profile: str) -> str:
+    """The plan's profile selects optimization; a facet never does."""
+    if profile == "release":
+        return "-O3"
+    return "-O0"
+
+
+def compiled_archive(
+    name: str,
+    root: str,
+    facet: CFacet,
+    resolved: ResolvedConfiguration,
+    planned: list[PlannedSource],
+    compiler: HostCompiler,
+    profile: str,
+    directory: Path,
+    archive: Path,
+) -> Result[list[str], str]:
+    """
+    Compile every planned source and archive the objects deterministically, returning every file the compiles read.
+
+    1. Compile each source from the Loaf root with relative paths, recording the headers it reads.
+    2. Refuse a compile that read a file outside the Loaf root.
+    3. Archive the objects in source order with fixed member metadata.
+    """
+    objects_directory = directory.joinpath("objects")
+    objects_directory.mkdir(true, true).map_err((error) => f"{objects_directory.0}: {error.message()}")?
+    mut objects: list[str] = []
+    mut read_files: list[str] = []
+    canonical_root = Path(root).resolve().map_err((error) => f"{root}: {error.message()}")?.0
+    for index in range(len(planned)):
+        source = planned[index]
+        # 1. Objects are named by position, so member names never collide and never carry a host path.
+        stem = str(10000 + index)[1:] + "-" + Path(source.path).name().replace(".", "_")
+        object = objects_directory.joinpath(f"{stem}.o")
+        depends = objects_directory.joinpath(f"{stem}.d")
+        mut arguments = compiler.arguments + ["-c", source.path, "-o", object.0, "-MMD", "-MF", depends.0]
+        arguments = arguments + [optimization(profile), f"-ffile-prefix-map={canonical_root}=.", "-fno-ident"]
+        if source.kind == CSourceKind.C:
+            match facet.std:
+                Some(standard) => arguments.append(f"-std={standard}")
+                None => pass
+        for include in facet.include + source.include:
+            arguments.append(f"-I{include}")
+        for definition in definition_texts(resolved.defines) + definition_texts(source.defines):
+            arguments.append(f"-D{definition}")
+        mut program = compiler.c
+        if source.kind == CSourceKind.CPlusPlus:
+            program = compiler.cplusplus
+        run(program, arguments, root).map_err((error) => f"Clove `{name}` configuration `{resolved.name}`: {error}")?
+        # 2. Every file the compile read must be inside the Loaf or the target's platform files; system headers are
+        # not listed by `-MMD`, and the compiler identity already covers the platform files.
+        for path in depended(read(depends)?):
+            located = Path(root).joinpath(path)
+            resolved_path = located.resolve().map_err((error) => f"{located.0}: {error.message()}")?.0
+            if within_any(resolved_path, compiler.platform_roots):
+                continue
+            if not resolved_path.startswith(canonical_root + "/"):
+                return Err(
+                    f"Clove `{name}`: compiling `{source.path}` read `{resolved_path}`, which is outside the Loaf root and its declared include roots",
+                )
+            relative = resolved_path[len(canonical_root) + 1:]
+            if relative not in read_files:
+                read_files.append(relative)
+        objects.append(object.0)
+    # 3. Fixed member order, names, owners, modes and timestamps make identical inputs give identical bytes.
+    if archive.is_file():
+        archive.unlink().map_err((error) => f"{archive.0}: {error.message()}")?
+    if OS == "macos":
+        run(compiler.archiver, ["-static", "-D", "-no_warning_for_no_symbols", "-o", archive.0] + objects, root)?
+    else:
+        run(compiler.archiver, ["rcsD", archive.0] + objects, root)?
+    return Ok(sorted(read_files))
+
+
+def depended(text: str) -> list[str]:
+    """The prerequisites of a make-style dependency file, without its target."""
+    parts = text.replace("\\\n", " ").replace("\n", " ").replace("\t", " ").split(": ")
+    if len(parts) < 2:
+        return []
+    mut paths: list[str] = []
+    for token in ": ".join(parts[1:]).split(" "):
+        if token != "" and token != "\\":
+            paths.append(token)
+    return paths
+
+
+def within_any(path: str, roots: list[str]) -> bool:
+    """Whether `path` lies under one of `roots`."""
+    for root in roots:
+        if path.startswith(root + "/"):
+            return true
+    return false
