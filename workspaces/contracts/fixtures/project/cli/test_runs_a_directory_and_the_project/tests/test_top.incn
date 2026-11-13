@@ -1,0 +1,5 @@
+"""A test module directly in the tests directory."""
+
+
+def test_top() -> None:
+    assert 1 + 1 == 2

@@ -1,0 +1,5 @@
+"""A test module in a nested directory."""
+
+
+def test_deep() -> None:
+    assert "a" + "b" == "ab"

@@ -11,7 +11,7 @@ oven lock [--versions lowest|lowest-direct|newest] [PATH]
 oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE
 oven run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 oven check PATH [--format text|json] [UNIT OPTIONS]
-oven test PATH [UNIT OPTIONS]
+oven test [PATH] [UNIT OPTIONS]
 oven describe-unit PATH [--unattended] [UNIT OPTIONS]
 oven build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 oven owner stop
@@ -24,7 +24,7 @@ incan --version
 incan run [--direct] PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 incan check PATH [--format text|json] [UNIT OPTIONS]
 incan explain CODE
-incan test PATH [UNIT OPTIONS]
+incan test [PATH] [UNIT OPTIONS]
 incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 incan fmt [--check] PATH...
 incan inspect codegraph PATH [GRAPH OPTIONS]
@@ -33,7 +33,7 @@ incan toolchain pack OUT
 incan toolchain install ARCHIVE
 ```
 
-There is no implicit command or implicit source path. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
+There is no implicit command. Without `PATH`, `test` uses the current directory; every other command that takes `PATH` requires it. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
 
 ## Help and version
 
@@ -90,7 +90,7 @@ The JSON report has `schema_version: 2`, Boolean `ok`, and a `diagnostics` array
 
 ## `oven test`
 
-`PATH` names a source file containing test functions, or a Loaf directory. For a directory, the command runs the Loaf's Rust facet tests when it declares a Rust facet, then every `test_*.incn` module directly under its source root and its `tests` directory; a Loaf with neither is refused. The command compiles the collected tests and executes each in its own process on every invocation. The compiled tests of a source file reside under `target/incan/<profile>/tests/<STEM>/<crate>`, where `STEM` is the file's name without `.incn`, so invocations for different files of one project can run at once. Each test prints one line: `FILE::TEST` followed by `PASSED`, `FAILED`, `SKIPPED (REASON)`, `XFAIL (REASON)` or `XPASS (REASON)`, where `FILE` is the source file's name. A failed test's output follows on stderr. A compilation error, a failing test or an `XPASS` returns nonzero. `-k`, `--jobs`, `--list`, JSON and JUnit output flags are not accepted by this command.
+`PATH` names a source file containing test functions, a Loaf directory or another directory; without `PATH` it is the current directory. For a Loaf directory, the command runs the Loaf's Rust facet tests when it declares a Rust facet, then every test module below its source root and its `tests` directory; a Loaf with neither is refused. For another directory, it runs every test module below it and prints `No tests collected` when there is none. A test module is a `test_*.incn` or `*_test.incn` file; hidden directories, `target` directories and nested Loaves are not searched. The command compiles the collected tests and executes each in its own process on every invocation. The compiled tests of a source file reside under `target/incan/<profile>/tests/<STEM>/<crate>`, where `STEM` is the file's name without `.incn`, so invocations for different files of one project can run at once. Each test prints one line: `FILE::TEST` followed by `PASSED`, `FAILED`, `SKIPPED (REASON)`, `XFAIL (REASON)` or `XPASS (REASON)`, where `FILE` is the source file's name. A failed test's output follows on stderr. A compilation error, a failing test or an `XPASS` returns nonzero. `-k`, `--jobs`, `--list`, JSON and JUnit output flags are not accepted by this command.
 
 Collected test functions take no arguments and return `None` or `Result[None, E]`. A result-returning test passes with `Ok(None)` and fails with `Err(error)`; `E` must satisfy the `Debug` trait bound. `@skip`, `@skipif`, `@xfail` and `@xfailif` set a test's outcome policy; `@test`, `@slow`, `@mark` and `@serial` are accepted and do not change execution. Fixtures, parametrized tests, `@timeout` and `@resource` are refused.
 
