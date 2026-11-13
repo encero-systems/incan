@@ -3,9 +3,10 @@
 //! dependencies and unresolved adaptations refuse this profile until their own facts are available.
 
 use super::super::flow::{InputEvaluation, Invocation, InvocationArgument};
+use super::call_results::{conditional_result, plain_result, primitive_display};
 use super::{
     Access, Builder, Event, Loan, LoanId, LoanKind, OwnershipMode, Path, Permission, Place, Projection, ResolvedType,
-    Root, SourceSlot, Unavailable,
+    Root, SourceSlot, Unavailable, ViewRelation, ViewSource,
 };
 use crate::ast::{CallArg, Expr, ParamKind, Receiver, Span, Spanned};
 use crate::symbols::CallableParam;
@@ -69,6 +70,17 @@ impl Builder<'_> {
                 return self.enum_view_construction(arguments, &view_fields, span, incoming);
             }
         }
+        if self
+            .checker
+            .type_info
+            .resolved_identity(span)
+            .is_some_and(|identity| identity.kind == incan_semantics_core::SemanticSourceTargetKind::Variant)
+        {
+            return self.variant_construction(arguments, span, incoming);
+        }
+        if self.checker.type_info.resolved_collection_constructor(span).is_some() {
+            return self.collection_construction(arguments, incoming);
+        }
         if !matches!(callee.node, Expr::Ident(_)) {
             return Err(Unavailable {
                 span,
@@ -82,6 +94,29 @@ impl Builder<'_> {
             return self.ordinary_iteration_call(None, arguments, incoming);
         }
         self.apply_call(None, arguments, span, incoming)
+    }
+
+    /// Evaluate a checker-selected builtin collection constructor as fresh independent storage. The constructor
+    /// identity, argument types and result type were fixed by expression checking; source flow only preserves
+    /// written evaluation order and any dependencies inside its arguments.
+    fn collection_construction(
+        &mut self,
+        arguments: &[CallArg],
+        mut incoming: Vec<usize>,
+    ) -> Result<Vec<usize>, Unavailable> {
+        for argument in arguments {
+            let value = match argument {
+                CallArg::Positional(value) | CallArg::Named(_, value) => value,
+                CallArg::PositionalUnpack(value) | CallArg::KeywordUnpack(value) => {
+                    return Err(Unavailable {
+                        span: value.span,
+                        reason: "collection construction needs fixed checked arguments".into(),
+                    });
+                }
+            };
+            incoming = self.expression(value, incoming, true)?;
+        }
+        Ok(incoming)
     }
 
     /// Whether an iteration-only graph must project this missing or inferred ordinary call without claiming an
@@ -122,9 +157,10 @@ impl Builder<'_> {
         Ok(incoming)
     }
 
-    /// A builtin list method reads or changes its receiver place in place, after evaluating its arguments. An element
-    /// is fresh or Copy until values moved into a collection gain checked transfer materialization.
-    pub(super) fn list_method(
+    /// A supported builtin collection or carrier method reads or changes its receiver place after evaluating its
+    /// arguments. A collection element is fresh or Copy until values moved into a collection gain checked transfer
+    /// materialization.
+    pub(super) fn builtin_place_method(
         &mut self,
         receiver: &Spanned<Expr>,
         writes: bool,
@@ -132,19 +168,24 @@ impl Builder<'_> {
         span: Span,
         incoming: Vec<usize>,
     ) -> Result<Vec<usize>, Unavailable> {
-        let place = self.place(receiver)?;
-        let mut incoming = self.evaluate_place(receiver, incoming)?;
+        let (place, mut incoming) = if let Some(place) = self.optional_place(receiver)? {
+            let incoming = self.evaluate_place(receiver, incoming)?;
+            (place, incoming)
+        } else {
+            self.borrowed_input_source(receiver, span, incoming)?
+        };
         for argument in arguments {
             let CallArg::Positional(value) = argument else {
                 return Err(Unavailable {
                     span,
-                    reason: "list method needs positional arguments".into(),
+                    reason: "builtin place method needs positional arguments".into(),
                 });
             };
             if !self.fresh_or_copy_field(value) && !matches!(value.node, Expr::Call(..) | Expr::MethodCall(..)) {
                 return Err(Unavailable {
                     span: value.span,
-                    reason: "a non-Copy list element needs checked ownership transfer materialization".into(),
+                    reason: "a non-Copy builtin method argument needs checked ownership transfer materialization"
+                        .into(),
                 });
             }
             incoming = self.expression(value, incoming, false)?;
@@ -305,13 +346,9 @@ impl Builder<'_> {
                 reason: "call facts belong to a different callable".into(),
             });
         }
-        // A native associated function written on its type, as in `HashMap.new()`, names the type, not a receiver
-        // value.
-        let receiver = if self.checker.type_info.native_associated_call(span) {
-            None
-        } else {
-            receiver
-        };
+        // A static or native associated function is written on its type, but its selected callable contract has no
+        // receiver value. The checked call fact, rather than the surface qualifier's spelling, owns that distinction.
+        let receiver = if call.receiver.is_none() { None } else { receiver };
         if call.receiver.is_some() != receiver.is_some() {
             return Err(Unavailable {
                 span,
@@ -389,6 +426,7 @@ impl Builder<'_> {
             && !plain_result(result)
             && result_requirement.is_none()
             && !lends_nothing
+            && !(call.kind == super::super::InputCallKind::Ordinary && call.parameters.is_empty())
         {
             return Err(Unavailable {
                 span,
@@ -460,9 +498,42 @@ impl Builder<'_> {
                     source_node,
                 });
             } else {
-                // A chained receiver continues on the place its inner call's returned view substituted.
-                let (source, evaluated) = self.borrowed_input_source(receiver, span, incoming)?;
-                incoming = evaluated;
+                // A chained direct view continues on the place its inner call substituted. An aggregate temporary
+                // owns distinct storage while retaining the loans carried by that value, so the outer call borrows
+                // the temporary and keeps every carried dependency live through invocation.
+                let aggregate = self
+                    .call_relation(receiver)?
+                    .filter(|relation| !relation.component.is_empty() && relation.carried.is_none());
+                let source = if let Some(relation) = aggregate {
+                    let (evaluated, dependencies) = self.evaluate_aggregate_view_call(receiver, relation, incoming)?;
+                    incoming = evaluated;
+                    let root = Root::Temporary {
+                        owner: self.owner.clone(),
+                        expression: receiver.span,
+                        invocation: span,
+                    };
+                    self.graph.permissions.insert(
+                        root.clone(),
+                        Permission {
+                            exclusive: true,
+                            writable: true,
+                            transferable: true,
+                        },
+                    );
+                    invocation.receiver_dependencies = dependencies.clone();
+                    loans.extend(dependencies);
+                    Path {
+                        place: Place {
+                            root,
+                            projection: Vec::new(),
+                        },
+                        through: None,
+                    }
+                } else {
+                    let (source, evaluated) = self.borrowed_input_source(receiver, span, incoming)?;
+                    incoming = evaluated;
+                    source
+                };
                 let mutable = call.receiver == Some(Receiver::Mutable);
                 let loan = self.call_loan(source, mutable, mutable, receiver.span);
                 let source_node = self.graph.nodes.len();
@@ -502,12 +573,23 @@ impl Builder<'_> {
             let source = self.optional_place(expression)?.map(|path| path.place);
             let start_node = self.graph.nodes.len();
             incoming = self.event(incoming, Event::Nothing, expression.span);
-            let explicit = matches!(
-                call.kind,
-                super::super::InputCallKind::Explicit | super::super::InputCallKind::Native
-            );
-            let (outgoing, loan) =
-                self.call_argument(expression, &call.parameters[slot], mode, explicit, span, incoming)?;
+            let (outgoing, loan) = self.call_argument(
+                expression,
+                &call.parameters[slot],
+                mode,
+                call.kind == super::super::InputCallKind::Ordinary,
+                matches!(
+                    call.kind,
+                    super::super::InputCallKind::Explicit | super::super::InputCallKind::Native
+                ) || (call.kind == super::super::InputCallKind::Ordinary
+                    && self
+                        .checker
+                        .type_info
+                        .constructor_field_binding(expression.span)
+                        .is_some()),
+                span,
+                incoming,
+            )?;
             incoming = outgoing;
             let source_node = if source.is_some() || loan.is_some() {
                 Some(*incoming.first().filter(|_| incoming.len() == 1).ok_or(Unavailable {
@@ -608,7 +690,8 @@ impl Builder<'_> {
         expression: &Spanned<Expr>,
         parameter: &CallableParam,
         mode: Option<OwnershipMode>,
-        explicit_callee: bool,
+        ordinary_callee: bool,
+        accepts_fresh_inferred: bool,
         invocation: Span,
         incoming: Vec<usize>,
     ) -> Result<(Vec<usize>, Option<LoanId>), Unavailable> {
@@ -633,18 +716,41 @@ impl Builder<'_> {
             None if self.copy_value(&parameter.ty) && !parameter.is_mut => self
                 .expression(expression, incoming, false)
                 .map(|outgoing| (outgoing, None)),
-            // A fresh closed value given to an explicit callee has no source to conflict with, so the parameter's
-            // inferred passing applies. Ordinary helpers keep the Copy-only profile.
-            None if explicit_callee
+            // A fresh closed value has no caller-owned source to conflict with. Explicit boundaries and an ordinary
+            // model constructor argument retain that checked independence without inventing a copy or loan.
+            None if accepts_fresh_inferred
                 && !parameter.is_mut
                 && self.optional_place(expression)?.is_none()
-                && self
+                && (self
                     .checker
                     .type_info
                     .expr_type(expression.span)
-                    .is_some_and(plain_result) =>
+                    .is_some_and(plain_result)
+                    || (ordinary_callee
+                        && self
+                            .checker
+                            .type_info
+                            .constructor_field_binding(expression.span)
+                            .is_some())) =>
             {
                 self.expression(expression, incoming, true)
+                    .map(|outgoing| (outgoing, None))
+            }
+            // A whole local may be observed by an ordinary helper while its body retains later storage. Parameters,
+            // projections and borrowed aliases still need an explicit access fact rather than inferred widening.
+            None if ordinary_callee
+                && !parameter.is_mut
+                && self.optional_place(expression)?.is_some_and(|path| {
+                    path.through.is_none()
+                        && path.place.projection.is_empty()
+                        && matches!(
+                            path.place.root,
+                            Root::Binding(ref identity)
+                                if identity.kind == incan_semantics_core::SemanticSourceTargetKind::Local
+                        )
+                }) =>
+            {
+                self.expression(expression, incoming, false)
                     .map(|outgoing| (outgoing, None))
             }
             _ => Err(Unavailable {
@@ -700,10 +806,34 @@ impl Builder<'_> {
             .type_info
             .constructor_field_binding(expression.span)
             .is_some();
+        let independent_source_result = self
+            .checker
+            .type_info
+            .protocols
+            .explicit_input_calls
+            .get(&expression.span)
+            .is_some_and(|call| {
+                (call.kind == super::super::InputCallKind::Ordinary && call.parameters.is_empty())
+                    || (call.kind == super::super::InputCallKind::Explicit
+                        && self
+                            .checker
+                            .type_info
+                            .selected_input_contract(call)
+                            .ok()
+                            .and_then(|contract| crate::ownership_metadata::owned_result(contract).ok())
+                            .flatten()
+                            .is_some()
+                        && self
+                            .checker
+                            .type_info
+                            .selected_input_contract(call)
+                            .is_ok_and(|contract| contract.is_some_and(|contract| contract.result_source.is_none())))
+            });
         let independent_native_result = self.checker.native_result_is_independent(expression.span);
         if !plain_result(ty)
             && !matches!(expression.node, Expr::List(_))
             && !fresh_constructor
+            && !independent_source_result
             && !independent_native_result
         {
             return Err(Unavailable {
@@ -1010,6 +1140,7 @@ impl Builder<'_> {
         incoming: Vec<usize>,
     ) -> Result<(Vec<usize>, Path), Unavailable> {
         let span = expression.span;
+        let aggregate = !relation.component.is_empty();
         let incoming = match &expression.node {
             // `?` continues on the carried view's place; its error path leaves the body carrying no loan.
             Expr::Paren(inner) | Expr::Try(inner) => return self.evaluate_view_call(inner, relation, incoming),
@@ -1053,7 +1184,7 @@ impl Builder<'_> {
             span,
             reason: "returned view source was not borrowed by its invocation".into(),
         })?;
-        if !matches!(base.source.root, Root::Binding(_)) {
+        if matches!(base.source.root, Root::Temporary { .. }) && !aggregate {
             return Err(Unavailable {
                 span,
                 reason: "a returned view of a temporary cannot outlive its invocation".into(),
@@ -1102,12 +1233,12 @@ impl Builder<'_> {
             span: call.span,
             reason: "aggregate view call has no checked invocation".into(),
         })?;
-        let source = match source_slot {
+        let source = match &source_slot {
             SourceSlot::Receiver => invocation.receiver,
             SourceSlot::Parameter(slot) => invocation
                 .arguments
                 .iter()
-                .find(|argument| argument.slot == slot)
+                .find(|argument| argument.slot == *slot)
                 .and_then(|argument| argument.loan),
         }
         .and_then(|loan| self.graph.loans.get(loan.0))
@@ -1117,6 +1248,7 @@ impl Builder<'_> {
         })?;
         let dependencies = match &source.source.root {
             Root::Binding(root) => self.graph.dependent_locals.get(root).cloned().unwrap_or_default(),
+            Root::Temporary { .. } if source_slot == SourceSlot::Receiver => invocation.receiver_dependencies.clone(),
             Root::Temporary { .. } => Vec::new(),
         };
         let mut loans = vec![direct];
@@ -1159,80 +1291,5 @@ impl Builder<'_> {
             .projection
             .extend(relation.fields.iter().cloned().map(Projection::Field));
         Ok(place)
-    }
-}
-
-/// A selected callee's returned view: its access, the source slot, the declared stored-field path, and the carrier
-/// payload or tuple element holding the view, if any.
-pub(super) struct ViewRelation {
-    exclusive: bool,
-    slot: SourceSlot,
-    fields: Vec<incan_semantics_core::CanonicalSymbolId>,
-    pub(super) component: Vec<usize>,
-    pub(super) carried: Option<usize>,
-}
-
-/// Where a place view comes from: a call returning a view, or `?` on a local still holding a carried call.
-pub(super) enum ViewSource {
-    Call(ViewRelation),
-    Carrier(incan_semantics_core::CanonicalSymbolId),
-}
-
-/// This initial call profile admits only closed scalar/owned byte-string results and builtin `Result`/`Option`
-/// carriers of them, with no possible retained source dependency. Other aggregates, references, native and generic
-/// results await their checked dependency representation.
-fn plain_result(ty: &ResolvedType) -> bool {
-    match ty {
-        ResolvedType::Unit
-        | ResolvedType::Int
-        | ResolvedType::Float
-        | ResolvedType::Numeric(_)
-        | ResolvedType::Bool
-        | ResolvedType::Str
-        | ResolvedType::Bytes
-        | ResolvedType::FrozenStr
-        | ResolvedType::FrozenBytes => true,
-        ResolvedType::Generic(_, arguments) if ty.is_result() || ty.is_option() => {
-            !arguments.is_empty() && arguments.iter().all(plain_result)
-        }
-        _ => false,
-    }
-}
-
-/// Retain an unresolved scalar-carrier obligation without declaring any named leaf independent. Legacy checking
-/// can represent an enclosing binder as Named; Body IR classifies it using the exact declaration's binder inventory.
-/// A real nominal leaf stays nominal and refuses closed admission until its dependency proof is supported.
-pub(in crate::typechecker::ownership_contracts) fn conditional_result(ty: &ResolvedType) -> bool {
-    /// Check carrier leaves while retaining whether any unresolved binder prevents a final independence proof.
-    fn leaves(ty: &ResolvedType, generic: &mut bool) -> bool {
-        match ty {
-            ResolvedType::TypeVar(_) | ResolvedType::Named(_) => {
-                *generic = true;
-                true
-            }
-            ResolvedType::Generic(_, arguments) if ty.is_result() || ty.is_option() => {
-                !arguments.is_empty() && arguments.iter().all(|item| leaves(item, generic))
-            }
-            _ => plain_result(ty),
-        }
-    }
-    let mut generic = false;
-    (ty.is_result() || ty.is_option()) && leaves(ty, &mut generic) && generic
-}
-
-/// Printing reaches no nominal display hook for primitive values and for lists whose items print the same way.
-fn primitive_display(ty: &ResolvedType) -> bool {
-    match ty {
-        ResolvedType::Str
-        | ResolvedType::FrozenStr
-        | ResolvedType::Int
-        | ResolvedType::Float
-        | ResolvedType::Bool
-        | ResolvedType::Unit => true,
-        ResolvedType::Generic(name, arguments) => {
-            collections::from_str(name) == Some(CollectionTypeId::List)
-                && matches!(arguments.as_slice(), [item] if primitive_display(item))
-        }
-        _ => false,
     }
 }

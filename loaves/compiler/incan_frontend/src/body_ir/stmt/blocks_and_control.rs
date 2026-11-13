@@ -73,6 +73,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .rev()
             .filter(|local| local.scope == scope && local.origin == bir::LocalOrigin::Temporary)
             .filter(|local| !local.ty.abi_v0_facts().ownership.is_trivially_copy())
+            .filter(|local| !self.retained_statement_temporaries.contains(&local.id))
             .filter(|local| !self.moved_out.contains(&local.id) && Some(local.id) != kept)
             .map(|local| local.id)
             .collect::<Vec<_>>();

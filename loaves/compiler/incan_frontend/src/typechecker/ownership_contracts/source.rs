@@ -10,7 +10,7 @@ use super::flow::{
 };
 use crate::ast::{
     AssignmentStmt, BinaryOp, BindingKind, CompoundAssignmentStmt, Condition, Expr, FieldAssignmentStmt, ForStmt,
-    FunctionDecl, IfStmt, MethodDecl, Param, Receiver, Span, Spanned, Statement, Type,
+    FunctionDecl, IfStmt, IndexAssignmentStmt, MethodDecl, Param, Receiver, Span, Spanned, Statement, Type,
 };
 use crate::ownership_metadata::SourceSlot;
 use crate::symbols::{ResolvedType, SymbolKind};
@@ -19,6 +19,7 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 mod builder_places;
 mod builder_statements;
+pub(super) mod call_results;
 pub(super) mod calls;
 mod closures;
 mod comprehensions;
@@ -100,6 +101,21 @@ struct LoopEdges {
 struct Path {
     place: Place,
     through: Option<LoanId>,
+}
+
+/// A selected callee's returned view: its access, source slot, stored-field path and optional carrier position.
+pub(super) struct ViewRelation {
+    exclusive: bool,
+    slot: SourceSlot,
+    fields: Vec<CanonicalSymbolId>,
+    pub(super) component: Vec<usize>,
+    pub(super) carried: Option<usize>,
+}
+
+/// Where a place view comes from: a call returning a view, or `?` on a local still holding a carried call.
+pub(super) enum ViewSource {
+    Call(ViewRelation),
+    Carrier(CanonicalSymbolId),
 }
 
 /// Invocation-local projection state, borrowing immutable checked identities and types rather than resolving names.
@@ -380,6 +396,15 @@ impl Builder<'_> {
         if let Some(result) = self.retained_result(expression, incoming.clone(), false)? {
             return Ok(result.incoming);
         }
+        if matches!(expression.node, Expr::Field(_, _))
+            && self
+                .checker
+                .type_info
+                .resolved_identity(expression.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Variant)
+        {
+            return Ok(incoming);
+        }
         if self
             .checker
             .type_info
@@ -502,6 +527,7 @@ impl Builder<'_> {
                     if view_fields.iter().any(|field| *field) {
                         return self.enum_view_construction(arguments, &view_fields, expression.span, incoming);
                     }
+                    return self.variant_construction(arguments, expression.span, incoming);
                 }
                 let enum_view_fields = self.enum_view_method_constructor_fields(receiver, method, expression.span);
                 if let Some(view_fields) = &enum_view_fields {
@@ -512,9 +538,10 @@ impl Builder<'_> {
                     if view_fields.iter().any(|field| *field) {
                         return self.enum_view_construction(arguments, &view_fields, expression.span, incoming);
                     }
+                    return self.variant_construction(arguments, expression.span, incoming);
                 }
-                match super::builtins::list_method_writes(&self.checker.type_info, expression.span) {
-                    Some(writes) => self.list_method(receiver, writes, arguments, expression.span, incoming),
+                match super::builtins::builtin_place_method_writes(&self.checker.type_info, expression.span) {
+                    Some(writes) => self.builtin_place_method(receiver, writes, arguments, expression.span, incoming),
                     None if self.uses_ordinary_iteration_access(expression.span) => {
                         self.ordinary_iteration_call(Some(receiver), arguments, incoming)
                     }

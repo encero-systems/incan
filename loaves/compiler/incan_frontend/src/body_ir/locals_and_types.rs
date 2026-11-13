@@ -26,6 +26,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             awaited_view_places: HashMap::new(),
             carried_view_locals: HashMap::new(),
             aggregate_view_locals: HashSet::new(),
+            aggregate_view_temporary_dependencies: HashMap::new(),
+            retained_statement_temporaries: HashSet::new(),
             input_if_scopes: Vec::new(),
             input_loops: Vec::new(),
             runtime_type_conflicts: lowering_facts.runtime_type_conflicts,

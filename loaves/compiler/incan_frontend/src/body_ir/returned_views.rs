@@ -346,6 +346,59 @@ impl BodyBuilder<'_, '_> {
         Some((expression.span, component))
     }
 
+    /// Select a checked aggregate view's hidden temporary source, if its authenticated receiver or parameter is one.
+    /// Stored bindings need no special retention because their lexical local already owns their lifetime.
+    pub(super) fn aggregate_view_temporary_source(
+        &self,
+        span: ast::Span,
+        receiver: Option<&bir::Operand>,
+        arguments: &[bir::ArgumentElement],
+    ) -> Option<bir::LocalId> {
+        let (_, slot, _, _) = self.type_info.selected_aggregate_view(span)?;
+        let source = match slot {
+            SourceSlot::Receiver => receiver,
+            SourceSlot::Parameter(slot) => arguments.get(slot).and_then(bir::ArgumentElement::as_one),
+        };
+        let bir::Operand::Place(read) = source? else {
+            return None;
+        };
+        let local = read.place.local_id()?;
+        self.locals
+            .get(local.index())
+            .is_some_and(|declaration| declaration.origin == bir::LocalOrigin::Temporary)
+            .then_some(local)
+    }
+
+    /// Record the complete hidden owner chain of an aggregate result temporary. The chain is retained only if a
+    /// later named aggregate local adopts this result; an unused or statement-local result keeps normal drop timing.
+    pub(super) fn record_aggregate_view_temporary_dependencies(
+        &mut self,
+        result: &bir::Operand,
+        source: Option<bir::LocalId>,
+    ) {
+        let Some(source) = source else { return };
+        let bir::Operand::Place(read) = result else { return };
+        let Some(result) = read.place.local_id() else { return };
+        let mut dependencies = vec![source];
+        if let Some(inherited) = self.aggregate_view_temporary_dependencies.get(&source) {
+            for dependency in inherited {
+                if !dependencies.contains(dependency) {
+                    dependencies.push(*dependency);
+                }
+            }
+        }
+        self.aggregate_view_temporary_dependencies.insert(result, dependencies);
+    }
+
+    /// Promote only the checked hidden owners of a named aggregate result from statement to lexical-scope lifetime.
+    pub(super) fn retain_aggregate_view_temporary_dependencies(&mut self, value: &bir::Operand) {
+        let bir::Operand::Place(read) = value else { return };
+        let Some(result) = read.place.local_id() else { return };
+        if let Some(dependencies) = self.aggregate_view_temporary_dependencies.get(&result) {
+            self.retained_statement_temporaries.extend(dependencies.iter().copied());
+        }
+    }
+
     /// For a call whose selected callee carries a view in its `Result` or `Option`, the same substituted place a
     /// direct view would give, with the payload carrying the view. `?` on a success-carried view continues on it; the
     /// carrier's own reference is never read.

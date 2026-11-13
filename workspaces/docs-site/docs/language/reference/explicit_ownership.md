@@ -34,7 +34,7 @@ def main() -> int:
 
 A call borrows each borrowed argument from existing storage for the invocation. A fresh expression supplies temporary storage for that call. Borrowing a variable through parentheses preserves that variable's permissions; it does not create a fresh writable owner. Assigning to a writable borrowed parameter replaces the caller's value; assigning to a mutable owned parameter replaces the callee's own value. Immutable, static and interop access restrictions still apply: an annotation cannot grant permission to change a source that is otherwise read-only.
 
-Each call takes its declared access for the invocation, whether the callee reads or writes the argument. Calls to ordinary functions from a body with explicit annotations keep the callee's inferred parameter contract.
+Each call takes its declared access for the invocation, whether the callee reads or writes the argument. Calls to ordinary functions from a body with explicit annotations keep the callee's inferred parameter contract. Such a body may otherwise use ordinary checked expressions, constructors, calls, matches, assignments, branches and loops; those operations retain their ordinary value and access contracts.
 
 ### Trait implementations
 

@@ -61,6 +61,8 @@ pub(super) struct LocalMode {
 /// declaration/default evaluation has no callable body owner, but still cannot cross a record profile unaware of it.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct InputCall {
+    /// Complete call-site span anchoring independently retained selection and header facts.
+    pub site: Span,
     pub kind: InputCallKind,
     pub owner: Option<incan_semantics_core::CanonicalSymbolId>,
     pub callee: incan_semantics_core::CanonicalSymbolId,
@@ -681,13 +683,13 @@ fn whole_binding(value: &Spanned<Expr>, facts: &TypeCheckInfo) -> Option<Canonic
     }
 }
 
-/// Recognize a compiler-selected mutating list method on the retained source place.
+/// Recognize a compiler-selected mutating builtin place method on the retained source place.
 fn expression_mutates_binding(value: &Spanned<Expr>, source: &CanonicalSymbolId, facts: &TypeCheckInfo) -> bool {
     let Expr::MethodCall(receiver, _, _, _) = &value.node else {
         return false;
     };
     place_binding(receiver, facts).as_ref() == Some(source)
-        && builtins::list_method_writes(facts, value.span) == Some(true)
+        && builtins::builtin_place_method_writes(facts, value.span) == Some(true)
 }
 
 /// Find replacement of the retained root in statement-owned write positions that expression traversal does not see.
