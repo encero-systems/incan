@@ -3,12 +3,48 @@
 
 use super::*;
 
+/// Recover generated-member ownership retained by the checker records that supplied reusable bodies.
+///
+/// A generated member has no independent executable representation: its checked nominal owner is the dependency
+/// root. Conflicting owners for one canonical member are invalid retained checker evidence.
+fn retained_generated_member_owners(
+    modules: &[ParsedModule],
+    analysis: &CompilationAnalysis,
+) -> Result<BTreeMap<CanonicalSymbolId, CanonicalSymbolId>, String> {
+    let mut owners = BTreeMap::new();
+    for module in modules {
+        let info = analysis
+            .type_info_for_path(&module.file_path)
+            .ok_or("module analysis is missing")?;
+        for (member, owner) in &info.calls.compiler_generated_member_identities {
+            if let Some(previous) = owners.insert(member.clone(), owner.clone())
+                && previous != *owner
+            {
+                return Err(format!(
+                    "compiler-generated member `{}` has conflicting retained owners",
+                    member.render_compact(),
+                ));
+            }
+        }
+    }
+    Ok(owners)
+}
+
 /// Recover nonlocal call roots from accepted Body IR when a reused checker record no longer carries the reference
 /// edge that originally selected the body. The canonical target is producer evidence; source spelling is not.
-fn retained_body_call_requirements(modules: &[BodyIrModule], package_identity: &str) -> BTreeSet<CanonicalSymbolId> {
+fn retained_body_call_requirements(
+    modules: &[BodyIrModule],
+    package_identity: &str,
+    generated_member_owners: &BTreeMap<CanonicalSymbolId, CanonicalSymbolId>,
+) -> BTreeSet<CanonicalSymbolId> {
     let mut requirements = BTreeSet::new();
     for body in modules.iter().flat_map(|module| &module.bodies) {
-        collect_retained_body_calls(&body.block.stmts, package_identity, &mut requirements);
+        collect_retained_body_calls(
+            &body.block.stmts,
+            package_identity,
+            generated_member_owners,
+            &mut requirements,
+        );
     }
     requirements
 }
@@ -16,6 +52,7 @@ fn retained_body_call_requirements(modules: &[BodyIrModule], package_identity: &
 fn collect_retained_body_calls(
     statements: &[incan_semantics_core::body_ir::Statement],
     package_identity: &str,
+    generated_member_owners: &BTreeMap<CanonicalSymbolId, CanonicalSymbolId>,
     requirements: &mut BTreeSet<CanonicalSymbolId>,
 ) {
     use incan_semantics_core::body_ir::{CallableTarget, Callee, Rvalue, StatementKind};
@@ -26,10 +63,12 @@ fn collect_retained_body_calls(
                 callee: Callee::Function(CallableTarget::Named(target)),
                 ..
             } => {
-                if let Some(identity) = &target.canonical
-                    && matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity)
-                {
-                    requirements.insert(identity.clone());
+                if let Some(identity) = &target.canonical {
+                    let requirement = generated_member_owners.get(identity).unwrap_or(identity);
+                    if matches!(&requirement.origin, SymbolOrigin::Package { library, .. } if library != package_identity)
+                    {
+                        requirements.insert(requirement.clone());
+                    }
                 }
             }
             StatementKind::Assign {
@@ -37,32 +76,52 @@ fn collect_retained_body_calls(
                 ..
             } => {
                 for arm in arms {
-                    collect_retained_body_calls(&arm.guard_stmts, package_identity, requirements);
-                    collect_retained_body_calls(&arm.body_stmts, package_identity, requirements);
+                    collect_retained_body_calls(
+                        &arm.guard_stmts,
+                        package_identity,
+                        generated_member_owners,
+                        requirements,
+                    );
+                    collect_retained_body_calls(
+                        &arm.body_stmts,
+                        package_identity,
+                        generated_member_owners,
+                        requirements,
+                    );
                 }
             }
             StatementKind::Assign {
                 rvalue: Rvalue::Closure { body, .. },
                 ..
-            } => collect_retained_body_calls(&body.stmts, package_identity, requirements),
+            } => collect_retained_body_calls(&body.stmts, package_identity, generated_member_owners, requirements),
             StatementKind::Assign {
                 rvalue: Rvalue::Generator { body, .. },
                 ..
-            } => collect_retained_body_calls(&body.stmts, package_identity, requirements),
+            } => collect_retained_body_calls(&body.stmts, package_identity, generated_member_owners, requirements),
             StatementKind::If {
                 then_block, else_block, ..
             } => {
-                collect_retained_body_calls(&then_block.stmts, package_identity, requirements);
+                collect_retained_body_calls(
+                    &then_block.stmts,
+                    package_identity,
+                    generated_member_owners,
+                    requirements,
+                );
                 if let Some(block) = else_block {
-                    collect_retained_body_calls(&block.stmts, package_identity, requirements);
+                    collect_retained_body_calls(&block.stmts, package_identity, generated_member_owners, requirements);
                 }
             }
             StatementKind::Loop { body } | StatementKind::UnsafeRegion { body, .. } => {
-                collect_retained_body_calls(&body.stmts, package_identity, requirements);
+                collect_retained_body_calls(&body.stmts, package_identity, generated_member_owners, requirements);
             }
             StatementKind::Race { arms, .. } => {
                 for arm in arms {
-                    collect_retained_body_calls(&arm.body.stmts, package_identity, requirements);
+                    collect_retained_body_calls(
+                        &arm.body.stmts,
+                        package_identity,
+                        generated_member_owners,
+                        requirements,
+                    );
                 }
             }
             _ => {}
@@ -275,7 +334,12 @@ pub(super) fn checked_modules(
 
     // ---- The program's own modules ----
     lower_authored_modules(&modules, &analysis, &session, &mut bodies, &mut files)?;
-    let retained_requirements = retained_body_call_requirements(&bodies[loaf_modules..], package_identity);
+    let retained_generated_member_owners = retained_generated_member_owners(&modules, &analysis)?;
+    let retained_requirements = retained_body_call_requirements(
+        &bodies[loaf_modules..],
+        package_identity,
+        &retained_generated_member_owners,
+    );
     if !retained_requirements
         .iter()
         .all(|identity| requested.contains(identity))
