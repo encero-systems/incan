@@ -9,7 +9,7 @@ from loaf_local_graph import unique
 from observation import Ledger, SETTLE_SECONDS, load_ledger, trace
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf
-from unit_freshness import artifact_identity, cache_identities, compiler_fingerprint, fingerprint
+from unit_freshness import ArtifactIdentities, cache_identities, compiler_fingerprint, fingerprint
 
 const CHECKED_DOMAIN: str = "incan.oven.checked-source/2"
 
@@ -31,10 +31,12 @@ pub def retain_callable_products(unit: UnitDescription, toolchain: Toolchain) ->
         return Ok(refused)
     # 2. Profile flags never enter checked-source equivalence, but every semantic input does.
     mut ledger = load_ledger(unit_ledger(unit.project_root, "checked-source"), SETTLE_SECONDS)
-    description = semantic_description(unit)?
-    interfaces = interface_inputs(unit, ledger)?
+    identities = ArtifactIdentities()
+    description = semantic_description(unit, identities)?
+    interfaces = interface_inputs(unit, ledger, identities)?
     caches = cache_identities(unit.rust_abi)?
-    native_search = native_search_inputs(unit, toolchain)?
+    native_search = native_search_inputs(unit, toolchain, identities)?
+    identities.verify()?
     parts = [
         CHECKED_DOMAIN,
         compiler_fingerprint(toolchain)?,
@@ -67,7 +69,7 @@ def reusable_vocabulary(unit: UnitDescription) -> Result[bool, str]:
     return Ok(true)
 
 
-def semantic_description(unit: UnitDescription) -> Result[str, str]:
+def semantic_description(unit: UnitDescription, identities: ArtifactIdentities) -> Result[str, str]:
     """Normalize only native profile policy and authenticated Loaf locations, preserving all other unit fields."""
     mut fields = unit.to_json().expect_object().map_err((error) => error.message())?
     fields["profile"] = JsonValue.string("")
@@ -79,7 +81,9 @@ def semantic_description(unit: UnitDescription) -> Result[str, str]:
         item["dir"] = JsonValue.string(f"loaf:{loaf.name}")
         loaves.append(JsonValue.object(item))
     fields["loaves"] = JsonValue.array(loaves)
-    fields["externs"] = JsonValue.array([JsonValue.string(binding_identity(item, unit)?) for item in unit.externs])
+    fields["externs"] = JsonValue.array(
+        [JsonValue.string(binding_identity(item, unit, identities)?) for item in unit.externs],
+    )
     fields["search"] = JsonValue.array([JsonValue.string(path) for path in semantic_search(unit)?])
     return json_text(JsonValue.object(fields))
 
@@ -96,7 +100,11 @@ def semantic_search(unit: UnitDescription) -> Result[list[str], str]:
     return Ok(paths)
 
 
-def interface_inputs(unit: UnitDescription, mut ledger: Ledger) -> Result[list[str], str]:
+def interface_inputs(
+    unit: UnitDescription,
+    mut ledger: Ledger,
+    identities: ArtifactIdentities,
+) -> Result[list[str], str]:
     """Witness semantic interfaces and native closure; separately requested tooling graphs are not checker inputs."""
     mut inputs: list[str] = []
     for loaf in unit.loaves:
@@ -109,11 +117,11 @@ def interface_inputs(unit: UnitDescription, mut ledger: Ledger) -> Result[list[s
                 inputs.append(ledger.digest(path)?)
             else:
                 inputs.append("absent")
-        inputs = inputs + closure_inputs(loaf, unit)?
+        inputs = inputs + closure_inputs(loaf, unit, identities)?
     return Ok(inputs)
 
 
-def closure_inputs(loaf: UnitLoaf, unit: UnitDescription) -> Result[list[str], str]:
+def closure_inputs(loaf: UnitLoaf, unit: UnitDescription, identities: ArtifactIdentities) -> Result[list[str], str]:
     """Preserve native graph edges, macro bindings and search order while quotienting only witnessed Loaf profiles."""
     directory = Path(loaf.dir)
     closure = read_json(directory.joinpath(f"{loaf.name}.native.json"))?
@@ -126,14 +134,14 @@ def closure_inputs(loaf: UnitLoaf, unit: UnitDescription) -> Result[list[str], s
                 return Err("native closure binding must name exactly one alias and artifact")
             name = string_value(pair[0])?
             path = located(directory, string_value(pair[1])?)?
-            inputs.append(binding_identity(NativeCrate(name=name, path=path.0), unit)?)
+            inputs.append(binding_identity(NativeCrate(name=name, path=path.0), unit, identities)?)
     inputs.append("search")
     for item in required_items(closure, "search")?:
         inputs.append(search_identity(located(directory, string_value(item)?)?, unit)?)
     return Ok(inputs)
 
 
-def binding_identity(native: NativeCrate, unit: UnitDescription) -> Result[str, str]:
+def binding_identity(native: NativeCrate, unit: UnitDescription, identities: ArtifactIdentities) -> Result[str, str]:
     """Use semantic Loaf identity only for its exact admitted rlib; Rust imports retain exact native identity."""
     path = Path(native.path).resolve().map_err((error) => f"cannot resolve {error.message()}")?
     if native.name not in unit.rust_crates:
@@ -144,7 +152,7 @@ def binding_identity(native: NativeCrate, unit: UnitDescription) -> Result[str, 
                 and expected.resolve().map_err((error) => f"cannot resolve {error.message()}")?.0 == path.0
             ):
                 return Ok(f"loaf:{native.name}:{loaf.name}")
-    return fingerprint([native.name, path.0, artifact_identity(path)?])
+    return fingerprint([native.name, path.0, identities.identity(path)?])
 
 
 def search_identity(path: Path, unit: UnitDescription) -> Result[str, str]:
@@ -164,7 +172,11 @@ def located(directory: Path, path: str) -> Result[Path, str]:
     return selected.resolve().map_err((error) => f"cannot resolve {error.message()}")
 
 
-def native_search_inputs(unit: UnitDescription, toolchain: Toolchain) -> Result[list[str], str]:
+def native_search_inputs(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    identities: ArtifactIdentities,
+) -> Result[list[str], str]:
     """Witness project-selected native search artifacts outside the already-admitted frozen toolchain generation."""
     mut ledger = load_ledger(unit_ledger(unit.project_root, "checked-native"), SETTLE_SECONDS, "")
     providers = [Path(loaf.dir).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0 for loaf in unit.loaves]
@@ -179,7 +191,7 @@ def native_search_inputs(unit: UnitDescription, toolchain: Toolchain) -> Result[
             for file in ledger.sources(directory, false)?:
                 if native_artifact(file):
                     inputs.append(file)
-                    inputs.append(artifact_identity(Path(file))?)
+                    inputs.append(identities.identity(Path(file))?)
     ledger.save()?
     return Ok(inputs)
 
