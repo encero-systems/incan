@@ -8,7 +8,7 @@
     - RFC 029 (union types and type narrowing)
     - RFC 049 (`if let` single-arm conditional match)
 - **Issue:** https://github.com/encero-systems/incan/issues/387
-- **RFC PR:** —
+- **RFC PR:** [#518](https://github.com/encero-systems/incan/pull/518)
 - **Written against:** v0.2
 - **Shipped in:** v0.3.0-dev.38
 

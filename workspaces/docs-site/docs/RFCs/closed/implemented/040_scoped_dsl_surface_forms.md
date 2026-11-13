@@ -8,7 +8,7 @@
     - RFC 028 (global operator overloading)
     - RFC 045 (scoped DSL symbol surfaces — companion RFC for identifier-level scoping)
 - **Issue:** https://github.com/encero-systems/incan/issues/174
-- **RFC PR:** —
+- **RFC PR:** [#441](https://github.com/encero-systems/incan/pull/441)
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 

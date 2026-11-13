@@ -9,7 +9,7 @@
     - RFC 068 (protocol hooks for core language syntax)
     - RFC 070 (Result combinators)
 - **Issue:** #127
-- **RFC PR:** —
+- **RFC PR:** [#512](https://github.com/encero-systems/incan/pull/512)
 - **Written against:** v0.3
 - **Shipped in:** v0.3.0-dev.36
 
