@@ -1,0 +1,28 @@
+# behavior: a binding names a header the package declares under `[[interop.c.targets]]` in loaf.toml; the header is verified from the project, its macro folds into a checked enum, and the call runs (#1008)
+# expect-stdout:
+#   5
+#   7
+
+from std.interop import c
+
+
+binding Bridge:
+    header = "interop/include/bridge.h"
+    link = c.system_library("c")
+
+    symbol absolute(value: c.i32) -> c.i32:
+        native = "abs"
+    enum Limit:
+        MAX: c.i32 = BRIDGE_LIMIT
+
+
+def absolute(value: i32) -> i32:
+    """Call the package-declared C function at one private boundary."""
+    unsafe:
+        return Bridge.absolute(value)
+
+
+def main() -> None:
+    """Print a verified call result and a verified header constant."""
+    println(absolute(-5))
+    println(Bridge.Limit.MAX)
