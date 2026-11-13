@@ -54,7 +54,8 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     signature.mkdir(true, true).map_err((error) => error.message())?
     linked = root.joinpath("signature")
     linked.symlink_to(signature).map_err((error) => error.message())?
-    return verify_signature_edit(binary, linked)
+    verify_signature_edit(binary, linked)?
+    return verify_rust_closure_debug_reproducibility(binary, root.joinpath("rust-closure"))
 
 
 pub def test_local_rust_source_edit_rebuilds_affected_unit() -> Result[None, str]:
@@ -161,6 +162,64 @@ def rust_source_probe_build(binary: str, app: Path, store: Path) -> Result[JsonV
     errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
     if not outcome.status.success() or errors != "":
         return Err(f"Rust source probe: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return command_proof(outcome.stdout)
+
+
+def verify_rust_closure_debug_reproducibility(binary: str, root: Path) -> Result[None, str]:
+    """A debug edit linked through an Incan library and local Rust library must reproduce its cold executable."""
+    provider = root.joinpath("provider")
+    app = root.joinpath("app")
+    provider.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    provider.joinpath("rust/src").mkdir(true, true).map_err((error) => error.message())?
+    app.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(
+        provider.joinpath("loaf.toml"),
+        "[project]\nname = \"debug_repro_provider\"\nversion = \"0.1.0\"\n\n[rust]\nname = \"debug_repro_native\"\ntype = \"lib\"\nedition = \"2024\"\n\n[rust.source]\nroot = \"rust\"\n",
+    )?
+    write(
+        provider.joinpath("src/lib.incn"),
+        "from rust::debug_repro_native import native_value\n\n\npub def value() -> int:\n    return native_value()\n",
+    )?
+    write(provider.joinpath("rust/src/lib.rs"), "pub fn native_value() -> i64 {\n    42\n}\n")?
+    write(
+        app.joinpath("loaf.toml"),
+        "[project]\nname = \"debug_repro_app\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[dependencies]\ndebug_repro_provider = { path = \"../provider\" }\n",
+    )?
+    source = app.joinpath("src/main.incn")
+    write(source, "from pub::debug_repro_provider import value\n\n\ndef main() -> None:\n    println(value())\n")?
+    warm_store = root.joinpath("warm-store")
+    _ = debug_probe_build(binary, app, warm_store)?
+    write(source, "from pub::debug_repro_provider import value\n\n\ndef main() -> None:\n    println(value() + 1)\n")?
+    warm_report = debug_probe_build(binary, app, warm_store)?
+    diagnostic = warm_report.to_json().map_err((error) => error.message())?
+    assert proof_count(warm_report, "native_bakes")? == 1, diagnostic
+    executable = app.joinpath("target/incan/debug/bin/debug_repro_app")
+    warm = executable.read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, warm_store)?
+    app.joinpath("target").remove_tree().map_err((error) => error.message())?
+    cold_store = root.joinpath("cold-store")
+    _ = debug_probe_build(binary, app, cold_store)?
+    cold = executable.read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, cold_store)?
+    assert warm == cold, "warm and cold debug executables with a Rust library differ"
+    return Ok(None)
+
+
+def debug_probe_build(binary: str, app: Path, store: Path) -> Result[JsonValue, str]:
+    """Build one real debug probe through records lowering and return its measured proof report."""
+    outcome = Command
+        .new(binary)
+        .arg("build")
+        .arg(app.0)
+        .args(["--profile", "debug", "--engine-report"])
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or errors != "":
+        return Err(f"debug reproducibility probe: status={outcome.status.code()} stdout={output} stderr={errors}")
     return command_proof(outcome.stdout)
 
 
