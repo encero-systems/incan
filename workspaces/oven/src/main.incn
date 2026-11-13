@@ -657,14 +657,22 @@ def check(arguments: list[str]) -> None:
         index += 1
     if format != "text" and format != "json":
         fail(f"{invoked()} check: `--format` is text or json, got `{format}`", 2)
-    match parse_options(own):
+    match parse_options(own, "."):
         Err(reason) => syntax_error("check", reason)
-        Ok(options) => finish("check", checked(validated("check", options), format), format)
+        Ok(options) => finish("check", checked(validated("check", located("check", options)), format), format)
 
 
 def checked(options: Options, format: str) -> Result[i32, str]:
-    """Describe an ordinary unit, then let checking prepare its dependencies and exact native inputs once."""
-    unit = describe(Path(options.path), options.profile, options.request, options.manifests)?
+    """
+    Describe an ordinary unit, then let checking prepare its dependencies and exact native inputs once. A directory,
+    or no PATH, checks the entry `build` selects for the Loaf at or above it.
+    """
+    mut source = Path(options.path)
+    if source.is_dir():
+        match build_source(source, options.manifests)?:
+            Some(entry) => source = entry
+            None => return Err(f"{source.0}: the Loaf has no Incan entry to check; name a source file")
+    unit = describe(source, options.profile, options.request, options.manifests)?
     return check_unit(unit, toolchain_for(unit)?, format)
 
 
