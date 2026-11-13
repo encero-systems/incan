@@ -10,6 +10,7 @@ from toolchain_archive import PACK_USAGE, INSTALL_USAGE, help_text as archive_he
 from runner_options import RUNNER_VALUE_OPTIONS, help_lines as runner_help_lines
 from project_scaffold import INIT_USAGE, NEW_USAGE, VALUE_OPTIONS as SCAFFOLD_VALUE_OPTIONS, scaffold_help
 from project_version import VERSION_USAGE, version_help
+from workspace import INSPECT_USAGE as WORKSPACE_USAGE, inspect_help as workspace_help
 
 # The project commands both surfaces run follow the invoked surface's name.
 const RUN_OPERANDS: str = "run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
@@ -51,6 +52,7 @@ pub def usage(surface: str) -> str:
                 NEW_USAGE,
                 INIT_USAGE,
                 VERSION_USAGE,
+                WORKSPACE_USAGE,
             ],
         )
     return overview(
@@ -113,7 +115,9 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
         return Some(mcp_help())
     elif command in ["new", "init"] and requested(arguments, list(SCAFFOLD_VALUE_OPTIONS)):
         return Some(scaffold_help(command))
-    elif command == "version" and surface == OVEN and requested(arguments, ["--set", "--project"]):
+    elif command == "workspace" and nested_help(arguments, "inspect", ["--format", "--member", "-p", "--exclude"]):
+        return Some(workspace_help())
+    elif command == "version" and surface == OVEN and requested(arguments, ["--set", "--project", "--member", "-p"]):
         return Some(version_help())
     elif command in ["--version", "version"] and requested(arguments):
         return Some(render(f"{surface} --version", [], f"{surface} --version"))

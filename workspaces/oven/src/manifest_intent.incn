@@ -26,6 +26,7 @@ const ROOT_TABLES: FrozenList[str] = [
     "interop",
     "c",
     "envs",
+    "workspace",
 ]
 # The keys of `[project]`.
 const PROJECT_KEYS: FrozenList[str] = [
@@ -268,6 +269,10 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
             ),
         )
     allowed(root, list(ROOT_TABLES), manifest, [])?
+    validate_workspace(root, manifest)?
+    if "project" not in root and "workspace" in root:
+        detail = "a virtual workspace is not a project: select its members with --workspace or --member"
+        return Err(refusal(manifest, ["project"], IntakeErrorKind.Missing, detail))
     if "project" not in root:
         return Err(refusal(manifest, ["project"], IntakeErrorKind.Missing, "project identity is required"))
     project = table(root["project"], manifest, ["project"])?
@@ -343,6 +348,22 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
             toolchain_access=access,
         ),
     )
+
+
+def validate_workspace(root: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:
+    """A `[workspace]` table lists member directories; membership is read by workspace selection, not by a unit."""
+    if "workspace" not in root:
+        return Ok(None)
+    workspace = table(root["workspace"], manifest, ["workspace"])?
+    allowed(workspace, ["members", "default-members", "exclude"], manifest, ["workspace"])?
+    for key in ["members", "default-members", "exclude"]:
+        if key in workspace:
+            entries = workspace[key]
+                .as_array()
+                .map_err((error) => refusal(manifest, ["workspace", key], IntakeErrorKind.Invalid, error.message()))?
+            for entry in entries:
+                text(entry, manifest, ["workspace", key])?
+    return Ok(None)
 
 
 def validate_environments(root: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:

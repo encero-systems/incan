@@ -56,6 +56,7 @@ from surfaces import OVEN, invoked, misplaced
 from trust_commands import trust_command
 from project_scaffold import ScaffoldCommand, parse_scaffold, scaffold
 from project_version import change_version, parse_version_request
+from workspace import inspect_workspace, parse_selection, run_members, selected
 from pub::incan_platform.trace import WorkObserver
 from pub::incan_platform.store.files import observe_work
 from trace_adapter import finish as finish_trace
@@ -137,6 +138,15 @@ def dispatch(command: str, rest: list[str]) -> None:
     if command in ["new", "init"] or (command == "version" and len(rest) > 0):
         project_command(command, rest)
         return
+    if command == "workspace":
+        workspace_command(rest)
+        return
+    if command in ["run", "check", "test", "build", "fmt"]:
+        match parse_selection(rest):
+            Err(reason) => syntax_error(command, reason)
+            Ok(selection) =>
+                if selected(selection):
+                    finish(command, run_members(invoked(), command, selection))
     if command == "--version" or command == "version":
         require_no_arguments(command, rest)
         println(version_text(invoked()))
@@ -296,6 +306,17 @@ def project_command(command: str, arguments: list[str]) -> None:
             Ok(request) => outcome = scaffold(request)
     match outcome:
         Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
+        Ok(text) => println(text)
+
+
+def workspace_command(arguments: list[str]) -> None:
+    """`oven workspace inspect`: the workspace root, its manifest, the selected members and the lock."""
+    if len(arguments) == 0:
+        syntax_error("workspace", "expected `inspect`")
+    if arguments[0] != "inspect":
+        syntax_error("workspace", f"unknown command `{arguments[0]}`")
+    match inspect_workspace(arguments[1:]):
+        Err(reason) => argument_error("workspace", reason)
         Ok(text) => println(text)
 
 
