@@ -19,6 +19,8 @@ pub const INCAN: str = "incan"
 # Commands only `oven` runs; `inspect` is split by its subcommand below.
 const OVEN_COMMANDS: FrozenList[str] = ["describe-unit", "owner", "bakery", "lock", "trust"]
 const OVEN_INSPECTIONS: FrozenList[str] = ["dependencies", "run"]
+# Oven commands 0.5.1 ran as `incan` commands; on `incan` they name their Oven spelling instead of being unknown.
+const MOVED_FROM_INCAN: FrozenList[str] = ["new", "init"]
 # Commands only `incan` runs.
 const INCAN_COMMANDS: FrozenList[str] = ["explain", "fmt", "mcp", "toolchain"]
 # 0.5.1 `incan` commands that only `oven` runs now; refusing one names its `oven` spelling.
@@ -42,7 +44,10 @@ pub def owner_of(command: str, arguments: list[str]) -> str:
         if len(arguments) > 0 and arguments[0] == "codegraph":
             return INCAN
         return ""
-    if command in OVEN_COMMANDS:
+    if command in OVEN_COMMANDS or command in MOVED_FROM_INCAN:
+        return OVEN
+    # Both surfaces print their version; changing the project's version is Oven's.
+    if command == "version" and arguments not in [[], ["--help"], ["-h"]]:
         return OVEN
     if command in INCAN_COMMANDS:
         return INCAN
@@ -65,6 +70,8 @@ pub def misplaced(surface: str, command: str, arguments: list[str]) -> Option[st
             return Some(f"{INCAN} inspect: unknown command `{arguments[0]}`")
         if command in MOVED_TO_OVEN:
             return Some(f"{INCAN}: unknown command `{command}`: run `{OVEN} {command}`")
+        if command in MOVED_FROM_INCAN or command == "version":
+            return Some(f"{INCAN}: `incan {command}` is an Oven command: run `oven {command}`")
         return Some(f"{INCAN}: unknown command `{command}`")
     name = spelled(command, arguments)
     return Some(f"{OVEN}: `oven {name}` is a language command: run `incan {name}`")

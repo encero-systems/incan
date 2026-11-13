@@ -1,0 +1,333 @@
+"""
+Create a Loaf (`oven new`) or give an existing directory its manifest (`oven init`), the commands 0.5.1 ran as
+`incan new` and `incan init` (RFC 118 places them under Oven).
+
+Both write the same starter project: `loaf.toml`, `src/main.incn`, `tests/test_main.incn`, `README.md` and
+`.gitignore`. Neither prompts: a missing name is refused, and `--yes` is accepted for 0.5.1's spelling.
+"""
+
+from std.fs import Path
+from cli_help import render
+from files import make_directory, write
+from home_paths import TOOLCHAIN
+from loaf_identity import validate_project_identity
+from semver_req import parse_version
+
+pub const NEW_USAGE: str = "oven new [NAME] [--dir PATH] [--description TEXT] [--author AUTHOR] [--license LICENSE] [--force] [--yes]"
+pub const INIT_USAGE: str = "oven init [PATH] [--name NAME] [--version VERSION] [--description TEXT] [--author AUTHOR] [--license LICENSE] [--force] [--detect] [--yes]"
+pub const VALUE_OPTIONS: FrozenList[str] = ["--dir", "--name", "--version", "--description", "--author", "--license"]
+const ENTRY: str = "src/main.incn"
+const GREETINGS: str = "src/greetings.incn"
+const STARTER_TEST: str = "tests/test_main.incn"
+
+
+@derive(Eq)
+pub enum ScaffoldCommand(str):
+    """The two commands that write a starter project."""
+
+    New = "new"
+    Init = "init"
+
+
+pub model ScaffoldRequest:
+    """One `oven new` or `oven init` invocation, before the project directory is touched."""
+
+    pub command: ScaffoldCommand
+    # The NAME operand of `new` or the PATH operand of `init`.
+    pub operand: Option[str] = None
+    pub directory: Option[str] = None
+    pub name: Option[str] = None
+    pub version: str = "0.1.0"
+    pub description: Option[str] = None
+    pub author: Option[str] = None
+    pub license: Option[str] = None
+    pub force: bool = false
+    pub detect: bool = false
+
+
+pub def parse_scaffold(command: ScaffoldCommand, arguments: list[str]) -> Result[ScaffoldRequest, str]:
+    """Read one invocation's operand and options; options of the other command are unknown here."""
+    mut request = ScaffoldRequest(command=command)
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in VALUE_OPTIONS and accepts(command, argument):
+            if index + 1 >= len(arguments):
+                return Err(f"`{argument}` needs a value")
+            apply_value(request, argument, arguments[index + 1])
+            index += 2
+            continue
+        if argument == "--force":
+            request.force = true
+        elif argument == "--detect" and command == ScaffoldCommand.Init:
+            request.detect = true
+        elif argument in ["--yes", "-y"]:
+            pass
+        elif argument.startswith("-"):
+            return Err(f"unknown option `{argument}`")
+        elif request.operand is not None:
+            return Err(f"unexpected argument `{argument}`")
+        else:
+            request.operand = Some(argument)
+        index += 1
+    return Ok(request)
+
+
+def accepts(command: ScaffoldCommand, option: str) -> bool:
+    """`--dir` belongs to `new`; `--name` and `--version` belong to `init`."""
+    if option == "--dir":
+        return command == ScaffoldCommand.New
+    if option in ["--name", "--version"]:
+        return command == ScaffoldCommand.Init
+    return true
+
+
+def apply_value(mut request: ScaffoldRequest, option: str, value: str) -> None:
+    """Record one value-taking option."""
+    if option == "--dir":
+        request.directory = Some(value)
+    elif option == "--name":
+        request.name = Some(value)
+    elif option == "--version":
+        request.version = value
+    elif option == "--description":
+        request.description = Some(value)
+    elif option == "--author":
+        request.author = Some(value)
+    else:
+        request.license = Some(value)
+
+
+pub def scaffold(request: ScaffoldRequest) -> Result[str, str]:
+    """
+    Write the starter project the request selects and return the report to print.
+
+    1. Select the directory and the project name, and validate the name and version.
+    2. Refuse a nonempty directory (`new`) or an existing manifest (`init`) unless `--force` is given.
+    3. Write each starter file; `init` keeps existing files unless `--force`, and `--detect` keeps the entry source.
+    """
+    # 1. The directory and name come from the operand, `--dir` and `--name`; the name must be a Loaf name.
+    shown = target_directory(request)?
+    directory = Path(shown)
+    name = project_name(request, directory)?
+    match validate_project_identity(name):
+        Err(reason) => return Err(f"project name `{name}` is not a Loaf name: {reason}; choose one with --name")
+        Ok(_) => pass
+    match parse_version(request.version):
+        Err(reason) => return Err(f"invalid project version `{request.version}`: {reason}")
+        Ok(_) => pass
+    # 2. Without `--force`, `new` needs an empty directory and `init` a directory without a manifest.
+    manifest = directory.joinpath("loaf.toml")
+    if request.command == ScaffoldCommand.New and not request.force and nonempty(directory):
+        return Err(f"project directory '{shown}' already exists and is not empty (use --force to reuse it)")
+    if request.command == ScaffoldCommand.Init and not request.force and manifest.exists():
+        return Err(f"manifest already exists at '{manifest.0}'")
+    # 3. Each starter file is written unless it is kept.
+    make_directory(directory.joinpath("src"))?
+    make_directory(directory.joinpath("tests"))?
+    # The starter test imports the greeting from its own module: a test importing `main` itself is refused today.
+    entry_written = place(request, directory, ENTRY, entry_source(), request.detect)?
+    if entry_written:
+        _ = place(request, directory, GREETINGS, greetings_source(name), false)?
+        _ = place(request, directory, STARTER_TEST, starter_test(name), false)?
+    write(manifest, manifest_text(request, name))?
+    _ = place(request, directory, "README.md", readme(request, name), false)?
+    _ = place(request, directory, ".gitignore", "target/\n", false)?
+    return Ok(report(name, shown))
+
+
+def target_directory(request: ScaffoldRequest) -> Result[str, str]:
+    """`new` writes `--dir` or `./NAME`; `init` writes PATH, the current directory by default."""
+    if request.command == ScaffoldCommand.Init:
+        if let Some(path) = request.operand:
+            return Ok(path)
+        return Ok(".")
+    if let Some(path) = request.directory:
+        return Ok(path)
+    if let Some(name) = request.operand:
+        return Ok(name.replace(" ", "_"))
+    return Err("requires NAME or --dir")
+
+
+def project_name(request: ScaffoldRequest, directory: Path) -> Result[str, str]:
+    """An explicit name as given; otherwise the directory's name, lowercased with spaces replaced by underscores."""
+    if let Some(name) = request.name:
+        return Ok(name)
+    mut derived = ""
+    if let Some(name) = request.operand:
+        if request.command == ScaffoldCommand.New:
+            derived = name
+    if derived == "":
+        absolute = directory.absolute().map_err((error) => f"cannot resolve {directory.0}: {error.message()}")?
+        derived = absolute.name()
+    return Ok(derived.replace(" ", "_").lower())
+
+
+def nonempty(directory: Path) -> bool:
+    """Whether `directory` exists with at least one entry, or exists as something other than a directory."""
+    if not directory.exists():
+        return false
+    match directory.iterdir():
+        Ok(entries) => return len(entries) > 0
+        Err(_) => return true
+
+
+def place(request: ScaffoldRequest, directory: Path, relative: str, text: str, keep: bool) -> Result[bool, str]:
+    """Write one starter file and report whether it was written; `init` keeps an existing file unless forced."""
+    path = directory.joinpath(relative)
+    if path.exists() and (keep or (request.command == ScaffoldCommand.Init and not request.force)):
+        return Ok(false)
+    write(path, text)?
+    return Ok(true)
+
+
+def manifest_text(request: ScaffoldRequest, name: str) -> str:
+    """A minimal `loaf.toml` naming the standard environments as comments (RFC 117)."""
+    mut lines = ["[project]", f"name = \"{name}\"", f"version = \"{request.version}\""]
+    if let Some(description) = request.description:
+        lines.append(f"description = {quoted(description)}")
+    if let Some(author) = request.author:
+        lines.append(f"authors = [{quoted(author)}]")
+    if let Some(license) = request.license:
+        lines.append(f"license = {quoted(license)}")
+    lines.append("readme = \"README.md\"")
+    lines.append(f"requires-incan = \"{toolchain_requirement()}\"")
+    lines = lines + [
+        "",
+        "[project.scripts]",
+        f"main = \"{ENTRY}\"",
+        "",
+        "# The standard environments dev, test, lint and docs exist without a table. Declare one only to add to it:",
+        "# test, lint and documentation dependencies belong in its dependencies table.",
+        "#",
+        "# [envs.test.dependencies]",
+        "# [envs.lint.dependencies]",
+        "# [envs.docs.dependencies]",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def toolchain_requirement() -> str:
+    """The running toolchain's minor line: a prerelease toolchain is its own lower bound, so it satisfies it."""
+    parts = TOOLCHAIN.split("-")[0].split(".")
+    major = parts[0]
+    minor = int(parts[1])
+    mut lower = f"{major}.{minor}.0"
+    if "-" in TOOLCHAIN:
+        lower = TOOLCHAIN
+    return f">={lower}, <{major}.{minor + 1}.0"
+
+
+def quoted(text: str) -> str:
+    """A TOML basic string."""
+    return "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+
+def entry_source() -> str:
+    """The starter program."""
+    return "\n".join(
+        [
+            "\"\"\"A fresh Incan project.\"\"\"",
+            "",
+            "from greetings import greeting",
+            "",
+            "",
+            "def main() -> None:",
+            "    println(greeting())",
+            "",
+        ],
+    )
+
+
+def greetings_source(name: str) -> str:
+    """The module the starter program and its test share."""
+    return "\n".join(
+        [
+            "\"\"\"The greeting the program prints.\"\"\"",
+            "",
+            "",
+            "pub def greeting() -> str:",
+            "    \"\"\"Greet from this project.\"\"\"",
+            f"    return \"Hello from {name}!\"",
+            "",
+        ],
+    )
+
+
+def starter_test(name: str) -> str:
+    """The starter test of the starter program."""
+    return "\n".join(
+        [
+            f"\"\"\"The starter test of {name}.\"\"\"",
+            "",
+            "from greetings import greeting",
+            "",
+            "",
+            "def test_greeting() -> None:",
+            f"    assert greeting() == \"Hello from {name}!\"",
+            "",
+        ],
+    )
+
+
+def readme(request: ScaffoldRequest, name: str) -> str:
+    """The starter README: the description and the commands that run, test and release the project."""
+    mut lines = [f"# {name}", ""]
+    if let Some(description) = request.description:
+        lines = lines + [description, ""]
+    lines = lines + [
+        f"Generated by `oven {request.command.value()}`.",
+        "",
+        "```bash",
+        f"incan run {ENTRY}",
+        f"incan test {STARTER_TEST}",
+        f"incan build {ENTRY} --profile release",
+        "```",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def report(name: str, shown: str) -> str:
+    """What `oven new` and `oven init` print: the files and the commands that use them."""
+    return "\n".join(
+        [
+            f"Created project '{name}' at {shown}",
+            "",
+            "  loaf.toml              Project manifest",
+            f"  {ENTRY}          Entry point",
+            f"  {STARTER_TEST}   Starter test",
+            "",
+            f"Run it:     incan run {ENTRY}",
+            f"Test it:    incan test {STARTER_TEST}",
+            f"Release it: incan build {ENTRY} --profile release",
+        ],
+    )
+
+
+pub def scaffold_help(command: str) -> str:
+    """`oven new --help` and `oven init --help`."""
+    common = [
+        "  --description TEXT  Project description.",
+        "  --author AUTHOR     Project author, usually `Name <email>`.",
+        "  --license LICENSE   Project license identifier or expression.",
+        "  --yes, -y           Accepted for 0.5.1's spelling; Oven never prompts.",
+    ]
+    if command == "new":
+        return render(
+            NEW_USAGE,
+            ["  --dir PATH          Directory to create (default ./NAME)."] + common + [
+                "  --force             Reuse an existing directory and overwrite generated files.",
+            ],
+            "oven new hello --description \"A first Loaf\"",
+        )
+    return render(
+        INIT_USAGE,
+        [
+            "  --name NAME         Project name (default: the directory's name).",
+            "  --version VERSION   Project version (default 0.1.0).",
+        ] + common + [
+            "  --force             Overwrite an existing manifest and the generated files.",
+            "  --detect            Keep an existing src/main.incn even with --force.",
+        ],
+        "oven init . --name hello",
+    )

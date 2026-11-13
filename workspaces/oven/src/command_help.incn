@@ -8,6 +8,8 @@ from home_paths import TOOLCHAIN
 from surfaces import OVEN, owner_of
 from toolchain_archive import PACK_USAGE, INSTALL_USAGE, help_text as archive_help
 from runner_options import RUNNER_VALUE_OPTIONS, help_lines as runner_help_lines
+from project_scaffold import INIT_USAGE, NEW_USAGE, VALUE_OPTIONS as SCAFFOLD_VALUE_OPTIONS, scaffold_help
+from project_version import VERSION_USAGE, version_help
 
 # The project commands both surfaces run follow the invoked surface's name.
 const RUN_OPERANDS: str = "run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
@@ -46,6 +48,9 @@ pub def usage(surface: str) -> str:
                 DEPENDENCIES_USAGE,
                 LOCK_USAGE,
                 TRUST_USAGE,
+                NEW_USAGE,
+                INIT_USAGE,
+                VERSION_USAGE,
             ],
         )
     return overview(
@@ -106,6 +111,10 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
         return Some(format_help())
     elif command == "mcp" and requested(arguments, ["--profile"]):
         return Some(mcp_help())
+    elif command in ["new", "init"] and requested(arguments, list(SCAFFOLD_VALUE_OPTIONS)):
+        return Some(scaffold_help(command))
+    elif command == "version" and surface == OVEN and requested(arguments, ["--set", "--project"]):
+        return Some(version_help())
     elif command in ["--version", "version"] and requested(arguments):
         return Some(render(f"{surface} --version", [], f"{surface} --version"))
     elif command == "owner" and nested_help(arguments, "stop"):

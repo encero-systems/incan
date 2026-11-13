@@ -54,6 +54,8 @@ from cli_help import help_hint, unknown_option
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage, version_text
 from surfaces import OVEN, invoked, misplaced
 from trust_commands import trust_command
+from project_scaffold import ScaffoldCommand, parse_scaffold, scaffold
+from project_version import change_version, parse_version_request
 from pub::incan_platform.trace import WorkObserver
 from pub::incan_platform.store.files import observe_work
 from trace_adapter import finish as finish_trace
@@ -132,6 +134,9 @@ def command_line() -> None:
 
 def dispatch(command: str, rest: list[str]) -> None:
     """Execute one command, preserving syntax status two separately from runtime failures."""
+    if command in ["new", "init"] or (command == "version" and len(rest) > 0):
+        project_command(command, rest)
+        return
     if command == "--version" or command == "version":
         require_no_arguments(command, rest)
         println(version_text(invoked()))
@@ -273,6 +278,25 @@ def explain(arguments: list[str]) -> None:
     match load_toolchain():
         Err(reason) => fail(f"incan explain: {reason}", 1)
         Ok(toolchain) => finish("explain", run_compiler(toolchain, ["--explain", arguments[0]]))
+
+
+def project_command(command: str, arguments: list[str]) -> None:
+    """Create a project (`new`, `init`) or change its version (`version BUMP`); usage errors exit with status two."""
+    mut outcome: Result[str, str] = Err("")
+    if command == "version":
+        match parse_version_request(arguments):
+            Err(reason) => syntax_error(command, reason)
+            Ok(request) => outcome = change_version(request)
+    else:
+        mut selected = ScaffoldCommand.New
+        if command == "init":
+            selected = ScaffoldCommand.Init
+        match parse_scaffold(selected, arguments):
+            Err(reason) => syntax_error(command, reason)
+            Ok(request) => outcome = scaffold(request)
+    match outcome:
+        Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
+        Ok(text) => println(text)
 
 
 def lock(arguments: list[str]) -> None:

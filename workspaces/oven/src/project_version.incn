@@ -1,0 +1,203 @@
+"""
+Bump or set the project version in `loaf.toml` (`oven version`), the command 0.5.1 ran as `incan version`.
+
+Only the `version` line of the `[project]` table changes; every other byte of the manifest, comments included, stays.
+"""
+
+from std.fs import Path
+from cli_help import render
+from files import read, write
+from semver_req import Version, parse_version
+from unit import project_root_of
+
+pub const VERSION_USAGE: str = "oven version [BUMP | --set VERSION] [--dry-run] [--keep-prerelease] [--project PATH]"
+
+
+@derive(Eq)
+pub enum Bump(str):
+    """The bumps 0.5.1 named: three release components and four prerelease channels."""
+
+    Major = "major"
+    Minor = "minor"
+    Patch = "patch"
+    Alpha = "alpha"
+    Beta = "beta"
+    Rc = "rc"
+    Dev = "dev"
+
+
+pub model VersionRequest:
+    """One `oven version` invocation that changes the project version."""
+
+    pub bump: Option[Bump] = None
+    pub set: Option[str] = None
+    pub dry_run: bool = false
+    pub keep_prerelease: bool = false
+    pub project: Option[str] = None
+
+
+pub def parse_version_request(arguments: list[str]) -> Result[VersionRequest, str]:
+    """Read a bump or `--set VERSION` and the options; exactly one of the bump and `--set` is required."""
+    mut request = VersionRequest()
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in ["--set", "--project"]:
+            if index + 1 >= len(arguments):
+                return Err(f"`{argument}` needs a value")
+            if argument == "--set":
+                request.set = Some(arguments[index + 1])
+            else:
+                request.project = Some(arguments[index + 1])
+            index += 2
+            continue
+        if argument == "--dry-run":
+            request.dry_run = true
+        elif argument == "--keep-prerelease":
+            request.keep_prerelease = true
+        elif argument.startswith("-"):
+            return Err(f"unknown option `{argument}`")
+        elif request.bump is not None:
+            return Err(f"unexpected argument `{argument}`")
+        else:
+            match Bump.from_value(argument):
+                Some(bump) => request.bump = Some(bump)
+                None => return Err(f"unknown bump `{argument}`: major, minor, patch, alpha, beta, rc or dev")
+        index += 1
+    if request.bump is not None and request.set is not None:
+        return Err("accepts either a bump name or `--set VERSION`, not both")
+    if request.bump is None and request.set is None:
+        return Err("requires a bump name or `--set VERSION`")
+    return Ok(request)
+
+
+pub def change_version(request: VersionRequest) -> Result[str, str]:
+    """
+    Plan the project's next version, write it unless this is a dry run, and return the report to print.
+
+    1. Select the manifest: `--project PATH`, or the nearest `loaf.toml` at or above the working directory.
+    2. Read the `[project]` version and compute the new one.
+    3. Replace only the version line, unless this is a dry run.
+    """
+    # 1. An explicit project names its directory; otherwise the nearest manifest above the working directory.
+    manifest = selected_manifest(request.project)?
+    # 2. The current version must be SemVer; the new one is the bump or the explicit version.
+    text = read(manifest)?
+    lines = text.split("\n")
+    line = version_line(lines, manifest.0)?
+    current = quoted_value(lines[line], manifest.0)?
+    old = parse_version(current).map_err((reason) => f"{manifest.0}: project version `{current}` is invalid: {reason}")?
+    mut next = ""
+    if let Some(explicit) = request.set:
+        _ = parse_version(explicit).map_err((reason) => f"invalid explicit project version `{explicit}`: {reason}")?
+        next = explicit
+    if let Some(bump) = request.bump:
+        next = spelled(bumped(old, bump, request.keep_prerelease))
+    # 3. Only the version's quoted value changes.
+    if not request.dry_run:
+        mut changed = lines
+        changed[line] = lines[line].replace(f"\"{current}\"", f"\"{next}\"")
+        write(manifest, "\n".join(changed))?
+    mut report: list[str] = []
+    if request.dry_run:
+        report.append("dry-run: true")
+    report = report + [f"old version: {current}", f"new version: {next}", "modified files:", f"  {manifest.0}"]
+    return Ok("\n".join(report))
+
+
+def selected_manifest(project: Option[str]) -> Result[Path, str]:
+    """The manifest `--project` names, or the nearest one at or above the working directory."""
+    if let Some(directory) = project:
+        manifest = Path(directory).joinpath("loaf.toml")
+        if not manifest.is_file():
+            return Err(f"no loaf.toml in {directory}")
+        return Ok(manifest)
+    working = Path.cwd().map_err((error) => f"cannot read the working directory: {error.message()}")?
+    match project_root_of(working.joinpath("loaf.toml")):
+        Some(root) => return Ok(root.joinpath("loaf.toml"))
+        None => return Err("no loaf.toml found; run `oven init` or `oven new NAME` to create a project")
+
+
+def version_line(lines: list[str], manifest: str) -> Result[int, str]:
+    """The index of the `version` key of the `[project]` table."""
+    mut in_project = false
+    for index in range(len(lines)):
+        stripped = lines[index].strip()
+        if stripped.startswith("["):
+            in_project = stripped == "[project]"
+            continue
+        if in_project and stripped.startswith("version") and stripped[7:].strip().startswith("="):
+            return Ok(index)
+    return Err(f"{manifest}: [project] declares no version")
+
+
+def quoted_value(line: str, manifest: str) -> Result[str, str]:
+    """The basic-string value of a `key = "value"` line."""
+    parts = line.split("\"")
+    if len(parts) < 3:
+        return Err(f"{manifest}: the project version is not a quoted string")
+    return Ok(parts[1])
+
+
+pub def bumped(version: Version, bump: Bump, keep_prerelease: bool) -> Version:
+    """
+    The version after `bump`, as 0.5.1 computed it: a release bump increments its component and resets those below,
+    dropping the prerelease unless kept; a channel bump starts `CHANNEL.1` or advances the current channel's number.
+    """
+    mut next = version
+    next.build = []
+    if bump == Bump.Major or bump == Bump.Minor or bump == Bump.Patch:
+        if bump == Bump.Major:
+            next.major = str(int(version.major) + 1)
+            next.minor = "0"
+            next.patch = "0"
+        elif bump == Bump.Minor:
+            next.minor = str(int(version.minor) + 1)
+            next.patch = "0"
+        else:
+            next.patch = str(int(version.patch) + 1)
+        if not keep_prerelease:
+            next.prerelease = []
+        return next
+    channel = bump.value()
+    if len(version.prerelease) == 2 and version.prerelease[0] == channel and is_number(version.prerelease[1]):
+        next.prerelease = [channel, str(int(version.prerelease[1]) + 1)]
+    else:
+        next.prerelease = [channel, "1"]
+    return next
+
+
+def is_number(text: str) -> bool:
+    """Whether a prerelease identifier is a short decimal number."""
+    if len(text) == 0 or len(text) > 9:
+        return false
+    for character in text:
+        if character not in "0123456789":
+            return false
+    return true
+
+
+def spelled(version: Version) -> str:
+    """A version's SemVer spelling."""
+    mut text = f"{version.major}.{version.minor}.{version.patch}"
+    if len(version.prerelease) > 0:
+        text += "-" + ".".join(version.prerelease)
+    if len(version.build) > 0:
+        text += "+" + ".".join(version.build)
+    return text
+
+
+pub def version_help() -> str:
+    """`oven version --help`: the project version command, and the toolchain version without arguments."""
+    return render(
+        VERSION_USAGE,
+        [
+            "  BUMP                major, minor, patch, or the prerelease channel alpha, beta, rc or dev.",
+            "  --set VERSION       Set an explicit SemVer version.",
+            "  --dry-run           Print the planned change without writing loaf.toml.",
+            "  --keep-prerelease   Keep prerelease identifiers on a major, minor or patch bump.",
+            "  --project PATH      The project directory (default: the nearest loaf.toml).",
+            "  Without arguments, `oven version` prints the toolchain version.",
+        ],
+        "oven version minor --dry-run",
+    )
