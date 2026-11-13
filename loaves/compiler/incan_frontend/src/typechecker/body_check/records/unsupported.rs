@@ -56,7 +56,7 @@ pub(super) fn reference_artifacts(value: &ReferenceArtifacts) -> Result<(), Node
 /// Refuse every unrepresented nonempty CallArtifacts field; additions must choose a canonical capability.
 pub(super) fn call_artifacts(value: &CallArtifacts) -> Result<(), NodeBindingError> {
     let CallArtifacts {
-        body_ir_constructor_field_requirements,
+        body_ir_constructor_field_requirements: _,
         body_ir_reexport_calls,
         body_ir_string_slice_members,
         body_ir_self_result_methods,
@@ -93,7 +93,7 @@ pub(super) fn call_artifacts(value: &CallArtifacts) -> Result<(), NodeBindingErr
         source_display_methods,
         error_message_display_types,
     } = value;
-    require_empty!("CallArtifacts"; body_ir_constructor_field_requirements, body_ir_reexport_calls, body_ir_string_slice_members, body_ir_self_result_methods, body_ir_async_call_targets, body_ir_native_constructor_bindings, body_ir_module_constructor_bindings, body_ir_native_argument_identities, body_ir_factory_result_conflicts, body_ir_factory_owner_types, body_ir_constructor_types, body_ir_native_codec_members, inferred_constructor_types, inferred_call_result_types, mutable_receiver_method_calls, fixed_unpack_plans, isinstance_targets, race_arm_binding_types, constructor_field_bindings, resolved_operator_calls, resolved_method_calls, compiler_generated_member_identities, resolved_collection_constructors, closure_holding_params, closure_returning_callables, capturing_callable_bindings, source_display_methods, error_message_display_types);
+    require_empty!("CallArtifacts"; body_ir_reexport_calls, body_ir_string_slice_members, body_ir_self_result_methods, body_ir_async_call_targets, body_ir_native_constructor_bindings, body_ir_module_constructor_bindings, body_ir_native_argument_identities, body_ir_factory_result_conflicts, body_ir_factory_owner_types, body_ir_constructor_types, body_ir_native_codec_members, inferred_constructor_types, inferred_call_result_types, mutable_receiver_method_calls, fixed_unpack_plans, isinstance_targets, race_arm_binding_types, constructor_field_bindings, resolved_operator_calls, resolved_method_calls, compiler_generated_member_identities, resolved_collection_constructors, closure_holding_params, closure_returning_callables, capturing_callable_bindings, source_display_methods, error_message_display_types);
     Ok(())
 }
 

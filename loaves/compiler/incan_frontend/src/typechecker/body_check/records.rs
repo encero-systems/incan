@@ -1016,6 +1016,23 @@ fn restore_local(
                 return Err(NodeBindingError::MissingNode);
             }
         }
+        "requirement" if row[2] == "constructor-field" => {
+            let field = positions.canonical(next(&mut values)?)?;
+            let owner = positions.canonical_type(next(&mut values)?)?;
+            if field.kind != SemanticSourceTargetKind::Field
+                || !matches!(
+                    owner.kind,
+                    SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+                )
+                || local
+                    .calls
+                    .body_ir_constructor_field_requirements
+                    .insert(span, (field, owner))
+                    .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
         "builtin" if row[2] == "call" => {
             let builtin =
                 incan_lang::lang::builtins::from_str(next(&mut values)?).ok_or(NodeBindingError::MissingNode)?;
