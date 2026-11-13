@@ -255,6 +255,13 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
         "src/bindings.incn",
         "stable",
     )?.key.facet == "partial:stable"
+    projected_enum = project_source("package", "src/messages.incn", "pub enum Message:\n    Ready\n    Failed\n")?
+    assert compiler_source_projection.compiled_owner_source(
+        projected_enum,
+        "src/messages.incn",
+        "Failed",
+        "variant:package::src::messages::Message::Failed|body",
+    )?.key.facet == "enum:Message"
 
     selected = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_source_projection(selected, before)?
