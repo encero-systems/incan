@@ -58,6 +58,7 @@ from project_scaffold import ScaffoldCommand, parse_scaffold, scaffold
 from project_version import change_version, parse_version_request
 from workspace import inspect_workspace, parse_selection, run_members, selected
 from environments import command_admission, env_command, parse_env
+from explanations import explained_json, parse_explain
 from pub::incan_platform.trace import WorkObserver
 from pub::incan_platform.store.files import observe_work
 from trace_adapter import finish as finish_trace
@@ -291,14 +292,16 @@ def scheduled_unit_command(arguments: list[str]) -> None:
 
 def explain(arguments: list[str]) -> None:
     """Resolve one diagnostic through the installed compiler's catalog, independently of a project or engine."""
-    match unknown_option(arguments):
-        Some(reason) => syntax_error("explain", reason)
-        None => pass
-    if len(arguments) != 1:
-        syntax_error("explain", "requires exactly one CODE")
-    match load_toolchain():
-        Err(reason) => fail(f"incan explain: {reason}", 1)
-        Ok(toolchain) => finish("explain", run_compiler(toolchain, ["--explain", arguments[0]]))
+    match parse_explain(arguments):
+        Err(reason) => syntax_error("explain", reason)
+        Ok(selected) =>
+            code, format = selected
+            match load_toolchain():
+                Err(reason) => fail(f"incan explain: {reason}", 1)
+                Ok(toolchain) =>
+                    if format == "json":
+                        finish("explain", explained_json(toolchain, code))
+                    finish("explain", run_compiler(toolchain, ["--explain", code]))
 
 
 def project_command(command: str, arguments: list[str]) -> None:

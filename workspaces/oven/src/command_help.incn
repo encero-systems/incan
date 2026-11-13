@@ -19,7 +19,7 @@ const INCAN_RUN_OPERANDS: str = "run [--direct] [PATH | -c CODE] [UNIT OPTIONS] 
 const CHECK_OPERANDS: str = "check [PATH] [--format text|json] [UNIT OPTIONS]"
 const TEST_OPERANDS: str = "test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]"
 const BUILD_OPERANDS: str = "build [PATH [OUTPUT_DIR]] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
-const EXPLAIN_USAGE: str = "incan explain CODE"
+const EXPLAIN_USAGE: str = "incan explain CODE [--format text|json]"
 const DESCRIBE_USAGE: str = "oven describe-unit PATH [--unattended] [UNIT OPTIONS]"
 const OWNER_USAGE: str = "oven owner stop"
 const BAKERY_USAGE: str = "oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"
@@ -82,8 +82,14 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
     if command in ["run", "check", "test", "describe-unit", "build"]:
         if requested(arguments, unit_valued()):
             return Some(unit_help(surface, command))
-    elif command == "explain" and requested(arguments):
-        return Some(render(EXPLAIN_USAGE, [], "incan explain INCAN-T0001"))
+    elif command == "explain" and requested(arguments, ["--format"]):
+        return Some(
+            render(
+                EXPLAIN_USAGE,
+                ["  --format text|json  Explanation format (default text)."],
+                "incan explain INCAN-T0001",
+            ),
+        )
     elif command == "lock" and requested(arguments, ["--versions"]):
         return Some(
             render(
