@@ -1,0 +1,17 @@
+# behavior: `incan inspect codegraph --allow-errors`, 0.5.1's spelling for exporting a source with errors, exports its parseable facts as the default tolerant export does (#3142).
+# cli-commands:
+#   inspect codegraph . --allow-errors --query defs helper
+#   inspect codegraph . --query defs helper --allow-errors
+# expect-stdout:
+#   declaration helper src/main.incn:11 (unchecked)
+# expect-stderr-contains:
+#   is unchecked, using its parseable facts only
+# expect-exit: 0
+
+def helper() -> int:
+    """A declaration whose body does not check."""
+    return "text"
+
+
+def main() -> None:
+    println(helper())
