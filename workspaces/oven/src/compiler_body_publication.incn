@@ -339,7 +339,11 @@ pub def prepare_compiled_bodies(
         return Err("successful graph-enabled compile did not publish body outputs")
     outputs = read_compiled_body_outputs(output)?
     discard_file(output)
-    owner_evaluations = len(outputs.values) + len(outputs.fallbacks)
+    retained_identities = [record.identity for record in retained]
+    mut owner_evaluations = len(outputs.fallbacks)
+    for value in outputs.values:
+        if value.identity not in retained_identities:
+            owner_evaluations += 1
     origin = source_origin(unit)
     if projection_refusal_mode()? == ProjectionRefusalMode.List:
         refusals = projection_refusals(unit, origin, outputs.values)
