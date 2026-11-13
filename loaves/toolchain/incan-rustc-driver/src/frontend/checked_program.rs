@@ -3,6 +3,73 @@
 
 use super::*;
 
+/// Recover nonlocal call roots from accepted Body IR when a reused checker record no longer carries the reference
+/// edge that originally selected the body. The canonical target is producer evidence; source spelling is not.
+fn retained_body_call_requirements(modules: &[BodyIrModule], package_identity: &str) -> BTreeSet<CanonicalSymbolId> {
+    let mut requirements = BTreeSet::new();
+    for body in modules.iter().flat_map(|module| &module.bodies) {
+        collect_retained_body_calls(&body.block.stmts, package_identity, &mut requirements);
+    }
+    requirements
+}
+
+fn collect_retained_body_calls(
+    statements: &[incan_semantics_core::body_ir::Statement],
+    package_identity: &str,
+    requirements: &mut BTreeSet<CanonicalSymbolId>,
+) {
+    use incan_semantics_core::body_ir::{CallableTarget, Callee, Rvalue, StatementKind};
+
+    for statement in statements {
+        match &statement.kind {
+            StatementKind::Call {
+                callee: Callee::Function(CallableTarget::Named(target)),
+                ..
+            } => {
+                if let Some(identity) = &target.canonical
+                    && matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity)
+                {
+                    requirements.insert(identity.clone());
+                }
+            }
+            StatementKind::Assign {
+                rvalue: Rvalue::Match { arms, .. },
+                ..
+            } => {
+                for arm in arms {
+                    collect_retained_body_calls(&arm.guard_stmts, package_identity, requirements);
+                    collect_retained_body_calls(&arm.body_stmts, package_identity, requirements);
+                }
+            }
+            StatementKind::Assign {
+                rvalue: Rvalue::Closure { body, .. },
+                ..
+            } => collect_retained_body_calls(&body.stmts, package_identity, requirements),
+            StatementKind::Assign {
+                rvalue: Rvalue::Generator { body, .. },
+                ..
+            } => collect_retained_body_calls(&body.stmts, package_identity, requirements),
+            StatementKind::If {
+                then_block, else_block, ..
+            } => {
+                collect_retained_body_calls(&then_block.stmts, package_identity, requirements);
+                if let Some(block) = else_block {
+                    collect_retained_body_calls(&block.stmts, package_identity, requirements);
+                }
+            }
+            StatementKind::Loop { body } | StatementKind::UnsafeRegion { body, .. } => {
+                collect_retained_body_calls(&body.stmts, package_identity, requirements);
+            }
+            StatementKind::Race { arms, .. } => {
+                for arm in arms {
+                    collect_retained_body_calls(&arm.body.stmts, package_identity, requirements);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Carry checker-selected native nominal identities into governed source bodies before publication drops held layouts.
 /// Consumers recover the layouts through the ordinary held-Rust-items boundary; publication retains only used
 /// identities.
@@ -186,13 +253,7 @@ pub(super) fn checked_modules(
         }
         None => None,
     };
-    let requested = required_loaf_identities(&modules, &analysis, package_identity)?;
-    let string_conversion_contract = incan_frontend::body_ir::compilation_string_conversion_contract(
-        modules.iter().map(|module| &module.ast),
-        session.loaves(),
-        &requested,
-    )
-    .ok_or("unsupported Body IR string conversion contract identity")?;
+    let mut requested = required_loaf_identities(&modules, &analysis, package_identity)?;
     let checked_local = checked_local_identities(manifest.as_ref());
     let runtime_callable_bindings = runtime_declarations(&session, manifest.as_ref())?;
     let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
@@ -201,7 +262,7 @@ pub(super) fn checked_modules(
     // ---- Declarations the program reaches in its Loaves ----
     let mut package_versions = resolved.package_versions;
     package_versions.insert(unit.package.clone(), unit.version.clone());
-    let reached_loaves = resolved.entries;
+    let mut reached_loaves = resolved.entries;
     let mut bodies = resolved.modules;
     // Loaf declarations retain canonical spans but carry no source text. Do not attribute those spans to the entry.
     let mut files = bodies
@@ -209,11 +270,39 @@ pub(super) fn checked_modules(
         .map(|module| module.module_id.path().to_owned())
         .collect::<Vec<_>>();
     let mut sources = vec![String::new(); bodies.len()];
-    let loaf_modules = bodies.len();
-    let entry = entry + loaf_modules;
+    let mut loaf_modules = bodies.len();
+    let mut entry = entry + loaf_modules;
 
     // ---- The program's own modules ----
     lower_authored_modules(&modules, &analysis, &session, &mut bodies, &mut files)?;
+    let retained_requirements = retained_body_call_requirements(&bodies[loaf_modules..], package_identity);
+    if !retained_requirements
+        .iter()
+        .all(|identity| requested.contains(identity))
+    {
+        requested.extend(retained_requirements);
+        let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
+        package_versions.extend(resolved.package_versions);
+        reached_loaves = resolved.entries;
+        let mut authored = bodies.split_off(loaf_modules);
+        let authored_files = files.split_off(loaf_modules);
+        entry = entry - loaf_modules + resolved.modules.len();
+        bodies = resolved.modules;
+        loaf_modules = bodies.len();
+        files = bodies
+            .iter()
+            .map(|module| module.module_id.path().to_owned())
+            .chain(authored_files)
+            .collect();
+        sources = vec![String::new(); loaf_modules];
+        bodies.append(&mut authored);
+    }
+    let string_conversion_contract = incan_frontend::body_ir::compilation_string_conversion_contract(
+        modules.iter().map(|module| &module.ast),
+        session.loaves(),
+        &requested,
+    )
+    .ok_or("unsupported Body IR string conversion contract identity")?;
     let mut cacheable_bodies = callable_products.publish(&modules, &bodies[loaf_modules..]);
     cacheable_bodies.extend(analysis.namespace_lowering_inputs().iter().cloned());
     for body in bodies[loaf_modules..].iter().flat_map(|module| &module.bodies) {
