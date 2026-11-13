@@ -1,10 +1,10 @@
 """Write one finite, bounded Crumb row envelope with complete descriptions and an optional logical seal."""
 
+from rust::incan_std_primitives::crumb import row_envelope as native_row_envelope
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.hashes import start_seal, append_seal
 from crate.primitives.crumb.registrations import KindRegistry
-from crate.primitives.crumb.encoding_buffer import EncodingBuffer
 from crate.primitives.crumb.cells import root
 from crate.primitives.crumb.descriptions import Description, encode_entry
 from crate.primitives.crumb.description_dictionary import admit_dictionary, slot
@@ -27,29 +27,29 @@ pub def write_rows(
     bounded by the caller's budget; it does not promise a spooled or streaming output sink.
     """
     dictionary = admit_dictionary(descriptions, registry, budget)?
-    mut body = EncodingBuffer.create()
-    body.count(len(dictionary.entries), budget)?
+    mut entries: list[bytes] = []
     for description in dictionary.entries:
-        body.append(encode_entry(description, budget)?, budget)?
-    body.count(len(records), budget)?
+        entries.append(encode_entry(description, budget)?)
+    mut slots: list[i64] = []
+    mut cells: list[bytes] = []
     for record in records:
         budget.charge_elements(1)?
         index = slot(dictionary, record.key, budget)?
         # Typed row encoding admits this value; a separate tree walk would repeat the same admission.
         encoded = root(dictionary.entries[index], record.value, dictionary, budget)?
-        body.count(index, budget)?
-        body.frame(encoded, budget)?
+        slots.append(index.saturating_resize[i64]())
+        cells.append(encoded)
+    mut seal_bytes: bytes = b""
     if sealed:
         mut seal = start_seal(len(records), budget)?
         for record in records:
             append_seal(record.value, seal, budget)?
-        body.count(len(records), budget)?
-        body.append(seal.digest(budget)?, budget)?
-    mut envelope = EncodingBuffer.create()
-    envelope.append(b"CRMB\x01\x01", budget)?
-    if sealed:
-        envelope.octet(1, budget)?
-    else:
-        envelope.octet(0, budget)?
-    envelope.frame(body.finish(budget)?, budget)?
-    return envelope.finish(budget)
+        seal_bytes = seal.digest(budget)?
+    layout = native_row_envelope(entries, slots, cells, sealed, seal_bytes)
+    if layout.kind == 1u8:
+        return Err(CrumbError.invalid_input("row envelope layout"))
+    if layout.kind != 0u8:
+        return Err(CrumbError.limit("row envelope layout"))
+    budget.charge_bytes(layout.byte_charge.saturating_resize[int]())?
+    budget.charge_elements(layout.element_charge.saturating_resize[int]())?
+    return Ok(layout.data)
