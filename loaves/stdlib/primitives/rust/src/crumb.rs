@@ -2,6 +2,11 @@
 //!
 //! Incan's generated code is slower than this codec needs; the Incan twin measures the gap.
 
+#[path = "crumb/layout.rs"]
+mod layout;
+
+pub use layout::{EnvelopeLayout, column_envelope, row_envelope};
+
 /// Encoded bytes and the exact logical work charged by the Incan codec contract.
 pub struct Encoded {
     pub data: Vec<u8>,
