@@ -15,7 +15,7 @@ from std.json import JsonValue
 from files import json_text
 from home import home
 from loaf_local_graph import unique
-from observation import Observation
+from observation import Observation, observe
 from publication import publish
 from retained_readings import recall, retain
 from rust_registry import read_registry_units
@@ -38,9 +38,15 @@ pub def search_index(toolchain: Toolchain, registry: Option[RegistryUnits] = Non
     """
     # 1. Both identities are taken before anything is derived from the files.
     description = toolchain_file()?
-    generation = match frozen_observation(description):
-        Some(stamp) => stamp
-        None => return Err("search index requires the admitted toolchain generation")
+    mut generation = ""
+    match frozen_observation(description):
+        Some(stamp) => generation = stamp
+        None =>
+            # Installation selections must use the generation sealed into their page. Staged and synthetic
+            # toolchains have no page yet and retain the direct observation used while preparing an installation.
+            if len(toolchain.compiler_facts) == len(toolchain.rust_abi) + 1:
+                return Err("search index requires the admitted toolchain generation")
+            generation = observe(description)?.stamp
     observed = Observation(stamp=generation, newest=0)
     selection = f"{SELECTION} {registry_identity(toolchain)}"
     # 2. An index never changes once published, so a retained path is used while the file is there.
