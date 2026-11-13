@@ -1,6 +1,9 @@
-"""A Clove's compiled archives are part of the identity of every unit that reaches them, and their locations are not."""
+"""Clove units: their archives are part of the identity of every unit that reaches them, and entries select targets."""
 
-from clove_units import CloveConfigurationUnit, CloveUnit
+from rust::std::env::consts import ARCH
+from c_facet import CCompile
+from c_interop import host_triple
+from clove_units import CloveConfigurationUnit, CloveUnit, entry_applies
 from unit import UnitDescription
 from unit_freshness import description_digest
 
@@ -61,4 +64,22 @@ pub def test_a_rebuilt_clove_archive_rekeys_the_units_that_reach_it() -> Result[
     assert description_digest(linking([clove("/checkout/project", "sha256:aa", ["SHIM_OFFSET=3"])]))? != first
     # 3. Locations are provenance, not identity.
     assert description_digest(linking([clove("/elsewhere/project", "sha256:aa", ["SHIM_OFFSET=2"])]))? == first
+    return Ok(None)
+
+
+pub def test_a_compile_entry_selects_the_host_by_exact_triple_or_cfg() -> Result[None, str]:
+    """
+    A compile entry's `target` selects the host by its exact triple or by a cfg predicate over the host's facts.
+
+    1. No predicate always applies.
+    2. The host's exact triple applies and another triple does not.
+    3. A cfg predicate is evaluated against the host's architecture.
+    """
+    # 1. An entry without a target compiles everywhere.
+    assert entry_applies(CCompile(sources=["a.c"]))?
+    # 2. Exact triples compare whole, so `aarch64-apple-darwin` selects a macOS arm64 host.
+    assert entry_applies(CCompile(sources=["a.c"], target=Some(host_triple())))?
+    assert not entry_applies(CCompile(sources=["a.c"], target=Some("riscv64gc-unknown-none-elf")))?
+    # 3. The cfg form reads the host's facts.
+    assert entry_applies(CCompile(sources=["a.c"], target=Some(f"cfg(target_arch = \"{ARCH}\")")))?
     return Ok(None)
