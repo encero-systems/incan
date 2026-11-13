@@ -12,6 +12,7 @@ from toolchain_access import BINARY_SEPARATOR, BUILD_SEPARATOR, ToolchainAccess,
 from pub::incan_platform.trace import Operation
 from jec import begin, record, text_size
 from c_facet import CFacet, parse_c_facet
+from semver_req import parse_requirement
 
 # The manifest's tables.
 const ROOT_TABLES: FrozenList[str] = [
@@ -27,6 +28,17 @@ const ROOT_TABLES: FrozenList[str] = [
     "c",
     "envs",
     "workspace",
+]
+# The keys of `[envs.NAME]` (RFC 073, RFC 117).
+const ENVIRONMENT_KEYS: FrozenList[str] = [
+    "dependencies",
+    "extends",
+    "requires-incan",
+    "cwd",
+    "env-vars",
+    "scripts",
+    "detached",
+    "description",
 ]
 # The keys of `[project]`.
 const PROJECT_KEYS: FrozenList[str] = [
@@ -282,6 +294,8 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
         (error) => refusal(manifest, ["project", "name"], IntakeErrorKind.Invalid, error),
     )?
     version = required(project, "version", manifest, ["project", "version"])?
+    if "requires-incan" in project:
+        requirement(project["requires-incan"], manifest, ["project", "requires-incan"])?
     mut registry_id: Option[str] = None
     if "registry-id" in project:
         declared_registry = required(project, "registry-id", manifest, ["project", "registry-id"])?
@@ -366,6 +380,20 @@ def validate_workspace(root: Dict[str, TomlValue], manifest: str) -> Result[None
     return Ok(None)
 
 
+def requirement(value: TomlValue, manifest: str, field: list[str]) -> Result[None, IntakeError]:
+    """A `requires-incan` is a version requirement (RFC 073); anything else makes the manifest invalid."""
+    declared = text(value, manifest, field)?
+    parse_requirement(declared).map_err(
+        (reason) => refusal(
+            manifest,
+            field,
+            IntakeErrorKind.Invalid,
+            f"`{declared}` is not a version requirement: {reason}",
+        ),
+    )?
+    return Ok(None)
+
+
 def validate_environments(root: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:
     """Admit inactive environment tables without treating their partial dependency overrides as production edges."""
     if "envs" not in root:
@@ -384,9 +412,12 @@ def validate_environments(root: Dict[str, TomlValue], manifest: str) -> Result[N
             )?
             detail = f"use [envs.{name}.dependencies] {replacement}"
             return Err(refusal(manifest, ["envs", name, "rust-dependencies"], IntakeErrorKind.Unsupported, detail))
-        allowed(environment, ["dependencies"], manifest, ["envs", name])?
-        for group in sorted([group for group in environment.keys()]):
-            table(environment[group], manifest, ["envs", name, group])?
+        allowed(environment, list(ENVIRONMENT_KEYS), manifest, ["envs", name])?
+        for group in ["dependencies", "env-vars", "scripts"]:
+            if group in environment:
+                table(environment[group], manifest, ["envs", name, group])?
+        if "requires-incan" in environment:
+            requirement(environment["requires-incan"], manifest, ["envs", name, "requires-incan"])?
     return Ok(None)
 
 

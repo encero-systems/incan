@@ -1,0 +1,528 @@
+"""
+Named project environments and toolchain requirements (RFC 073, RFC 117): `oven env list`, `oven env show` and
+`oven env run`, the commands 0.5.1 ran as `incan env`, and the `requires-incan` admission of execution commands.
+
+Every Loaf has the standard environments `dev`, `test`, `lint` and `docs`; `[envs.NAME]` declares another or adds to
+one. An environment resolves through its overlay chain: the project, then `dev` unless it is `dev` or `detached`, then
+each environment it `extends`, then itself. Later layers replace earlier `cwd` and add or replace variables and
+scripts. Every `requires-incan` along the chain must hold together: a layer narrows the requirement, never widens it.
+"""
+
+from std import toml
+from std.fs import Path
+from std.json import JsonValue
+from std.toml import TomlValue
+from rust::std::process import Command
+from cli_help import render
+from files import read
+from home_paths import TOOLCHAIN, home
+from semver_req import parse_requirement, parse_version, requirement_matches
+from unit import project_root_of
+from intake import read_project
+
+pub const ENV_USAGE: str = "oven env list [--format text|json] [--project PATH] | show [ENV] [--format text|json] [--project PATH] | run ENV SCRIPT [--dry-run] [--project PATH] [-- ARGS...]"
+pub const STANDARD: FrozenList[str] = ["dev", "test", "lint", "docs"]
+
+
+pub model Layer:
+    """One `requires-incan` in an overlay chain and where it was declared."""
+
+    pub source: str
+    pub requirement: str
+
+
+pub model Resolved:
+    """An environment after its overlay chain is applied."""
+
+    pub name: str
+    pub chain: list[str]
+    pub requirements: list[Layer]
+    pub cwd: str = "."
+    pub variables: Dict[str, str] = {}
+    pub scripts: Dict[str, list[str]] = {}
+    pub dependencies: int = 0
+
+
+pub model EnvRequest:
+    """One `oven env` invocation."""
+
+    pub action: str
+    pub environment: Option[str] = None
+    pub script: Option[str] = None
+    pub format: str = "text"
+    pub project: Option[str] = None
+    pub dry_run: bool = false
+    pub passed: list[str] = []
+
+
+pub def parse_env(arguments: list[str]) -> Result[EnvRequest, str]:
+    """Read `list`, `show [ENV]` or `run ENV SCRIPT` and their options; arguments after `--` go to the script."""
+    if len(arguments) == 0:
+        return Err("expected `list`, `show` or `run`")
+    action = arguments[0]
+    if action not in ["list", "show", "run"]:
+        return Err(f"unknown command `{action}`")
+    mut request = EnvRequest(action=action)
+    mut operands: list[str] = []
+    mut index = 1
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--":
+            request.passed = arguments[index + 1:]
+            break
+        if argument in ["--format", "--project"]:
+            if index + 1 >= len(arguments):
+                return Err(f"`{argument}` needs a value")
+            if argument == "--format":
+                request.format = arguments[index + 1]
+            else:
+                request.project = Some(arguments[index + 1])
+            index += 2
+            continue
+        if argument == "--dry-run" and action == "run":
+            request.dry_run = true
+        elif argument.startswith("-"):
+            return Err(f"unknown option `{argument}`")
+        else:
+            operands.append(argument)
+        index += 1
+    return admitted(request, operands)
+
+
+def admitted(request: EnvRequest, operands: list[str]) -> Result[EnvRequest, str]:
+    """Each action takes its own operands: none for `list`, an optional ENV for `show`, ENV and SCRIPT for `run`."""
+    mut checked = request
+    if checked.format not in ["text", "json"] or (checked.action == "run" and checked.format != "text"):
+        return Err(f"`--format` is text or json for list and show, got `{checked.format}`")
+    mut limit = 0
+    if checked.action == "show":
+        limit = 1
+    if checked.action == "run":
+        if len(operands) != 2:
+            return Err("run requires ENV and SCRIPT")
+        checked.script = Some(operands[1])
+        limit = 2
+    if len(operands) > limit:
+        return Err(f"unexpected argument `{operands[limit]}`")
+    if len(operands) > 0:
+        checked.environment = Some(operands[0])
+    return Ok(checked)
+
+
+pub def env_command(request: EnvRequest) -> Result[i32, str]:
+    """Run one `oven env` request against the selected project's manifest."""
+    root = selected_root(request.project)?
+    # The manifest is validated as every project command validates it, so an invalid requirement is refused here too.
+    read_project(root).map_err((error) => error.message())?
+    document = manifest(root)?
+    declared = declared_environments(document)?
+    if request.action == "list":
+        names = environment_names(declared)
+        if request.format == "json":
+            println(
+                JsonValue
+                    .array([JsonValue.string(name) for name in names])
+                    .to_pretty_json()
+                    .map_err((error) => error.message())?,
+            )
+        else:
+            println("\n".join(names))
+        return Ok(0)
+    if request.action == "show":
+        match request.environment:
+            None =>
+                println(overview(document, declared)?)
+                return Ok(0)
+            Some(name) =>
+                resolved = resolve(document, declared, name)?
+                if request.format == "json":
+                    println(resolved_document(resolved).to_pretty_json().map_err((error) => error.message())?)
+                else:
+                    println(shown(resolved))
+                return Ok(0)
+    return run_script(root, document, declared, request)
+
+
+def selected_root(project: Option[str]) -> Result[Path, str]:
+    """`--project PATH`, or the nearest project at or above the working directory."""
+    if let Some(directory) = project:
+        if not Path(directory).joinpath("loaf.toml").is_file():
+            return Err(f"no loaf.toml in {directory}")
+        return Ok(Path(directory))
+    working = Path.cwd().map_err((error) => f"cannot read the working directory: {error.message()}")?
+    match project_root_of(working.joinpath("loaf.toml")):
+        Some(root) => return Ok(root)
+        None => return Err("no loaf.toml found; run `oven init` or `oven new NAME` to create a project")
+
+
+def manifest(root: Path) -> Result[TomlValue, str]:
+    """The project's parsed `loaf.toml`."""
+    path = root.joinpath("loaf.toml")
+    return toml.parse(read(path)?).map_err((error) => f"{path.0}: {error.message()}")
+
+
+def declared_environments(document: TomlValue) -> Result[Dict[str, TomlValue], str]:
+    """The `[envs.NAME]` tables, by name."""
+    root = document.as_table().map_err((error) => error.message())?
+    if "envs" not in root:
+        return Ok({})
+    return root["envs"].as_table().map_err((error) => f"[envs]: {error.message()}")
+
+
+pub def environment_names(declared: Dict[str, TomlValue]) -> list[str]:
+    """The standard environments, then each other declared one in name order."""
+    mut names = list(STANDARD)
+    for name in sorted([name for name in declared.keys()]):
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def field(environment: Dict[str, TomlValue], key: str, name: str) -> Result[Option[TomlValue], str]:
+    """One key of `[envs.NAME]`."""
+    if key in environment:
+        return Ok(Some(environment[key]))
+    return Ok(None)
+
+
+def table_of(declared: Dict[str, TomlValue], name: str) -> Result[Dict[str, TomlValue], str]:
+    """`[envs.NAME]`, empty for an undeclared standard environment."""
+    if name in declared:
+        return declared[name].as_table().map_err((error) => f"[envs.{name}]: {error.message()}")
+    if name in STANDARD:
+        return Ok({})
+    return Err(f"environment `{name}` is not configured")
+
+
+def parents(environment: Dict[str, TomlValue], name: str) -> Result[list[str], str]:
+    """The environments `extends` names, a string or a list of strings."""
+    if "extends" not in environment:
+        return Ok([])
+    value = environment["extends"]
+    match value.as_str():
+        Ok(single) => return Ok([single])
+        Err(_) => pass
+    mut names: list[str] = []
+    for item in value.as_array().map_err((error) => f"[envs.{name}] extends: {error.message()}")?:
+        names.append(item.as_str().map_err((error) => f"[envs.{name}] extends: {error.message()}")?)
+    return Ok(names)
+
+
+pub def overlay_chain(declared: Dict[str, TomlValue], name: str, visiting: list[str] = []) -> Result[list[str], str]:
+    """`dev` unless the environment is `dev` or detached, the chains of what it extends, then the environment."""
+    if name in visiting:
+        return Err(f"environment `{name}` extends itself through {" -> ".join(visiting + [name])}")
+    environment = table_of(declared, name)?
+    mut chain: list[str] = []
+    mut detached = false
+    if "detached" in environment:
+        detached = environment["detached"].as_bool().map_err((error) => f"[envs.{name}] detached: {error.message()}")?
+    if name != "dev" and not detached:
+        chain = overlay_chain(declared, "dev", visiting + [name])?
+    for parent in parents(environment, name)?:
+        for member in overlay_chain(declared, parent, visiting + [name])?:
+            if member not in chain:
+                chain.append(member)
+    chain.append(name)
+    return Ok(chain)
+
+
+pub def resolve(document: TomlValue, declared: Dict[str, TomlValue], name: str) -> Result[Resolved, str]:
+    """Apply the overlay chain of `name` to the project's base: requirements accumulate, later layers override."""
+    chain = overlay_chain(declared, name)?
+    mut resolved = Resolved(name=name, chain=chain, requirements=project_requirements(document)?)
+    for layer in chain:
+        environment = table_of(declared, layer)?
+        if "requires-incan" in environment:
+            requirement = environment["requires-incan"]
+                .as_str()
+                .map_err((error) => f"[envs.{layer}] requires-incan: {error.message()}")?
+            resolved.requirements.append(Layer(source=f"envs.{layer}.requires-incan", requirement=requirement))
+        if "cwd" in environment:
+            resolved.cwd = environment["cwd"].as_str().map_err((error) => f"[envs.{layer}] cwd: {error.message()}")?
+        if "env-vars" in environment:
+            variables = environment["env-vars"]
+                .as_table()
+                .map_err((error) => f"[envs.{layer}] env-vars: {error.message()}")?
+            for key in sorted([key for key in variables.keys()]):
+                resolved.variables[key] = variables[key]
+                    .as_str()
+                    .map_err((error) => f"[envs.{layer}] env-vars.{key}: {error.message()}")?
+        if "scripts" in environment:
+            scripts = environment["scripts"].as_table().map_err((error) => f"[envs.{layer}] scripts: {error.message()}")?
+            for key in sorted([key for key in scripts.keys()]):
+                resolved.scripts[key] = script_argv(scripts[key], f"[envs.{layer}] scripts.{key}")?
+        if "dependencies" in environment:
+            entries = environment["dependencies"]
+                .as_table()
+                .map_err((error) => f"[envs.{layer}] dependencies: {error.message()}")?
+            resolved.dependencies += len(entries)
+    return Ok(resolved)
+
+
+def script_argv(value: TomlValue, field_name: str) -> Result[list[str], str]:
+    """A script is a nonempty argument list; a single string is a one-word command."""
+    match value.as_str():
+        Ok(single) => return Ok([single])
+        Err(_) => pass
+    mut argv: list[str] = []
+    for item in value.as_array().map_err((error) => f"{field_name}: {error.message()}")?:
+        argv.append(item.as_str().map_err((error) => f"{field_name}: {error.message()}")?)
+    if len(argv) == 0:
+        return Err(f"{field_name}: a script needs a command")
+    return Ok(argv)
+
+
+pub def project_requirements(document: TomlValue) -> Result[list[Layer], str]:
+    """The project's own `requires-incan`, when it declares one."""
+    match document.get_optional[str]("project.requires-incan").map_err((error) => error.message())?:
+        None => return Ok([])
+        Some(requirement) => return Ok([Layer(source="project.requires-incan", requirement=requirement)])
+
+
+pub def satisfied(requirements: list[Layer]) -> Result[bool, str]:
+    """Whether the active toolchain satisfies every requirement."""
+    active = parse_version(TOOLCHAIN)?
+    for layer in requirements:
+        requirement = parse_requirement(layer.requirement).map_err(
+            (reason) => f"{layer.source} `{layer.requirement}`: {reason}",
+        )?
+        if not requirement_matches(requirement, active):
+            return Ok(false)
+    return Ok(true)
+
+
+pub def require_toolchain(requirements: list[Layer]) -> Result[None, str]:
+    """
+    Refuse when the active toolchain does not satisfy the requirements, naming the active and installed toolchains,
+    the effective requirement, each contributing layer and how to install a fitting toolchain.
+    """
+    if len(requirements) == 0 or satisfied(requirements)?:
+        return Ok(None)
+    effective = ", ".join([layer.requirement for layer in requirements])
+    mut lines = [
+        f"active Incan toolchain {TOOLCHAIN} does not satisfy requires-incan {effective}",
+        "",
+        "contributing constraints:",
+    ]
+    for layer in requirements:
+        lines.append(f"  - {layer.source}: {layer.requirement}")
+    lines.append(f"installed toolchains: {", ".join(installed())}")
+    lines.append("help: install a toolchain that satisfies it with `incan toolchain install ARCHIVE`")
+    return Err("\n".join(lines))
+
+
+def installed() -> list[str]:
+    """The toolchain versions installed in the home, the active one when the home cannot be listed."""
+    mut names: list[str] = []
+    match home():
+        Err(_) => pass
+        Ok(directory) =>
+            match directory.joinpath("toolchains").iterdir():
+                Err(_) => pass
+                Ok(entries) =>
+                    for entry in entries:
+                        if entry.is_dir() and not entry.name().startswith("."):
+                            names.append(entry.name())
+    if len(names) == 0:
+        names.append(TOOLCHAIN)
+    return sorted(names)
+
+
+pub def project_admission(root: Path) -> Result[None, str]:
+    """Refuse a project command when the project's `requires-incan` excludes the active toolchain."""
+    return require_toolchain(project_requirements(manifest(root)?)?)
+
+
+def run_script(
+    root: Path,
+    document: TomlValue,
+    declared: Dict[str, TomlValue],
+    request: EnvRequest,
+) -> Result[i32, str]:
+    """Run one script in a resolved environment, after its requirements admit the active toolchain."""
+    name = request.environment.unwrap_or("")
+    script = request.script.unwrap_or("")
+    resolved = resolve(document, declared, name)?
+    if script not in resolved.scripts:
+        return Err(f"script `{script}` is not configured in resolved environment `{name}`")
+    argv = resolved.scripts[script] + request.passed
+    mut directory = root
+    if resolved.cwd != ".":
+        directory = root.joinpath(resolved.cwd)
+    if request.dry_run:
+        mut lines = [
+            f"env: {name}",
+            f"requires-incan: {requirement_text(resolved)}",
+            f"active Incan: {TOOLCHAIN} ({state(resolved)})",
+        ]
+        lines.append(f"cwd: {directory.0}")
+        lines.append("env-vars:")
+        for key in sorted([key for key in resolved.variables.keys()]):
+            lines.append(f"  {key}={resolved.variables[key]}")
+        lines.append(f"command: {displayed(argv)}")
+        println("\n".join(lines))
+        return Ok(0)
+    require_toolchain(resolved.requirements)?
+    mut command = Command.new(argv[0])
+    for argument in argv[1:]:
+        command.arg(argument)
+    for key in sorted([key for key in resolved.variables.keys()]):
+        command.env(key, resolved.variables[key])
+    command.current_dir(directory.0)
+    status = command.status().map_err((error) => f"cannot run script `{script}` ({argv[0]}): {error}")?
+    match status.code():
+        Some(code) => return Ok(code)
+        None => return Ok(1)
+
+
+def requirement_text(resolved: Resolved) -> str:
+    """The effective requirement, or `*` when nothing constrains the toolchain."""
+    if len(resolved.requirements) == 0:
+        return "*"
+    return ", ".join([layer.requirement for layer in resolved.requirements])
+
+
+def state(resolved: Resolved) -> str:
+    """Whether the active toolchain satisfies the environment, without refusing it."""
+    match satisfied(resolved.requirements):
+        Ok(true) => return "satisfied"
+        Ok(false) => return "unsatisfied"
+        Err(reason) => return f"invalid: {reason}"
+
+
+def displayed(argv: list[str]) -> str:
+    """A command line with each argument that contains a space quoted."""
+    mut words: list[str] = []
+    for argument in argv:
+        if " " in argument or argument == "":
+            words.append("\"" + argument + "\"")
+        else:
+            words.append(argument)
+    return " ".join(words)
+
+
+def overview(document: TomlValue, declared: Dict[str, TomlValue]) -> Result[str, str]:
+    """`oven env show` without ENV: one row per environment."""
+    mut lines = ["Name     Requires Incan        Toolchain    Cwd  Env Vars  Scripts  Dependencies"]
+    for name in environment_names(declared):
+        resolved = resolve(document, declared, name)?
+        row = f"{pad(name, 8)} {pad(requirement_text(resolved), 21)} {pad(state(resolved), 12)} {pad(resolved.cwd, 4)} "
+        lines.append(
+            row + f"{pad(str(len(resolved.variables)), 9)} {pad(str(len(resolved.scripts)), 8)} {resolved.dependencies}",
+        )
+    return Ok("\n".join(lines))
+
+
+def pad(text: str, width: int) -> str:
+    """Left-aligned text in a column of at least `width` characters."""
+    mut padded = text
+    while len(padded) < width:
+        padded += " "
+    return padded
+
+
+def shown(resolved: Resolved) -> str:
+    """`oven env show ENV`: the resolved environment."""
+    mut lines = [
+        resolved.name,
+        f"  overlay chain: project -> {" -> ".join(resolved.chain)}",
+        f"  requires-incan: {requirement_text(resolved)}",
+        f"  active Incan: {TOOLCHAIN} ({state(resolved)})",
+        f"  cwd: {resolved.cwd}",
+        f"  env vars: {len(resolved.variables)}",
+        f"  scripts: {len(resolved.scripts)}",
+        f"  dependencies: {resolved.dependencies}",
+    ]
+    if len(resolved.variables) > 0:
+        lines = lines + ["", "Environment Variables"]
+        for key in sorted([key for key in resolved.variables.keys()]):
+            lines.append(f"  {key}={resolved.variables[key]}")
+    if len(resolved.scripts) > 0:
+        lines = lines + ["", "Scripts"]
+        for key in sorted([key for key in resolved.scripts.keys()]):
+            lines.append(f"  {pad(key, 16)} {displayed(resolved.scripts[key])}")
+    return "\n".join(lines)
+
+
+def resolved_document(resolved: Resolved) -> JsonValue:
+    """The JSON form of `oven env show ENV`."""
+    mut variables: Dict[str, JsonValue] = {}
+    for key in resolved.variables.keys():
+        variables[key] = JsonValue.string(resolved.variables[key])
+    mut scripts: Dict[str, JsonValue] = {}
+    for key in resolved.scripts.keys():
+        scripts[key] = JsonValue.array([JsonValue.string(word) for word in resolved.scripts[key]])
+    requirements = [JsonValue.object(
+        {"source": JsonValue.string(layer.source), "requirement": JsonValue.string(layer.requirement)},
+    ) for layer in resolved.requirements]
+    return JsonValue.object(
+        {"name": JsonValue.string(resolved.name), "overlay_chain": JsonValue.array(
+            [JsonValue.string(name) for name in resolved.chain],
+        ), "requires_incan": JsonValue.array(requirements), "active_incan": JsonValue.string(TOOLCHAIN), "toolchain": JsonValue.string(
+            state(resolved),
+        ), "cwd": JsonValue.string(resolved.cwd), "env_vars": JsonValue.object(variables), "scripts": JsonValue.object(
+            scripts,
+        )},
+    )
+
+
+pub def env_help() -> str:
+    """`oven env --help`."""
+    return render(
+        ENV_USAGE,
+        [
+            "  list                Every environment: the standard dev, test, lint and docs, then each declared one.",
+            "  show [ENV]          The resolved environment, or an overview of every environment.",
+            "  run ENV SCRIPT      Run a script of the resolved environment; arguments after `--` follow it.",
+            "  --format text|json  Report format of list and show (default text).",
+            "  --dry-run           Print the resolved command without running it.",
+            "  --project PATH      The project directory (default: the nearest loaf.toml).",
+        ],
+        "oven env run ci test -- --verbose",
+    )
+
+
+# Options whose next argument is a value, never a command's PATH.
+const VALUED: FrozenList[str] = [
+    "--profile",
+    "--features",
+    "--substitute",
+    "--program-entry",
+    "--argv0",
+    "--format",
+    "--versions",
+]
+
+
+pub def command_admission(command: str, arguments: list[str]) -> Result[None, str]:
+    """
+    Refuse an execution command on a project whose `requires-incan` excludes the active toolchain, before it compiles,
+    runs or locks anything. The project is the one PATH belongs to, or the working directory's; direct source
+    execution and commands outside a project have no requirement to meet.
+    """
+    if "--direct" in arguments:
+        return Ok(None)
+    mut operand = "."
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--":
+            break
+        if argument in VALUED:
+            index += 2
+            continue
+        if not argument.startswith("-"):
+            operand = argument
+            break
+        index += 1
+    path = Path(operand).absolute().map_err((error) => f"cannot resolve {operand}: {error.message()}")?
+    mut root = project_root_of(path)
+    if path.is_dir():
+        root = project_root_of(path.joinpath("loaf.toml"))
+    match root:
+        None => return Ok(None)
+        Some(project) =>
+            match project_admission(project):
+                Err(reason) => return Err(f"{command} refused: {reason}")
+                Ok(_) => return Ok(None)

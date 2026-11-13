@@ -11,6 +11,7 @@ from runner_options import RUNNER_VALUE_OPTIONS, help_lines as runner_help_lines
 from project_scaffold import INIT_USAGE, NEW_USAGE, VALUE_OPTIONS as SCAFFOLD_VALUE_OPTIONS, scaffold_help
 from project_version import VERSION_USAGE, version_help
 from workspace import INSPECT_USAGE as WORKSPACE_USAGE, inspect_help as workspace_help
+from environments import ENV_USAGE, env_help
 
 # The project commands both surfaces run follow the invoked surface's name.
 const RUN_OPERANDS: str = "run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
@@ -53,6 +54,7 @@ pub def usage(surface: str) -> str:
                 INIT_USAGE,
                 VERSION_USAGE,
                 WORKSPACE_USAGE,
+                ENV_USAGE,
             ],
         )
     return overview(
@@ -115,6 +117,8 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
         return Some(mcp_help())
     elif command in ["new", "init"] and requested(arguments, list(SCAFFOLD_VALUE_OPTIONS)):
         return Some(scaffold_help(command))
+    elif command == "env" and env_help_requested(arguments):
+        return Some(env_help())
     elif command == "workspace" and nested_help(arguments, "inspect", ["--format", "--member", "-p", "--exclude"]):
         return Some(workspace_help())
     elif command == "version" and surface == OVEN and requested(arguments, ["--set", "--project", "--member", "-p"]):
@@ -241,3 +245,11 @@ def unit_valued() -> list[str]:
     for option in RUNNER_VALUE_OPTIONS:
         valued.append(option)
     return valued
+
+
+def env_help_requested(arguments: list[str]) -> bool:
+    """Help for `oven env` or one of its subcommands, before `--`."""
+    for subcommand in ["list", "show", "run"]:
+        if nested_help(arguments, subcommand, ["--format", "--project"]):
+            return true
+    return false

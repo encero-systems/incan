@@ -20,7 +20,7 @@ pub const INCAN: str = "incan"
 const OVEN_COMMANDS: FrozenList[str] = ["describe-unit", "owner", "bakery", "lock", "trust"]
 const OVEN_INSPECTIONS: FrozenList[str] = ["dependencies", "run"]
 # Oven commands 0.5.1 ran as `incan` commands; on `incan` they name their Oven spelling instead of being unknown.
-const MOVED_FROM_INCAN: FrozenList[str] = ["new", "init", "workspace"]
+const MOVED_FROM_INCAN: FrozenList[str] = ["new", "init", "workspace", "env"]
 # Commands only `incan` runs.
 const INCAN_COMMANDS: FrozenList[str] = ["explain", "fmt", "mcp", "toolchain"]
 # 0.5.1 `incan` commands that only `oven` runs now; refusing one names its `oven` spelling.
