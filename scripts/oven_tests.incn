@@ -21,6 +21,8 @@ from rust::std::cell import RefCell
 from rust::std::env import args
 from rust::std::fs import File
 from rust::std::io import copy as copy_stream
+from rust::std::ops import Index
+from rust::std::primitive import usize
 from rust::std::process import Child, Command, Stdio, exit
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
@@ -206,11 +208,11 @@ pub def invocations(root: Path, evidence: Path, logs: Path, jobs: int) -> Result
         projects.append(isolated_oven_project(root, evidence, shard)?)
     cleanup = oven_cleanup_positions(sources, shards)
     for index in range(len(sources)):
-        source = sources[index]
+        source = path_at(sources, index)
         if not source.is_file():
             return Err("Oven test sources are absent")
         shard = index % shards
-        project = projects[shard]
+        project = path_at(projects, shard)
         isolated_source = project.joinpath("src").joinpath(source.name())
         unit = ["test", isolated_source.0]
         alone = source.name() in NEEDS_SETTLED_INSTALLATION
@@ -287,7 +289,7 @@ def invocation(
     reservation: int,
     logs: Path,
     position: int,
-    source: Path,
+    source: &Path,
     alone: bool = false,
     group: str = "",
     scratch: Option[Path] = None,
@@ -312,7 +314,7 @@ def reservation_of(source: Path, compiler: str) -> int:
     return PROJECT_RESERVATION_BYTES
 
 
-pub def log_name(position: int, source: Path) -> str:
+pub def log_name(position: int, source: &Path) -> str:
     """A log name that sorts in invocation order and names the test source."""
     mut number = str(position)
     while len(number) < 3:
@@ -355,6 +357,12 @@ def visible_directories(directory: Path) -> Result[list[Path], str]:
 def sorted_paths(paths: list[Path]) -> list[Path]:
     """Paths in byte order of their spelling."""
     return [Path(spelling) for spelling in sorted([path.0 for path in paths])]
+
+
+def path_at(paths: &list[Path], position: int) -> &Path:
+    """Borrow one retained path without copying its owned spelling."""
+    slot: usize = position.wrapping_resize()
+    return Index.index(paths, slot)
 
 
 pub def run_all(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[bool, str]:
