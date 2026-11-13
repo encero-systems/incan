@@ -1,0 +1,31 @@
+# behavior: two configurations of one Clove in one link closure are refused, because both archives define the same symbols (#3133, RFC 159)
+# environment:
+#   INCAN_C_COMPILER=host
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   Clove `clove_two_configurations` is linked in configurations `default` and `wide` in one link closure
+
+from std.interop import c
+
+
+binding Narrow:
+    header = "include/r.h"
+    link = c.loaf_library("clove_two_configurations")
+
+    symbol value() -> c.i32:
+        native = "r_value"
+
+
+binding Wide:
+    header = "include/r.h"
+    link = c.loaf_library("clove_two_configurations", configuration="wide")
+
+    symbol value() -> c.i32:
+        native = "r_value"
+
+
+def main() -> None:
+    unsafe:
+        println(Narrow.value() + Wide.value())

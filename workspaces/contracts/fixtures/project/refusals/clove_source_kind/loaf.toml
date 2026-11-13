@@ -1,0 +1,14 @@
+[project]
+name = "clove_source_kind"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[c]
+library = "r"
+public-headers = ["include/r.h"]
+include = ["include"]
+
+[[c.compile]]
+sources = ["csrc/r.c", "csrc/r.rs"]

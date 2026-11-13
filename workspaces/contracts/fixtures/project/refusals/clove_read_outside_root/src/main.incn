@@ -1,0 +1,15 @@
+# behavior: a Clove compile that reads a file outside the Loaf root and its declared include roots is refused, naming the source and the file it read (#3133, RFC 159)
+# environment:
+#   INCAN_C_COMPILER=host
+# cli-commands:
+#   oven check src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   Clove `leaky`: compiling `csrc/leaky.c` read
+#   which is outside the Loaf root and its declared include roots
+
+from pub::leaky import ready
+
+
+def main() -> None:
+    println(ready())
