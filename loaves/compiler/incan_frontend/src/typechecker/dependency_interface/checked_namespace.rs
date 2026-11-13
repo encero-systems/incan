@@ -117,6 +117,7 @@ impl CheckedNamespaceInterface {
         let converter = TypeChecker::new();
         let mut symbols = HashMap::new();
         let mut callables = HashMap::new();
+        let mut reexports = HashMap::new();
         let mut symbol_rows = Vec::new();
         for declaration in &self.api.declarations {
             let name = namespace_declaration_name(declaration)
@@ -126,9 +127,24 @@ impl CheckedNamespaceInterface {
                 .get(name)
                 .ok_or_else(|| format!("checked namespace declaration `{name}` has no identity"))?
                 .clone();
-            let kind = converter
-                .symbol_kind_from_api_declaration(None, declaration)
-                .ok_or_else(|| format!("checked namespace declaration `{name}` has no semantic symbol"))?;
+            let Some(kind) = converter.symbol_kind_from_api_declaration(None, declaration) else {
+                let crate::api_metadata::ApiDeclaration::Alias(alias) = declaration else {
+                    return Err(format!("checked namespace declaration `{name}` has no semantic symbol"));
+                };
+                let Some((target_name, target_module)) = alias.target_path.split_last() else {
+                    return Err(format!("checked namespace alias `{name}` has no target"));
+                };
+                reexports.insert(
+                    name.to_owned(),
+                    DependencyMemberReexport {
+                        target_module: ImportPath::simple(target_module.to_vec()),
+                        target_name: target_name.clone(),
+                        declaration_origin: SymbolOrigin::Module(self.module_path.clone()),
+                        declaration_span: namespace_declaration_span(declaration),
+                    },
+                );
+                continue;
+            };
             if let SymbolKind::Function(function_info) = &kind {
                 callables.insert(
                     identity.clone(),
@@ -178,7 +194,7 @@ impl CheckedNamespaceInterface {
             declaration_nominal_scopes: Arc::default(),
             retained_nominal_carriers: Arc::default(),
             declaration_callables: Arc::new(callables),
-            member_reexports: Arc::default(),
+            member_reexports: Arc::new(reexports),
             body_ir_pub_reexports: Arc::default(),
             direct_member_partial_projections: Arc::default(),
             derivable_modules: Arc::default(),
