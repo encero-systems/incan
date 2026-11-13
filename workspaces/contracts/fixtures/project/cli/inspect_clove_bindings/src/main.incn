@@ -1,0 +1,23 @@
+# behavior: `incan inspect bindings` reports a binding that links a Clove as a `loaf_library` link naming the Clove, not as a system library (#3137, #3133)
+# environment:
+#   INCAN_C_COMPILER=host
+# cli-commands:
+#   inspect bindings .
+# expect-stdout:
+#   binding Probe in src/main.incn: header include/probe.h, link loaf_library("inspect_clove_bindings")
+#     symbol value() -> c.i32 is probe_value
+
+from std.interop import c
+
+
+binding Probe:
+    header = "include/probe.h"
+    link = c.loaf_library("inspect_clove_bindings")
+
+    symbol value() -> c.i32:
+        native = "probe_value"
+
+
+def main() -> None:
+    unsafe:
+        println(Probe.value())
