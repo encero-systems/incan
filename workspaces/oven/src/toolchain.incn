@@ -49,7 +49,7 @@ from apple_sdk import selected_sdk
 from std.environ import get_or
 from jec import begin, record
 from installation_codec import Installation
-from installation_page import recall as recall_installation, retain as retain_installation
+from installation_page import readmit as readmit_installation_page, recall as recall_installation, retain as retain_installation
 
 pub const TOOLCHAIN_SCHEMA: str = "incan.toolchain/1"
 
@@ -122,6 +122,23 @@ pub def installation(directory: Path) -> Result[Installation, str]:
     retire_legacy_admission(directory)?
     record(Operation.ToolchainAdmission, directory.0, clock)
     return Ok(page)
+
+
+pub def readmit_installation(directory: Path) -> Result[Installation, str]:
+    """Replace the admitted page only when the owner of an unfinished build installation changed it."""
+    clock = begin()
+    page = readmit_installation_page(directory, read_toolchain)?
+    retire_legacy_admission(directory)?
+    record(Operation.ToolchainAdmission, directory.0, clock)
+    return Ok(page)
+
+
+pub def readmit_selected_installation() -> Result[Installation, str]:
+    """Explicitly re-admit the selected unfinished installation in the home that owns its catalog."""
+    mut directory = toolchain_directory()?
+    if directory.is_dir():
+        directory = directory.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    return readmit_installation(directory)
 
 
 def parsed_without_admission(directory: Path) -> Result[Toolchain, str]:

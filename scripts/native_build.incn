@@ -119,7 +119,7 @@ pub def build_source_tools(context: NativeContext, builder_home: Path) -> Result
 
 pub def publish_support(context: NativeContext, helper: Path) -> Result[None, str]:
     """Publish the source-selected Rust support closure into the fresh candidate home."""
-    return require_native_step(
+    require_native_step(
         context,
         step(
             context,
@@ -129,6 +129,23 @@ pub def publish_support(context: NativeContext, helper: Path) -> Result[None, st
             common_environment(context),
             context.repo,
             context.evidence.joinpath("support-build.log"),
+        ),
+    )?
+    return readmit_build_home(context, helper, "support-readmit")
+
+
+pub def readmit_build_home(context: NativeContext, helper: Path, phase: str) -> Result[None, str]:
+    """Explicitly replace the page in the unfinished build home's own installation catalog."""
+    return require_native_step(
+        context,
+        step(
+            context,
+            phase,
+            helper.0,
+            ["--readmit"],
+            common_environment(context),
+            context.repo,
+            context.evidence.joinpath(f"{phase}.log"),
         ),
     )
 
@@ -493,6 +510,7 @@ def install_runtime(context: NativeContext, helper: Path, unit: Path, output: Pa
         persisted = temporary.persist().map_err((error) => error.message())?
         _ = persisted.move(installed).map_err((error) => error.message())?
     update_runtime_manifest(toolchain, installed)?
+    readmit_build_home(context, helper, "runtime-readmit")?
     return Ok(installed.joinpath(f"lib{RUNTIME_NAME}.rlib"))
 
 
@@ -619,6 +637,7 @@ def complete_standard_package(
     if package.profile == "release":
         replace_symlink(Path("release"), package.parent.joinpath("debug"))?
     append_line(admitted, package.name)?
+    readmit_build_home(context, helper, f"std-{package.package}-{package.profile}-readmit")?
     return Ok(None)
 
 
