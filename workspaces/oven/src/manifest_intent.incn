@@ -184,10 +184,11 @@ pub def parse_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
 
 
 pub model ManifestDocument:
-    """One byte snapshot and its independently comparable normalized intent."""
+    """One byte snapshot, its independently comparable normalized intent, and its Rust source-facet root."""
 
     pub evidence: ManifestEvidence
     pub intent: ProjectIntent
+    pub rust_source_root: Option[str] = None
 
 
 pub def parse_document(raw: bytes, manifest: str) -> Result[ManifestDocument, IntakeError]:
@@ -212,8 +213,15 @@ pub def parse_document(raw: bytes, manifest: str) -> Result[ManifestDocument, In
             assert document.intent.name == "catalog"
     """
     snapshot = decoded_manifest(raw, manifest)?
+    rust_source_root = snapshot.parsed
+        .get_optional[str]("rust.source.root")
+        .map_err(
+            (error) => refusal(manifest, ["rust", "source", "root"], IntakeErrorKind.Invalid, error.message()).with_source(
+                snapshot.evidence.source,
+            ),
+        )?
     intent = intent_from_snapshot(snapshot)?
-    return Ok(ManifestDocument(intent=intent, evidence=snapshot.evidence))
+    return Ok(ManifestDocument(intent=intent, evidence=snapshot.evidence, rust_source_root=rust_source_root))
 
 
 pub def decoded_manifest(raw: bytes, manifest: str) -> Result[ManifestSnapshot, IntakeError]:
@@ -349,9 +357,7 @@ def validate_environments(root: Dict[str, TomlValue], manifest: str) -> Result[N
                 ["envs", name, "rust-dependencies", alias],
             )?
             detail = f"use [envs.{name}.dependencies] {replacement}"
-            return Err(
-                refusal(manifest, ["envs", name, "rust-dependencies"], IntakeErrorKind.Unsupported, detail),
-            )
+            return Err(refusal(manifest, ["envs", name, "rust-dependencies"], IntakeErrorKind.Unsupported, detail))
         allowed(environment, ["dependencies"], manifest, ["envs", name])?
         for group in sorted([group for group in environment.keys()]):
             table(environment[group], manifest, ["envs", name, group])?
@@ -461,12 +467,7 @@ def first_key(values: Dict[str, TomlValue]) -> str:
     return keys[0]
 
 
-def dependency_replacement(
-    alias: str,
-    value: TomlValue,
-    manifest: str,
-    field: list[str],
-) -> Result[str, IntakeError]:
+def dependency_replacement(alias: str, value: TomlValue, manifest: str, field: list[str]) -> Result[str, IntakeError]:
     """Render the Loaf dependency form used by a retired-table or retired-key refusal hint."""
     mut package = alias
     mut version = "*"
@@ -725,12 +726,7 @@ def parse_dependencies(
         alias = first_key(entries)
         replacement = dependency_replacement(alias, entries[alias], manifest, ["rust-dependencies", alias])?
         return Err(
-            refusal(
-                manifest,
-                ["rust-dependencies"],
-                IntakeErrorKind.Unsupported,
-                f"use [dependencies] {replacement}",
-            ),
+            refusal(manifest, ["rust-dependencies"], IntakeErrorKind.Unsupported, f"use [dependencies] {replacement}"),
         )
     if "dependencies" in root:
         group = "dependencies"
@@ -826,12 +822,7 @@ def validate_facets(root: Dict[str, TomlValue], manifest: str, project_name: str
     """Validate authored facet metadata even when local intake does not execute it."""
     if "rust" in root:
         rust_facet = table(root["rust"], manifest, ["rust"])?
-        allowed(
-            rust_facet,
-            ["name", "type", "edition", "source", "bin", "lib", "build-script"],
-            manifest,
-            ["rust"],
-        )?
+        allowed(rust_facet, ["name", "type", "edition", "source", "bin", "lib", "build-script"], manifest, ["rust"])?
         for key in ["name", "type", "edition"]:
             if key in rust_facet:
                 value = required(rust_facet, key, manifest, ["rust", key])?
