@@ -47,7 +47,7 @@ const PRIVATE_DIRECTORY: u32 = 448
 const LIFECYCLE_SECONDS: u64 = 5
 # The suffix of an owner's socket file name.
 const SOCKET_SUFFIX: str = ".sock"
-# Where the user's endpoint directory is made when the platform names no user runtime directory.
+# The short root of every user's private endpoint directory.
 const ENDPOINT_ROOT: str = "/tmp"
 # The digits of a directory's digest that name its sockets in the endpoint directory.
 const DIRECTORY_DIGITS: int = 12
@@ -96,7 +96,7 @@ pub def socket_prefix(directory: str) -> Result[str, str]:
     The short, depth-independent path prefix of the sockets that belong to the private `directory`.
 
     1. Make `directory` private; the user who owns it owns its sockets.
-    2. Make that user's private endpoint directory: `i-<uid>` under the user runtime directory, or under `/tmp`.
+    2. Make that user's private endpoint directory: `i-<uid>` under the fixed short endpoint root.
     3. Name the sockets by a digest of `directory`, so different homes never share one.
     """
     # 1. The directory the sockets belong to is private to its user before anything is named after it.
@@ -110,10 +110,7 @@ pub def socket_prefix(directory: str) -> Result[str, str]:
 
 
 def endpoint_root() -> str:
-    """The user runtime directory when the platform names one, else `/tmp`."""
-    runtime = get_or("XDG_RUNTIME_DIR", "")
-    if runtime != "" and runtime.startswith("/"):
-        return runtime
+    """The fixed short root whose private per-user directory keeps every socket path bindable."""
     return ENDPOINT_ROOT
 
 
