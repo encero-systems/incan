@@ -488,7 +488,12 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         .map_err((error) => error.message())?
     provider_root = scratch.path().joinpath("provider").joinpath("src")
     provider_root.mkdir(true, true).map_err((error) => error.message())?
-    provider_source = "pub def value() -> int:\n    return 1\n\npub enum CodecFault:\n    Invalid\n"
+    provider_source = (
+        "pub def value() -> int:\n    return 1\n\n"
+        + "pub enum CodecFault:\n    Invalid\n\n"
+        + "pub model ProgramOutcome:\n    transaction: Option[int] = None\n\n"
+        + "pub model NativeSelection:\n    transaction: Option[int] = None\n"
+    )
     provider_root
         .joinpath("lib.incn")
         .write_text(provider_source, "utf-8", "strict", None)
@@ -553,24 +558,28 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
                                 module="helper",
                                 name="value",
                                 identity="app|module:helper|value|function|module|0|() -> int",
+                                reference_subject="expr:main#10..17",
                             ),
                             CompiledBodyDependencyRead(
                                 package=None,
                                 module="lib",
                                 name="other",
                                 identity="function:lib::other|incan.source-signature/2:sha256:fixture",
+                                reference_subject="expr:main#20..27",
                             ),
                             CompiledBodyDependencyRead(
                                 package=Some("provider"),
                                 module="lib",
                                 name="CodecFault",
                                 identity="provider|module:lib|CodecFault|enum|module|0|CodecFault",
+                                reference_subject="type:main#expr.30..40/type.0",
                             ),
                             CompiledBodyDependencyRead(
                                 package=Some("provider"),
                                 module="lib",
                                 name="value",
                                 identity="provider|module:lib|value|function|module|0|() -> int",
+                                reference_subject="expr:main#50..57",
                             ),
                         ],
                     ),
@@ -593,6 +602,40 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     assert published.bodies == 1 and published.fallbacks == 1
     assert published.snapshot.generation == before.generation + 1, "one compiled body publication used more than one generation"
     assert not output.is_file()
+    diagnostic_output = scratch.path().joinpath("ambiguous-dependency-output")
+    publish_binary(
+        diagnostic_output,
+        compiled_output_bytes(
+            CompiledBodyOutputs(
+                values=[
+                    CompiledBodyValue(
+                        module="src/main.incn",
+                        name="main",
+                        identity=identity,
+                        declaration=declaration,
+                        local=local,
+                        final=final,
+                        body_ir=b"owner-frame",
+                        dependency_reads=[
+                            CompiledBodyDependencyRead(
+                                package=Some("provider"),
+                                module="lib",
+                                name="transaction",
+                                identity="member/field:engine_programs::transaction",
+                                reference_subject="expr:engine_programs#120..131",
+                            ),
+                        ],
+                    ),
+                ],
+                fallbacks=[],
+            ),
+        ).map_err((error) => f"{error:?}")?,
+    )?
+    match publish_compiled_bodies(published.snapshot, unit, diagnostic_output):
+        Ok(_) => assert false, "an ambiguous dependency source unexpectedly published"
+        Err(message) =>
+            assert message.contains("body_owner=src/main.incn:main; body_identity=" + identity), message
+            assert message.contains("reference_subject=expr:engine_programs#120..131"), message
     fallback_key = RecordKey(
         family="eligibility",
         identity_profile="incan.stable-declaration/1",

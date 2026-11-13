@@ -290,21 +290,31 @@ fn encoded_body_value(
             module: dependency_module(&read.module_path),
             name: read.declaration_name.clone(),
             identity: read.declaration_identity.clone(),
+            reference_subject: read.reference_subject.clone(),
         })
         .collect::<Vec<_>>();
     dependency_reads.sort_by(|left, right| {
-        (&left.package, &left.module, &left.name, &left.identity).cmp(&(
-            &right.package,
-            &right.module,
-            &right.name,
-            &right.identity,
-        ))
+        (
+            &left.package,
+            &left.module,
+            &left.name,
+            &left.identity,
+            &left.reference_subject,
+        )
+            .cmp(&(
+                &right.package,
+                &right.module,
+                &right.name,
+                &right.identity,
+                &right.reference_subject,
+            ))
     });
     dependency_reads.dedup_by(|left, right| {
         left.package == right.package
             && left.module == right.module
             && left.name == right.name
             && left.identity == right.identity
+            && left.reference_subject == right.reference_subject
     });
     Ok(PendingBodyValue {
         module: module.to_owned(),

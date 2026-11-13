@@ -14,7 +14,7 @@ from checker_records import (
     record_root,
 )
 
-const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-output/9"
+const COMPILED_TRANSPORT_SCHEMA: str = "incan.checker-compiled-output/10"
 const FRAME_PREFIX_BYTES: int = 8
 const MAX_FRAME_BYTES: int = 67108864
 const MAX_FIELDS: int = 4096
@@ -158,10 +158,10 @@ def encode_compiled_body_value(value: CompiledBodyValue) -> Result[bytes, CodecF
     mut previous = ""
     for read in value.dependency_reads:
         package = optional_identity(read.package)
-        order = package + "\n" + read.module + "\n" + read.name + "\n" + read.identity
-        if read.module == "" or read.name == "" or read.identity == "" or order <= previous:
+        order = package + "\n" + read.module + "\n" + read.name + "\n" + read.identity + "\n" + read.reference_subject
+        if read.module == "" or read.name == "" or read.identity == "" or read.reference_subject == "" or order <= previous:
             return Err(CodecFault.Malformed)
-        fields += [package.encode(), read.module.encode(), read.name.encode(), read.identity.encode()]
+        fields += [package.encode(), read.module.encode(), read.name.encode(), read.identity.encode(), read.reference_subject.encode()]
         previous = order
     return binary_frame(fields)
 
@@ -193,7 +193,7 @@ def decode_compiled_body_value(fields: list[bytes]) -> Result[CompiledBodyValue,
     if len(fields) < 10:
         return Err(CodecFault.Malformed)
     dependency_count = decimal(text_field(fields[9])?)?
-    if dependency_count > MAX_FIELDS or len(fields) != 10 + dependency_count * 4:
+    if dependency_count > MAX_FIELDS or len(fields) != 10 + dependency_count * 5:
         return Err(CodecFault.Malformed)
     mut dependency_reads: list[CompiledBodyDependencyRead] = []
     mut previous = ""
@@ -204,13 +204,14 @@ def decode_compiled_body_value(fields: list[bytes]) -> Result[CompiledBodyValue,
             module=text_field(fields[offset + 1])?,
             name=text_field(fields[offset + 2])?,
             identity=text_field(fields[offset + 3])?,
+            reference_subject=text_field(fields[offset + 4])?,
         )
-        order = optional_identity(read.package) + "\n" + read.module + "\n" + read.name + "\n" + read.identity
-        if read.module == "" or read.name == "" or read.identity == "" or order <= previous:
+        order = optional_identity(read.package) + "\n" + read.module + "\n" + read.name + "\n" + read.identity + "\n" + read.reference_subject
+        if read.module == "" or read.name == "" or read.identity == "" or read.reference_subject == "" or order <= previous:
             return Err(CodecFault.Malformed)
         dependency_reads.append(read)
         previous = order
-        offset += 4
+        offset += 5
     value = CompiledBodyValue(
         module=text_field(fields[2])?,
         name=text_field(fields[3])?,
