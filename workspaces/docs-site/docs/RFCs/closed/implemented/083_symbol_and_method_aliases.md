@@ -12,7 +12,7 @@
     - RFC 082 (checked API documentation generation)
     - RFC 084 (RHS partial callable presets)
 - **Issue:** [#437](https://github.com/encero-systems/incan/issues/437)
-- **RFC PR:** —
+- **RFC PR:** [#470](https://github.com/encero-systems/incan/pull/470)
 - **Written against:** v0.3
 - **Shipped in:** v0.3
 

@@ -12,7 +12,7 @@
     - RFC 054 (explicit call-site generics)
     - RFC 083 (symbol and method aliases)
 - **Issue:** [#453](https://github.com/encero-systems/incan/issues/453)
-- **RFC PR:** —
+- **RFC PR:** [#532](https://github.com/encero-systems/incan/pull/532)
 - **Written against:** v0.3
 - **Shipped in:** v0.3
 

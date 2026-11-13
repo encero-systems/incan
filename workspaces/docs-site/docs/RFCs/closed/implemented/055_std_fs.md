@@ -12,7 +12,7 @@
     - RFC 041 (first-class Rust interop authoring)
     - RFC 056 (`std.io` in-memory byte cursors)
 - **Issue:** https://github.com/encero-systems/incan/issues/286
-- **RFC PR:** —
+- **RFC PR:** [#497](https://github.com/encero-systems/incan/pull/497)
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 
