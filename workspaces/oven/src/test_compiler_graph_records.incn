@@ -59,6 +59,7 @@ from compiler_body_publication import (
     dependency_owner,
     prepare_captured_source_inputs,
     prepare_compiled_bodies,
+    projection_refusals,
     publish_compiled_bodies,
     retained_owner_record,
 )
@@ -636,6 +637,40 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         Err(message) =>
             assert message.contains("body_owner=src/main.incn:main; body_identity=" + identity), message
             assert message.contains("reference_subject=expr:engine_programs#120..131"), message
+    listed = projection_refusals(
+        unit,
+        "app",
+        [
+            CompiledBodyValue(
+                module="src/main.incn",
+                name="main",
+                identity=identity,
+                declaration=declaration,
+                local=local,
+                final=final,
+                body_ir=b"owner-frame",
+                dependency_reads=[
+                    CompiledBodyDependencyRead(
+                        package=Some("provider"),
+                        module="lib",
+                        name="transaction",
+                        identity="member/field:engine_programs::transaction",
+                        reference_subject="expr:engine_programs#120..131",
+                    ),
+                    CompiledBodyDependencyRead(
+                        package=Some("provider"),
+                        module="lib",
+                        name="absent",
+                        identity="function:provider::absent|incan.source-signature/2:sha256:fixture",
+                        reference_subject="expr:engine_programs#140..146",
+                    ),
+                ],
+            ),
+        ],
+    )
+    assert len(listed) == 2, str(listed)
+    assert listed[0].contains("reference_subject=expr:engine_programs#120..131"), listed[0]
+    assert listed[1].contains("reference_subject=expr:engine_programs#140..146"), listed[1]
     fallback_key = RecordKey(
         family="eligibility",
         identity_profile="incan.stable-declaration/1",

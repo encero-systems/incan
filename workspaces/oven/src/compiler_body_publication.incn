@@ -1,6 +1,7 @@
 """Publish successful compiler body outputs into the ranked record graph."""
 
 from std.fs import File, Path
+from std.environ import get_or
 from std.encoding.hex import hexlify
 from std.json import JsonValue, parse
 from std.primitives.hash import sha256
@@ -78,6 +79,12 @@ pub enum OwnerRecordFault(str):
     Absent = "absent"
     Ambiguous = "ambiguous"
 
+@derive(Eq)
+pub enum ProjectionRefusalMode(str):
+    """Whether body publication stops at its first projection refusal or lists every preflight refusal."""
+
+    Default = "default"
+    List = "list"
 
 class CompiledBodyFrames:
     """Read one independently bounded binary compiler output frame without buffering the sidecar envelope."""
@@ -359,6 +366,14 @@ pub def prepare_compiled_bodies(
     outputs = read_compiled_body_outputs(output)?
     discard_file(output)
     origin = source_origin(unit)
+    if projection_refusal_mode()? == ProjectionRefusalMode.List:
+        refusals = projection_refusals(unit, origin, outputs.values)
+        if len(refusals) > 0:
+            return Err(
+                f"compiled body projection refusal list ({len(refusals)}):\n" + "\n".join(
+                    [f"{index + 1}. {refusals[index]}" for index in range(len(refusals))],
+                ),
+            )
 
     # 2. The prepared source authenticates only values carried by this exact request transaction.
     scope = ReadScope(snapshot=transaction.id, profile=CHECKER_PROFILE)
@@ -603,6 +618,89 @@ pub def prepare_compiled_bodies(
             selected,
         )?
     return Ok(PreparedCompiledBodies(transaction=prepared, bodies=published, fallbacks=len(outputs.fallbacks)))
+
+def projection_refusal_mode() -> Result[ProjectionRefusalMode, str]:
+    """Select the diagnosis-only preflight without changing ordinary fail-first publication."""
+    selected = get_or("OVEN_BODY_REFUSALS", ProjectionRefusalMode.Default.value())
+    if selected == ProjectionRefusalMode.Default.value():
+        return Ok(ProjectionRefusalMode.Default)
+    if selected == ProjectionRefusalMode.List.value():
+        return Ok(ProjectionRefusalMode.List)
+    return Err("OVEN_BODY_REFUSALS must be default or list")
+
+
+pub def projection_refusals(
+    unit: UnitDescription,
+    origin: str,
+    values: list[CompiledBodyValue],
+) -> list[str]:
+    """Preflight every body and editable-source dependency projection, retaining one refusal per reference."""
+    mut refusals: list[str] = []
+    editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
+    for value in values:
+        match source_projection(unit, origin, value.module):
+            Err(reason) => refusals.append(body_projection_refusal(reason, value))
+            Ok(projection) =>
+                match compiled_owner_source(projection, value.module, value.name, value.identity):
+                    Err(reason) => refusals.append(body_projection_refusal(reason, value))
+                    Ok(_) => pass
+        for dependency in value.dependency_reads:
+            match dependency.package:
+                Some(package) =>
+                    if package in editable_packages:
+                        match dependency_owner_record(
+                            unit,
+                            package,
+                            dependency.module,
+                            dependency.name,
+                            dependency.identity,
+                        ):
+                            Err(reason) => refusals.append(
+                                dependency_projection_refusal(
+                                    reason,
+                                    value.module,
+                                    value.name,
+                                    value.identity,
+                                    dependency,
+                                ),
+                            )
+                            Ok(_) => pass
+                None =>
+                    match project_dependency_module(unit, dependency.module):
+                        Err(reason) => refusals.append(
+                            dependency_projection_refusal(
+                                reason, value.module, value.name, value.identity, dependency,
+                            ),
+                        )
+                        Ok(module) =>
+                            match source_projection(unit, origin, module):
+                                Err(reason) => refusals.append(
+                                    dependency_projection_refusal(
+                                        reason, value.module, value.name, value.identity, dependency,
+                                    ),
+                                )
+                                Ok(_) =>
+                                    match project_signature_record(
+                                        unit,
+                                        origin,
+                                        dependency.module,
+                                        dependency.name,
+                                        dependency.identity,
+                                    ):
+                                        Err(reason) => refusals.append(
+                                            dependency_projection_refusal(
+                                                reason, value.module, value.name, value.identity, dependency,
+                                            ),
+                                        )
+                                        Ok(_) => pass
+    return refusals
+
+
+def body_projection_refusal(reason: str, value: CompiledBodyValue) -> str:
+    """Retain the exact body owner on a source-projection or owner-selection refusal."""
+    return (
+        reason + f"; body_owner={value.module}:{value.name}; body_identity={value.identity}; module={value.module}"
+    )
 
 
 def lowering_witnesses(
