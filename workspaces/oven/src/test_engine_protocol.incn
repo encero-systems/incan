@@ -273,8 +273,48 @@ def check_project_directory_selection() -> Result[None, str]:
 
 def check_worker_residency() -> Result[None, str]:
     """One compiler serves both activations under a deep runtime path, retains no bulk manifests, and reads frozen records."""
+    check_worker_residency_case(false)?
+    match check_worker_residency_case(true):
+        Err(error) =>
+            assert error == "injected worker-residency failure"
+        Ok(_) => return Err("injected worker-residency failure unexpectedly passed")
+    return Ok(None)
+
+
+def check_worker_residency_case(inject_failure: bool) -> Result[None, str]:
+    """Run one residency case and stop any engine it starts before returning success or failure."""
     scratch = scratch_directory()?
     root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    checked = exercise_worker_residency(root, binary, inject_failure)
+    store = root.joinpath("store")
+    if store.joinpath("CURRENT").is_file():
+        match stop_engine(store, binary):
+            Err(cleanup) =>
+                match checked:
+                    Err(error) => return Err(f"{error}; engine cleanup failed: {cleanup}")
+                    Ok(_) => return Err(cleanup)
+            Ok(_) => pass
+    match checked:
+        Err(error) => return Err(error)
+        Ok(_) => pass
+    check_frozen_installation_reads(root.joinpath("jec"))?
+    # Stop acknowledges that the resident service drained its buffered observations.
+    lines = root.joinpath("worker.trace").read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n")
+    waits = len([line for line in lines if "worker_observer_joined" in line])
+    detached = len([line for line in lines if "worker_observer_detached" in line])
+    releases = len([line for line in lines if "worker_heap_released" in line])
+    # Both activations restore the same resident worker and release its free heap before the next request.
+    assert waits == 2 and detached == 0 and releases == 2, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
+    released_requests = [line for line in lines if "engine request released:" in line]
+    assert len(released_requests) == 2, "request teardown did not release its payload verification observations"
+    assert "captures=0 verification=0" in released_requests[0]
+    check_worker_clock(root.joinpath("observations"))?
+    return Ok(None)
+
+
+def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> Result[None, str]:
+    """Exercise the resident worker; the caller owns unconditional engine retirement."""
     mut runtime = root.joinpath("var/folders/yd/1lgl20914vn4nhg0hgpjd4gr0000gn/T")
     while len(runtime.0) <= 100:
         runtime = runtime.joinpath("a-runtime-directory-deeper-than-a-socket-path-may-be")
@@ -290,7 +330,6 @@ def check_worker_residency() -> Result[None, str]:
     _ = load_toolchain()?
     jec = root.joinpath("jec")
     jec.mkdir(true, true).map_err((error) => error.message())?
-    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     outcome = Command
         .new(binary)
         .arg("run")
@@ -311,6 +350,8 @@ def check_worker_residency() -> Result[None, str]:
     if not outcome.status.success() or outcome.stdout != b"hello\x0a" or outcome.stderr != b"":
         error = RustString.from_utf8(outcome.stderr).map_err((decode_error) => str(decode_error))?
         return Err(f"initial records run: status={outcome.status.code()} stderr={error}")
+    if inject_failure:
+        return Err("injected worker-residency failure")
     initial_manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest")
     initial_record_reads = invocation_count(observations, "incan_frontend::read_compiler_records")
     initial_records = compiler_records_read(observations)?
@@ -347,30 +388,6 @@ def check_worker_residency() -> Result[None, str]:
     processes = invocation_processes(observations, "incan_rustc_driver::compile_unit")?
     if processes != 1:
         return Err(f"initial build and one-body edit used {processes} unit compiler processes")
-    # Stop this test's disposable engine before the temporary directory leaves scope.
-    store = root.joinpath("store")
-    mut identity = service_identity(store)?
-    identity.service_generation = fingerprint([binary, observe(Path(binary))?.stamp])?
-    mut channel = connect_with(store, identity, binary).map_err(detail)?
-    channel.send(zero_id(), Message.Stop(Stop(reason="retirement proof completed"))).map_err(detail)?
-    stopped = channel.receive().map_err(detail)?
-    match stopped.message:
-        Message.Event(value) =>
-            assert value.status == "Stopping"
-        _ => return Err("retirement proof did not stop its engine")
-    _ = channel.transport.close()
-    check_frozen_installation_reads(jec)?
-    # Stop acknowledges that the resident service drained its buffered observations.
-    lines = trace.read_text("utf-8", "strict").map_err((error) => error.message())?.split("\n")
-    waits = len([line for line in lines if "worker_observer_joined" in line])
-    detached = len([line for line in lines if "worker_observer_detached" in line])
-    releases = len([line for line in lines if "worker_heap_released" in line])
-    # Both activations restore the same resident worker and release its free heap before the next request.
-    assert waits == 2 and detached == 0 and releases == 2, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
-    released_requests = [line for line in lines if "engine request released:" in line]
-    assert len(released_requests) == 2, "request teardown did not release its payload verification observations"
-    assert "captures=0 verification=0" in released_requests[0]
-    check_worker_clock(observations)?
     return Ok(None)
 
 
