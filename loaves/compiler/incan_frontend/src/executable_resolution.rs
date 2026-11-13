@@ -195,11 +195,8 @@ fn demand_package<'a>(
         chain: dependency_chain(declaration, parents),
     };
     let key = catalog.get(library).ok_or_else(unknown)?;
-    let entry = loaves.demand(key)?.ok_or_else(unknown)?;
-    Ok(slot.insert(PackageArtifact {
-        manifest: Arc::clone(&entry.artifact.manifest),
-        bodies: entry.artifact.bodies_path(),
-    }))
+    let (manifest, bodies) = loaves.execution_artifact(key)?.ok_or_else(unknown)?;
+    Ok(slot.insert(PackageArtifact { manifest, bodies }))
 }
 
 /// Load every required declaration and its published closure from one package catalog.
