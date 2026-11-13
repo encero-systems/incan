@@ -535,6 +535,19 @@ pub def keys(view: Snapshot) -> Result[list[str], StoreError]:
     return Ok(live)
 
 
+pub def verify_segments(view: Snapshot) -> list[StoreError]:
+    """Read every byte of every segment retained by the generation and report content-name damage."""
+    mut damaged: list[StoreError] = []
+    for digest in view.segments:
+        path = view.root.joinpath("segments").joinpath(f"{digest}.seg")
+        match file_digest(path, "sha256"):
+            Err(error) => damaged.append(failure("integrity", path.value, error.message()))
+            Ok(found) =>
+                if hexlify(found) != digest:
+                    damaged.append(failure("integrity", path.value, "segment does not match its digest"))
+    return damaged
+
+
 # ---- Segments ----
 
 
