@@ -44,7 +44,7 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
             ("explain", "incan explain CODE"),
             ("test", "incan test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]"),
             ("build", "incan build [PATH] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
-            ("fmt", "incan fmt [--check] PATH..."),
+            ("fmt", "incan fmt [--check] [--diff] [PATH...]"),
             ("inspect codegraph", "incan inspect codegraph PATH [GRAPH OPTIONS]"),
             ("mcp", "incan mcp PATH [--profile NAME]"),
             ("toolchain pack", "incan toolchain pack OUT"),

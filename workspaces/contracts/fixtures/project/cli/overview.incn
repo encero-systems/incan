@@ -11,7 +11,7 @@
 #   incan explain CODE
 #   incan test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
 #   incan build [PATH] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
-#   incan fmt [--check] PATH...
+#   incan fmt [--check] [--diff] [PATH...]
 #   incan inspect codegraph PATH [GRAPH OPTIONS]
 #   incan mcp PATH [--profile NAME]
 #   incan toolchain pack OUT
