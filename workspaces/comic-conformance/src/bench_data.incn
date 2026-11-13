@@ -1,0 +1,244 @@
+"""Deterministic logical inputs shared by codec measurements, independent of encoded output."""
+
+from std.json import JsonValue
+from std.primitives.crumb.descriptions import Description, DescriptionMode
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.text_types import TextDescription, TextDocument, TextRootValue
+from std.primitives.crumb.types import (
+    AbsentPolicy,
+    ContainerKind,
+    FieldShape,
+    NominalKind,
+    ScalarKind,
+    TypeNode,
+)
+from std.primitives.crumb.values import IntegerValue, Metadata, MetadataEntry, Value, ValueField
+from std.primitives.text import encode_utf8
+
+
+pub model FieldSpec:
+    """One shared logical field with binary identity and both public schema spellings."""
+
+    pub name: str
+    pub storage: str
+    pub storage_type: TypeNode
+
+
+pub def fields(workload: str) -> list[FieldSpec]:
+    """Keep field order identical for JSON, COMIC and binary records."""
+    if workload == "nested":
+        return [
+            FieldSpec(name="field0", storage="i64", storage_type=TypeNode.Scalar(ScalarKind.I64)),
+            FieldSpec(
+                name="field1",
+                storage="list<i64>",
+                storage_type=TypeNode.Container(ContainerKind.List, [TypeNode.Scalar(ScalarKind.I64)]),
+            ),
+            FieldSpec(
+                name="field2",
+                storage="option<i64>",
+                storage_type=TypeNode.Container(ContainerKind.Option, [TypeNode.Scalar(ScalarKind.I64)]),
+            ),
+            FieldSpec(
+                name="field3",
+                storage="record@6368696c6478",
+                storage_type=TypeNode.Nominal(NominalKind.Record, "bench.Child", Some(b"childx"), []),
+            ),
+        ]
+    mut width = 3
+    if workload == "wide":
+        width = 32
+    mut result: list[FieldSpec] = []
+    for index in range(width):
+        name = "f" + ("00000" + str(index))[-5:]
+        mut storage = "i64"
+        if workload == "strings":
+            storage = "string"
+        mut node = TypeNode.Scalar(ScalarKind.I64)
+        if workload == "strings":
+            node = TypeNode.Scalar(ScalarKind.String)
+        result.append(FieldSpec(name=name, storage=storage, storage_type=node))
+    return result
+
+
+pub def child_fields() -> list[FieldSpec]:
+    """Nested records have actual stored fields rather than flattened benchmark aliases."""
+    return [FieldSpec(name="postal", storage="string", storage_type=TypeNode.Scalar(ScalarKind.String))]
+
+
+pub def member(spec: FieldSpec) -> Metadata:
+    """Complete required field metadata; optional None is a value, not a missing field."""
+    return Metadata.Map([
+        MetadataEntry(key="id", value=Metadata.Binary(encode_utf8(spec.name))),
+        MetadataEntry(key="name", value=Metadata.Text(spec.name)),
+        MetadataEntry(key="type", value=Metadata.Text(spec.storage)),
+        MetadataEntry(key="canonical", value=Metadata.Boolean(true)),
+        MetadataEntry(key="absent", value=Metadata.Text("required")),
+        MetadataEntry(key="properties", value=Metadata.Map([])),
+    ])
+
+
+pub def declaration(key: bytes, path: str, specs: list[FieldSpec]) -> Description:
+    """Build one inline description without reading or deriving it from encoded bytes."""
+    mut members: list[Metadata] = []
+    for spec in specs:
+        members.append(member(spec))
+    return Description(metadata=Metadata.Map([
+        MetadataEntry(key="kind", value=Metadata.Text("Record")),
+        MetadataEntry(key="nominal", value=Metadata.Binary(key)),
+        MetadataEntry(key="path", value=Metadata.Text(path)),
+        MetadataEntry(key="fields", value=Metadata.List(members)),
+        MetadataEntry(key="properties", value=Metadata.Map([])),
+    ]), mode=DescriptionMode.Inline)
+
+
+pub def descriptions(workload: str) -> list[Description]:
+    """Include the complete nested declaration even when a workload has no populated optional."""
+    mut result = [declaration(b"record\x00", "bench.Row", fields(workload))]
+    if workload == "nested":
+        result.append(declaration(b"childx\x00", "bench.Child", child_fields()))
+    return result
+
+
+pub def stored(name: str, value: Value) -> ValueField:
+    """All generated fields are canonical and explicitly present."""
+    return ValueField(identity=encode_utf8(name), canonical=true, absent=AbsentPolicy.Required, value=value)
+
+
+def signed(value: int) -> Value:
+    """Keep the benchmark's nonnegative host integers in the declared signed i64 domain."""
+    return Value.Integer(IntegerValue.Signed(value.saturating_resize[i128]()))
+
+
+def repeated_text(size: int, suffix: int) -> str:
+    """Build deterministic text without depending on an unimplemented string repetition operator."""
+    mut result = ""
+    for _ in range(size):
+        result += "x"
+    return result + str(suffix)
+
+
+pub def row_value(workload: str, index: int, specs: list[FieldSpec]) -> Value:
+    """Use bounded repeated values so all six column encodings have valid representative inputs."""
+    if workload == "nested":
+        mut optional = Value.NoneValue
+        if index % 3 != 0:
+            optional = Value.Some([signed(index % 1000)])
+        return Value.Record([
+            stored("field0", signed(index)),
+            stored("field1", Value.List([signed(index), signed(index + 1)])),
+            stored("field2", optional),
+            stored("field3", Value.Record([stored("postal", Value.Text("1011AB"))])),
+        ])
+    mut result: list[ValueField] = []
+    for position in range(len(specs)):
+        mut value = signed((index // 8 + position) % 4096)
+        if workload == "strings":
+            size = (index // 8 + position) % 128
+            value = Value.Text(repeated_text(size, (index // 8 + position) % 32))
+        result.append(stored(specs[position].name, value))
+    return Value.Record(result)
+
+
+pub def rows(workload: str, count: int) -> list[RowRecord]:
+    """Materialize binary format values; this stage is timed separately from encoding."""
+    specs = fields(workload)
+    mut result: list[RowRecord] = []
+    for index in range(count):
+        result.append(RowRecord(key=b"record\x00", value=row_value(workload, index, specs)))
+    return result
+
+
+pub def json_value(value: Value) -> Result[JsonValue, str]:
+    """Translate only the benchmark's common JSON-representable subset without dropping fields."""
+    match value:
+        Value.Integer(IntegerValue.Signed(number)) => return Ok(JsonValue.int(number.saturating_resize[int]()))
+        Value.Integer(IntegerValue.Unsigned(number)) => return Ok(JsonValue.int(number.saturating_resize[int]()))
+        Value.Text(text) => return Ok(JsonValue.string(text))
+        Value.NoneValue => return Ok(JsonValue.null())
+        Value.Some(children) => return json_value(children[0])
+        Value.List(children) =>
+            mut result: list[JsonValue] = []
+            for child in children:
+                result.append(json_value(child)?)
+            return Ok(JsonValue.array(result))
+        Value.Record(members) =>
+            mut result: Dict[str, JsonValue] = {}
+            for field in members:
+                # The benchmark uses ASCII field identities identical to public names.
+                name = field.identity.decode("utf-8").map_err((e) => str(e))?
+                result[name] = json_value(field.value)?
+            return Ok(JsonValue.object(result))
+        _ => return Err("benchmark value is outside the shared JSON subset")
+
+
+pub def json_rows(workload: str, count: int) -> Result[JsonValue, str]:
+    """Generate JSON independently; only one temporary format row exists at a time."""
+    specs = fields(workload)
+    mut result: list[JsonValue] = []
+    for index in range(count):
+        result.append(json_value(row_value(workload, index, specs))?)
+    return Ok(JsonValue.array(result))
+
+
+pub def text_declaration(path: str, identity: bytes, specs: list[FieldSpec]) -> TextDescription:
+    """Build an ordinary Record declaration with no application registration or metadata extras."""
+    mut members: list[FieldShape] = []
+    for spec in specs:
+        members.append(
+            FieldShape(
+                identity=encode_utf8(spec.name),
+                storage_type=spec.storage_type,
+                canonical=true,
+                absent=AbsentPolicy.Required,
+                name=spec.name,
+                renamed_from=[],
+            ),
+        )
+    return TextDescription(
+        path=path,
+        kind="Record",
+        shape=NominalKind.Record,
+        identity=Some(identity),
+        properties=Metadata.Map([]),
+        fields=members,
+        variants=[],
+    )
+
+
+pub def text_rows(workload: str, count: int) -> Result[TextDocument, str]:
+    """Generate text values without retaining a second complete binary Value tree."""
+    specs = fields(workload)
+    mut declarations = [text_declaration("bench.Row", b"record\x00", specs)]
+    if workload == "nested":
+        declarations.append(text_declaration("bench.Child", b"childx", child_fields()))
+    mut result: list[TextRootValue] = []
+    for index in range(count):
+        result.append(
+            TextRootValue(
+                storage_type=TypeNode.Nominal(NominalKind.Record, "bench.Row", Some(b"record\x00"), []),
+                value=row_value(workload, index, specs),
+            ),
+        )
+    return Ok(TextDocument(descriptions=declarations, values=result))
+
+
+pub def value_sum(value: Value) -> Result[int, str]:
+    """Consume every scalar for a cross-codec checksum; this work is labeled in scan timings."""
+    match value:
+        Value.Integer(IntegerValue.Signed(number)) => return Ok(number.saturating_resize[int]())
+        Value.Integer(IntegerValue.Unsigned(number)) => return Ok(number.saturating_resize[int]())
+        Value.Text(text) => return Ok(len(text))
+        Value.NoneValue => return Ok(0)
+        Value.Some(children) => return value_sum(children[0])
+        Value.List(children) =>
+            mut result = 0
+            for child in children:
+                result += value_sum(child)?
+            return Ok(result)
+        Value.Record(members) =>
+            mut result = 0
+            for member in members:
+                result += value_sum(member.value)?
+            return Ok(result)
+        _ => return Err("unsupported checksum value")
