@@ -1,6 +1,11 @@
 """Bounded COMIC tokenization with Unicode-scalar source positions."""
 
-from rust::incan_std_primitives::crumb import decode_scalar as native_decode_scalar, scalar_text as native_scalar_text
+from rust::incan_std_primitives::crumb import (
+    Buffer as NativeBuffer,
+    TextBuilder as NativeTextBuilder,
+    decode_scalar as native_decode_scalar,
+    scalar_text as native_scalar_text,
+)
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.text_types import TextError, TextFailure, TextPosition
 from crate.primitives.crumb.text_controls import BIDIRECTIONAL_CONTROLS
@@ -378,29 +383,29 @@ class Tokenizer:
         if self.following(1)? == "\"" and self.following(2)? == "\"":
             return self.multiline_token(position, start)
         self.advance()?
-        mut value = ""
+        mut value = NativeTextBuilder.new()
         while not self.at_end():
             character = self.advance()?
             if character == "\"":
-                return self.retain_text(TextTokenKind.String, start, position, value)
+                return self.retain_text(TextTokenKind.String, start, position, value.finish())
             if character == "\\":
                 escape_position = TextPosition(line=self.line, column=self.column - 1)
-                value += self.escaped_scalar(escape_position)?
+                value.push(self.escaped_scalar(escape_position)?)
             else:
-                value += character
+                value.push(character)
         return Err(TextError(kind=TextFailure.UnexpectedEnd, position=self.position()))
 
     def multiline_token(mut self, position: TextPosition, start: int) -> Result[TextToken, TextError]:
         """Decode every scalar between triple quotes without normalizing it."""
         for _ in range(3):
             self.advance()?
-        mut value = ""
+        mut value = NativeTextBuilder.new()
         while not self.at_end():
             if self.current()? == "\"" and self.following(1)? == "\"" and self.following(2)? == "\"":
                 for _ in range(3):
                     self.advance()?
-                return self.retain_text(TextTokenKind.String, start, position, value)
-            value += self.advance()?
+                return self.retain_text(TextTokenKind.String, start, position, value.finish())
+            value.push(self.advance()?)
         return Err(TextError(kind=TextFailure.UnexpectedEnd, position=self.position()))
 
     def escaped_scalar(mut self, position: TextPosition) -> Result[str, TextError]:
@@ -439,23 +444,23 @@ class Tokenizer:
         """Decode printable ASCII and exact two-digit lowercase hexadecimal byte escapes."""
         self.advance()?
         self.advance()?
-        mut data: list[u8] = []
+        mut data = NativeBuffer.new()
         while not self.at_end():
             character = self.advance()?
             if character == "\"":
-                return self.retain_data(start, position, data)
+                return self.retain_data(start, position, data.finish())
             if character == "\\":
                 if self.at_end():
                     return Err(TextError(kind=TextFailure.UnexpectedEnd, position=self.position()))
                 escape = self.advance()?
                 if escape == "\\" or escape == "\"":
-                    data.append(ascii_byte(escape, position)?)
+                    data.push(ascii_byte(escape, position)?)
                 elif escape == "x":
-                    data.append(self.binary_hex(position)?)
+                    data.push(self.binary_hex(position)?)
                 else:
                     return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
             else:
-                data.append(ascii_byte(character, position)?)
+                data.push(ascii_byte(character, position)?)
         return Err(TextError(kind=TextFailure.UnexpectedEnd, position=self.position()))
 
     def binary_hex(mut self, position: TextPosition) -> Result[u8, TextError]:
