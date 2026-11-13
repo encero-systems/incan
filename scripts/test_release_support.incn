@@ -49,7 +49,7 @@ from verify_installation import (
     require_pristine_relocation_inputs,
     require_shipped_standard_sources,
 )
-from relink_driver import absolute_manifest
+from relink_driver import Relink, absolute_manifest, driver_build_environment
 
 const SHA: str = "0123456789abcdef0123456789abcdef01234567"
 const COMPLETE_LOG: str = """PASS behavior/a/a
@@ -351,6 +351,31 @@ def test_reference_cache_store_moves_then_reuses_complete_evidence() -> Result[N
     worker_timings.write_text("reference-contracts\t2.0\n", "utf-8", "strict", None).map_err((error) => error.message())?
     append_timing_file(timings, worker_timings)?
     assert timings.read_text("utf-8", "strict").map_err((error) => error.message())? == ("source-closure\t1.0\nreference-contracts\t2.0\n")
+    return Ok(None)
+
+
+def test_driver_build_shares_the_installation_bakery_unless_one_is_requested() -> Result[None, str]:
+    """The compiler home selects installed trees; its compiled units land in the installation's own bakery."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    installed = temporary.path().joinpath("build-home")
+    installed.mkdir(true, true).map_err((error) => error.message())?
+    compiler = installed.joinpath("compiler-build")
+    relink = Relink(
+        repo=temporary.path().joinpath("source"),
+        bootstrap=temporary.path().joinpath("bootstrap"),
+        toolchain_home=installed,
+        builder="oven",
+        stdlib="stdlib",
+        profile="release",
+        refresh=false,
+        log=temporary.path().joinpath("driver-build.log"),
+    )
+    environment = driver_build_environment(relink, "/sysroot", compiler, "")?
+    assert environment["INCAN_HOME"] == compiler.0
+    assert environment["INCAN_BAKERY"] == installed.resolve().map_err((error) => error.message())?.joinpath("bakery").0
+    assert environment["RUSTC"] == "/sysroot/bin/rustc"
+    requested = driver_build_environment(relink, "/sysroot", compiler, "/shared/bakery")?
+    assert requested["INCAN_BAKERY"] == "/shared/bakery"
     return Ok(None)
 
 
