@@ -166,6 +166,10 @@ pub def compiled_owner_source(
             for owner in projection.owners:
                 if owner.key.facet.startswith(prefix) and owner.key.facet.endswith(":" + declaration + ":" + name):
                     return Ok(owner)
+        for prefix in ["model:", "class:", "trait:", "enum:", "newtype:"]:
+            for owner in projection.owners:
+                if owner.key.facet == prefix + declaration:
+                    return Ok(owner)
     else:
         for owner in projection.owners:
             if (
