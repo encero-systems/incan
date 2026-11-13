@@ -11,6 +11,10 @@ from workers import Invocation, invoke_many
 
 # The largest partition file read back; a bigger one is discarded and discovered again.
 const MAX_PLAN_BYTES: int = 2_000_000
+# Oven's refusal of entry selection by an engine that cannot compile several programs into one unit.
+const ENGINE_REFUSES_ENTRIES: str = "do not implement feature, substitution or program-entry options"
+# Why every case keeps its own command once the engine refuses shared entries: no partition can make it share.
+pub const SHARED_ENTRIES_REFUSED: str = "the selected engine refuses shared program entries"
 
 
 pub def group_compilation_request(incan: str, arguments: list[str], project: Path, duration_hint: int) -> Invocation:
@@ -53,7 +57,7 @@ pub def run_batches(
     2. Partition them into groups: this scratch's previous partition, or a full-family hint, or one group to discover
        the partition from.
     3. Compile groups and run their verified entries in one pool, refining refusals before splitting them.
-    4. Retain the partition for the next run.
+    4. Retain the partition for the next run, unless the engine refused to share any compilation.
     """
     # 1. Only the cases whose entry can be compiled together with others are shared; the rest keep their own command.
     entries, refusals = admitted_entries(fixtures)
@@ -76,12 +80,25 @@ pub def run_batches(
     mut outcomes: dict[str, Result[Outcome, str]] = {}
     mut costs = load_costs(hint)
     mut projects: list[Path] = []
-    compile_groups(incan, scratch, groups, built, notes, partition, overlapping, outcomes, jobs, costs, projects)
+    sharing = compile_groups(
+        incan,
+        scratch,
+        groups,
+        built,
+        notes,
+        partition,
+        overlapping,
+        outcomes,
+        jobs,
+        costs,
+        projects,
+    )
     retain_costs(hint, projects, costs)
-    # 4. Retain the partition whose entries ran fresh in the owning pool.
+    # 4. Retain the partition whose entries ran fresh in the owning pool. An engine that refused sharing taught nothing
+    # about compatibility, so its all-singleton partition never replaces one that a sharing engine can use.
     for group in built:
         partition.append("\t".join([candidate.fixture.case_name() for candidate in group.entries]))
-    if len(entries) > 0:
+    if len(entries) > 0 and sharing:
         match write(plan, "\n".join(partition) + "\n"):
             Err(error) => println(f"batch plan: {error}")
             Ok(_) => pass
@@ -291,18 +308,23 @@ def compile_groups(
     jobs: int,
     costs: Costs,
     mut projects: list[Path],
-) -> None:
+) -> bool:
     """
-    Compile each partition wave through the same child budget used for fresh execution and isolated commands.
+    Compile each partition wave through the same child budget used for fresh execution and isolated commands, and
+    report whether the engine shared compilations.
 
     1. Retain singleton names and prepare each shared compilation.
     2. Queue original commands alongside shared compilation waves, including newly isolated cases.
     3. Run builds and their verified entries under one child budget, recording original results once.
-    4. Retain successful builds and refine refused groups for the next wave.
+    4. Retain successful builds and refine refused groups for the next wave. An engine that refuses shared entries
+       ends sharing: no group is bisected or attempted again, and each case keeps its own command once.
     """
     mut pending = groups
     mut isolated = separate
+    mut sharing = true
     while len(pending) > 0 or len(isolated) > 0:
+        if not sharing:
+            pending = dissolved(pending)
         mut requests: list[Invocation] = []
         mut attempts: list[GroupProject] = []
         mut retry: list[list[Entry]] = []
@@ -362,12 +384,29 @@ def compile_groups(
                 first, selected = executions[index]
                 for offset in range(len(selected)):
                     outcomes[selected[offset]] = results[first + offset]
+            elif refusal == SHARED_ENTRIES_REFUSED:
+                sharing = false
+                retry += dissolved([group.entries])
             else:
                 refine_group(group, retry, refusal, evidence)
         pending = retry
+    return sharing
 
 
-def compilation_refusal(result: Result[Outcome, str]) -> tuple[str, str]:
+def dissolved(groups: list[list[Entry]]) -> list[list[Entry]]:
+    """Every case of `groups` alone, each shared group named once, for an engine that cannot share compilations."""
+    mut alone: list[list[Entry]] = []
+    for entries in groups:
+        if len(entries) > 1:
+            first = entries[0].fixture.case_name()
+            last = entries[-1].fixture.case_name()
+            println(f"BATCH-ISOLATE {first} .. {last} ({len(entries)} cases): {SHARED_ENTRIES_REFUSED}")
+        for candidate in entries:
+            alone.append([candidate])
+    return alone
+
+
+pub def compilation_refusal(result: Result[Outcome, str]) -> tuple[str, str]:
     """The refusal and its diagnostic evidence; an empty refusal means compilation succeeded without output."""
     match result:
         Err(_) => return ("combined compilation refused", "")
@@ -375,6 +414,8 @@ def compilation_refusal(result: Result[Outcome, str]) -> tuple[str, str]:
             evidence = outcome.stdout + outcome.stderr
             if "contract invocation timed out" in outcome.stderr:
                 return ("combined compilation exceeded its deadline", evidence)
+            if outcome.code != Some(0) and ENGINE_REFUSES_ENTRIES in outcome.stderr:
+                return (str(SHARED_ENTRIES_REFUSED), evidence)
             if outcome.code != Some(0):
                 return ("combined compilation refused", evidence)
             if outcome.stdout != "" or outcome.stderr != "":
