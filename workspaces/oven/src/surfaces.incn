@@ -18,7 +18,7 @@ pub const OVEN: str = "oven"
 pub const INCAN: str = "incan"
 # Commands only `oven` runs; `inspect` is split by its subcommand below.
 const OVEN_COMMANDS: FrozenList[str] = ["describe-unit", "owner", "bakery", "lock", "trust"]
-const OVEN_INSPECTIONS: FrozenList[str] = ["dependencies", "run"]
+const OVEN_INSPECTIONS: FrozenList[str] = ["dependencies", "run", "features"]
 # Oven commands 0.5.1 ran as `incan` commands; on `incan` they name their Oven spelling instead of being unknown.
 const MOVED_FROM_INCAN: FrozenList[str] = ["new", "init", "workspace", "env"]
 # Commands only `incan` runs.
@@ -67,6 +67,8 @@ pub def misplaced(surface: str, command: str, arguments: list[str]) -> Option[st
         return None
     if surface == INCAN:
         if command == "inspect":
+            if arguments[0] == "features":
+                return Some(f"{INCAN}: `incan inspect features` is an Oven command: run `oven inspect features`")
             return Some(f"{INCAN} inspect: unknown command `{arguments[0]}`")
         if command in MOVED_TO_OVEN:
             return Some(f"{INCAN}: unknown command `{command}`: run `{OVEN} {command}`")

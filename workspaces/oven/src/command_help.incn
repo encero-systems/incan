@@ -13,6 +13,7 @@ from project_version import VERSION_USAGE, version_help
 from workspace import INSPECT_USAGE as WORKSPACE_USAGE, inspect_help as workspace_help
 from environments import ENV_USAGE, env_help
 from doctor import DOCTOR_USAGE, doctor_help
+from feature_inspection import FEATURES_USAGE, features_help
 
 # The project commands both surfaces run follow the invoked surface's name.
 const RUN_OPERANDS: str = "run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
@@ -56,6 +57,7 @@ pub def usage(surface: str) -> str:
                 VERSION_USAGE,
                 WORKSPACE_USAGE,
                 ENV_USAGE,
+                FEATURES_USAGE,
             ],
         )
     return overview(
@@ -151,6 +153,8 @@ def inspection_help(surface: str, arguments: list[str]) -> Option[str]:
     """Help for the inspection the surface runs: semantic codegraph facts on `incan`, operational facts on `oven`."""
     if surface != OVEN and nested_help(arguments, "codegraph", list(GRAPH_VALUE_OPTIONS)):
         return Some(graph_help())
+    if surface == OVEN and nested_help(arguments, "features", ["--format", "--features"]):
+        return Some(features_help())
     if surface == OVEN and nested_help(arguments, "dependencies", list(UNIT_VALUE_OPTIONS)):
         return Some(unit_help(surface, "inspect dependencies"))
     if surface == OVEN and nested_help(arguments, "run"):
