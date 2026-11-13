@@ -187,13 +187,22 @@ pub def manifest_candidates(source: Path) -> list[Path]:
     return candidates
 
 
-def standard_loaves(package: str, profile: str, reader: ManifestReader) -> Result[list[UnitLoaf], str]:
+def standard_loaves(
+    package: str,
+    profile: str,
+    reader: ManifestReader,
+    selected: Option[list[StandardPackage]] = None,
+) -> Result[list[UnitLoaf], str]:
     """
     The standard packages a unit of `package` reaches. They are ambient: every one is available, the unit's own
     package excepted, and the unit links the ones it uses.
     """
     mut loaves: list[UnitLoaf] = []
-    for found in standard_packages(reader)?:
+    packages = match selected:
+        Some(known) => known
+        None => standard_packages(reader)?
+
+    for found in packages:
         if found.name != package:
             directory = standard_artifact_dir(found.name, profile)?
             loaves.append(UnitLoaf(key=found.name, name=found.name, dir=directory.0, standard=true))
@@ -209,10 +218,21 @@ pub def describe(
     selected_facets: list[LocalFacet] = [],
     direct: bool = false,
     purpose: ActivationPurpose = ActivationPurpose.Normal,
+    selected_standard: Option[list[StandardPackage]] = None,
 ) -> Result[UnitDescription, str]:
     """Describe `source` for its owning purpose, bypassing a Loaf only for explicit direct source execution."""
     clock = begin()
-    result = described(source, profile, request, reader, selected_toolchain, selected_facets, direct, purpose)
+    result = described(
+        source,
+        profile,
+        request,
+        reader,
+        selected_toolchain,
+        selected_standard,
+        selected_facets,
+        direct,
+        purpose,
+    )
     key = (f"{source.0}|{profile}|{",".join(sorted(request.features))}|{request.default_features}|" + f"{request.all_features}|direct={direct}|purpose={purpose.value()}")
     record(Operation.UnitDescription, key, clock)
     return result
@@ -224,6 +244,7 @@ def described(
     request: FeatureRequest,
     reader: ManifestReader,
     selected_toolchain: Option[Toolchain],
+    selected_standard: Option[list[StandardPackage]],
     selected_facets: list[LocalFacet],
     direct: bool,
     purpose: ActivationPurpose,
@@ -233,15 +254,15 @@ def described(
     if not entry.is_file():
         return Err(f"{entry.0}: no such source file")
     if direct:
-        return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader)?))
+        return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader, selected_standard)?))
     match project_root_of(entry):
-        None => return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader)?))
+        None => return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader, selected_standard)?))
         Some(found) =>
             graph = intake(found, reader).map_err((error) => error.message())?
             root = found.resolve().map_err((error) => f"{found.0}: {error.message()}")?
             active = resolve_features(graph, root.0, request, reader, selected_toolchain, selected_facets, purpose)?
             projects = projects_by_root(graph.projects)
-            return project_unit(entry, projects[root.0], profile, root.0, active, projects, reader)
+            return project_unit(entry, projects[root.0], profile, root.0, active, projects, reader, selected_standard)
 
 
 def projects_by_root(found: list[LocalProject]) -> Dict[str, LocalProject]:
@@ -260,6 +281,7 @@ def project_unit(
     active: ActiveGraph,
     projects: Dict[str, LocalProject],
     reader: ManifestReader,
+    selected_standard: Option[list[StandardPackage]],
 ) -> Result[UnitDescription, str]:
     """Describe one project in the root's selected graph; dependency builds share its artifact layout."""
     return Ok(
@@ -273,7 +295,7 @@ def project_unit(
             profile=profile,
             declared_features=sorted([name for name in own.intent.features.keys()]),
             active_features=active.active[own.root],
-            loaves=project_loaves(own, profile, artifact_root, active, projects, reader)?,
+            loaves=project_loaves(own, profile, artifact_root, active, projects, reader, selected_standard)?,
             rust_crates=rust_crates_of(own, active.facets),
             contract_models=own.intent.contract_models,
             c_headers=own.intent.c_headers,
@@ -293,6 +315,7 @@ def project_loaves(
     active: ActiveGraph,
     projects: Dict[str, LocalProject],
     reader: ManifestReader,
+    selected_standard: Option[list[StandardPackage]],
 ) -> Result[list[UnitLoaf], str]:
     """
     List a project's reachable Loaves, preserving direct aliases before transitive package names.
@@ -338,7 +361,7 @@ def project_loaves(
             ),
         )
     # 4. Every standard package is available, except the one the unit is.
-    return Ok(loaves + standard_loaves(own.intent.name, profile, reader)?)
+    return Ok(loaves + standard_loaves(own.intent.name, profile, reader, selected_standard)?)
 
 
 def reachable_roots(start: str, active: ActiveGraph) -> list[str]:

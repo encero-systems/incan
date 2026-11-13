@@ -26,11 +26,11 @@ from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue, parse
 from files import json_text
-from home import home, standard_library_dir
+from home import StandardPackage, home, standard_library_dir
 from manifest_intent import parse_document
 from loaf_local_graph import unique
 from observation import SETTLE_SECONDS, FileMetadata, children, file_metadata
-from toolchain import Toolchain, load_toolchain, toolchain_file
+from toolchain import Toolchain, installation, toolchain_file
 from installation_page import admitted_identity
 from unit import manifest_candidates
 
@@ -338,6 +338,14 @@ pub model AdmittedHome:
         ]
 
 
+pub model SelectedHome:
+    """One request's admitted home, toolchain and standard packages selected from one installation page."""
+
+    pub admitted: AdmittedHome
+    pub toolchain: Toolchain
+    pub standard: list[StandardPackage]
+
+
 pub model CaptureResult:
     """A capture's outcome, its epoch (none when an input was unstable), and the work it did."""
 
@@ -350,18 +358,29 @@ pub model CaptureResult:
 
 pub def admitted_home() -> Result[AdmittedHome, str]:
     """The admitted home this Oven runs with."""
+    return Ok(selected_home()?.admitted)
+
+
+pub def selected_home() -> Result[SelectedHome, str]:
+    """Select the admitted home and decoded toolchain together for one request."""
     pin = toolchain_file()?
-    toolchain = load_toolchain()?
+    page = installation(pin.parent())?
+    toolchain = page.toolchain.select()
     admission = match admitted_identity(pin.parent())?:
         Some(identity) => identity
         None => return Err("toolchain installation has no admitted page")
+
     return Ok(
-        AdmittedHome(
-            home=home()?.0,
-            pin=pin.0,
-            standard_library=standard_library_dir()?.0,
-            admission=admission,
-            pinned=toolchain_roots(toolchain),
+        SelectedHome(
+            admitted=AdmittedHome(
+                home=home()?.0,
+                pin=pin.0,
+                standard_library=standard_library_dir()?.0,
+                admission=admission,
+                pinned=toolchain_roots(toolchain),
+            ),
+            toolchain=toolchain,
+            standard=[StandardPackage(name=manifest.intent.name, root=manifest.root) for manifest in page.manifests],
         ),
     )
 
@@ -447,9 +466,7 @@ model Capture:
                 self.recorded_witnesses = [witness.path for witness in epoch.witnesses()]
 
     def take_frozen_roots(mut self) -> Result[None, str]:
-        """
-        Select the frozen roots and exact installation-page identity admitted before this request.
-        """
+        """Select the frozen roots and exact installation-page identity admitted before this request."""
         self.pinned = sorted(self.admitted.pinned + [self.admitted.pin, f"installation:{self.admitted.admission}"])
         self.frozen = self.admitted.frozen_roots()
         return Ok(None)

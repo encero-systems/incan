@@ -78,6 +78,7 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
         directory.joinpath(run).0,
         Some(pending.capture.epoch),
         pending.producer,
+        Some(pending.capture.selected),
     )
     frozen = finish_frozen_counting()
     produced = produced_result?
