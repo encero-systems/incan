@@ -165,7 +165,7 @@ fn prepared(
     let number = NEXT_STAGING.fetch_add(1, Ordering::Relaxed);
     let staging = store.join(format!(".staged-{}-{number}", std::process::id()));
     fs::create_dir(&staging).map_err(io_error)?;
-    let built = build(root, recipe, externs, directories, identity, &staging, shared);
+    let built = build(root, recipe, externs, directories, identity, store, &staging, shared);
     let result = built.and_then(|library| publish(store, &index, library));
     // This directory and every file in it belong to this invocation; no completed store entry is removed here.
     let _ = fs::remove_dir_all(&staging);
@@ -182,20 +182,29 @@ fn recipe(
     // ---- Pinned compiler and exact native inputs ----
     let executable = std::env::current_exe().map_err(io_error)?;
     let mut inputs = vec![observed(artifact)?, observed(&executable)?];
+    let mut content = vec![content_identity(artifact)?, content_identity(&executable)?];
+    let mut system = Vec::new();
+    let mut system_content = Vec::new();
     for (_, path) in shared {
         inputs.push(observed(path)?);
+        content.push(content_identity(path)?);
     }
 
     // ---- Selected SDK ----
     let sdk = std::env::var("SDKROOT").unwrap_or_default();
     if !sdk.is_empty() {
-        inputs.push(observed(Path::new(&sdk))?);
+        let sdk_input = observed(Path::new(&sdk))?;
+        inputs.push(sdk_input.clone());
+        system.push(sdk_input);
         if let Some(parent) = Path::new(&sdk).parent() {
-            inputs.push(observed(parent)?);
+            let parent_input = observed(parent)?;
+            inputs.push(parent_input.clone());
+            system.push(parent_input);
         }
         let settings = Path::new(&sdk).join("SDKSettings.json");
         if settings.is_file() {
             inputs.push(observed(&settings)?);
+            system_content.push(content_identity(&settings)?);
         }
     }
 
@@ -203,7 +212,7 @@ fn recipe(
     let environment = ["MACOSX_DEPLOYMENT_TARGET", "DEVELOPER_DIR", "LIBRARY_PATH", "PATH"]
         .map(|name| (name, std::env::var_os(name)));
     let description = format!(
-        "incan.native-shared/1\n{root}\n{}\n{}\n{}\n{sdk}\n{environment:?}\n{inputs:?}",
+        "incan.native-shared/2\n{root}\n{}\n{}\n{}\n{sdk}\n{environment:?}\n{content:?}\n{system:?}\n{system_content:?}",
         identity.sysroot.display(),
         identity.toolchain,
         identity.target
@@ -305,6 +314,7 @@ fn build(
     externs: &[(String, PathBuf)],
     directories: &[PathBuf],
     identity: &DriverIdentity,
+    store: &Path,
     staging: &Path,
     shared: &[(String, PathBuf)],
 ) -> Result<Library, DriverError> {
@@ -332,6 +342,16 @@ fn build(
         output.display().to_string(),
         "incan-shared-native".into(),
     ];
+    if identity.target.ends_with("-apple-darwin") {
+        let linker = std::env::current_exe().map_err(io_error)?;
+        args.push(format!("-Clinker={}", linker.display()));
+        args.push("-Clinker-flavor=ld".into());
+        args.push(format!(
+            "-Clink-arg={}{}",
+            crate::adapter::stable_link::STORE_ARGUMENT,
+            store.display()
+        ));
+    }
 
     // ---- Existing implementations and preceding shared carriers ----
     let all = externs.iter().chain(shared).cloned().collect::<Vec<_>>();
@@ -396,6 +416,11 @@ fn observed(path: &Path) -> Result<(PathBuf, String), DriverError> {
     let stamp = crate::native_search::file_identity(path)
         .ok_or_else(|| refusal(&format!("cannot observe native input {}", path.display())))?;
     Ok((path.to_owned(), stamp))
+}
+
+/// Name a file input only by bytes for a reproducible carrier recipe while generation witnesses still guard reuse.
+fn content_identity(path: &Path) -> Result<String, DriverError> {
+    crate::adapter::stable_link::file_digest(path).map_err(io_error)
 }
 
 /// Reject changed or missing native generations before or after a carrier build.

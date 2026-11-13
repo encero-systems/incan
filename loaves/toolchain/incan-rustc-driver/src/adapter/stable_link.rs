@@ -11,7 +11,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub(crate) const STORE_ARGUMENT: &str = "--incan-link-input-store=";
 static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
 
-/// Replace every direct object input with an immutable content-named copy, then preserve ld's status and diagnostics.
+/// Replace every direct object or archive input with an immutable content-named copy, then preserve ld's status and
+/// diagnostics. Rust rlibs are archives even when their published Bakery path has no extension.
 pub(crate) fn run(arguments: &[String]) -> io::Result<i32> {
     let store = link_store(arguments)?;
     let mut rewritten = Vec::with_capacity(arguments.len());
@@ -20,10 +21,9 @@ pub(crate) fn run(arguments: &[String]) -> io::Result<i32> {
             continue;
         }
         let path = Path::new(argument);
-        if path.extension().and_then(|extension| extension.to_str()) == Some("o") && path.is_file() {
-            rewritten.push(stable_object(&store, path)?.to_string_lossy().into_owned());
-        } else {
-            rewritten.push(argument.clone());
+        match link_input_suffix(path)? {
+            Some(suffix) => rewritten.push(stable_input(&store, path, suffix)?.to_string_lossy().into_owned()),
+            None => rewritten.push(argument.clone()),
         }
     }
     let status = Command::new("/usr/bin/ld").args(rewritten).status()?;
@@ -52,11 +52,27 @@ fn link_store(arguments: &[String]) -> io::Result<PathBuf> {
     Ok(store)
 }
 
-/// Publish one object once beneath its digest; an existing content name must still contain those exact bytes.
-fn stable_object(store: &Path, source: &Path) -> io::Result<PathBuf> {
+/// Classify the link inputs whose paths Darwin records, recognizing extensionless Bakery archives by their magic.
+fn link_input_suffix(path: &Path) -> io::Result<Option<&'static str>> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    if path.extension().and_then(|extension| extension.to_str()) == Some("o") {
+        return Ok(Some("o"));
+    }
+    let mut file = File::open(path)?;
+    let mut magic = [0_u8; 8];
+    if file.read(&mut magic)? == magic.len() && magic == *b"!<arch>\n" {
+        return Ok(Some("a"));
+    }
+    Ok(None)
+}
+
+/// Publish one link input once beneath its digest; an existing content name must still contain those exact bytes.
+fn stable_input(store: &Path, source: &Path, suffix: &str) -> io::Result<PathBuf> {
     let digest = file_digest(source)?;
     let directory = store.join("link-inputs/sha256").join(&digest[..2]);
-    let target = directory.join(format!("{digest}.o"));
+    let target = directory.join(format!("{digest}.{suffix}"));
     fs::create_dir_all(&directory)?;
     if target.is_file() {
         if file_digest(&target)? == digest {
@@ -102,8 +118,8 @@ fn copy_object(source: &Path, target: &Path) -> io::Result<()> {
     fs::set_permissions(target, permissions)
 }
 
-/// Hash one complete object without retaining a program-sized allocation.
-fn file_digest(path: &Path) -> io::Result<String> {
+/// Hash one complete native input without retaining a program-sized allocation.
+pub(crate) fn file_digest(path: &Path) -> io::Result<String> {
     let mut file = File::open(path)?;
     let mut hash = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
