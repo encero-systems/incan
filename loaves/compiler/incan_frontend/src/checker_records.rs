@@ -9,7 +9,7 @@ use incan_semantics_core::stable_identity::{StableDeclarationContext, StableDecl
 pub use crate::typechecker::canonical_nodes::NodeBindingError as RecordAdapterFault;
 
 /// Exact canonical checker profile carried by graph body values and any cache capable of supplying their owners.
-pub const GRAPH_BODY_RECORD_PROFILE: &str = "incan.checker-free-functions/16";
+pub const GRAPH_BODY_RECORD_PROFILE: &str = "incan.checker-free-functions/17";
 
 /// One graph-admitted body pair keyed by the compiler-owned stable declaration identity encoded in both records.
 #[derive(Debug, Clone)]

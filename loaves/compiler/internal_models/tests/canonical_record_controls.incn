@@ -16,6 +16,7 @@ from checker_records import (
     encode_record,
     encode_graph_body_values,
     decode_record,
+    content_digest,
     semantic_digest,
     from_native_final_fields,
     from_native_fields,
@@ -40,7 +41,9 @@ pub def canonical_record_controls() -> Result[None, str]:
         changed = checked_fixture(moved, "main", declaration)?
         before = encode_record(base).map_err((_) => "encode")?
         after = encode_record(changed).map_err((_) => "moved encode")?
+        assert before[:4] == b"CRMB"
         assert before == after
+        assert content_digest(base).map_err((_) => "content digest")? == content_digest(changed).map_err((_) => "content digest")?
         assert semantic_digest(base).map_err((_) => "digest")? == semantic_digest(changed).map_err((_) => "digest")?
         # The source checker and native owner were destroyed inside fixture_record before encoding.
         decoded = decode_record(before, CHECKER_PROFILE, changed.owner, changed.root).map_err((_) => "decode")?
