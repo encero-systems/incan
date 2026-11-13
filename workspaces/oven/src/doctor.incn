@@ -1,0 +1,214 @@
+"""
+`incan tools doctor`: how this installation resolves, for issue reports and editor setup, as 0.5.1 reported it.
+
+The report names the running program, the home and its toolchains, where `incan`, `oven` and `incan-lsp` resolve
+on `PATH` and in the home's `bin`, and the editor settings that use them. 0.5.1's Cargo sections are gone with Cargo.
+"""
+
+from rust::std::env import current_exe
+from rust::std::fs import metadata, read_link
+from rust::std::os::unix::fs import PermissionsExt
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue
+from cli_help import render
+from home_paths import TOOLCHAIN, home
+
+pub const DOCTOR_USAGE: str = "incan tools doctor [--format text|json]"
+const PROGRAMS: FrozenList[str] = ["incan", "oven", "incan-lsp"]
+const EDITOR_NOTES: FrozenList[str] = [
+    "leave incan.lsp.path and incan.compiler.path empty to use workspace discovery or PATH",
+    "if either setting is explicit, use a literal executable path; shell syntax like $HOME or ~ is not expanded",
+    "after rebuilding or changing paths, reload VS Code/Cursor so it starts a fresh incan-lsp process",
+]
+
+
+pub model Entry:
+    """One program's location: where it is, whether it exists and runs, and what a link points at."""
+
+    pub path: str
+    pub exists: bool
+    pub executable: bool
+    pub symlink_target: Option[str] = None
+
+
+pub def parse_tools(arguments: list[str]) -> Result[str, str]:
+    """`tools doctor [--format text|json]`: the format."""
+    if len(arguments) == 0:
+        return Err("expected `doctor`")
+    if arguments[0] != "doctor":
+        if arguments[0].startswith("-"):
+            return Err(f"unknown option `{arguments[0]}`")
+        return Err(f"unknown command `{arguments[0]}`")
+    mut format = "text"
+    mut index = 1
+    while index < len(arguments):
+        if arguments[index] == "--format" and index + 1 < len(arguments):
+            format = arguments[index + 1]
+            index += 2
+            continue
+        if arguments[index].startswith("-"):
+            return Err(f"unknown option `{arguments[index]}`")
+        return Err(f"unexpected argument `{arguments[index]}`")
+    if format != "text" and format != "json":
+        return Err(f"`--format` is text or json, got `{format}`")
+    return Ok(format)
+
+
+pub def doctor(format: str) -> Result[i32, str]:
+    """Print the report; a missing home or toolchain is reported, never a failure of the doctor itself."""
+    running = str(current_exe().map_err((error) => f"cannot locate the running program: {error}")?.display())
+    working = Path.cwd().map_err((error) => f"cannot read the working directory: {error.message()}")?
+    mut home_text = ""
+    mut installed: list[str] = []
+    mut bin: Dict[str, Entry] = {}
+    match home():
+        Err(reason) => home_text = f"(unavailable: {reason})"
+        Ok(directory) =>
+            home_text = directory.0
+            installed = toolchains(directory)
+            for program in PROGRAMS:
+                bin[program] = entry(directory.joinpath("bin").joinpath(program).0)
+    mut resolved: Dict[str, Option[Entry]] = {}
+    for program in PROGRAMS:
+        resolved[program] = on_path(program)
+    if format == "json":
+        println(
+            document(running, working.0, home_text, installed, resolved, bin)
+                .to_pretty_json()
+                .map_err((error) => error.message())?,
+        )
+        return Ok(0)
+    mut lines = ["Incan tools doctor", f"version: {TOOLCHAIN}", f"current_exe: {running}", f"cwd: {working.0}"]
+    lines = lines + ["", f"home: {home_text}", f"active toolchain: {TOOLCHAIN} ({state(installed)})"]
+    lines.append(f"installed toolchains: {listed(installed)}")
+    for program in PROGRAMS:
+        lines = lines + ["", f"PATH {program}:", f"  command: {program}"]
+        match resolved[program]:
+            None => lines.append("  resolved: (not found)")
+            Some(found) => lines = lines + described(found, "resolved")
+    lines = lines + ["", "home bin:"]
+    for program in PROGRAMS:
+        if program in bin:
+            lines = lines + [f"  {program}:"] + [f"  {line}" for line in described(bin[program], "path")]
+    lines = lines + ["", "editor setup:"] + [f"  {note}" for note in EDITOR_NOTES]
+    println("\n".join(lines))
+    return Ok(0)
+
+
+def state(installed: list[str]) -> str:
+    """Whether the toolchain this program runs is installed in the home."""
+    if TOOLCHAIN in installed:
+        return "installed"
+    return "not installed; run `incan toolchain install ARCHIVE`"
+
+
+def toolchains(directory: Path) -> list[str]:
+    """The toolchain versions installed in the home."""
+    mut names: list[str] = []
+    match directory.joinpath("toolchains").iterdir():
+        Err(_) => return names
+        Ok(entries) =>
+            for item in entries:
+                if item.is_dir() and not item.name().startswith("."):
+                    names.append(item.name())
+    return sorted(names)
+
+
+def entry(path: str) -> Entry:
+    """A program location's facts, without following a failure into an error."""
+    mut found = Entry(path=path, exists=Path(path).exists(), executable=false)
+    match read_link(path):
+        Ok(target) => found.symlink_target = Some(str(target.display()))
+        Err(_) => pass
+    match metadata(path):
+        Ok(info) => found.executable = info.is_file() and int(info.permissions().mode()) // 64 % 2 == 1
+        Err(_) => pass
+    return found
+
+
+def on_path(program: str) -> Option[Entry]:
+    """The first `PATH` directory that holds an executable `program`."""
+    for directory in get_or("PATH", "").split(":"):
+        if directory == "":
+            continue
+        candidate = entry(Path(directory).joinpath(program).0)
+        if candidate.exists and candidate.executable:
+            return Some(candidate)
+    return None
+
+
+def described(found: Entry, label: str) -> list[str]:
+    """One location's lines in the text report."""
+    mut target = "(not a link)"
+    if let Some(linked) = found.symlink_target:
+        target = linked
+    return [
+        f"  {label}: {found.path}",
+        f"  exists: {flag(found.exists)}",
+        f"  executable: {flag(found.executable)}",
+        f"  symlink_target: {target}",
+    ]
+
+
+def located(found: Entry) -> JsonValue:
+    """One location as JSON."""
+    mut target = JsonValue.null()
+    if let Some(linked) = found.symlink_target:
+        target = JsonValue.string(linked)
+    return JsonValue.object(
+        {"path": JsonValue.string(found.path), "exists": JsonValue.bool(found.exists), "executable": JsonValue.bool(
+            found.executable,
+        ), "symlink_target": target},
+    )
+
+
+def document(
+    running: str,
+    working: str,
+    home_text: str,
+    installed: list[str],
+    resolved: Dict[str, Option[Entry]],
+    bin: Dict[str, Entry],
+) -> JsonValue:
+    """The versioned JSON report for editor integrations and issue templates."""
+    mut path_entries: Dict[str, JsonValue] = {}
+    mut bin_entries: Dict[str, JsonValue] = {}
+    for program in PROGRAMS:
+        match resolved[program]:
+            None => path_entries[program] = JsonValue.null()
+            Some(found) => path_entries[program] = located(found)
+        if program in bin:
+            bin_entries[program] = located(bin[program])
+    return JsonValue.object(
+        {"schema_version": JsonValue.int(1), "version": JsonValue.string(TOOLCHAIN), "current_exe": JsonValue.string(
+            running,
+        ), "cwd": JsonValue.string(working), "home": JsonValue.string(home_text), "installed_toolchains": JsonValue.array(
+            [JsonValue.string(name) for name in installed],
+        ), "active_toolchain_installed": JsonValue.bool(TOOLCHAIN in installed), "path": JsonValue.object(path_entries), "home_bin": JsonValue.object(
+            bin_entries,
+        ), "editor_setup": JsonValue.array([JsonValue.string(note) for note in EDITOR_NOTES])},
+    )
+
+
+pub def doctor_help() -> str:
+    """`incan tools doctor --help`."""
+    return render(
+        DOCTOR_USAGE,
+        ["  --format text|json  Report format (default text); JSON is for editor integrations and issue templates."],
+        "incan tools doctor --format json",
+    )
+
+
+def listed(names: list[str]) -> str:
+    """Names joined for the report, or `(none)`."""
+    if len(names) == 0:
+        return "(none)"
+    return ", ".join(names)
+
+
+def flag(value: bool) -> str:
+    """A yes-or-no fact spelled as JSON spells it."""
+    if value:
+        return "true"
+    return "false"
