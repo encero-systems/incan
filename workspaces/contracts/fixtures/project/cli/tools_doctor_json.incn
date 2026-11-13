@@ -1,0 +1,12 @@
+# behavior: `incan tools doctor --format json` prints the same report as a versioned JSON document for editor integrations (#3142).
+# cli-commands:
+#   tools doctor --format json
+# expect-stdout-contains:
+#   {
+#     "schema_version": 1,
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """Provide the project case's source; the doctor reads no project."""
+    pass
