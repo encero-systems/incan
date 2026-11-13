@@ -1,0 +1,28 @@
+"""The complete committed corpus must cross the independent native semantic-codec boundary."""
+
+from rust::incan_std_primitives::crumb import evaluate_semantic_case
+from std.fs import Path
+from case_data import CaseOperation
+from corpus import load
+
+
+def test_native_semantic_codec_covers_all_444_corpus_cases() -> Result[None, str]:
+    """Every corpus operation must encode and decode natively; the binary subset remains separately counted."""
+    corpus = load(Path("specs/comic/corpus/manifest.json"))?
+    mut completed = 0
+    mut binary = 0
+    mut encoded_nanoseconds: u64 = 0
+    mut decoded_nanoseconds: u64 = 0
+    for item in corpus.cases:
+        if item.operation == CaseOperation.BinaryDecode or item.operation == CaseOperation.ColumnCodec:
+            binary += 1
+        document = item.document.to_json().map_err((error) => error.message())?
+        outcome = evaluate_semantic_case(item.operation.value(), document)
+        encoded_nanoseconds += outcome.encode_ns
+        decoded_nanoseconds += outcome.decode_ns
+        if outcome.kind == 0u8 and outcome.encoded == outcome.decoded:
+            completed += 1
+    assert len(corpus.cases) == 444
+    assert binary == 188
+    assert completed == 444, f"native semantic corpus completed {completed}/444; encode_ns={encoded_nanoseconds}; decode_ns={decoded_nanoseconds}"
+    return Ok(None)

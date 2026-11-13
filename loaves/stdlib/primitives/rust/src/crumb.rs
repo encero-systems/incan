@@ -6,9 +6,12 @@
 mod layout;
 #[path = "crumb/scalar_records.rs"]
 mod scalar_records;
+#[path = "crumb/semantic.rs"]
+mod semantic;
 
 pub use layout::{EnvelopeLayout, column_envelope, row_envelope};
 pub use scalar_records::{ScalarRecordBatch, encode_scalar_records};
+pub use semantic::{SemanticCase, evaluate_semantic_case};
 
 /// Encoded bytes and the exact logical work charged by the Incan codec contract.
 pub struct Encoded {
