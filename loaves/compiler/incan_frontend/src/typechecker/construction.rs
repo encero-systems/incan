@@ -31,6 +31,7 @@ impl TypeChecker {
             produced_final_records: std::collections::BTreeMap::new(),
             final_record_refusals: std::collections::BTreeMap::new(),
             callable_declaration_reuse: std::collections::BTreeMap::new(),
+            callable_final_record_reuse: std::collections::BTreeMap::new(),
             graph_body_records: crate::checker_records::GraphBodyRecords::default(),
             lazy_result_bodies: HashSet::new(),
             iteration_replacement_bodies: HashSet::new(),
