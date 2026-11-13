@@ -389,7 +389,10 @@ pub(super) fn checked_alias_function_export(name: &str, info: &FunctionInfo) -> 
         emitted_name: info.emitted_name.clone(),
         type_params: checked_function_type_params(info),
         params: info.params.clone(),
-        param_defaults: vec![None; info.params.len()],
+        // Alias projections do not own the provider's default expressions. An empty default vector tells manifest
+        // conversion to retain the checked parameters' `has_default` flags instead of treating same-length `None`
+        // entries as proof that every parameter is required.
+        param_defaults: Vec::new(),
         return_type: info.return_type.clone(),
         is_async: info.is_async,
     }
