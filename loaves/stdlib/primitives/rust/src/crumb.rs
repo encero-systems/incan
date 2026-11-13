@@ -4,8 +4,11 @@
 
 #[path = "crumb/layout.rs"]
 mod layout;
+#[path = "crumb/scalar_records.rs"]
+mod scalar_records;
 
 pub use layout::{EnvelopeLayout, column_envelope, row_envelope};
+pub use scalar_records::{ScalarRecordBatch, encode_scalar_records};
 
 /// Encoded bytes and the exact logical work charged by the Incan codec contract.
 pub struct Encoded {
