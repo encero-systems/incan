@@ -338,6 +338,7 @@ def validate(record: CheckedRecord) -> Result[None, CodecFault]:
         if field.family not in [
             "type",
             "type-identity",
+            "identity-context",
             "binding",
             "binding-type",
             "reference",
@@ -654,6 +655,20 @@ def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
             return Err(CodecFault.Malformed)
         validate_type_identity_path(field.selector)?
         end = 1
+    # A nested member reference keeps its stable identity, declaring nominal, collision ordinal, kind and source name.
+    elif field.family == "identity-context":
+        if (
+            field.node == ""
+            or field.selector != "reference"
+            or len(values) != 5
+            or values[0] == ""
+            or values[1] == ""
+            or values[3] not in ["field", "method", "property", "variant"]
+            or values[4] == ""
+        ):
+            return Err(CodecFault.Malformed)
+        _ = decimal(values[2])?
+        end = 5
     # A binding's type: the binding, then its type.
     elif field.family == "binding-type":
         if field.node == "" or len(values) == 0 or values[0] == "":
