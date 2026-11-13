@@ -60,6 +60,17 @@ pub def canonical_record_controls() -> Result[None, str]:
         println(f"canonical-record declaration={declaration} fields={len(base.fields)} bytes={len(before)} stable=true")
         codec_fault_controls(before, base)
     local_record_controls(source, moved)?
+    member_source = "model LockDependency:\n    key: str\n    loaf: str\n    version: str\n    domain: str\n    target: str\n    entry: str\n\ndef edge_order(edge: LockDependency) -> str:\n    return edge.key + edge.domain + edge.target + edge.loaf + edge.version + edge.entry\n"
+    member_rows = fixture_record(member_source, "edge_order", false).map_err((error) => error.to_string())?
+    member_record = match from_native_final_fields(member_rows):
+        Ok(record) => record
+        Err(CodecFault.Unsupported(name)) => return Err("unsupported member field: " + name)
+        Err(_) => return Err("malformed member field")
+
+    assert len([field for field in member_record.fields if field.family == "identity-context"]) == 6
+    verify_fixture(member_source, "edge_order", native_fields(member_record).map_err((_) => "member context fields")?).map_err(
+        (error) => "member context restore: " + error.to_string(),
+    )?
     compiled_output_controls(source)?
     projected_owner_controls()?
     edited_owner_controls()?
