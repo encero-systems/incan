@@ -284,6 +284,7 @@ nav:
           - Diagnose a failed build: tooling/tutorials/diagnose_failed_build.md
       - How-to:
           - Install/build/run: tooling/how-to/install_and_run.md
+          - Move a project from 0.5 to 0.6: tooling/how-to/move_from_0_5_to_0_6.md
           - Managing dependencies: tooling/how-to/dependencies.md
           - CI & automation: tooling/how-to/ci_and_automation.md
           - Troubleshooting: tooling/how-to/troubleshooting.md
