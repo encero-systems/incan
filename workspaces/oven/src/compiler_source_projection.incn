@@ -192,22 +192,21 @@ pub def compiled_owner_source(
     for owner in projection.owners:
         if owner.key.facet.endswith(":" + name):
             return Ok(owner)
-    return Err(f"compiled body output has no matching owner source: {module}:{name}")
+    return Err(f"compiled body output has no matching owner source: {module}:{name}; identity={identity}")
 
 
 def stable_member_declaration(identity: str) -> str:
     """Recover the enclosing nominal declaration name from one compiler-owned stable identity."""
+    nested = identity.split("#in(")
+    if len(nested) >= 2:
+        owner = nested[len(nested) - 1].split(")")[0]
+        parts = owner.split(":")
+        if len(parts) >= 2 and parts[len(parts) - 1] != "":
+            return parts[len(parts) - 1]
     compact = identity.split("|")[0].split("::")
     if len(compact) >= 2:
         return compact[len(compact) - 2]
-    nested = identity.split("#in(")
-    if len(nested) < 2:
-        return ""
-    owner = nested[len(nested) - 1].split(")")[0]
-    parts = owner.split(":")
-    if len(parts) < 2 or parts[len(parts) - 1] == "":
-        return ""
-    return parts[len(parts) - 1]
+    return ""
 
 
 pub def declaration_index_key(origin: str, path: str) -> RecordKey:
