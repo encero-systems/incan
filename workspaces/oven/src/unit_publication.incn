@@ -9,7 +9,7 @@ from std.json import JsonValue
 from observation import file_digest, observe
 from publication import publish
 from home_paths import home
-pub from payload_types import PayloadAdmission
+from payload_types import PayloadAdmission
 from frozen_inputs import payload as frozen_payload
 
 const PUBLICATION_SCHEMA: str = "incan.oven.unit-publication/1"
