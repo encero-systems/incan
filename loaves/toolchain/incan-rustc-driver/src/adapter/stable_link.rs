@@ -26,7 +26,12 @@ pub(crate) fn run(arguments: &[String]) -> io::Result<i32> {
             None => rewritten.push(argument.clone()),
         }
     }
-    let status = Command::new("/usr/bin/ld").args(rewritten).status()?;
+    // Development links skip ld's deduplication pass: a debug executable gains nothing from folded duplicates, and
+    // the pass is a measurable share of an edit's link.
+    let status = Command::new("/usr/bin/ld")
+        .arg("-no_deduplicate")
+        .args(rewritten)
+        .status()?;
     Ok(status.code().unwrap_or(1))
 }
 
