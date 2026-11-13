@@ -508,7 +508,9 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
-    use super::{CheckedOwnerDependencyRead, CheckedOwnerRecordOutput, checked_owner_record_outputs};
+    use super::{
+        CheckedOwnerDependencyRead, CheckedOwnerRecordOutput, checked_owner_record_outputs, stable_dependency_contexts,
+    };
     use crate::library_exports::collect_checked_public_exports;
     use crate::library_manifest::LibraryManifest;
     use crate::loaf_index::LoafIndex;
@@ -682,6 +684,25 @@ mod tests {
                 "member/field:engine_messages::transaction#in(model:engine_messages::Second)[0]",
                 "member/variant:engine_messages::Cancelled#in(enum:engine_messages::CompletionStatus)[0]",
                 "member/variant:engine_messages::Failed#in(enum:engine_messages::CompletionStatus)[0]",
+            ]
+        );
+        let facts = checker.type_info().semantic_fact_store(&["main".into()]);
+        let contexts = stable_dependency_contexts(&facts);
+        let mut field_reads = contexts
+            .iter()
+            .filter(|(identity, _)| identity.declaration_name == "transaction")
+            .filter_map(|(identity, context)| {
+                checker
+                    .stable_dependency_identity_with_context(identity, Some(context))
+                    .map(|identity| identity.render_compact())
+            })
+            .collect::<Vec<_>>();
+        field_reads.sort();
+        assert_eq!(
+            field_reads,
+            vec![
+                "member/field:engine_messages::transaction#in(model:engine_messages::First)[0]",
+                "member/field:engine_messages::transaction#in(model:engine_messages::Second)[0]",
             ]
         );
         Ok(())

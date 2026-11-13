@@ -161,6 +161,7 @@ pub(crate) struct CallSiteFacts {
     inferred_call_result_type: Option<ResolvedType>,
     method_call: Option<ResolvedMethodCall>,
     identity: Option<CanonicalSymbolId>,
+    stable_declaration_context: Option<CanonicalStableDeclarationContext>,
     callable_params: Option<Vec<CallableParam>>,
     monomorph_type_args: Option<Vec<ResolvedType>>,
     body_ir_constructor_type: Option<ResolvedType>,

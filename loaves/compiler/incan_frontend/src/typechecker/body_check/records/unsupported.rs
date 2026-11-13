@@ -46,6 +46,7 @@ pub(super) fn expression_artifacts(value: &ExpressionArtifacts) -> Result<(), No
 pub(super) fn reference_artifacts(value: &ReferenceArtifacts) -> Result<(), NodeBindingError> {
     let ReferenceArtifacts {
         resolved_identities: _,
+        stable_declaration_contexts: _,
         resolved_write_identities: _,
         resolved_write_types: _,
     } = value;
