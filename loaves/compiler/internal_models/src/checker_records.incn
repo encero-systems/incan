@@ -351,6 +351,7 @@ def validate(record: CheckedRecord) -> Result[None, CodecFault]:
             "default",
             "final-type",
             "native-call",
+            "artifact-call",
             "target",
             "identifier",
             "effect",

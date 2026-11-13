@@ -1,0 +1,239 @@
+"""Generate structural checker-artifact projection and restoration from one closed field schema."""
+
+from rust::std::process import exit
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from check_support import read, repository_root, write_stderr
+
+
+model ArtifactField:
+    """One native collection, its stable wire selector, and the shared structural codec used for its values."""
+
+    name: str
+    codec: str
+
+
+def call_fields() -> list[ArtifactField]:
+    """Declare every CallArtifacts collection exactly once, in native declaration order."""
+    return [
+        ArtifactField(name="body_ir_constructor_field_requirements", codec="legacy"),
+        ArtifactField(name="body_ir_reexport_calls", codec="manual"),
+        ArtifactField(name="body_ir_string_slice_members", codec="span-identity"),
+        ArtifactField(name="body_ir_self_result_methods", codec="span-identity"),
+        ArtifactField(name="body_ir_async_call_targets", codec="span-identity"),
+        ArtifactField(name="body_ir_native_constructor_bindings", codec="manual"),
+        ArtifactField(name="body_ir_module_constructor_bindings", codec="manual"),
+        ArtifactField(name="body_ir_native_argument_types", codec="legacy"),
+        ArtifactField(name="body_ir_native_argument_identities", codec="span-identity"),
+        ArtifactField(name="body_ir_call_type_arguments", codec="legacy"),
+        ArtifactField(name="body_ir_call_parameter_types", codec="legacy"),
+        ArtifactField(name="body_ir_factory_result_conflicts", codec="span-set"),
+        ArtifactField(name="body_ir_factory_owner_types", codec="span-type"),
+        ArtifactField(name="body_ir_constructor_types", codec="span-type"),
+        ArtifactField(name="body_ir_call_result_types", codec="legacy"),
+        ArtifactField(name="body_ir_native_codec_members", codec="span-identity"),
+        ArtifactField(name="inferred_constructor_types", codec="span-type"),
+        ArtifactField(name="inferred_call_result_types", codec="span-type"),
+        ArtifactField(name="mutable_receiver_method_calls", codec="span-set"),
+        ArtifactField(name="resolved_builtin_calls", codec="legacy"),
+        ArtifactField(name="resolved_builtin_method_calls", codec="legacy"),
+        ArtifactField(name="fixed_unpack_plans", codec="fixed-unpack"),
+        ArtifactField(name="call_site_monomorph_type_args", codec="legacy"),
+        ArtifactField(name="isinstance_targets", codec="manual"),
+        ArtifactField(name="call_site_callable_params", codec="legacy"),
+        ArtifactField(name="race_arm_binding_types", codec="span-type"),
+        ArtifactField(name="constructor_field_bindings", codec="legacy"),
+        ArtifactField(name="resolved_operator_calls", codec="operator"),
+        ArtifactField(name="resolved_method_calls", codec="manual"),
+        ArtifactField(name="compiler_generated_member_identities", codec="manual"),
+        ArtifactField(name="resolved_collection_constructors", codec="collection"),
+        ArtifactField(name="closure_holding_params", codec="span-set"),
+        ArtifactField(name="closure_returning_callables", codec="span-set"),
+        ArtifactField(name="capturing_callable_bindings", codec="span-set"),
+        ArtifactField(name="source_display_methods", codec="span-identity"),
+        ArtifactField(name="error_message_display_types", codec="manual"),
+    ]
+
+
+def project_field(field: ArtifactField) -> str:
+    """Generate one encoder from its structural codec tag; semantic admission remains a named handwritten call."""
+    name = field.name
+    if field.codec == "legacy":
+        return ""
+    if field.codec == "span-set":
+        return """    for span in &calls.__NAME__ {
+        fields.push(vec!["artifact-call".into(), positions.nodes.anchor(*span)?.path, "__NAME__".into(), "true".into()]);
+    }
+""".replace("__NAME__", name)
+    if field.codec == "span-type":
+        return """    for (span, value) in &calls.__NAME__ {
+        let mut row = vec!["artifact-call".into(), positions.nodes.anchor(*span)?.path, "__NAME__".into()];
+        type_fields(value, &mut row)?;
+        fields.push(row);
+    }
+""".replace("__NAME__", name)
+    if field.codec == "span-identity":
+        return """    for (span, value) in &calls.__NAME__ {
+        fields.push(vec!["artifact-call".into(), positions.nodes.anchor(*span)?.path, "__NAME__".into(), positions.identity(value)?]);
+    }
+""".replace("__NAME__", name)
+    if field.codec == "collection":
+        return """    for (span, value) in &calls.__NAME__ {
+        fields.push(vec!["artifact-call".into(), positions.nodes.anchor(*span)?.path, "__NAME__".into(), incan_lang::lang::types::collections::as_str(*value).into()]);
+    }
+""".replace("__NAME__", name)
+    if field.codec == "operator":
+        return """    for (span, value) in &calls.__NAME__ {
+        fields.push(vec!["artifact-call".into(), positions.nodes.anchor(*span)?.path, "__NAME__".into(), artifact_admission::operator_kind(value.kind).into(), value.method.clone()]);
+    }
+""".replace("__NAME__", name)
+    if field.codec == "fixed-unpack":
+        return """    for (span, value) in &calls.__NAME__ {
+        let mut row = vec!["artifact-call".into(), positions.nodes.anchor(*span)?.path, "__NAME__".into()];
+        artifact_admission::project_fixed_unpack(value, &mut row)?;
+        fields.push(row);
+    }
+""".replace("__NAME__", name)
+    return f"    artifact_admission::project_{name}(positions, &calls.{name}, fields)?;\n"
+
+
+def restore_field(field: ArtifactField) -> str:
+    """Generate one decoder arm from the same declaration used by the encoder."""
+    name = field.name
+    if field.codec == "legacy":
+        return ""
+    mut body = ""
+    if field.codec == "span-set":
+        body = """if next(&mut values)? != "true" || !calls.__NAME__.insert(span) {
+                return Err(NodeBindingError::MissingNode);
+            }""".replace("__NAME__", name)
+    elif field.codec == "span-type":
+        body = """if calls.__NAME__.insert(span, read_type(&mut values)?).is_some() {
+                return Err(NodeBindingError::MissingNode);
+            }""".replace("__NAME__", name)
+    elif field.codec == "span-identity":
+        body = """if calls.__NAME__.insert(span, positions.canonical(next(&mut values)?)?).is_some() {
+                return Err(NodeBindingError::MissingNode);
+            }""".replace("__NAME__", name)
+    elif field.codec == "collection":
+        body = """let value = incan_lang::lang::types::collections::from_str(next(&mut values)?)
+                .ok_or(NodeBindingError::MissingNode)?;
+            if calls.__NAME__.insert(span, value).is_some() {
+                return Err(NodeBindingError::MissingNode);
+            }""".replace("__NAME__", name)
+    elif field.codec == "operator":
+        body = """let kind = artifact_admission::read_operator_kind(next(&mut values)?)?;
+            let method = next(&mut values)?.to_owned();
+            if calls.__NAME__.insert(span, crate::typechecker::type_info::ResolvedOperatorCall { method, kind }).is_some() {
+                return Err(NodeBindingError::MissingNode);
+            }""".replace("__NAME__", name)
+    elif field.codec == "fixed-unpack":
+        body = """if calls.__NAME__.insert(span, artifact_admission::read_fixed_unpack(&mut values)?).is_some() {
+                return Err(NodeBindingError::MissingNode);
+            }""".replace("__NAME__", name)
+    else:
+        body = f"artifact_admission::restore_{name}(positions, &mut calls.{name}, span, &mut values)?;"
+    return """        "__NAME__" => {
+            __BODY__
+        }
+""".replace("__NAME__", name).replace("__BODY__", body)
+
+
+def generated_source(generator: str, fields: list[ArtifactField]) -> str:
+    """Render the checked-in Rust module, including source freshness and schema round-trip tests."""
+    schema = "\n".join(
+        [f"    ArtifactFieldSchema {{ name: \"{field.name}\", codec: \"{field.codec}\" }}," for field in fields],
+    )
+    projected = "".join([project_field(field) for field in fields])
+    restored = "".join([restore_field(field) for field in fields])
+    generator_digest = hexlify(sha256.digest(generator.encode()))
+    return """// @generated by scripts/generate_checker_artifact_codecs.incn; do not edit.
+
+use super::*;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ArtifactFieldSchema {
+    name: &'static str,
+    codec: &'static str,
+}
+
+const CALL_ARTIFACT_SCHEMA: &[ArtifactFieldSchema] = &[
+__SCHEMA__
+];
+
+const GENERATOR_SHA256: &str = "__GENERATOR_DIGEST__";
+
+pub(super) fn project(
+    positions: &Positions,
+    calls: &crate::typechecker::type_info::CallArtifacts,
+    fields: &mut Fields,
+) -> Result<(), NodeBindingError> {
+__PROJECTED__    Ok(())
+}
+
+pub(super) fn restore(
+    positions: &Positions,
+    calls: &mut crate::typechecker::type_info::CallArtifacts,
+    row: &[String],
+) -> Result<bool, NodeBindingError> {
+    if row[0] != "artifact-call" {
+        return Ok(false);
+    }
+    let span = positions.span(&row[1])?;
+    let mut values = row[3..].iter();
+    match row[2].as_str() {
+__RESTORED__        _ => return Err(NodeBindingError::MissingNode),
+    }
+    if values.next().is_some() {
+        return Err(NodeBindingError::MissingNode);
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
+mod generated_tests {
+    use super::*;
+
+    #[test]
+    fn generated_call_artifact_schema_is_fresh() {
+        use sha2::{Digest, Sha256};
+
+        let source = include_bytes!("../../../../../../../scripts/generate_checker_artifact_codecs.incn");
+        assert_eq!(format!("{:x}", Sha256::digest(source)), GENERATOR_SHA256);
+        assert_eq!(CALL_ARTIFACT_SCHEMA.len(), 36);
+    }
+
+    #[test]
+    fn generated_call_artifact_schema_round_trips() {
+        for field in CALL_ARTIFACT_SCHEMA {
+            let encoded = format!("{}|{}", field.name, field.codec);
+            let (name, codec) = encoded.split_once('|').expect("generated schema row has a separator");
+            assert_eq!((name, codec), (field.name, field.codec));
+        }
+    }
+}
+""".replace("__SCHEMA__", schema).replace("__GENERATOR_DIGEST__", generator_digest).replace(
+        "__PROJECTED__", projected,
+    ).replace("__RESTORED__", restored)
+
+
+def run() -> Result[None, str]:
+    """Write the one generated codec module from the authoritative schema above."""
+    root = repository_root()?
+    generator_path = root.joinpath("scripts/generate_checker_artifact_codecs.incn")
+    output = root.joinpath(
+        "loaves/compiler/incan_frontend/src/typechecker/body_check/records/call_artifacts_generated.rs",
+    )
+    return output.write_text(generated_source(read(generator_path)?, call_fields()), "utf-8", "strict", None).map_err(
+        (error) => error.message(),
+    )
+
+
+def main() -> None:
+    """Generate the codec or return a concise error to the invoking check."""
+    match run():
+        Ok(_) => exit(0)
+        Err(message) =>
+            write_stderr(f"checker artifact generator: {message}\n")
+            exit(1)

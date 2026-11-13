@@ -1,5 +1,7 @@
 //! Selected owner projections for the Incan checker-record codec. This is a bootstrap conversion, not a store.
 
+mod artifact_admission;
+mod call_artifacts_generated;
 mod diagnostics;
 mod function_calls;
 mod input_flow;
@@ -946,6 +948,9 @@ fn restore_local(
     record_identities: &mut BTreeMap<String, CanonicalSymbolId>,
     row: &[String],
 ) -> Result<(), NodeBindingError> {
+    if call_artifacts_generated::restore(positions, &mut local.calls, row)? {
+        return Ok(());
+    }
     if matches!(
         row[0].as_str(),
         "input-call" | "input-local" | "input-flow" | "input-copy"
