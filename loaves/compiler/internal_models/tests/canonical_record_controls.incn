@@ -46,7 +46,9 @@ pub def canonical_record_controls() -> Result[None, str]:
         after = encode_record(changed).map_err((_) => "moved encode")?
         assert before[:4] == b"CRMB"
         assert before == after
-        assert content_digest(base).map_err((_) => "content digest")? == content_digest(changed).map_err((_) => "content digest")?
+        assert content_digest(base).map_err((_) => "content digest")? == content_digest(changed).map_err(
+            (_) => "content digest",
+        )?
         assert semantic_digest(base).map_err((_) => "digest")? == semantic_digest(changed).map_err((_) => "digest")?
         # The source checker and native owner were destroyed inside fixture_record before encoding.
         decoded = decode_record(before, CHECKER_PROFILE, changed.owner, changed.root).map_err((_) => "decode")?
@@ -96,13 +98,15 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         local=local_bytes,
         final=final_bytes,
         body_ir=b"owner-frame",
-        dependency_reads=[CompiledBodyDependencyRead(
-            package=Some("provider"),
-            module="lib",
-            name="value",
-            identity="provider|module:lib|value|function|module|0|() -> int",
-            reference_subject="expr:main#10..17",
-        )],
+        dependency_reads=[
+            CompiledBodyDependencyRead(
+                package=Some("provider"),
+                module="lib",
+                name="value",
+                identity="provider|module:lib|value|function|module|0|() -> int",
+                reference_subject="expr:main#10..17",
+            ),
+        ],
     )
     fallback = CompiledBodyFallback(
         module="src/main.incn",
@@ -127,6 +131,8 @@ def compiled_output_controls(source: str) -> Result[None, str]:
         CompiledBodyOutputs(namespaces=[namespace], values=[value], fallbacks=[fallback, identityless]),
     ).map_err((_) => "compiled output encode")?
     assert len(encoded) == 4
+    for frame in encoded:
+        assert frame[8:12] == b"CRMB"
     match decode_compiled_body_frame(encoded[0]).map_err((_) => "compiled value decode")?:
         CompiledBodyOutput.Namespace(decoded) =>
             assert decoded.module == namespace.module and decoded.interface == namespace.interface
@@ -146,10 +152,12 @@ def compiled_output_controls(source: str) -> Result[None, str]:
             )
         _ => return Err("compiled value decoded as another output kind")
     match decode_compiled_body_frame(encoded[2]).map_err((_) => "compiled fallback decode")?:
-        CompiledBodyOutput.Fallback(decoded) => assert decoded == fallback
+        CompiledBodyOutput.Fallback(decoded) =>
+            assert decoded == fallback
         _ => return Err("compiled fallback decoded as another output kind")
     match decode_compiled_body_frame(encoded[3]).map_err((_) => "identityless fallback decode")?:
-        CompiledBodyOutput.Fallback(decoded) => assert decoded == identityless
+        CompiledBodyOutput.Fallback(decoded) =>
+            assert decoded == identityless
         _ => return Err("identityless fallback decoded as another output kind")
     compiled_output_size_controls(declaration, local, from_native_final_fields(final_rows).map_err((_) => "final")?)?
     return Ok(None)
