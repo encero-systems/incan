@@ -122,7 +122,7 @@ Core tracking issues:
 - [RFC 107](RFCs/107_type_directed_library_apis.md): type-directed library APIs and compile-time type tokens.
 - [RFC 095](RFCs/095_span_vocabulary_blocks.md): span vocabulary blocks.
 
-[Read the 0.6 development release note](release_notes/0_6.md) · [Browse the 0.6 delivery map](project/v0_6_delivery.md)
+[Read the 0.6 development release note](release_notes/0_6.md)
 
 #### 0.7 Release: feature reopening
 

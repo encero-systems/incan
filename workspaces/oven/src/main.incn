@@ -29,7 +29,7 @@ from rust_testing import build_rust_tests
 from project_lock import ensure_project_lock, lock_project, parse_lock_command
 from toolchain import load_toolchain, rust_compiler
 from formatting import format_paths, parse_arguments as format_options
-from testing import run_collected, run_tests, run_rust_harness, test_sources
+from testing import directory_test_sources, run_collected, run_tests, run_rust_harness, test_sources
 from owner_client import owned, status_code
 from owner_protocol import Reply
 from owner_endpoint import stop_owners
@@ -294,8 +294,8 @@ def fail(message: str, code: i32) -> None:
     exit(code)
 
 
-def parse_options(arguments: list[str]) -> Result[Options, str]:
-    """The unit options: one PATH and the profile and feature flags."""
+def parse_options(arguments: list[str], default_path: str = "") -> Result[Options, str]:
+    """The unit options: one PATH, or `default_path` when the command has one, and the profile and feature flags."""
     mut options = Options()
     mut index = 0
     while index < len(arguments):
@@ -331,6 +331,8 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
         else:
             options.path = argument
         index += 1
+    if options.path == "":
+        options.path = default_path
     if options.path == "":
         return Err("a PATH is required")
     return Ok(options)
@@ -488,20 +490,44 @@ def via_owner(command: str, options: Options, entry: Path) -> Option[Reply]:
 
 
 def test(arguments: list[str]) -> None:
-    """Compile one collected test unit and report each test's observed outcome."""
-    match parse_options(arguments):
+    """Compile the collected test units of a file, a directory or, with no PATH, the current one; report each test."""
+    match parse_options(arguments, "."):
         Err(reason) => syntax_error("test", reason)
         Ok(options) =>
-            selected = validated("test", options)
+            mut selected = validated("test", options)
+            if Path(selected.path).is_dir():
+                # A directory's project is found from the directory itself, so it is named absolutely.
+                match Path(selected.path).absolute():
+                    Ok(absolute) => selected.path = absolute.0
+                    Err(error) => fail(f"{invoked()} test: cannot resolve {error.message()}", 1)
             prepared_lock("test", selected)
             finish("test", tested(selected))
 
 
 def tested(options: Options) -> Result[i32, str]:
     """Make a test unit's executable, through its owner or in this process, and report each test's fresh outcome."""
-    if Path(options.path).is_dir():
+    if Path(options.path).joinpath("loaf.toml").is_file():
         return tested_project(options)
+    if Path(options.path).is_dir():
+        return tested_directory(options)
     return tested_incan(options)
+
+
+def tested_directory(options: Options) -> Result[i32, str]:
+    """Run every test module below a directory that is not itself a Loaf, retaining any module's failure."""
+    sources = directory_test_sources(Path(options.path))?
+    if len(sources) == 0:
+        println("No tests collected")
+        return Ok(0)
+    mut failed = false
+    for source in sources:
+        mut selected = options
+        selected.path = source.0
+        if tested_incan(selected)? != 0:
+            failed = true
+    if failed:
+        return Ok(1)
+    return Ok(0)
 
 
 def tested_project(options: Options) -> Result[i32, str]:

@@ -1,0 +1,2 @@
+def main() -> None:
+    println("a retired manifest was stepped over")

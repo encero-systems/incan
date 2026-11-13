@@ -23,6 +23,8 @@ incan run scripts/release.incn -- "$(git rev-parse HEAD)" target/release \
   --prove-fixed-point --jobs 6 --timeout 600
 ```
 
+The seed builds only the conductor and the support helper. Both link the seed's installed native crates, and the seed links such a crate only into builds of the sources it was built from. When the source changes one of those crates (`loaves/kernel/incan_lang`), pass `--seed-source SEED_SHA`, the commit the seed was built from: the two seed-built tools then take that crate's sources from the seed's commit and everything else from the source SHA. Every later step, and so every shipped artifact, builds the source SHA alone.
+
 The program builds the source support closure, checked bootstrap interfaces, compiler, runtime, standard Loaves, Oven, language server, and contract runner. It writes `receipt.json` with schema `incan.release-rehearsal/1`, `timings.tsv`, one retained log per phase, `bundle/{incan,incan-lsp,toolchain.tar.zst}`, and `ci/run.*/` installed-verification evidence. A failure leaves a refused receipt naming the current phase. Normal qualification omits `--prove-fixed-point`; release workflows pass the flag because a published release must reproduce DD-0010's driver, runtime, lowering, standard-library floor, Oven, and runner bytes.
 
 The candidate census must have the same case keys as the seed census over the same committed fixture tree, preserve every seed PASS, and preserve the committed baseline. A fresh installation at another source, home, and Rust-sysroot path must reproduce every direct candidate outcome. Linux additionally pulls the pinned Clang artifact with oras and unpacks it through Incan libraries; macOS evidence does not establish that branch.

@@ -492,17 +492,6 @@ After a comment above `main`:
 - `position-map(main)` changes, `native-interface(app)` reads it and evaluates, and the native unit is baked again for its line tables.
 - Rendered diagnostics, if any, show `main`'s new lines.
 
-#### Figures
-
-An SVG belongs at `workspaces/docs-site/docs/contributing/explanation/build_engine_producer_map.svg`, drawn with the same skin as `build_engine_record_graph.svg`:
-
-- **Columns** are the producer stages in rank order, from `Discover` to `NativeInterface`, with a separate band for frozen admitted records on the left.
-- **Each column** holds the hello example's records as boxes.
-- **Edges** are typed (P, A, M) and point from reader to target.
-- **Overlays:** for the body edit, evaluated records in the accent color and reused ones outlined; for the comment edit, only `discover`, `position-map(main)` and `native-interface` in the accent color.
-- **Insets:** a joint group (a mutation-effect cycle of two functions) and one absent witness at `helpers.f`.
-
-
 #### Settled design points
 
 Each quotes the sentence that raised it, then gives the decision DD-0015 records.

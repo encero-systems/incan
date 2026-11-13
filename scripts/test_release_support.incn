@@ -43,7 +43,12 @@ from release_support import (
     tree_digest,
     verification_program,
 )
-from verify_installation import audit_relocation, census_arguments, require_pristine_relocation_inputs
+from verify_installation import (
+    audit_relocation,
+    census_arguments,
+    require_pristine_relocation_inputs,
+    require_shipped_standard_sources,
+)
 from relink_driver import absolute_manifest
 
 const SHA: str = "0123456789abcdef0123456789abcdef01234567"
@@ -126,12 +131,24 @@ def test_release_arguments_keep_fixed_point_and_process_budgets_explicit() -> Re
     defaults = parse_release_options([SHA, "out"])?
     assert not defaults.keep_trees
     assert defaults.jobs == 4
+    assert defaults.seed_source == ""
+    return Ok(None)
+
+
+def test_release_seed_source_names_the_full_commit_of_the_seed_generation() -> Result[None, str]:
+    """The seed's own source commit is an explicit full SHA, separate from the qualified source SHA."""
+    seed = "89abcdef0123456789abcdef0123456789abcdef"
+    options = parse_release_options([SHA, "out", "--seed-source", seed])?
+    assert options.source_sha == SHA
+    assert options.seed_source == seed
+    assert refused_release([SHA, "out", "--seed-source"]) == "--seed-source needs a full lowercase source commit"
+    assert refused_release([SHA, "out", "--seed-source", "deadbeef"]) == "--seed-source needs a full lowercase source commit"
     return Ok(None)
 
 
 def test_release_arguments_refuse_ambiguous_or_unbounded_invocations() -> Result[None, str]:
     """Missing operands, abbreviated SHAs, unknown options, and nonpositive budgets fail closed."""
-    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--jobs N] [--timeout SECONDS]"
+    assert refused_release([SHA]) == "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--seed-source SHA] [--jobs N] [--timeout SECONDS]"
     assert refused_release(["deadbeef", "out"]) == "SHA must be a full lowercase source commit"
     assert refused_release([SHA, "out", "--fast"]) == "unknown option `--fast`"
     assert refused_release([SHA, "out", "--jobs", "0"]) == "--jobs needs a positive integer"
@@ -556,4 +573,19 @@ def make_tree_writable(root: Path) -> Result[None, str]:
     for entry in root.rglob("*").map_err((error) => error.message())?:
         entry.chmod(false).map_err((error) => error.message())?
     root.chmod(false).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def test_installed_verification_refuses_a_toolchain_without_standard_sources() -> Result[None, str]:
+    """An installation without shipped standard sources is refused; checkout sources are never substituted."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = temporary.path().joinpath("home")
+    primitives = home.joinpath(TOOLCHAIN_DIRECTORY).joinpath("stdlib/primitives")
+    primitives.mkdir(true, true).map_err((error) => error.message())?
+    match require_shipped_standard_sources(home):
+        Ok(_accepted) => return Err("an installation without standard sources was accepted")
+        Err(message) =>
+            assert "ships no standard sources" in message
+    primitives.joinpath("loaf.toml").write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+    require_shipped_standard_sources(home)?
     return Ok(None)

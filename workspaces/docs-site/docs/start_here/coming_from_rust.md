@@ -41,7 +41,7 @@ Follow [Getting Started](../tooling/tutorials/getting_started.md) for the curren
 
 - A low-level Rust replacement for kernels, unsafe systems work, or exact control over allocation and representation
 - Every crate API to feel natural without a small wrapper
-- Stable compatibility based on generated Rust internals
+- Stable compatibility based on compiler internals
 
 ## Continue
 

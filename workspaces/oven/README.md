@@ -27,7 +27,7 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 | `json_fields.incn`, `semver_req.incn` | Typed JSON fields and version requirement checks for prepared registry units. |
 | `rust_source.incn`, `rust_activation.incn`, `cfg_predicate.incn`, `loaf_local_graph.incn` | The shared local graph: dependency declarations, `cfg` and target predicates, per-unit activation and feature propagation, keeping host and target separate. |
 
-`test_*.incn` hold each module's tests; `freshness_fixtures.incn` holds the scratch project and toolchain the unit freshness tests share. The dev.8 command accepts one test file at a time; directory discovery is not implemented.
+`test_*.incn` hold each module's tests; `freshness_fixtures.incn` holds the scratch project and toolchain the unit freshness tests share.
 
 ## Test units
 

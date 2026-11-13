@@ -17,7 +17,7 @@ from unit import UnitDescription
 
 pub def test_sources(project: Path) -> Result[list[Path], str]:
     """
-    Select test_*.incn modules directly under the source root and tests directory.
+    Select the test modules below the source root and tests directory.
 
     1. Read the Loaf's source-root policy and collect matching files without descending into dependencies.
     2. Return each path once in stable order.
@@ -26,19 +26,38 @@ pub def test_sources(project: Path) -> Result[list[Path], str]:
     root = source_root_of(read_project(project).map_err((error) => error.message())?)
     mut paths: list[str] = []
     for directory in [Path(root), project.joinpath("tests")]:
-        if not directory.is_dir():
-            continue
-        for source in directory.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
-            if is_test_source(source) and source.0 not in paths:
+        for source in directory_test_sources(directory)?:
+            if source.0 not in paths:
                 paths.append(source.0)
     # 2. Discovery order does not change execution or duplicate a source root named tests.
     return Ok([Path(path) for path in sorted(paths)])
 
 
+pub def directory_test_sources(directory: Path) -> Result[list[Path], str]:
+    """
+    Every test module below `directory` in stable order: `test_*.incn` and `*_test.incn` files, as 0.5.1 collects them.
+    Hidden entries, `target` output and nested Loaves, which own their tests, are not entered.
+    """
+    if not directory.is_dir():
+        return Ok([])
+    mut found: list[str] = []
+    for entry in directory.iterdir().map_err((error) => f"cannot list directory {error.message()}")?:
+        name = entry.name()
+        if name.startswith(".") or name == "target":
+            continue
+        if entry.is_dir():
+            if not entry.joinpath("loaf.toml").is_file():
+                for nested in directory_test_sources(entry)?:
+                    found.append(nested.0)
+        elif is_test_source(entry):
+            found.append(entry.0)
+    return Ok([Path(path) for path in sorted(found)])
+
+
 def is_test_source(source: Path) -> bool:
-    """Whether a direct source-root entry is an authored Incan test module."""
+    """Whether a source entry is an authored Incan test module: `test_*.incn` or `*_test.incn`."""
     name = source.name()
-    return source.is_file() and name.startswith("test_") and name.endswith(".incn")
+    return source.is_file() and name.endswith(".incn") and (name.startswith("test_") or name.endswith("_test.incn"))
 
 
 pub def tests_binary(unit: UnitDescription) -> Path:

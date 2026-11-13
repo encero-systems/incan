@@ -58,7 +58,7 @@ When an assignment, return annotation, or function parameter already expects `Ff
 
 Receiver declarations containing Rust const parameters cannot use this syntax in Incan 0.5 because Incan type-argument brackets do not accept const values. The compiler reports that boundary instead of shifting a type argument into the wrong Rust turbofish position. Use a type-only Rust or Incan wrapper for those APIs.
 
-Imported Rust methods may also declare their own type parameters. Their bracket lists are arity-complete just like Incan calls: a three-parameter method accepts `[T, U, V]` or an equally long list containing `_` placeholders, but not a shortened `[T]`. This keeps the checked Incan call and the emitted Rust method turbofish structurally identical.
+Imported Rust methods may also declare their own type parameters. Their bracket lists are arity-complete just like Incan calls: a three-parameter method accepts `[T, U, V]` or an equally long list containing `_` placeholders, but not a shortened `[T]`. This keeps the checked Incan call and the native Rust method call structurally identical.
 
 ## Why `_` exists
 

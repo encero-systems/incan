@@ -19,13 +19,10 @@ Reference:
 - 1.0 public contracts: /start_here/public_contracts/
 
 Machine-readable command surfaces:
-- incan check --format json
-- incan explain --format json
-- incan build --report json
-- incan inspect rust --format json
-- incan inspect codegraph --format jsonl
-- incan tools metadata api --format json
-- incan tools metadata model --format json
+- incan check PATH --format json
+- incan explain CODE
+- incan inspect codegraph PATH --format jsonl
+- oven describe-unit PATH
 
 Important caveat:
-Generated Rust is inspectable current backend output, not the durable public compatibility boundary. Prefer Incan source, manifests, checked metadata, semantic facts, package metadata, documented CLI report schemas, and explicit interop contracts.
+Compiler internals are not the durable public compatibility boundary. Prefer Incan source, manifests, checked metadata, semantic facts, package metadata, documented CLI report schemas, and explicit interop contracts.

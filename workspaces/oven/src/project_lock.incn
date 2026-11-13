@@ -25,7 +25,7 @@ from semver_req import parse_requirement, parse_version, requirement_matches
 from rust_registry import read_registry_units, registry_selection, resolve_registry
 from rust_target import target_configuration
 from toolchain import load_toolchain, rust_compiler
-from unit import project_root_of
+from unit import discovered_project
 from unit_freshness import compiler_fingerprint
 
 
@@ -95,7 +95,7 @@ def root_project(path: Path) -> Result[Option[Path], str]:
     """Resolve only the command's root project; dependency roots are never consulted for their own locks."""
     if path.is_dir() and path.joinpath("loaf.toml").is_file():
         return Ok(Some(path.resolve().map_err((error) => f"cannot resolve {error.message()}")?))
-    match project_root_of(path):
+    match discovered_project(path)?:
         None => return Ok(None)
         Some(root) => return Ok(Some(root.resolve().map_err((error) => f"cannot resolve {error.message()}")?))
 

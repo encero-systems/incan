@@ -267,7 +267,7 @@ Incan uses pinned Rust 1.98.0 for native compilation. Oven builds the compiler; 
 
 #### Panics on recoverable paths
 
-In this repository, do **not** use `.unwrap()` or `.expect()` in compiler code, tests, or examples. Even when an invariant feels obvious, prefer `?`, an explicit `match`, or a helper that turns the failure into a typed error with context. The only accepted exception is emitting `.unwrap()` / `.expect()` as literal strings in generated Rust when that is the intended runtime contract of the compiled program.
+In this repository, do **not** use `.unwrap()` or `.expect()` in compiler code, tests, or examples. Even when an invariant feels obvious, prefer `?`, an explicit `match`, or a helper that turns the failure into a typed error with context.
 
 ```rust
 // Bad — panics with no context if the file is missing
