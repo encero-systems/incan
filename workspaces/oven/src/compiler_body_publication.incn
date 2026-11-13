@@ -806,11 +806,8 @@ def prepare_lowering_records(
         function = required_event_text(event, "function")?
         product = required_event_text(event, "product")?.encode("utf-8")
         body = body_value(bodies, fallbacks, event_identity)?
-        if (
-            body.retained
-            and not event.require("reused").and_then((field) => field.expect_bool()).map_err((error) => error.message())?
-        ):
-            return Err("a fresh plan product requires a fresh graph Body IR witness")
+        # A retained body is already byte-matched to this selected graph above. Its native plan may still be fresh
+        # when a linked Rust unit changed without changing the checked source body or its callable signature.
         identity = body.identity
         body_ir_key = body_key("body-ir", origin, identity, "checked", root(body.final)?)
         demand_key = body_key("lowering-demand", origin, identity, function, key)
@@ -1225,7 +1222,7 @@ def eligibility_key(origin: str, identity: str, name: str) -> RecordKey:
     )
 
 
-def source_origin(unit: UnitDescription) -> str:
+pub def source_origin(unit: UnitDescription) -> str:
     """Use the package authority, or the standalone namespace whose view already isolates manifest-free sources."""
     if unit.package != "":
         return unit.package
