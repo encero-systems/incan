@@ -11,8 +11,15 @@ from workers import Invocation, invoke_many
 
 # The largest partition file read back; a bigger one is discarded and discovered again.
 const MAX_PLAN_BYTES: int = 2_000_000
-# An expensive shared attempt can split without limiting any case's original command.
-const GROUP_COMPILATION_SECONDS: int = 5
+pub def group_compilation_request(incan: str, arguments: list[str], project: Path, duration_hint: int) -> Invocation:
+    """One compatible shared compilation, with no runner-imposed deadline or cached execution outcome."""
+    return Invocation(
+        program=incan,
+        arguments=arguments,
+        project=project,
+        selector=None,
+        duration_hint=duration_hint,
+    )
 
 
 model Entry:
@@ -318,13 +325,11 @@ def compile_groups(
                 Err(_) => split_group(entries, retry, "combined preparation failed")
                 Ok(group) =>
                     requests.append(
-                        Invocation(
-                            program=incan,
-                            arguments=group_arguments("build", group.project, entries),
-                            project=group.project,
-                            selector=None,
-                            deadline_seconds=GROUP_COMPILATION_SECONDS,
-                            duration_hint=costs.duration(group.project),
+                        group_compilation_request(
+                            incan,
+                            group_arguments("build", group.project, entries),
+                            group.project,
+                            costs.duration(group.project),
                         ),
                     )
                     attempts.append(group)
