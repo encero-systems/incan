@@ -94,6 +94,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
             module="lib",
             name="value",
             identity="provider|module:lib|value|function|module|0|() -> int",
+            reference_subject="expr:main#10..17",
         )],
     )
     fallback = CompiledBodyFallback(
@@ -128,6 +129,7 @@ def compiled_output_controls(source: str) -> Result[None, str]:
     match decode_compiled_body_frame(encoded[1]).map_err((_) => "compiled value decode")?:
         CompiledBodyOutput.Value(decoded) =>
             assert decoded.module == value.module and decoded.name == value.name and decoded.identity == value.identity
+            assert decoded.dependency_reads[0].reference_subject == "expr:main#10..17"
             assert decoded.dependency_reads == value.dependency_reads
             assert (
                 decoded.declaration == value.declaration

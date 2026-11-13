@@ -9,7 +9,7 @@ use incan_semantics_core::stable_identity::{StableDeclarationContext, StableDecl
 pub use crate::typechecker::canonical_nodes::NodeBindingError as RecordAdapterFault;
 
 /// Exact canonical checker profile carried by graph body values and any cache capable of supplying their owners.
-pub const GRAPH_BODY_RECORD_PROFILE: &str = "incan.checker-free-functions/15";
+pub const GRAPH_BODY_RECORD_PROFILE: &str = "incan.checker-free-functions/16";
 
 /// One graph-admitted body pair keyed by the compiler-owned stable declaration identity encoded in both records.
 #[derive(Debug, Clone)]
@@ -88,6 +88,8 @@ pub struct CheckedOwnerDependencyRead {
     pub declaration_name: String,
     /// Stable checked identity of the declaration whose declaration record authenticates this read.
     pub declaration_identity: String,
+    /// Compiler-owned semantic subject that introduced this exact dependency edge.
+    pub reference_subject: String,
 }
 
 /// One checked owner that cannot publish the complete record triple required for body reuse.
@@ -286,26 +288,31 @@ pub fn checked_owner_record_outputs(
             };
             let mut dependency_reads = semantic_owner
                 .into_iter()
-                .flat_map(|owner| dependencies.reachable_from([owner.clone()]))
-                .filter(|dependency| dependency != canonical)
-                .filter_map(|dependency| match &dependency.origin {
+                .flat_map(|owner| dependencies.reachable_dependencies_from([owner.clone()]))
+                .filter(|dependency| &dependency.target != canonical)
+                .filter_map(|dependency| match &dependency.target.origin {
                     incan_semantics_core::SymbolOrigin::Package { library, module_path } => {
-                        StableDeclarationId::from_canonical(&dependency, None, None).map(|stable| {
+                        StableDeclarationId::from_canonical(&dependency.target, None, None).map(|stable| {
                             CheckedOwnerDependencyRead {
                                 package: Some(library.clone()),
                                 module_path: module_path.clone(),
-                                declaration_name: dependency.declaration_name.clone(),
+                                declaration_name: dependency.target.declaration_name.clone(),
                                 declaration_identity: stable.render_compact(),
+                                reference_subject: dependency.subject.to_string(),
                             }
                         })
                     }
                     incan_semantics_core::SymbolOrigin::Module(dependency_module) => checker
-                        .stable_dependency_identity_with_context(&dependency, stable_contexts.get(&dependency))
+                        .stable_dependency_identity_with_context(
+                            &dependency.target,
+                            stable_contexts.get(&dependency.target),
+                        )
                         .map(|stable| CheckedOwnerDependencyRead {
                             package: None,
                             module_path: dependency_module.clone(),
-                            declaration_name: dependency.declaration_name.clone(),
+                            declaration_name: dependency.target.declaration_name.clone(),
                             declaration_identity: stable.render_compact(),
+                            reference_subject: dependency.subject.to_string(),
                         }),
                     _ => None,
                 })
@@ -562,15 +569,15 @@ mod tests {
             return Err("the dependency-consuming owner fell back".into());
         };
         assert_eq!(owner.name, "main");
-        assert_eq!(
-            owner.dependency_reads,
-            vec![CheckedOwnerDependencyRead {
-                package: Some("provider".into()),
-                module_path: vec!["lib".into()],
-                declaration_name: "value".into(),
-                declaration_identity: "function:pub::provider::lib::value".into(),
-            }]
-        );
+        let read = owner
+            .dependency_reads
+            .first()
+            .ok_or("missing provider dependency read")?;
+        assert_eq!(read.package, Some("provider".into()));
+        assert_eq!(read.module_path, vec!["lib".to_string()]);
+        assert_eq!(read.declaration_name, "value");
+        assert_eq!(read.declaration_identity, "function:pub::provider::lib::value");
+        assert!(read.reference_subject.starts_with("expr:main#"));
         for source in [
             "def main() -> None:\n    println(\"hello\")\n",
             "def greeting() -> str:\n    return \"hello\"\n\ndef main() -> None:\n    println(greeting())\n",

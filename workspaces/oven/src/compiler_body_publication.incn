@@ -431,6 +431,14 @@ pub def prepare_compiled_bodies(
                                 dependency.module,
                                 dependency.name,
                                 dependency.identity,
+                            ).map_err(
+                                (error) => dependency_projection_refusal(
+                                    error,
+                                    value.module,
+                                    value.name,
+                                    value.identity,
+                                    dependency,
+                                ),
                             )?,
                         )
                         prepared = put(prepared, encode_record_key(owner.key)?, owner.text.encode("utf-8"))
@@ -452,6 +460,14 @@ pub def prepare_compiled_bodies(
                         dependency.module,
                         dependency.name,
                         dependency.identity,
+                    ).map_err(
+                        (error) => dependency_projection_refusal(
+                            error,
+                            value.module,
+                            value.name,
+                            value.identity,
+                            dependency,
+                        ),
                     )?
                     signature_key = encode_record_key(signature.key)?
                     signature_value = signature.text.encode("utf-8")
@@ -1009,6 +1025,21 @@ def dependency_read_key(
                 )
             return Ok(None)
         None => return Ok(Some(project_declaration_slot(origin, dependency.module, dependency.name)))
+
+
+def dependency_projection_refusal(
+    error: str,
+    owner_module: str,
+    owner_name: str,
+    owner_identity: str,
+    dependency: CompiledBodyDependencyRead,
+) -> str:
+    """Attach the producing body owner and checked reference subject to one dependency source refusal."""
+    return (
+        error
+        + f"; body_owner={owner_module}:{owner_name}; body_identity={owner_identity}"
+        + f"; reference_subject={dependency.reference_subject}"
+    )
 
 
 def project_signature_record(
