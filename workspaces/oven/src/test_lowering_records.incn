@@ -1,6 +1,6 @@
 """Real record-scoped lowering reuse through the installed native driver."""
 
-from rust::std::process import Command
+from rust::std::process import Child, Command, Stdio
 from rust::std::str import from_utf8
 from std.environ import get_or
 from std.fs import Path
@@ -12,6 +12,7 @@ from engine_endpoint import connect_with
 from engine_messages import Message, Stop
 from engine_wire import zero_id
 from observation import observe
+from rust_target import decoded
 from unit_freshness import fingerprint
 
 
@@ -113,6 +114,60 @@ def generic_source(index: str) -> str:
     unrelated = "def unrelated(value: int) -> int:\n    return value + 1\n\n\n"
     entry = "def main() -> None:\n    println(pick([1, 2, 3]))\n    println(pick([\"a\", \"b\", \"c\"]))\n    println(unrelated(41))\n"
     return generic + unrelated + entry
+
+
+pub def test_concurrent_identical_requests_bake_once() -> Result[None, str]:
+    """Four concurrent requests for one new program share one unit evaluation and one native bake."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("shared.incn")
+    store = root.joinpath("store")
+    write(
+        source,
+        "def twice(value: int) -> int:\n    return value * 2\n\n\ndef main() -> None:\n    println(twice(21))\n",
+    )?
+    first = started_run(binary, source, store)?
+    second = started_run(binary, source, store)?
+    third = started_run(binary, source, store)?
+    fourth = started_run(binary, source, store)?
+    first_output = first.wait_with_output().map_err((error) => str(error))?
+    second_output = second.wait_with_output().map_err((error) => str(error))?
+    third_output = third.wait_with_output().map_err((error) => str(error))?
+    fourth_output = fourth.wait_with_output().map_err((error) => str(error))?
+    reports = [
+        finished_run(first_output.status.success(), first_output.stdout, first_output.stderr)?,
+        finished_run(second_output.status.success(), second_output.stdout, second_output.stderr)?,
+        finished_run(third_output.status.success(), third_output.stdout, third_output.stderr)?,
+        finished_run(fourth_output.status.success(), fourth_output.stdout, fourth_output.stderr)?,
+    ]
+    mut evaluations = 0
+    mut bakes = 0
+    for report in reports:
+        evaluations += proof_count(report, "unit_evaluations")?
+        bakes += proof_count(report, "native_bakes")?
+    stop_example_engine(binary, store)?
+    assert evaluations == 1, f"four concurrent requests evaluated the unit {evaluations} times"
+    assert bakes == 1, f"four concurrent requests baked the unit {bakes} times"
+    return Ok(None)
+
+
+def started_run(binary: str, source: Path, store: Path) -> Result[Child, str]:
+    """Start one records-engine run of `source` against `store`, collecting its report and output."""
+    mut command = Command.new(binary)
+    command.arg("run").arg(source.0).args(["--profile", "release", "--engine-report"])
+    command.env("INCAN_ENGINE", "records").env("INCAN_BAKERY", store.0)
+    command.stdin(Stdio.null()).stdout(Stdio.piped()).stderr(Stdio.piped())
+    return command.spawn().map_err((error) => f"cannot start {binary}: {error}")
+
+
+def finished_run(succeeded: bool, stdout: bytes, stderr: bytes) -> Result[JsonValue, str]:
+    """Require one concurrent run's success, its program output and silence, then return its proof report."""
+    text = decoded(stdout)
+    errors = decoded(stderr)
+    if not succeeded or not text.endswith("42\n") or errors != "":
+        return Err(f"concurrent run: stdout={text} stderr={errors}")
+    return command_proof(stdout)
 
 
 def verify_signature_edit(binary: str, root: Path) -> Result[None, str]:
