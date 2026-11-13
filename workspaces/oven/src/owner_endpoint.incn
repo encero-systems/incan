@@ -101,7 +101,7 @@ pub def socket_prefix(directory: str) -> Result[str, str]:
     1. Make `directory` private; the user who owns it owns its sockets.
     2. Select an absolute environment root only when the longest endpoint still fits, otherwise use `/tmp`.
     3. Make that user's private endpoint directory: `i-<uid>` under the selected root.
-    4. Name the sockets by a digest of `directory`, so different homes never share one.
+    4. Name the sockets by the physical identity of `directory`, so aliases share one and different homes never do.
     """
     # 1. The directory the sockets belong to is private to its user before anything is named after it.
     prepare_directory(directory)?
@@ -109,8 +109,10 @@ pub def socket_prefix(directory: str) -> Result[str, str]:
     # 2. and 3. The endpoint directory belongs to the same user and nobody else can enter it.
     endpoints = f"{endpoint_root(uid)}/i-{uid}"
     prepare_endpoints(endpoints, uid)?
-    # 4. A digest of the directory keeps the sockets of every home apart at a fixed length.
-    return Ok(f"{endpoints}/{fingerprint([directory])?[0:DIRECTORY_DIGITS]}-")
+    # 4. Device and inode identify the locked directory even when `/var` and `/private/var` spell it differently.
+    physical = metadata(f"{directory}").map_err((error) => f"{directory}: {error}")?
+    identity = fingerprint([str(physical.dev()), str(physical.ino())])?
+    return Ok(f"{endpoints}/{identity[0:DIRECTORY_DIGITS]}-")
 
 
 def endpoint_root(uid: u32) -> str:
