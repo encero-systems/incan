@@ -218,8 +218,19 @@ pub(super) fn project_calls(
             fields.push(row);
         }
     }
-    if !local.calls.body_ir_call_result_types.is_empty() || !local.calls.body_ir_native_argument_types.is_empty() {
-        return Err(NodeBindingError::Unsupported("native call refinements"));
+    for (selector, values) in [
+        ("argument-type", &local.calls.body_ir_native_argument_types),
+        ("result-type", &local.calls.body_ir_call_result_types),
+    ] {
+        for (span, ty) in values {
+            let mut row = vec![
+                "native-call".into(),
+                positions.nodes.anchor(*span)?.path,
+                selector.into(),
+            ];
+            type_fields(ty, &mut row)?;
+            fields.push(row);
+        }
     }
     Ok(())
 }

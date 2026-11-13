@@ -5,6 +5,42 @@ use std::collections::BTreeMap;
 use super::super::{BodyLocal, Positions, fixture};
 use super::{InputFlow, Reader, restore};
 
+/// A checked native result type survives the record boundary without falling back to its source-facing type.
+#[test]
+fn native_call_refinement_types_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def view(value: int) -> int:\n    return value\n";
+    let (program, checker, owner) = fixture(source, "view")?;
+    let mut local = checker
+        .checked_body(owner)
+        .ok_or("missing checked body")?
+        .local
+        .as_ref()
+        .clone();
+    let span = *local
+        .expressions
+        .expr_types
+        .keys()
+        .next()
+        .ok_or("missing checked expression")?;
+    let native = crate::symbols::ResolvedType::Int;
+    local.calls.body_ir_call_result_types.insert(span, native.clone());
+    local.calls.body_ir_native_argument_types.insert(span, native.clone());
+    let positions = Positions::for_local(&checker, &program, owner, &local)?;
+    let fields = super::super::local_fields(&positions, &local)?;
+    let rows = fields.iter().filter(|row| row[0] == "native-call").collect::<Vec<_>>();
+    assert_eq!(rows.len(), 2);
+    let mut restored = BodyLocal {
+        owner,
+        ..BodyLocal::default()
+    };
+    for row in rows {
+        super::super::restore_local(&positions, &mut restored, &mut BTreeMap::new(), row)?;
+    }
+    assert_eq!(restored.calls.body_ir_call_result_types.get(&span), Some(&native));
+    assert_eq!(restored.calls.body_ir_native_argument_types.get(&span), Some(&native));
+    Ok(())
+}
+
 /// A local Rust-derived value retains its exact native carrier independently of its projected source type.
 #[test]
 fn native_value_types_roundtrip_by_local_identity() -> Result<(), Box<dyn std::error::Error>> {
