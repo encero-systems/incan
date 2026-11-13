@@ -356,6 +356,14 @@ impl crate::typechecker::TypeChecker {
         if let Some(identity) = self.type_info().declarations.source_identities.get(dependency).cloned() {
             return Some(identity);
         }
+        if let Some(owner) = self
+            .type_info()
+            .calls
+            .compiler_generated_member_identities
+            .get(dependency)
+        {
+            return stable_member_identity(dependency, owner);
+        }
         let owner = self
             .symbols
             .all_symbols()
@@ -370,15 +378,23 @@ impl crate::typechecker::TypeChecker {
                     .flatten()
             });
         if let Some(owner) = owner {
-            let owner = StableDeclarationId::from_canonical(owner, None, None)?;
-            let context = StableDeclarationContext {
-                owner,
-                binding_ordinal: 0,
-            };
-            return StableDeclarationId::from_canonical(dependency, None, Some(context));
+            return stable_member_identity(dependency, owner);
         }
         StableDeclarationId::from_canonical(dependency, None, None)
     }
+}
+
+/// Bind a checked member to the canonical declaration retained for its enclosing nominal.
+fn stable_member_identity(
+    member: &incan_semantics_core::CanonicalSymbolId,
+    owner: &incan_semantics_core::CanonicalSymbolId,
+) -> Option<StableDeclarationId> {
+    let owner = StableDeclarationId::from_canonical(owner, None, None)?;
+    let context = StableDeclarationContext {
+        owner,
+        binding_ordinal: 0,
+    };
+    StableDeclarationId::from_canonical(member, None, Some(context))
 }
 
 /// Test canonical member provenance carried by one checked nominal type; spelling is never consulted.
@@ -605,6 +621,36 @@ mod tests {
                 "member/variant:engine_messages::Cancelled#in(enum:engine_messages::CompletionStatus)[0]",
                 "member/variant:engine_messages::Failed#in(enum:engine_messages::CompletionStatus)[0]",
             ]
+        );
+        Ok(())
+    }
+
+    /// A generated field identity retains its checked enclosing declaration when same-spelled defaults coexist.
+    #[test]
+    fn local_field_reads_keep_their_stable_declaration_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let program = program(
+            "pub model ProgramOutcome:\n    pub transaction: Option[int] = None\n\npub model NativeSelection:\n    pub transaction: Option[int] = None\n",
+        )?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["engine_programs".into()]));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let owner = checker
+            .symbols
+            .lookup("ProgramOutcome")
+            .and_then(|symbol| checker.symbols.identity_of(symbol))
+            .cloned()
+            .ok_or("missing ProgramOutcome identity")?;
+        let dependency = owner.generated_member("transaction", incan_semantics_core::SemanticSourceTargetKind::Field);
+        checker
+            .type_info
+            .record_compiler_generated_member_identity(dependency.clone(), owner);
+        assert_eq!(
+            checker
+                .stable_dependency_identity(&dependency)
+                .map(|identity| identity.render_compact()),
+            Some("member/field:engine_programs::transaction#in(model:engine_programs::ProgramOutcome)[0]".into())
         );
         Ok(())
     }
