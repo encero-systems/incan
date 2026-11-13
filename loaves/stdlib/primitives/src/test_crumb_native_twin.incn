@@ -1,0 +1,81 @@
+"""Byte-identical checks between native Crumb framing and its retained Incan twin."""
+
+from crate.primitives.crumb.budget import Budget
+from crate.primitives.crumb.errors import CrumbError
+from crate.primitives.crumb.framing import (
+    encode_integer,
+    encode_native_signed,
+    encode_native_unsigned,
+    encode_wide_unsigned,
+    frame,
+)
+from crate.primitives.crumb.values import IntegerValue
+from crate.primitives.crumb.wide_integer import WideInteger
+
+
+def allowance() -> Result[Budget, CrumbError]:
+    """Return an independent allowance large enough for one framing comparison."""
+    return Budget.create(bytes=1048576, elements=1048576, depth=8)
+
+
+def incan_signed(value: i128, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Run the retained Incan Z and U implementation."""
+    return encode_wide_unsigned(WideInteger.from_signed(value).zigzag(budget)?, budget)
+
+
+def incan_unsigned(value: u128, mut budget: Budget) -> Result[bytes, CrumbError]:
+    """Run the retained Incan U implementation."""
+    return encode_wide_unsigned(WideInteger.from_unsigned(value), budget)
+
+
+def test_native_framing_matches_incan_boundaries() -> Result[None, CrumbError]:
+    """Native integer and frame bytes equal the Incan twin at zero and carrier endpoints."""
+    signed = [
+        -170141183460469231731687303715884105727i128 - 1i128,
+        -18446744073709551616i128,
+        -128i128,
+        -1i128,
+        0i128,
+        1i128,
+        127i128,
+        128i128,
+        18446744073709551616i128,
+        170141183460469231731687303715884105727i128,
+    ]
+    for value in signed:
+        if encode_native_signed(value, allowance()?)? != incan_signed(value, allowance()?)?:
+            return Err(CrumbError.invalid_input(f"signed twin mismatch: {value}"))
+    unsigned = [
+        0u128,
+        1u128,
+        127u128,
+        128u128,
+        18446744073709551616u128,
+        340282366920938463463374607431768211455u128,
+    ]
+    for value in unsigned:
+        if encode_native_unsigned(value, allowance()?)? != incan_unsigned(value, allowance()?)?:
+            return Err(CrumbError.invalid_input(f"unsigned twin mismatch: {value}"))
+        expected = encode_wide_unsigned(WideInteger.from_unsigned(value).zigzag(allowance()?)?, allowance()?)?
+        if encode_integer(IntegerValue.Unsigned(value), allowance()?)? != expected:
+            return Err(CrumbError.invalid_input(f"logical unsigned twin mismatch: {value}"))
+    if frame(b"", allowance()?)? != b"\x00":
+        return Err(CrumbError.invalid_input("empty frame twin mismatch"))
+    if frame(b"comic corpus payload", allowance()?)? != b"\x14comic corpus payload":
+        return Err(CrumbError.invalid_input("payload frame twin mismatch"))
+    return Ok(None)
+
+
+def test_native_framing_matches_real_shape_integer_stream() -> Result[None, CrumbError]:
+    """A few hundred 32-field records retain the same byte stream under both integer encoders."""
+    mut native: list[u8] = []
+    mut incan: list[u8] = []
+    for record in range(300):
+        for field in range(32):
+            value = (record * 4096 + field * 257 - 524288).saturating_resize[i128]()
+            for byte in encode_native_signed(value, allowance()?)?:
+                native.append(byte.saturating_resize[u8]())
+            for byte in incan_signed(value, allowance()?)?:
+                incan.append(byte.saturating_resize[u8]())
+    assert native == incan
+    return Ok(None)
