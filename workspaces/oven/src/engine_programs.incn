@@ -4,7 +4,7 @@ from std.fs import Path
 from std.environ import get_or
 from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
-from engine_capture import BuildEpoch, InputRole
+from engine_capture import BuildEpoch, InputRole, SelectedHome
 from std.json import JsonValue, parse
 from bakery import find, fact_file
 from bakery_records import Fact
@@ -21,11 +21,12 @@ from compiler_plan_values import select_plan_inventory_except, plan_owners_readi
 from engine_epochs import record_text, load_epoch
 from features import FeatureRequest
 from files import json_text
+from home import StandardPackage
 from incan_units import obtain_executable, program_binary, executable_view, view_executable
 from json_fields import required_text
 from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, Transaction, begin, commit, put
 from store_path_conversion import snapshot
-from toolchain import load_toolchain, toolchain_directory
+from toolchain import Toolchain, load_toolchain, toolchain_directory
 from unit import describe
 from unit_compiler import graph_body_output_path, plan_record_counts, plan_record_report_path
 from unit_rust import prepare_native
@@ -78,6 +79,13 @@ pub model ProgramOutcome:
     pub claim: Option[Rc[LockGuard]] = None
 
 
+model ProgramHome:
+    """The request-owned compiler and standard packages used to describe and build one program."""
+
+    toolchain: Toolchain
+    standard: Option[list[StandardPackage]] = None
+
+
 pub model NativeSelection:
     """The exact selected view and the encoding and publication work needed to select it."""
 
@@ -94,6 +102,7 @@ pub def obtain(
     console: str,
     captured: Option[BuildEpoch] = None,
     producer: str = "",
+    selected_home: Option[SelectedHome] = None,
 ) -> Result[ProgramOutcome, str]:
     """
     Ask for a unit record, using the existing RFC 124 producer on a miss.
@@ -128,13 +137,16 @@ pub def obtain(
             return Ok(ProgramOutcome(code=0, unit=Some(unit), epoch_reads=epoch_reads))
     preparing = begin_work()
 
-    mut toolchain = load_toolchain()?
+    home = program_home(selected_home)?
+    mut toolchain = home.toolchain
+
     toolchain.console = console
     described = describe(
         Path(epoch.roots[0]),
         epoch.selection.profile,
         FeatureRequest(),
         selected_toolchain=Some(toolchain),
+        selected_standard=home.standard,
     )?
     if (
         described.kind != "program"
@@ -228,6 +240,13 @@ pub def obtain(
             claim=produced.claim,
         ),
     )
+
+
+def program_home(selected: Option[SelectedHome]) -> Result[ProgramHome, str]:
+    """Use a request's selected installation, or load one for direct producer callers."""
+    match selected:
+        Some(home) => return Ok(ProgramHome(toolchain=home.toolchain, standard=Some(home.standard)))
+        None => return Ok(ProgramHome(toolchain=load_toolchain()?))
 
 
 def refusal_diagnostic_key(key: Key) -> Result[Key, str]:
