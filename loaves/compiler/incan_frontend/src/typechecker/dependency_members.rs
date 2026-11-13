@@ -612,7 +612,7 @@ impl TypeChecker {
     /// Return the module path segments that canonically identify a cached dependency, if they are known.
     ///
     /// A declaration identity must never be built from a *projection* spelling. The cache key is the flattened,
-    /// underscore-joined name that also names the emitted Rust module, and it is not injective: the path
+    /// underscore-joined name that also names the native Rust module, and it is not injective: the path
     /// `pkg.helpers` and a module literally named `pkg_helpers` are one key. Reading segments back out of it would
     /// invent an origin for a module that may not exist, and would give one module two identities depending on which
     /// spelling reached it.

@@ -155,7 +155,7 @@ pub enum StoredTypeParamOwner {
 ///
 /// A model or class can carry such a parameter (it becomes a phantom marker, #1370), but a newtype has exactly its
 /// underlying type and an enum has exactly its variant payloads, so a parameter neither mentions has nowhere to
-/// live; the generated Rust would be rejected as an unused type parameter. Reported at the parameter's own span.
+/// live; rustc would reject it as an unused type parameter. Reported at the parameter's own span.
 pub fn type_param_not_stored(owner: StoredTypeParamOwner, owner_name: &str, param: &str, span: Span) -> CompileError {
     let (kind, storage, hint) = match owner {
         StoredTypeParamOwner::Newtype => (

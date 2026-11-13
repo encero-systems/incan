@@ -763,7 +763,7 @@ impl TypeChecker {
         }
     }
 
-    /// Refuse a field annotation that would store a bare trait value in generated Rust.
+    /// Refuse a field annotation that would store a bare trait value.
     pub(super) fn refuse_stored_trait_field(
         &mut self,
         owner_kind: &str,

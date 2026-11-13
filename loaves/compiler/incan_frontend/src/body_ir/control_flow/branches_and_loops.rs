@@ -450,8 +450,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// The condition is lowered *inside* the loop body, in `loop_scope`, so it is re-evaluated every iteration.
     ///
     /// A literal `true` condition is the infinite loop `loop:` spells, and lowers exactly as that statement does, with
-    /// no exit test: only the body's own `break` or `return` leaves it. Legacy emission makes the same decision (it
-    /// emits Rust's `loop` for a literal `true`), so a value-returning body that ends in such a loop has no
+    /// no exit test: only the body's own `break` or `return` leaves it. A value-returning body that ends in such a
+    /// loop therefore has no
     /// fallthrough.
     pub(in crate::body_ir) fn lower_while(
         &mut self,

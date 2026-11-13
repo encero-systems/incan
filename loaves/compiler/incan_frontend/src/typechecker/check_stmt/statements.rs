@@ -102,7 +102,7 @@ impl TypeChecker {
     ///
     /// A trait stands for the types that adopt it only where the whole annotation is the trait: a parameter lowers to
     /// a hidden type parameter bounded by it and a return to one hidden adopting type. Inside another type it has no
-    /// value representation, and the generated Rust would name a bare trait there (E0782, #1866). A reference or a
+    /// value representation, and Rust would name a bare trait there (E0782, #1866). A reference or a
     /// type token wraps the annotation without nesting it. A function type is not searched: its parameters are how a
     /// decorator names the trait receiver of the method it decorates (`(Service) -> int`).
     pub(in crate::typechecker) fn trait_type_nested_in(&self, ty: &ResolvedType) -> Option<ResolvedType> {

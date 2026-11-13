@@ -327,7 +327,7 @@ impl TypeChecker {
     /// Match a function value against the parameter list of an RFC 041 `Fn`-family capability marker.
     ///
     /// `Fn[int]`, `FnMut[int]` and `FnOnce[int]` name the callable's parameters and nothing else: the return type is
-    /// whatever the value passed returns. The generated Rust asks for exactly that shape (the canonical `CallableN`
+    /// whatever the value passed returns. The native bound asks for exactly that shape (the canonical `CallableN`
     /// bound with a free return type, #1716), so a function whose arity or parameter types do not match the marker is
     /// refused here rather than by rustc. A value that is not a function answers `None`: a nominal type can satisfy
     /// the callable requirement through its own `__call__` adoption, which the marker cannot see.

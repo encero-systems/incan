@@ -411,8 +411,8 @@ pub fn type_param_not_determined(owner: &str, type_param: &str, sources: &str, s
 /// Refuse a method call on a value of a type parameter whose bounds declare no method of that name (#1561).
 ///
 /// Inside the declaration that introduces it, a type parameter has the methods its bounds' traits declare, and
-/// `.clone()`, which the generated Rust bounds by `Clone`. Any other method has nothing to call for a type argument
-/// that lacks it, so the generated Rust refuses it.
+/// `.clone()`, which lowering bounds by `Clone`. Any other method has nothing to call for a type argument
+/// that lacks it, so rustc refuses it.
 pub fn type_parameter_method_not_declared(type_param: &str, method: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Type parameter '{type_param}' has no method '{method}(...)': no bound of '{type_param}' declares it"),

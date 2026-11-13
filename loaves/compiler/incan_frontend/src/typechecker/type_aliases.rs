@@ -233,7 +233,7 @@ impl TypeChecker {
 
     /// Replace locally aliased public-library nominals with their source-unspellable canonical provider path.
     ///
-    /// Emitted Rust displays and compiled manifests must retain provider identity independently of the aliases that
+    /// Native Rust displays and compiled manifests must retain provider identity independently of the aliases that
     /// happen to be in scope for source typechecking.
     pub fn canonicalize_public_library_nominals(&self, ty: &mut ResolvedType) {
         match ty {

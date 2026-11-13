@@ -237,7 +237,7 @@ When the application is compiled against the 0.5 full-standard-library Loaf:
 3. **Models with `@derive(json)`** get serde derives
 4. **`App.run()`** becomes Axum router setup + tokio server
 
-The generated Rust code uses:
+The compiled server uses:
 
 - `axum::Router` for routing
 - `axum::Json` for JSON request/response
@@ -255,11 +255,11 @@ The example is deliberately read-only. Once you add persistence, keep database f
 
 ## Runtime shape
 
-The generated Rust/Axum-backed design targets:
+The Axum-backed design targets:
 
 - **Native server path** — no Python interpreter process in the request path
 - **Tokio-backed async** — an efficient async runtime without Python event-loop compatibility claims
-- **Deterministic ownership** — generated Rust does not depend on a tracing garbage collector
+- **Deterministic ownership** — compiled code does not depend on a tracing garbage collector
 - **Workload-dependent performance** — latency and memory use still depend on handlers, dependencies, traffic, and deployment settings, so benchmark the service you intend to run
 
 These are architectural properties, not benchmark results. The 0.5 release envelope can build and run this guide through its checked web closure, but latency and resource behavior still depend on the service and deployment you actually ship. Benchmark that concrete workload rather than inferring performance from the generated architecture.

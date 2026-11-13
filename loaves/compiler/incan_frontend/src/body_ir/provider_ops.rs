@@ -3,7 +3,7 @@
 //! Body IR does not decide what a provider operation *is*. It is told, by canonical identity, through a private
 //! [`ProviderOperationCatalog`] projected from the compilation's Loaves. That direction is the point of this
 //! module rather than an implementation convenience: a lowering pass that recognized provider operations by module
-//! name, callee spelling, or emitted Rust name would be a second source-resolution mechanism competing with the one
+//! name, callee spelling, or native symbol name would be a second source-resolution mechanism competing with the one
 //! that already resolved the call, and it would make ordinary package-defined providers impossible to express.
 //!
 //! What lowering does own is admission. An operation reaches [`bir::Callee::ProviderOperation`] only when its
@@ -42,7 +42,7 @@ pub(super) struct ProviderOperationRecord {
 /// The provider operations this compilation knows about, keyed by the operation's canonical identity.
 ///
 /// Keying on [`CanonicalSymbolId`] is what keeps the lookup free of source spellings: a local call, an import, and
-/// an alias of one operation all present the same key, and no provider name, module spelling, or emitted Rust name
+/// an alias of one operation all present the same key, and no provider name, module spelling, or native symbol name
 /// participates. An empty catalog is the ordinary case — a compilation with no provider operations lowers exactly
 /// as it did before, because no call can match an entry that does not exist.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

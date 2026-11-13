@@ -184,7 +184,7 @@ This PR implements RFC 035: First-class named function references in Incan. Name
 ## Key details
 
 - **User-facing behavior**: Named functions can now be used as first-class values. The `Callable[Params, R]` syntax provides a convenient way to express function types.
-- **Internals**: Parser now recognizes `Callable` as a type sugar and desugars it to the canonical function type. Typechecker validates function references and their signatures. Lowering emits Rust closures for function references.
+- **Internals**: Parser now recognizes `Callable` as a type sugar and desugars it to the canonical function type. Typechecker validates function references and their signatures. Lowering produces closures for function references.
 - **Risks**: This is a new language feature; existing code is not affected. The `Callable` sugar may conflict with future type aliases named `Callable`.
 
 ## Testing / verification

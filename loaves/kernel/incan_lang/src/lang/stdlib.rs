@@ -235,7 +235,7 @@ pub fn stdlib_json_trait_id_from_path(segments: &[String]) -> Option<StdlibJsonT
     stdlib_json_trait_id(&segments.join("."))
 }
 
-/// Return the stdlib JSON trait id when generated Rust must import the trait module for method resolution.
+/// Return the stdlib JSON trait id when a compiled unit must import the trait module for method resolution.
 #[must_use]
 pub fn stdlib_json_trait_scope_import_id(name: &str) -> Option<StdlibJsonTraitId> {
     match name {
@@ -302,7 +302,7 @@ pub struct StdlibNamespace {
     /// Known submodules for validation and LSP completion. Empty for leaf modules.
     pub submodules: &'static [&'static str],
     /// When `true`, this namespace is handled entirely by the typechecker with no corresponding `.incn` stub file or
-    /// emitted Rust module. Items are resolved symbolically at import time.
+    /// native module. Items are resolved symbolically at import time.
     ///
     /// `std.rust` is the canonical example: `Send`, `Sync`, etc. map to native Rust traits that are already in scope
     /// and must not be re-declared or imported in generated code.
@@ -441,8 +441,8 @@ pub fn stdlib_facet_for(path: &[String]) -> Option<&'static str> {
 /// Returns `true` when a stdlib module path refers to a typechecker-only namespace.
 ///
 /// Typechecker-only namespaces (`std.rust`) are handled entirely by the frontend: their items are resolved
-/// symbolically at import time and have no corresponding `.incn` stub file or emitted Rust module. The dependency
-/// resolver and emission layer must skip them.
+/// symbolically at import time and have no corresponding `.incn` stub file or native module. The dependency
+/// resolver and lowering must skip them.
 #[must_use]
 pub fn is_typechecker_only_stdlib(path: &[String]) -> bool {
     if path.len() < 2 || path[0] != STDLIB_ROOT {

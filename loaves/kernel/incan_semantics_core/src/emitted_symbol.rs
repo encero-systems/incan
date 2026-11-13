@@ -3,7 +3,7 @@
 //! This module is deliberately an artifact-inspection boundary. Compiler semantic stages carry
 //! [`CanonicalSymbolId`] directly and must never call the decoder to decide what a source reference means. The
 //! encoder is available to backend emission; the decoder exists so a completed artifact can report which
-//! compiler-owned identity one of its symbols carries without consulting generated Rust or a sidecar.
+//! compiler-owned identity one of its symbols carries without consulting a sidecar.
 
 use std::fmt;
 

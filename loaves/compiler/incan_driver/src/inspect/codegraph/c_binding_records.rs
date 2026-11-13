@@ -95,7 +95,7 @@ pub(super) fn c_binding_symbol_record(symbol: &CBindingSymbol) -> CodegraphCBind
     }
 }
 
-/// Convert one compiler-owned pointer-to-length association without inferring it from names or generated Rust.
+/// Convert one compiler-owned pointer-to-length association without inferring it from names.
 pub(super) fn c_binding_buffer_record(buffer: &incan_frontend::typechecker::CBindingBuffer) -> CodegraphCBindingBuffer {
     CodegraphCBindingBuffer {
         pointer_parameter: buffer.pointer_parameter.clone(),
@@ -122,7 +122,7 @@ pub(super) fn c_binding_outcome_record(outcome: &CBindingOutcome) -> CodegraphCB
     }
 }
 
-/// Convert a checked C type structurally without leaking generated Rust spelling into the public graph.
+/// Convert a checked C type structurally without leaking native Rust spelling into the public graph.
 pub(super) fn c_binding_type_record(ty: &CBindingType) -> CodegraphCBindingType {
     match ty {
         CBindingType::Scalar(scalar) => CodegraphCBindingType::Scalar {

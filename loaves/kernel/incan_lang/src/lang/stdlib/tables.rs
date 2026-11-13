@@ -307,7 +307,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         facet: None,
         submodules: &[],
         // Capability bounds (Send, Sync, Static, Fn, FnMut, FnOnce) are native Rust traits already in scope in all
-        // generated code. They have no .incn stub and no emitted Rust module.
+        // generated code. They have no .incn stub and no native module.
         typechecker_only: true,
     },
     StdlibNamespace {
@@ -316,7 +316,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         facet: None,
         submodules: &[],
         // `std.builtins.<name>(...)` is an explicit call escape to the compiler's builtin-function registry. Builtin
-        // types deliberately stay at the root surface and there is no source stub or emitted Rust module.
+        // types deliberately stay at the root surface and there is no source stub or native module.
         typechecker_only: true,
     },
     StdlibNamespace {

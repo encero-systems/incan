@@ -16,7 +16,7 @@ pub def integer_conversion(value: Operand, ty: PlanType) -> Result[RvalueKind, s
 
 
 pub def float_conversion(value: Operand, ty: PlanType) -> Result[RvalueKind, str]:
-    """Admit legacy numeric carriers; bool-to-float stays refused because legacy Rust emission rejects it."""
+    """Admit legacy numeric carriers; bool-to-float stays refused."""
     match ty:
         PlanType.Int => return Ok(RvalueKind.IntToFloat(value))
         PlanType.Float => return Ok(RvalueKind.Use(value))

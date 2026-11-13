@@ -1,4 +1,4 @@
-//! Iteration helpers for Incan-generated Rust code.
+//! Iteration helpers for compiled Incan code.
 //!
 //! Rust remains necessary because the native plan represents generators as Rust iterators and thread-backed cursors.
 //!
@@ -6,7 +6,7 @@
 //! This Rust module remains the runtime boundary for behavior that the current backend still emits directly as Rust
 //! support:
 //!
-//! - `Generator<T>` gives RFC 006 generator functions and generator expressions one stable emitted Rust return type.
+//! - `Generator<T>` gives RFC 006 generator functions and generator expressions one stable native return type.
 //! - [`range`] implements Python-like `range(start, end, step)` semantics, including negative steps and zero-step
 //!   diagnostics.
 //! - [`nonnegative_count`] centralizes the signed Incan `int` to Rust `usize` conversion used when the backend lowers
@@ -258,7 +258,7 @@ pub fn range(start: i64, end: i64, step: i64) -> PyRange {
 /// Convert an Incan iterator count argument to a Rust `usize` for nonnegative-count adapters.
 ///
 /// RFC 088 defines `take(n)` and `skip(n)` so values less than or equal to zero do not create large wrapped counts.
-/// This helper centralizes the signed-to-`usize` boundary for generated Rust.
+/// This helper centralizes the signed-to-`usize` boundary for compiled Incan code.
 #[inline]
 pub fn nonnegative_count(n: i64) -> usize {
     if n <= 0 {
@@ -298,7 +298,7 @@ where
     Generator::new(left.iter.zip(right.iter))
 }
 
-/// Lazy fixed-size batch adapter used by generated Rust for RFC 088 `.batch(size)`.
+/// Lazy fixed-size batch adapter used by compiled Incan code for RFC 088 `.batch(size)`.
 #[derive(Debug, Clone)]
 pub struct Batch<I> {
     iter: I,

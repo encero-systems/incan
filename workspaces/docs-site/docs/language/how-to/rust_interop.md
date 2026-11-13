@@ -148,7 +148,7 @@ pub def borrowed(value: &PathBuf) -> &PathBuf:
     return value.borrow()
 ```
 
-To disambiguate two imported traits with the same method name, call `Trait.method(receiver, arguments...)`. The named trait must declare the method, and its checked signature must be available. This is a native trait call; it does not depend on retaining a generated Rust `use` statement.
+To disambiguate two imported traits with the same method name, call `Trait.method(receiver, arguments...)`. The named trait must declare the method, and its checked signature must be available. This is a native trait call; it does not depend on a trait import being in scope.
 
 ## Match a borrowed callback signature
 

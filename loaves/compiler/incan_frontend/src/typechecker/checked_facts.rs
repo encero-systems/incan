@@ -287,7 +287,7 @@ impl TypeChecker {
     ///
     /// The general semantic source-target map remains the authority for all codegraph targets. This narrow retained
     /// view merely records which active callable made a resolved function call so C-ABI tooling can identify a
-    /// public facade without reparsing source or generated Rust.
+    /// public facade without reparsing source.
     pub fn record_c_abi_function_call_target(&mut self, span: Span, target: SourceTargetInfo) {
         let Some(caller) = self.current_c_abi_raw_call_owner.clone() else {
             return;

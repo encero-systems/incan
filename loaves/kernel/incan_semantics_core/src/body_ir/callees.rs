@@ -17,7 +17,7 @@ pub enum Callee {
     /// `insert`) that have no source-level call site of their own -- see `lower_comprehension_terminal` in
     /// `loaves/compiler/incan_frontend/src/body_ir.rs` for the synthesized case.
     Method(MethodTarget),
-    /// A compiler-owned runtime/helper operation, represented explicitly instead of as a generated-Rust helper-call
+    /// A compiler-owned runtime/helper operation, represented explicitly instead of as a helper-call
     /// idiom (#653 criterion 3).
     Helper(HelperOp),
     /// An admitted provider-service operation, carrying the checked plan its execution needs (#1213).
@@ -354,7 +354,7 @@ pub struct ProviderOperationPlan {
     /// RFC 120 canonical identity of the operation declaration this call selected.
     ///
     /// This is the only thing that answers "which operation is this". A consumer must not recover that answer from a
-    /// call-site spelling, a provider name, or an emitted Rust name.
+    /// call-site spelling, a provider name, or a native symbol name.
     pub operation: CanonicalSymbolId,
     /// The checked provider that owns the operation, and its activation in this compilation.
     pub provider: ProviderActivation,

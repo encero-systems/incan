@@ -55,7 +55,7 @@ pub struct CompiledProviderMetadata {
     pub schema_version: u32,
     /// Stable digest of the provider's authored manifest and Incan source inputs.
     ///
-    /// Physical generated Rust and extracted host ABI metadata remain protected by the artifact digest, while this
+    /// Physical native artifacts and extracted host ABI metadata remain protected by the artifact digest, while this
     /// source-owned identity lets canonical locks compare equivalent native provider builds across platforms.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub semantic_source_digest: Option<String>,

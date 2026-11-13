@@ -287,7 +287,7 @@ impl TypeChecker {
     ///
     /// An unbound root is an unknown symbol like any other. A bound root that is not a module, or a module that
     /// declares no such type, is refused with its own message: the spelling would otherwise resolve to `Unknown`
-    /// and reach lowering as a dotted name, which the Rust emitter cannot spell (#1437). A spelling that resolved
+    /// and reach lowering as a dotted name, which lowering cannot resolve (#1437). A spelling that resolved
     /// has its proof recorded under [`DeclarationArtifacts::qualified_type_references`] and needs nothing here.
     ///
     /// The C interop namespace is the one dotted root that is not a module: `c.i32` or `c.Owned[T]` names a

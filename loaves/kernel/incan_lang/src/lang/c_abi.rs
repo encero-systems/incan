@@ -95,7 +95,7 @@ pub const SCOPED_C_STRING_VIEW_TYPE_ID: &str = "__incan_c_scoped_string_view";
 
 /// Generated helper that validates Incan text before it becomes a C string temporary.
 ///
-/// The helper remains compiler-private. Its spelling is shared only so typed lowering and Rust emission cannot drift.
+/// The helper remains compiler-private. Its spelling is shared only so every stage names the same helper.
 pub const C_STRING_CONSTRUCTOR_RUST_NAME: &str = "__incan_checked_c_cstr";
 
 /// Generated helper that copies a returned C string view only after an explicit bounded terminator scan and UTF-8
@@ -122,7 +122,7 @@ pub fn pointer_type_identity(mutable: bool, pointee: &str) -> String {
 /// Return the compiler-internal nominal identity for one checked C output slot.
 ///
 /// The source offsets distinguish otherwise-identical slots in nested scopes. They are not an exposed ABI detail:
-/// lowering maps every instance of one parameter contract to its private generated Rust carrier.
+/// lowering maps every instance of one parameter contract to its private native carrier.
 pub fn output_slot_type_identity(
     binding: &str,
     symbol: &str,

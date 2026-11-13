@@ -41,7 +41,7 @@ pub fn str_contains(haystack: &str, needle: &str) -> bool {
 /// Count the Unicode scalar values in a string.
 ///
 /// This is intentionally a scalar count rather than a UTF-8 byte count or a user-perceived grapheme count. It is the
-/// canonical policy named by the Incan string-method registry and shared by direct execution and generated Rust.
+/// canonical policy named by the Incan string-method registry and shared by every consumer.
 ///
 /// ## Parameters
 /// - `s`: String to measure.

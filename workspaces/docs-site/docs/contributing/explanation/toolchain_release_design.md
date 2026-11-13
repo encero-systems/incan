@@ -8,7 +8,7 @@ Oven's `incan toolchain pack OUT` produces the archive from an installed toolcha
 
 `incan toolchain install ARCHIVE` installs under the selected Incan home. The archive must name the toolchain this Oven supports. Installation binds the local Rust sysroot and verifies the staged driver's identity before replacing an existing installation. Moving the archive between machines does not relax the pinned compiler or loaded-library identity checks.
 
-**An archive is releasable only if the toolchain it installs relocates.** The gate (`workspaces/oven/tests/verify_toolchain_relocation.sh`) packs the installed toolchain, installs it into a fresh directory against a copied sysroot, and audits that every artifact path in every document Oven reads is relative and resolves inside that installation. It then runs the check, testing and interop contract families against the relocated installation with the source installation and its builder directories absent. Each case must have the source installation's outcome.
+**An archive is releasable only if the toolchain it installs relocates.** The gate (`scripts/verify_installation.incn`) packs the installed toolchain, installs it into a fresh directory against a copied sysroot, and audits that every artifact path in every document Oven reads is relative and resolves inside that installation. It then runs the check, testing and interop contract families against the relocated installation with the source installation and its builder directories absent. Each case must have the source installation's outcome.
 
 ### CI and later development
 

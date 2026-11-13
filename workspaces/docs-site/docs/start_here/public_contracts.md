@@ -10,18 +10,18 @@ This page is a planning target for the 1.0 stabilization pass. It names the cont
 | --- | --- | --- |
 | Source compatibility | Which source programs should keep working across compatible releases? | Define compatibility promises for syntax, typechecking, stdlib behavior, diagnostics that are part of user workflows, and allowed breaking-change process. |
 | Package metadata | What facts travel with a package? | Version package manifests, dependency metadata, checked API metadata, model/contract metadata, semantic facts, and artifact metadata. |
-| Rust interop | What is stable for Rust-facing users? | State the stable Rust-facing ABI/package direction, and separate it from generated Rust source as an implementation or inspection artifact. |
+| Rust interop | What is stable for Rust-facing users? | State the stable Rust-facing ABI/package direction, and separate it from compiler internals. |
 | Diagnostics | What can tools rely on? | Version diagnostic JSON, stable diagnostic codes, severity, phase, spans, notes, hints, and `incan explain` records. |
 | Build reports | What does a successful build report guarantee? | Version build-report JSON and document compiler version, profile, project identity, source breadcrumbs, artifacts, dependencies, interop summary, timings, notes, and degraded/partial report rules. |
 | Codegraph and inspection | Which compiler facts are public? | Version codegraph records, provenance, degraded-state behavior, language coverage, and unsupported fact categories. |
 | Artifact inspection | Which artifacts are stable enough for tools? | Separate native artifacts, package artifacts, checked metadata, current backend output, and debug-only generated files. |
 | Experimental surfaces | How are future features labeled? | Every public feature page should say current, beta, experimental, planned, or deferred. |
 
-## Generated Rust boundary
+## Compiler internals boundary
 
-For the documented Oven Alpha envelope, current beta `incan build`, `incan test`, and `incan run` select a receipt-bound direct-`rustc` plan from Incan-owned storage rather than invoking Cargo. Generated Rust remains useful, inspectable backend output, while the internal compatibility publisher is the sole Cargo-backed producer rather than a normal-command backend.
+`incan build`, `incan test`, and `incan run` compile checked Body IR through the pinned Rust compiler. No Rust source is generated and Cargo is not invoked.
 
-For 1.0, generated Rust source should not be the public package compatibility contract. Public compatibility should be based on Incan source, manifests, checked metadata, semantic facts, package metadata, native artifacts, CLI report schemas, and explicit Rust-facing interop contracts.
+For 1.0, compiler internals are not the public package compatibility contract. Public compatibility should be based on Incan source, manifests, checked metadata, semantic facts, package metadata, native artifacts, CLI report schemas, and explicit Rust-facing interop contracts.
 
 ## Stabilization rules
 

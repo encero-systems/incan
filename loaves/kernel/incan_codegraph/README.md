@@ -54,7 +54,7 @@ Rust graph facts are collected by the installed rustc driver. Incan facts come f
 - a graph database
 - an MCP server
 - an embedding or search index
-- a generated-Rust ABI contract
+- a native ABI contract
 - a full resolved reference or call graph
 - an architecture recommendation engine
 - a process-risk scoring engine

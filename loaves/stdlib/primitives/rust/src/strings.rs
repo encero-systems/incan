@@ -1,6 +1,6 @@
 //! Provide runtime string helpers that delegate to the shared semantic core.
 //!
-//! This module is used by generated Rust code. Its functions intentionally route behavior through `incan_lang::strings`
+//! This module is used by compiled Incan code. Its functions intentionally route behavior through `incan_lang::strings`
 //! so runtime behavior (including panics/messages) stays aligned with compiler expectations and parity tests.
 //! Rust remains necessary because native text values and compiler-emitted calls currently use Rust `String` and `str`.
 

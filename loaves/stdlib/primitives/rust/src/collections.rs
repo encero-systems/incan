@@ -1,4 +1,4 @@
-//! Collection helpers for Incan-generated Rust code.
+//! Collection helpers for compiled Incan code.
 //!
 //! This module exists to keep runtime behavior Python-like while avoiding Rust-default panic messages (e.g. Vec/HashMap
 //! indexing panics). Instead, we raise canonical `IncanError` messages.
@@ -177,7 +177,7 @@ pub fn dict_not_contains_key<K: Eq + Hash, V>(dict: &HashMap<K, V>, key: &K) -> 
     !dict.contains_key(key)
 }
 
-/// Compiler-only collection helpers used by generated Rust.
+/// Compiler-only collection helpers used by compiled Incan code.
 #[doc(hidden)]
 pub mod __private {
     use super::{IncanError, raise, raise_value_error};

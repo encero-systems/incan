@@ -7,7 +7,7 @@
 
 pub(crate) mod ordinal_map;
 
-/// Compiler-only ordinal-key helpers used by generated Rust.
+/// Compiler-only ordinal-key helpers used by compiled Incan code.
 #[doc(hidden)]
 pub mod __private {
     /// Hash canonical `OrdinalKey` bytes into the signed positive hash domain used by `std.collections.OrdinalMap`.

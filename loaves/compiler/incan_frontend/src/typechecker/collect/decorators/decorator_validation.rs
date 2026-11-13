@@ -512,7 +512,7 @@ impl TypeChecker {
         }
     }
 
-    /// Return whether a string Rust derive path names a crate available to generated Rust.
+    /// Return whether a string Rust derive path names a crate available to the compiled unit.
     pub(super) fn rust_derive_path_has_declared_crate(&self, path: &str) -> bool {
         let segments: Vec<_> = path.split("::").collect();
         if segments.is_empty() || !segments.iter().all(|segment| Self::is_valid_rust_path_segment(segment)) {
