@@ -30,7 +30,7 @@ from toolchain import load_toolchain
 from unit import describe
 from unit_compiler import graph_body_output_path, plan_record_counts, plan_record_report_path
 from unit_rust import prepare_native
-from unit_freshness import fingerprint, unit_key
+from unit_freshness import Key, fingerprint, unit_key
 from observation import FileMetadata, file_metadata
 from shared_link import development_link, linkage_key, library_witness, witness_current
 from jec import begin as begin_work, record as record_work
@@ -103,12 +103,15 @@ pub def obtain(
     3. Obtain its executable through the bakery's claim, recheck, worker compilation and publication path.
     4. Return the descriptor after checking capture; caller selection publishes it in the caller's view.
     """
+    listing_refusals = get_or("OVEN_BODY_REFUSALS", "default") == "list"
     # 1. A hit uses the same whole-unit record as the legacy producer, without another compiler activation.
-    match read_program(store, handle)?:
-        Some(unit) =>
-            restore_program(store, unit)?
-            return Ok(ProgramOutcome(code=0, unit=Some(unit)))
-        None => pass
+    # Refusal diagnosis must reach the checker: an earlier successful descriptor contains no refusal evidence.
+    if not listing_refusals:
+        match read_program(store, handle)?:
+            Some(unit) =>
+                restore_program(store, unit)?
+                return Ok(ProgramOutcome(code=0, unit=Some(unit)))
+            None => pass
     # 2. Unsupported roots refuse explicitly; this producer does not pretend to expose declaration records.
     opening = begin_work()
     mut epoch_reads = 0
@@ -119,9 +122,10 @@ pub def obtain(
     if len(epoch.roots) != 1:
         return Err("unit records require exactly one program root")
     selector = standalone_selector(epoch, producer)?
-    if let Some(unit) = indexed_program(store, epoch, selector)?:
-        restore_program(store, unit)?
-        return Ok(ProgramOutcome(code=0, unit=Some(unit), epoch_reads=epoch_reads))
+    if not listing_refusals:
+        if let Some(unit) = indexed_program(store, epoch, selector)?:
+            restore_program(store, unit)?
+            return Ok(ProgramOutcome(code=0, unit=Some(unit), epoch_reads=epoch_reads))
     preparing = begin_work()
 
     mut toolchain = load_toolchain()?
@@ -143,15 +147,19 @@ pub def obtain(
     compiled_key = unit_key(ready, toolchain)?
     if compiled_key.refusal != "":
         return Err(compiled_key.refusal)
+    # Diagnosis has a separate native identity: a normal successful unit is not proof that all bodies were rechecked.
+    mut native_key = compiled_key
+    if listing_refusals:
+        native_key = refusal_diagnostic_key(compiled_key)?
     # Build and run ask for the same debug program, including its existing shared native linkage policy.
-    key = linkage_key(compiled_key, development_link(ready, true))?
+    key = linkage_key(native_key, development_link(ready, true))?
     binary = program_binary(ready)
     record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
     # 3. Exactly one existing producer owns claiming and publishing a native unit.
     graph = snapshot(store).map_err((error) => error.message())?
     projected = prepare_captured_source_inputs(graph, begin(graph), ready, epoch.inputs)?
     mut invalid = body_owners_reading(graph, projected.keys, CHECKER_PROFILE)?
-    if get_or("OVEN_BODY_REFUSALS", "default") == "list":
+    if listing_refusals:
         invalid = [record.identity for record in select_body_inventory(graph, CHECKER_PROFILE)?]
     invalid_namespaces = invalid_namespace_modules(graph, projected.keys, CHECKER_PROFILE)?
     retained_bodies = select_body_inventory_except(graph, CHECKER_PROFILE, invalid)?
@@ -160,7 +168,7 @@ pub def obtain(
     # Lowering revalidates its exact checked inputs; a changed raw source slice may still produce equal meaning.
     invalid_plans = plan_owners_reading(graph, projected.keys)?
     selected_bodies.extend(select_plan_inventory_except(graph, invalid_plans)?)
-    produced = obtain_executable(ready, toolchain, binary, compiled_key, true, Some(store), true, Some(selected_bodies))?
+    produced = obtain_executable(ready, toolchain, binary, native_key, true, Some(store), true, Some(selected_bodies))?
     plan_counts = plan_record_counts(ready, compiled_key)?
     if produced.code != 0:
         return Ok(
@@ -209,6 +217,20 @@ pub def obtain(
             epoch_reads=epoch_reads,
             transaction=index_program(store, selector, unit, Some(request_transaction))?,
             claim=produced.claim,
+        ),
+    )
+
+
+def refusal_diagnostic_key(key: Key) -> Result[Key, str]:
+    """Keep list-mode compiler evidence separate from an ordinary reusable native unit."""
+    domain = "incan.body-refusal-list-native/1"
+    return Ok(
+        Key(
+            digest="sha256:" + fingerprint([domain, key.digest])?,
+            parts=key.parts + [f"diagnostic {domain}"],
+            codegen=key.codegen,
+            provenance=key.provenance,
+            descriptor=key.descriptor,
         ),
     )
 
