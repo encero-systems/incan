@@ -1,0 +1,11 @@
+[project]
+name = "counter"
+version = "0.1.0"
+
+[c]
+library = "counter"
+public-headers = ["include/counter.h"]
+include = ["include"]
+
+[[c.compile]]
+sources = ["csrc/counter.c"]

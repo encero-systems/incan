@@ -1,0 +1,44 @@
+# behavior: a project's own `[c]` facet is a Clove: an ordinary build compiles its C and C++ sources (the C++ behind a C interface) into the configuration's static archive with the host compiler under the explicit local override, and a binding links it with `c.loaf_library`, verified against the Clove's public header with that configuration's definitions (#3133)
+# environment:
+#   INCAN_C_COMPILER=host
+# cli-commands:
+#   oven run src/main.incn
+# expect-stdout:
+#   42
+#   8
+#   10
+# expect-trace-contains:
+#   unit clove_own_shim clove scaled:
+
+from std.interop import c
+
+
+binding Shim:
+    header = "include/shim.h"
+    link = c.loaf_library("clove_own_shim", configuration="scaled")
+
+    symbol scale(value: c.i32) -> c.i32:
+        native = "shim_scale"
+    symbol twice(value: c.i32) -> c.i32:
+        native = "shim_twice"
+    enum Factor:
+        SCALE: c.i32 = SHIM_FACTOR
+
+
+def scaled(value: i32) -> i32:
+    """Call the Clove's C function."""
+    unsafe:
+        return Shim.scale(value)
+
+
+def twice(value: i32) -> i32:
+    """Call the Clove's C++ function through its C interface."""
+    unsafe:
+        return Shim.twice(value)
+
+
+def main() -> None:
+    """Print results computed by the archive and a constant verified with the configuration's definitions."""
+    println(scaled(4))
+    println(twice(4))
+    println(Shim.Factor.SCALE)

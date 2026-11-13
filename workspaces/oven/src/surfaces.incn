@@ -21,6 +21,8 @@ const OVEN_COMMANDS: FrozenList[str] = ["describe-unit", "owner", "bakery", "loc
 const OVEN_INSPECTIONS: FrozenList[str] = ["dependencies", "run"]
 # Commands only `incan` runs.
 const INCAN_COMMANDS: FrozenList[str] = ["explain", "fmt", "mcp", "toolchain"]
+# 0.5.1 `incan` commands that only `oven` runs now; refusing one names its `oven` spelling.
+const MOVED_TO_OVEN: FrozenList[str] = ["lock"]
 
 
 pub def invoked() -> str:
@@ -51,8 +53,9 @@ pub def misplaced(surface: str, command: str, arguments: list[str]) -> Option[st
     """
     The refusal for `command` on `surface` when only the other surface runs it.
 
-    An Oven command on `incan` is unknown, in the words any unknown command gets. A language command on `oven` names
-    the `incan` command that runs it.
+    An Oven command on `incan` is unknown, in the words any unknown command gets; one that 0.5.1 ran as an `incan`
+    command also names the `oven` command that runs it now. A language command on `oven` names the `incan` command
+    that runs it.
     """
     owner = owner_of(command, arguments)
     if owner == "" or owner == surface:
@@ -60,6 +63,8 @@ pub def misplaced(surface: str, command: str, arguments: list[str]) -> Option[st
     if surface == INCAN:
         if command == "inspect":
             return Some(f"{INCAN} inspect: unknown command `{arguments[0]}`")
+        if command in MOVED_TO_OVEN:
+            return Some(f"{INCAN}: unknown command `{command}`: run `{OVEN} {command}`")
         return Some(f"{INCAN}: unknown command `{command}`")
     name = spelled(command, arguments)
     return Some(f"{OVEN}: `oven {name}` is a language command: run `incan {name}`")

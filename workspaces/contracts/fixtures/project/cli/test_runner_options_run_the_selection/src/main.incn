@@ -1,0 +1,13 @@
+# behavior: `incan test` accepts 0.5.1's runner options together: selection, workers, a time limit, stop policy, a seeded shuffle, durations, captured output, a JUnit report, a testing feature and verbose console output (#3138).
+# cli-commands:
+#   test tests -k alpha --jobs 2 --timeout 5s -x --run-xfail --shuffle --seed 3 --durations 1 --nocapture --fail-on-empty --junit report.xml --feature extra -v --format console
+#   test tests -k alpha -j 2 --timeout=5s --exitfirst --run-xfail --shuffle --seed=3 --durations=1 --nocapture --fail-on-empty --junit=report.xml --feature=extra --verbose
+# expect-stdout-contains:
+#   collected 1 test(s)
+#   shuffle seed: 3
+#   test_runner.incn::test_alpha PASSED
+#   ==================== slowest durations ===================
+# expect-exit: 0
+
+def main() -> None:
+    println("main")

@@ -1,0 +1,14 @@
+# behavior: 0.5.1's `--release` refuses by naming its 0.6 spelling, `--profile release` (RFC 118, #3143).
+# cli-commands:
+#   run --release src/main.incn
+#   build --release
+#   test --release
+#   oven run --release src/main.incn
+# expect-stdout:
+# expect-stderr-contains:
+#   unknown option `--release`: select the release profile with `--profile release`
+# expect-exit: 2
+
+def main() -> None:
+    """Provide a source that refused invocations never compile."""
+    pass

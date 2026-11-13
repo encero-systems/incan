@@ -1,0 +1,28 @@
+# behavior: an unchanged Clove configuration is reused by every later build instead of being compiled again (#3133)
+# environment:
+#   INCAN_C_COMPILER=host
+# cli-commands:
+#   oven build src/main.incn
+#   oven build src/main.incn
+#   oven run src/main.incn
+# expect-exit: 0
+# expect-trace-contains:
+#   unit clove_reuse clove default:
+# expect-trace-at-most-once:
+#   unit clove_reuse clove default: compiled
+
+from std.interop import c
+
+
+binding Reuse:
+    header = "include/reuse.h"
+    link = c.loaf_library("clove_reuse")
+
+    symbol value() -> c.i32:
+        native = "reuse_value"
+
+
+def main() -> None:
+    """Run the linked archive without printing, so every command meets the same stream expectations."""
+    unsafe:
+        _ = Reuse.value()
