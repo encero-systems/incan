@@ -612,15 +612,15 @@ impl TypeChecker {
             ManifestExportRef::Class(class) => class.type_params.clone(),
             _ => Vec::new(),
         };
-        let Some((mut kind, type_alias_target)) =
-            self.symbol_kind_for_manifest_export(manifest, export, imported_type_aliases)
-        else {
-            return;
-        };
         let canonical = manifest
             .contract_metadata
             .identity_graph
             .canonical_for_public_name(source_name);
+        let Some((mut kind, type_alias_target)) =
+            self.symbol_kind_for_manifest_export(manifest, export, canonical.as_ref(), imported_type_aliases)
+        else {
+            return;
+        };
         self.remap_symbol_kind_through_declaring_module(library, manifest, canonical.as_ref(), &mut kind);
         self.remap_symbol_kind_with_import_aliases(&mut kind, imported_type_aliases);
         Self::mark_compiled_class_field_provider(&mut kind, library);
@@ -678,6 +678,7 @@ impl TypeChecker {
         &mut self,
         manifest: &LibraryManifest,
         export: ManifestExportRef<'_>,
+        canonical: Option<&CanonicalSymbolId>,
         imported_type_aliases: &HashMap<String, String>,
     ) -> Option<(SymbolKind, Option<crate::typechecker::TypeAliasTarget>)> {
         let mut type_alias_target = None;
@@ -737,7 +738,10 @@ impl TypeChecker {
                         nominal_identities: Default::default(),
                     });
                 }
-                self.symbol_kind_from_manifest_alias(manifest, export, &mut HashSet::new())?
+                canonical
+                    .filter(|identity| identity.kind == SemanticSourceTargetKind::Function)
+                    .and_then(|identity| self.symbol_kind_from_canonical_identity(identity))
+                    .or_else(|| self.symbol_kind_from_manifest_alias(manifest, export, &mut HashSet::new()))?
             }
         };
         Some((kind, type_alias_target))
