@@ -552,16 +552,28 @@ pub def begin(view: Snapshot) -> Transaction:
     )
 
 
-pub def put(mut transaction: Transaction, key: str, value: bytes, expect: int = EXPECT_ANY) -> Transaction:
+pub def put(transaction: Transaction, key: str, value: bytes, expect: int = EXPECT_ANY) -> Transaction:
     """`transaction` with a value written under `key`, valid only while `expect` holds at commit."""
-    transaction.writes.append(Write(key=key, kind=KIND_VALUE, value=value, expect=expect))
-    return transaction
+    mut next = transaction
+    stage_put(next, key, value, expect)
+    return next
 
 
-pub def delete(mut transaction: Transaction, key: str) -> Transaction:
+pub def delete(transaction: Transaction, key: str) -> Transaction:
     """`transaction` with a tombstone written under `key`."""
+    mut next = transaction
+    stage_delete(next, key)
+    return next
+
+
+pub def stage_put(mut transaction: Transaction, key: str, value: bytes, expect: int = EXPECT_ANY) -> None:
+    """Stage one value directly in a caller-owned transaction without copying its accumulated writes."""
+    transaction.writes.append(Write(key=key, kind=KIND_VALUE, value=value, expect=expect))
+
+
+pub def stage_delete(mut transaction: Transaction, key: str) -> None:
+    """Stage one tombstone directly in a caller-owned transaction without copying its accumulated writes."""
     transaction.writes.append(Write(key=key, kind=KIND_TOMBSTONE, value=b"", expect=EXPECT_ANY))
-    return transaction
 
 
 pub def fork(view: Snapshot, name: str) -> Result[Snapshot, StoreError]:
