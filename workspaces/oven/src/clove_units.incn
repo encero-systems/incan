@@ -3,7 +3,8 @@ Clove units (RFC 159): one configuration of a local Loaf's C facet compiled into
 
 Until the Incan toolchain names a managed C toolchain release, a Clove compiles only through RFC 159's explicit,
 non-portable local override, `INCAN_C_COMPILER=host`; the unit records that the host compiler built it and is not
-publishable. Each configuration is its own unit under the root project's `target/incan/cloves`.
+publishable. Each configuration is its own unit under the root project's `target/incan/cloves`, reused while its
+declared inputs and every file its last compile read are unchanged.
 """
 
 from rust::std::env::consts import ARCH, OS
@@ -294,6 +295,25 @@ def declared_identity(
     return fingerprint(inputs)
 
 
+def recorded_inputs_current(root: str, stamp: Path, identity: str) -> Result[bool, str]:
+    """Whether the last build's stamp names this identity and every file its compiles read is unchanged."""
+    if not stamp.is_file():
+        return Ok(false)
+    lines = read(stamp)?.split("\n")
+    if len(lines) == 0 or lines[0] != identity:
+        return Ok(false)
+    for line in lines[1:]:
+        if line == "":
+            continue
+        fields = line.split("\t")
+        if len(fields) != 2:
+            return Ok(false)
+        path = Path(root).joinpath(fields[0])
+        if not path.is_file() or content_digest(path)? != fields[1]:
+            return Ok(false)
+    return Ok(true)
+
+
 def configuration_unit(
     name: str,
     root: str,
@@ -304,12 +324,17 @@ def configuration_unit(
     profile: str,
     directory: Path,
 ) -> Result[CloveConfigurationUnit, str]:
-    """Compile a configuration into its archive, recording the identity and every file its compiles read."""
+    """Reuse a configuration's archive while its inputs are unchanged; otherwise compile it again."""
     identity = declared_identity(name, root, facet, resolved, planned, compiler, profile)?
     archive = directory.joinpath(f"lib{facet.library}.a")
     stamp = directory.joinpath(str(STAMP))
     label = f"unit {name} clove {resolved.name}"
-    reason = "no stored build"
+    mut reason = "no stored build"
+    if archive.is_file() and stamp.is_file():
+        if recorded_inputs_current(root, stamp, identity)?:
+            trace(f"{label}: reused")
+            return Ok(configured(resolved, archive)?)
+        reason = "inputs changed"
     read_files = compiled_archive(name, root, facet, resolved, planned, compiler, profile, directory, archive)?
     mut lines = [identity]
     for path in read_files:
