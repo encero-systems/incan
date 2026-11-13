@@ -33,7 +33,7 @@ from owned_lists import is_owned_list_iterator, owned_list_next
 from generators import generator_shape, generator_collect, generator_next
 from table_views import borrowed_at
 from element_places import is_element_place
-from element_borrows import mutable_element_place
+from element_borrows import mutable_element_place, shared_element_place
 from models import field_step_type
 from tuples import is_tuple_type, tuple_has_owners, owned_carrier
 from builtins import list_call
@@ -597,6 +597,9 @@ def iteration_root(mut builder: Builder, value: RustPlace, exclusive: bool, span
     if is_element_place(builder, value)?:
         if exclusive:
             return mutable_element_place(builder, value, span)
+        match shared_element_place(builder, value, span)?:
+            Some(place) => return Ok(place)
+            None => pass
         return materialized_receiver(builder, value, span)
     return list_root_place(builder, value, span)
 

@@ -155,7 +155,13 @@ def shared_element_receiver(
     receiver_type: PlanType,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Borrow a copy of the element as a shared receiver, as any other element read copies it."""
+    """Borrow the selected element in place when list storage can provide a checked shared loan."""
+    match shared_element_place(builder, source, span)?:
+        Some(selected) =>
+            reference = temporary(builder, receiver_type, span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(selected), span))
+            return Ok(reference)
+        None => pass
     copied = materialized_receiver(builder, source, span)?
     reference = temporary(builder, receiver_type, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(copied), span))
