@@ -1,0 +1,9 @@
+# behavior: `incan fmt` with no PATH formats the current directory's tree, as 0.5.1 does; with `--check` an already formatted tree exits 0 (#3143).
+# cli-commands:
+#   fmt --check
+# expect-stdout:
+#   ✓ 1 file(s) already formatted
+# expect-exit: 0
+
+def main() -> None:
+    println("formatted")

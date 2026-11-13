@@ -1,0 +1,6 @@
+[project]
+name = "fmt_defaults_to_the_current_directory"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
