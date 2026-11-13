@@ -11,10 +11,12 @@ from oven_tests import (
     admitted,
     default_jobs,
     file_lines,
+    free_worker,
     invocations,
     join_logs,
     log_name,
     parse_options,
+    remove_worker_projects,
     run_all,
     run_all_failures,
     shared_memory,
@@ -82,7 +84,16 @@ def test_admission_keeps_reservations_within_memory() -> Result[None, str]:
     assert admitted(reservations, [4, 5], [4 * GIB, 4 * GIB], 4, large) == [4]
     assert admitted(reservations, [5], [6 * GIB, 4 * GIB, 4 * GIB], 4, large) == []
     assert admitted(reservations, [4, 5], [6 * GIB], 4, large) == [4]
-    assert admitted(reservations, [1, 2, 3], [4 * GIB], 4, large, ["a", "a", "b", "c"], ["a"]) == [2, 3]
+    return Ok(None)
+
+
+def test_a_pooled_invocation_takes_the_first_free_worker() -> Result[None, str]:
+    """A worker project runs one invocation at a time; any free one serves, and none free means waiting."""
+    assert free_worker(["/w/0", "/w/1", "/w/2"], []) == "/w/0"
+    assert free_worker(["/w/0", "/w/1", "/w/2"], ["/w/0", ""]) == "/w/1"
+    assert free_worker(["/w/0", "/w/1", "/w/2"], ["/w/2", "/w/0"]) == "/w/1"
+    assert free_worker(["/w/0", "/w/1"], ["/w/1", "/w/0"]) == ""
+    assert free_worker([], ["/w/0"]) == ""
     return Ok(None)
 
 
@@ -222,9 +233,9 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
     loaf_a = root.joinpath("loaves/group_b/loaf_a")
     loaf_b = root.joinpath("loaves/group_a/loaf_b")
     assert [item.arguments for item in planned] == [
-        ["test", oven_a.joinpath("src/test_alpha.incn").0],
-        ["test", oven_b.joinpath("src/test_beta.incn").0],
-        ["test", oven_a.joinpath("src/test_engine_protocol.incn").0],
+        ["test", "src/test_alpha.incn"],
+        ["test", "src/test_beta.incn"],
+        ["test", "src/test_engine_protocol.incn"],
         ["test", models.joinpath("tests/test_record_scope.incn").0, "--profile", "release"],
         ["test", lowering.joinpath("tests/test_three.incn").0, "--profile", "release"],
         ["test", loaf_b.joinpath("tests/test_one.incn").0, "--profile", "release"],
@@ -232,9 +243,9 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
         ["test", loaf_a.joinpath("tests/test_two.incn").0, "--profile", "release"],
     ]
     assert [item.directory for item in planned] == [
-        oven_a.0,
-        oven_b.0,
-        oven_a.0,
+        "",
+        "",
+        "",
         models.0,
         lowering.0,
         loaf_b.0,
@@ -254,14 +265,52 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
         4 * GIB,
     ]
     assert [item.alone for item in planned] == [false, false, true, false, false, false, false, false]
-    assert [item.group for item in planned] == [oven_a.0, oven_b.0, oven_a.0, "", "", "", "", ""]
-    assert [item.scratch is not None for item in planned] == [false, true, true, false, false, false, false, false]
+    workers = [oven_a.0, oven_b.0]
+    assert [item.workers for item in planned] == [workers, workers, workers, [], [], [], [], []]
     assert oven_a.joinpath("src/test_beta.incn").is_file()
     assert oven_b.joinpath("src/test_alpha.incn").is_file()
     assert oven_a.joinpath("tests/fixture.txt").is_file()
     assert oven_a.parent().parent().joinpath("workbench/app/loaf.toml").is_file()
     assert oven_a.parent().parent().joinpath("loaves").is_symlink()
     assert planned[3].log.0 == logs.joinpath("003-test_record_scope.log").0
+    # Every invocation has exited before the worker checkouts go; the Loaf projects they name are not theirs to remove.
+    remove_worker_projects(planned)?
+    assert not oven_a.parent().parent().exists() and not oven_b.parent().parent().exists()
+    assert root.joinpath("loaves").is_dir() and loaf_a.joinpath("tests/test_one.incn").is_file()
+    return Ok(None)
+
+
+def test_pooled_invocations_never_wait_behind_a_busy_worker() -> Result[None, str]:
+    """
+    A long invocation holds its worker project while later ones run, one at a time, in the free one.
+
+    The first invocation waits until the last one has run, so a fixed assignment that queued the last one behind it in
+    the same worker would fail it. A second invocation in an occupied worker fails at `mkdir busy`.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    logs = root.joinpath("logs")
+    logs.mkdir(true, true).map_err((error) => error.message())?
+    workers = [root.joinpath("w0").0, root.joinpath("w1").0]
+    for worker in workers:
+        Path(worker).mkdir(true, true).map_err((error) => error.message())?
+    done = root.joinpath("done").0
+    waits = "i=0; while [ ! -e \"$1\" ]; do i=$((i+1)); if [ $i -gt 200 ]; then exit 1; fi; sleep 0.05; done"
+    mut planned: list[Invocation] = []
+    for index in range(5):
+        mut script = f"mkdir busy || exit 1; touch ran-{index}; sleep 0.05"
+        if index == 0:
+            script = f"mkdir busy || exit 1; {waits}; touch ran-0"
+        elif index == 4:
+            script += "; touch \"$1\""
+        script += "; rmdir busy"
+        log = logs.joinpath(log_name(index, Path(f"/r/test_{index}.incn")))
+        arguments = ["-c", script, "sh", done]
+        planned.append(Invocation(arguments=arguments, directory="", reservation=GIB, log=log, workers=workers))
+    assert run_all_failures("/bin/sh", planned, 2, 0)? == []
+    assert Path(workers[0]).joinpath("ran-0").is_file()
+    for index in range(1, 5):
+        assert Path(workers[1]).joinpath(f"ran-{index}").is_file(), f"invocation {index} did not run in the free worker"
     return Ok(None)
 
 
@@ -284,14 +333,8 @@ def test_joined_log_keeps_invocation_order_whatever_the_schedule() -> Result[Non
     mut planned: list[Invocation] = []
     for index in range(7):
         log = logs.joinpath(log_name(index, Path(f"/r/test_{index}.incn")))
-        scratch = root.joinpath(f"scratch-{index}")
-        scratch.mkdir(true, true).map_err((error) => error.message())?
-        scratch.joinpath("target").write_text("built\n", "utf-8", "strict", None).map_err((error) => error.message())?
-        planned.append(
-            Invocation(arguments=[f"line {index}"], directory=root.0, reservation=GIB, log=log, scratch=Some(scratch)),
-        )
+        planned.append(Invocation(arguments=[f"line {index}"], directory=root.0, reservation=GIB, log=log))
     assert run_all("/bin/echo", planned, 5, 3 * GIB)?
-    assert len(root.glob("scratch-*").map_err((error) => error.message())?) == 0
     joined = join_logs(planned, root.joinpath("joined.log"))?
     assert joined == "line 0\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\n"
     assert not run_all("/usr/bin/false", planned, 4, 0)?
