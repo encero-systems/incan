@@ -1,0 +1,6 @@
+[project]
+name = "run_and_build_find_the_enclosing_loaf"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

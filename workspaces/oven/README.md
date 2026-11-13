@@ -15,6 +15,7 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 | `incan_units.incn` | Preparing path libraries in dependency order, checking and compiling a described unit with the toolchain's compiler, and running the program it compiled (`incan check`, `incan run`, `incan build`). |
 | `unit_freshness.incn` | Content fingerprints for prepared path libraries: selected unit inputs, source files, compiler inputs and reached Loaf artifacts. |
 | `testing.incn` | Discovering test modules, then selecting, running and reporting the collected tests of compiled Incan and Rust harnesses, each in its own process (`incan test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]`). |
+| `inline_source.incn` | Inline source for `incan run -c CODE`: the digest-named module file a direct run compiles. |
 | `runner_options.incn`, `runner_selection.incn`, `runner_reports.incn` | The test runner options 0.5.1 accepts, `-k` and `-m` expressions with the seeded shuffle, and the console, JSON Lines, JUnit and durations reports. |
 | `rust_units.incn` | Rust units: a local Loaf's Rust facet and the local facets it reaches, libraries in dependency order, one `rustc` per unit against compiled registry units (`incan build`). |
 | `rust_build.incn` | The shared Rust build request: unit ordering, the externs and search directories each unit links, the pinned toolchain's libraries and `rustc` invocation. |
