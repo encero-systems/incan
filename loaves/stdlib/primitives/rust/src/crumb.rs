@@ -16,6 +16,25 @@ pub struct IndexedLayout {
     pub element_charge: i64,
 }
 
+/// One canonical integer parse with distinct spelling and range failures.
+pub struct ParsedInteger {
+    pub kind: u8,
+    pub signed: i128,
+    pub unsigned: u128,
+}
+
+/// One canonical floating-point parse retaining its network-order IEEE bits.
+pub struct ParsedFloat {
+    pub kind: u8,
+    pub data: Vec<u8>,
+}
+
+/// One fixed-scale decimal parse with contract-specific failure classification.
+pub struct ParsedDecimal {
+    pub kind: u8,
+    pub coefficient: i128,
+}
+
 /// One bounded scan result; numeric tags keep Incan's typed error surface authoritative.
 #[derive(Clone, Copy)]
 pub struct Scan {
@@ -368,6 +387,211 @@ pub fn indexed(cells: Vec<Vec<u8>>, width: u8) -> IndexedLayout {
     }
 }
 
+/// Parse one canonical decimal integer and enforce its declared exact width.
+pub fn parse_integer(value: String, signed: bool, bits: u8) -> ParsedInteger {
+    if !canonical_integer(&value) {
+        return ParsedInteger {
+            kind: 1,
+            signed: 0,
+            unsigned: 0,
+        };
+    }
+    if signed {
+        if let Ok(number) = value.parse::<i128>()
+            && signed_in_width(number, bits)
+        {
+            return ParsedInteger {
+                kind: 0,
+                signed: number,
+                unsigned: 0,
+            };
+        }
+    } else if let Ok(number) = value.parse::<u128>()
+        && unsigned_in_width(number, bits)
+    {
+        return ParsedInteger {
+            kind: 0,
+            signed: 0,
+            unsigned: number,
+        };
+    }
+    ParsedInteger {
+        kind: 2,
+        signed: 0,
+        unsigned: 0,
+    }
+}
+
+/// Parse one canonical COMIC float and retain its exact-width network-order bits.
+pub fn parse_float(value: String, width: u8) -> ParsedFloat {
+    if !nonfinite(&value) && !valid_finite_float(&value) {
+        return ParsedFloat {
+            kind: 1,
+            data: Vec::new(),
+        };
+    }
+    if width == 32 {
+        return match value.parse::<f32>() {
+            Ok(number) => ParsedFloat {
+                kind: 0,
+                data: number.to_bits().to_be_bytes().to_vec(),
+            },
+            Err(_) => ParsedFloat {
+                kind: 2,
+                data: Vec::new(),
+            },
+        };
+    }
+    match value.parse::<f64>() {
+        Ok(number) => ParsedFloat {
+            kind: 0,
+            data: number.to_bits().to_be_bytes().to_vec(),
+        },
+        Err(_) => ParsedFloat {
+            kind: 2,
+            data: Vec::new(),
+        },
+    }
+}
+
+/// Parse one `d`-suffixed decimal under its declared precision and exact scale.
+pub fn parse_decimal(value: String, precision: u8, scale: u8) -> ParsedDecimal {
+    let Some(number) = value.strip_suffix('d') else {
+        return decimal_failure(1);
+    };
+    let mut parts = number.split('.');
+    let Some(integral) = parts.next() else {
+        return decimal_failure(2);
+    };
+    let Some(fractional) = parts.next() else {
+        return decimal_failure(2);
+    };
+    if parts.next().is_some()
+        || fractional.len() != usize::from(scale)
+        || !decimal_digits(integral, true)
+        || !decimal_digits(fractional, false)
+    {
+        return decimal_failure(2);
+    }
+    let mut coefficient = String::with_capacity(integral.len() + fractional.len());
+    coefficient.push_str(integral);
+    coefficient.push_str(fractional);
+    if coefficient
+        .strip_prefix('-')
+        .is_some_and(|digits| digits.bytes().all(|digit| digit == b'0'))
+    {
+        coefficient = "0".to_string();
+    }
+    if coefficient.trim_start_matches('-').len() > usize::from(precision) {
+        return decimal_failure(3);
+    }
+    match coefficient.parse::<i128>() {
+        Ok(number) => ParsedDecimal {
+            kind: 0,
+            coefficient: number,
+        },
+        Err(_) => decimal_failure(3),
+    }
+}
+
+/// Construct one classified decimal failure without an optional payload.
+fn decimal_failure(kind: u8) -> ParsedDecimal {
+    ParsedDecimal { kind, coefficient: 0 }
+}
+
+/// Accept canonical integer digits with one optional minus and no negative zero.
+fn canonical_integer(value: &str) -> bool {
+    if value.is_empty() || value.starts_with('+') || value.contains('_') {
+        return false;
+    }
+    let digits = if let Some(digits) = value.strip_prefix('-') {
+        if digits == "0" {
+            return false;
+        }
+        digits
+    } else {
+        value
+    };
+    canonical_unsigned(digits)
+}
+
+/// Accept nonempty unsigned decimal digits without leading zeros.
+fn canonical_unsigned(value: &str) -> bool {
+    !value.is_empty()
+        && (value.len() == 1 || !value.starts_with('0'))
+        && value.bytes().all(|digit| digit.is_ascii_digit())
+}
+
+/// Check a parsed signed integer against one valid core width.
+fn signed_in_width(value: i128, bits: u8) -> bool {
+    if bits == 128 {
+        return true;
+    }
+    let limit = 1i128 << u32::from(bits - 1);
+    value >= -limit && value < limit
+}
+
+/// Check a parsed unsigned integer against one valid core width.
+fn unsigned_in_width(value: u128, bits: u8) -> bool {
+    bits == 128 || value < (1u128 << u32::from(bits))
+}
+
+/// Recognize the exact lowercase nonfinite COMIC spellings.
+fn nonfinite(value: &str) -> bool {
+    matches!(value, "inf" | "-inf" | "nan")
+}
+
+/// Validate finite COMIC float syntax before delegating numeric conversion to Rust.
+fn valid_finite_float(value: &str) -> bool {
+    if value.is_empty()
+        || value.starts_with('+')
+        || value.contains('_')
+        || (!value.contains('.') && !value.contains('e'))
+    {
+        return false;
+    }
+    let mut exponent_parts = value.split('e');
+    let Some(base) = exponent_parts.next() else {
+        return false;
+    };
+    if !decimal_float_base(base) {
+        return false;
+    }
+    if let Some(exponent) = exponent_parts.next()
+        && (exponent.starts_with('+') || !decimal_digits(exponent, true))
+    {
+        return false;
+    }
+    exponent_parts.next().is_none()
+}
+
+/// Validate digits around one optional decimal point.
+fn decimal_float_base(value: &str) -> bool {
+    let mut parts = value.split('.');
+    let Some(integral) = parts.next() else {
+        return false;
+    };
+    if !decimal_digits(integral, true) {
+        return false;
+    }
+    if let Some(fractional) = parts.next()
+        && !decimal_digits(fractional, false)
+    {
+        return false;
+    }
+    parts.next().is_none()
+}
+
+/// Validate one decimal digit run with an optional leading minus.
+fn decimal_digits(value: &str, signed: bool) -> bool {
+    let digits = if signed {
+        value.strip_prefix('-').unwrap_or(value)
+    } else {
+        value
+    };
+    !digits.is_empty() && digits.bytes().all(|digit| digit.is_ascii_digit())
+}
+
 /// Append one already-validated little-endian fixed-width offset.
 fn push_offset(output: &mut Vec<u8>, mut value: usize, width: u8) {
     for _ in 0..width {
@@ -491,7 +715,8 @@ fn top_bits(value: u128) -> u64 {
 mod tests {
     use super::{
         Buffer, Reader, TextBuilder, binary_literal, decode_scalar, encode_integer_unsigned, encode_native_signed,
-        encode_native_unsigned, frame, indexed, quote_text, scalar_text, spaces,
+        encode_native_unsigned, frame, indexed, parse_decimal, parse_float, parse_integer, quote_text, scalar_text,
+        spaces,
     };
 
     #[test]
@@ -543,6 +768,22 @@ mod tests {
         let wide = indexed(vec![vec![0; 256]], 2);
         assert_eq!(&wide.data[..5], b"\x02\x00\x00\x00\x01");
         assert_eq!((wide.byte_charge, wide.element_charge), (522, 1));
+    }
+
+    #[test]
+    fn number_parsers_preserve_comic_failure_classes_and_bits() {
+        assert_eq!(parse_integer("-128".to_string(), true, 8).signed, -128);
+        assert_eq!(parse_integer("128".to_string(), true, 8).kind, 2);
+        assert_eq!(parse_integer("-0".to_string(), true, 128).kind, 1);
+        assert_eq!(parse_integer(u128::MAX.to_string(), false, 128).unsigned, u128::MAX);
+
+        assert_eq!(parse_float("1.5".to_string(), 32).data, 1.5f32.to_bits().to_be_bytes());
+        assert_eq!(parse_float("1".to_string(), 64).kind, 1);
+        assert_eq!(parse_float("nan".to_string(), 64).data.len(), 8);
+
+        assert_eq!(parse_decimal("-0.00d".to_string(), 3, 2).coefficient, 0);
+        assert_eq!(parse_decimal("1.2d".to_string(), 3, 2).kind, 2);
+        assert_eq!(parse_decimal("123.45d".to_string(), 4, 2).kind, 3);
     }
 
     #[test]
