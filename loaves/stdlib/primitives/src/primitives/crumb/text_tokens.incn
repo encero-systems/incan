@@ -1,6 +1,6 @@
 """Bounded COMIC tokenization with Unicode-scalar source positions."""
 
-from rust::std::string import String as RustString
+from rust::incan_std_primitives::crumb import decode_scalar as native_decode_scalar, scalar_text as native_scalar_text
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.text_types import TextError, TextFailure, TextPosition
 from crate.primitives.crumb.text_controls import BIDIRECTIONAL_CONTROLS
@@ -556,63 +556,17 @@ def ascii_byte(character: str, position: TextPosition) -> Result[u8, TextError]:
 
 def scalar_at(data: &bytes, index: int, position: TextPosition) -> Result[tuple[str, int], TextError]:
     """Decode one proven UTF-8 scalar and return its byte width without retaining a per-scalar string list."""
-    if index < 0 or index >= len(data):
+    decoded = native_decode_scalar(data, index.saturating_resize[i64]())
+    if decoded.kind != 0u8:
         return Err(TextError(kind=TextFailure.InvalidUtf8, position=position))
-    lead = int(data[index])
-    mut width = 1
-    mut value = lead
-    if lead >= 194 and lead <= 223:
-        width = 2
-        value = lead & 31
-    elif lead >= 224 and lead <= 239:
-        width = 3
-        value = lead & 15
-    elif lead >= 240 and lead <= 244:
-        width = 4
-        value = lead & 7
-    elif lead >= 128:
-        return Err(TextError(kind=TextFailure.InvalidUtf8, position=position))
-    if index + width > len(data):
-        return Err(TextError(kind=TextFailure.InvalidUtf8, position=position))
-    for offset in range(1, width):
-        continuation = int(data[index + offset])
-        if continuation < 128 or continuation > 191:
-            return Err(TextError(kind=TextFailure.InvalidUtf8, position=position))
-        value = value * 64 + continuation - 128
-    if (width == 2 and value < 128) or (width == 3 and value < 2048) or (width == 4 and value < 65536):
-        return Err(TextError(kind=TextFailure.InvalidUtf8, position=position))
-    if value > 1114111 or (value >= 55296 and value <= 57343):
-        return Err(TextError(kind=TextFailure.InvalidUtf8, position=position))
-    return Ok((scalar_text(value, position)?, width))
+    return Ok((decoded.text, decoded.width.saturating_resize[int]()))
 
 
 def scalar_text(value: int, position: TextPosition) -> Result[str, TextError]:
     """Encode one valid non-surrogate Unicode scalar as owned UTF-8 text."""
-    if value < 0 or value > 1114111 or (value >= 55296 and value <= 57343):
-        return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
-    mut data: list[u8] = []
-    if value <= 127:
-        data.append(byte(value))
-    elif value <= 2047:
-        data.append(byte(192 + value // 64))
-        data.append(byte(128 + value % 64))
-    elif value <= 65535:
-        data.append(byte(224 + value // 4096))
-        data.append(byte(128 + (value // 64) % 64))
-        data.append(byte(128 + value % 64))
-    else:
-        data.append(byte(240 + value // 262144))
-        data.append(byte(128 + (value // 4096) % 64))
-        data.append(byte(128 + (value // 64) % 64))
-        data.append(byte(128 + value % 64))
-    match RustString.from_utf8(data):
-        Ok(text) => return Ok(str(text))
-        Err(_) => return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
-
-
-def byte(value: int) -> u8:
-    """Convert a proven 0..255 integer to its exact byte."""
-    return value.saturating_resize[u8]()
+    match native_scalar_text(value.saturating_resize[i64]()):
+        Some(text) => return Ok(text)
+        None => return Err(TextError(kind=TextFailure.InvalidEscape, position=position))
 
 
 def hex_value(character: str) -> int:
