@@ -27,6 +27,34 @@ pub struct Reader {
     offset: usize,
 }
 
+/// Operation-local byte assembly without generated per-octet list traffic.
+#[derive(Clone, Debug, Default)]
+pub struct Buffer {
+    data: Vec<u8>,
+}
+
+impl Buffer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn len(&self) -> i64 {
+        self.data.len() as i64
+    }
+
+    pub fn append(&mut self, value: Vec<u8>) {
+        self.data.extend(value);
+    }
+
+    pub fn push(&mut self, value: u8) {
+        self.data.push(value);
+    }
+
+    pub fn finish(&self) -> Vec<u8> {
+        self.data.clone()
+    }
+}
+
 impl Reader {
     pub fn new(data: Vec<u8>) -> Self {
         Self { data, offset: 0 }
@@ -280,7 +308,7 @@ fn top_bits(value: u128) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Reader, encode_integer_unsigned, encode_native_signed, encode_native_unsigned, frame};
+    use super::{Buffer, Reader, encode_integer_unsigned, encode_native_signed, encode_native_unsigned, frame};
 
     #[test]
     fn native_boundaries_match_crumb_framing() {
@@ -311,5 +339,14 @@ mod tests {
 
         let limited = Reader::new(b"\x80\x01".to_vec()).scan_unsigned(2, 1);
         assert_eq!((limited.kind, limited.byte_charge, limited.element_charge), (5, 2, 1));
+    }
+
+    #[test]
+    fn buffer_assembles_owned_bytes() {
+        let mut buffer = Buffer::new();
+        buffer.push(1);
+        buffer.append(vec![2, 3]);
+        assert_eq!(buffer.len(), 3);
+        assert_eq!(buffer.finish(), [1, 2, 3]);
     }
 }
