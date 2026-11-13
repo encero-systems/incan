@@ -9,8 +9,9 @@ from cli_help import render
 from files import read, write
 from semver_req import Version, parse_version
 from unit import project_root_of
+from workspace import Selection, find_workspace, select_members
 
-pub const VERSION_USAGE: str = "oven version [BUMP | --set VERSION] [--dry-run] [--keep-prerelease] [--project PATH]"
+pub const VERSION_USAGE: str = "oven version [BUMP | --set VERSION] [--dry-run] [--keep-prerelease] [--project PATH | --member NAME_OR_PATH | --workspace]"
 
 
 @derive(Eq)
@@ -34,6 +35,8 @@ pub model VersionRequest:
     pub dry_run: bool = false
     pub keep_prerelease: bool = false
     pub project: Option[str] = None
+    # `--workspace` and `--member`: a workspace selection that must name exactly one member.
+    pub selection: Selection = Selection()
 
 
 pub def parse_version_request(arguments: list[str]) -> Result[VersionRequest, str]:
@@ -42,6 +45,16 @@ pub def parse_version_request(arguments: list[str]) -> Result[VersionRequest, st
     mut index = 0
     while index < len(arguments):
         argument = arguments[index]
+        if argument in ["--member", "-p"]:
+            if index + 1 >= len(arguments):
+                return Err(f"`{argument}` needs a member name or path")
+            request.selection.members.append(arguments[index + 1])
+            index += 2
+            continue
+        if argument == "--workspace":
+            request.selection.workspace = true
+            index += 1
+            continue
         if argument in ["--set", "--project"]:
             if index + 1 >= len(arguments):
                 return Err(f"`{argument}` needs a value")
@@ -80,7 +93,7 @@ pub def change_version(request: VersionRequest) -> Result[str, str]:
     3. Replace only the version line, unless this is a dry run.
     """
     # 1. An explicit project names its directory; otherwise the nearest manifest above the working directory.
-    manifest = selected_manifest(request.project)?
+    manifest = selected_manifest(request.project, request.selection)?
     # 2. The current version must be SemVer; the new one is the bump or the explicit version.
     text = read(manifest)?
     lines = text.split("\n")
@@ -105,8 +118,16 @@ pub def change_version(request: VersionRequest) -> Result[str, str]:
     return Ok("\n".join(report))
 
 
-def selected_manifest(project: Option[str]) -> Result[Path, str]:
-    """The manifest `--project` names, or the nearest one at or above the working directory."""
+def selected_manifest(project: Option[str], selection: Selection) -> Result[Path, str]:
+    """
+    The manifest `--project` names, the one workspace member `--member` or `--workspace` selects, or the nearest one
+    at or above the working directory.
+    """
+    if selection.workspace or len(selection.members) > 0:
+        _origin, members = select_members(find_workspace(Path("."))?, selection)?
+        if len(members) != 1:
+            return Err("requires exactly one workspace member; select one with --member NAME_OR_PATH")
+        return Ok(members[0].root.joinpath("loaf.toml"))
     if let Some(directory) = project:
         manifest = Path(directory).joinpath("loaf.toml")
         if not manifest.is_file():
@@ -197,6 +218,8 @@ pub def version_help() -> str:
             "  --dry-run           Print the planned change without writing loaf.toml.",
             "  --keep-prerelease   Keep prerelease identifiers on a major, minor or patch bump.",
             "  --project PATH      The project directory (default: the nearest loaf.toml).",
+            "  --member, -p NAME   The workspace member to change, by project name or root-relative path.",
+            "  --workspace         Every workspace member; valid only when the workspace has one.",
             "  Without arguments, `oven version` prints the toolchain version.",
         ],
         "oven version minor --dry-run",
