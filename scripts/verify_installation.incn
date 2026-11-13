@@ -1,5 +1,6 @@
 """Verify one installed release toolchain against this checkout's complete contract and native-test surface."""
 
+from rust::std::env import current_exe
 from rust::std::process import Command, exit
 from rust::std::string import String as RustString
 from rust::std::time import Instant
@@ -147,11 +148,10 @@ def verification_release_trace() -> Result[Option[ReleaseTrace], str]:
 
 
 def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tuple[BaselineReport, int], str]:
-    """Run independent installed gates under one host-memory budget and recover their typed results."""
+    """Run independent installed gates through this built verifier and recover their typed results."""
     plans = verification_phase_plans(installation.jobs)
     mut invocations: list[Invocation] = []
-    compiler = installation.home.joinpath("bin/incan")
-    program = installation.root.joinpath("scripts/verify_installation.incn")
+    verifier = current_exe().map_err((error) => error.to_string())?.to_string_lossy().into_owned()
     retain_traces = get_or("INCAN_VERIFY_TRACES", "") == "1"
     for plan in plans:
         name = verification_phase_name(plan.phase)
@@ -160,17 +160,13 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
             Path(trace_environment["INCAN_TRACE_DIR"]).mkdir(true, true).map_err((error) => error.message())?
         invocations.append(
             Invocation(
-                arguments=[
-                    "run",
-                    program.0,
-                    "--",
-                    "--phase",
+                arguments=verification_phase_arguments(
                     name,
-                    installation.run.0,
-                    runner.0,
-                    str(installation.jobs),
-                    str(installation.timeout_seconds),
-                ],
+                    installation.run,
+                    runner,
+                    installation.jobs,
+                    installation.timeout_seconds,
+                ),
                 directory=installation.root.0,
                 reservation=plan.reservation,
                 log=installation.run.joinpath(f"phase-{name}.log"),
@@ -179,7 +175,7 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
             ),
         )
     memory = shared_memory(host_memory())
-    failed = run_all_failures(compiler.0, invocations, len(invocations), memory)?
+    failed = run_all_failures(verifier, invocations, len(invocations), memory)?
     if len(failed) > 0:
         return Err(
             "installed verification phase failures: " + ", ".join(
@@ -199,6 +195,11 @@ def run_concurrent_gates(installation: Installation, runner: Path) -> Result[tup
             .map_err((error) => error.message())?.strip(),
     )
     return Ok((report, suites))
+
+
+pub def verification_phase_arguments(name: str, run: Path, runner: Path, jobs: int, timeout: int) -> list[str]:
+    """Address one phase directly through the already-built verifier executable."""
+    return ["--phase", name, run.0, runner.0, str(jobs), str(timeout)]
 
 
 pub def verification_trace_environment(run: Path, phase: str, enabled: bool) -> Dict[str, str]:
