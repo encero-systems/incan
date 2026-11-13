@@ -1,0 +1,9 @@
+# behavior: incan and oven run a project directory through the same registry-dependency route as build
+# cli-commands:
+#   run .
+#   oven run .
+# expect-stdout:
+#   project route
+
+def main() -> None:
+    println("project route")
