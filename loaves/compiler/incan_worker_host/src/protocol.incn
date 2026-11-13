@@ -316,6 +316,48 @@ pub def import_request_document(
     return JsonValue.object(fields)
 
 
+pub def import_compile_document(
+    generation: str,
+    arguments: list[str],
+    directory: str,
+    stdout: str,
+    stderr: str,
+) -> JsonValue:
+    """Continue a staged exchange with Oven's final unit invocation and its authoritative resolved artifacts."""
+    mut fields: Dict[str, JsonValue] = {}
+    fields["schema"] = JsonValue.string(SCHEMA)
+    fields["generation"] = JsonValue.string(generation)
+    fields["exchange"] = JsonValue.string("compile")
+    fields["arguments"] = JsonValue.array([JsonValue.string(argument) for argument in arguments])
+    fields["cwd"] = JsonValue.string(directory)
+    fields["stdout"] = JsonValue.string(stdout)
+    fields["stderr"] = JsonValue.string(stderr)
+    return JsonValue.object(fields)
+
+
+pub def import_cancel_document(generation: str) -> JsonValue:
+    """Cancel a staged exchange whose final unit was satisfied from Oven's bakery."""
+    mut fields: Dict[str, JsonValue] = {}
+    fields["schema"] = JsonValue.string(SCHEMA)
+    fields["generation"] = JsonValue.string(generation)
+    fields["exchange"] = JsonValue.string("cancel")
+    return JsonValue.object(fields)
+
+
+pub def import_requirements(document: JsonValue, generation: str) -> Result[list[JsonValue], str]:
+    """Read the typed requirement array returned by the compiler for this worker generation."""
+    if required_text(document, "schema")? != SCHEMA or required_text(document, "generation")? != generation:
+        return Err("compiler worker import requirements protocol mismatch")
+    if required_text(document, "exchange")? != "requirements":
+        return Err("compiler worker did not return import requirements")
+    match document.get("requirements"):
+        Some(value) =>
+            match value.as_array():
+                Some(items) => return Ok(items)
+                None => return Err("compiler worker import requirements are not an array")
+        None => return Err("compiler worker returned no import requirements")
+
+
 pub def encode_import_requirements(generation: str, requirements: bytes) -> Result[bytes, str]:
     """Encode the compiler's typed import requirement array as the first reply of a staged exchange."""
     parsed = decoded(requirements)?

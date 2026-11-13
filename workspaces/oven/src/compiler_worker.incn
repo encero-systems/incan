@@ -14,10 +14,21 @@ from std.environ import get_or
 from rust::std::time import Duration
 from std.fs import Path
 from std.fs.locking import FileLock
+from std.json import JsonValue
 from pub::incan_platform.ipc import Connection, Listener, listen
 from files import discard_file, open_stream
 from home import owners_dir
-from pub::incan_worker_host.protocol import SCHEMA, completion, ready, request_document, retired
+from pub::incan_worker_host.protocol import (
+    SCHEMA,
+    completion,
+    import_cancel_document,
+    import_compile_document,
+    import_request_document,
+    import_requirements,
+    ready,
+    request_document,
+    retired,
+)
 from pub::incan_worker_host.record_protocol import (
     RECORD_SCHEMA,
     RecordMessage,
@@ -51,6 +62,90 @@ pub model Completion:
     pub exited: bool
     pub output: bytes
     pub error: bytes
+
+
+pub class ImportExchange:
+    """One held worker slot and connection between parsed import requirements and Oven's final unit description."""
+
+    pub requirements: list[JsonValue]
+    connection: Connection
+    generation: str
+    held: FileLock
+    console: str
+    directory: str
+    relay: bool
+
+    @staticmethod
+    pub def new(
+        requirements: list[JsonValue],
+        connection: Connection,
+        generation: str,
+        held: FileLock,
+        console: str,
+        directory: str,
+        relay: bool,
+    ) -> ImportExchange:
+        """Construct a retained exchange while keeping its transport and worker-slot ownership private."""
+        return ImportExchange(
+            requirements=requirements,
+            connection=connection,
+            generation=generation,
+            held=held,
+            console=console,
+            directory=directory,
+            relay=relay,
+        )
+
+    pub def compile(mut self, arguments: list[str]) -> Result[i32, str]:
+        """Continue with Oven's final invocation, then relay foreground console bytes and return its real status."""
+        self.connection.send(
+            import_compile_document(
+                self.generation,
+                arguments,
+                self.directory,
+                f"{self.console}.out",
+                f"{self.console}.err",
+            ).to_json().map_err((error) => error.message())?.encode("utf-8"),
+        )?
+        reply = receive_document(self.connection)?
+        if self.relay:
+            relay_console(self.console)?
+        return Ok(status_code(completion(reply)?))
+
+    pub def cancel(mut self) -> Result[None, str]:
+        """Release a parsed activation whose final artifact was already present in Oven's bakery."""
+        self.connection.send(
+            import_cancel_document(self.generation).to_json().map_err((error) => error.message())?.encode("utf-8"),
+        )?
+        _ = receive_document(self.connection)?
+        if self.relay:
+            relay_console(self.console)?
+        return Ok(None)
+
+
+pub def begin_imports(toolchain: Toolchain, unit: Path) -> Result[ImportExchange, str]:
+    """Start a retained compiler activation and return only its typed import requirements to Oven for resolution."""
+    relay = toolchain.console == ""
+    capturing = capture_for(toolchain)?
+    connected, generation, held = connection_for(capturing)?
+    directory = current_dir().map_err((error) => f"compiler working directory: {error}")?
+    cwd = directory.to_string_lossy().into_owned()
+    mut connection = connected
+    send_document(
+        connection,
+        import_request_document(
+            generation,
+            unit.0,
+            cwd,
+            f"{capturing.console}.out",
+            f"{capturing.console}.err",
+        ),
+    )?
+    reply = receive_document(connection)?
+    requirements = import_requirements(reply, generation)?
+    return Ok(
+        ImportExchange.new(requirements, connection, generation, held, capturing.console, cwd, relay),
+    )
 
 
 pub def served_resident(arguments: list[str]) -> bool:

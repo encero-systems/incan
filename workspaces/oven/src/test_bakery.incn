@@ -147,7 +147,7 @@ pub def test_two_projects_with_the_same_unit_compile_it_once_and_target_holds_on
     assert read(second_output)? == "compiled program"
     assert attempts(root) == "x"
     # Development linkage must also start the requested view, so the host reports it as the executable image.
-    made = obtain_executable(second, toolchain, second_output, key, true, Some(store))?
+    made = obtain_executable(second, toolchain, second_output, key, true, Some(store), false, None, None)?
     assert made.launch.0 == second_output.0, "a development run replaced the view with its bakery payload"
     assert verification_entries() > 0
     forget_verified()

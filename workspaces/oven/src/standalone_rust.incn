@@ -22,8 +22,16 @@ from unit import UnitDescription
 from unit_freshness import fingerprint, unit_key
 from pub::incan_platform.trace import Operation
 from jec import begin, record
+from compiler_worker import ImportExchange, begin_imports
 
 const IMPORTS_SCHEMA: str = "incan.oven.rust-imports/1"
+
+
+pub model StagedCrates:
+    """Oven-resolved standalone crates and the compiler activation retaining the parsed graph, when one was needed."""
+
+    pub crates: list[NativeCrate]
+    pub exchange: Option[ImportExchange] = None
 
 
 pub def standalone_crates(described: UnitDescription, toolchain: Toolchain) -> Result[list[NativeCrate], str]:
@@ -37,6 +45,21 @@ pub def standalone_crates(described: UnitDescription, toolchain: Toolchain) -> R
     """
     # 1. Parsing, including local module discovery, belongs to the compiler.
     requests = source_requests(described, toolchain)?
+    return resolved_crates(requests, described, toolchain)
+
+
+pub def staged_standalone_crates(described: UnitDescription, toolchain: Toolchain) -> Result[StagedCrates, str]:
+    """Resolve typed requirements under Oven authority while retaining a new compiler parse for final activation."""
+    requests, exchange = staged_source_requests(described, toolchain)?
+    return Ok(StagedCrates(crates=resolved_crates(requests, described, toolchain)?, exchange=exchange))
+
+
+def resolved_crates(
+    requests: list[JsonValue],
+    described: UnitDescription,
+    toolchain: Toolchain,
+) -> Result[list[NativeCrate], str]:
+    """Select exact artifacts for compiler-produced requirements using only Oven's registry and publication policy."""
     # 2. A crate has one version requirement and the union of its requested features.
     selections = merged_requests(requests)?
     if len(selections) == 0:
@@ -59,6 +82,28 @@ pub def standalone_crates(described: UnitDescription, toolchain: Toolchain) -> R
         artifact = registry.artifact_for(selections[name], "target")?
         externs.append(NativeCrate(name=name, path=artifact))
     return Ok(externs)
+
+
+def staged_source_requests(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+) -> Result[tuple[list[JsonValue], Option[ImportExchange]], str]:
+    """Reuse retained requirements, or begin one compiler exchange whose parsed graph continues into compilation."""
+    directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
+    retained = directory.joinpath(f"{unit.package}.imports.json")
+    identity = imports_identity(unit, toolchain)?
+    if identity != "":
+        if let Some(records) = retained_imports(retained, identity):
+            trace(f"unit {unit.package} imports: reused")
+            return Ok((records, None))
+    make_directory(directory)?
+    path = directory.joinpath(f"{unit.package}.imports.unit.json")
+    write(path, unit.to_json().to_pretty_json().map_err((error) => error.message())?)?
+    exchange = begin_imports(toolchain, path)?
+    records = exchange.requirements
+    if identity != "" and imports_identity(unit, toolchain)? == identity:
+        _ = retain_imports(retained, identity, records)
+    return Ok((records, Some(exchange)))
 
 
 pub def bind_published(

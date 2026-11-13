@@ -32,7 +32,8 @@ from rust_target import target_configuration
 from search_index import search_index
 from sysroot_access import declared_libraries, runtime_sysroot
 from toolchain import NativeCrate, Toolchain, load_toolchain, located, rust_compiler
-from standalone_rust import bind_published, standalone_crates
+from standalone_rust import bind_published, standalone_crates, staged_standalone_crates
+from compiler_worker import ImportExchange
 from registry_metadata import bound_entries
 from unit import UnitDescription, UnitLoaf, describe
 from observation import trace
@@ -45,6 +46,13 @@ from unit_publication import record_payload
 from compiler_facts import admit_fact
 from vocabulary import prepare_vocabulary, published_workers, stage_vocabulary
 from compile_time_trust import MissingTrust, combine as combine_trust, decide, decide_registry
+
+
+pub model NativePreparation:
+    """A final Oven-authoritative unit and the compiler activation retaining its provisional parsed graph, if any."""
+
+    pub unit: UnitDescription
+    pub exchange: Option[ImportExchange] = None
 
 
 pub def describe_native(
@@ -256,6 +264,23 @@ pub def prepare_native(
             unit = add_rust_root(unit, native)?
     # 2. No source graph is selected again while the prepared unit is linked.
     return prepare_linked(unit, toolchain)
+
+
+pub def prepare_native_for_compilation(
+    described: UnitDescription,
+    toolchain: Toolchain,
+    unattended: bool = false,
+) -> Result[NativePreparation, str]:
+    """Prepare a compile unit, retaining standalone import parsing until Oven supplies its final description."""
+    mut unit = described
+    unit.unattended = unattended or unit.unattended
+    if Path(unit.project_root).joinpath("loaf.toml").is_file():
+        unit = resolve_dependencies(unit, toolchain)?
+        return Ok(NativePreparation(unit=prepare_linked(unit, toolchain)?))
+    staged = staged_standalone_crates(unit, toolchain)?
+    for native in staged.crates:
+        unit = add_rust_root(unit, native)?
+    return Ok(NativePreparation(unit=prepare_linked(unit, toolchain)?, exchange=staged.exchange))
 
 
 pub def prepare_linked(

@@ -45,7 +45,8 @@ from toolchain import Toolchain
 from unit import UnitDescription
 from unit_compiler import compile_prepared_unit, crate_name, described_by, run_compiler, write_unit
 from unit_freshness import Key, unit_key
-from unit_rust import compile_library_unit, prepare_native
+from unit_rust import compile_library_unit, prepare_native, prepare_native_for_compilation
+from compiler_worker import ImportExchange
 from shared_link import development_link, library_witness, linkage_key, witness_current
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
@@ -136,11 +137,24 @@ pub def make_unit(
     2. Compile a library, or reuse an executable whose inputs have not changed.
     """
     # 1. Every provider is current before the unit receives the exact artifacts and ABI caches it reads.
-    ready = prepare_native(unit, toolchain)?
+    mut prepared = prepare_native_for_compilation(unit, toolchain)?
+    ready = prepared.unit
     # 2. Both libraries and executables reuse their complete, unchanged artifact sets.
     if ready.kind == "library":
+        if let Some(exchange) = prepared.exchange:
+            exchange.cancel()?
         return Ok(Made(code=compile_library_unit(ready, toolchain, output)?, launch=output))
-    return obtain_executable(ready, toolchain, output, unit_key(ready, toolchain)?, development)
+    return obtain_executable(
+        ready,
+        toolchain,
+        output,
+        unit_key(ready, toolchain)?,
+        development,
+        None,
+        false,
+        None,
+        prepared.exchange,
+    )
 
 
 pub def compile_executable(
@@ -152,7 +166,9 @@ pub def compile_executable(
     selected_store: Option[Path] = None,
 ) -> Result[i32, str]:
     """Obtain one whole-unit executable through the bakery, preserving the existing status-only caller contract."""
-    return obtain_executable(unit, toolchain, output, key, development, selected_store).map((result) => result.code)
+    return obtain_executable(unit, toolchain, output, key, development, selected_store, false, None, None).map(
+        (result) => result.code,
+    )
 
 
 pub def obtain_executable(
@@ -164,6 +180,7 @@ pub def obtain_executable(
     selected_store: Option[Path] = None,
     defer_publication: bool = false,
     graph_body_records: Option[list[SelectedBodyPage]] = None,
+    exchange: Option[ImportExchange] = None,
 ) -> Result[Made, str]:
     """
     Obtain the executable of `key` from the home bakery and make `output` a view of it.
@@ -179,9 +196,10 @@ pub def obtain_executable(
     5. Seal it, then view it.
     """
     shared = development_link(unit, development)
+    mut active_exchange = exchange
     # Inputs that cannot be named portably are compiled in place; nothing is baked or reused.
     if key.refusal != "":
-        code = compile_staged(unit, toolchain, output, key, key.refusal, shared, graph_body_records)?
+        code = compile_staged(unit, toolchain, output, key, key.refusal, shared, graph_body_records, active_exchange)?
         return Ok(Made(code=code, launch=output, evaluations=1))
     selected = linkage_key(key, shared)?
     mut store = Path("")
@@ -193,6 +211,8 @@ pub def obtain_executable(
     register_root(store, unit.project_root, root_registration(unit), [identity])?
     # 1. A sealed executable of the identity starts no compiler.
     if let Some(fact) = current_executable(store, identity, output.name(), shared)?:
+        if let Some(staged) = active_exchange:
+            staged.cancel()?
         made = viewed(store, fact, output, unit.kind, shared)?
         trace(f"{label}: reused")
         return Ok(made)
@@ -200,6 +220,8 @@ pub def obtain_executable(
     held = claim(store, identity)?
     # 3. A bake another command finished while this one waited is used, not repeated.
     if let Some(fact) = current_executable(store, identity, output.name(), shared)?:
+        if let Some(staged) = active_exchange:
+            staged.cancel()?
         made = viewed(store, fact, output, unit.kind, shared)?
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(made)
@@ -213,6 +235,7 @@ pub def obtain_executable(
         bake_reason(store, unit),
         shared,
         graph_body_records,
+        active_exchange,
     )?
     if code != 0:
         _ = staged.remove_tree()
@@ -285,9 +308,10 @@ def compile_staged(
     reason: str,
     shared: bool,
     graph_body_records: Option[list[SelectedBodyPage]] = None,
+    exchange: Option[ImportExchange] = None,
 ) -> Result[i32, str]:
     """Compile a unit to its staged name. Returns the compiler's exit code."""
-    return compile_prepared_unit(unit, toolchain, staged, Some(key), reason, shared, graph_body_records)
+    return compile_prepared_unit(unit, toolchain, staged, Some(key), reason, shared, graph_body_records, exchange)
 
 
 pub def executable_outputs(kind: str, output: Path, shared: bool = false) -> list[Path]:
