@@ -50,6 +50,7 @@ impl TypeChecker {
             return;
         }
         if self.callable_body_matches_current_scope(span) {
+            self.select_callable_final_record(span);
             self.symbols.enter_scope(crate::symbols::ScopeKind::Function);
             self.symbols.exit_scope();
             return;
