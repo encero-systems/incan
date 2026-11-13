@@ -1,0 +1,80 @@
+"""Isolated public component costs; these are not inferred allocations or an additive profiler."""
+
+from rust::std::time import Instant
+from std.primitives.crumb import Budget
+from std.primitives.crumb.column_value_dictionary import build_keys
+from std.primitives.crumb.hashes import seal_hash, value_hash
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.description_dictionary import admit_dictionary
+from std.primitives.crumb.types import ScalarKind, TypeNode
+from std.primitives.crumb.values import Projection, Value
+from bench_codecs import budget, report
+from bench_data import descriptions, rows
+
+
+pub def components(workload: str, count: int) -> Result[None, str]:
+    """Run explicit loops over the same inputs; every result is consumed and labeled by actual unit count."""
+    started = Instant.now()
+    input = rows(workload, count)
+    declared = descriptions(workload)
+    report("materialize", started.elapsed().as_secs_f64(), count, 0, 0)
+    retained_at = Instant.now()
+    mut values: list[Value] = []
+    for record in input:
+        values.append(record.value)
+    report("retain_value_tree", retained_at.elapsed().as_secs_f64(), count, 0, len(values))
+    mut setup = budget()?
+    registry = KindRegistry.create([], setup).map_err((e) => e.message())?
+    admitted_at = Instant.now()
+    mut repeated_entries = 0
+    iterations = min([count, 1000])
+    for _ in range(iterations):
+        mut allowance = budget()?
+        result = admit_dictionary(declared, registry, allowance).map_err((e) => e.message())?
+        repeated_entries += len(result.entries)
+    report("description_admission_iterations", admitted_at.elapsed().as_secs_f64(), iterations, 0, repeated_entries)
+    mut charge = Budget.create(bytes=count, elements=count, depth=1).map_err((e) => e.message())?
+    charge_at = Instant.now()
+    for _ in range(count):
+        charge.charge_bytes(1).map_err((e) => e.message())?
+        charge.charge_elements(1).map_err((e) => e.message())?
+    if charge.charge_bytes(1).is_ok() or charge.charge_elements(1).is_ok():
+        return Err("charge loop did not exhaust exactly its allowance")
+    report("two_budget_charges_per_record", charge_at.elapsed().as_secs_f64(), count, 0, count)
+    mut hash_budget = budget()?
+    hashes_at = Instant.now()
+    mut digest_bytes = 0
+    for value in values:
+        result = value_hash(value, Projection.Object, hash_budget).map_err((e) => e.message())?
+        digest_bytes += len(result.digest)
+    report("object_hash", hashes_at.elapsed().as_secs_f64(), count, digest_bytes, digest_bytes)
+    mut captured_budget = budget()?
+    captured_at = Instant.now()
+    mut preimage_bytes = 0
+    for value in values:
+        result = value_hash(value, Projection.Object, captured_budget, true).map_err((e) => e.message())?
+        match result.preimage:
+            Some(preimage) => preimage_bytes += len(preimage)
+            None => return Err("capture requested but absent")
+    report("object_hash_with_preimage", captured_at.elapsed().as_secs_f64(), count, preimage_bytes, preimage_bytes)
+    mut seal_budget = budget()?
+    sealed_at = Instant.now()
+    seal = seal_hash(values, seal_budget).map_err((e) => e.message())?
+    report("logical_seal", sealed_at.elapsed().as_secs_f64(), count, preimage_bytes, len(seal.digest))
+    if workload == "strings":
+        mut keys: list[Value] = []
+        for value in values:
+            match value:
+                Value.Record(members) => keys.append(members[0].value)
+                _ => return Err("dictionary benchmark expects records")
+        mut key_budget = budget()?
+        dictionary = admit_dictionary(declared, registry, key_budget).map_err((e) => e.message())?
+        keyed_at = Instant.now()
+        result = build_keys(
+            TypeNode.Scalar(ScalarKind.String),
+            keys,
+            dictionary,
+            key_budget,
+        ).map_err((e) => e.message())?
+        report("column_dictionary", keyed_at.elapsed().as_secs_f64(), count, 0, len(result.values))
+    return Ok(None)
