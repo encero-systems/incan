@@ -1,0 +1,128 @@
+"""The test runner's option grammar, selection expressions, seeded order and reports, without running a test."""
+
+from runner_options import ReportFormat, duration_ms, split_runner_options
+from runner_reports import Outcome, Status, json_record, json_summary, junit, slowest, summary_line
+from runner_selection import keyword_matches, markers_match, shuffled
+
+
+pub def test_every_runner_option_parses_and_leaves_unit_options() -> Result[None, str]:
+    """Each 0.5.1 runner option, in short, long and `=` spellings, is taken out; unit options and the path remain."""
+    runner, rest = split_runner_options(
+        [
+            "tests",
+            "--list",
+            "-k",
+            "alpha",
+            "-m",
+            "db",
+            "--strict-markers",
+            "--slow",
+            "-x",
+            "--run-xfail",
+            "--shuffle",
+            "--seed=3",
+            "--durations",
+            "2",
+            "--nocapture",
+            "--fail-on-empty",
+            "-v",
+            "--format=json",
+            "--junit",
+            "report.xml",
+            "-j",
+            "4",
+            "--timeout",
+            "250ms",
+            "--feature",
+            "net",
+            "--feature=disk",
+            "--profile",
+            "release",
+        ],
+    )?
+    assert rest == ["tests", "--profile", "release"]
+    assert runner.list and runner.strict_markers and runner.slow and runner.exitfirst and runner.run_xfail
+    assert runner.shuffle and runner.nocapture and runner.fail_on_empty and runner.verbose
+    assert runner.keyword == "alpha" and runner.markers == "db"
+    assert seeded(runner.seed) == 3 and runner.durations == 2 and runner.jobs == 4 and runner.timeout_ms == 250
+    assert runner.format == ReportFormat.Json and runner.junit == "report.xml"
+    assert runner.features == ["net", "disk"]
+    spelled, long = split_runner_options(["--markers", "db", "--jobs", "2", "--exitfirst", "--verbose"])?
+    assert long == [] and spelled.markers == "db" and spelled.jobs == 2 and spelled.exitfirst and spelled.verbose
+    return Ok(None)
+
+
+pub def test_runner_values_outside_their_domain_are_refused() -> Result[None, str]:
+    """Durations, counts, formats and a seed without a shuffle are refused with 0.5.1's wording where it had one."""
+    assert duration_ms("5s")? == 5000 and duration_ms("2m")? == 120000 and duration_ms("7")? == 7000
+    assert refusal(duration_ms("xyz")) == "invalid --timeout value `xyz`; use a duration like 250ms, 5s, or 2m"
+    assert refusal(duration_ms("0s")) != "" and refusal(duration_ms("ms")) != ""
+    assert refusal(split_runner_options(["--jobs", "0"])) != ""
+    assert refusal(split_runner_options(["--durations", "-1"])) != ""
+    assert refusal(split_runner_options(["--format", "xml"])) != ""
+    assert refusal(split_runner_options(["--seed", "4"])) != ""
+    assert refusal(split_runner_options(["-k"])) != ""
+    return Ok(None)
+
+
+pub def test_selection_expressions_and_seeded_order() -> Result[None, str]:
+    """Keyword terms match parts of identifiers; marker terms match whole markers; a seed fixes the shuffle."""
+    identifier = "tests/test_a.incn::test_Alpha"
+    assert keyword_matches("", identifier)?
+    assert keyword_matches("alpha", identifier)?
+    assert keyword_matches("test_a and not beta", identifier)?
+    assert not keyword_matches("beta or (alpha and gamma)", identifier)?
+    assert keyword_matches("not (beta)", identifier)?
+    assert refusal(keyword_matches("alpha and", identifier)) != ""
+    assert refusal(keyword_matches("(alpha", identifier)) != ""
+    assert markers_match("db and not slow", ["db"])?
+    assert not markers_match("d", ["db"])?
+    assert shuffled(5, 7) == shuffled(5, 7)
+    assert sorted(shuffled(5, 7)) == [0, 1, 2, 3, 4]
+    assert shuffled(0, 7) == []
+    return Ok(None)
+
+
+pub def test_reports_take_the_shapes_of_0_5_1() -> Result[None, str]:
+    """JSON Lines records, the summary, JUnit XML and the slowest durations name each outcome as 0.5.1 did."""
+    passed = Outcome(file="tests/test_a.incn", label="test_a.incn", name="test_one", status=Status.Passed, duration_ms=12)
+    skipped = Outcome(
+        file="tests/test_a.incn",
+        label="test_a.incn",
+        name="test_two",
+        status=Status.Skipped,
+        reason="later & <soon>",
+        markers=["skip"],
+    )
+    failed = Outcome(file="tests/test_a.incn", label="test_a.incn", name="test_three", status=Status.Failed, duration_ms=1500)
+    assert passed.console_line() == "test_a.incn::test_one PASSED"
+    assert skipped.console_line() == "test_a.incn::test_two SKIPPED (later & <soon>)"
+    assert json_record(passed)? == "{\"duration_ms\":12,\"file\":\"tests/test_a.incn\",\"markers\":[],\"name\":\"test_one\",\"schema_version\":\"incan.test.v1\",\"status\":\"passed\",\"test_id\":\"test_a.incn::test_one\"}"
+    assert "\"reason\":\"later & <soon>\"" in json_record(skipped)?
+    summary = json_summary([passed, skipped, failed], 1600, Some(9))?
+    assert summary == "{\"schema_version\":\"incan.test.v1\",\"summary\":{\"duration_ms\":1600,\"failed\":1,\"passed\":1,\"shuffle_seed\":9,\"skipped\":1,\"total\":3,\"xfailed\":0,\"xpassed\":0}}"
+    document = junit([passed, skipped, failed], 1600)
+    assert "<testsuite name=\"incan\" tests=\"3\" failures=\"1\" skipped=\"1\" time=\"1.600\">" in document
+    assert "<testcase classname=\"tests/test_a.incn\" name=\"test_one\" time=\"0.012\"></testcase>" in document
+    assert "<skipped>later &amp; &lt;soon&gt;</skipped>" in document
+    assert "<failure message=\"test failed\"></failure>" in document
+    assert slowest([passed, skipped, failed], 1) == [
+        "==================== slowest durations ===================",
+        "  1500ms test_a.incn::test_three",
+    ]
+    assert summary_line([passed, skipped, failed], 1600) == "1 passed, 1 failed, 1 skipped in 1.600s"
+    return Ok(None)
+
+
+def refusal[T](result: Result[T, str]) -> str:
+    """The reason a result was refused, or an empty string when it was not."""
+    match result:
+        Ok(_) => return ""
+        Err(reason) => return reason
+
+
+def seeded(seed: Option[int]) -> int:
+    """A parsed seed, or -1 when none was given."""
+    match seed:
+        Some(value) => return value
+        None => return -1

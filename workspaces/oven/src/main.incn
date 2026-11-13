@@ -29,7 +29,8 @@ from rust_testing import build_rust_tests
 from project_lock import ensure_project_lock, lock_project, parse_lock_command
 from toolchain import load_toolchain, rust_compiler
 from formatting import format_paths, parse_arguments as format_options
-from testing import directory_test_sources, run_collected, run_tests, run_rust_harness, test_sources
+from testing import TestCase, collected_cases, compile_tests, directory_test_sources, run_session, rust_cases, test_sources
+from runner_options import RunnerOptions, split_runner_options
 from owner_client import owned, status_code
 from owner_protocol import Reply
 from owner_endpoint import stop_owners
@@ -490,79 +491,104 @@ def via_owner(command: str, options: Options, entry: Path) -> Option[Reply]:
 
 
 def test(arguments: list[str]) -> None:
-    """Compile the collected test units of a file, a directory or, with no PATH, the current one; report each test."""
-    match parse_options(arguments, "."):
-        Err(reason) => syntax_error("test", reason)
-        Ok(options) =>
-            mut selected = validated("test", options)
-            if Path(selected.path).is_dir():
-                # A directory's project is found from the directory itself, so it is named absolutely.
-                match Path(selected.path).absolute():
-                    Ok(absolute) => selected.path = absolute.0
-                    Err(error) => fail(f"{invoked()} test: cannot resolve {error.message()}", 1)
-            prepared_lock("test", selected)
-            finish("test", tested(selected))
-
-
-def tested(options: Options) -> Result[i32, str]:
-    """Make a test unit's executable, through its owner or in this process, and report each test's fresh outcome."""
-    if Path(options.path).joinpath("loaf.toml").is_file():
-        return tested_project(options)
-    if Path(options.path).is_dir():
-        return tested_directory(options)
-    return tested_incan(options)
-
-
-def tested_directory(options: Options) -> Result[i32, str]:
-    """Run every test module below a directory that is not itself a Loaf, retaining any module's failure."""
-    sources = directory_test_sources(Path(options.path))?
-    if len(sources) == 0:
-        println("No tests collected")
-        return Ok(0)
-    mut failed = false
-    for source in sources:
-        mut selected = options
-        selected.path = source.0
-        if tested_incan(selected)? != 0:
-            failed = true
-    if failed:
-        return Ok(1)
-    return Ok(0)
-
-
-def tested_project(options: Options) -> Result[i32, str]:
     """
-    Run a Loaf's Rust harnesses, when it declares a Rust facet, and its Incan test modules, retaining failure from
-    either language. A Loaf with neither is refused rather than reported as passing.
+    Compile the collected test units of a file, a directory or, with no PATH, the current one, then select, run and
+    report their tests under the invocation's runner options.
+    """
+    match split_runner_options(arguments):
+        Err(reason) => syntax_error("test", reason)
+        Ok(split) =>
+            runner, unit_arguments = split
+            match parse_options(unit_arguments, "."):
+                Err(reason) => syntax_error("test", reason)
+                Ok(options) =>
+                    mut selected = validated("test", options)
+                    if Path(selected.path).is_dir():
+                        # A directory's project is found from the directory itself, so it is named absolutely.
+                        match Path(selected.path).absolute():
+                            Ok(absolute) => selected.path = absolute.0
+                            Err(error) => fail(f"{invoked()} test: cannot resolve {error.message()}", 1)
+                    prepared_lock("test", selected)
+                    finish("test", tested(selected, runner))
+
+
+model Collected:
+    """The tests one invocation compiled, and the first failed compilation's status, or zero."""
+
+    cases: list[TestCase] = []
+    compiled: i32 = 0
+
+
+def tested(options: Options, runner: RunnerOptions) -> Result[i32, str]:
+    """Collect a Loaf's, a directory's or one module's tests, then run them as one session."""
+    path = Path(options.path)
+    mut collected = Collected()
+    if path.joinpath("loaf.toml").is_file():
+        collected = project_cases(options, runner)?
+    elif path.is_dir():
+        collected = module_cases(options, runner, directory_test_sources(path)?, path)?
+    else:
+        collected = module_cases(options, runner, [path], path.parent())?
+    return run_session(collected.cases, runner, collected.compiled)
+
+
+def project_cases(options: Options, runner: RunnerOptions) -> Result[Collected, str]:
+    """
+    Collect a Loaf's Rust harness tests, when it declares a Rust facet, and its Incan test modules' tests. A Loaf with
+    neither is refused rather than reported as passing.
     """
     declared = rust_facet(options.path, false)?
     facet = declared.kind != "" or len(declared.binaries) > 0
     sources = test_sources(Path(options.path))?
     if not facet and len(sources) == 0:
         return Err(f"{options.path}: the Loaf has no test_*.incn modules and no Rust facet tests")
-    mut failed = false
+    mut collected = Collected()
     if facet:
         for binary in build_rust_tests(rust_request(options)?)?:
-            if run_rust_harness(Path(binary), Path(options.path))? != 0:
-                failed = true
+            for test_case in rust_cases(Path(binary), Path(options.path))?:
+                collected.cases.append(test_case)
+    modules = module_cases(options, runner, sources, Path(options.path))?
+    for test_case in modules.cases:
+        collected.cases.append(test_case)
+    collected.compiled = modules.compiled
+    return Ok(collected)
+
+
+def module_cases(options: Options, runner: RunnerOptions, sources: list[Path], root: Path) -> Result[Collected, str]:
+    """Compile each test module and collect its tests, named relative to `root`; a failed module keeps its status."""
+    mut collected = Collected()
     for source in sources:
         mut selected = options
         selected.path = source.0
-        if tested_incan(selected)? != 0:
-            failed = true
-    if failed:
-        return Ok(1)
-    return Ok(0)
+        code, binary = compiled_tests(selected, runner)?
+        if code != 0:
+            if collected.compiled == 0:
+                collected.compiled = code
+            continue
+        for test_case in collected_cases(binary, relative_name(source, root), source.name())?:
+            collected.cases.append(test_case)
+    return Ok(collected)
 
 
-def tested_incan(options: Options) -> Result[i32, str]:
-    """Preserve owner-backed Incan test compilation and per-entry execution."""
-    match via_owner("test", options, Path(options.path)):
-        Some(reply) =>
-            if reply.exit != 0:
-                return Ok(status_code(reply.exit))
-            return run_collected(Path(reply.binary), Path(options.path).name())
-        None => pass
+def relative_name(source: Path, root: Path) -> str:
+    """A module's path below `root`, as listings and reports name it."""
+    mut prefix = root.0
+    if not prefix.endswith("/"):
+        prefix += "/"
+    if source.0.startswith(prefix):
+        return source.0[len(prefix):]
+    return source.0
+
+
+def compiled_tests(options: Options, runner: RunnerOptions) -> Result[tuple[i32, Path], str]:
+    """
+    Make a test unit's executable through its owner or in this process. Testing features change what is collected,
+    so a unit with any is compiled here, with each feature active.
+    """
+    if len(runner.features) == 0:
+        match via_owner("test", options, Path(options.path)):
+            Some(reply) => return Ok((status_code(reply.exit), Path(reply.binary)))
+            None => pass
     mut unit = describe(
         Path(options.path),
         options.profile,
@@ -571,7 +597,10 @@ def tested_incan(options: Options) -> Result[i32, str]:
         purpose=ActivationPurpose.Test,
     )?
     unit.kind = "test"
-    return run_tests(unit, toolchain_for(unit)?)
+    for feature in runner.features:
+        if feature not in unit.active_features:
+            unit.active_features.append(feature)
+    return compile_tests(unit, toolchain_for(unit)?)
 
 
 def check(arguments: list[str]) -> None:

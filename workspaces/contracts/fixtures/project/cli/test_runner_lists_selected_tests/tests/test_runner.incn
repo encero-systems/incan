@@ -1,0 +1,9 @@
+"""Tests the runner selects, orders and reports."""
+
+
+def test_alpha() -> None:
+    assert 1 + 1 == 2
+
+
+def test_beta() -> None:
+    assert "b" + "c" == "bc"

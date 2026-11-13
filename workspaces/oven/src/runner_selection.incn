@@ -1,0 +1,128 @@
+"""
+Which collected tests a run selects and in what order: `-k` keyword and `-m` marker expressions, slow tests and a
+seeded shuffle. An expression combines terms with `and`, `or`, `not` and parentheses, as 0.5.1 and pytest spell them.
+"""
+
+from rust::std::time import SystemTime, UNIX_EPOCH
+
+# The multiplier, increment and modulus of the shuffle's linear congruential sequence; products stay within `int`.
+const MULTIPLIER: int = 1103515245
+const INCREMENT: int = 12345
+const MODULUS: int = 2147483648
+
+
+pub def keyword_matches(expression: str, identifier: str) -> Result[bool, str]:
+    """Whether a `-k` expression selects a test: each term matches a case-insensitive part of its identifier."""
+    return evaluate(expression, "-k", [identifier.lower()], true)
+
+
+pub def markers_match(expression: str, markers: list[str]) -> Result[bool, str]:
+    """Whether a `-m` expression selects a test: each term names one of its markers exactly."""
+    return evaluate(expression, "-m", markers, false)
+
+
+model Parsed:
+    """A parsed part of an expression: its value for the test and the index of the token after it."""
+
+    value: bool
+    next: int
+
+
+def evaluate(expression: str, option: str, subjects: list[str], substring: bool) -> Result[bool, str]:
+    """Evaluate one expression over a test's subjects; an empty expression selects every test."""
+    tokens = tokenize(expression)
+    if len(tokens) == 0:
+        return Ok(true)
+    parsed = disjunction(tokens, 0, subjects, substring).map_err((reason) => f"`{option}` {reason}")?
+    if parsed.next != len(tokens):
+        return Err(f"`{option}` expression has an unexpected `{tokens[parsed.next]}`")
+    return Ok(parsed.value)
+
+
+def tokenize(expression: str) -> list[str]:
+    """Split an expression into terms, operators and parentheses."""
+    mut tokens: list[str] = []
+    mut current = ""
+    for character in expression:
+        if character in ["(", ")", " ", "\t"]:
+            if current != "":
+                tokens.append(current)
+                current = ""
+            if character in ["(", ")"]:
+                tokens.append(character)
+        else:
+            current += character
+    if current != "":
+        tokens.append(current)
+    return tokens
+
+
+def disjunction(tokens: list[str], start: int, subjects: list[str], substring: bool) -> Result[Parsed, str]:
+    """`A or B ...`, every operand evaluated so a malformed later operand is still refused."""
+    mut parsed = conjunction(tokens, start, subjects, substring)?
+    while parsed.next < len(tokens) and tokens[parsed.next] == "or":
+        operand = conjunction(tokens, parsed.next + 1, subjects, substring)?
+        parsed = Parsed(value=parsed.value or operand.value, next=operand.next)
+    return Ok(parsed)
+
+
+def conjunction(tokens: list[str], start: int, subjects: list[str], substring: bool) -> Result[Parsed, str]:
+    """`A and B ...`."""
+    mut parsed = negation(tokens, start, subjects, substring)?
+    while parsed.next < len(tokens) and tokens[parsed.next] == "and":
+        operand = negation(tokens, parsed.next + 1, subjects, substring)?
+        parsed = Parsed(value=parsed.value and operand.value, next=operand.next)
+    return Ok(parsed)
+
+
+def negation(tokens: list[str], start: int, subjects: list[str], substring: bool) -> Result[Parsed, str]:
+    """`not A`, a parenthesized expression or one term."""
+    if start >= len(tokens):
+        return Err("expression ends where a term is expected")
+    token = tokens[start]
+    if token == "not":
+        operand = negation(tokens, start + 1, subjects, substring)?
+        return Ok(Parsed(value=not operand.value, next=operand.next))
+    if token == "(":
+        inner = disjunction(tokens, start + 1, subjects, substring)?
+        if inner.next >= len(tokens) or tokens[inner.next] != ")":
+            return Err("expression has an unclosed `(`")
+        return Ok(Parsed(value=inner.value, next=inner.next + 1))
+    if token in [")", "and", "or"]:
+        return Err(f"expression has an unexpected `{token}`")
+    return Ok(Parsed(value=term_matches(token, subjects, substring), next=start + 1))
+
+
+def term_matches(term: str, subjects: list[str], substring: bool) -> bool:
+    """Whether one term matches a subject: a case-insensitive part of it, or exactly."""
+    for subject in subjects:
+        if substring and term.lower() in subject:
+            return true
+        if not substring and term == subject:
+            return true
+    return false
+
+
+pub def shuffle_seed(requested: Option[int]) -> int:
+    """The requested seed, or one taken from the clock so each unseeded shuffle differs."""
+    match requested:
+        Some(seed) => return seed
+        None => pass
+    match SystemTime.now().duration_since(UNIX_EPOCH):
+        Ok(elapsed) => return int(elapsed.subsec_nanos()) % MODULUS
+        Err(_) => return 0
+
+
+pub def shuffled(count: int, seed: int) -> list[int]:
+    """A permutation of `0..count` that depends only on `seed`: a Fisher-Yates shuffle over a seeded sequence."""
+    mut order = [index for index in range(count)]
+    mut state = seed % MODULUS
+    mut index = count - 1
+    while index > 0:
+        state = (state * MULTIPLIER + INCREMENT) % MODULUS
+        other = state % (index + 1)
+        held = order[index]
+        order[index] = order[other]
+        order[other] = held
+        index -= 1
+    return order
