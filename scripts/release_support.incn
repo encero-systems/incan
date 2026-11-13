@@ -41,7 +41,12 @@ pub const STANDARD_PACKAGES: FrozenList[str] = [
 
 
 pub model ReleaseOptions:
-    """Caller-selected release source, output, retention, fixed-point proof, worker count, and per-command timeout."""
+    """
+    Caller-selected release source, output, retention, fixed-point proof, worker count, and per-command timeout.
+
+    `seed_source` names the commit the seed's installed native generation was built from; empty means the qualified
+    source still carries those sources unchanged.
+    """
 
     pub source_sha: str
     pub output: Path
@@ -49,6 +54,7 @@ pub model ReleaseOptions:
     pub prove_fixed_point: bool
     pub jobs: int
     pub timeout_seconds: int
+    pub seed_source: str = ""
 
 
 pub model VerificationOptions:
@@ -268,6 +274,7 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
     mut prove = false
     mut jobs = 4
     mut timeout = 600
+    mut seed_source = ""
     mut index = 0
     while index < len(arguments):
         argument = str(arguments[index])
@@ -277,6 +284,11 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
         elif argument == "--prove-fixed-point":
             prove = true
             index += 1
+        elif argument == "--seed-source":
+            if index + 1 >= len(arguments) or not full_sha(arguments[index + 1]):
+                return Err("--seed-source needs a full lowercase source commit")
+            seed_source = str(arguments[index + 1])
+            index += 2
         elif argument == "--jobs" or argument == "--timeout":
             if index + 1 >= len(arguments):
                 return Err(f"{argument} needs a positive integer")
@@ -292,7 +304,10 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
             positional.append(argument)
             index += 1
     if len(positional) != 2:
-        return Err("usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--jobs N] [--timeout SECONDS]")
+        return Err(
+            "usage: release.incn SHA OUT [--keep-trees] [--prove-fixed-point] [--seed-source SHA] [--jobs N] "
+            + "[--timeout SECONDS]",
+        )
     if not full_sha(positional[0]):
         return Err("SHA must be a full lowercase source commit")
     return Ok(
@@ -303,6 +318,7 @@ pub def parse_release_options(arguments: list[str]) -> Result[ReleaseOptions, st
             prove_fixed_point=prove,
             jobs=jobs,
             timeout_seconds=timeout,
+            seed_source=seed_source,
         ),
     )
 
