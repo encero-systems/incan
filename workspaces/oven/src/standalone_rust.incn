@@ -5,6 +5,7 @@ from std.fs import Path
 from std.json import JsonValue
 from files import json_text, make_directory, parse_json, read_json, write
 from driver_command import driver_command
+from compiler_worker import captured_resident
 from home import standard_intents
 from json_fields import array, field, required_items, required_text, strings
 from loaf_local_graph import unique
@@ -128,20 +129,33 @@ def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[
     make_directory(directory)?
     path = directory.joinpath(f"{unit.package}.imports.unit.json")
     write(path, unit.to_json().to_pretty_json().map_err((error) => error.message())?)?
-    mut command = driver_command(toolchain)?
-    command.arg("--rust-imports")
-    command.arg(path.0)
-    clock = begin()
-    output = command.output().map_err((error) => error.to_string())?
-    record(Operation.DriverSpawn, f"--rust-imports {path.0}", clock)
-    if not output.status.success():
-        return Err(decoded(output.stderr))
-    records = array(parse_json(decoded(output.stdout))?, []).map_err((_) => "invalid Rust import records")?
+    output = rust_import_records(toolchain, path)?
+    records = array(parse_json(decoded(output))?, []).map_err((_) => "invalid Rust import records")?
     # 3. An edit made while the compiler read the sources is read again next time. A record that cannot be written
     #    only costs the next command the same parse.
     if identity != "" and imports_identity(unit, toolchain)? == identity:
         _ = retain_imports(retained, identity, records)
     return Ok(records)
+
+
+def rust_import_records(toolchain: Toolchain, path: Path) -> Result[bytes, str]:
+    """Ask the resident compiler for import records, retaining one short-lived process only as its cold fallback."""
+    arguments = ["--rust-imports", path.0]
+    match captured_resident(toolchain, arguments)?:
+        Some(completed) =>
+            if completed.code != 0:
+                return Err(decoded(completed.error))
+            return Ok(completed.output)
+        None => pass
+    mut command = driver_command(toolchain)?
+    for argument in arguments:
+        command.arg(argument)
+    clock = begin()
+    output = command.output().map_err((error) => error.to_string())?
+    record(Operation.DriverSpawn, f"--rust-imports {path.0}", clock)
+    if not output.status.success():
+        return Err(decoded(output.stderr))
+    return Ok(output.stdout)
 
 
 def imports_identity(unit: UnitDescription, toolchain: Toolchain) -> Result[str, str]:
