@@ -738,7 +738,9 @@ def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) ->
             toolchain.sysroot,
         ), "rust_abi": JsonValue.array([JsonValue.string(path) for path in toolchain.rust_abi]), "externs": JsonValue.array(
             [native.to_json() for native in toolchain.externs],
-        ), "search": JsonValue.array([]), "registry_units": JsonValue.string("registry/closure.json")},
+        ), "search": JsonValue.array([]), "registry_units": JsonValue.string("registry/closure.json"), "codegraph_on_request": JsonValue.bool(
+            true,
+        )},
     )
     write(directory.joinpath("toolchain.json"), json_text(document)?)?
     write(registry, "damaged during transport")?
@@ -747,7 +749,8 @@ def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) ->
             assert false, "a damaged transported registry payload was admitted"
         Err(_) => pass
     write(registry, read(original)?)?
-    read_toolchain(directory)?
+    selected = read_toolchain(directory)?
+    assert selected.codegraph_on_request
     verify_renamed_admission(scratch, original)?
     verify_published_installation(scratch, original)?
     verify_installation_check(scratch)?
@@ -809,7 +812,7 @@ def verify_published_installation(scratch: Path, original: Path) -> Result[None,
     write(stage.joinpath("registry/closure.json"), "{\"externs\":{}}")?
     write(
         stage.joinpath("toolchain.json"),
-        "{\"schema\":\"incan.toolchain/1\",\"driver\":\"driver\",\"sysroot\":\"sysroot\"," + "\"rust_abi\":[\"std.rustabi\"],\"externs\":[{\"name\":\"runtime\",\"path\":\"library.rlib\"}]," + "\"search\":[],\"registry_units\":\"registry/closure.json\"}",
+        "{\"schema\":\"incan.toolchain/1\",\"driver\":\"driver\",\"sysroot\":\"sysroot\"," + "\"rust_abi\":[\"std.rustabi\"],\"externs\":[{\"name\":\"runtime\",\"path\":\"library.rlib\"}]," + "\"search\":[],\"registry_units\":\"registry/closure.json\",\"codegraph_on_request\":true}",
     )?
     _, admission = prepare_installation(stage)?
     assert len(admission.payloads) == 1 and len(admission.facts) == 2
@@ -818,6 +821,7 @@ def verify_published_installation(scratch: Path, original: Path) -> Result[None,
     finish_installation(target, admission)?
     installed = load_toolchain_at(target)?
     assert installed.driver == target.joinpath("driver").0
+    assert installed.codegraph_on_request
     assert published_identity(target.joinpath("library.rlib"))? == "installed producer"
     verify_installation_page(target)?
     _ = flush_trace()
@@ -862,6 +866,7 @@ def verify_installation_page(directory: Path) -> Result[None, str]:
         Some(view) =>
             decoded = decode_installation(view)?
             assert encode_installation(decoded)? == encoded
+            assert decoded.toolchain.codegraph_on_request
             assert decoded.manifests[0].intent == page.manifests[0].intent
     verify_page_refusals(fixture, encoded)?
     verify_page_vectors(fixture)?

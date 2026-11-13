@@ -144,8 +144,8 @@ struct CheckedProgram {
     reached_loaves: BTreeMap<String, Vec<Vec<CanonicalSymbolId>>>,
     /// A library unit's manifest, which its executable representation completes once the unit compiles (DD-0007).
     manifest: Option<LibraryManifest>,
-    /// The owning library's portable graph bytes, encoded while its checked source context is still owned here.
-    graph: Vec<u8>,
+    /// Compatibility graph bytes for a caller that has not opted into separate requested publication.
+    graph: Option<Vec<u8>>,
     /// Session-collected tests; lowering receives their names and Oven receives their outcome policy.
     tests: Vec<crate::test_unit::CollectedTest>,
 }
@@ -168,6 +168,8 @@ pub(crate) struct Dependencies {
     pub(crate) rust_abi: Vec<PathBuf>,
     /// Compatibility for bootstrap invocations that select a library with `--library`.
     library: bool,
+    /// Compatibility for a compiler generation whose Oven still requires graphs in native publications.
+    collect_codegraph: bool,
     /// Arguments Oven passes to rustc unchanged (`--rustc-arg`): the pinned target's link policy (DD-0008).
     rustc_args: Vec<String>,
     /// A development executable may link exact native carriers from this immutable store.
@@ -216,6 +218,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         externs.push((native.name.clone(), native.path.clone()));
     }
     let mut library = false;
+    let mut collect_codegraph = true;
     let mut rustc_args = Vec::new();
     let mut shared_native = None;
     let mut graph_body_records = incan_frontend::checker_records::GraphBodyRecords::default();
@@ -226,6 +229,10 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     while let Some(option) = remaining.next() {
         if option == "--library" {
             library = true;
+            continue;
+        }
+        if option == "--no-codegraph" {
+            collect_codegraph = false;
             continue;
         }
         let value = remaining.next().ok_or_else(|| format!("missing value for {option}"))?;
@@ -251,6 +258,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         directories: unit.search.clone(),
         rust_abi: unit.rust_abi.clone(),
         library,
+        collect_codegraph,
         rustc_args,
         shared_native,
         graph_body_records,
@@ -448,6 +456,7 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
         receipt.clone(),
         dependencies.graph_body_records,
         dependencies.graph_body_output,
+        dependencies.collect_codegraph,
     )?;
     lower_compilation_plan(
         &mut program,
@@ -516,6 +525,7 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
             &RefusalReceipt(None),
             dependencies.graph_body_records,
             None,
+            true,
         )
     })?;
     let manifest = program
@@ -528,7 +538,7 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
         manifest,
         &program.modules[program.own..],
         &closure,
-        &program.graph,
+        program.graph.as_deref(),
     )
     .map_err(|error| error.to_string())?;
     Ok(())
@@ -592,6 +602,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         receipt.clone(),
         dependencies.graph_body_records.clone(),
         dependencies.graph_body_output.clone(),
+        dependencies.collect_codegraph,
     )?;
     if census_complete(&mut program, kind, overflow_checks)? {
         return Ok(());
@@ -636,7 +647,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
             manifest,
             &program.modules[program.own..],
             &closure,
-            &program.graph,
+            program.graph.as_deref(),
         )
         .map_err(|error| error.to_string())?;
         Some((directory, prepared))
@@ -685,11 +696,20 @@ fn check_compilation_source(
     receipt: RefusalReceipt,
     graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
     graph_body_output: Option<PathBuf>,
+    collect_codegraph: bool,
 ) -> Result<CheckedProgram, Box<dyn std::error::Error>> {
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(&unit, &rust, resident, &receipt, graph_body_records, graph_body_output)
+        checked_modules(
+            &unit,
+            &rust,
+            resident,
+            &receipt,
+            graph_body_records,
+            graph_body_output,
+            collect_codegraph,
+        )
     });
     match checked {
         Ok(program) => Ok(program),
