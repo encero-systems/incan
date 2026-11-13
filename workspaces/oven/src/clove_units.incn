@@ -195,7 +195,7 @@ def host_cfg() -> Tuple[list[str], Dict[str, list[str]]]:
     return (flags, values)
 
 
-def entry_applies(entry: CCompile) -> Result[bool, str]:
+pub def entry_applies(entry: CCompile) -> Result[bool, str]:
     """Whether a compile entry's target predicate holds for the host target."""
     match entry.target:
         None => return Ok(true)
