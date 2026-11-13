@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use incan_semantics_core::stable_identity::StableDeclarationId;
+use incan_semantics_core::stable_identity::{StableDeclarationContext, StableDeclarationId};
 
 pub use crate::typechecker::canonical_nodes::NodeBindingError as RecordAdapterFault;
 
@@ -299,12 +299,7 @@ pub fn checked_owner_record_outputs(
                         })
                     }
                     incan_semantics_core::SymbolOrigin::Module(dependency_module) => checker
-                        .type_info()
-                        .declarations
-                        .source_identities
-                        .get(&dependency)
-                        .cloned()
-                        .or_else(|| StableDeclarationId::from_canonical(&dependency, None, None))
+                        .stable_dependency_identity(&dependency)
                         .map(|stable| CheckedOwnerDependencyRead {
                             package: None,
                             module_path: dependency_module.clone(),
@@ -350,6 +345,42 @@ pub fn checked_owner_record_outputs(
             })))
         })
         .collect()
+}
+
+impl crate::typechecker::TypeChecker {
+    /// Resolve the checked stable identity used by one editable dependency read.
+    fn stable_dependency_identity(
+        &self,
+        dependency: &incan_semantics_core::CanonicalSymbolId,
+    ) -> Option<StableDeclarationId> {
+        if let Some(identity) = self.type_info().declarations.source_identities.get(dependency).cloned() {
+            return Some(identity);
+        }
+        let owner = self
+            .symbols
+            .all_symbols()
+            .iter()
+            .enumerate()
+            .find_map(|(index, symbol)| {
+                let crate::symbols::SymbolKind::Type(crate::symbols::TypeInfo::Enum(info)) = &symbol.kind else {
+                    return None;
+                };
+                info.variant_identities
+                    .values()
+                    .any(|identity| identity == dependency)
+                    .then(|| self.symbols.identity_of(index))
+                    .flatten()
+            });
+        if let Some(owner) = owner {
+            let owner = StableDeclarationId::from_canonical(owner, None, None)?;
+            let context = StableDeclarationContext {
+                owner,
+                binding_ordinal: 0,
+            };
+            return StableDeclarationId::from_canonical(dependency, None, Some(context));
+        }
+        StableDeclarationId::from_canonical(dependency, None, None)
+    }
 }
 
 /// Name the first missing producer stage using its retained refusal when one was emitted.
@@ -479,6 +510,72 @@ mod tests {
         assert_ne!(
             signature,
             local_callee_identity(&base.replace("-> int", "-> str").replace("return 1", "return \"one\""))?
+        );
+        Ok(())
+    }
+
+    /// An editable sibling enum variant keeps the provider enum as its stable owner, even when another top-level
+    /// declaration has the variant's spelling.
+    #[test]
+    fn sibling_enum_variant_stable_dependency_identity_keeps_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let provider = program(
+            "pub model Cancelled:\n    reason: str\n\npub enum CompletionStatus:\n    Success\n    Failed\n    Cancelled\n",
+        )?;
+        let module_path = vec!["engine_messages".into()];
+        let mut provider_checker = TypeChecker::new();
+        provider_checker.set_current_module_path(Some(module_path.clone()));
+        provider_checker.register_dependency_module_path_segments("engine_messages", module_path.clone());
+        let interface = provider_checker
+            .build_dependency_interface_component(
+                &[(
+                    "engine_messages",
+                    &provider,
+                    Arc::from(crate::module::exported_symbols(&provider)),
+                )],
+                &[],
+                true,
+            )
+            .pop()
+            .ok_or("provider namespace was not publishable")?;
+
+        let consumer = program(
+            "from engine_messages import CompletionStatus\n\ndef selected() -> CompletionStatus:\n    return CompletionStatus.Failed\n\ndef cancelled() -> CompletionStatus:\n    return CompletionStatus.Cancelled\n",
+        )?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".into()]));
+        checker.register_dependency_module_path_segments("engine_messages", module_path);
+        checker.select_dependency_interfaces(vec![interface]);
+        checker
+            .check_with_imports(&consumer, &[("engine_messages", &provider)])
+            .map_err(|errors| format!("{errors:?}"))?;
+
+        let mut reads = checker
+            .symbols
+            .all_symbols()
+            .iter()
+            .filter_map(|symbol| {
+                let crate::symbols::SymbolKind::Type(crate::symbols::TypeInfo::Enum(info)) = &symbol.kind else {
+                    return None;
+                };
+                Some(info.variant_identities.values())
+            })
+            .flatten()
+            .filter(|identity| identity.declaration_name == "Failed" || identity.declaration_name == "Cancelled")
+            .map(|identity| {
+                checker
+                    .stable_dependency_identity(identity)
+                    .map(|stable| stable.render_compact())
+                    .ok_or_else(|| "missing variant dependency identity".to_owned())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        reads.sort();
+        reads.dedup();
+        assert_eq!(
+            reads,
+            vec![
+                "member/variant:engine_messages::Cancelled#in(enum:engine_messages::CompletionStatus)[0]",
+                "member/variant:engine_messages::Failed#in(enum:engine_messages::CompletionStatus)[0]",
+            ]
         );
         Ok(())
     }
