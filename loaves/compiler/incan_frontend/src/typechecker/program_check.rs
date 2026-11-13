@@ -205,6 +205,7 @@ impl TypeChecker {
         self.produced_final_records.clear();
         self.final_record_refusals.clear();
         self.callable_declaration_reuse.clear();
+        self.callable_final_record_reuse.clear();
         self.refused_ownership_authorities.clear();
         self.diagnostic_owner_ranges.clear();
         self.body_open_diagnostics.clear();
