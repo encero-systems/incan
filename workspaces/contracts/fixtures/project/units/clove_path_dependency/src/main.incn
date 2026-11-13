@@ -1,4 +1,4 @@
-# behavior: a path dependency that is a Clove compiles its C into its default configuration's archive during an ordinary build, and its Incan facade's `c.loaf_library` binding links that archive into the consumer's program (#3133)
+# behavior: a path dependency that is a Clove compiles its C into its default configuration's archive once during an ordinary build, though both its library and the consumer's program reach it, and its Incan facade's `c.loaf_library` binding links that archive into the consumer's program (#3133)
 # environment:
 #   INCAN_C_COMPILER=host
 # cli-commands:
@@ -7,6 +7,8 @@
 #   42
 # expect-trace-contains:
 #   unit counter clove default:
+# expect-trace-at-most-once:
+#   unit counter clove default: compiled
 
 from pub::counter import next_after
 
