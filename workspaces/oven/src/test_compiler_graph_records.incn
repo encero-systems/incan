@@ -646,6 +646,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
     before = provider.snapshot
     published = publish_compiled_bodies(before, unit, output)?
     assert published.bodies == 1 and published.fallbacks == 1
+    assert published.checking_evaluations == 2 and published.body_ir_evaluations == 2
     assert published.snapshot.generation == before.generation + 1, "one compiled body publication used more than one generation"
     assert not output.is_file()
     diagnostic_output = scratch.path().joinpath("ambiguous-dependency-output")

@@ -65,6 +65,7 @@ pub model ProgramOutcome:
     pub unit: Option[NativeUnit] = None
     pub evaluations: int = 0
     pub body_evaluations: int = 0
+    pub body_ir_evaluations: int = 0
     pub native_bakes: int = 0
     pub plan_function_evaluations: int = 0
     pub plan_function_reuses: int = 0
@@ -189,6 +190,8 @@ pub def obtain(
         if not captured_file_current(Path(input.path), input.metadata):
             return Err("captured inputs changed before native selection; submit a new request")
     mut request_transaction = merge_request_transaction(produced.transaction, projected.transaction)
+    mut body_evaluations = 0
+    mut body_ir_evaluations = 0
     if produced.native_bakes == 1:
         bodies = prepare_compiled_bodies(
             request_transaction,
@@ -199,6 +202,8 @@ pub def obtain(
             retained_bodies,
         )?
         request_transaction = bodies.transaction
+        body_evaluations = bodies.checking_evaluations
+        body_ir_evaluations = bodies.body_ir_evaluations
     fact = produced_fact(produced.fact)?
     unit = NativeUnit(identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0)
     return Ok(
@@ -206,7 +211,8 @@ pub def obtain(
             code=0,
             unit=Some(unit),
             evaluations=produced.evaluations,
-            body_evaluations=len(invalid),
+            body_evaluations=body_evaluations,
+            body_ir_evaluations=body_ir_evaluations,
             native_bakes=produced.native_bakes,
             plan_function_evaluations=plan_counts.plan_evaluations,
             plan_function_reuses=plan_counts.plan_reuses,
