@@ -1,0 +1,21 @@
+# behavior: incan run --direct refuses every option it cannot apply, and every other command refuses --direct, before preparing any unit
+# cli-commands:
+#   run --direct src/main.incn --features absent
+#   run --direct src/main.incn --no-default-features
+#   run --direct src/main.incn --all-features
+#   run --direct src/main.incn --program-entry src/main.incn
+#   run --direct src/main.incn --substitute missing=absent
+#   run --direct src/main.incn --locked
+#   run --direct src/main.incn --engine-report
+#   build --direct src/main.incn
+#   check --direct src/main.incn
+#   oven run --direct src/main.incn
+# expect-stdout:
+# expect-stderr-contains:
+#   --direct
+#   for usage.
+# expect-exit: 2
+
+def main() -> None:
+    """Provide a source that refused direct invocations never compile."""
+    pass
