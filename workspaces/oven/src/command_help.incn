@@ -10,11 +10,11 @@ from toolchain_archive import PACK_USAGE, INSTALL_USAGE, help_text as archive_he
 from runner_options import RUNNER_VALUE_OPTIONS, help_lines as runner_help_lines
 
 # The project commands both surfaces run follow the invoked surface's name.
-const RUN_OPERANDS: str = "run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
-const INCAN_RUN_OPERANDS: str = "run [--direct] PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
+const RUN_OPERANDS: str = "run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
+const INCAN_RUN_OPERANDS: str = "run [--direct] [PATH | -c CODE] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
 const CHECK_OPERANDS: str = "check PATH [--format text|json] [UNIT OPTIONS]"
 const TEST_OPERANDS: str = "test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]"
-const BUILD_OPERANDS: str = "build PATH [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
+const BUILD_OPERANDS: str = "build [PATH] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
 const EXPLAIN_USAGE: str = "incan explain CODE"
 const DESCRIBE_USAGE: str = "oven describe-unit PATH [--unattended] [UNIT OPTIONS]"
 const OWNER_USAGE: str = "oven owner stop"
@@ -208,7 +208,10 @@ def direct_options(surface: str) -> list[str]:
     """Expose direct source execution only on the Incan surface."""
     if surface == OVEN:
         return []
-    return ["  --direct               Run PATH as one source file without Oven planning."]
+    return [
+        "  --direct               Run PATH as one source file without Oven planning.",
+        "  -c, --command CODE     Run CODE, a whole module, as direct source.",
+    ]
 
 
 pub def version_text(surface: str) -> str:
@@ -220,6 +223,8 @@ def unit_valued() -> list[str]:
     """The value options of the unit commands, so help never reads an option's value as a help flag."""
     mut valued = list(UNIT_VALUE_OPTIONS)
     valued.append("--format")
+    valued.append("-c")
+    valued.append("--command")
     for option in RUNNER_VALUE_OPTIONS:
         valued.append(option)
     return valued

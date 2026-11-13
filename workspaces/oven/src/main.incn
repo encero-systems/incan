@@ -31,6 +31,7 @@ from toolchain import load_toolchain, rust_compiler
 from formatting import format_paths, parse_arguments as format_options
 from testing import TestCase, collected_cases, compile_tests, directory_test_sources, run_session, rust_cases, test_sources
 from runner_options import RunnerOptions, split_runner_options
+from inline_source import inline, inline_arguments
 from owner_client import owned, status_code
 from owner_protocol import Reply
 from owner_endpoint import stop_owners
@@ -140,6 +141,9 @@ def dispatch(command: str, rest: list[str]) -> None:
         return
     if command == "run":
         own, _passed = program_arguments(rest)
+        if inline(own):
+            run(rest)
+            return
         match parse_options(own):
             Ok(options) =>
                 if options.direct:
@@ -313,6 +317,8 @@ def parse_options(arguments: list[str], default_path: str = "") -> Result[Option
             options.engine_report = true
         elif argument == "--locked":
             options.locked = true
+        elif argument == "--release":
+            return Err("unknown option `--release`: select the release profile with `--profile release`")
         elif argument == "--direct":
             options.direct = true
         elif argument == "--unattended":
@@ -349,9 +355,10 @@ def records_command(command: str, arguments: list[str]) -> None:
     if command not in ["run", "build"]:
         fail(f"{invoked()} {command}: records engine does not implement `{command}`", 1)
     own, passed = program_arguments(arguments)
-    match parse_options(own):
+    match parse_options(own, "."):
         Err(reason) => syntax_error(command, reason)
-        Ok(options) =>
+        Ok(parsed) =>
+            options = located(command, parsed)
             if options.feature_options or len(options.substitutes) > 0 or len(options.program_entries) > 0:
                 fail(
                     f"{invoked()} {command}: unit records do not implement feature, substitution or program-entry options",
@@ -392,12 +399,19 @@ def apply_option(mut options: Options, name: str, value: str) -> Result[None, st
 
 
 def run(arguments: list[str]) -> None:
-    """Compile the program whose entry source is PATH and run it with the arguments after `--`."""
+    """
+    Compile the program whose entry source is PATH and run it with the arguments after `--`. Without PATH, or with a
+    directory, the program is the enclosing Loaf's; `-c CODE` runs CODE as a direct source module.
+    """
     own, passed = program_arguments(arguments)
-    match parse_options(own):
+    mut unit_arguments = own
+    match inline_arguments(own, invoked()):
+        Err(reason) => syntax_error("run", reason)
+        Ok(replaced) => unit_arguments = replaced
+    match parse_options(unit_arguments, "."):
         Err(reason) => syntax_error("run", reason)
         Ok(options) =>
-            mut selected = validated("run", options)
+            mut selected = validated("run", located("run", options))
             match build_source(Path(selected.path), selected.manifests):
                 Err(reason) => fail(f"{invoked()} run: {reason}", 1)
                 Ok(Some(source)) => selected.path = source.0
@@ -419,6 +433,32 @@ def program_arguments(arguments: list[str]) -> tuple[list[str], list[str]]:
         else:
             own.append(argument)
     return (own, passed)
+
+
+def located(command: str, options: Options) -> Options:
+    """A directory PATH, or no PATH, names the Loaf at or above that directory; a file PATH or direct source is kept."""
+    if options.direct or not Path(options.path).is_dir():
+        return options
+    match enclosing_loaf(Path(options.path)):
+        Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
+        Ok(root) =>
+            mut selected = options
+            selected.path = root.0
+            return selected
+    return options
+
+
+def enclosing_loaf(directory: Path) -> Result[Path, str]:
+    """The nearest directory at or above `directory` that holds a `loaf.toml`."""
+    mut current = directory.absolute().map_err((error) => f"cannot resolve {directory.0}: {error.message()}")?
+    while true:
+        if current.joinpath("loaf.toml").is_file():
+            return Ok(current)
+        parent = current.parent()
+        if parent.0 == current.0 or parent.0 == "":
+            break
+        current = parent
+    return Err(f"{directory.0}: no loaf.toml in this directory or above it; name a source file")
 
 
 def prepared_lock(command: str, options: Options) -> None:
@@ -762,11 +802,14 @@ def print_description(options: Options) -> None:
 
 
 def build(arguments: list[str]) -> None:
-    """Compile an Incan source unit or a Rust project against the installed toolchain's registry units."""
-    match parse_options(arguments):
+    """
+    Compile an Incan source unit or a Rust project against the installed toolchain's registry units. Without PATH, or
+    with a directory, the unit is the enclosing Loaf's.
+    """
+    match parse_options(arguments, "."):
         Err(reason) => syntax_error("build", reason)
         Ok(options) =>
-            selected = validated("build", options)
+            selected = validated("build", located("build", options))
             prepared_lock("build", selected)
             build_selected(selected)
 

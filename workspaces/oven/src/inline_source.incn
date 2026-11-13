@@ -1,0 +1,63 @@
+"""
+Inline source for `incan run -c CODE` (or `--command CODE`), which 0.5.1 runs: CODE is a whole module, written to a
+source file named by its digest and run as direct source. Only `incan` runs it, because direct source execution is the
+language command's (RFC 118).
+"""
+
+from rust::std::env import temp_dir
+from rust::std::string import String as RustString
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from surfaces import OVEN
+
+
+pub def inline(own: list[str]) -> bool:
+    """Whether a run's own arguments carry `-c CODE` or `--command CODE`."""
+    for argument in own:
+        if argument in ["-c", "--command"] or argument.startswith("--command="):
+            return true
+    return false
+
+
+pub def inline_arguments(own: list[str], surface: str) -> Result[list[str], str]:
+    """
+    A run's own arguments with `-c CODE` or `--command CODE` replaced by `--direct` and the source file holding CODE;
+    arguments without inline source are returned unchanged.
+    """
+    mut rest: list[str] = []
+    mut code: Option[str] = None
+    mut index = 0
+    while index < len(own):
+        argument = own[index]
+        if argument in ["-c", "--command"]:
+            if index + 1 >= len(own):
+                return Err(f"`{argument}` needs a value")
+            code = Some(own[index + 1])
+            index += 2
+            continue
+        if argument.startswith("--command="):
+            code = Some(argument[len("--command="):])
+        else:
+            rest.append(argument)
+        index += 1
+    match code:
+        None => return Ok(rest)
+        Some(source) =>
+            if surface == OVEN:
+                return Err("`--command` runs direct source and requires incan run")
+            return Ok(["--direct", inline_source(source)?.0] + rest)
+    return Ok(rest)
+
+
+pub def inline_source(code: str) -> Result[Path, str]:
+    """The source file that holds inline CODE, named by its digest so an unchanged command reuses its program."""
+    digest = hexlify(sha256.digest(code.encode("utf-8")))
+    directory = Path(str(temp_dir().display())).joinpath(f"incan_inline_command_{digest[:16]}")
+    directory.mkdir(true, true).map_err((error) => f"cannot create {directory.0}: {error.message()}")?
+    source = directory.joinpath("main.incn")
+    if not source.is_file():
+        source
+            .write_bytes(RustString.from(code + "\n").into_bytes())
+            .map_err((error) => f"cannot write {source.0}: {error.message()}")?
+    return Ok(source)

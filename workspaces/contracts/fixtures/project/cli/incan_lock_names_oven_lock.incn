@@ -1,0 +1,13 @@
+# behavior: 0.5.1's `incan lock` refuses by naming the command that runs it in 0.6, `oven lock` (RFC 118, #3143).
+# cli-commands:
+#   lock
+#   lock --versions newest
+# expect-stdout:
+# expect-stderr-contains:
+#   incan: unknown command `lock`: run `oven lock`
+#   Run `incan --help` for usage.
+# expect-exit: 2
+
+def main() -> None:
+    """Provide a source that refused invocations never compile."""
+    pass

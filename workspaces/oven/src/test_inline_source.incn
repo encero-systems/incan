@@ -1,0 +1,29 @@
+"""Inline source for `incan run -c CODE`: the module CODE becomes, and the arguments a run then parses."""
+
+from inline_source import inline, inline_arguments
+from std.fs import Path
+
+
+pub def test_inline_code_becomes_a_direct_source_module() -> Result[None, str]:
+    """`-c`, `--command` and `--command=` name one source file holding CODE; the other arguments are kept in order."""
+    code = "def main() -> None:\n    println(42)"
+    assert inline(["-c", code]) and inline(["--command", code]) and inline([f"--command={code}"])
+    assert not inline(["src/main.incn", "--profile", "release"])
+    replaced = inline_arguments(["--profile", "release", "-c", code, "--argv0", "tool"], "incan")?
+    assert len(replaced) == 6 and replaced[0] == "--direct"
+    assert replaced[2:] == ["--profile", "release", "--argv0", "tool"]
+    source = Path(replaced[1])
+    assert source.name() == "main.incn"
+    assert source.read_text("utf-8", "strict").map_err((error) => error.message())? == code + "\n"
+    assert inline_arguments(["--command", code], "incan")?[1] == replaced[1]
+    assert inline_arguments([f"--command={code}"], "incan")?[1] == replaced[1]
+    assert inline_arguments(["src/main.incn", "--locked"], "incan")? == ["src/main.incn", "--locked"]
+    return Ok(None)
+
+
+pub def test_inline_code_needs_a_value_and_the_incan_surface() -> None:
+    """`-c` without CODE is refused, and `oven run` does not run direct source."""
+    assert inline_arguments(["-c"], "incan") == Err("`-c` needs a value")
+    assert inline_arguments(["-c", "def main() -> None:\n    pass"], "oven") == Err(
+        "`--command` runs direct source and requires incan run",
+    )
