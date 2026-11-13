@@ -24,7 +24,13 @@ pub def retain_callable_products(unit: UnitDescription, toolchain: Toolchain) ->
     3. Name item products by that context; each product separately validates its exact current source.
     """
     # 1. Owned vocabulary and C headers have no admitted item producer in this slice.
-    if unit.vocab is not None or unit.vocabulary or unit.vocab_desugarer or len(unit.c_headers) != 0:
+    if (
+        unit.vocab is not None
+        or unit.vocabulary
+        or unit.vocab_desugarer
+        or len(unit.c_headers) != 0
+        or len(unit.cloves) != 0
+    ):
         trace(f"{unit.package}: checked-source reuse refused for executable vocabulary or C headers")
         mut refused = unit
         refused.checked_context = None
@@ -60,7 +66,13 @@ pub def retain_callable_products(unit: UnitDescription, toolchain: Toolchain) ->
 
 def reusable_vocabulary(unit: UnitDescription) -> Result[bool, str]:
     """Require inert source and providers; dynamic desugaring needs an environment observation contract first."""
-    if unit.vocab is not None or unit.vocabulary or unit.vocab_desugarer or len(unit.c_headers) != 0:
+    if (
+        unit.vocab is not None
+        or unit.vocabulary
+        or unit.vocab_desugarer
+        or len(unit.c_headers) != 0
+        or len(unit.cloves) != 0
+    ):
         return Ok(false)
     for loaf in unit.loaves:
         manifest = read_json(Path(loaf.dir).joinpath(f"{loaf.name}.incnlib"))?
