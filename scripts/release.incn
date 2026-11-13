@@ -571,11 +571,13 @@ def reference_census(run: ReleaseRun, timings: Path) -> Result[Path, str]:
     project = run.paths.source.joinpath("workspaces/contracts")
     log = run.paths.output.joinpath("reference-contracts.log")
     contracts_tree = command_text("git", ["-C", run.paths.source.0, "rev-parse", "HEAD:workspaces/contracts"])?.strip()
+    stdlib_tree = command_text("git", ["-C", run.paths.source.0, "rev-parse", "HEAD:loaves/stdlib"])?.strip()
     identity = reference_cache_identity(
         run.seed_oven,
         run.seed_lsp,
         run.seed_home.joinpath(f"{TOOLCHAIN_DIRECTORY}/toolchain.json"),
         contracts_tree,
+        stdlib_tree,
     )?
     cached = reference_cache_root(run.seed_home).joinpath(identity).joinpath("contracts.log")
     if cached.is_file():

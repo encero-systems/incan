@@ -433,10 +433,11 @@ pub def reference_cache_identity(
     seed_lsp: Path,
     seed_manifest: Path,
     contracts_tree: str,
+    stdlib_tree: str,
 ) -> Result[str, str]:
-    """Hash every seed bundle component and the committed contract tree that determine reference outcomes."""
+    """Hash every seed component and committed source tree that determine reference outcomes."""
     mut hasher = sha256.new()
-    for value in [digest(seed_oven)?, digest(seed_lsp)?, digest(seed_manifest)?, contracts_tree]:
+    for value in [digest(seed_oven)?, digest(seed_lsp)?, digest(seed_manifest)?, contracts_tree, stdlib_tree]:
         encoded = value.encode("utf-8")
         hasher.update(f"{len(encoded)}:".encode("utf-8"))
         hasher.update(encoded)
