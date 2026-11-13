@@ -16,6 +16,7 @@
 #   incan mcp PATH [--profile NAME]
 #   incan toolchain pack OUT
 #   incan toolchain install ARCHIVE
+#   incan tools doctor [--format text|json]
 #   Reference: https://incan.io/latest/tooling/reference/cli_reference/
 # expect-exit: 0
 
