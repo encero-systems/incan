@@ -340,6 +340,7 @@ pub(super) fn append_c_abi(target: &mut CAbiInteropArtifacts, local: CAbiInterop
         output_slots,
         enum_accesses,
         enum_values,
+        clove_libraries,
     } = local;
     target.verified_bindings.extend(verified_bindings);
     target.bridge_calls.extend(bridge_calls);
@@ -350,4 +351,5 @@ pub(super) fn append_c_abi(target: &mut CAbiInteropArtifacts, local: CAbiInterop
     target.output_slots.extend(output_slots);
     target.enum_accesses.extend(enum_accesses);
     target.enum_values.extend(enum_values);
+    target.clove_libraries.extend(clove_libraries);
 }

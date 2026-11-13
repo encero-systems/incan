@@ -49,6 +49,8 @@ pub def lower_foreign_call(
         name=encode_incan_symbol_identity(target.binding) + "__c_" + str(target.member),
         symbol=str(target.symbol),
         library=str(target.library),
+        clove=str(target.clove),
+        configuration=str(target.configuration),
         parameters=parameters,
         return_type=output,
     )

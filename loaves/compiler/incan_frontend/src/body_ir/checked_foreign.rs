@@ -59,12 +59,28 @@ impl BodyBuilder<'_, '_> {
                 .bindings
                 .get(&selected.binding)
                 .ok_or("checked C call lost its binding descriptor")?;
+            // A Clove binding links the archive of the configuration it names, under the library's link name that
+            // verification resolved from the unit's description.
             if descriptor.link_capability != c_abi::LinkCapabilityId::SystemLibrary {
                 return Err(format!(
                     "unsupported checked C native link capability {}",
                     c_abi::link_capability_as_str(descriptor.link_capability)
                 ));
             }
+            let (library, clove, configuration) = if descriptor.configuration.is_empty() {
+                (descriptor.system_library.clone(), String::new(), String::new())
+            } else {
+                (
+                    self.type_info
+                        .c_abi
+                        .clove_libraries
+                        .get(&selected.binding)
+                        .cloned()
+                        .ok_or("checked C Clove binding has no verified library")?,
+                    descriptor.system_library.clone(),
+                    descriptor.configuration.clone(),
+                )
+            };
             let symbol = descriptor
                 .symbols
                 .iter()
@@ -100,7 +116,9 @@ impl BodyBuilder<'_, '_> {
                     binding,
                     member: symbol.name.clone(),
                     symbol: symbol.native.clone(),
-                    library: descriptor.system_library.clone(),
+                    library,
+                    clove,
+                    configuration,
                     header: descriptor.header.clone(),
                     parameters,
                     return_type,

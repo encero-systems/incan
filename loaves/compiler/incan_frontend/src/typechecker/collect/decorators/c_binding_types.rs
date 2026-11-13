@@ -266,8 +266,14 @@ impl TypeChecker {
         })
     }
 
-    /// Extract the logical library name and exact link shape from an imported C link declaration.
-    pub(super) fn c_system_library_name(&self, value: &Spanned<Expr>) -> Option<(String, LinkCapabilityId)> {
+    /// Extract the logical library name, exact link shape and Clove configuration from an imported C link
+    /// declaration. `c.loaf_library("loaf")` and `c.loaf_library("loaf", configuration="name")` name a Clove (RFC
+    /// 159), whose configuration defaults to `default`; the other shapes take one name and no configuration.
+    ///
+    /// A Clove link is a static-archive link whose library a Loaf supplies. It is marked by its nonempty
+    /// configuration until the installed kernel's link-capability set names it: that set belongs to the native
+    /// closure every program links, which this compiler generation cannot replace.
+    pub(super) fn c_system_library_name(&self, value: &Spanned<Expr>) -> Option<(String, LinkCapabilityId, String)> {
         let (namespace, method, type_args, arguments) = match &value.node {
             Expr::MethodCall(namespace, method, type_args, arguments) => (
                 namespace.as_ref(),
@@ -291,7 +297,12 @@ impl TypeChecker {
         if !type_args.is_empty() {
             return None;
         }
-        let link_capability = c_abi::link_capability_from_str(method)?;
+        let loaf_library = method == LOAF_LIBRARY_LINK;
+        let link_capability = if loaf_library {
+            LinkCapabilityId::SystemLibrary
+        } else {
+            c_abi::link_capability_from_str(method)?
+        };
         let Expr::Ident(namespace_name) = &namespace.node else {
             return None;
         };
@@ -301,12 +312,26 @@ impl TypeChecker {
         {
             return None;
         }
-        match arguments {
-            [CallArg::Positional(value)] => match &value.node {
-                Expr::Literal(Literal::String(value)) if !value.is_empty() => Some((value.clone(), link_capability)),
-                _ => None,
-            },
+        let text = |value: &Spanned<Expr>| match &value.node {
+            Expr::Literal(Literal::String(value)) if !value.is_empty() => Some(value.clone()),
+            _ => None,
+        };
+        match (loaf_library, arguments) {
+            (false, [CallArg::Positional(value)]) => Some((text(value)?, link_capability, String::new())),
+            (true, [CallArg::Positional(loaf)]) => Some((text(loaf)?, link_capability, "default".to_string())),
+            // The binding vocabulary carries call arguments positionally, so the keyword may arrive as either form.
+            (true, [CallArg::Positional(loaf), CallArg::Positional(configuration)]) => {
+                Some((text(loaf)?, link_capability, text(configuration)?))
+            }
+            (true, [CallArg::Positional(loaf), CallArg::Named(name, configuration)])
+                if name.node == "configuration" =>
+            {
+                Some((text(loaf)?, link_capability, text(configuration)?))
+            }
             _ => None,
         }
     }
 }
+
+/// The `std.interop.c` member that links one configuration of a Clove's static archive (RFC 159).
+pub(crate) const LOAF_LIBRARY_LINK: &str = "loaf_library";
