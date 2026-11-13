@@ -64,6 +64,8 @@ pub model GraphOptions:
     pub term: str = ""
     pub limit: int = 20
     pub strict: bool = false
+    # 0.5.1's `--allow-errors`: the tolerant export, which is the default; it only refuses `--strict` beside it.
+    pub allow_errors: bool = false
     pub substitutes: Dict[str, str] = {}
     pub stale: str = ""
     pub task: str = ""
@@ -95,6 +97,10 @@ pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
             result.risk = true
             index += 1
             continue
+        if value == "--allow-errors":
+            result.allow_errors = true
+            index += 1
+            continue
         if value == "--strict":
             result.strict = true
             index += 1
@@ -116,6 +122,8 @@ pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
     # 3. Nothing is built or cached before the path, the format and the query kind are known to be valid.
     if result.path == "":
         return Err("a PATH is required")
+    if result.strict and result.allow_errors:
+        return Err("--allow-errors cannot be combined with --strict")
     if result.format not in ["json", "jsonl", "compact"]:
         return Err("--format is json, jsonl or compact")
     if result.format == "compact" and result.task == "":
@@ -140,6 +148,7 @@ pub def help_text() -> str:
             "  --budget N                  Context byte bound (default 8000; 128..1000000).",
             "  --stale SNAPSHOT            Check an exported snapshot: identity.",
             "  --strict                    Refuse unchecked units.",
+            "  --allow-errors              Export unchecked units' parseable facts (the default).",
             "  --risk                      Include optional local git observations.",
             "  --substitute NAME=DIR       Select a local dependency source; repeatable.",
         ],
