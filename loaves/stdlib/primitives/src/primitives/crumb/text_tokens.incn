@@ -2,13 +2,13 @@
 
 from rust::incan_std_primitives::crumb import (
     Buffer as NativeBuffer,
+    TextScalar as NativeTextScalar,
     TextBuilder as NativeTextBuilder,
-    decode_scalar as native_decode_scalar,
+    decode_text as native_decode_text,
     scalar_text as native_scalar_text,
 )
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.text_types import TextError, TextFailure, TextPosition
-from crate.primitives.crumb.text_controls import BIDIRECTIONAL_CONTROLS
 from crate.primitives.crumb.text_names import require_path
 from crate.primitives.crumb.types import ContainerKind, NominalKind, ScalarKind, TypeConstructorKind, TypeNode
 from crate.primitives.text import decode_utf8, encode_utf8
@@ -98,9 +98,9 @@ pub class TextTokens:
     terminal: bool = false
 
     @staticmethod
-    pub def create(source: bytes, budget: Budget) -> Self:
+    pub def create(source: bytes, scalars: list[NativeTextScalar], budget: Budget) -> Self:
         """Start a streaming cursor over one charged source buffer."""
-        return TextTokens(source=source, tokenizer=Tokenizer.create(source, budget), items=[])
+        return TextTokens(source=source, tokenizer=Tokenizer.create(source, scalars, budget), items=[])
 
     pub def peek(mut self) -> Result[TextToken, TextError]:
         """Return the next lazily scanned span, including the stable terminal token."""
@@ -268,16 +268,18 @@ class Tokenizer:
     """Scalar-indexed scanner and budget; line and column always name the next character."""
 
     data: bytes
+    scalars: list[NativeTextScalar]
     budget: Budget
     index: int = 0
+    scalar_index: int = 0
     line: int = 1
     column: int = 1
     previous: Option[TextToken] = None
 
     @staticmethod
-    pub def create(data: bytes, budget: Budget) -> Self:
+    pub def create(data: bytes, scalars: list[NativeTextScalar], budget: Budget) -> Self:
         """Own one source scanner and the allowance charged by its emitted spans."""
-        return Tokenizer(data=data, budget=budget)
+        return Tokenizer(data=data, scalars=scalars, budget=budget)
 
     pub def position(self) -> TextPosition:
         """Return the next character's one-based source position."""
@@ -285,30 +287,25 @@ class Tokenizer:
 
     pub def at_end(self) -> bool:
         """Return whether every source scalar has been consumed."""
-        return self.index >= len(self.data)
+        return self.scalar_index >= len(self.scalars)
 
     pub def current(self) -> Result[str, TextError]:
         """Return the current scalar; callers first prove the scanner is not at end."""
-        character, _ = scalar_at(self.data, self.index, self.position())?
-        return Ok(character)
+        return Ok(self.scalars[self.scalar_index].text)
 
     pub def following(self, distance: int) -> Result[str, TextError]:
         """Return a lookahead scalar or empty text beyond the input boundary."""
-        mut selected = self.index
-        for _ in range(distance):
-            if selected >= len(self.data):
-                return Ok("")
-            _, width = scalar_at(self.data, selected, self.position())?
-            selected += width
-        if selected >= len(self.data):
+        selected = self.scalar_index + distance
+        if selected < 0 or selected >= len(self.scalars):
             return Ok("")
-        character, _ = scalar_at(self.data, selected, self.position())?
-        return Ok(character)
+        return Ok(self.scalars[selected].text)
 
     pub def advance(mut self) -> Result[str, TextError]:
         """Consume one scalar and update the following source position."""
-        character, width = scalar_at(self.data, self.index, self.position())?
-        self.index += width
+        scalar = self.scalars[self.scalar_index]
+        character = scalar.text
+        self.index += scalar.width.saturating_resize[int]()
+        self.scalar_index += 1
         if character == "\n":
             self.line += 1
             self.column = 1
@@ -534,8 +531,13 @@ pub def tokenize(source: str, mut budget: Budget) -> Result[TextTokens, TextErro
     budget
         .charge_bytes(len(data))
         .map_err((_) => limit_error(TextPosition(line=1, column=1)))?
-    check_bidirectional_controls(source)?
-    return Ok(TextTokens.create(data, budget))
+    decoded = native_decode_text(data)
+    position = TextPosition(line=decoded.line.saturating_resize[int](), column=decoded.column.saturating_resize[int]())
+    if decoded.kind == 1u8:
+        return Err(TextError(kind=TextFailure.InvalidUtf8, position=position))
+    if decoded.kind == 2u8:
+        return Err(TextError(kind=TextFailure.BidirectionalControl, position=position))
+    return Ok(TextTokens.create(data, decoded.scalars, budget))
 
 
 def delimiter(character: str) -> bool:
@@ -559,14 +561,6 @@ def ascii_byte(character: str, position: TextPosition) -> Result[u8, TextError]:
     return Ok(data[0])
 
 
-def scalar_at(data: &bytes, index: int, position: TextPosition) -> Result[tuple[str, int], TextError]:
-    """Decode one proven UTF-8 scalar and return its byte width without retaining a per-scalar string list."""
-    decoded = native_decode_scalar(data, index.saturating_resize[i64]())
-    if decoded.kind != 0u8:
-        return Err(TextError(kind=TextFailure.InvalidUtf8, position=position))
-    return Ok((decoded.text, decoded.width.saturating_resize[int]()))
-
-
 def scalar_text(value: int, position: TextPosition) -> Result[str, TextError]:
     """Encode one valid non-surrogate Unicode scalar as owned UTF-8 text."""
     match native_scalar_text(value.saturating_resize[i64]()):
@@ -580,21 +574,6 @@ def hex_value(character: str) -> int:
         if character == digit:
             return index % 16
     return -1
-
-
-def check_bidirectional_controls(source: str) -> Result[None, TextError]:
-    """Refuse every raw Unicode bidi control before comments or strings can hide it."""
-    mut line = 1
-    mut column = 1
-    for character in source:
-        if character in BIDIRECTIONAL_CONTROLS:
-            return Err(TextError(kind=TextFailure.BidirectionalControl, position=TextPosition(line=line, column=column)))
-        if character == "\n":
-            line += 1
-            column = 1
-        else:
-            column += 1
-    return Ok(None)
 
 
 def plain_unsigned(value: str) -> bool:
