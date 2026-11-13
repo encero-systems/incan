@@ -539,6 +539,51 @@ impl TypeChecker {
         for interface in interfaces {
             self.install_dependency_interface(interface);
         }
+        self.refresh_installed_dependency_reexports();
+    }
+
+    /// Materialize source re-export symbols after every retained provider is installed.
+    fn refresh_installed_dependency_reexports(&mut self) {
+        for _ in 0..Self::MAX_REEXPORT_DEPTH {
+            let pending = self
+                .dependency_member_reexports
+                .iter()
+                .flat_map(|(module_name, links)| {
+                    let base = self
+                        .dependency_module_path_segments
+                        .get(module_name)
+                        .cloned()
+                        .unwrap_or_else(|| vec![module_name.clone()]);
+                    links.iter().map(move |(name, link)| {
+                        (
+                            module_name.clone(),
+                            base.clone(),
+                            name.clone(),
+                            link.target_module.clone(),
+                            link.target_name.clone(),
+                        )
+                    })
+                })
+                .collect::<Vec<_>>();
+            let mut changed = false;
+            for (module_name, base, name, target_module, target_name) in pending {
+                if self
+                    .dependency_member_symbols
+                    .get(&module_name)
+                    .is_some_and(|symbols| symbols.contains_key(&name))
+                {
+                    continue;
+                }
+                let Some(kind) = self.dependency_reexported_member_symbol(&base, &target_module, &target_name) else {
+                    continue;
+                };
+                Arc::make_mut(self.dependency_member_symbols.entry(module_name).or_default()).insert(name, kind);
+                changed = true;
+            }
+            if !changed {
+                break;
+            }
+        }
     }
 
     /// Clear only the dependency-owned tables replaced by an exact interface selection.
