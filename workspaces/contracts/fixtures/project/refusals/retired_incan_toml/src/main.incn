@@ -1,0 +1,15 @@
+# behavior: a directory that holds the retired incan.toml and no loaf.toml is refused by name, and discovery does not walk past it to the project above
+# cli-commands:
+#   oven check legacy/src/main.incn
+#   oven run legacy/src/main.incn
+#   oven test legacy/src/main.incn
+#   oven build legacy/src/main.incn
+# expect-stdout:
+# expect-stderr-contains:
+#   legacy/incan.toml: `incan.toml` is not a project manifest; rename it to `loaf.toml`
+# expect-exit: 1
+
+
+def main() -> None:
+    """The enclosing project stays valid; only the nested legacy directory is refused."""
+    println("enclosing project")
