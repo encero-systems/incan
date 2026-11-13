@@ -14,6 +14,7 @@ from engine_wire import zero_id
 from observation import observe
 from unit_freshness import fingerprint
 
+
 pub def test_lowering_record_worked_example() -> Result[None, str]:
     """Body edits and moves reuse callers; a callee signature edit invalidates their plans and matches cold output."""
     scratch = scratch_directory()?
@@ -38,7 +39,10 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     assert proof_count(edited, "lowering_demand_evaluations")? == 1, diagnostic
     assert proof_count(edited, "lowering_demand_reuses")? == 1, diagnostic
     assert proof_count(edited, "native_interface_evaluations")? == 1, diagnostic
-    write(source, "def greeting() -> str:\n    return \"hullo\"\n\n\n# inserted above main\ndef main() -> None:\n    println(greeting())\n")?
+    write(
+        source,
+        "def greeting() -> str:\n    return \"hullo\"\n\n\n# inserted above main\ndef main() -> None:\n    println(greeting())\n",
+    )?
     commented = lowering_example_run(binary, source, store, "hullo")?
     comment_diagnostic = commented.to_json().map_err((error) => error.message())?
     assert proof_count(commented, "plan_function_evaluations")? == 0, comment_diagnostic
@@ -99,16 +103,10 @@ def verify_rust_closure_debug_reproducibility(binary: str, root: Path) -> Result
         "[project]\nname = \"debug_repro_app\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[dependencies]\ndebug_repro_provider = { path = \"../provider\" }\n",
     )?
     source = app.joinpath("src/main.incn")
-    write(
-        source,
-        "from pub::debug_repro_provider import value\n\n\ndef main() -> None:\n    println(value())\n",
-    )?
+    write(source, "from pub::debug_repro_provider import value\n\n\ndef main() -> None:\n    println(value())\n")?
     warm_store = root.joinpath("warm-store")
     _ = debug_probe_build(binary, app, warm_store)?
-    write(
-        source,
-        "from pub::debug_repro_provider import value\n\n\ndef main() -> None:\n    println(value() + 1)\n",
-    )?
+    write(source, "from pub::debug_repro_provider import value\n\n\ndef main() -> None:\n    println(value() + 1)\n")?
     warm_report = debug_probe_build(binary, app, warm_store)?
     diagnostic = warm_report.to_json().map_err((error) => error.message())?
     assert proof_count(warm_report, "native_bakes")? == 1, diagnostic
@@ -127,8 +125,14 @@ def verify_rust_closure_debug_reproducibility(binary: str, root: Path) -> Result
 def debug_probe_build(binary: str, app: Path, store: Path) -> Result[JsonValue, str]:
     """Build one real debug probe through records lowering and return its measured proof report."""
     outcome = Command
-        .new(binary).arg("build").arg(app.0).args(["--profile", "debug", "--engine-report"])
-        .env("INCAN_ENGINE", "records").env("INCAN_BAKERY", store.0).output().map_err((error) => str(error))?
+        .new(binary)
+        .arg("build")
+        .arg(app.0)
+        .args(["--profile", "debug", "--engine-report"])
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
     output = from_utf8(outcome.stdout).map_err((error) => str(error))?
     errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
     if not outcome.status.success() or errors != "":
@@ -141,10 +145,13 @@ def stop_example_engine(binary: str, store: Path) -> Result[None, str]:
     mut identity = service_identity(store)?
     identity.service_generation = fingerprint([binary, observe(Path(binary))?.stamp])?
     mut channel = connect_with(store, identity, binary).map_err((refusal) => refusal.detail)?
-    channel.send(zero_id(), Message.Stop(Stop(reason="lowering example completed"))).map_err((refusal) => refusal.detail)?
+    channel
+        .send(zero_id(), Message.Stop(Stop(reason="lowering example completed")))
+        .map_err((refusal) => refusal.detail)?
     stopped = channel.receive().map_err((refusal) => refusal.detail)?
     match stopped.message:
-        Message.Event(value) => assert value.status == "Stopping"
+        Message.Event(value) =>
+            assert value.status == "Stopping"
         _ => return Err("lowering example did not stop its engine")
     _ = channel.transport.close()
     return Ok(None)
@@ -153,9 +160,15 @@ def stop_example_engine(binary: str, store: Path) -> Result[None, str]:
 def lowering_example_run(binary: str, source: Path, store: Path, expected: str) -> Result[JsonValue, str]:
     """Run one real engine request and require both successful native output and its measured proof."""
     outcome = Command
-        .new(binary).arg("run").arg(source.0).args(["--profile", "release", "--engine-report"])
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .args(["--profile", "release", "--engine-report"])
         .env("INCAN_NATIVE_PLAN_REPORT", source.parent().joinpath("native.plan").0)
-        .env("INCAN_ENGINE", "records").env("INCAN_BAKERY", store.0).output().map_err((error) => str(error))?
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
     output = from_utf8(outcome.stdout).map_err((error) => str(error))?
     errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
     if not outcome.status.success() or not output.endswith(expected + "\n") or errors != "":
@@ -163,13 +176,24 @@ def lowering_example_run(binary: str, source: Path, store: Path, expected: str) 
     return command_proof(outcome.stdout)
 
 
-def lowering_example_run_with_fingerprints(binary: str, source: Path, store: Path, expected: str) -> Result[JsonValue, str]:
+def lowering_example_run_with_fingerprints(
+    binary: str,
+    source: Path,
+    store: Path,
+    expected: str,
+) -> Result[JsonValue, str]:
     """Run one native request while asking the adapter for per-definition tracked-input evidence."""
     outcome = Command
-        .new(binary).arg("run").arg(source.0).args(["--profile", "release", "--engine-report"])
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .args(["--profile", "release", "--engine-report"])
         .env("INCAN_NATIVE_PLAN_REPORT", source.parent().joinpath("native.plan").0)
         .env("INCAN_NATIVE_FINGERPRINT_REPORT", source.parent().joinpath("native.fingerprints").0)
-        .env("INCAN_ENGINE", "records").env("INCAN_BAKERY", store.0).output().map_err((error) => str(error))?
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
     output = from_utf8(outcome.stdout).map_err((error) => str(error))?
     errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
     if not outcome.status.success() or not output.endswith(expected + "\n") or errors != "":
