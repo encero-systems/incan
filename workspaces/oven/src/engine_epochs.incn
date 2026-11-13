@@ -1,6 +1,7 @@
 """Prepare request captures for atomic publication; idle services retain no decoded inputs."""
 
 from rust::std::str import from_utf8
+from std.environ import get_optional
 from std.fs import Path
 from engine_capture import (
     BuildEpoch,
@@ -67,7 +68,11 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
     # 2. Build and run select the same program inputs; the verb is an execution action, not a compiled identity.
     request = CaptureRequest(
         roots=[source.0],
-        selection=InputSelection(command="run", profile=submit.input_selection),
+        selection=InputSelection(
+            command="run",
+            profile=submit.input_selection,
+            features=diagnostic_features(),
+        ),
         whole_unit=true,
     )
     # Complete nanosecond metadata guards this Unix request; no coarse timestamp grace delays unchanged reuse.
@@ -112,6 +117,13 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
                     counters=captured.counters,
                 ),
             )
+
+
+def diagnostic_features() -> list[str]:
+    """Bind an explicitly selected body-refusal diagnosis to the captured unit without changing ordinary requests."""
+    match get_optional("OVEN_BODY_REFUSALS"):
+        Some(mode) => return ["body-refusals:" + mode]
+        None => return []
 
 
 pub def after_projection(captured: CapturedRequest) -> Result[CapturedRequest, str]:
