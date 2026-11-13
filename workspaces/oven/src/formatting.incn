@@ -14,7 +14,7 @@ from unit import UnitDescription, describe
 from unit_rust import prepare_native
 from cli_help import render
 
-pub const USAGE: str = "incan fmt [--check] PATH..."
+pub const USAGE: str = "incan fmt [--check] [PATH...]"
 
 
 pub model FormatRequest:
@@ -60,7 +60,10 @@ pub def format_paths(request: FormatRequest) -> Result[i32, str]:
 
 
 pub def parse_arguments(arguments: list[str]) -> Result[FormatRequest, str]:
-    """Read `--check` and the paths; `--` ends the options, so a path after it may start with `-`."""
+    """
+    Read `--check` and the paths; `--` ends the options, so a path after it may start with `-`. Without a path, the
+    tree is the current directory's.
+    """
     mut check = false
     mut paths: list[str] = []
     mut options = true
@@ -74,7 +77,7 @@ pub def parse_arguments(arguments: list[str]) -> Result[FormatRequest, str]:
         else:
             paths.append(argument)
     if len(paths) == 0:
-        return Err("a PATH is required")
+        paths.append(".")
     return Ok(FormatRequest(check=check, paths=paths))
 
 

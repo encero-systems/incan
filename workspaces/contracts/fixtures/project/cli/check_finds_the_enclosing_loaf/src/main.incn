@@ -1,0 +1,11 @@
+# behavior: `incan check` with no PATH, or with a directory inside a Loaf, checks the enclosing Loaf's unit without running it, as 0.5.1 checks the project's entry point (#3143).
+# cli-commands:
+#   check
+#   check src
+#   oven check
+# expect-stdout:
+#   ✓ Type check passed!
+# expect-exit: 0
+
+def main() -> None:
+    println("main must not run during a check")
