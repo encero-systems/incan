@@ -94,17 +94,17 @@ pub def test_unsupported_intent_is_not_dropped() -> None:
     """
     Check the intake boundary.
 
-    1. Accept implemented features and empty C intent.
+    1. Accept implemented features, empty C intent and a workspace table.
     2. Refuse unsupported manifest sections.
     """
     # 1. Implemented intent remains accepted.
-    for extra in ["[project.features]\ndefault=[]\n", "[interop.c]\n"]:
+    for extra in ["[project.features]\ndefault=[]\n", "[interop.c]\n", "[workspace]\nmembers=[]\n"]:
         match parse_intent(project_manifest(extra), "loaf.toml"):
             Ok(_) => pass
             Err(error) => fail(error.message())
     # 2. Unsupported intent must still be named instead of ignored.
     for extra in [
-        "[workspace]\nmembers=[]\n",
+        "[workspace]\nresolver='2'\n",
         "[interop.cuda]\n",
         "[rust]\ncrate-name='legacy'\n",
         "[build]\nregistry-lock='closure.json'\n",

@@ -1,0 +1,10 @@
+[project]
+name = "inspect_reports_members"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[workspace]
+members = ["alpha", "beta"]
+default-members = ["alpha"]

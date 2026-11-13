@@ -1,0 +1,13 @@
+# behavior: A member selection outside a workspace, or of a name or path the workspace does not declare, is refused before any member runs (#3141).
+# cli-commands:
+#   oven check --workspace
+#   oven check --member missing
+#   oven workspace inspect
+# expect-stdout:
+# expect-stderr-contains:
+#   workspace
+# expect-exit: 1
+
+def main() -> None:
+    """A project that declares no workspace."""
+    pass

@@ -1,0 +1,13 @@
+# behavior: `run`, `test`, `build` and `fmt` act on the members `--member` selects, as in 0.5.1 (#3141).
+# cli-commands:
+#   oven run --member alpha
+#   oven test --member alpha
+#   oven build --member alpha
+#   fmt --check --member alpha
+# expect-stdout-contains:
+#   workspace member alpha: alpha
+# expect-exit: 0
+
+def main() -> None:
+    """The workspace root's own program, which these selections leave out."""
+    pass
