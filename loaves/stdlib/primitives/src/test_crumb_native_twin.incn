@@ -3,6 +3,7 @@
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.framing import (
+    Reader,
     encode_integer,
     encode_native_signed,
     encode_native_unsigned,
@@ -26,6 +27,36 @@ def incan_signed(value: i128, mut budget: Budget) -> Result[bytes, CrumbError]:
 def incan_unsigned(value: u128, mut budget: Budget) -> Result[bytes, CrumbError]:
     """Run the retained Incan U implementation."""
     return encode_wide_unsigned(WideInteger.from_unsigned(value), budget)
+
+
+def incan_unsigned_end(data: bytes, offset: int, mut budget: Budget) -> Result[int, CrumbError]:
+    """Run the retained Incan U scanner without committing a reader cursor."""
+    mut end = offset + 0
+    loop:
+        if end == len(data):
+            return Err(CrumbError.truncated(end))
+        budget.charge_bytes(1)?
+        budget.charge_elements(1)?
+        value = int(data[end])
+        end += 1
+        if value < 128:
+            if end - offset > 1 and value == 0:
+                return Err(CrumbError.nonminimal(offset))
+            return Ok(end)
+
+
+def incan_length(data: bytes, offset: int, end: int) -> Result[u64, CrumbError]:
+    """Run the retained Incan L value reconstruction."""
+    count = end - offset
+    if count > 10 or (count == 10 and data[end - 1] > 1u8):
+        return Err(CrumbError.overflow(offset))
+    mut value: u64 = 0
+    mut index = end - 1
+    while index >= offset:
+        group: u64 = (data[index] & 127u8).saturating_resize()
+        value = value * 128u64 + group
+        index -= 1
+    return Ok(value)
 
 
 def test_native_framing_matches_incan_boundaries() -> Result[None, CrumbError]:
@@ -78,4 +109,23 @@ def test_native_framing_matches_real_shape_integer_stream() -> Result[None, Crum
             for byte in incan_signed(value, allowance()?)?:
                 incan.append(byte.saturating_resize[u8]())
     assert native == incan
+    return Ok(None)
+
+
+def test_native_reader_matches_incan_twin() -> Result[None, CrumbError]:
+    """Native U and L decoding equals the retained Incan scanner on boundary and real-shape values."""
+    mut values = [0u128, 1u128, 127u128, 128u128, 16384u128, 18446744073709551615u128]
+    for record in range(300):
+        for field in range(32):
+            values.append((record * 4096 + field * 257).saturating_resize[u128]())
+    for value in values:
+        data = incan_unsigned(value, allowance()?)?
+        end = incan_unsigned_end(data, 0, allowance()?)?
+        expected = data[0:end]
+        mut native = Reader.from_bytes(data)
+        if native.read_unsigned(allowance()?)? != expected:
+            return Err(CrumbError.invalid_input(f"reader twin mismatch for {value}"))
+        if incan_length(data, 0, end)? != Reader.from_bytes(expected).read_length(allowance()?)?:
+            return Err(CrumbError.invalid_input(f"length twin mismatch for {value}"))
+        assert native.position() == len(data)
     return Ok(None)

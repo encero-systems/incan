@@ -9,6 +9,126 @@ pub struct Encoded {
     pub element_charge: u64,
 }
 
+/// One bounded scan result; numeric tags keep Incan's typed error surface authoritative.
+#[derive(Clone, Copy)]
+pub struct Scan {
+    pub kind: u8,
+    pub end: i64,
+    pub value: u64,
+    pub byte_charge: i64,
+    pub element_charge: i64,
+    pub detail: i64,
+}
+
+/// An owned native cursor for bounded U, L, and F byte scanning.
+#[derive(Clone, Debug)]
+pub struct Reader {
+    data: Vec<u8>,
+    offset: usize,
+}
+
+impl Reader {
+    pub fn new(data: Vec<u8>) -> Self {
+        Self { data, offset: 0 }
+    }
+
+    pub fn position(&self) -> i64 {
+        self.offset as i64
+    }
+
+    pub fn remaining(&self) -> i64 {
+        (self.data.len() - self.offset) as i64
+    }
+
+    pub fn scan_unsigned(&self, byte_limit: i64, element_limit: i64) -> Scan {
+        self.scan(byte_limit, element_limit, false)
+    }
+
+    pub fn scan_length(&self, byte_limit: i64, element_limit: i64) -> Scan {
+        self.scan(byte_limit, element_limit, true)
+    }
+
+    pub fn take_to(&mut self, end: i64) -> Vec<u8> {
+        let end = end as usize;
+        let result = self.data[self.offset..end].to_vec();
+        self.offset = end;
+        result
+    }
+
+    pub fn commit(&mut self, end: i64) {
+        self.offset = end as usize;
+    }
+
+    pub fn take_frame(&mut self, start: i64, size: i64) -> Vec<u8> {
+        let start = start as usize;
+        let end = start + size as usize;
+        let result = self.data[start..end].to_vec();
+        self.offset = end;
+        result
+    }
+
+    fn scan(&self, byte_limit: i64, element_limit: i64, length: bool) -> Scan {
+        let mut scan = Scan::at(self.offset);
+        loop {
+            if scan.end as usize == self.data.len() {
+                let detail = scan.end;
+                return scan.failed(1, detail);
+            }
+            if scan.byte_charge == byte_limit {
+                return scan.failed(4, 0);
+            }
+            scan.byte_charge += 1;
+            if scan.element_charge == element_limit {
+                return scan.failed(5, 0);
+            }
+            scan.element_charge += 1;
+            let byte = self.data[scan.end as usize];
+            scan.end += 1;
+            if byte < 128 {
+                if scan.end - self.offset as i64 > 1 && byte == 0 {
+                    return scan.failed(2, self.offset as i64);
+                }
+                if length {
+                    return self.read_length(scan);
+                }
+                return scan;
+            }
+        }
+    }
+
+    fn read_length(&self, mut scan: Scan) -> Scan {
+        let count = scan.end as usize - self.offset;
+        if count > 10 || (count == 10 && self.data[scan.end as usize - 1] > 1) {
+            return scan.failed(3, self.offset as i64);
+        }
+        let mut value = 0u64;
+        for byte in self.data[self.offset..scan.end as usize].iter().rev() {
+            value = value * 128 + u64::from(byte & 0x7f);
+        }
+        scan.value = value;
+        scan
+    }
+}
+
+impl Scan {
+    fn at(offset: usize) -> Self {
+        Self {
+            kind: 0,
+            end: offset as i64,
+            value: 0,
+            byte_charge: 0,
+            element_charge: 0,
+            detail: 0,
+        }
+    }
+
+    fn failed(mut self, kind: u8, detail: i64) -> Self {
+        self.kind = kind;
+        self.detail = detail;
+        self
+    }
+}
+
 /// Encode one native unsigned value with shortest little-endian base-128 groups.
 pub fn encode_native_unsigned(value: u128) -> Encoded {
     let data = encode_base128(value, false);
@@ -160,7 +280,7 @@ fn top_bits(value: u128) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_integer_unsigned, encode_native_signed, encode_native_unsigned, frame};
+    use super::{Reader, encode_integer_unsigned, encode_native_signed, encode_native_unsigned, frame};
 
     #[test]
     fn native_boundaries_match_crumb_framing() {
@@ -177,5 +297,19 @@ mod tests {
     fn zigzag_keeps_the_unsigned_129th_bit() {
         assert_eq!(encode_integer_unsigned(u128::MAX).data.len(), 19);
         assert_eq!(encode_integer_unsigned(u128::MAX).data[18], 0x07);
+    }
+
+    #[test]
+    fn reader_scans_lengths_under_independent_limits() {
+        let mut reader = Reader::new(b"\x80\x01\x03abc".to_vec());
+        let length = reader.scan_length(2, 2);
+        assert_eq!((length.kind, length.value, length.end), (0, 128, 2));
+        reader.commit(length.end);
+        let frame = reader.scan_length(8, 8);
+        assert_eq!((frame.kind, frame.value, frame.end), (0, 3, 3));
+        assert_eq!(reader.take_frame(frame.end, frame.value as i64), b"abc");
+
+        let limited = Reader::new(b"\x80\x01".to_vec()).scan_unsigned(2, 1);
+        assert_eq!((limited.kind, limited.byte_charge, limited.element_charge), (5, 2, 1));
     }
 }
