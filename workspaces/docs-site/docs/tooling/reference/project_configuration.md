@@ -1,10 +1,10 @@
 # Project configuration (`loaf.toml`)
 
-A project manifest is a TOML file named `loaf.toml`. Source commands select the nearest manifest above the source file. Without one, the source is a standalone unit.
+A project manifest is a TOML file named `loaf.toml`. Source commands select the nearest manifest above the source file. Without one, the source is a standalone unit. A directory on the way that holds `incan.toml` and no `loaf.toml` stops the search with an error naming that file; `incan.toml` is never read.
 
 ## Root tables
 
-The accepted root tables are `project`, `dependencies`, `build`, `rust`, `vocab`, `tool`, `interop` and `envs`. Unknown root tables are refused. `sdk`, `workspace`, `rust-dependencies` and `rust-dev-dependencies` are not accepted.
+The accepted root tables are `project`, `dependencies`, `build`, `rust`, `vocab`, `tool`, `interop`, `c` and `envs`. Unknown root tables are refused. `sdk`, `workspace`, `rust-dependencies` and `rust-dev-dependencies` are not accepted.
 
 ## `[project]`
 
@@ -127,6 +127,29 @@ Accepts a required nonempty string `entry`; `crate` and other keys are refused. 
 ## `[interop.c]`
 
 `[[interop.c.targets]]` entries can declare `headers`, an array of project-relative paths supplied to the checker. Header and binding contracts are specified in [`std.interop`](../../language/reference/stdlib/interop.md).
+
+## `[c]`
+
+A Loaf with a `[c]` table carries a C facet and is a Clove (RFC 159). Every path is relative to the Loaf root.
+
+| Field | Form | Meaning |
+| --- | --- | --- |
+| `library` | Required string, a C identifier. | The archive's link name: `lib<library>.a`. |
+| `public-headers` | Required array of paths. | The headers a [`c.loaf_library`](../../language/reference/stdlib/interop.md#binding-declarations) binding may name. |
+| `include` | Array of paths. | Include roots of every compile. |
+| `std` | `c89`, `c90`, `c99`, `c11`, `c17`, `c18`, `c23`, or the `gnu` form of one of these. | The language standard of the C sources. |
+| `[[c.compile]]` | At least one entry. | Compile units. |
+| `[c.configurations.NAME]` | Tables. | Named configurations. |
+
+Each `[[c.compile]]` entry accepts `sources` (required: files, or globs whose `*`, `?` and `[...]` match file names in one directory), `target` (an exact triple or a `cfg(...)` predicate; the entry applies only where it holds), `include` and `defines` (a table of C identifiers to string values). A source is C (`.c`), assembly (`.S`, `.s`) or C++ (`.cc`, `.cpp`, `.cxx`) behind a C interface.
+
+A configuration accepts `extends` (one other configuration), `sources` and `defines`. It compiles the compile entries' sources and the sources and definitions of its `extends` chain and its own. Without `[c.configurations]`, the facet has one configuration, `default`, with no definitions.
+
+An `oven build`, `run`, `test` or `check` of a unit that reaches a Clove (its own project or a path dependency) compiles every configuration into a static archive under the root project's `target/incan/cloves/`. Archive members, their order and their metadata are fixed, so identical inputs give identical archive bytes. A configuration is reused while its declared inputs and every file its compiles read are unchanged; a rebuilt archive rebuilds the units that link it. Optimization follows the profile: `-O0` for `debug`, `-O3` for `release`.
+
+No C toolchain release is installed with the Incan toolchain yet. `INCAN_C_COMPILER=host` selects the host compiler for local development: Xcode's Clang and `libtool` on macOS, `cc`, `c++` and `ar` elsewhere. The unit records the host compiler's identity and is not publishable.
+
+- Refused: a missing `library`, `public-headers` or `[[c.compile]]` entry; a `library` that is not a C identifier; a declared `[c.configurations]` without `default`; an `extends` that names no configuration or forms a cycle; a definition that redefines one inherited through `extends`; a source of another file kind; an absolute path, a path naming an environment variable, or a path that leaves the Loaf root; a glob that matches nothing or spans directories; compiler flags (`flags`, `cflags` and other keys); a build without `INCAN_C_COMPILER=host`; and a compile that reads a file outside the Loaf root.
 
 ## Related contracts
 
