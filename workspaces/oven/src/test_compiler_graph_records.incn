@@ -243,6 +243,19 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     assert before.owners[3].text.startswith("def second"), before.owners[3].text
     assert before.owners[0].start < before.owners[0].end
 
+    projected_bindings = project_source(
+        "package",
+        "src/bindings.incn",
+        "pub stable = partial choose(value=7)\npub forwarded = alias stable\n",
+    )?
+    assert projected_owner(projected_bindings, "partial:stable")?.text.startswith("pub stable = partial")
+    assert projected_owner(projected_bindings, "alias:forwarded")?.text.startswith("pub forwarded = alias")
+    assert compiler_source_projection.compiled_owner_source(
+        projected_bindings,
+        "src/bindings.incn",
+        "stable",
+    )?.key.facet == "partial:stable"
+
     selected = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_source_projection(selected, before)?
     assert len(published.keys) == 10

@@ -108,6 +108,13 @@ enum SemanticEdit(str):
     NamespaceSignature = "namespace-signature"
     NamespaceModel = "namespace-model"
     NamespaceConst = "namespace-const"
+    NamespaceClass = "namespace-class"
+    NamespaceEnum = "namespace-enum"
+    NamespaceStatic = "namespace-static"
+    NamespaceTrait = "namespace-trait"
+    NamespaceNewtype = "namespace-newtype"
+    NamespaceTypeAlias = "namespace-type-alias"
+    NamespaceReexport = "namespace-reexport"
 
 
 @derive(Eq)
@@ -747,10 +754,17 @@ def semantic_edit_cases() -> list[MatrixCase]:
             expected_lowered_modules=1,
         ),
         namespace_family_case(SemanticEdit.NamespaceConst, ["pub const LIMIT: int = 7"]),
+        namespace_family_case(SemanticEdit.NamespaceClass, ["pub class Marker:", "    pub value: int"]),
+        namespace_family_case(SemanticEdit.NamespaceEnum, ["pub enum Mode:", "    Fast", "    Slow"]),
+        namespace_family_case(SemanticEdit.NamespaceStatic, ["pub static LIMIT: int = 7"]),
+        namespace_family_case(SemanticEdit.NamespaceTrait, ["pub trait Marker:", "    def mark(self) -> int"]),
+        namespace_family_case(SemanticEdit.NamespaceNewtype, ["pub type EvidenceId = newtype str"]),
+        namespace_family_case(SemanticEdit.NamespaceTypeAlias, ["pub type Answer = int | str"]),
+        namespace_reexport_case(),
     ]
 
 
-def namespace_family_case(edit: SemanticEdit, declarations: list[str]) -> MatrixCase:
+def namespace_family_case(edit: SemanticEdit, declarations: list[str], append_stable: bool = true) -> MatrixCase:
     """Require one unchanged declaration-family namespace to stay admitted across a sibling body edit."""
     main = fixture_source(
         [
@@ -763,7 +777,10 @@ def namespace_family_case(edit: SemanticEdit, declarations: list[str]) -> Matrix
             "    println(stable())",
         ],
     )
-    independent = fixture_source(declarations + ["", "", "pub def stable() -> int:", "    return 7"])
+    mut independent_lines = declarations
+    if append_stable:
+        independent_lines.extend(["", "", "pub def stable() -> int:", "    return 7"])
+    independent = fixture_source(independent_lines)
     return MatrixCase(
         edit=edit,
         fixture=MatrixFixture.Namespaces,
@@ -774,6 +791,31 @@ def namespace_family_case(edit: SemanticEdit, declarations: list[str]) -> Matrix
         edited={"main.incn": main, "provider.incn": fixture_source(
             ["pub def value() -> str:", "    return \"hullo\""],
         ), "independent.incn": independent},
+        expected_module_checks=1,
+        expected_body_ir_modules=1,
+        expected_lowered_modules=1,
+    )
+
+
+def namespace_reexport_case() -> MatrixCase:
+    """Require a real public source re-export namespace to stay admitted across an unrelated body edit."""
+    main = fixture_source(
+        ["from independent import stable", "from provider import value", "", "", "def main() -> None:",
+         "    println(stable())", "    println(value())"],
+    )
+    provider = fixture_source(["pub def value() -> str:", "    return \"hello\""])
+    edited_provider = fixture_source(["pub def value() -> str:", "    return \"hullo\""])
+    origin = fixture_source(["pub def stable() -> int:", "    return 7"])
+    facade = fixture_source(["pub from origin import stable"])
+    manifest = "[project]\nname = \"app\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+    return MatrixCase(
+        edit=SemanticEdit.NamespaceReexport,
+        fixture=MatrixFixture.Namespaces,
+        target="src/main.incn",
+        base={"loaf.toml": manifest, "src/main.incn": main, "src/provider.incn": provider, "src/origin.incn": origin,
+              "src/independent.incn": facade},
+        edited={"loaf.toml": manifest, "src/main.incn": main, "src/provider.incn": edited_provider, "src/origin.incn": origin,
+                "src/independent.incn": facade},
         expected_module_checks=1,
         expected_body_ir_modules=1,
         expected_lowered_modules=1,

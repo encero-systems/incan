@@ -466,10 +466,7 @@ pub(super) fn property_from_checked(package_name: &str, property: &CheckedProper
 }
 
 /// Convert a checked source function export into manifest metadata, including the materializable default subset.
-pub(in crate::library_manifest) fn function_export_from_checked(
-    package_name: &str,
-    export: &CheckedFunctionExport,
-) -> FunctionExport {
+pub(crate) fn function_export_from_checked(package_name: &str, export: &CheckedFunctionExport) -> FunctionExport {
     let mut projected = FunctionExport {
         ownership: export
             .ownership
