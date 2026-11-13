@@ -336,6 +336,14 @@ pub def parse_verification_options(arguments: list[str]) -> Result[VerificationO
 
 pub def check_baseline(baseline: str, log: str) -> Result[BaselineReport, str]:
     """Require a complete eight-family census and every committed baseline key to remain `PASS`."""
+    report = measure_baseline(baseline, log)?
+    if len(report.lost_passes) > 0:
+        return Err("lost PASS " + "; lost PASS ".join(report.lost_passes))
+    return Ok(report)
+
+
+pub def measure_baseline(baseline: str, log: str) -> Result[BaselineReport, str]:
+    """Measure a complete eight-family census against committed PASS keys without enforcing their retention."""
     valid = Regex("^(behavior|check|library|interop|testing|project|format|graph)/[a-z_][a-z0-9_]*/[a-z_][a-z0-9_]*$").map_err(
         (error) => error.message(),
     )?
@@ -356,8 +364,6 @@ pub def check_baseline(baseline: str, log: str) -> Result[BaselineReport, str]:
             if key in results:
                 status = results[key]
             lost.append(f"{key} -> {status}")
-    if len(lost) > 0:
-        return Err("lost PASS " + "; lost PASS ".join(lost))
     return Ok(
         BaselineReport(
             counts=counts,

@@ -23,6 +23,7 @@ from release_support import (
     append_bytes,
     append_timing_file,
     check_baseline,
+    measure_baseline,
     parse_release_options,
     parse_verification_options,
     reference_cache_identity,
@@ -161,6 +162,9 @@ def test_baseline_requires_complete_unique_results_and_preserves_every_pass() ->
         .replace("total: 8 passed, 0 failed", "total: 7 passed, 1 failed")
     lost = refused_baseline("behavior/a/a\n", failed_behavior)
     assert lost == "lost PASS behavior/a/a -> FAIL", lost
+    measured = measure_baseline("behavior/a/a\n", failed_behavior)?
+    assert measured.counts == Counts(passed=7, failed=1, pending=0)
+    assert measured.lost_passes == ["behavior/a/a -> FAIL"]
     without_graph = COMPLETE_LOG.replace("PASS graph/a/a\n", "").replace("total: 8 passed", "total: 7 passed")
     missing = refused_baseline("behavior/a/a\n", without_graph)
     assert missing == "family absent: graph", missing
@@ -504,17 +508,17 @@ def test_installed_verification_uses_only_the_clean_checkout() -> Result[None, s
         .write_text("{\"path\": \"/local/source.rs\"}\n", "utf-8", "strict", None)
         .map_err((error) => error.message())?
     audit_relocation(home, ["/builder"])?
-    manifest = JsonValue.parse(
-        "{\"driver\":\"bin/driver\",\"sysroot\":\"sysroot\",\"rust_abi\":[],\"search\":[],\"externs\":[],\"compiler_records\":{\"root\":\"compiler-records\",\"digest\":\"pin\"}}",
-    ).map_err((error) => error.message())?
+    manifest = JsonValue
+        .parse(
+            "{\"driver\":\"bin/driver\",\"sysroot\":\"sysroot\",\"rust_abi\":[],\"search\":[],\"externs\":[],\"compiler_records\":{\"root\":\"compiler-records\",\"digest\":\"pin\"}}",
+        )
+        .map_err((error) => error.message())?
     relocated = JsonValue.parse(absolute_manifest(manifest, verification.0)?).map_err((error) => error.message())?
     records = relocated.require("compiler_records").map_err((error) => error.message())?
-    assert records.require("root").and_then((value) => value.expect_str()).map_err(
-        (error) => error.message(),
-    )? == verification.joinpath("compiler-records").0
-    assert records.require("digest").and_then((value) => value.expect_str()).map_err(
-        (error) => error.message(),
-    )? == "pin"
+    assert records.require("root").and_then((value) => value.expect_str()).map_err((error) => error.message())? == verification.joinpath(
+        "compiler-records",
+    ).0
+    assert records.require("digest").and_then((value) => value.expect_str()).map_err((error) => error.message())? == "pin"
     return Ok(None)
 
 

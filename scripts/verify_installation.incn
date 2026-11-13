@@ -31,6 +31,7 @@ from release_support import (
     counts_json,
     digest,
     finish_step_trace,
+    measure_baseline,
     parse_verification_options,
     require_step,
     run_reserved_steps,
@@ -52,6 +53,7 @@ pub enum VerificationPhase(str):
     DriverIntegration = "driver-integration"
     Lsp = "lsp"
     Census = "census"
+    RecordsCensus = "records-census"
     Memory = "memory"
 
 
@@ -101,7 +103,7 @@ pub def verify(output: Path, jobs: int, timeout_seconds: int) -> Result[Path, st
     Verify an installed toolchain in three steps.
 
     1. Select only shipped standard packages and build this checkout's contract runner.
-    2. Concurrently audit relocation and run Oven, every Rust facet, direct-driver integration, LSP, census, and memory.
+    2. Concurrently audit relocation and run Oven, every Rust facet, direct-driver integration, LSP, both censuses, and memory.
     3. Preserve every committed PASS key and all per-phase evidence.
     """
     installation = prepare(output, jobs, timeout_seconds)?
@@ -220,6 +222,7 @@ pub def verification_phase_plans(jobs: int) -> list[VerificationPhasePlan]:
         VerificationPhasePlan(phase=VerificationPhase.DriverIntegration, reservation=LOWERING_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.Lsp, reservation=SMALL_PROJECT_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.Census, reservation=workers * LOWERING_RESERVATION_BYTES),
+        VerificationPhasePlan(phase=VerificationPhase.RecordsCensus, reservation=workers * LOWERING_RESERVATION_BYTES),
         VerificationPhasePlan(phase=VerificationPhase.Memory, reservation=LOWERING_RESERVATION_BYTES),
     ]
 
@@ -240,6 +243,7 @@ def verification_phase_name(phase: VerificationPhase) -> str:
         VerificationPhase.DriverIntegration => return "driver-integration"
         VerificationPhase.Lsp => return "lsp"
         VerificationPhase.Census => return "census"
+        VerificationPhase.RecordsCensus => return "records-census"
         VerificationPhase.Memory => return "memory"
 
 
@@ -282,12 +286,13 @@ def run_selected_phase(installation: Installation, runner: Path, phase: Verifica
         VerificationPhase.DriverIntegration => run_driver_integration(installation)?
         VerificationPhase.Lsp => verify_lsp(installation, runner)?
         VerificationPhase.Census => _ = run_contracts(installation, runner)?
+        VerificationPhase.RecordsCensus => _ = run_records_contracts(installation, runner)?
         VerificationPhase.Memory => measure_memory(installation)?
     return Ok(None)
 
 
 def parse_verification_phase(text: str) -> Result[VerificationPhase, str]:
-    """Parse only the seven internal verification phase spellings."""
+    """Parse only the eight internal verification phase spellings."""
     match text:
         "relocation" => return Ok(VerificationPhase.Relocation)
         "oven" => return Ok(VerificationPhase.Oven)
@@ -295,6 +300,7 @@ def parse_verification_phase(text: str) -> Result[VerificationPhase, str]:
         "driver-integration" => return Ok(VerificationPhase.DriverIntegration)
         "lsp" => return Ok(VerificationPhase.Lsp)
         "census" => return Ok(VerificationPhase.Census)
+        "records-census" => return Ok(VerificationPhase.RecordsCensus)
         "memory" => return Ok(VerificationPhase.Memory)
         _ => return Err(f"unknown verification phase `{text}`")
 
@@ -785,6 +791,55 @@ def run_contracts(installation: Installation, runner: Path) -> Result[BaselineRe
         log.read_text("utf-8", "strict").map_err((error) => error.message())?,
     )?
     write_json(installation.run.joinpath("counts.json"), counts_json(report.counts))?
+    return Ok(report)
+
+
+def run_records_contracts(installation: Installation, runner: Path) -> Result[BaselineReport, str]:
+    """Run the complete records-engine census and retain baseline losses without gating the release."""
+    mut environment = command_environment(installation)
+    environment["INCAN_LSP"] = installation.lsp.0
+    environment["INCAN_ENGINE"] = "records"
+    log = installation.run.joinpath("records-contracts.log")
+    code = run_step(
+        Step(
+            name="records-contracts",
+            executable=runner.0,
+            arguments=census_arguments(
+                installation.oven,
+                installation.root.joinpath("workspaces/contracts/fixtures"),
+                installation.run.joinpath("records-scratch"),
+                installation.jobs,
+                installation.timeout_seconds,
+            ),
+            environment=environment,
+            remove_environment=["RUSTC_BOOTSTRAP"],
+            directory=Some(installation.root),
+            log=log,
+            timeout_seconds=installation.timeout_seconds * 20,
+        ),
+    )?
+    if code > 1:
+        return Err(f"records contract runner exited {code}; evidence: {installation.run.0}")
+    baseline = installation.root.joinpath("workspaces/contracts/pass-baseline.txt")
+    report = measure_baseline(
+        baseline.read_text("utf-8", "strict").map_err((error) => error.message())?,
+        log.read_text("utf-8", "strict").map_err((error) => error.message())?,
+    )?
+    write_json(installation.run.joinpath("records-counts.json"), counts_json(report.counts))?
+    lost_count = len(report.lost_passes)
+    mut losses = ""
+    for lost in report.lost_passes:
+        losses += f"lost PASS {lost}\n"
+    installation.run
+        .joinpath("records-lost-passes.txt")
+        .write_text(losses, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    summary = f"records: {report.counts.passed} PASS, {report.counts.failed} FAIL, {report.counts.pending} PEND; {report.baseline_keys} baseline keys, {lost_count} lost PASS\n"
+    installation.run
+        .joinpath("records-summary.txt")
+        .write_text(summary, "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    println(summary.strip())
     return Ok(report)
 
 
