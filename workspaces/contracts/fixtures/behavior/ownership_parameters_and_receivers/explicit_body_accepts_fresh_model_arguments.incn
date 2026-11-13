@@ -1,0 +1,25 @@
+# behavior: an explicit input body accepts a fresh model value passed to an ordinary method (#2500)
+# expect-stdout:
+#   editor
+
+model Label:
+    pub name: str
+
+
+class Graph:
+    pub labels: list[Label]
+
+    pub def add(mut self, label: Label) -> None:
+        """Store one label in this graph."""
+        self.labels.append(label)
+
+    pub def read_view(self) -> Borrowed[Graph] from self:
+        """Borrow this labeled graph."""
+        return self
+
+
+def main() -> None:
+    mut graph = Graph(labels=[])
+    graph.add(Label(name="editor"))
+    reader = graph.read_view()
+    println(reader.labels[0].name)
