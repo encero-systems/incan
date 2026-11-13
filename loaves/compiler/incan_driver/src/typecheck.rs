@@ -3,6 +3,7 @@
 //! This is the one place the driver calls the typechecker for a whole program; single-module callers go through
 //! the session. Nothing here renders: diagnostics come back as values.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -395,14 +396,40 @@ fn verify_checked_c_bindings(
             return;
         }
     };
+    let mut clove_configurations = BTreeMap::new();
     for (module_index, module, binding) in bindings {
-        let verification_binding = resolve_package_owned_c_binding_header(unit, &binding);
-        match verify_checked_c_binding(&toolchain, &plan, &verification_binding) {
+        let (verification_binding, binding_plan, clove_library) = if !binding.configuration.is_empty() {
+            match resolve_clove_binding(unit, &binding, &plan, &mut clove_configurations) {
+                Ok((resolved, clove_plan, library)) => (resolved, clove_plan, Some(library)),
+                Err(message) => {
+                    diagnostics_out.push(CliDiagnostic {
+                        file_path: module.file_path.to_string_lossy().to_string(),
+                        source: module.source.clone(),
+                        phase: diagnostics::DiagnosticPhase::Typecheck,
+                        error: diagnostics::CompileError::type_error(message, binding.span),
+                    });
+                    continue;
+                }
+            }
+        } else {
+            (
+                resolve_package_owned_c_binding_header(unit, &binding),
+                plan.clone(),
+                None,
+            )
+        };
+        match verify_checked_c_binding(&toolchain, &binding_plan, &verification_binding) {
             Ok(receipt) => {
                 type_infos[module_index]
                     .c_abi
                     .verified_bindings
                     .insert(binding.class_name.clone());
+                if let Some(library) = clove_library {
+                    type_infos[module_index]
+                        .c_abi
+                        .clove_libraries
+                        .insert(binding.class_name.clone(), library);
+                }
                 let enum_values = &mut type_infos[module_index].c_abi.enum_values;
                 for ((enumeration, variant), value) in receipt.enum_values() {
                     enum_values.insert(
@@ -421,6 +448,74 @@ fn verify_checked_c_bindings(
             }
         }
     }
+}
+
+/// Resolve a `c.loaf_library` binding against the Clove the unit describes (RFC 159).
+///
+/// The binding's header must be one of the Clove's public headers, verification uses the named configuration's
+/// definitions and the Clove's include roots (as the archive was compiled), and one unit links one configuration of
+/// each Clove, because two configurations of one library define the same symbols.
+fn resolve_clove_binding(
+    unit: &UnitDescription,
+    binding: &CBindingDescriptor,
+    plan: &CAbiVerificationPlan,
+    selected: &mut BTreeMap<String, String>,
+) -> Result<(CBindingDescriptor, CAbiVerificationPlan, String), String> {
+    let loaf = &binding.system_library;
+    let Some(clove) = unit.cloves.iter().find(|clove| &clove.name == loaf) else {
+        let reached = unit
+            .cloves
+            .iter()
+            .map(|clove| format!("`{}`", clove.name))
+            .collect::<Vec<_>>();
+        let known = if reached.is_empty() {
+            "it reaches none".to_string()
+        } else {
+            format!("it reaches {}", reached.join(", "))
+        };
+        return Err(format!(
+            "`c.loaf_library(\"{loaf}\")` names no Clove this unit reaches ({known}); a Clove is a Loaf with a `[c]` facet: the project itself or a path dependency"
+        ));
+    };
+    let Some(configuration) = clove
+        .configurations
+        .iter()
+        .find(|configuration| configuration.name == binding.configuration)
+    else {
+        let declared = clove
+            .configurations
+            .iter()
+            .map(|configuration| format!("`{}`", configuration.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "unknown configuration `{}` of Clove `{loaf}`; it declares {declared}",
+            binding.configuration
+        ));
+    };
+    if let Some(previous) = selected.get(loaf)
+        && previous != &binding.configuration
+    {
+        return Err(format!(
+            "Clove `{loaf}` is linked in configurations `{previous}` and `{}` in one link closure; two configurations of one library define the same symbols",
+            binding.configuration
+        ));
+    }
+    selected.insert(loaf.clone(), binding.configuration.clone());
+    if !clove.public_headers.contains(&binding.header) {
+        return Err(format!(
+            "`{}` is not a public header of Clove `{loaf}`; it exposes {}",
+            binding.header,
+            clove.public_headers.join(", ")
+        ));
+    }
+    let mut resolved = binding.clone();
+    resolved.header = clove.root.join(&binding.header).to_string_lossy().into_owned();
+    Ok((
+        resolved,
+        plan.with_clove(&configuration.definitions, &clove.include),
+        clove.library.clone(),
+    ))
 }
 
 /// Resolve a package-declared header before passing its spelling to Clang.

@@ -26,6 +26,8 @@ pub struct CAbiInteropArtifacts {
     pub enum_accesses: Vec<CBindingEnumAccess>,
     /// Folded C enum values keyed by `(binding, enum, variant)` after Clang verification.
     pub enum_values: HashMap<(String, String, String), i64>,
+    /// For each verified `c.loaf_library` binding, the link name of the Clove library its unit describes.
+    pub clove_libraries: HashMap<String, String>,
 }
 
 /// One checked C bridge call, retained before its source method spelling is erased.
@@ -146,6 +148,9 @@ pub struct CBindingDescriptor {
     pub system_library: String,
     /// Exact native link shape selected by the checked declaration.
     pub link_capability: LinkCapabilityId,
+    /// For `c.loaf_library`, the Clove configuration the binding links (`system_library` names the Clove's Loaf);
+    /// empty for every other link shape.
+    pub configuration: String,
     /// Nominal opaque resources and their binding-local release associations.
     pub resources: Vec<CBindingResource>,
     /// Raw C functions declared by the binding.
@@ -333,6 +338,9 @@ pub fn c_binding_descriptor_identity(module_path: &[String], descriptor: &CBindi
         "link_capability",
         link_capability_as_str(descriptor.link_capability),
     );
+    if !descriptor.configuration.is_empty() {
+        hash_c_binding_text(&mut hasher, "configuration", &descriptor.configuration);
+    }
     hash_c_binding_list(&mut hasher, "resources", &descriptor.resources, |hasher, resource| {
         hash_c_binding_text(hasher, "name", &resource.name);
         hash_c_binding_text(hasher, "native", &resource.native);
