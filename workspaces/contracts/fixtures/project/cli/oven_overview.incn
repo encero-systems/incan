@@ -20,6 +20,7 @@
 #   oven init [PATH] [--name NAME] [--version VERSION] [--description TEXT] [--author AUTHOR] [--license LICENSE] [--force] [--detect] [--yes]
 #   oven version [BUMP | --set VERSION] [--dry-run] [--keep-prerelease] [--project PATH | --member NAME_OR_PATH | --workspace]
 #   oven workspace inspect [--format text|json] [--workspace] [--member NAME_OR_PATH]... [--exclude NAME_OR_PATH]...
+#   oven env list [--format text|json] [--project PATH] | show [ENV] [--format text|json] [--project PATH] | run ENV SCRIPT [--dry-run] [--project PATH] [-- ARGS...]
 #   Reference: https://incan.io/latest/tooling/reference/cli_reference/
 # expect-exit: 0
 

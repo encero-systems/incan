@@ -1,0 +1,15 @@
+# behavior: `oven env` and its subcommands print usage, options, an example and the reference before reading a manifest (#3140).
+# cli-commands:
+#   oven env --help
+#   oven env list -h
+#   oven env show release --help
+#   oven env run ci test --help
+# expect-stdout-contains:
+#   Options:
+#   Example:
+#   Reference: https://incan.io/latest/tooling/reference/cli_reference/
+# expect-exit: 0
+
+def main() -> None:
+    """Provide the project case's source; help runs without reading environments."""
+    pass

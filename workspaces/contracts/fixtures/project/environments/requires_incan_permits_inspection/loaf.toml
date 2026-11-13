@@ -1,0 +1,7 @@
+[project]
+name = "requires_incan_permits_inspection"
+version = "0.1.0"
+requires-incan = ">=0.4, <0.5"
+
+[project.scripts]
+main = "src/main.incn"
