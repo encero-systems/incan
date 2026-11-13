@@ -1,0 +1,19 @@
+# behavior: `oven init PATH` writes a manifest and the starter files into a directory, creating it when missing, as 0.5.1's `incan init` did (#3139).
+# cli-commands:
+#   oven init fresh --yes --force --name initialized --version 1.2.3
+# expect-stdout:
+#   Created project 'initialized' at fresh
+#
+#     loaf.toml              Project manifest
+#     src/main.incn          Entry point
+#     tests/test_main.incn   Starter test
+#
+#   Run it:     incan run src/main.incn
+#   Test it:    incan test tests/test_main.incn
+#   Release it: incan build src/main.incn --profile release
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """Provide the project case's source; `oven init` writes a separate project beside it."""
+    pass

@@ -1,0 +1,17 @@
+# behavior: `oven new`, `oven init` and `oven version` print usage, options, an example and the reference before touching a project (#3139).
+# cli-commands:
+#   oven new --help
+#   oven new demo -h
+#   oven init --help
+#   oven init missing --name x -h
+#   oven version --help
+#   oven version patch -h
+# expect-stdout-contains:
+#   Options:
+#   Example:
+#   Reference: https://incan.io/latest/tooling/reference/cli_reference/
+# expect-exit: 0
+
+def main() -> None:
+    """Provide the project case's source; help runs without compiling it."""
+    pass
