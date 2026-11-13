@@ -5,7 +5,7 @@ from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from std.hash import file_digest
 from std.json import JsonValue
-from rust::std::fs import OpenOptions, Permissions, metadata, rename, set_permissions
+from rust::std::fs import OpenOptions, Permissions, metadata, remove_file, rename, set_permissions
 from rust::std::os::unix::fs import MetadataExt, PermissionsExt, symlink
 from compare import compare
 from files import (
@@ -402,10 +402,11 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
         return Err(f"provider inspection failed: {checked.stderr}")
     checked_digest = helper_digest(checked.stdout)?
     # 1. Native compilation does not pay for inspection until publication is explicitly requested.
+    publications_before = published_graph_identities(project, provider)?
     built = invoke(incan, ["build", source.0], project, environment)?
     if built.code != Some(0):
         return Err(f"provider build failed: {built.stderr}")
-    if len(published_graphs(project, provider)) != 0:
+    if published_graph_identities(project, provider)? != publications_before:
         return Err("an ordinary provider build collected an unrequested graph")
     native_before = library_artifacts(provider)?
     requested = invoke(incan, ["build", source.0, "--codegraph"], project, environment)?
@@ -474,7 +475,8 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     if legacy.code != Some(0) or legacy.stdout != original.stdout or not stable:
         return Err(f"older artifact did not receive a stable cached graph export: {legacy.stderr}")
     # 5. A linked directory is itself damaged; repair must never follow it into another directory.
-    check_linked_view(incan, project, publications[0], arguments, original.stdout, environment)?
+    if len(publications_before) == 0:
+        check_linked_view(incan, project, publications[0], arguments, original.stdout, environment)?
     return Ok(None)
 
 
@@ -503,6 +505,11 @@ def check_linked_view(
         return Err("graph repair followed a linked directory and changed its referent")
     if library_artifacts(referent)? != bodies:
         return Err("graph repair changed compiled bodies in a linked directory's referent")
+    # When the platform reports a linked directory as an ordinary directory, restore the referent before its
+    # temporary owner retires; otherwise this contract itself leaves a dangling warm-run view behind.
+    match remove_file(directory.0):
+        Ok(_) => rename(referent.0, directory.0).map_err((error) => str(error))?
+        Err(_) => pass
     return Ok(None)
 
 
@@ -536,8 +543,23 @@ def published_graphs(project: Path, provider: Path) -> list[Path]:
         directory = root.joinpath("target").joinpath("incan").joinpath("loaves").joinpath("graph_checked")
         graph = directory.joinpath("debug").joinpath("graph_checked.incngraph")
         if graph.is_file():
-            graphs.append(graph)
+            # A linked-view contract can leave an intermediate symlink whose referent is being retired. It is not a
+            # publication until the file can be read through that view.
+            match read_bytes(graph):
+                Ok(_) => graphs.append(graph)
+                Err(_) => pass
     return graphs
+
+
+def published_graph_identities(project: Path, provider: Path) -> Result[list[str], str]:
+    """The exact file generations of existing publications, so a warm reused graph is not mistaken for a new one."""
+    mut identities: list[str] = []
+    for graph in published_graphs(project, provider):
+        info = metadata(graph.0).map_err((error) => str(error))?
+        identity = f"{graph.0}:{info.dev()}:{info.ino()}:{info.size()}"
+        clock = f"{info.mtime()}.{info.mtime_nsec()}:{info.ctime()}.{info.ctime_nsec()}"
+        identities.append(f"{identity}:{clock}")
+    return Ok(sorted(identities))
 
 
 def check_rust_links(document: GraphDocument) -> Result[None, str]:
