@@ -12,9 +12,12 @@ from checker_records import (
     CompiledBodyValue,
     CompiledNamespaceValue,
     GraphBodyValue,
+    GraphNamespaceValue,
     decode_graph_body_values,
+    decode_graph_namespace_value,
     encode_record,
     encode_graph_body_values,
+    encode_graph_namespace_value,
     decode_record,
     content_digest,
     semantic_digest,
@@ -63,6 +66,7 @@ pub def canonical_record_controls() -> Result[None, str]:
     final_value_controls()?
     ownership_record_controls()?
     input_protocol_controls()?
+    graph_namespace_controls()?
     return Ok(None)
 
 
@@ -321,6 +325,7 @@ def graph_transport_controls(local: CheckedRecord, final: CheckedRecord) -> Resu
     transport = encode_graph_body_values(
         [GraphBodyValue(identity=local.owner, local=local_bytes, final=final_bytes, body_ir=b"owner-frame")],
     ).map_err((_) => "graph transport encode")?
+    assert transport[:4] == b"CRMB"
     selected = decode_graph_body_values(transport).map_err((_) => "graph transport decode")?
     assert len(selected) == 1
     assert selected[0].identity == local.owner
@@ -347,6 +352,22 @@ def graph_transport_controls(local: CheckedRecord, final: CheckedRecord) -> Resu
     ):
         Err(CodecFault.Malformed) => pass
         _ => return Err("graph transport accepted crossed families")
+    return Ok(None)
+
+
+def graph_namespace_controls() -> Result[None, str]:
+    """The composite checked namespace is one Crumb row while interface and Body IR bytes remain opaque."""
+    value = GraphNamespaceValue(
+        module="src/main.incn",
+        interface=b"checked-interface",
+        body_ir=b"module-body-ir",
+        lowering_inputs=[["main#decl.0..10", "witness"]],
+    )
+    encoded = encode_graph_namespace_value(value).map_err((_) => "graph namespace encode")?
+    assert encoded[:4] == b"CRMB"
+    decoded = decode_graph_namespace_value(encoded).map_err((_) => "graph namespace decode")?
+    assert decoded.module == value.module and decoded.interface == value.interface
+    assert decoded.body_ir == value.body_ir and decoded.lowering_inputs == value.lowering_inputs
     return Ok(None)
 
 
