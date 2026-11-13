@@ -57,6 +57,12 @@ fn produce_local(
 }
 
 impl TypeChecker {
+    /// Return how many physical callable owners entered the body-check scope in the current test activation.
+    #[cfg(test)]
+    pub(crate) fn body_check_trace_count(&self) -> usize {
+        self.body_check_traces.len()
+    }
+
     /// Complete one owner trace with the checker-record outcome decided after all producer boundaries settle.
     pub(crate) fn record_body_check_outcome(&self, owner: Span, outcome: &'static str) {
         if let Some(span) = self.body_check_traces.get(&owner) {
