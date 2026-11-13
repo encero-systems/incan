@@ -191,6 +191,21 @@ def compiled_output_size_controls(
     assert len(frames) == 70
     assert sum([len(frame) for frame in frames]) > 67108864
 
+    large_body_ir = "".join(["x" for _ in range(13000000)]).encode()
+    large_namespace = CompiledNamespaceValue(
+        module="src/large.incn",
+        interface=b"checked-interface",
+        body_ir=large_body_ir,
+        dependencies=[],
+    )
+    large_frames = encode_compiled_body_outputs(
+        CompiledBodyOutputs(namespaces=[large_namespace], values=[], fallbacks=[]),
+    ).map_err((_) => "large compiled namespace encode")?
+    match decode_compiled_body_frame(large_frames[0]).map_err((_) => "large compiled namespace decode")?:
+        CompiledBodyOutput.Namespace(decoded) =>
+            assert decoded.module == large_namespace.module and decoded.body_ir == large_namespace.body_ir
+        _ => return Err("large compiled namespace decoded as another output kind")
+
     mut oversized_value = values[0]
     oversized_value.body_ir = "".join(["x" for _ in range(67108864)]).encode()
     match encode_compiled_body_outputs(CompiledBodyOutputs(values=[oversized_value], fallbacks=[])):

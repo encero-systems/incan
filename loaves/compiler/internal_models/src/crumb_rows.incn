@@ -60,7 +60,7 @@ pub def decode_rows(encoded: bytes, descriptions: list[Description], maximum: in
     """Admit one complete envelope and materialize only its bounded logical rows."""
     if len(encoded) > maximum:
         return Err("encoded Crumb rows exceed their byte boundary")
-    mut budget = operation_budget()?
+    mut budget = Budget.create(bytes=maximum * 4, elements=4194304, depth=128).map_err((error) => error.message())?
     registry = KindRegistry.create([], budget).map_err((error) => error.message())?
     owner = MappedFile.owned(encoded)?
     view = match owner.view(0, owner.len()):
