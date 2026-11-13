@@ -7,8 +7,12 @@ from std.primitives.crumb import Budget
 from std.primitives.crumb.encoding_buffer import EncodingBuffer
 from std.primitives.crumb.framing import frame
 from std.primitives.crumb.identity import member_identity, declaration_identity, declaration_preimage
+from std.primitives.crumb.identity import closed_selector, check_arity
+from std.primitives.crumb.spelling import selector_spelling
+from std.primitives.crumb.types import NominalKind, TypeNode
 from std.primitives.hash import sha256
-from case_data import CaseOperation, text
+from std.primitives.text import encode_utf8
+from case_data import CaseOperation, field, hex_bytes, nodes, text
 from corpus import load
 
 
@@ -40,6 +44,10 @@ def test_native_semantic_codec_covers_all_444_corpus_cases() -> Result[None, str
                 incan = nominal_twin(item.document)?
                 if outcome.kind == 0u8 and outcome.encoded == incan and outcome.decoded == incan:
                     completed += 1
+            CaseOperation.TypeSelector =>
+                incan = selector_twin(item.document)?
+                if outcome.kind == 0u8 and outcome.encoded == incan and outcome.decoded == incan:
+                    completed += 1
             _ =>
                 if outcome.kind == 0u8:
                     return Err(f"native operation has no independent twin assertion: {item.operation.value()}")
@@ -64,4 +72,30 @@ def nominal_twin(document: JsonValue) -> Result[bytes, str]:
         .append(frame(preimage, budget).map_err((error) => error.message())?, budget)
         .map_err((error) => error.message())?
     output.append(digest, budget).map_err((error) => error.message())?
+    return output.finish(budget).map_err((error) => error.message())
+
+
+def selector_twin(document: JsonValue) -> Result[bytes, str]:
+    """Encode the Incan selector spelling and key into the harness's canonical comparison frame."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=128).map_err((error) => error.message())?
+    input = field(document, "input")?
+    mut arguments: list[TypeNode] = []
+    if let Some(items) = input.get("arguments"):
+        arguments = nodes(items.expect_array().map_err((error) => error.message())?)?
+    kind = match NominalKind.from_value(text(input, "kind")?):
+        Some(value) => value
+        None => return Err("unknown nominal kind")
+
+    node = TypeNode.Nominal(kind, "", Some(hex_bytes(text(input, "declaration_hex")?)?), arguments)
+    if let Some(parameters) = input.get("parameter_names"):
+        check_arity(node, len(parameters.expect_array().map_err((error) => error.message())?)).map_err(
+            (error) => error.message(),
+        )?
+    spelling = encode_utf8(selector_spelling(node, budget).map_err((error) => error.message())?)
+    key = closed_selector(node, budget).map_err((error) => error.message())?
+    mut output = EncodingBuffer.create()
+    output
+        .append(frame(spelling, budget).map_err((error) => error.message())?, budget)
+        .map_err((error) => error.message())?
+    output.append(key, budget).map_err((error) => error.message())?
     return output.finish(budget).map_err((error) => error.message())

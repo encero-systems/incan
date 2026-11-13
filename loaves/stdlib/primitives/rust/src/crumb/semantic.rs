@@ -31,6 +31,7 @@ pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCa
     let encoded = match operation.as_str() {
         "member_identity" => member_identity(&parsed),
         "nominal_identity" => nominal_identity(&parsed),
+        "type_selector" => type_selector(&parsed),
         _ => None,
     };
     let encode_ns = elapsed_ns(encode_started);
@@ -93,6 +94,158 @@ fn append_frame(output: &mut Vec<u8>, data: &[u8]) {
     }
 }
 
+/// Encode the canonical closed-selector spelling and its key preimage.
+fn type_selector(document: &Value) -> Option<Vec<u8>> {
+    let input = document.get("input")?;
+    let kind = input.get("kind")?.as_str()?;
+    if !matches!(kind, "record" | "enum") {
+        return None;
+    }
+    let identity_text = input.get("declaration_hex")?.as_str()?;
+    let identity = decode_hex(identity_text)?;
+    if identity.len() != 6 {
+        return None;
+    }
+    let arguments: &[Value] = match input.get("arguments") {
+        Some(value) => value.as_array()?.as_slice(),
+        None => &[],
+    };
+    if let Some(parameters) = input.get("parameter_names")
+        && parameters.as_array()?.len() != arguments.len()
+    {
+        return None;
+    }
+    let mut spellings = Vec::with_capacity(arguments.len());
+    for argument in arguments {
+        let spelling = argument.as_str()?;
+        if !valid_selector_spelling(spelling) {
+            return None;
+        }
+        spellings.push(spelling);
+    }
+    let mut selector = format!("{kind}@{identity_text}");
+    if !spellings.is_empty() {
+        selector.push('<');
+        selector.push_str(&spellings.join(","));
+        selector.push('>');
+    }
+    let mut key = identity;
+    append_base128(&mut key, spellings.len());
+    for spelling in spellings {
+        append_frame(&mut key, spelling.as_bytes());
+    }
+    let mut encoded = Vec::with_capacity(selector.len() + key.len() + 2);
+    append_frame(&mut encoded, selector.as_bytes());
+    encoded.extend(key);
+    Some(encoded)
+}
+
+/// Admit the closed scalar and nominal spellings exercised by selector construction.
+fn valid_selector_spelling(value: &str) -> bool {
+    if matches!(
+        value,
+        "none"
+            | "bool"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "fp32"
+            | "fp64"
+            | "decimal"
+            | "string"
+            | "binary"
+    ) {
+        return true;
+    }
+    let Some((head, arguments)) = value.split_once('<') else {
+        return valid_nominal_head(value);
+    };
+    if !valid_nominal_head(head) || !arguments.ends_with('>') {
+        return false;
+    }
+    let inner = &arguments[..arguments.len() - 1];
+    !inner.is_empty() && split_selector_arguments(inner).is_some()
+}
+
+/// Validate one nominal selector head with an exact six-byte lowercase identity.
+fn valid_nominal_head(value: &str) -> bool {
+    let Some((kind, identity)) = value.split_once('@') else {
+        return false;
+    };
+    matches!(kind, "record" | "enum") && identity.len() == 12 && decode_hex(identity).is_some()
+}
+
+/// Split nested selector arguments while rejecting empty or unbalanced members.
+fn split_selector_arguments(value: &str) -> Option<Vec<&str>> {
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut result = Vec::new();
+    for (index, character) in value.char_indices() {
+        match character {
+            '<' => depth = depth.checked_add(1)?,
+            '>' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                let part = &value[start..index];
+                if !valid_selector_spelling(part) {
+                    return None;
+                }
+                result.push(part);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    let part = &value[start..];
+    if depth != 0 || !valid_selector_spelling(part) {
+        return None;
+    }
+    result.push(part);
+    Some(result)
+}
+
+/// Decode strict lowercase hexadecimal bytes.
+fn decode_hex(value: &str) -> Option<Vec<u8>> {
+    if !value.len().is_multiple_of(2) {
+        return None;
+    }
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| Some(hex_value(pair[0])? * 16 + hex_value(pair[1])?))
+        .collect()
+}
+
+/// Decode one lowercase hexadecimal digit.
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        _ => None,
+    }
+}
+
+/// Append one shortest base-128 native count.
+fn append_base128(output: &mut Vec<u8>, mut value: usize) {
+    loop {
+        let mut group = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            group |= 0x80;
+        }
+        output.push(group);
+        if value == 0 {
+            return;
+        }
+    }
+}
+
 impl SemanticCase {
     /// Preserve an explicit unsupported state without placeholder bytes or timings.
     fn unsupported() -> Self {
@@ -133,6 +286,13 @@ mod tests {
         assert_eq!(nominal.kind, 0);
         assert_eq!(&nominal.encoded[..6], [0x1d, 0xdb, 0x0b, 0x3c, 0xe6, 0xd3]);
         assert_eq!(nominal.encoded, nominal.decoded);
+
+        let selector = evaluate_semantic_case(
+            "type_selector".to_string(),
+            "{\"input\":{\"kind\":\"record\",\"declaration_hex\":\"070dcdc804d5\",\"arguments\":[\"i8\"]}}".to_string(),
+        );
+        assert_eq!(selector.kind, 0);
+        assert_eq!(selector.encoded, selector.decoded);
 
         let unsupported = evaluate_semantic_case("binary_decode".to_string(), "{\"id\":\"red\"}".to_string());
         assert_eq!(unsupported.kind, 1);
