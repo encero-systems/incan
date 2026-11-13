@@ -43,7 +43,12 @@ from release_support import (
     tree_digest,
     verification_program,
 )
-from verify_installation import audit_relocation, census_arguments, require_pristine_relocation_inputs
+from verify_installation import (
+    audit_relocation,
+    census_arguments,
+    require_pristine_relocation_inputs,
+    require_shipped_standard_sources,
+)
 from relink_driver import absolute_manifest
 
 const SHA: str = "0123456789abcdef0123456789abcdef01234567"
@@ -556,4 +561,19 @@ def make_tree_writable(root: Path) -> Result[None, str]:
     for entry in root.rglob("*").map_err((error) => error.message())?:
         entry.chmod(false).map_err((error) => error.message())?
     root.chmod(false).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def test_installed_verification_refuses_a_toolchain_without_standard_sources() -> Result[None, str]:
+    """An installation without shipped standard sources is refused; checkout sources are never substituted."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = temporary.path().joinpath("home")
+    primitives = home.joinpath(TOOLCHAIN_DIRECTORY).joinpath("stdlib/primitives")
+    primitives.mkdir(true, true).map_err((error) => error.message())?
+    match require_shipped_standard_sources(home):
+        Ok(_accepted) => return Err("an installation without standard sources was accepted")
+        Err(message) =>
+            assert "ships no standard sources" in message
+    primitives.joinpath("loaf.toml").write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+    require_shipped_standard_sources(home)?
     return Ok(None)

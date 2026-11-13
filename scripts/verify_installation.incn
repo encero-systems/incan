@@ -63,13 +63,12 @@ pub model VerificationPhasePlan:
 
 
 pub model Installation:
-    """Installed commands, source checkout, selected standard sources, and retained evidence."""
+    """Installed commands, source checkout, and retained evidence."""
 
     pub root: Path
     pub home: Path
     pub oven: Path
     pub lsp: Path
-    pub stdlib: str
     pub run: Path
     pub jobs: int
     pub timeout_seconds: int
@@ -323,18 +322,8 @@ def phase_installation(run: Path, jobs: int, timeout_seconds: int) -> Result[Ins
     lsp = Path(get_or("INCAN_LSP", home.joinpath("bin/incan-lsp").0))
     if not oven.is_file() or not lsp.is_file():
         return Err("the installed Oven and language server are required")
-    stdlib = run.joinpath("selected-stdlib.txt").read_text("utf-8", "strict").map_err((error) => error.message())?
     return Ok(
-        Installation(
-            root=root,
-            home=home,
-            oven=oven,
-            lsp=lsp,
-            stdlib=stdlib,
-            run=run,
-            jobs=jobs,
-            timeout_seconds=timeout_seconds,
-        ),
+        Installation(root=root, home=home, oven=oven, lsp=lsp, run=run, jobs=jobs, timeout_seconds=timeout_seconds),
     )
 
 
@@ -426,53 +415,19 @@ def prepare(output: Path, jobs: int, timeout_seconds: int) -> Result[Installatio
     output.mkdir(true, true).map_err((error) => error.message())?
     temporary = TemporaryDirectory.try_new_with("run.", "", Some(output)).map_err((error) => error.message())?
     run = temporary.persist().map_err((error) => error.message())?
-    standard = select_standard_sources(root, home, run)?
-    run
-        .joinpath("selected-stdlib.txt")
-        .write_text(standard, "utf-8", "strict", None)
-        .map_err((error) => error.message())?
+    require_shipped_standard_sources(home)?
     retain_input_digests(run, oven, lsp)?
     return Ok(
-        Installation(
-            root=root,
-            home=home,
-            oven=oven,
-            lsp=lsp,
-            stdlib=standard,
-            run=run,
-            jobs=jobs,
-            timeout_seconds=timeout_seconds,
-        ),
+        Installation(root=root, home=home, oven=oven, lsp=lsp, run=run, jobs=jobs, timeout_seconds=timeout_seconds),
     )
 
 
-def select_standard_sources(root: Path, home: Path, run: Path) -> Result[str, str]:
-    """Expose checkout sources only for standard packages whose compiled artifacts the archive shipped."""
+pub def require_shipped_standard_sources(home: Path) -> Result[None, str]:
+    """Refuse an installation that ships no standard sources, so no gate can read the checkout's instead."""
     toolchain = home.joinpath(TOOLCHAIN_DIRECTORY)
-    if toolchain.joinpath("stdlib/primitives/loaf.toml").is_file():
-        return Ok("")
-    stdlib = run.joinpath("stdlib")
-    stdlib.mkdir(true, true).map_err((error) => error.message())?
-    mut packages: list[str] = []
-    for artifact in toolchain.joinpath("loaves").iterdir().map_err((error) => error.message())?:
-        if not artifact.is_dir():
-            continue
-        name = artifact.name()
-        if not name.startswith("incan_stdlib_"):
-            return Err(f"unknown standard package: {name}")
-        package = name[13:]
-        source = root.joinpath(f"loaves/stdlib/{package}")
-        if not source.joinpath("loaf.toml").is_file():
-            return Err(f"missing standard source: {package}")
-        stdlib.joinpath(package).symlink_to(source).map_err((error) => error.message())?
-        packages.append(package)
-    if "primitives" not in packages:
-        return Err("archive has no primitive standard package")
-    run
-        .joinpath("standard-packages.txt")
-        .write_text("\n".join(sorted(packages)) + "\n", "utf-8", "strict", None)
-        .map_err((error) => error.message())?
-    return Ok(stdlib.0)
+    if not toolchain.joinpath("stdlib/primitives/loaf.toml").is_file():
+        return Err("the installed toolchain ships no standard sources: stdlib/primitives/loaf.toml is missing")
+    return Ok(None)
 
 
 def build_runner(installation: Installation) -> Result[Path, str]:
@@ -698,7 +653,7 @@ def describe_unit(installation: Installation, oven: Path, source: Path, output: 
     command
         .current_dir(installation.root.0)
         .env("INCAN_HOME", installation.home.0)
-        .env("INCAN_STDLIB", installation.stdlib)
+        .env("INCAN_STDLIB", "")
         .env("INCAN_NO_BANNER", "1")
         .env("OVEN_OWNER", "off")
         .env("RUSTUP_TOOLCHAIN", "1.98.0")
@@ -850,7 +805,7 @@ def command_step(
 
 def command_environment(installation: Installation) -> Dict[str, str]:
     """Return the explicit environment selected for every installed-verification child."""
-    return {"INCAN_HOME": installation.home.0, "INCAN_STDLIB": installation.stdlib, "INCAN_NO_BANNER": "1", "OVEN_OWNER": "off", "RUSTUP_TOOLCHAIN": "1.98.0"}
+    return {"INCAN_HOME": installation.home.0, "INCAN_STDLIB": "", "INCAN_NO_BANNER": "1", "OVEN_OWNER": "off", "RUSTUP_TOOLCHAIN": "1.98.0"}
 
 
 def owns_rust_facet(manifest: str) -> bool:
