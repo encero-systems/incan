@@ -13,16 +13,16 @@ it does not depend on scheduling. The passing ids must equal `workspaces/contrac
 
 At most N invocations run at once: `--jobs N`, else the core count. Each invocation also reserves memory, and one starts
 only while the reservations fit the memory they share: `--memory GIB`, else physical memory less a headroom. Oven
-sources share one private project per worker under `.agents/state`; a worker runs its sources serially, so unchanged
-modules are reused without concurrent generations sharing mutable output.
+sources share a pool of private worker projects under `.agents/state`, one per job. Each Oven source starts in whichever
+worker project is free, so a long source never holds back the sources planned after it, and a worker project runs one
+source at a time, so concurrent generations never share mutable output. The worker projects are removed once every
+invocation has exited.
 """
 
 from rust::std::cell import RefCell
 from rust::std::env import args
 from rust::std::fs import File
 from rust::std::io import copy as copy_stream
-from rust::std::ops import Index
-from rust::std::primitive import usize
 from rust::std::process import Child, Command, Stdio, exit
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
@@ -77,10 +77,9 @@ pub model Invocation:
     pub timeout_seconds: int = 0
     # Runs by itself after the others, because it requires an installation that has stopped changing.
     pub alone: bool = false
-    # Invocations with the same nonempty group share mutable output and therefore run serially.
-    pub group: str = ""
-    # A private project removed only after this invocation's process has exited and its external log is durable.
-    pub scratch: Option[Path] = None
+    # Worker projects this invocation may run in: it starts in the first one no other invocation is running in, and its
+    # relative arguments resolve there. Empty runs it in `directory`.
+    pub workers: list[str] = []
 
 
 pub model Summary:
@@ -100,8 +99,8 @@ model Running:
     timeout_seconds: int
     started: Instant
     child: Rc[RefCell[Child]]
-    group: str
-    scratch: Option[Path]
+    # The worker project it runs in; empty when it has none.
+    worker: str
 
 
 def main() -> None:
@@ -187,6 +186,7 @@ def run(options: Options) -> Result[str, str]:
     planned = invocations(root, options.evidence, logs, options.jobs)?
     ran = run_all(options.oven, [item for item in planned if not item.alone], options.jobs, options.memory)?
     ran_alone = run_all(options.oven, [item for item in planned if item.alone], 1, options.memory)?
+    remove_worker_projects(planned)?
     succeeded = ran and ran_alone
     log = options.evidence.joinpath("oven-tests.log")
     joined = join_logs(planned, log)?
@@ -196,42 +196,21 @@ def run(options: Options) -> Result[str, str]:
 
 
 pub def invocations(root: Path, evidence: Path, logs: Path, jobs: int) -> Result[list[Invocation], str]:
-    """Plan fixed-order invocations while each Oven worker reuses one private, serially accessed project."""
+    """Plan fixed-order invocations; each Oven source may run in any of one private worker project per job."""
     mut planned: list[Invocation] = []
     oven = root.joinpath("workspaces/oven")
     sources = listed_tests(oven.joinpath("src"))?
     if len(sources) == 0:
         return Err("Oven test sources are absent")
-    shards = min([jobs, len(sources)])
-    mut projects: list[Path] = []
-    for shard in range(shards):
-        projects.append(isolated_oven_project(root, evidence, shard)?)
-    cleanup = oven_cleanup_positions(sources, shards)
-    for index in range(len(sources)):
-        source = path_at(sources, index)
+    mut workers: list[str] = []
+    for position in range(min([jobs, len(sources)])):
+        workers.append(isolated_oven_project(root, evidence, position)?.0)
+    for source in sources:
         if not source.is_file():
             return Err("Oven test sources are absent")
-        shard = index % shards
-        project = path_at(projects, shard)
-        isolated_source = project.joinpath("src").joinpath(source.name())
-        unit = ["test", isolated_source.0]
+        unit = ["test", f"src/{source.name()}"]
         alone = source.name() in NEEDS_SETTLED_INSTALLATION
-        mut scratch: Option[Path] = None
-        if cleanup[shard] == index:
-            scratch = Some(project.parent().parent())
-        planned.append(
-            invocation(
-                unit,
-                project.0,
-                PROJECT_RESERVATION_BYTES,
-                logs,
-                len(planned),
-                source,
-                alone,
-                project.0,
-                scratch,
-            ),
-        )
+        planned.append(invocation(unit, "", PROJECT_RESERVATION_BYTES, logs, len(planned), source, alone, workers))
     compiler = root.joinpath("loaves/compiler").0 + "/"
     for source in loaf_tests(root.joinpath("loaves"))?:
         # Compiler Loaves link native support, which an installed bundle ships for the release profile only.
@@ -241,19 +220,24 @@ pub def invocations(root: Path, evidence: Path, logs: Path, jobs: int) -> Result
     return Ok(planned)
 
 
-def oven_cleanup_positions(sources: list[Path], shards: int) -> list[int]:
-    """Select each shard's final invocation, preferring its settled-installation source when it has one."""
-    mut positions = [-1 for _ in range(shards)]
-    for index in range(len(sources)):
-        positions[index % shards] = index
-    for index in range(len(sources)):
-        if sources[index].name() in NEEDS_SETTLED_INSTALLATION:
-            positions[index % shards] = index
-    return positions
+pub def remove_worker_projects(planned: list[Invocation]) -> Result[None, str]:
+    """Remove the private checkout holding each worker project, once no invocation can run in it any more."""
+    mut removed: list[str] = []
+    for item in planned:
+        for worker in item.workers:
+            checkout = Path(worker).parent().parent()
+            if checkout.0 in removed:
+                continue
+            removed.append(checkout.0)
+            if checkout.exists() or checkout.is_symlink():
+                checkout
+                    .remove_tree()
+                    .map_err((error) => f"cannot remove completed Oven test worker {checkout.0}: {error.message()}")?
+    return Ok(None)
 
 
 def isolated_oven_project(root: Path, evidence: Path, position: int) -> Result[Path, str]:
-    """Copy one Oven worker project whose target is reused only by that worker's serial invocations."""
+    """Copy one Oven worker project, whose target its successive invocations reuse, one at a time."""
     checkout = oven_test_state_root(root, get_or("OVEN_TEST_STATE_ROOT", ""))
         .joinpath(evidence.name())
         .joinpath(str(position))
@@ -291,8 +275,7 @@ def invocation(
     position: int,
     source: &Path,
     alone: bool = false,
-    group: str = "",
-    scratch: Option[Path] = None,
+    workers: list[str] = [],
 ) -> Invocation:
     """One invocation whose log name orders it by its position."""
     log = logs.joinpath(log_name(position, source))
@@ -302,8 +285,7 @@ def invocation(
         reservation=reservation,
         log=log,
         alone=alone,
-        group=group,
-        scratch=scratch,
+        workers=workers,
     )
 
 
@@ -359,12 +341,6 @@ def sorted_paths(paths: list[Path]) -> list[Path]:
     return [Path(spelling) for spelling in sorted([path.0 for path in paths])]
 
 
-def path_at(paths: &list[Path], position: int) -> &Path:
-    """Borrow one retained path without copying its owned spelling."""
-    slot: usize = position.wrapping_resize()
-    return Index.index(paths, slot)
-
-
 pub def run_all(oven: str, planned: list[Invocation], jobs: int, memory: int) -> Result[bool, str]:
     """Run every invocation, at most `jobs` at once within `memory`, and report whether all of them succeeded."""
     return Ok(len(run_all_failures(oven, planned, jobs, memory)?) == 0)
@@ -377,17 +353,16 @@ pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory
     mut active: list[Running] = []
     mut failed: list[int] = []
     while len(waiting) > 0 or len(active) > 0:
-        chosen = admitted(
-            reservations,
-            waiting,
-            [item.reservation for item in active],
-            jobs,
-            memory,
-            [item.group for item in planned],
-            [item.group for item in active],
-        )
+        chosen = admitted(reservations, waiting, [item.reservation for item in active], jobs, memory)
+        mut busy = [item.worker for item in active]
+        mut started: list[int] = []
         for index in chosen:
-            child = start(oven, planned[index])?
+            worker = free_worker(planned[index].workers, busy)
+            if len(planned[index].workers) > 0 and worker == "":
+                continue
+            child = start(oven, planned[index], worker)?
+            busy.append(worker)
+            started.append(index)
             active.append(
                 Running(
                     position=index,
@@ -395,23 +370,20 @@ pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory
                     timeout_seconds=planned[index].timeout_seconds,
                     started=Instant.now(),
                     child=Rc.new(RefCell.new(child)),
-                    group=planned[index].group,
-                    scratch=planned[index].scratch,
+                    worker=worker,
                 ),
             )
-        waiting = [index for index in waiting if index not in chosen]
+        waiting = [index for index in waiting if index not in started]
         mut running: list[Running] = []
         for item in active:
             match item.child.borrow_mut().try_wait().map_err((error) => str(error))?:
                 Some(status) =>
-                    remove_completed_scratch(item.scratch)?
                     if not status.success():
                         failed.append(item.position)
                 None =>
                     if item.timeout_seconds > 0 and item.started.elapsed().as_secs() >= item.timeout_seconds:
                         _ = item.child.borrow_mut().kill()
                         _ = item.child.borrow_mut().wait()
-                        remove_completed_scratch(item.scratch)?
                         failed.append(item.position)
                     else:
                         running.append(item)
@@ -421,27 +393,15 @@ pub def run_all_failures(oven: str, planned: list[Invocation], jobs: int, memory
     return Ok(sorted(failed))
 
 
-def remove_completed_scratch(scratch: Option[Path]) -> Result[None, str]:
-    """Remove one private test project only after its child has exited and its file-backed log is complete."""
-    match scratch:
-        None => return Ok(None)
-        Some(path) =>
-            if path.exists() or path.is_symlink():
-                path
-                    .remove_tree()
-                    .map_err((error) => f"cannot remove completed Oven test scratch {path.0}: {error.message()}")?
-            return Ok(None)
+pub def free_worker(workers: list[str], busy: list[str]) -> str:
+    """The first of `workers` that no running invocation occupies, or empty when every one is busy or none exists."""
+    for worker in workers:
+        if worker not in busy:
+            return worker
+    return ""
 
 
-pub def admitted(
-    reservations: list[int],
-    waiting: list[int],
-    held: list[int],
-    jobs: int,
-    memory: int,
-    groups: list[str] = [],
-    held_groups: list[str] = [],
-) -> list[int]:
+pub def admitted(reservations: list[int], waiting: list[int], held: list[int], jobs: int, memory: int) -> list[int]:
     """
     The waiting invocations to start now, in order: each whose reservation fits in `memory` beside those `held`,
     while fewer than `jobs` run. One that fits only alone waits for the others; with nothing running it always starts.
@@ -452,31 +412,26 @@ pub def admitted(
     for reservation in held:
         reserved += reservation
     mut chosen: list[int] = []
-    mut chosen_groups: list[str] = []
     for index in waiting:
         if count >= jobs:
             break
-        mut group = ""
-        if index < len(groups):
-            group = groups[index]
-        if group != "" and (group in held_groups or group in chosen_groups):
-            continue
         if count == 0 or memory == 0 or reserved + reservations[index] <= memory:
             chosen.append(index)
-            chosen_groups.append(group)
             count += 1
             reserved += reservations[index]
     return chosen
 
 
-def start(oven: str, planned: Invocation) -> Result[Child, str]:
-    """Start one invocation with stdout and stderr in its own log, in the order it writes them."""
+def start(oven: str, planned: Invocation, worker: str = "") -> Result[Child, str]:
+    """Start one invocation in `worker`, else its directory, with stdout and stderr in its own log, in written order."""
     log = File.create(planned.log.0).map_err((error) => f"{planned.log.0}: {error}")?
     errors = log.try_clone().map_err((error) => str(error))?
     mut command = Command.new(oven)
     for argument in planned.arguments:
         command.arg(argument)
-    if planned.directory != "":
+    if worker != "":
+        command.current_dir(worker)
+    elif planned.directory != "":
         command.current_dir(planned.directory)
     for name in sorted([name for name in planned.environment.keys()]):
         command.env(name, planned.environment[name])
