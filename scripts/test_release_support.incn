@@ -227,8 +227,8 @@ def test_byte_comparison_reads_complete_content() -> Result[None, str]:
     return Ok(None)
 
 
-def test_reference_cache_identity_covers_seed_bundle_and_committed_contract_tree() -> Result[None, str]:
-    """Changing any seed component or the committed contract tree yields a distinct reference cache key."""
+def test_reference_cache_identity_covers_seed_and_reference_source_trees() -> Result[None, str]:
+    """Changing a seed component, contracts tree or selected stdlib tree changes the reference cache key."""
     temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
     oven = temporary.path().joinpath("incan")
     lsp = temporary.path().joinpath("incan-lsp")
@@ -236,12 +236,13 @@ def test_reference_cache_identity_covers_seed_bundle_and_committed_contract_tree
     oven.write_bytes(b"oven-a").map_err((error) => error.message())?
     lsp.write_bytes(b"lsp-a").map_err((error) => error.message())?
     manifest.write_bytes(b"manifest-a").map_err((error) => error.message())?
-    original = reference_cache_identity(oven, lsp, manifest, "tree-a")?
+    original = reference_cache_identity(oven, lsp, manifest, "contracts-a", "stdlib-a")?
     assert reference_cache_root(temporary.path()).0 == temporary.path().joinpath("cache/release-reference").0
     assert release_rust_cache_root(temporary.path()).0 == temporary.path().joinpath("cache/release-rust").0
-    assert reference_cache_identity(oven, lsp, manifest, "tree-b")? != original
+    assert reference_cache_identity(oven, lsp, manifest, "contracts-b", "stdlib-a")? != original
+    assert reference_cache_identity(oven, lsp, manifest, "contracts-a", "stdlib-b")? != original
     lsp.write_bytes(b"lsp-b").map_err((error) => error.message())?
-    assert reference_cache_identity(oven, lsp, manifest, "tree-a")? != original
+    assert reference_cache_identity(oven, lsp, manifest, "contracts-a", "stdlib-a")? != original
     return Ok(None)
 
 
