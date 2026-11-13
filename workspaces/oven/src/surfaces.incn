@@ -60,6 +60,8 @@ pub def misplaced(surface: str, command: str, arguments: list[str]) -> Option[st
     if surface == INCAN:
         if command == "inspect":
             return Some(f"{INCAN} inspect: unknown command `{arguments[0]}`")
+        if command == "lock":
+            return Some(f"{INCAN}: unknown command `lock`; the lock is written by `oven lock`")
         return Some(f"{INCAN}: unknown command `{command}`")
     name = spelled(command, arguments)
     return Some(f"{OVEN}: `oven {name}` is a language command: run `incan {name}`")

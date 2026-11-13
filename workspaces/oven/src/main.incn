@@ -324,6 +324,8 @@ def parse_options(arguments: list[str], default_path: str = "") -> Result[Option
         elif argument == "--all-features":
             options.feature_options = true
             options.request.all_features = true
+        elif argument == "--release":
+            return Err("unknown option `--release`; select the release profile with `--profile release`")
         elif argument.startswith("-"):
             return Err(f"unknown option `{argument}`")
         elif options.path != "":
@@ -336,6 +338,16 @@ def parse_options(arguments: list[str], default_path: str = "") -> Result[Option
     if options.path == "":
         return Err("a PATH is required")
     return Ok(options)
+
+
+def project_default_path() -> str:
+    """`.` when the working directory is inside a project, so a project command needs no PATH; otherwise nothing."""
+    match Path(".").absolute():
+        Ok(here) =>
+            if project_root_of(here.joinpath("loaf.toml")) is not None:
+                return "."
+        Err(_) => pass
+    return ""
 
 
 def records_command(command: str, arguments: list[str]) -> None:
@@ -393,11 +405,11 @@ def apply_option(mut options: Options, name: str, value: str) -> Result[None, st
 def run(arguments: list[str]) -> None:
     """Compile the program whose entry source is PATH and run it with the arguments after `--`."""
     own, passed = program_arguments(arguments)
-    match parse_options(own):
+    match parse_options(own, project_default_path()):
         Err(reason) => syntax_error("run", reason)
         Ok(options) =>
             mut selected = validated("run", options)
-            match build_source(Path(selected.path), selected.manifests):
+            match program_source(Path(selected.path), selected.manifests):
                 Err(reason) => fail(f"{invoked()} run: {reason}", 1)
                 Ok(Some(source)) => selected.path = source.0
                 Ok(None) => pass
@@ -588,14 +600,19 @@ def check(arguments: list[str]) -> None:
         index += 1
     if format != "text" and format != "json":
         fail(f"{invoked()} check: `--format` is text or json, got `{format}`", 2)
-    match parse_options(own):
+    match parse_options(own, project_default_path()):
         Err(reason) => syntax_error("check", reason)
         Ok(options) => finish("check", checked(validated("check", options), format), format)
 
 
 def checked(options: Options, format: str) -> Result[i32, str]:
     """Describe an ordinary unit, then let checking prepare its dependencies and exact native inputs once."""
-    unit = describe(Path(options.path), options.profile, options.request, options.manifests)?
+    mut source = Path(options.path)
+    if source.is_dir():
+        match build_source(source, options.manifests)?:
+            Some(entry) => source = entry
+            None => return Err(f"{source.0}: the directory names no Incan entry; name a source file")
+    unit = describe(source, options.profile, options.request, options.manifests)?
     return check_unit(unit, toolchain_for(unit)?, format)
 
 
@@ -734,7 +751,7 @@ def print_description(options: Options) -> None:
 
 def build(arguments: list[str]) -> None:
     """Compile an Incan source unit or a Rust project against the installed toolchain's registry units."""
-    match parse_options(arguments):
+    match parse_options(arguments, project_default_path()):
         Err(reason) => syntax_error("build", reason)
         Ok(options) =>
             selected = validated("build", options)
@@ -785,18 +802,55 @@ def rust_request(options: Options) -> Result[RustBuild, str]:
     return Ok(request)
 
 
+def project_directory(path: Path) -> Result[Option[Path], str]:
+    """
+    The root of the project a directory is or belongs to, when it has one. It is absolute, so every spelling of the
+    directory selects one source spelling.
+    """
+    here = path.absolute().map_err((error) => f"{path.0}: {error.message()}")?
+    return Ok(project_root_of(here.joinpath("loaf.toml")))
+
+
 def build_source(path: Path, reader: ManifestReader) -> Result[Option[Path], str]:
-    """Select an explicit source or a directory's conventional Incan entry; other directories name Rust projects."""
+    """
+    Select an explicit source, or the conventional Incan entry of the project a directory is or belongs to. A directory
+    outside any project, or of a project without that entry, names a Rust project.
+    """
     if path.is_file():
         return Ok(Some(path))
-    if not path.joinpath("loaf.toml").is_file():
-        return Ok(None)
-    project = read_project(path, reader).map_err((error) => error.message())?
-    root = Path(source_root_of(project))
-    for name in ["lib.incn", "main.incn"]:
-        source = root.joinpath(name)
-        if source.is_file():
-            return Ok(Some(source))
+    match project_directory(path)?:
+        None => return Ok(None)
+        Some(owner) =>
+            project = read_project(owner, reader).map_err((error) => error.message())?
+            root = Path(source_root_of(project))
+            for name in ["lib.incn", "main.incn"]:
+                source = root.joinpath(name)
+                if source.is_file():
+                    return Ok(Some(source))
+    return Ok(None)
+
+
+def program_source(path: Path, reader: ManifestReader) -> Result[Option[Path], str]:
+    """
+    Select an explicit source, or the program the project of a directory runs: its `main` script, else its only script,
+    else its conventional `main.incn`. Several scripts without a `main` are refused, because none is the program.
+    """
+    if path.is_file():
+        return Ok(Some(path))
+    match project_directory(path)?:
+        None => return Ok(None)
+        Some(owner) =>
+            project = read_project(owner, reader).map_err((error) => error.message())?
+            scripts = project.intent.scripts
+            if "main" in scripts:
+                return Ok(Some(Path(project.root).joinpath(scripts["main"])))
+            if len(scripts) > 1:
+                return Err(f"the project declares {len(scripts)} scripts and none is named `main`; name the source")
+            for name in scripts.keys():
+                return Ok(Some(Path(project.root).joinpath(scripts[name])))
+            source = Path(source_root_of(project)).joinpath("main.incn")
+            if source.is_file():
+                return Ok(Some(source))
     return Ok(None)
 
 

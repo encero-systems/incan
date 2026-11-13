@@ -1,0 +1,11 @@
+# behavior: inside a project, check needs no path and accepts a directory: both check the project's entry
+# cli-commands:
+#   check
+#   oven check
+#   check .
+#   check src
+# expect-stdout:
+#   ✓ Type check passed!
+
+def main() -> None:
+    println("checked through its project")

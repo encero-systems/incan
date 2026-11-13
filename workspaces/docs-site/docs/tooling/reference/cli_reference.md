@@ -9,11 +9,11 @@ oven --help | -h | help
 oven --version
 oven lock [--versions lowest|lowest-direct|newest] [PATH]
 oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE
-oven run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
-oven check PATH [--format text|json] [UNIT OPTIONS]
+oven run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
+oven check [PATH] [--format text|json] [UNIT OPTIONS]
 oven test [PATH] [UNIT OPTIONS]
 oven describe-unit PATH [--unattended] [UNIT OPTIONS]
-oven build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
+oven build [PATH] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 oven owner stop
 oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE
 oven inspect dependencies PATH [UNIT OPTIONS]
@@ -21,19 +21,19 @@ oven inspect run ID --proofs
 
 incan --help | -h | help
 incan --version
-incan run [--direct] PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
-incan check PATH [--format text|json] [UNIT OPTIONS]
+incan run [--direct] [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
+incan check [PATH] [--format text|json] [UNIT OPTIONS]
 incan explain CODE
 incan test [PATH] [UNIT OPTIONS]
-incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
-incan fmt [--check] PATH...
+incan build [PATH] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
+incan fmt [--check] [PATH...]
 incan inspect codegraph PATH [GRAPH OPTIONS]
 incan mcp PATH [--profile NAME]
 incan toolchain pack OUT
 incan toolchain install ARCHIVE
 ```
 
-There is no implicit command. Without `PATH`, `test` uses the current directory; every other command that takes `PATH` requires it. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
+There is no implicit command. Without `PATH`, `run`, `check` and `build` select the project the working directory belongs to, and are refused outside a project; `test` and `fmt` select the working directory; every other command that takes `PATH` requires it. `--release` and `incan lock` are refused: the refusal names `--profile release` and `oven lock`. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
 
 ## Help and version
 
@@ -74,13 +74,13 @@ Trust controls only whether unattended preparation and the language server may r
 
 ## `oven run`
 
-`PATH` names an Incan entry source. Arguments after `--` are passed to the program. `--argv0 TEXT` sets the program's argument zero. Repeatable `--program-entry PATH` adds program entries. The compiled program inherits stdin, stdout and stderr; its exit status is the command's exit status.
+`PATH` names an Incan entry source or a directory. A directory selects the program of the project it is or belongs to: the script named `main`, otherwise the only script, otherwise `main.incn` in the source root. A project with several scripts and none named `main` is refused. Arguments after `--` are passed to the program. `--argv0 TEXT` sets the program's argument zero. Repeatable `--program-entry PATH` adds program entries. The compiled program inherits stdin, stdout and stderr; its exit status is the command's exit status.
 
 With `INCAN_ENGINE=records`, `PATH` must name one ordinary program source file or a project directory with a conventional `src/main.incn` entry, the profile must be `debug` or `release`, and vocabulary entries, foreign headers, feature-selection flags, substitutions and additional program entries are refused. Editable Incan path dependencies are captured with the program. Build and run select the same compiled unit. The program runs only after successful capture and native selection. `--engine-report` retains a proof report and prints one JSON line before any program output. Without that flag, proof reporting adds no console output. The flag is refused in legacy mode.
 
 ## `oven check`
 
-Checks the source at `PATH` without producing an executable. `--format` accepts `text` (default) or `json`. Successful checks exit zero; errors exit nonzero.
+Checks the source at `PATH` without producing an executable. A directory selects the entry that `oven build` selects for the project it is or belongs to; a directory with no such entry is refused. `--format` accepts `text` (default) or `json`. Successful checks exit zero; errors exit nonzero.
 
 The JSON report has `schema_version: 2`, Boolean `ok`, and a `diagnostics` array. Diagnostic entries carry `code`, `severity`, `phase`, `origin`, `message`, `primary_span`, `notes`, `hints` and `explain`, with additional related or comparison fields when applicable. `explain` is always the string `incan explain CODE`, with the diagnostic's code. Message wording is not stable. A span carries its source file and positions, including byte offsets.
 
@@ -96,7 +96,7 @@ Collected test functions take no arguments and return `None` or `Result[None, E]
 
 ## `oven build`
 
-An explicit source file selects that unit. For a directory, `lib.incn` in the project's source root selects a library; otherwise `main.incn` there selects a program. The source root is `[build] source-root`, otherwise `src` when present, otherwise the project directory. Other project directories select the Rust facet build.
+An explicit source file selects that unit. A directory selects the project it is or belongs to: `lib.incn` in that project's source root selects a library; otherwise `main.incn` there selects a program. The source root is `[build] source-root`, otherwise `src` when present, otherwise the project directory. Other project directories select the Rust facet build.
 
 A library source named `lib.incn` produces an rlib and checked library sidecars. Path dependency artifacts reside under `target/incan/loaves/<package>/<profile>/`. Program executables reside under `target/incan/<profile>/bin/<crate>`. `--substitute NAME=DIR` supplies local Rust dependency substitutions for a Rust-project build. `--program-entry` is accepted for Incan programs. `--argv0` is refused by builds. `--lib` and `--report` are not accepted.
 
@@ -131,7 +131,7 @@ Writes the selected source's unit description as a JSON object. Execution-only o
 
 ## `incan fmt`
 
-Formats one or more files or directory trees. `--check` leaves files unchanged and exits `1` when formatting would change a file. `--` ends option parsing. Only `.incn` files are selected; hidden directories, `target`, `node_modules` and nested symbolic links are skipped. Explicitly named files retain their single-file selection. Directory-read errors and no discovered source files are errors. Files that cannot be formatted are reported; other selected files are still processed. Formatting changes layout only: a formatted file reads as the same program, with its comments and docstrings kept. The [code style](../../language/reference/code_style.md) specifies formatting rules.
+Formats one or more files or directory trees; without a path, the working directory. `--check` leaves files unchanged and exits `1` when formatting would change a file. `--` ends option parsing. Only `.incn` files are selected; hidden directories, `target`, `node_modules` and nested symbolic links are skipped. Explicitly named files retain their single-file selection. Directory-read errors and no discovered source files are errors. Files that cannot be formatted are reported; other selected files are still processed. Formatting changes layout only: a formatted file reads as the same program, with its comments and docstrings kept. The [code style](../../language/reference/code_style.md) specifies formatting rules.
 
 ## `oven owner stop`
 

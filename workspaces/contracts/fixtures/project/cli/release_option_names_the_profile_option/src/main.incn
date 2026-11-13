@@ -1,0 +1,13 @@
+# behavior: the release option of the previous release is refused by naming the profile option that replaced it
+# cli-commands:
+#   run --release src/main.incn
+#   build --release src/main.incn
+#   test --release src/main.incn
+#   oven run --release src/main.incn
+# expect-stdout:
+# expect-stderr-contains:
+#   unknown option `--release`; select the release profile with `--profile release`
+# expect-exit: 2
+
+def main() -> None:
+    println("unreachable")

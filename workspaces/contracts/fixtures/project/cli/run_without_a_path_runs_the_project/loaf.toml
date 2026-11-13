@@ -1,0 +1,6 @@
+[project]
+name = "run_without_a_path_runs_the_project"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

@@ -1,0 +1,10 @@
+# behavior: inside a project, run needs no path: it runs the project's main script, from the root or a directory below it
+# cli-commands:
+#   run
+#   oven run
+#   run src
+# expect-stdout:
+#   the project's program
+
+def main() -> None:
+    println("the project's program")

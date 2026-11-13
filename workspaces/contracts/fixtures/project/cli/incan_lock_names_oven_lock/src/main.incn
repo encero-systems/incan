@@ -1,0 +1,11 @@
+# behavior: the lock command of the previous release is refused on incan by naming the oven command that replaced it
+# cli-commands:
+#   lock
+#   lock .
+# expect-stdout:
+# expect-stderr-contains:
+#   incan: unknown command `lock`; the lock is written by `oven lock`
+# expect-exit: 2
+
+def main() -> None:
+    println("unreachable")

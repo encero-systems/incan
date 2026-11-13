@@ -1,0 +1,9 @@
+# behavior: inside a project, build needs no path: it builds the project's entry
+# cli-commands:
+#   build
+#   oven build
+# expect-stdout:
+# expect-exit: 0
+
+def main() -> None:
+    println("built through its project")

@@ -1,0 +1,8 @@
+# behavior: fmt with no path formats the sources under the working directory
+# cli-commands:
+#   fmt --check
+# expect-stdout:
+#   ✓ 1 file(s) already formatted
+
+def main() -> None:
+    println("formatted in place")
