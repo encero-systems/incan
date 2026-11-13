@@ -446,6 +446,25 @@ impl LoafIndex {
         Ok(Some(entry))
     }
 
+    /// Read only the package facts executable-resolution admission consults and locate its governed bodies sidecar.
+    pub(crate) fn execution_artifact(
+        &self,
+        key: &str,
+    ) -> Result<Option<(Arc<LibraryManifest>, PathBuf)>, LoafIndexError> {
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        Ok(Some((indexed.execution_manifest()?, indexed.bodies_path())))
+    }
+
+    /// Read the authenticated manifest projection needed to resolve executable declarations.
+    pub fn execution_manifest(&self, key: &str) -> Result<Option<Arc<LibraryManifest>>, LoafIndexError> {
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        Ok(Some(indexed.execution_manifest()?))
+    }
+
     /// Refuse any failed demand, or a Rust ABI cache read that failed, before an analysis or executable closure can be
     /// accepted. Untouched entries stay lazy.
     pub fn validate_demands(&self) -> Result<(), LoafIndexError> {

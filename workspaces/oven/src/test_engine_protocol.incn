@@ -301,6 +301,7 @@ def check_worker_retirement() -> Result[None, str]:
         return Err(f"initial records run: status={outcome.status.code()} stderr={error}")
     initial_manifest_reads = invocation_count(observations, "incan_frontend::read_loaf_manifest")
     initial_record_reads = invocation_count(observations, "incan_frontend::read_compiler_records")
+    initial_records = compiler_records_read(observations)?
     write(source, "def main() -> None:\n    println(\"hullo\")\n")?
     edited = Command
         .new(binary)
@@ -326,6 +327,9 @@ def check_worker_retirement() -> Result[None, str]:
     record_reads = invocation_count(observations, "incan_frontend::read_compiler_records") - initial_record_reads
     if record_reads > 6:
         return Err(f"one-body edit reconstructed {record_reads} compiler-record groups")
+    records = compiler_records_read(observations)? - initial_records
+    if records > 86:
+        return Err(f"one-body edit opened {records} compiler records")
     # Stop this test's disposable engine before the temporary directory leaves scope.
     store = root.joinpath("store")
     mut identity = service_identity(store)?
@@ -377,6 +381,29 @@ def invocation_count(directory: Path, function: str) -> int:
                                     ):
                                         count += 1
     return count
+
+
+def compiler_records_read(directory: Path) -> Result[int, str]:
+    """Sum the independently addressed values opened by completed compiler-record group demands."""
+    mut count = 0
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file():
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        for line in text.split("\n"):
+            if line == "":
+                continue
+            document = parse(line).map_err((error) => error.message())?
+            if (
+                not json_text_is(document, "kind", "begin")
+                or not json_text_is(document, "function", "incan_frontend::read_compiler_records")
+            ):
+                continue
+            fields = document.require("fields").map_err((error) => error.message())?.expect_object().map_err(
+                (error) => error.message(),
+            )?
+            count += fields["records"].expect_int().map_err((error) => error.message())?
+    return Ok(count)
 
 
 def json_text_is(document: JsonValue, key: str, expected: str) -> bool:
