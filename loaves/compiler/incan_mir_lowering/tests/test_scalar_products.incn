@@ -121,6 +121,69 @@ pub def test_native_product_round_trips_formatting_frame() -> Result[None, str]:
     return Ok(None)
 
 
+pub def test_native_product_records_expose_only_incan_identities() -> Result[None, str]:
+    """The stored product and the identical engine payload contain no native crate path or carrier name."""
+    span = source_span(file="interface_audit.incn", line=1, column=1)
+    function = Function(
+        name="main",
+        parameters=[],
+        return_type=PlanType.String,
+        locals=[
+            Local(ty=PlanType.String, span=span),
+            Local(ty=PlanType.StrRef, span=span),
+            Local(ty=PlanType.StrSlice, span=span),
+            Local(ty=PlanType.StringSlice, span=span),
+        ],
+        blocks=[
+            BasicBlock(
+                statements=[],
+                terminator=Terminator(kind=TerminatorKind.Return, span=span),
+                cleanup=false,
+                span=span,
+            ),
+        ],
+        span=span,
+    )
+    runtime = [
+        ExternalFunction(
+            path="incan_native_runtime::initialize_panic_hook",
+            parameters=[], return_type=PlanType.Unit, span=span,
+        ),
+        ExternalFunction(
+            path="incan_std_primitives::strings::str_concat",
+            parameters=[PlanType.StrRef, PlanType.StrRef], return_type=PlanType.String, span=span,
+        ),
+        ExternalFunction(
+            path="incan_std_primitives::strings::fstring",
+            parameters=[PlanType.StrSlice, PlanType.StringSlice], return_type=PlanType.String, span=span,
+        ),
+        ExternalFunction(
+            path="incan_native_runtime::println_text",
+            parameters=[PlanType.String], return_type=PlanType.Unit, span=span,
+        ),
+    ]
+    product = encode_product(function, runtime)?
+    assert '"path":"builtin::print"' in product
+    assert '"path":"std::strings::str_concat"' in product
+    assert '"LiteralTextView"' in product and '"LiteralTextSequence"' in product
+    assert '"TextSequence"' in product and '"Text"' in product
+    for rust_name in [
+        "incan_native_runtime::", "incan_std_primitives::", "incan_stdlib::",
+        "StrRef", "StrSlice", "StringSlice", "String",
+    ]:
+        assert rust_name not in product, f"stored product exposes native representation `{rust_name}`"
+    restored, restored_runtime = decode_product(product)?
+    assert restored == function and restored_runtime == runtime
+    unsupported = [ExternalFunction(
+        path="core::clone::Clone::clone",
+        parameters=[PlanType.StrRef], return_type=PlanType.String, span=span,
+    )]
+    match encode_product(function, unsupported):
+        Ok(_) => assert false, "stored product admitted a native path without an Incan identity"
+        Err(_) => pass
+    return Ok(None)
+
+
 def assign_array(local: int, values: list[Operand], span: SourceSpan) -> Statement:
     """Assign one exact fixed formatting array to its native local."""
     return assign(local, RvalueKind.Array(values), span)
