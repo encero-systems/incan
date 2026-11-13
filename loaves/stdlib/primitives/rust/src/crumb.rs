@@ -9,6 +9,13 @@ pub struct Encoded {
     pub element_charge: u64,
 }
 
+/// One completed indexed-cell layout and the exact logical work charged by its Incan contract.
+pub struct IndexedLayout {
+    pub data: Vec<u8>,
+    pub byte_charge: i64,
+    pub element_charge: i64,
+}
+
 /// One bounded scan result; numeric tags keep Incan's typed error surface authoritative.
 #[derive(Clone, Copy)]
 pub struct Scan {
@@ -338,6 +345,37 @@ pub fn frame(data: Vec<u8>) -> Encoded {
     }
 }
 
+/// Lay out all cell offsets and payloads in one native call across the Incan boundary.
+pub fn indexed(cells: Vec<Vec<u8>>, width: u8) -> IndexedLayout {
+    let total = cells.iter().map(Vec::len).sum::<usize>();
+    let table_length = (cells.len() + 1) * usize::from(width);
+    let output_length = 1 + table_length + total;
+    let mut data = Vec::with_capacity(output_length);
+    data.push(width);
+    let mut position = 0usize;
+    push_offset(&mut data, position, width);
+    for cell in &cells {
+        position += cell.len();
+        push_offset(&mut data, position, width);
+    }
+    for cell in cells {
+        data.extend(cell);
+    }
+    IndexedLayout {
+        data,
+        byte_charge: (output_length * 2) as i64,
+        element_charge: (table_length / usize::from(width) - 1) as i64,
+    }
+}
+
+/// Append one already-validated little-endian fixed-width offset.
+fn push_offset(output: &mut Vec<u8>, mut value: usize, width: u8) {
+    for _ in 0..width {
+        output.push((value & 0xff) as u8);
+        value >>= 8;
+    }
+}
+
 fn encode_zigzag(magnitude: u128, negative: bool) -> Encoded {
     let magnitude_len = magnitude_bytes(magnitude);
     let mut groups = zigzag_groups(magnitude, negative);
@@ -453,7 +491,7 @@ fn top_bits(value: u128) -> u64 {
 mod tests {
     use super::{
         Buffer, Reader, TextBuilder, binary_literal, decode_scalar, encode_integer_unsigned, encode_native_signed,
-        encode_native_unsigned, frame, quote_text, scalar_text, spaces,
+        encode_native_unsigned, frame, indexed, quote_text, scalar_text, spaces,
     };
 
     #[test]
@@ -494,6 +532,17 @@ mod tests {
         buffer.append(vec![2, 3]);
         assert_eq!(buffer.len(), 3);
         assert_eq!(buffer.finish(), [1, 2, 3]);
+    }
+
+    #[test]
+    fn indexed_layout_batches_offsets_payloads_and_charges() {
+        let layout = indexed(vec![b"a".to_vec(), b"bc".to_vec()], 1);
+        assert_eq!(layout.data, b"\x01\x00\x01\x03abc");
+        assert_eq!((layout.byte_charge, layout.element_charge), (14, 2));
+
+        let wide = indexed(vec![vec![0; 256]], 2);
+        assert_eq!(&wide.data[..5], b"\x02\x00\x00\x00\x01");
+        assert_eq!((wide.byte_charge, wide.element_charge), (522, 1));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 """Bounded owned byte assembly for binary encodings and their indexed cells."""
 
-from rust::incan_std_primitives::crumb import Buffer as NativeBuffer
+from rust::incan_std_primitives::crumb import Buffer as NativeBuffer, indexed as native_indexed
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.framing import encode_native_unsigned
@@ -84,8 +84,7 @@ pub def valid_offset_width(width: int) -> bool:
 
 
 pub def indexed(cells: list[bytes], mut budget: Budget) -> Result[bytes, CrumbError]:
-    """Build width, count+1 offsets and cells; the containing layout owns count and bitmap."""
-    budget.charge_elements(len(cells))?
+    """Validate dimensions, then build all offsets and cells in one native boundary crossing."""
     mut total = 0
     for cell in cells:
         if len(cell) > 9223372036854775807 - total:
@@ -93,16 +92,10 @@ pub def indexed(cells: list[bytes], mut budget: Budget) -> Result[bytes, CrumbEr
         total += len(cell)
     width = offset_width(total)?
     offset_table_length(len(cells), width)?
-    mut output = EncodingBuffer.create()
-    output.octet(width, budget)?
-    mut position = 0
-    output.offset(position, width, budget)?
-    for cell in cells:
-        position += len(cell)
-        output.offset(position, width, budget)?
-    for cell in cells:
-        output.append(cell, budget)?
-    return output.finish(budget)
+    layout = native_indexed(cells, width.saturating_resize[u8]())
+    budget.charge_elements(layout.element_charge.saturating_resize[int]())?
+    budget.charge_bytes(layout.byte_charge.saturating_resize[int]())?
+    return Ok(layout.data)
 
 
 pub def offset_table_length(count: int, width: int) -> Result[int, CrumbError]:
