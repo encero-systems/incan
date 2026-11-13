@@ -41,7 +41,7 @@ pub def owner_of(command: str, arguments: list[str]) -> str:
     if command == "inspect":
         if len(arguments) > 0 and arguments[0] in OVEN_INSPECTIONS:
             return OVEN
-        if len(arguments) > 0 and arguments[0] == "codegraph":
+        if len(arguments) > 0 and arguments[0] in ["codegraph", "bindings"]:
             return INCAN
         return ""
     if command in OVEN_COMMANDS or command in MOVED_FROM_INCAN:

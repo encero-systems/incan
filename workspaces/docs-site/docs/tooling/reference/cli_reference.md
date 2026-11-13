@@ -259,6 +259,21 @@ A duration is a nonnegative integer of at most twelve digits followed by `s`, `m
 
 Graph options, schemas, queries, context packs and snapshot checks are specified in [Agent context CLI and MCP](agent_context_cli.md). `--profile NAME` selects the artifact profile as specified under [Unit options](#unit-options). `--strict` refuses a graph containing unchecked units. The default returns available facts and warns about unchecked units.
 
+## `incan inspect bindings`
+
+`incan inspect bindings [--format text|json] [PATH]` prints the checked C bindings (see [`std.interop`](../../language/reference/stdlib/interop.md)) of the source or project at `PATH` (default `.`), from the `c_binding` records of its codegraph export, ordered by file and name. The text report is:
+
+```text
+binding NAME in FILE: header HEADER, link CAPABILITY("LIBRARY")
+  symbol NAME(PARAMETER: TYPE, ...) -> TYPE is NATIVE
+  enum NAME: CARRIER
+    VARIANT is NATIVE
+  struct NAME is NATIVE
+  resource NAME is NATIVE
+```
+
+`FILE` is relative to the project. `--format json` prints `incan.bindings/1`: each binding's `file`, `name`, `header`, `link_capability`, `system_library`, `binding_identity`, `symbols`, `enums`, `structs` and `resources`, as the codegraph records them.
+
 ## `oven inspect dependencies`
 
 Prints the packages the unit at `PATH` reaches, as a build of the same unit links them. The unit is checked and planned as for `oven build`; nothing is generated or published. Execution-only options are refused. The text report is:

@@ -48,6 +48,7 @@ from installation_page import begin_command as begin_installation_command
 from owner_service import serve_owner
 from graph_inspection import inspect_codegraph, options as graph_options
 from interop_plan import inspect_interop_plan, plan_options
+from binding_inspection import binding_options, inspect_bindings
 from graph_incan import inspect_prepared, publish_prepared_graph
 from graph_mcp import serve_graph, options as mcp_options
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
@@ -261,6 +262,11 @@ def dispatch(command: str, rest: list[str]) -> None:
             "inspect",
             "inspects `dependencies PATH`, `interop-plan [--target TRIPLE] [PATH]`, or `run ID --proofs` with INCAN_ENGINE=records",
         )
+    if command == "inspect" and len(rest) > 0 and rest[0] == "bindings":
+        match binding_options(rest[1:]):
+            Err(reason) => argument_error("inspect", reason)
+            Ok(options) => finish("inspect", inspect_bindings(options))
+        return
     if command == "inspect":
         match graph_options(rest):
             Err(reason) => argument_error("inspect", reason)
