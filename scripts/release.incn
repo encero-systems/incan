@@ -68,6 +68,11 @@ from release_support import (
 from relink_driver import Relink, absolute_manifest, run as relink
 from verify_fixed_point import prove_fixed_point
 
+# Sources of the native crates the seed installs and its built tools reach by path. The seed links an installed crate
+# only into builds of the sources it was built from, so its tools take these from the seed's own commit.
+const SEED_GENERATION_SOURCES: FrozenList[str] = ["loaves/kernel/incan_lang"]
+const SEED_TOOL_SOURCE: str = "seed-tool-source"
+
 
 pub model ReleasePaths:
     """Stable release output, source, lane, home, toolchain, and bundle paths."""
@@ -222,7 +227,11 @@ pub def release(options: ReleaseOptions) -> Result[Path, str]:
     if run.options.prove_fixed_point:
         phase(run, "fixed-point")?
         prove_fixed_point(candidate.context)?
-        reclaim(run, "fixed-point-work", [run.paths.lane, run.paths.home, run.paths.source])?
+        reclaim(
+            run,
+            "fixed-point-work",
+            [run.paths.lane, run.paths.home, run.paths.source, run.paths.output.joinpath(SEED_TOOL_SOURCE)],
+        )?
     else:
         reclaim(run, "qualified-build-inputs", [run.paths.home, run.paths.source])?
     complete_receipt(run, candidate_report.counts)?
@@ -459,7 +468,7 @@ def apply_release_trust(source: Path, toolchain: Path) -> Result[None, str]:
 
 def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
     """Build the conductor and fresh support/runtime/standard source closure with the released seed."""
-    seed_context = native_context(run, run.seed_oven, run.seed_home)
+    seed_context = seed_tool_context(run)?
     conductor, helper = build_source_tools(seed_context, run.seed_home)?
     context = native_context(run, conductor, run.paths.home)
     withdraw_seed_providers(run)?
@@ -476,6 +485,52 @@ def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
     require_unique_runtime_root(context)?
     build_standard_packages(context, helper, "", standard_profiles(StandardGeneration.SourceClosure))?
     return Ok(Candidate(context=context, oven=conductor, lsp=Path(""), pending_lsp=None))
+
+
+def seed_tool_context(run: ReleaseRun) -> Result[NativeContext, str]:
+    """Select the source tree from which the released seed builds the conductor and the support helper."""
+    context = native_context(run, run.seed_oven, run.seed_home)
+    if run.options.seed_source == "":
+        return Ok(context)
+    return Ok(
+        NativeContext(
+            repo=seed_tool_source(run)?,
+            lane=context.lane,
+            home=context.home,
+            builder=context.builder,
+            stdlib=context.stdlib,
+            evidence=context.evidence,
+            timings=context.timings,
+            jobs=context.jobs,
+            memory=context.memory,
+            timeout_seconds=context.timeout_seconds,
+            trace=context.trace,
+        ),
+    )
+
+
+def seed_tool_source(run: ReleaseRun) -> Result[Path, str]:
+    """
+    Check out the qualified source with the seed generation's own sources for the native crates the seed installs.
+
+    A seed-built tool links the seed's installed native crates, and the seed refuses a build whose selected sources for
+    such a crate differ from those it was built from. The conductor and support helper therefore take exactly those
+    crates' sources from the seed's commit and every other source from the qualified commit. Every later producer,
+    and so every shipped artifact, builds the qualified sources alone.
+    """
+    verify = ["-C", run.root.0, "rev-parse", "--verify", f"{run.options.seed_source}^{{commit}}"]
+    if command_text("git", verify).unwrap_or("").strip() != run.options.seed_source:
+        return Err(f"--seed-source does not identify a commit in this repository: {run.options.seed_source}")
+    root = run.paths.output.joinpath(SEED_TOOL_SOURCE)
+    clone = ["clone", "--shared", "--no-checkout", run.root.0, root.0]
+    require_release_step(run, release_step(run, "seed-tool-clone", "git", clone, run.root, {}))?
+    checkout = ["-C", root.0, "checkout", "--detach", run.options.source_sha]
+    require_release_step(run, release_step(run, "seed-tool-checkout", "git", checkout, run.root, {}))?
+    mut restore = ["-C", root.0, "restore", f"--source={run.options.seed_source}", "--staged", "--worktree", "--"]
+    for path in SEED_GENERATION_SOURCES:
+        restore.append(path)
+    require_release_step(run, release_step(run, "seed-tool-generation", "git", restore, run.root, {}))?
+    return Ok(root)
 
 
 def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Candidate, str]:
@@ -1010,8 +1065,9 @@ def phase(run: ReleaseRun, name: str) -> Result[None, str]:
 
 
 def generated_source_targets(run: ReleaseRun) -> list[Path]:
-    """Name release-produced target roots whose binaries have already moved to the lane, home, or bundle."""
+    """Name release-produced source and target roots whose binaries have already moved to the lane, home, or bundle."""
     return [
+        run.paths.output.joinpath(SEED_TOOL_SOURCE),
         run.paths.source.joinpath("workspaces/oven/target"),
         run.paths.source.joinpath("workspaces/contracts/target"),
         run.paths.source.joinpath("loaves/toolchain/incan-lsp/target"),
