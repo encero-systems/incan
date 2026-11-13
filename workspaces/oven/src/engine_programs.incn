@@ -119,7 +119,6 @@ pub def obtain(
 
     mut toolchain = load_toolchain()?
     toolchain.console = console
-    toolchain.retire_worker = true
     described = describe(
         Path(epoch.roots[0]),
         epoch.selection.profile,
