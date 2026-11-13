@@ -189,6 +189,8 @@ pub model PublishedCompiledBodies:
     pub snapshot: Snapshot
     pub bodies: int
     pub fallbacks: int
+    pub checking_evaluations: int
+    pub body_ir_evaluations: int
 
 
 pub model PreparedCompiledBodies:
@@ -197,6 +199,8 @@ pub model PreparedCompiledBodies:
     pub transaction: Transaction
     pub bodies: int
     pub fallbacks: int
+    pub checking_evaluations: int
+    pub body_ir_evaluations: int
 
 
 pub model PublishedSourceInputs:
@@ -304,7 +308,15 @@ pub def publish_compiled_bodies(
     """Publish one successful compiler sidecar in a standalone atomic transaction."""
     prepared = prepare_compiled_bodies(begin(selected), unit, output)?
     published = commit(prepared.transaction).map_err((error) => error.message())?
-    return Ok(PublishedCompiledBodies(snapshot=published, bodies=prepared.bodies, fallbacks=prepared.fallbacks))
+    return Ok(
+        PublishedCompiledBodies(
+            snapshot=published,
+            bodies=prepared.bodies,
+            fallbacks=prepared.fallbacks,
+            checking_evaluations=prepared.checking_evaluations,
+            body_ir_evaluations=prepared.body_ir_evaluations,
+        ),
+    )
 
 
 pub def prepare_compiled_bodies(
@@ -327,6 +339,7 @@ pub def prepare_compiled_bodies(
         return Err("successful graph-enabled compile did not publish body outputs")
     outputs = read_compiled_body_outputs(output)?
     discard_file(output)
+    owner_evaluations = len(outputs.values) + len(outputs.fallbacks)
     origin = source_origin(unit)
     if projection_refusal_mode()? == ProjectionRefusalMode.List:
         refusals = projection_refusals(unit, origin, outputs.values)
@@ -576,7 +589,15 @@ pub def prepare_compiled_bodies(
             unit,
             selected,
         )?
-    return Ok(PreparedCompiledBodies(transaction=prepared, bodies=published, fallbacks=len(outputs.fallbacks)))
+    return Ok(
+        PreparedCompiledBodies(
+            transaction=prepared,
+            bodies=published,
+            fallbacks=len(outputs.fallbacks),
+            checking_evaluations=owner_evaluations,
+            body_ir_evaluations=owner_evaluations,
+        ),
+    )
 
 
 def projection_refusal_mode() -> Result[ProjectionRefusalMode, str]:
