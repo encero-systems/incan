@@ -2,6 +2,9 @@
 
 use std::time::Instant;
 
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+
 /// One native semantic-codec attempt with independently measured encode and decode stages.
 pub struct SemanticCase {
     /// Zero is a completed semantic operation; one means that operation is not implemented natively.
@@ -18,30 +21,49 @@ pub struct SemanticCase {
 
 /// Exercise one corpus case through the native semantic boundary without borrowing an Incan result.
 ///
-/// The red implementation deliberately reports every operation as unsupported. Parsing and serializing the
-/// independently supplied corpus document prove the interop and timing boundary while preventing a placeholder from
-/// being mistaken for a complete native codec.
-pub fn evaluate_semantic_case(_operation: String, document: String) -> SemanticCase {
+/// Unsupported operations remain explicit so a placeholder cannot be mistaken for a complete native codec.
+pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCase {
     let encode_started = Instant::now();
-    let encoded =
-        match serde_json::from_str::<serde_json::Value>(&document).and_then(|value| serde_json::to_vec(&value)) {
-            Ok(value) => value,
-            Err(_) => Vec::new(),
-        };
+    let parsed = match serde_json::from_str::<Value>(&document) {
+        Ok(value) => value,
+        Err(_) => return SemanticCase::unsupported(),
+    };
+    let encoded = match operation.as_str() {
+        "member_identity" => member_identity(&parsed),
+        _ => None,
+    };
     let encode_ns = elapsed_ns(encode_started);
+    let Some(encoded) = encoded else {
+        return SemanticCase::unsupported();
+    };
     let decode_started = Instant::now();
-    let decoded =
-        match serde_json::from_slice::<serde_json::Value>(&encoded).and_then(|value| serde_json::to_vec(&value)) {
-            Ok(value) => value,
-            Err(_) => Vec::new(),
-        };
+    let decoded = encoded.clone();
     let decode_ns = elapsed_ns(decode_started);
     SemanticCase {
-        kind: 1,
+        kind: 0,
         encoded,
         decoded,
         encode_ns,
         decode_ns,
+    }
+}
+
+/// Compute one member identity from the independently supplied earliest name.
+fn member_identity(document: &Value) -> Option<Vec<u8>> {
+    let earliest_name = document.get("earliest_name")?.as_str()?;
+    Some(Sha256::digest(earliest_name.as_bytes())[..6].to_vec())
+}
+
+impl SemanticCase {
+    /// Preserve an explicit unsupported state without placeholder bytes or timings.
+    fn unsupported() -> Self {
+        Self {
+            kind: 1,
+            encoded: Vec::new(),
+            decoded: Vec::new(),
+            encode_ns: 0,
+            decode_ns: 0,
+        }
     }
 }
 
@@ -55,9 +77,17 @@ mod tests {
     use super::evaluate_semantic_case;
 
     #[test]
-    fn unsupported_boundary_still_round_trips_independent_input() {
-        let result = evaluate_semantic_case("binary_decode".to_string(), "{\"id\":\"red\"}".to_string());
-        assert_eq!(result.kind, 1);
+    fn member_identity_hashes_exact_utf8_without_normalization() {
+        let result = evaluate_semantic_case(
+            "member_identity".to_string(),
+            "{\"earliest_name\":\"email\"}".to_string(),
+        );
+        assert_eq!(result.kind, 0);
+        assert_eq!(result.encoded, [0x82, 0x24, 0x44, 0x17, 0xf9, 0x56]);
         assert_eq!(result.encoded, result.decoded);
+
+        let unsupported = evaluate_semantic_case("binary_decode".to_string(), "{\"id\":\"red\"}".to_string());
+        assert_eq!(unsupported.kind, 1);
+        assert!(unsupported.encoded.is_empty());
     }
 }
