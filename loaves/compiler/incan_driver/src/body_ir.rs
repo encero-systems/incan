@@ -292,7 +292,9 @@ fn lower_component(
     for &index in &component.members {
         let module = &modules[index];
         if let Some(restored) = namespace_bodies[index] {
-            context_modules.push(restored.clone());
+            let mut restored = restored.clone();
+            incan_frontend::body_ir::refresh_dependency_call_targets(&mut restored, &context_modules);
+            context_modules.push(restored);
             continue;
         }
         let completed = context_modules.len();
