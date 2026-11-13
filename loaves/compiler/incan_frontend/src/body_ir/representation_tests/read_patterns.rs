@@ -41,8 +41,8 @@ def take(node: Node, dictionary: Dictionary) -> str:
         if name == "take" {
             assert_eq!(
                 body.params[0].input_access,
-                incan_semantics_core::IncanInputAccess::Inferred,
-                "moving a payload must retain the owned subject: {body:#?}"
+                incan_semantics_core::IncanInputAccess::InferredShared,
+                "an immutable subject borrows at entry before moving its payload: {body:#?}"
             );
         }
     }
@@ -155,7 +155,10 @@ def overlap(mut cursor: Cursor) -> int:
         let Some(bir::Operand::Place(capture)) = captures.first() else {
             return Err("missing captured source place".into());
         };
-        if matches!(name, "parser" | "read_field" | "direct" | "method") {
+        if matches!(
+            name,
+            "parser" | "read_field" | "direct" | "method" | "dependent" | "field_dependent"
+        ) {
             assert_eq!(capture.fact, bir::OwnershipFact::Borrow, "{name}: {body:#?}");
             assert!(!capture.last_use);
         } else {
@@ -165,16 +168,10 @@ def overlap(mut cursor: Cursor) -> int:
                 "stored or consuming closure changed: {body:#?}"
             );
         }
-        if matches!(name, "read_field" | "direct" | "method") {
+        if !matches!(name, "parser" | "overlap") {
             assert_eq!(
                 body.params[0].input_access,
                 incan_semantics_core::IncanInputAccess::InferredShared,
-                "{body:#?}"
-            );
-        } else if name != "parser" {
-            assert_eq!(
-                body.params[0].input_access,
-                incan_semantics_core::IncanInputAccess::Inferred,
                 "{name}: {body:#?}"
             );
         }
@@ -221,11 +218,11 @@ def owned_some(packet: Packet) -> Option[list[str]]:
         ("some_field", incan_semantics_core::IncanInputAccess::InferredShared),
         ("ok_index", incan_semantics_core::IncanInputAccess::InferredShared),
         ("plain_field", incan_semantics_core::IncanInputAccess::InferredShared),
-        ("whole_ok", incan_semantics_core::IncanInputAccess::Inferred),
-        ("whole_some", incan_semantics_core::IncanInputAccess::Inferred),
-        ("owned_ok", incan_semantics_core::IncanInputAccess::Inferred),
-        ("owned_err", incan_semantics_core::IncanInputAccess::Inferred),
-        ("owned_some", incan_semantics_core::IncanInputAccess::Inferred),
+        ("whole_ok", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("whole_some", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("owned_ok", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("owned_err", incan_semantics_core::IncanInputAccess::InferredShared),
+        ("owned_some", incan_semantics_core::IncanInputAccess::InferredShared),
     ] {
         let body = module
             .bodies
