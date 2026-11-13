@@ -2,6 +2,8 @@
 
 from rust::incan_std_primitives::crumb import (
     Encoded as NativeEncoded,
+    Reader as NativeReader,
+    Scan as NativeScan,
     encode_integer_unsigned as native_encode_integer_unsigned,
     encode_native_signed as native_encode_signed,
     encode_native_unsigned as native_encode_unsigned,
@@ -16,79 +18,64 @@ from crate.primitives.crumb.wide_integer import WideInteger
 pub class Reader:
     """An owned input cursor; failed operations retain its position but not spent budget."""
 
-    data: bytes
-    offset: int = 0
+    native: NativeReader
 
     @staticmethod
     pub def from_bytes(data: bytes) -> Self:
         """Take input bytes; returned payload slices are owned copies, not retained views."""
-        return Reader(data=data)
+        return Reader(native=NativeReader.new(data))
 
     pub def position(self) -> int:
         """Return the next unread byte offset."""
-        return self.offset
+        return self.native.position().saturating_resize[int]()
 
     pub def remaining(self) -> int:
         """Return unread input length without exposing the backing allocation."""
-        return len(self.data) - self.offset
+        return self.native.remaining().saturating_resize[int]()
 
     pub def read_unsigned(mut self, mut budget: Budget) -> Result[bytes, CrumbError]:
         """Read a shortest U value as exact encoded bytes, without imposing a numeric width."""
-        end = self._integer_end(budget)?
-        budget.charge_bytes(end - self.offset)?
-        result = self.data[self.offset:end]
-        self.offset = end
-        return Ok(result)
+        byte_limit, element_limit = budget.codec_allowance()
+        scan = self.native.scan_unsigned(byte_limit.saturating_resize[i64](), element_limit.saturating_resize[i64]())
+        _scanned(scan, budget)?
+        return Ok(self.native.take_to(scan.end))
 
     pub def read_length(mut self, mut budget: Budget) -> Result[u64, CrumbError]:
         """Read L, which shares U's spelling but is limited to unsigned 64 bits."""
-        end = self._integer_end(budget)?
-        value = self._length(end)?
-        self.offset = end
-        return Ok(value)
+        byte_limit, element_limit = budget.codec_allowance()
+        scan = self.native.scan_length(byte_limit.saturating_resize[i64](), element_limit.saturating_resize[i64]())
+        _scanned(scan, budget)?
+        self.native.commit(scan.end)
+        return Ok(scan.value)
 
     pub def read_frame(mut self, mut budget: Budget) -> Result[bytes, CrumbError]:
         """Read L-sized bytes, refusing before allocation if host size, input or budget is insufficient."""
-        end = self._integer_end(budget)?
-        value = self._length(end)?
-        converted: Option[int] = value.try_resize()
+        byte_limit, element_limit = budget.codec_allowance()
+        scan = self.native.scan_length(byte_limit.saturating_resize[i64](), element_limit.saturating_resize[i64]())
+        _scanned(scan, budget)?
+        converted: Option[int] = scan.value.try_resize()
         match converted:
             None => return Err(CrumbError.limit("host length"))
             Some(size) =>
-                if size > len(self.data) - end:
-                    return Err(CrumbError.truncated(len(self.data)))
+                prefix = scan.end.saturating_resize[int]() - self.position()
+                if size > self.remaining() - prefix:
+                    return Err(CrumbError.truncated(self.position() + self.remaining()))
                 budget.charge_bytes(size)?
-                result = self.data[end:end + size]
-                self.offset = end + size
-                return Ok(result)
+                return Ok(self.native.take_frame(scan.end, size.saturating_resize[i64]()))
 
-    def _integer_end(self, mut budget: Budget) -> Result[int, CrumbError]:
-        """Scan shortest framing under the shared budget without committing cursor movement."""
-        mut end = self.offset + 0
-        loop:
-            if end == len(self.data):
-                return Err(CrumbError.truncated(end))
-            budget.charge_bytes(1)?
-            budget.charge_elements(1)?
-            value = int(self.data[end])
-            end += 1
-            if value < 128:
-                if end - self.offset > 1 and value == 0:
-                    return Err(CrumbError.nonminimal(self.offset))
-                return Ok(end)
 
-    def _length(self, end: int) -> Result[u64, CrumbError]:
-        """Check the ten-group u64 limit before doing any wide arithmetic."""
-        count = end - self.offset
-        if count > 10 or (count == 10 and self.data[end - 1] > 1u8):
-            return Err(CrumbError.overflow(self.offset))
-        mut value: u64 = 0
-        mut index = end - 1
-        while index >= self.offset:
-            group: u64 = (self.data[index] & 127u8).saturating_resize()
-            value = value * 128u64 + group
-            index -= 1
-        return Ok(value)
+def _scanned(scan: NativeScan, mut budget: Budget) -> Result[None, CrumbError]:
+    """Apply native scan work in contract order and restore the typed Incan error surface."""
+    budget.charge_bytes(scan.byte_charge.saturating_resize[int]())?
+    budget.charge_elements(scan.element_charge.saturating_resize[int]())?
+    match scan.kind:
+        0u8 => return Ok(None)
+        1u8 => return Err(CrumbError.truncated(scan.detail.saturating_resize[int]()))
+        2u8 => return Err(CrumbError.nonminimal(scan.detail.saturating_resize[int]()))
+        3u8 => return Err(CrumbError.overflow(scan.detail.saturating_resize[int]()))
+        4u8 => return Err(CrumbError.limit("bytes"))
+        5u8 => return Err(CrumbError.limit("elements"))
+        _ => return Err(CrumbError.invalid_input("native scan status"))
 
 
 pub def encode_native_unsigned(value: u128, mut budget: Budget) -> Result[bytes, CrumbError]:
