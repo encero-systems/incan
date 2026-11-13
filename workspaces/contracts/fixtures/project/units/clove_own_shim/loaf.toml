@@ -1,0 +1,25 @@
+[project]
+name = "clove_own_shim"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[c]
+library = "shim"
+public-headers = ["include/shim.h"]
+include = ["include"]
+std = "c11"
+
+[[c.compile]]
+sources = ["csrc/*.c"]
+
+[[c.compile]]
+sources = ["csrc/twice.cpp"]
+
+[c.configurations.default]
+defines = { SHIM_OFFSET = "2" }
+
+[c.configurations.scaled]
+extends = "default"
+defines = { SHIM_SCALE = "10" }
