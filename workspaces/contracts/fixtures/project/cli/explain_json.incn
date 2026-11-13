@@ -1,0 +1,19 @@
+# behavior: `incan explain CODE --format json` prints the catalog entry as 0.5.1's versioned JSON document (#3142).
+# cli-commands:
+#   explain INCAN-T0001 --format json
+#   explain --format json INCAN-T0001
+# expect-stdout-contains:
+#   {
+#     "entry": {
+#       "code": "INCAN-T0001",
+#       "phase": "typecheck",
+#       "severity": "error",
+#       "title": "Type checking error"
+#     "found": true,
+#     "schema_version": 1
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """Provide the project case's source; explanations read only the compiler's catalog."""
+    pass

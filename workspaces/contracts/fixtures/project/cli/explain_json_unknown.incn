@@ -1,0 +1,12 @@
+# behavior: `incan explain` of an unknown code with `--format json` prints a document that says it was not found and names the closest codes, with exit status one (#3142).
+# cli-commands:
+#   explain INCAN-T0000 --format json
+# expect-stdout-contains:
+#   {
+#     "found": false,
+#     "schema_version": 1
+# expect-exit: 1
+
+def main() -> None:
+    """Provide the project case's source; explanations read only the compiler's catalog."""
+    pass
