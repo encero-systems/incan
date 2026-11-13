@@ -1,0 +1,44 @@
+[project]
+name = "interop_plan"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[c]
+library = "shim"
+public-headers = ["include/shim.h"]
+include = ["include"]
+
+[[c.compile]]
+sources = ["csrc/shim.c"]
+
+[c.configurations.default]
+defines = { SHIM_VALUE = "1" }
+
+[c.configurations.wide]
+extends = "default"
+defines = { SHIM_WIDE = "1" }
+
+[interop.c]
+
+[[interop.c.targets]]
+target = "x86_64-unknown-linux-gnu"
+headers = ["interop/include/bridge.h"]
+
+[[interop.c.targets.artifacts]]
+name = "helper"
+kind = "static"
+path = "interop/lib/libhelper.a"
+
+[[interop.c.targets.artifacts]]
+name = "bridge"
+kind = "static"
+path = "interop/lib/libbridge.a"
+dependencies = ["helper"]
+origin = { source = "https://example.invalid/bridge", revision = "v1.2.3", license = "MIT" }
+
+[[interop.c.targets.bindings]]
+module = ["main"]
+name = "Bridge"
+artifacts = ["bridge"]
