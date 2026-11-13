@@ -33,6 +33,7 @@ from toolchain import (
     prepare_installation,
     finish_installation,
     load_toolchain_at,
+    readmit_installation,
 )
 from compiler_facts import admit_fact, verified_fact, relocate_fact, fact_identity
 from unit_rust import add_extern, compile_library_unit, prepare_linked
@@ -88,6 +89,15 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     verify_request_artifact_identities(scratch.path().joinpath("artifact-identities"))?
     verify_semantic_edit_matrix(scratch.path().joinpath("semantic-edit-matrix"))?
     return Ok(None)
+
+
+pub def test_installed_inputs_are_admitted_once() -> Result[None, str]:
+    """An installed generation is selected from its admitted page without reopening any frozen input."""
+    scratch = scratch_directory()?
+    original = scratch.path().joinpath("producer/runtime.incnlib")
+    write(original, "runtime interface")?
+    record_payload(original, "runtime producer")?
+    return verify_published_installation(scratch.path(), original)
 
 
 @derive(Eq)
@@ -1106,7 +1116,7 @@ def verify_published_installation(scratch: Path, original: Path) -> Result[None,
 
 
 def verify_installation_page(directory: Path) -> Result[None, str]:
-    """Warm selections read the admitted page, preserve full intent, refresh edits and refuse page damage."""
+    """Warm selections read only the admitted page, preserve full intent and refuse page damage."""
     page = match recall_installation(directory)?:
         None => return Err("installation did not publish an admitted page")
         Some(found) => found
@@ -1123,9 +1133,9 @@ def verify_installation_page(directory: Path) -> Result[None, str]:
     work = finish_counting()
     assert work.reads == 0 and work.hashes == 0
     assert work.parses == 0 and work.decodes == 0
-    assert work.stats > 0
+    assert work.stats == 0, f"warm installation selection stat'ed frozen inputs {work.stats} times"
     assert work.pages <= 1
-    # A command captures once; ending it restores generation checks for later library or resident requests.
+    # A command captures once; ending it makes a later resident request select the admitted page again.
     begin_command()
     _ = load_toolchain_at(directory)?
     count_work(directory.0 + "/")
@@ -1133,7 +1143,7 @@ def verify_installation_page(directory: Path) -> Result[None, str]:
         assert load_toolchain_at(directory)?.driver == page.toolchain.driver
     captured = finish_counting()
     end_command()
-    assert captured.stats == 0 and captured.reads == 0 and captured.hashes == 0
+    assert captured.stats == 0 and captured.reads == 0 and captured.hashes == 0, f"captured installation touched frozen inputs: stats={captured.stats} reads={captured.reads} hashes={captured.hashes}"
     encoded = encode_installation(page)?
     fixture = directory.parent().joinpath("installation-page.bin")
     fixture.write_bytes(encoded).map_err((error) => error.message())?
@@ -1157,36 +1167,29 @@ def verify_installation_page(directory: Path) -> Result[None, str]:
     canonical.write_bytes(encoded).map_err((error) => error.message())?
     manifest = directory.joinpath("stdlib/primitives/loaf.toml")
     write(manifest, "[project]\nname='primitives'\nversion='2.0.0'\n")?
-    match recall_installation(directory)?:
-        None => pass
-        Some(_) => return Err("changed manifest retained its preceding admission")
-    _ = load_toolchain_at(directory)?
-    refreshed = match recall_installation(directory)?:
-        None => return Err("changed installation was not re-admitted")
-        Some(found) => found
-
-    assert refreshed.manifests[0].intent.version == "2.0.0"
-    write(manifest, "[project\n")?
-    match load_toolchain_at(directory):
-        Ok(_) => return Err("a damaged standard manifest retained admission")
-        Err(_) => pass
-    write(manifest, "[project]\nname='primitives'\nversion='2.0.0'\n")?
-    _ = load_toolchain_at(directory)?
-    # Source preparation can publish a new producer of unchanged bytes during one command.
-    record_payload(directory.joinpath("library.rlib"), "refreshed producer")?
-    assert published_identity(directory.joinpath("library.rlib"))? == "refreshed producer"
+    write(directory.joinpath("library.rlib"), "changed frozen payload")?
+    write(record_path(directory.joinpath("library.rlib")), "changed frozen producer record")?
     native = directory.joinpath("library.native.json")
-    write(native, "{\"search\":[\"refreshed\"],\"externs\":[],\"macro_externs\":[]}")?
+    write(native, "{\"search\":[\"changed\"],\"externs\":[],\"macro_externs\":[]}")?
+    count_work(directory.0 + "/")
+    match recall_installation(directory)?:
+        None => return Err("an installed manifest edit discarded immutable admission")
+        Some(admitted) =>
+            if admitted.manifests[0].intent.version != "1.0.0":
+                return Err(f"an installed manifest edit changed immutable admission to {admitted.manifests[0].intent.version}")
+    assert published_identity(directory.joinpath("library.rlib"))? == "installed producer"
+    assert len(required_items(read_json(native)?, "search")?) == 0
+    assert load_toolchain_at(directory)?.driver == page.toolchain.driver
+    immutable = finish_counting()
+    assert immutable.stats == 0 and immutable.reads == 0 and immutable.hashes == 0, f"immutable admission touched frozen inputs: stats={immutable.stats} reads={immutable.reads} hashes={immutable.hashes}"
+    record_payload(directory.joinpath("library.rlib"), "replacement producer")?
+    _ = readmit_installation(directory)?
+    replaced = match recall_installation(directory)?:
+        None => return Err("explicit installation re-admission did not select the replacement generation")
+        Some(admitted) => admitted
+    assert replaced.manifests[0].intent.version == "2.0.0"
+    assert published_identity(directory.joinpath("library.rlib"))? == "replacement producer"
     assert len(required_items(read_json(native)?, "search")?) == 1
-    _ = load_toolchain_at(directory)?
-    producer = record_path(directory.joinpath("library.rlib"))
-    original = read(producer)?
-    write(producer, "damaged producer record")?
-    match published_identity(directory.joinpath("library.rlib")):
-        Ok(_) => return Err("changed producer record retained its admitted identity")
-        Err(_) => pass
-    write(producer, original)?
-    _ = load_toolchain_at(directory)?
     return Ok(None)
 
 

@@ -1,4 +1,4 @@
-"""Admit one installation's normalized frozen inputs through sealed bakery pages and reconcile their generations."""
+"""Admit one installation's normalized frozen inputs once through sealed bakery pages."""
 
 from pub::incan_platform.trace import Operation
 from rust::std::string import String as RustString
@@ -32,7 +32,7 @@ static generations: Dict[str, str] = {}
 
 
 model ReadScope:
-    """One pinned bakery revision and, for a short CLI command, its reconciled installation observation."""
+    """One pinned bakery revision and, for a short CLI command, its selected installation page."""
 
     revision: str = ""
     held: Option[Arc[LockGuard]] = None
@@ -51,31 +51,27 @@ model ReadScope:
             Some(guard) => return Ok(guard.clone())
 
     def begin_command(mut self) -> None:
-        """Select one capture for a short ordinary command; servers and direct library callers reconcile each ask."""
+        """Select one admitted page for a short ordinary command."""
         self.command = true
         self.validated = ""
         self.directory = ""
 
     def captured(self, directory: Path) -> bool:
-        """A short command borrows its already checked page under the retained snapshot lease."""
+        """A short command borrows its already admitted page under the retained snapshot lease."""
         return self.command and self.validated != "" and self.directory == directory.0
 
     def end_command(mut self) -> None:
-        """Return a resident process to generation reconciliation between requests."""
+        """Return a resident process to selecting the admitted page for its next request."""
         self.command = false
         self.forget()
 
-    def reconciled(self, key: str) -> bool:
-        """Whether this command already reconciled the exact selected page generation."""
-        return self.command and self.validated == key
-
     def remember(mut self, key: str, directory: Path) -> None:
-        """Record completion only after all input generations have been checked."""
+        """Record the admitted page generation selected for this command."""
         self.validated = key
         self.directory = directory.0
 
     def forget(mut self) -> None:
-        """End a capture before an absent or changed selection clears its decoded input projection."""
+        """End a command's selection before an absent page clears its decoded input projection."""
         self.validated = ""
         self.directory = ""
 
@@ -95,11 +91,11 @@ pub def end_command() -> None:
 
 pub def recall(directory: Path) -> Result[Option[Installation], str]:
     """
-    Read the selected admitted page; changed inputs are a miss and damaged selected bytes are a refusal.
+    Read the selected admitted page without touching the frozen installation it records.
 
     1. Lease the current bakery snapshot and read the installation binding.
     2. Decode its exact typed revision through an integrity-checked mapping.
-    3. Reconcile every recorded generation before returning any admitted facts.
+    3. Select the recorded documents and payloads without reopening their installed paths.
     """
     if SCOPE.captured(directory) and "current" in pages:
         return Ok(Some(pages["current"]))
@@ -124,12 +120,8 @@ pub def recall(directory: Path) -> Result[Option[Installation], str]:
             generation = observe(payload)?.stamp
             cache_key = f"{view.root.value}\n{digest}"
             page = recalled_page(cache_key, generation, view, spec, digest, directory, clock)?
-            # 3. In-place edits and replacements cannot retain admission through a directory timestamp alone.
+            # 3. Installation admission, not each command, owns validation of the frozen installed generation.
             reading = f"{cache_key}\n{generation}"
-            if not SCOPE.reconciled(reading) and not current(page):
-                SCOPE.forget()
-                clear_documents()
-                return Ok(None)
             SCOPE.remember(reading, directory)
             select_documents(page.documents, page.payloads)
             return Ok(Some(page))
@@ -180,12 +172,29 @@ pub def retain(
     First use settles records inside an installation, so another process can change what an attempt just read. That
     attempt describes no single generation, so admission reads again, and only a failure that persists refuses.
     """
+    return retain_generation(directory, producer, prepared, false)
+
+
+pub def readmit(directory: Path, producer: (Path) -> Result[Toolchain, str]) -> Result[Installation, str]:
+    """Explicitly replace a build installation's admitted page after its owner changed that installation."""
+    SCOPE.forget()
+    return retain_generation(directory, producer, None, true)
+
+
+def retain_generation(
+    directory: Path,
+    producer: (Path) -> Result[Toolchain, str],
+    prepared: Option[Tuple[Toolchain, str]],
+    replace: bool,
+) -> Result[Installation, str]:
+    """Admit through the single installation-page route, optionally replacing an owner-mutated build generation."""
     # Concurrent first admissions recheck under the same installation claim.
     store = installation_catalog()?
     key = question(directory)
     held = claim(store, key).map_err((error) => error.message())?
-    if let Some(page) = recall(directory)?:
-        return Ok(page)
+    if not replace:
+        if let Some(page) = recall(directory)?:
+            return Ok(page)
     match prepared:
         Some((toolchain, generation)) =>
             match admit_generation(directory, toolchain, generation, store, key):

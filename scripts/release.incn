@@ -23,6 +23,7 @@ from native_build import (
     cancel_tool_build,
     finish_tool_build,
     publish_support,
+    readmit_build_home,
     require_unique_runtime_root,
     standard_profiles,
 )
@@ -461,6 +462,7 @@ def build_source_closure(run: ReleaseRun) -> Result[Candidate, str]:
     conductor, helper = build_source_tools(seed_context, run.seed_home)?
     context = native_context(run, conductor, run.paths.home)
     withdraw_seed_providers(run)?
+    readmit_build_home(context, helper, "source-home-readmit")?
     publish_support(context, helper)?
     interfaces_started = Instant.now()
     interfaces = build_source_interfaces(context, helper)?
@@ -497,6 +499,7 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
     retain_driver_build_evidence(run)?
     context = native_context(run, candidate.oven, run.paths.home)
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
+    readmit_build_home(context, helper, "candidate-driver-readmit")?
     interfaces_started = Instant.now()
     interfaces = build_source_interfaces(context, helper, "candidate-")?
     append_timing(

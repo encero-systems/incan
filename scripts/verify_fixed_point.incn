@@ -6,6 +6,7 @@ from native_build import (
     NativeContext,
     StandardGeneration,
     build_runtime,
+    readmit_build_home,
     build_source_interfaces,
     build_standard_packages,
     build_tool,
@@ -112,6 +113,7 @@ def rebuild_generation(context: NativeContext, evidence: Path, builder: Path, ge
         memory=context.memory,
         timeout_seconds=context.timeout_seconds,
     )
+    readmit_build_home(successor, helper, f"{generation}-driver-readmit")?
     interfaces = build_source_interfaces(successor, helper, f"{generation}-")?
     _ = build_runtime(successor, helper, Some(interfaces), true, f"{generation}-")?
     build_standard_packages(successor, helper, f"{generation}-", standard_profiles(StandardGeneration.Candidate))?
