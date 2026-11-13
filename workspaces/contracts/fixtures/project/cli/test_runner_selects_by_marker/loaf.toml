@@ -1,0 +1,6 @@
+[project]
+name = "test_runner_selects_by_marker"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"

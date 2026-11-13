@@ -1,0 +1,11 @@
+# behavior: `incan test --strict-markers` refuses a `@mark` name the module does not register in `TEST_MARKERS`, as 0.5.1 does (#3138).
+# cli-commands:
+#   test --strict-markers
+#   test --list --strict-markers
+# expect-stdout:
+# expect-stderr-contains:
+#   unknown marker `network` with --strict-markers; register it in TEST_MARKERS
+# expect-exit: 1
+
+def main() -> None:
+    println("main")
