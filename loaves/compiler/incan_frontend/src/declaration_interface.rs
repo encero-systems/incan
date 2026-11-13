@@ -635,6 +635,11 @@ mod tests {
         warm.set_callable_body_reuse(selection);
         warm.check_program(&current).map_err(|errors| format!("{errors:?}"))?;
         assert_eq!(
+            warm.body_check_trace_count(),
+            3,
+            "reused and freshly checked bodies must enter the same physical checking scope"
+        );
+        assert_eq!(
             warm.check_work().declaration_local_checks,
             0,
             "a body-only edit must reuse every unchanged declaration record"
