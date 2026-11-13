@@ -9,9 +9,10 @@ from engine_capture import (
     CaptureCounters,
     CaptureOutcome,
     InputSelection,
-    admitted_home,
+    SelectedHome,
     capture,
     decoded_epoch,
+    selected_home,
 )
 from engine_messages import Submit
 from pub::incan_platform.store import Lookup, Snapshot, Transaction, begin, commit, lookup, owned, put
@@ -29,6 +30,8 @@ pub model CapturedRequest:
     pub identity: str
     pub snapshot: Snapshot
     pub counters: CaptureCounters
+    # The exact admitted installation selected while capturing this request.
+    pub selected: SelectedHome
     # Canonical epoch encodings and publication attempts performed by this capture, including no-op commits.
     pub encodings: int = 1
     pub commits: int = 1
@@ -61,18 +64,15 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
     source = Path(submit.requested_roots).resolve().map_err((error) => f"cannot resolve source {error.message()}")?
     if not source.0.endswith(".incn") or submit.view == "":
         return Err("unit records require one Incan program file and a project view")
-    admitted = admitted_home()?
+    selected = selected_home()?
+    admitted = selected.admitted
     head = f"incan.engine.capture-head\t{fingerprint([submit.view, source.0, submit.input_selection, admitted.pin])?}"
     before = snapshot(store, submit.view).map_err((error) => error.message())?
     prior_revision, prior_identity, previous = previous_epoch(before, head)?
     # 2. Build and run select the same program inputs; the verb is an execution action, not a compiled identity.
     request = CaptureRequest(
         roots=[source.0],
-        selection=InputSelection(
-            command="run",
-            profile=submit.input_selection,
-            features=diagnostic_features(),
-        ),
+        selection=InputSelection(command="run", profile=submit.input_selection, features=diagnostic_features()),
         whole_unit=true,
     )
     # Complete nanosecond metadata guards this Unix request; no coarse timestamp grace delays unchanged reuse.
@@ -90,6 +90,7 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
                         identity=prior_identity,
                         snapshot=before,
                         counters=captured.counters,
+                        selected=selected,
                         encodings=0,
                         commits=0,
                         identity_encodings=0,
@@ -115,6 +116,7 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
                     head=head,
                     transaction=Some(transaction),
                     counters=captured.counters,
+                    selected=selected,
                 ),
             )
 
@@ -131,7 +133,7 @@ pub def after_projection(captured: CapturedRequest) -> Result[CapturedRequest, s
     if captured.commits == 0:
         return Ok(captured)
     request = CaptureRequest(roots=captured.epoch.roots, selection=captured.epoch.selection, whole_unit=true)
-    checked = capture(request, Some(captured.epoch), admitted_home()?, 0)?
+    checked = capture(request, Some(captured.epoch), captured.selected.admitted, 0)?
     match checked.epoch:
         None => return Err("inputs did not settle before request publication")
         Some(epoch) =>

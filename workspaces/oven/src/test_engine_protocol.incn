@@ -435,10 +435,7 @@ def invocation_processes(directory: Path, function: str) -> Result[int, str]:
             if line == "":
                 continue
             document = parse(line).map_err((error) => error.message())?
-            if (
-                json_text_is(document, "kind", "begin")
-                and json_text_is(document, "function", function)
-            ):
+            if (json_text_is(document, "kind", "begin") and json_text_is(document, "function", function)):
                 found = true
         if found:
             count += 1
@@ -586,6 +583,7 @@ def check_collection_before_selection() -> Result[None, str]:
             root.joinpath("console").0,
             Some(captured.epoch),
             "collection-proof",
+            Some(captured.selected),
         )?
         if produced.code != 0:
             console = root.joinpath("console.err").read_text("utf-8", "strict").map_err((error) => error.message())?
