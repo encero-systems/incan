@@ -106,7 +106,12 @@ impl TypeChecker {
     }
 
     /// Retain both the selected member and its declaring nominal at this exact reference site.
-    fn record_nominal_member_identity(&mut self, type_name: &str, span: Span, identity: CanonicalSymbolId) {
+    pub(in crate::typechecker::check_expr) fn record_nominal_member_identity(
+        &mut self,
+        type_name: &str,
+        span: Span,
+        identity: CanonicalSymbolId,
+    ) {
         let owner = self
             .type_info
             .declarations
