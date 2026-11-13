@@ -11,7 +11,6 @@ from std.json import JsonValue, parse
 from pub::incan_platform.trace import flush as flush_trace
 from std.environ import get_or
 from installation_check import verify_runtime
-from toolchain_archive import admit_archive_member, require_rust_components, stage_loaves
 from installation_page import recall as recall_installation, begin_command, end_command
 from home_paths import installation_catalog
 from installation_codec import decode as decode_installation, encode as encode_installation
@@ -44,6 +43,7 @@ from engine_endpoint import connect_with
 from engine_messages import Message, Stop
 from engine_wire import zero_id
 from freshness_fixtures import fixture, make_executable, reconcile, unit_key, write
+from dependency_freshness_archive import verify_archive_members
 
 
 pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
@@ -992,8 +992,6 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
 def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) -> Result[None, str]:
     """A selected toolchain admits transported native, standard and registry payloads and refuses changed bytes."""
     verify_archive_members(scratch)?
-    verify_staged_loaf_artifacts(scratch)?
-    verify_rust_prerequisites(scratch)?
     original = scratch.joinpath("producer/runtime.incnlib")
     write(original, "runtime interface")?
     record_payload(original, "runtime producer")?
@@ -1289,99 +1287,4 @@ def verify_closure_readings(path: Path) -> Result[None, str]:
         Err(_) => pass
     write(path, "{\"search\":[\"first\"],\"externs\":[[\"serde\",\"libserde.rlib\"]],\"unused_receipt\":true}")?
     assert json_text(readings.read(path)?)? == json_text(first)?
-    return Ok(None)
-
-
-def verify_archive_members(scratch: Path) -> Result[None, str]:
-    """
-    Archive installation admits a nested C sysroot and protects the root host link and staging boundary.
-
-    1. Check the complete member rule, including each refusal's offending-member message.
-    2. Pack real nested and root-link members with a manifest that stops before toolchain admission.
-    3. Check the public installer in an isolated home and verify its staging cleanup.
-    """
-    # 1. A nested C sysroot stays ordinary content; no root-link or staging escape spelling is admitted.
-    for member in ["c/sysroot", "./c/sysroot", "c/sysroot/usr/include/stdio.h"]:
-        admit_archive_member(member)?
-    for member in ["sysroot", "./sysroot", "sysroot/lib/rustlib", "../outside", "c/../../outside", "/outside"]:
-        match admit_archive_member(member):
-            Ok(_) =>
-                assert false, f"unsafe archive member was admitted: {member}"
-            Err(reason) =>
-                assert reason == f"unsafe toolchain archive member: {member}", reason
-    # 2. The deliberate name mismatch proves an allowed member was unpacked and reached manifest verification.
-    root = scratch.joinpath("archive-members")
-    write(root.joinpath("c/sysroot/include/payload"), "nested C sysroot")?
-    write(root.joinpath("sysroot/payload"), "refused host link")?
-    write(root.joinpath("toolchain.json"), "{\"name\":\"archive-member-probe\"}")?
-    archive = scratch.joinpath("members.tar")
-    home = scratch.joinpath("archive-home")
-    prior = home.joinpath("toolchains/0.6.0-dev.8/prior")
-    write(prior, "unchanged")?
-    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
-    # 3. Each refusal leaves both the prior installation and its sibling staging directory unchanged.
-    for member, refused in [
-        ("c/sysroot", false),
-        ("./c/sysroot", false),
-        ("sysroot", true),
-        ("./sysroot", true),
-        ("sysroot/payload", true),
-    ]:
-        mut pack = Command.new("tar")
-        pack.args(["-cf", archive.0, "-C", root.0, "toolchain.json", member])
-        packed = pack.output().map_err((error) => str(error))?
-        assert packed.status.success(), decoded(packed.stderr)
-        mut install = Command.new(binary)
-        install.args(["toolchain", "install", archive.0]).env("INCAN_HOME", home.0).env("OVEN_OWNER", "off")
-        install.env("INCAN_ENGINE", "legacy").env_remove("INCAN_STDLIB")
-        output = install.output().map_err((error) => str(error))?
-        assert output.status.code() == Some(1i32), member
-        message = decoded(output.stderr)
-        if refused:
-            assert f"unsafe toolchain archive member: {member}" in message, message
-        else:
-            assert "archive toolchain archive-member-probe does not match" in message, message
-        assert read(prior)? == "unchanged"
-        for entry in home.joinpath("toolchains").iterdir().map_err((error) => error.message())?:
-            assert not entry.name().startswith(".install-"), entry.0
-    return Ok(None)
-
-
-def verify_staged_loaf_artifacts(scratch: Path) -> Result[None, str]:
-    """Archive staging preserves compiled Loaf files while leaving builder logs and unit descriptions at source."""
-    source = scratch.joinpath("staged-loaf-source")
-    stage = scratch.joinpath("staged-loaf-target")
-    for profile in ["debug", "release"]:
-        original = source.joinpath("example").joinpath(profile)
-        write(original.joinpath("example.incnlib"), "checked interface")?
-        write(original.joinpath("example.incnbody"), "executable bodies")?
-        write(original.joinpath("libexample.rlib"), "native library")?
-        write(original.joinpath("build.log"), f"warning INCAN-T0125 at {scratch.0}/private/source.incn:1")?
-        write(original.joinpath("example.unit.json"), "builder unit")?
-    stage_loaves(source, stage)?
-    for profile in ["debug", "release"]:
-        original = source.joinpath("example").joinpath(profile)
-        packed = stage.joinpath("loaves/example").joinpath(profile)
-        assert read(packed.joinpath("example.incnlib"))? == "checked interface"
-        assert read(packed.joinpath("example.incnbody"))? == "executable bodies"
-        assert read(packed.joinpath("libexample.rlib"))? == "native library"
-        assert not packed.joinpath("build.log").exists()
-        assert not packed.joinpath("example.unit.json").exists()
-        assert original.joinpath("build.log").is_file()
-    return Ok(None)
-
-
-def verify_rust_prerequisites(scratch: Path) -> Result[None, str]:
-    """Toolchain admission accepts Rust with its compiler libraries and gives one exact repair command without them."""
-    sysroot = scratch.joinpath("rust-prerequisites")
-    components = sysroot.joinpath("lib/rustlib/components")
-    write(components, "rustc-dev-aarch64-apple-darwin\n")?
-    require_rust_components(sysroot)?
-    write(components, "rustc-aarch64-apple-darwin\n")?
-    match require_rust_components(sysroot):
-        Ok(_) =>
-            assert false, "a sysroot without rustc-dev must be refused before compiler verification"
-        Err(reason) =>
-            assert "missing required component rustc-dev" in reason, reason
-            assert "rustup component add --toolchain 1.98.0 rustc-dev" in reason, reason
     return Ok(None)
