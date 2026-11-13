@@ -132,6 +132,7 @@ pub enum CodecFault:
     BodyChanged
     Unsupported(str)
     Limit
+    LimitExceeded(str, int, int)
 
 
 pub def encode_record(record: CheckedRecord) -> Result[bytes, CodecFault]:

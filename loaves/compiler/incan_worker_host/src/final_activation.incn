@@ -112,3 +112,4 @@ def codec_fault_name(fault: CodecFault) -> str:
         CodecFault.BodyChanged => return "body changed"
         CodecFault.Unsupported(_) => return "unsupported"
         CodecFault.Limit => return "limit"
+        CodecFault.LimitExceeded(_, _, _) => return "limit exceeded"

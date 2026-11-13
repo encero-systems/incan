@@ -177,8 +177,26 @@ def compiled_output_size_controls(
     mut oversized_value = values[0]
     oversized_value.body_ir = "".join(["x" for _ in range(67108864)]).encode()
     match encode_compiled_body_outputs(CompiledBodyOutputs(values=[oversized_value], fallbacks=[])):
-        Err(CodecFault.Limit) => pass
+        Err(CodecFault.LimitExceeded(bound, observed, maximum)) =>
+            assert bound == "compiled-output-frame-bytes"
+            assert observed > maximum and maximum == 67108864
         _ => return Err("compiled output accepted an owner frame over its bound")
+
+    mut fallbacks: list[CompiledBodyFallback] = []
+    for index in range(4097):
+        fallbacks.append(
+            CompiledBodyFallback(
+                module="src/main.incn",
+                name="owner_" + str(index + 10000),
+                identity=None,
+                reason="fixture",
+            ),
+        )
+    match encode_compiled_body_outputs(CompiledBodyOutputs(values=[], fallbacks=fallbacks)):
+        Err(CodecFault.LimitExceeded(bound, observed, maximum)) =>
+            assert bound == "compiled-output-frame-count"
+            assert observed == 4097 and maximum == 4096
+        _ => return Err("compiled output accepted too many owner frames")
     return Ok(None)
 
 

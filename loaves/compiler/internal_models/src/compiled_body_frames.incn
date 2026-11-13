@@ -36,8 +36,9 @@ pub def encode_compiled_body_outputs(outputs: CompiledBodyOutputs) -> Result[lis
     The returned list preserves canonical value-then-fallback order, but its aggregate byte length is deliberately
     unbounded: the compiler writes and Oven reads one frame at a time.
     """
-    if len(outputs.namespaces) + len(outputs.values) + len(outputs.fallbacks) > MAX_FIELDS:
-        return Err(CodecFault.Limit)
+    output_count = len(outputs.namespaces) + len(outputs.values) + len(outputs.fallbacks)
+    if output_count > MAX_FIELDS:
+        return Err(CodecFault.LimitExceeded("compiled-output-frame-count", output_count, MAX_FIELDS))
     mut frames: list[bytes] = []
     mut previous = ""
     for namespace in outputs.namespaces:
@@ -294,7 +295,7 @@ def binary_frame(fields: list[bytes]) -> Result[bytes, CodecFault]:
         append_bytes(payload, fixed_width(len(field)))
         append_bytes(payload, field)
         if len(payload) > MAX_FRAME_BYTES:
-            return Err(CodecFault.Limit)
+            return Err(CodecFault.LimitExceeded("compiled-output-frame-bytes", len(payload), MAX_FRAME_BYTES))
     mut framed: list[u8] = []
     append_bytes(framed, fixed_width(len(payload)))
     append_bytes(framed, payload)
