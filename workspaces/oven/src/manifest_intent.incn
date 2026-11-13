@@ -13,6 +13,7 @@ from pub::incan_platform.trace import Operation
 from jec import begin, record, text_size
 from c_facet import CFacet, parse_c_facet
 from semver_req import parse_requirement
+from c_interop import CInteropTarget, parse_c_targets
 
 # The manifest's tables.
 const ROOT_TABLES: FrozenList[str] = [
@@ -139,6 +140,8 @@ pub model ProjectIntent:
     pub c_headers: list[str] = []
     # The `[c]` facet, when the Loaf is a Clove (RFC 159).
     pub c_facet: Option[CFacet] = None
+    # Every `[[interop.c.targets]]` entry: headers, package-owned static archives and binding relations.
+    pub c_targets: list[CInteropTarget] = []
     # The Incan module registering this Loaf's vocabulary, project-relative.
     pub vocab_entry: Option[str] = None
     # The rustc-internal access `[build]` declares for the Loaf's Incan units.
@@ -358,6 +361,7 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
             contract_models=parse_contract_models(root, manifest)?,
             c_headers=parse_c_headers(root, manifest)?,
             c_facet=parse_c_facet(root, manifest)?,
+            c_targets=parse_c_targets(root, manifest)?,
             vocab_entry=parse_vocab_entry(root, manifest)?,
             toolchain_access=access,
         ),

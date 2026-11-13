@@ -126,7 +126,38 @@ Accepts a required nonempty string `entry`; `crate` and other keys are refused. 
 
 ## `[interop.c]`
 
-`[[interop.c.targets]]` entries can declare `headers`, an array of project-relative paths supplied to the checker. Header and binding contracts are specified in [`std.interop`](../../language/reference/stdlib/interop.md).
+`[interop.c]` accepts only `targets`. Each `[[interop.c.targets]]` entry requires `target`, a target triple, and accepts `headers`, an array of project-relative paths supplied to the checker, `artifacts` and `bindings`. Header and binding contracts are specified in [`std.interop`](../../language/reference/stdlib/interop.md).
+
+```toml
+[[interop.c.targets]]
+target = "aarch64-apple-darwin"
+headers = ["interop/include/bridge.h"]
+
+[[interop.c.targets.artifacts]]
+name = "bridge"
+kind = "static"
+path = "interop/lib/libbridge.a"
+origin = { source = "https://example.invalid/bridge", revision = "v1.2.3", license = "MIT" }
+
+[[interop.c.targets.bindings]]
+module = ["bridge"]
+name = "Bridge"
+artifacts = ["bridge"]
+```
+
+Each `[[interop.c.targets.artifacts]]` entry declares a package-owned archive:
+
+| Field | Form | Meaning |
+| --- | --- | --- |
+| `name` | Required identifier, unique within the target. | The artifact's package-local name. |
+| `kind` | Required: `static`. | A static archive linked into the units that link a binding naming it. |
+| `path` | Required path to `lib<link>.a`, inside the package. | The archive; `<link>` is the link name a binding's `c.system_library("<link>")` uses. |
+| `dependencies` | Array of other artifact names of the same target. | Archives this one needs; they link after it. |
+| `origin` | Table of `source` (an HTTPS URL), `revision` and `license`, all non-empty. | Upstream provenance of the package's copy; never downloaded. |
+
+Each `[[interop.c.targets.bindings]]` entry relates one checked binding, by its `module` (a non-empty array of names) and `name`, to the artifacts (`artifacts`, a non-empty array of distinct declared names) that provide its symbols; the relation is never inferred from a header, library name or file name. A build for the host target links every declared static artifact of the package's units as a static library, an archive before the archives it depends on, and an archive's bytes are part of the identity of each unit that links it.
+
+- Refused: an unknown key; a missing `target`, `name`, `kind` or `path`; a `kind` other than `static`; a path outside the package or not named `lib<link>.a`; an artifact declared twice; a dependency or relation that names an undeclared artifact; an `origin` without an HTTPS `source`, `revision` or `license`; and, at build time, a declared archive that is not a file.
 
 ## `[c]`
 
