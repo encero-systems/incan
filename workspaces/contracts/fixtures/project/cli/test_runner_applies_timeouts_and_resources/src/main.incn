@@ -1,0 +1,14 @@
+# behavior: `incan test` applies a test's `@timeout`, never runs two tests that share a `@resource` at once and runs a `@serial` test alone, as 0.5.1 does (#3138).
+# cli-commands:
+#   test
+#   test --jobs 4
+# expect-stdout-contains:
+#   test_limits.incn::test_runs_forever FAILED (timed out after 100ms)
+#   test_limits.incn::test_finishes_in_time PASSED
+#   test_limits.incn::test_first_writer PASSED
+#   test_limits.incn::test_second_writer PASSED
+#   test_limits.incn::test_alone PASSED
+# expect-exit: 1
+
+def main() -> None:
+    println("main")

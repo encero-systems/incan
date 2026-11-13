@@ -119,6 +119,11 @@ pub model TestCase:
     pub slow: bool = false
     pub marks: list[str] = []
     pub unregistered: list[str] = []
+    # The test's own time limit in milliseconds, zero for the run's; resources no two running tests hold at once; and
+    # whether it runs alone.
+    pub timeout_ms: int = 0
+    pub resources: list[str] = []
+    pub serial: bool = false
     # Whether the compiler reported the test's selection markers.
     pub marked: bool = true
 
@@ -156,6 +161,16 @@ pub def collected_cases(binary: Path, file: str, label: str) -> Result[list[Test
             Some(_) =>
                 test_case.marks = names(test, "marks")
                 test_case.unregistered = names(test, "unregistered")
+                test_case.resources = names(test, "resources")
+                match test.get("timeout_ms"):
+                    Some(value) =>
+                        match value.as_int():
+                            Some(limit) => test_case.timeout_ms = limit
+                            None => pass
+                    None => pass
+                match test.get("serial"):
+                    Some(value) => test_case.serial = value.as_bool() == Some(true)
+                    None => pass
                 match test.get("slow"):
                     Some(value) => test_case.slow = value.as_bool() == Some(true)
                     None => pass
@@ -306,11 +321,13 @@ def execute(selected: list[TestCase], runner: RunnerOptions) -> Result[list[Outc
     while (next < len(selected) and not stopping) or len(active) > 0:
         while not stopping and next < len(selected) and len(active) < runner.jobs:
             test_case = selected[next]
+            if test_case.skip == None and not admissible(test_case, [selected[item.position] for item in active]):
+                break
             match test_case.skip:
                 Some(why) => settled[next] = Some(Finished(outcome=outcome_of(test_case, Status.Skipped, why, 0)))
                 None => active.append(launch(test_case, next, scratch)?)
             next += 1
-        active = reaped(selected, active, settled, runner, next >= len(selected) or len(active) >= runner.jobs)?
+        active = reaped(selected, active, settled, runner, saturated(selected, next, active, runner))?
         while len(outcomes) < len(selected):
             match settled[len(outcomes)]:
                 None => break
@@ -338,7 +355,7 @@ def reaped(
     for index in range(len(active)):
         item = active[index]
         mut ended: Option[bool] = None
-        if index == 0 and full and runner.timeout_ms == 0:
+        if index == 0 and full and unlimited(selected, active, runner):
             status = item.child.borrow_mut().wait().map_err((error) => str(error))?
             ended = Some(status.success())
         else:
@@ -346,18 +363,56 @@ def reaped(
                 Some(status) => ended = Some(status.success())
                 None => pass
         elapsed = int(item.started.elapsed().as_millis())
+        limit = limit_of(selected[item.position], runner)
         match ended:
             Some(passed) => settled[item.position] = Some(judged(selected[item.position], item, passed, elapsed, runner)?)
             None =>
-                if runner.timeout_ms > 0 and elapsed >= runner.timeout_ms:
+                if limit > 0 and elapsed >= limit:
                     _ = item.child.borrow_mut().kill()
                     _ = item.child.borrow_mut().wait()
-                    settled[item.position] = Some(timed_out(selected[item.position], item, elapsed, runner)?)
+                    settled[item.position] = Some(timed_out(selected[item.position], item, elapsed, limit)?)
                 else:
                     running.append(item)
     if len(running) > 0 and len(running) == len(active):
         sleep(Duration.from_millis(2))
     return Ok(running)
+
+
+def admissible(test_case: TestCase, running: list[TestCase]) -> bool:
+    """Whether a test may start beside the running ones: no shared `@resource`, and `@serial` runs alone."""
+    if len(running) == 0:
+        return true
+    if test_case.serial:
+        return false
+    for other in running:
+        if other.serial:
+            return false
+        for resource in test_case.resources:
+            if resource in other.resources:
+                return false
+    return true
+
+
+def saturated(selected: list[TestCase], next: int, active: list[Running], runner: RunnerOptions) -> bool:
+    """Whether no further test can start until a running one ends."""
+    if next >= len(selected) or len(active) >= runner.jobs:
+        return true
+    return selected[next].skip == None and not admissible(selected[next], [selected[item.position] for item in active])
+
+
+def limit_of(test_case: TestCase, runner: RunnerOptions) -> int:
+    """A test's time limit in milliseconds: its `@timeout`, otherwise `--timeout`; zero sets none."""
+    if test_case.timeout_ms > 0:
+        return test_case.timeout_ms
+    return runner.timeout_ms
+
+
+def unlimited(selected: list[TestCase], active: list[Running], runner: RunnerOptions) -> bool:
+    """Whether no running test has a time limit, so waiting for the oldest cannot miss one."""
+    for item in active:
+        if limit_of(selected[item.position], runner) > 0:
+            return false
+    return true
 
 
 def launch(test_case: TestCase, position: int, scratch: Path) -> Result[Running, str]:
@@ -415,11 +470,11 @@ def judged(test_case: TestCase, item: Running, passed: bool, elapsed: int, runne
     return Ok(finished)
 
 
-def timed_out(test_case: TestCase, item: Running, elapsed: int, runner: RunnerOptions) -> Result[Finished, str]:
+def timed_out(test_case: TestCase, item: Running, elapsed: int, limit: int) -> Result[Finished, str]:
     """A test stopped at its time limit failed, with what it printed before it was stopped."""
     printed = item.output.read_bytes().map_err((error) => error.message())?
     complained = item.errors.read_bytes().map_err((error) => error.message())?
-    reason = f"timed out after {runner.timeout_ms}ms"
+    reason = f"timed out after {limit}ms"
     return Ok(Finished(outcome=outcome_of(test_case, Status.Failed, reason, elapsed), output=printed, errors=complained))
 
 

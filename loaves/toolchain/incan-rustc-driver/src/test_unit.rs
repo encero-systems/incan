@@ -17,6 +17,11 @@ pub(crate) struct CollectedTest {
     marks: Vec<String>,
     // Marks the test module does not register in `TEST_MARKERS`, which strict marker selection refuses.
     unregistered: Vec<String>,
+    // `@timeout`, the test's own time limit in milliseconds, which the runner applies in place of its default.
+    timeout_ms: Option<u64>,
+    // `@resource` names the runner never holds by two running tests at once, and `@serial`, which runs alone.
+    resources: Vec<String>,
+    serial: bool,
 }
 
 /// Collect a test unit using the session's vocabulary and active features; unsupported harness contracts refuse by
@@ -39,9 +44,9 @@ pub(crate) fn collect(unit: &UnitDescription, session: &CompilationSession) -> R
     }
     let mut collected = Vec::new();
     for test in discovery.tests {
-        if !test.parameter_names.is_empty() || test.timeout.is_some() {
+        if !test.parameter_names.is_empty() {
             return Err(format!(
-                "unsupported test contract for `{}`: parameters or timeout",
+                "unsupported test contract for `{}`: parameters",
                 test.function_name
             ));
         }
@@ -52,6 +57,11 @@ pub(crate) fn collect(unit: &UnitDescription, session: &CompilationSession) -> R
             slow: false,
             marks: Vec::new(),
             unregistered: Vec::new(),
+            timeout_ms: test
+                .timeout
+                .map(|limit| u64::try_from(limit.as_millis()).unwrap_or(u64::MAX)),
+            resources: Vec::new(),
+            serial: false,
         };
         for marker in test.markers {
             match marker {
@@ -66,7 +76,13 @@ pub(crate) fn collect(unit: &UnitDescription, session: &CompilationSession) -> R
                         entry.marks.push(name);
                     }
                 }
-                TestMarker::Test | TestMarker::Serial => {}
+                TestMarker::Resource(name) => {
+                    if !entry.resources.contains(&name) {
+                        entry.resources.push(name);
+                    }
+                }
+                TestMarker::Serial => entry.serial = true,
+                TestMarker::Test | TestMarker::Timeout(_) => {}
                 _ => return Err(format!("unsupported test marker for `{}`", entry.name)),
             }
         }
@@ -93,6 +109,9 @@ pub(crate) fn report(tests: &[CollectedTest], native: &[String]) -> Result<serde
                     "slow": test.slow,
                     "marks": test.marks,
                     "unregistered": test.unregistered,
+                    "timeout_ms": test.timeout_ms,
+                    "resources": test.resources,
+                    "serial": test.serial,
                 })
             })
             .collect(),
