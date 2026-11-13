@@ -1,0 +1,12 @@
+# behavior: A build report other than JSON, or a report path without `--report json`, is refused before anything is built (#3142).
+# cli-commands:
+#   build src/main.incn --report yaml
+#   build src/main.incn --report-output build-report.json
+# expect-stdout:
+# expect-stderr-contains:
+#   --report
+# expect-exit: 2
+
+def main() -> None:
+    """A program the refused builds never compile."""
+    pass
