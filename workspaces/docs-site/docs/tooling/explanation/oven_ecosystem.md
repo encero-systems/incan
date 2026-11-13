@@ -2,16 +2,7 @@
 
 Oven is the `incan` command line, authored in Incan. It owns project intake, package-feature selection, dependency preparation, execution, formatting requests, graph inspection and toolchain archives.
 
-```mermaid
-flowchart TD
-    source["Source and loaf.toml"] --> oven["Oven: unit description"]
-    standard["Installed standard Loaves"] --> oven
-    local["Path dependency Loaves"] --> oven
-    oven --> compiler["Checked Body IR → Incan lowering → native compiler"]
-    compiler --> artifacts["Executable or library artifact set"]
-    artifacts --> reuse["Observed inputs authorize reuse"]
-    reuse --> oven
-```
+![Oven and Loaves: from a project to its artifacts](oven_and_loaves_flow.svg)
 
 The unit description is the boundary between project orchestration and the compiler. Semantic facts live in the checker and Body IR; build orchestration does not infer them independently.
 
