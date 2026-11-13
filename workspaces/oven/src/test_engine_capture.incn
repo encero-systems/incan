@@ -154,6 +154,14 @@ pub def test_an_unchanged_rerun_makes_zero_reads_and_zero_hashes() -> Result[Non
     assert repeated.encodings == 0 and repeated.commits == 0
     assert repeated.identity_encodings == 0
     assert repeated.revision == persisted.revision and repeated.epoch == persisted.epoch
+    # The submission boundary resolves a symlinked spelling once, so capture and later source identities share one root.
+    alias = scratch.path().joinpath("linked-app")
+    alias.symlink_to(app).map_err((error) => error.message())?
+    submit.requested_roots = alias.joinpath("src/main.incn").0
+    linked = capture_submit(scratch.path().joinpath("linked-store"), submit)?
+    canonical_source = app.joinpath("src/main.incn").resolve().map_err((error) => error.message())?
+    assert linked.epoch.roots == [canonical_source.0]
+    submit.requested_roots = canonical_source.0
     # Projection's excluded target directory is captured before publication, so the first rerun writes nothing.
     submit.view = "project-after-projection"
     prepared = prepare_submit(store, submit)?
