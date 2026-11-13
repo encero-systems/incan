@@ -33,6 +33,7 @@ pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCa
         "nominal_identity" => nominal_identity(&parsed),
         "type_selector" => type_selector(&parsed),
         "shape_admission" => shape_admission(&parsed),
+        "value_relation" => value_relation(&parsed),
         _ => None,
     };
     let encode_ns = elapsed_ns(encode_started);
@@ -276,6 +277,94 @@ fn admission_refusal(kind: &str, path: &str) -> Vec<u8> {
     result
 }
 
+/// Compare two logical values without consulting the corpus's expected relation.
+fn value_relation(document: &Value) -> Option<Vec<u8>> {
+    let left = document.get("left")?;
+    let right = document.get("right")?;
+    Some(vec![u8::from(!logical_equal(left, right)?)])
+}
+
+/// Apply Crumb object equality to the corpus value notation.
+fn logical_equal(left: &Value, right: &Value) -> Option<bool> {
+    let left = strip_present(left)?;
+    let right = strip_present(right)?;
+    let left_kind = left.get("kind")?.as_str()?;
+    let right_kind = right.get("kind")?.as_str()?;
+    if left_kind == "float" && right_kind == "float" {
+        return float_equal(left, right);
+    }
+    if left_kind == "int" && right_kind == "int" {
+        return Some(
+            left.get("value")?.as_str()?.parse::<i128>().ok()? == right.get("value")?.as_str()?.parse::<i128>().ok()?,
+        );
+    }
+    if left_kind != right_kind {
+        return Some(false);
+    }
+    match left_kind {
+        "none" => Some(true),
+        "string" => Some(left.get("value")?.as_str()? == right.get("value")?.as_str()?),
+        "some" => logical_equal(left.get("value")?, right.get("value")?),
+        "list" => sequence_equal(left.get("items")?.as_array()?, right.get("items")?.as_array()?),
+        "reference" => Some(
+            left.get("target_type")?.as_str()? == right.get("target_type")?.as_str()?
+                && left.get("identity")?.as_str()? == right.get("identity")?.as_str()?,
+        ),
+        _ => None,
+    }
+}
+
+/// Remove present optional layers only when they do not terminate in absence.
+fn strip_present(value: &Value) -> Option<&Value> {
+    let original = value;
+    let mut selected = value;
+    while selected.get("kind")?.as_str()? == "some" {
+        selected = selected.get("value")?;
+    }
+    if selected.get("kind")?.as_str()? == "none" {
+        Some(original)
+    } else {
+        Some(selected)
+    }
+}
+
+/// Compare ordered logical sequences element by element.
+fn sequence_equal(left: &[Value], right: &[Value]) -> Option<bool> {
+    if left.len() != right.len() {
+        return Some(false);
+    }
+    for (left_item, right_item) in left.iter().zip(right) {
+        if !logical_equal(left_item, right_item)? {
+            return Some(false);
+        }
+    }
+    Some(true)
+}
+
+/// Compare exact IEEE inputs while normalizing NaNs and preserving signed zero.
+fn float_equal(left: &Value, right: &Value) -> Option<bool> {
+    let left_number = float_number(left)?;
+    let right_number = float_number(right)?;
+    if left_number.is_nan() && right_number.is_nan() {
+        return Some(true);
+    }
+    if left_number == 0.0 && right_number == 0.0 {
+        return Some(left_number.is_sign_negative() == right_number.is_sign_negative());
+    }
+    Some(left_number == right_number)
+}
+
+/// Decode the corpus's exact big-endian IEEE bit label into a common carrier.
+fn float_number(value: &Value) -> Option<f64> {
+    let width = value.get("width")?.as_u64()?;
+    let bits = value.get("bits")?.as_str()?;
+    match width {
+        32 => Some(f32::from_bits(u32::from_str_radix(bits, 16).ok()?) as f64),
+        64 => Some(f64::from_bits(u64::from_str_radix(bits, 16).ok()?)),
+        _ => None,
+    }
+}
+
 impl SemanticCase {
     /// Preserve an explicit unsupported state without placeholder bytes or timings.
     fn unsupported() -> Self {
@@ -334,5 +423,69 @@ mod tests {
         let unsupported = evaluate_semantic_case("binary_decode".to_string(), "{\"id\":\"red\"}".to_string());
         assert_eq!(unsupported.kind, 1);
         assert!(unsupported.encoded.is_empty());
+    }
+
+    #[test]
+    fn value_relations_cover_exact_numeric_optional_sequence_and_reference_rules() {
+        let cases = [
+            (
+                r#"{"left":{"kind":"float","width":64,"bits":"0000000000000000"},"right":{"kind":"float","width":64,"bits":"8000000000000000"}}"#,
+                1,
+            ),
+            (
+                r#"{"left":{"kind":"float","width":64,"bits":"7ff8000000000001"},"right":{"kind":"float","width":64,"bits":"fff8000000000042"}}"#,
+                0,
+            ),
+            (
+                r#"{"left":{"kind":"float","width":32,"bits":"3fc00000"},"right":{"kind":"float","width":64,"bits":"3ff8000000000000"}}"#,
+                0,
+            ),
+            (
+                r#"{"left":{"kind":"int","type":"i32","value":"2147483647"},"right":{"kind":"int","type":"i64","value":"2147483647"}}"#,
+                0,
+            ),
+            (
+                r#"{"left":{"kind":"int","type":"i64","value":"9007199254740992"},"right":{"kind":"int","type":"i64","value":"9007199254740993"}}"#,
+                1,
+            ),
+            (
+                r#"{"left":{"kind":"string","value":"é"},"right":{"kind":"string","value":"é"}}"#,
+                1,
+            ),
+            (
+                r#"{"left":{"kind":"none"},"right":{"kind":"some","value":{"kind":"none"}}}"#,
+                1,
+            ),
+            (
+                r#"{"left":{"kind":"int","type":"i64","value":"7"},"right":{"kind":"some","value":{"kind":"int","type":"i64","value":"7"}}}"#,
+                0,
+            ),
+            (
+                r#"{"left":{"kind":"some","value":{"kind":"int","type":"i64","value":"7"}},"right":{"kind":"some","value":{"kind":"some","value":{"kind":"int","type":"i64","value":"7"}}}}"#,
+                0,
+            ),
+            (
+                r#"{"left":{"kind":"some","value":{"kind":"none"}},"right":{"kind":"some","value":{"kind":"some","value":{"kind":"none"}}}}"#,
+                1,
+            ),
+            (
+                r#"{"left":{"kind":"list","items":[{"kind":"int","type":"i64","value":"1"},{"kind":"int","type":"i64","value":"2"}]},"right":{"kind":"list","items":[{"kind":"int","type":"i64","value":"2"},{"kind":"int","type":"i64","value":"1"}]}}"#,
+                1,
+            ),
+            (
+                r#"{"left":{"kind":"reference","target_type":"example.Customer","identity":"customer-7","observed_target":"revision-a"},"right":{"kind":"reference","target_type":"example.Customer","identity":"customer-7","observed_target":"revision-b"}}"#,
+                0,
+            ),
+            (
+                r#"{"left":{"kind":"reference","target_type":"example.Customer","identity":"customer-7"},"right":{"kind":"reference","target_type":"example.Customer","identity":"customer-8"}}"#,
+                1,
+            ),
+        ];
+        for (document, expected) in cases {
+            let result = evaluate_semantic_case("value_relation".to_string(), document.to_string());
+            assert_eq!(result.kind, 0);
+            assert_eq!(result.encoded, [expected]);
+            assert_eq!(result.encoded, result.decoded);
+        }
     }
 }

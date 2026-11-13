@@ -9,12 +9,15 @@ from std.primitives.crumb.encoding_buffer import EncodingBuffer
 from std.primitives.crumb.framing import frame
 from std.primitives.crumb.identity import member_identity, declaration_identity, declaration_preimage
 from std.primitives.crumb.identity import closed_selector, check_arity
+from std.primitives.crumb.hashes import value_hash
 from std.primitives.crumb.spelling import selector_spelling
 from std.primitives.crumb.types import NominalKind, TypeNode
+from std.primitives.crumb.values import Projection
 from std.primitives.hash import sha256
 from std.primitives.text import encode_utf8
 from case_data import CaseOperation, field, fields as fixture_fields, hex_bytes, nodes, text
 from corpus import load
+from fixture_adapter import logical
 
 
 def test_native_semantic_codec_covers_all_444_corpus_cases() -> Result[None, str]:
@@ -51,6 +54,10 @@ def test_native_semantic_codec_covers_all_444_corpus_cases() -> Result[None, str
                     completed += 1
             CaseOperation.ShapeAdmission =>
                 incan = admission_twin(item.document)?
+                if outcome.kind == 0u8 and outcome.encoded == incan and outcome.decoded == incan:
+                    completed += 1
+            CaseOperation.ValueRelation =>
+                incan = relation_twin(item.document)?
                 if outcome.kind == 0u8 and outcome.encoded == incan and outcome.decoded == incan:
                     completed += 1
             _ =>
@@ -121,3 +128,15 @@ def admission_twin(document: JsonValue) -> Result[bytes, str]:
                 .append(frame(encode_utf8(error.path), budget).map_err((failure) => failure.message())?, budget)
                 .map_err((failure) => failure.message())?
             return output.finish(budget).map_err((failure) => failure.message())
+
+
+def relation_twin(document: JsonValue) -> Result[bytes, str]:
+    """Compare independently derived production object hashes without reading the expected relation."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=128).map_err((error) => error.message())?
+    left = value_hash(logical(field(document, "left")?)?, Projection.Object, budget).map_err((error) => error.message())?
+    right = value_hash(logical(field(document, "right")?)?, Projection.Object, budget).map_err(
+        (error) => error.message(),
+    )?
+    if left.digest == right.digest:
+        return Ok(b"\x00")
+    return Ok(b"\x01")
