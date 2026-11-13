@@ -256,6 +256,24 @@ pub def decode_product(text: str) -> Result[tuple[Function, list[ExternalFunctio
     return Ok((decode_scalar(stored.function)?, [restore_external(value)? for value in stored.runtime]))
 
 
+pub def encode_runtime(runtime: &list[ExternalFunction]) -> Result[list[str], str]:
+    """Encode a unit's resolved runtime inventory with the products' Incan-facing signature codec, loss-checked."""
+    mut encoded: list[str] = []
+    for value in runtime:
+        encoded.append(to_string(store_external(value)?).map_err((error) => str(error))?)
+    if not same_runtime(decode_runtime(encoded)?, runtime):
+        return Err("native runtime inventory round trip changed its signatures")
+    return Ok(encoded)
+
+
+pub def decode_runtime(encoded: list[str]) -> Result[list[ExternalFunction], str]:
+    """Restore a unit's resolved runtime inventory in its recorded order."""
+    mut runtime: list[ExternalFunction] = []
+    for text in encoded:
+        runtime.append(restore_external(decode_external_record(text).map_err((error) => str(error))?)?)
+    return Ok(runtime)
+
+
 pub def encode_scalar(function: &Function) -> Result[str, str]:
     """
     Retain one complete scalar/text function; the enclosing product retains its dependency requirements.
@@ -343,6 +361,11 @@ def decode_record(text: str) -> Result[StoredFunction, JsonError]:
 
 def decode_product_record(text: str) -> Result[StoredProduct, JsonError]:
     """Give the existing serde decoder the complete product's expected wire type."""
+    return from_str(text)
+
+
+def decode_external_record(text: str) -> Result[StoredExternal, JsonError]:
+    """Give the existing serde decoder one runtime signature's expected wire type."""
     return from_str(text)
 
 

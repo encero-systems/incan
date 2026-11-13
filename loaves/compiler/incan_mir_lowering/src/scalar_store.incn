@@ -96,6 +96,31 @@ pub def retain_scalar(directory: str, inputs: list[str], function: &Function, ru
     return publish_record(directory, inputs, text)
 
 
+pub def finalize_scalar(directory: str, key: str, function: &Function, reused: bool) -> Result[str, str]:
+    """
+    Retain the whole-program plan's final function under a keyed product's unchanged inputs and lowering demand.
+
+    1. Read the product lowering retained or reused for this declaration.
+    2. Encode the function the whole-program plan compiles, after unit-level runtime resolution, with that demand.
+    3. Accept a reused product only when it is already identical; replace a fresh product atomically.
+    """
+    # 1. The event key names the product by its complete producer inputs.
+    path = Path(directory).joinpath(key + ".incnfunction")
+    text = path.read_text("utf-8", "strict").map_err((error) => f"cannot read plan-function product {error.message()}")?
+    record = decode_record(text).map_err((error) => str(error))?
+    current = relocate_product(record.function, str(function.span.file), function.span.line)?
+    _captured, demand = decode_product(current)?
+    # 2. The same inputs now name the exact native function compiled for this declaration.
+    final = encoded_record(record.inputs, function, demand)?
+    if final == text:
+        return Ok(text)
+    # 3. A reused product was already final when retained, so any difference is a lowering defect, never a refresh.
+    if reused:
+        return Err(f"plan-function {function.name} differs from the whole-program plan")
+    publish_record(directory, record.inputs, final)?
+    return Ok(final)
+
+
 pub def report_scalar(
     directory: Option[str],
     products: str,
