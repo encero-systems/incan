@@ -135,6 +135,19 @@ pub(super) fn project_calls(
     local: &BodyLocal,
     fields: &mut Fields,
 ) -> Result<(), NodeBindingError> {
+    for (span, binding) in &local.calls.constructor_field_bindings {
+        let mut row = vec![
+            "constructor".into(),
+            positions.nodes.anchor(*span)?.path,
+            "field-binding".into(),
+            binding.field_count.to_string(),
+            binding.argument_slots.len().to_string(),
+        ];
+        row.extend(binding.argument_slots.iter().map(usize::to_string));
+        row.push(binding.defaulted_slots.len().to_string());
+        row.extend(binding.defaulted_slots.iter().map(usize::to_string));
+        fields.push(row);
+    }
     for (span, (field, owner)) in &local.calls.body_ir_constructor_field_requirements {
         fields.push(vec![
             "requirement".into(),
