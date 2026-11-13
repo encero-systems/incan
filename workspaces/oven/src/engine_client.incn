@@ -1,7 +1,7 @@
 """Submit program requests to the records engine, retain execution interest and relay only the caller's console."""
 
 from std.fs import Path
-from std.environ import get_or
+from std.environ import get_optional, get_or
 from std.json import JsonValue, parse
 from pub::incan_platform.ipc import session_id
 from bakery import bakery
@@ -47,7 +47,11 @@ pub def execute(
     """
     # 1. The admitted compiler identity is derived once per installation, never probed on an unchanged request.
     absolute = source.absolute().map_err((error) => f"cannot make absolute {error.message()}")?
-    view = f"project-{fingerprint([home()?.0, absolute.0, profile])?}"
+    mut view_identity = [home()?.0, absolute.0, profile]
+    match get_optional("OVEN_BODY_REFUSALS"):
+        Some(mode) => view_identity.append("body-refusals:" + mode)
+        None => pass
+    view = f"project-{fingerprint(view_identity)?}"
     mut policy = ""
     if proofs:
         policy = "proofs"
