@@ -39,6 +39,12 @@ pub(super) fn type_fields(ty: &ResolvedType, fields: &mut Vec<String>) -> Result
             fields.push(name.clone());
             type_fields(&arguments[0], fields)?;
         }
+        ResolvedType::Generic(name, arguments) if !name.is_empty() => {
+            fields.extend(["generic".into(), name.clone(), arguments.len().to_string()]);
+            for argument in arguments {
+                type_fields(argument, fields)?;
+            }
+        }
         ResolvedType::Function(parameters, result) => {
             fields.push("callable".into());
             parameter_fields(parameters, fields)?;
@@ -100,6 +106,23 @@ fn read_type_at(fields: &mut std::slice::Iter<'_, String>, depth: usize) -> Resu
                 .filter(|mode| mode.as_str() == name)
                 .ok_or(NodeBindingError::Unsupported("ownership mode"))?;
             ResolvedType::Generic(mode.as_str().into(), vec![read_type_at(fields, depth + 1)?])
+        }
+        "generic" => {
+            let name = next(fields)?;
+            if name.is_empty() {
+                return Err(NodeBindingError::Unsupported("empty generic type"));
+            }
+            let count = next(fields)?
+                .parse::<usize>()
+                .map_err(|_| NodeBindingError::MissingNode)?;
+            if count > fields.len() {
+                return Err(NodeBindingError::MissingNode);
+            }
+            let mut arguments = Vec::with_capacity(count);
+            for _ in 0..count {
+                arguments.push(read_type_at(fields, depth + 1)?);
+            }
+            ResolvedType::Generic(name.into(), arguments)
         }
         "callable" => ResolvedType::Function(
             read_parameters_at(fields, depth + 1)?,
