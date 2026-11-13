@@ -1,0 +1,88 @@
+"""Bounded public-Crumb row setup shared by the compiler's Incan-owned record models."""
+
+from std.primitives.crumb import Budget
+from std.primitives.crumb.descriptions import Description, DescriptionMode
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.row_reader import read_rows
+from std.primitives.crumb.row_writer import write_rows
+from std.primitives.crumb.types import AbsentPolicy
+from std.primitives.crumb.values import Metadata, MetadataEntry, Value, ValueField
+from std.primitives.views import MappedFile
+
+
+pub model ModelField:
+    """One required Crumb model field with its stable identity and canonical projection policy."""
+
+    pub identity: bytes
+    pub name: str
+    pub storage: str
+    pub canonical: bool = true
+
+
+pub def operation_budget() -> Result[Budget, str]:
+    """Create the shared bound for one compiler-record encode, decode or digest operation."""
+    return Budget.create(bytes=67108864, elements=4194304, depth=128).map_err((error) => error.message())
+
+
+pub def model_description(selector: bytes, path: str, fields: list[ModelField]) -> Description:
+    """Build one complete referenced Crumb model description in declaration order."""
+    return Description(
+        metadata=Metadata.Map(
+            [
+                MetadataEntry(key="kind", value=Metadata.Text("Record")),
+                MetadataEntry(key="nominal", value=Metadata.Binary(selector)),
+                MetadataEntry(key="path", value=Metadata.Text(path)),
+                MetadataEntry(key="properties", value=Metadata.Map([])),
+                MetadataEntry(key="fields", value=Metadata.List([description_field(field) for field in fields])),
+            ],
+        ),
+        mode=DescriptionMode.Reference,
+    )
+
+
+pub def required_value(identity: bytes, value: Value, canonical: bool = true) -> ValueField:
+    """Bind one present logical value to a required field contract."""
+    return ValueField(identity=identity, canonical=canonical, absent=AbsentPolicy.Required, value=value)
+
+
+pub def encode_rows(description: Description, records: list[RowRecord], maximum: int) -> Result[bytes, str]:
+    """Encode one model's rows through the public Crumb API and enforce the caller's byte boundary."""
+    mut budget = operation_budget()?
+    registry = KindRegistry.create([], budget).map_err((error) => error.message())?
+    encoded = write_rows([description], records, registry, false, budget).map_err((error) => error.message())?
+    if len(encoded) > maximum:
+        return Err("encoded Crumb rows exceed their byte boundary")
+    return Ok(encoded)
+
+
+pub def decode_rows(encoded: bytes, descriptions: list[Description], maximum: int) -> Result[list[RowRecord], str]:
+    """Admit one complete envelope and materialize only its bounded logical rows."""
+    if len(encoded) > maximum:
+        return Err("encoded Crumb rows exceed their byte boundary")
+    mut budget = operation_budget()?
+    registry = KindRegistry.create([], budget).map_err((error) => error.message())?
+    owner = MappedFile.owned(encoded)?
+    view = match owner.view(0, owner.len()):
+        Some(selected) => selected
+        None => return Err("Crumb row envelope has no complete view")
+
+    rows = read_rows(view, descriptions, registry, false, budget).map_err((error) => error.message())?
+    mut records: list[RowRecord] = []
+    for index in range(rows.len()):
+        records.append(rows.read_record(index, budget).map_err((error) => error.message())?)
+    return Ok(records)
+
+
+def description_field(field: ModelField) -> Metadata:
+    """Encode one required field's complete metadata."""
+    return Metadata.Map(
+        [
+            MetadataEntry(key="id", value=Metadata.Binary(field.identity)),
+            MetadataEntry(key="name", value=Metadata.Text(field.name)),
+            MetadataEntry(key="type", value=Metadata.Text(field.storage)),
+            MetadataEntry(key="canonical", value=Metadata.Boolean(field.canonical)),
+            MetadataEntry(key="absent", value=Metadata.Text("required")),
+            MetadataEntry(key="properties", value=Metadata.Map([])),
+        ],
+    )
