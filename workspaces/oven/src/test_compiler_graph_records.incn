@@ -73,6 +73,12 @@ from compiler_source_projection import project_source, publish_source_projection
 from publication import publish_binary
 from scratch import scratch_directory
 from unit import UnitDescription, UnitLoaf
+from rust::incan_semantics_core import (
+    CanonicalSymbolId as RustCanonicalSymbolId,
+    HirSourceSpan as RustHirSourceSpan,
+    SemanticSourceTargetKind as RustDeclarationKind,
+    encode_incan_symbol_identity,
+)
 
 
 pub def test_value_evaluation_and_edges_publish_in_one_generation() -> Result[None, str]:
@@ -764,6 +770,53 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
             assert false, "a checker-record fallback authenticated a lowering record"
         Err(message) =>
             assert message.contains("src/main.incn::other: local record output refused: Unsupported(\"fixture\")"), message
+    canonical_fallback_output = scratch.path().joinpath("canonical-fallback-body-output")
+    publish_binary(
+        canonical_fallback_output,
+        compiled_output_bytes(
+            CompiledBodyOutputs(
+                values=[],
+                fallbacks=[
+                    CompiledBodyFallback(
+                        module="src/main.incn",
+                        name="other",
+                        identity=fallback_identity,
+                        reason="local record output refused: Unsupported(\"fixture\")",
+                    ),
+                ],
+            ),
+        ).map_err((error) => f"{error:?}")?,
+    )?
+    canonical_report = scratch.path().joinpath("canonical-fallback-plan-report")
+    canonical_report.mkdir(true, true).map_err((error) => error.message())?
+    fallback_symbol = encode_incan_symbol_identity(
+        RustCanonicalSymbolId.module_declaration(
+            ["main"],
+            "other",
+            RustDeclarationKind.Function,
+            RustHirSourceSpan.new(0, 10),
+        ),
+    )
+    canonical_report
+        .joinpath("other.event")
+        .write_text(
+            f"{{\"schema\":2,\"reused\":false,\"identity\":\"{fallback_symbol}\",\"key\":\"plan\",\"function\":\"other\",\"product\":\"native\",\"runtime_requirements\":0}}",
+            "utf-8",
+            "strict",
+            None,
+        )
+        .map_err((error) => error.message())?
+    canonical_report
+        .joinpath("other.refusal")
+        .write_text(
+            "{\"schema\":2,\"function\":\"other\",\"refusal\":\"full-source fallback\"}",
+            "utf-8",
+            "strict",
+            None,
+        )
+        .map_err((error) => error.message())?
+    skipped = prepare_compiled_bodies(begin(published.snapshot), unit, canonical_fallback_output, Some(canonical_report))?
+    assert skipped.bodies == 0 and skipped.fallbacks == 1
     selected = select_body_inventory(published.snapshot, CHECKER_PROFILE)?
     assert len(selected) == 1 and selected[0].identity == identity
     pages = encode_body_inventory(selected)?
