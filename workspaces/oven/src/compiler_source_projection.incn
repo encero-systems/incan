@@ -273,11 +273,17 @@ def callable_declaration(line: str) -> bool:
 
 
 def declaration_owner(line: str) -> str:
-    """Name an independently owned declaration while imports, aliases and other module forms stay in the header."""
+    """Name an independently owned declaration while imports and other module forms stay in the header."""
     mut header = f"{line}"
     for prefix in ["pub ", "async "]:
         if header.startswith(prefix):
             header = header[len(prefix):]
+    for kind in ["partial", "alias"]:
+        marker = " = " + kind + " "
+        if marker in header:
+            name = identifier_prefix(header)
+            if name != "":
+                return kind + ":" + name
     for kind in ["def", "const", "static", "model", "capability", "class", "trait", "partial", "newtype", "enum"]:
         prefix = kind + " "
         if header.startswith(prefix):

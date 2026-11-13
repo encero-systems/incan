@@ -26,12 +26,12 @@ pub struct CheckedNamespaceInterface {
 }
 
 impl CheckedNamespaceInterface {
-    const SCHEMA: u32 = 3;
+    const SCHEMA: u32 = 4;
 
-    /// Capture an installable public function, model, and constant namespace from one accepted editable module.
+    /// Capture one complete installable public namespace from an accepted editable module.
     ///
-    /// Other declaration families remain on ordinary checking until their frozen-manifest tables have an exact
-    /// namespace installer. A miss is explicit and never publishes a partial interface.
+    /// Declaration forms outside checked API metadata remain on ordinary checking. A miss is explicit and never
+    /// publishes a partial interface.
     pub fn from_checked(
         module_name: &str,
         module_path: &[String],
@@ -43,7 +43,15 @@ impl CheckedNamespaceInterface {
                 declaration.node,
                 Declaration::Function(_)
                     | Declaration::Model(_)
+                    | Declaration::Class(_)
+                    | Declaration::Trait(_)
+                    | Declaration::Enum(_)
+                    | Declaration::Newtype(_)
+                    | Declaration::TypeAlias(_)
                     | Declaration::Const(_)
+                    | Declaration::Static(_)
+                    | Declaration::Alias(_)
+                    | Declaration::Partial(_)
                     | Declaration::Import(_)
                     | Declaration::Docstring(_)
             )
@@ -59,16 +67,6 @@ impl CheckedNamespaceInterface {
             .iter()
             .any(|declaration| matches!(declaration.node, Declaration::Import(_) | Declaration::Alias(_)));
         if api.declarations.is_empty() && !imports_project_namespace {
-            return Ok(None);
-        }
-        if api.declarations.iter().any(|declaration| {
-            !matches!(
-                declaration,
-                crate::api_metadata::ApiDeclaration::Function(_)
-                    | crate::api_metadata::ApiDeclaration::Model(_)
-                    | crate::api_metadata::ApiDeclaration::Const(_)
-            )
-        }) {
             return Ok(None);
         }
         let mut identities = std::collections::BTreeMap::new();
@@ -163,8 +161,8 @@ impl CheckedNamespaceInterface {
             .api
             .declarations
             .iter()
-            .map(namespace_export)
-            .collect::<Result<Vec<_>, _>>()?;
+            .flat_map(namespace_exports)
+            .collect::<Vec<_>>();
         let symbols = Arc::new(symbols);
         let identities = Arc::new(
             self.identities
@@ -231,7 +229,10 @@ impl CheckedNamespaceInterface {
             let Some(identity) = self.identities.get(name) else {
                 return Err("checked namespace interface is missing a declaration identity".into());
             };
-            if identity.declaration_name != name || identity.origin != SymbolOrigin::Module(self.module_path.clone()) {
+            if !matches!(declaration, crate::api_metadata::ApiDeclaration::Alias(_))
+                && (identity.declaration_name != name
+                    || identity.origin != SymbolOrigin::Module(self.module_path.clone()))
+            {
                 return Err("checked namespace interface declaration identity disagrees with its module".into());
             }
         }
@@ -244,8 +245,15 @@ fn namespace_declaration_name(declaration: &crate::api_metadata::ApiDeclaration)
     match declaration {
         crate::api_metadata::ApiDeclaration::Function(item) => Some(&item.name),
         crate::api_metadata::ApiDeclaration::Model(item) => Some(&item.name),
+        crate::api_metadata::ApiDeclaration::Class(item) => Some(&item.name),
+        crate::api_metadata::ApiDeclaration::Trait(item) => Some(&item.name),
+        crate::api_metadata::ApiDeclaration::Enum(item) => Some(&item.name),
+        crate::api_metadata::ApiDeclaration::Newtype(item) => Some(&item.name),
+        crate::api_metadata::ApiDeclaration::TypeAlias(item) => Some(&item.name),
         crate::api_metadata::ApiDeclaration::Const(item) => Some(&item.name),
-        _ => None,
+        crate::api_metadata::ApiDeclaration::Static(item) => Some(&item.name),
+        crate::api_metadata::ApiDeclaration::Alias(item) => Some(&item.name),
+        crate::api_metadata::ApiDeclaration::Partial(item) => Some(&item.name),
     }
 }
 
@@ -254,18 +262,37 @@ fn namespace_declaration_span(declaration: &crate::api_metadata::ApiDeclaration)
     match declaration {
         crate::api_metadata::ApiDeclaration::Function(item) => item.anchor.span,
         crate::api_metadata::ApiDeclaration::Model(item) => item.anchor.span,
+        crate::api_metadata::ApiDeclaration::Class(item) => item.anchor.span,
+        crate::api_metadata::ApiDeclaration::Trait(item) => item.anchor.span,
+        crate::api_metadata::ApiDeclaration::Enum(item) => item.anchor.span,
+        crate::api_metadata::ApiDeclaration::Newtype(item) => item.anchor.span,
+        crate::api_metadata::ApiDeclaration::TypeAlias(item) => item.anchor.span,
         crate::api_metadata::ApiDeclaration::Const(item) => item.anchor.span,
-        _ => crate::ast::Span::default(),
+        crate::api_metadata::ApiDeclaration::Static(item) => item.anchor.span,
+        crate::api_metadata::ApiDeclaration::Alias(item) => item.anchor.span,
+        crate::api_metadata::ApiDeclaration::Partial(item) => item.anchor.span,
     }
 }
 
 /// Project one supported frozen API row into the source module's public export table.
-fn namespace_export(declaration: &crate::api_metadata::ApiDeclaration) -> Result<ExportedSymbol, String> {
+fn namespace_exports(declaration: &crate::api_metadata::ApiDeclaration) -> Vec<ExportedSymbol> {
     match declaration {
-        crate::api_metadata::ApiDeclaration::Function(item) => Ok(ExportedSymbol::Function(item.name.clone())),
-        crate::api_metadata::ApiDeclaration::Model(item) => Ok(ExportedSymbol::Type(item.name.clone())),
-        crate::api_metadata::ApiDeclaration::Const(item) => Ok(ExportedSymbol::Const(item.name.clone())),
-        _ => Err("checked namespace interface contains an unsupported export".to_owned()),
+        crate::api_metadata::ApiDeclaration::Function(item) => vec![ExportedSymbol::Function(item.name.clone())],
+        crate::api_metadata::ApiDeclaration::Model(item) => vec![ExportedSymbol::Type(item.name.clone())],
+        crate::api_metadata::ApiDeclaration::Class(item) => vec![ExportedSymbol::Type(item.name.clone())],
+        crate::api_metadata::ApiDeclaration::Trait(item) => vec![ExportedSymbol::Trait(item.name.clone())],
+        crate::api_metadata::ApiDeclaration::Enum(item) => std::iter::once(ExportedSymbol::Type(item.name.clone()))
+            .chain(item.variants.iter().map(|variant| ExportedSymbol::Variant {
+                enum_name: item.name.clone(),
+                variant_name: variant.name.clone(),
+            }))
+            .collect(),
+        crate::api_metadata::ApiDeclaration::Newtype(item) => vec![ExportedSymbol::Type(item.name.clone())],
+        crate::api_metadata::ApiDeclaration::TypeAlias(item) => vec![ExportedSymbol::Type(item.name.clone())],
+        crate::api_metadata::ApiDeclaration::Const(item) => vec![ExportedSymbol::Const(item.name.clone())],
+        crate::api_metadata::ApiDeclaration::Static(item) => vec![ExportedSymbol::Static(item.name.clone())],
+        crate::api_metadata::ApiDeclaration::Alias(item) => vec![ExportedSymbol::Reexported(item.name.clone())],
+        crate::api_metadata::ApiDeclaration::Partial(item) => vec![ExportedSymbol::Function(item.name.clone())],
     }
 }
 
