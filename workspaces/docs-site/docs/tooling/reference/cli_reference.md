@@ -10,7 +10,7 @@ oven --version
 oven lock [--versions lowest|lowest-direct|newest] [PATH]
 oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE
 oven run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
-oven check PATH [--format text|json] [UNIT OPTIONS]
+oven check [PATH] [--format text|json] [UNIT OPTIONS]
 oven test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
 oven describe-unit PATH [--unattended] [UNIT OPTIONS]
 oven build [PATH] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
@@ -22,7 +22,7 @@ oven inspect run ID --proofs
 incan --help | -h | help
 incan --version
 incan run [--direct] [PATH | -c CODE] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
-incan check PATH [--format text|json] [UNIT OPTIONS]
+incan check [PATH] [--format text|json] [UNIT OPTIONS]
 incan explain CODE
 incan test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
 incan build [PATH] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
@@ -33,7 +33,7 @@ incan toolchain pack OUT
 incan toolchain install ARCHIVE
 ```
 
-There is no implicit command. Without `PATH`, `run` and `build` select the Loaf at or above the current directory, `test` and `fmt` use the current directory, and every other command that takes `PATH` requires it. A command only `oven` runs that 0.5.1 ran as an `incan` command names its `oven` spelling: `incan lock` reports ``incan: unknown command `lock`: run `oven lock` ``. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
+There is no implicit command. Without `PATH`, `run`, `check` and `build` select the Loaf at or above the current directory, `test` and `fmt` use the current directory, and every other command that takes `PATH` requires it. A command only `oven` runs that 0.5.1 ran as an `incan` command names its `oven` spelling: `incan lock` reports ``incan: unknown command `lock`: run `oven lock` ``. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
 
 ## Help and version
 
@@ -81,7 +81,7 @@ With `INCAN_ENGINE=records`, `PATH` must name one ordinary program source file o
 
 ## `oven check`
 
-Checks the source at `PATH` without producing an executable. `--format` accepts `text` (default) or `json`. Successful checks exit zero; errors exit nonzero.
+Checks the source at `PATH` without producing an executable. A directory, or no `PATH`, selects the Loaf at or above it and checks the entry [`oven build`](#oven-build) selects for it; a Loaf without an Incan entry is refused. `--format` accepts `text` (default) or `json`. Successful checks exit zero; errors exit nonzero.
 
 The JSON report has `schema_version: 2`, Boolean `ok`, and a `diagnostics` array. Diagnostic entries carry `code`, `severity`, `phase`, `origin`, `message`, `primary_span`, `notes`, `hints` and `explain`, with additional related or comparison fields when applicable. `explain` is always the string `incan explain CODE`, with the diagnostic's code. Message wording is not stable. A span carries its source file and positions, including byte offsets.
 
