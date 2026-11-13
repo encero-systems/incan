@@ -77,7 +77,6 @@ pub def tests_binary(unit: UnitDescription) -> Path:
     return stored_executable(unit, f"tests/{test_source_name(unit)}")
 
 
-
 pub def compile_tests(unit: UnitDescription, toolchain: Toolchain) -> Result[tuple[i32, Path], str]:
     """Compile a test unit once, unless its stored executable is current; the compiler's status and the executable."""
     binary = tests_binary(unit)
@@ -277,7 +276,9 @@ def selection(cases: list[TestCase], runner: RunnerOptions) -> Result[tuple[list
         if marker_policy and not test_case.marked:
             return Err("marker selection needs a compiler that reports test markers; this toolchain's does not")
         if runner.strict_markers and len(test_case.unregistered) > 0:
-            return Err(f"unknown marker `{test_case.unregistered[0]}` with --strict-markers; register it in TEST_MARKERS")
+            return Err(
+                f"unknown marker `{test_case.unregistered[0]}` with --strict-markers; register it in TEST_MARKERS",
+            )
     mut chosen: list[TestCase] = []
     for test_case in cases:
         if test_case.slow and not runner.slow:
@@ -370,7 +371,8 @@ def reaped(
         elapsed = int(item.started.elapsed().as_millis())
         limit = limit_of(selected[item.position], runner)
         match ended:
-            Some(passed) => settled[item.position] = Some(judged(selected[item.position], item, passed, elapsed, runner)?)
+            Some(passed) =>
+                settled[item.position] = Some(judged(selected[item.position], item, passed, elapsed, runner)?)
             None =>
                 if limit > 0 and elapsed >= limit:
                     _ = item.child.borrow_mut().kill()
@@ -433,10 +435,18 @@ def launch(test_case: TestCase, position: int, scratch: Path) -> Result[Running,
     command.stderr(File.create(errors.0).map_err((error) => f"{errors.0}: {error}")?)
     trace_launch(test_case.binary)
     child = command.spawn().map_err((error) => f"cannot run {test_case.binary}: {error}")?
-    return Ok(Running(position=position, started=Instant.now(), child=Rc.new(RefCell.new(child)), output=output, errors=errors))
+    return Ok(
+        Running(position=position, started=Instant.now(), child=Rc.new(RefCell.new(child)), output=output, errors=errors),
+    )
 
 
-def judged(test_case: TestCase, item: Running, passed: bool, elapsed: int, runner: RunnerOptions) -> Result[Finished, str]:
+def judged(
+    test_case: TestCase,
+    item: Running,
+    passed: bool,
+    elapsed: int,
+    runner: RunnerOptions,
+) -> Result[Finished, str]:
     """
     One ended test's outcome under its collected policy.
 
@@ -525,7 +535,12 @@ def print_finished(finished: Finished, runner: RunnerOptions) -> None:
         write_err(finished.errors)
 
 
-def report_session(outcomes: list[Outcome], runner: RunnerOptions, elapsed: int, seed: Option[int]) -> Result[None, str]:
+def report_session(
+    outcomes: list[Outcome],
+    runner: RunnerOptions,
+    elapsed: int,
+    seed: Option[int],
+) -> Result[None, str]:
     """Write the reports a run asked for after its last outcome: durations, a summary and JUnit XML."""
     if runner.format == ReportFormat.Json:
         println(json_summary(outcomes, elapsed, seed)?)

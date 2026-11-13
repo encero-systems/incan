@@ -29,7 +29,15 @@ from rust_testing import build_rust_tests
 from project_lock import ensure_project_lock, lock_project, parse_lock_command
 from toolchain import load_toolchain, rust_compiler
 from formatting import format_paths, parse_arguments as format_options
-from testing import TestCase, collected_cases, compile_tests, directory_test_sources, run_session, rust_cases, test_sources
+from testing import (
+    TestCase,
+    collected_cases,
+    compile_tests,
+    directory_test_sources,
+    run_session,
+    rust_cases,
+    test_sources,
+)
 from runner_options import RunnerOptions, split_runner_options
 from inline_source import inline, inline_arguments
 from owner_client import owned, status_code

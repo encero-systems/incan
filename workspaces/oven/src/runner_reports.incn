@@ -51,15 +51,13 @@ pub model Outcome:
 
 pub def json_record(outcome: Outcome) -> Result[str, str]:
     """One outcome as a JSON Lines record."""
-    mut fields: Dict[str, JsonValue] = {
-        "duration_ms": JsonValue.int(outcome.duration_ms),
-        "file": JsonValue.string(outcome.file),
-        "markers": JsonValue.array([JsonValue.string(marker) for marker in outcome.markers]),
-        "name": JsonValue.string(outcome.name),
-        "schema_version": JsonValue.string(SCHEMA),
-        "status": JsonValue.string(outcome.status.value()),
-        "test_id": JsonValue.string(f"{outcome.label}::{outcome.name}"),
-    }
+    mut fields: Dict[str, JsonValue] = {"duration_ms": JsonValue.int(outcome.duration_ms), "file": JsonValue.string(
+        outcome.file,
+    ), "markers": JsonValue.array([JsonValue.string(marker) for marker in outcome.markers]), "name": JsonValue.string(
+        outcome.name,
+    ), "schema_version": JsonValue.string(SCHEMA), "status": JsonValue.string(outcome.status.value()), "test_id": JsonValue.string(
+        f"{outcome.label}::{outcome.name}",
+    )}
     if outcome.reason != "":
         fields["reason"] = JsonValue.string(outcome.reason)
     return JsonValue.object(fields).to_json().map_err((error) => error.message())
@@ -71,16 +69,13 @@ pub def json_summary(outcomes: list[Outcome], duration_ms: int, seed: Option[int
     if let Some(selected) = seed:
         shuffle_seed = JsonValue.int(selected)
     summary = JsonValue.object(
-        {
-            "duration_ms": JsonValue.int(duration_ms),
-            "failed": JsonValue.int(counted(outcomes, Status.Failed)),
-            "passed": JsonValue.int(counted(outcomes, Status.Passed)),
-            "shuffle_seed": shuffle_seed,
-            "skipped": JsonValue.int(counted(outcomes, Status.Skipped)),
-            "total": JsonValue.int(len(outcomes)),
-            "xfailed": JsonValue.int(counted(outcomes, Status.XFailed)),
-            "xpassed": JsonValue.int(counted(outcomes, Status.XPassed)),
-        },
+        {"duration_ms": JsonValue.int(duration_ms), "failed": JsonValue.int(counted(outcomes, Status.Failed)), "passed": JsonValue.int(
+            counted(outcomes, Status.Passed),
+        ), "shuffle_seed": shuffle_seed, "skipped": JsonValue.int(counted(outcomes, Status.Skipped)), "total": JsonValue.int(
+            len(outcomes),
+        ), "xfailed": JsonValue.int(counted(outcomes, Status.XFailed)), "xpassed": JsonValue.int(
+            counted(outcomes, Status.XPassed),
+        )},
     )
     record = JsonValue.object({"schema_version": JsonValue.string(SCHEMA), "summary": summary})
     return record.to_json().map_err((error) => error.message())
@@ -101,10 +96,14 @@ pub def junit(outcomes: list[Outcome], duration_ms: int) -> str:
     skipped = counted(outcomes, Status.Skipped) + counted(outcomes, Status.XFailed)
     mut lines = [
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
-        f"<testsuite name=\"incan\" tests=\"{len(outcomes)}\" failures=\"{failures}\" skipped=\"{skipped}\" time=\"{seconds(duration_ms)}\">",
+        f"<testsuite name=\"incan\" tests=\"{len(outcomes)}\" failures=\"{failures}\" skipped=\"{skipped}\" time=\"{seconds(
+            duration_ms,
+        )}\">",
     ]
     for outcome in outcomes:
-        opening = f"  <testcase classname=\"{escaped(outcome.file)}\" name=\"{escaped(outcome.name)}\" time=\"{seconds(outcome.duration_ms)}\">"
+        opening = f"  <testcase classname=\"{escaped(outcome.file)}\" name=\"{escaped(outcome.name)}\" time=\"{seconds(
+            outcome.duration_ms,
+        )}\">"
         mut body = ""
         match outcome.status:
             Status.Failed => body = f"<failure message=\"{escaped(failure_message(outcome))}\"></failure>"
@@ -130,11 +129,11 @@ def escaped(text: str) -> str:
     """Text escaped for an XML attribute or element."""
     return (
         text
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace("\"", "&quot;")
-        .replace("'", "&apos;")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&apos;")
     )
 
 
