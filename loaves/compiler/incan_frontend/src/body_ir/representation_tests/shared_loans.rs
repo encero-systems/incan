@@ -1,7 +1,7 @@
 use super::*;
 
-/// Prove the decreasing shared-access fixed point across forwarding, recursion and a function-item adapter while a
-/// value-returning body and explicit source contracts keep their established ownership.
+/// Prove immutable parameter sharing across forwarding, recursion and a function-item adapter while explicit source
+/// contracts keep their established ownership and escaping operations retain their checked transfer facts.
 pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model Native:\n    value: int\nmodel Wrapper:\n    item: Native\nclass Reader:\n    pub def read(self, items: Native) -> int:\n        return items.value\ntrait Fetcher:\n    def fetch(self, scope: Native, request: Native) -> int: ...\nclass Fetch with Fetcher:\n    def fetch(self, scope: Native, request: Native) -> int:\n        return scope.value + request.value\ndef leaf(items: Native) -> int:\n    return items.value\ndef explicit(items: &Native) -> int:\n    return items.value\ndef forward(items: Native) -> int:\n    return leaf(items)\ndef explicit_forward(items: Native) -> int:\n    return explicit(items)\ndef explicit_projected(wrapper: &Wrapper) -> int:\n    return explicit(wrapper.item)\ndef method_forward(reader: Reader, items: Native) -> int:\n    return reader.read(items)\ndef trait_forward[F with Fetcher](source: F, scope: Native, request: Native) -> int:\n    return source.fetch(scope, request)\ndef left(items: Native, remaining: int) -> int:\n    if remaining == 0:\n        return items.value\n    return right(items, remaining - 1)\ndef right(items: Native, remaining: int) -> int:\n    if remaining == 0:\n        return items.value\n    return left(items, remaining - 1)\ndef escaped(items: Native) -> int:\n    return items.value\ndef take(items: Native) -> Native:\n    return items\ndef use() -> int:\n    callback = escaped\n    return callback(Native(value=1))\n";
     let (program, facts, mut candidate) = checked_seed(source)?;
@@ -154,7 +154,7 @@ pub(super) fn assert_shared_loans() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("missing owned result body")?;
     assert_eq!(
         take.params[0].input_access,
-        incan_semantics_core::IncanInputAccess::Inferred
+        incan_semantics_core::IncanInputAccess::InferredShared
     );
     let use_body = candidate
         .bodies
@@ -244,7 +244,7 @@ pub(super) fn assert_projected_shared_loans() -> Result<(), Box<dyn std::error::
             .ok_or("missing projected transfer body")?;
         assert_eq!(
             body.params[0].input_access,
-            incan_semantics_core::IncanInputAccess::Inferred,
+            incan_semantics_core::IncanInputAccess::InferredShared,
             "{name}: {body:#?}"
         );
     }
@@ -268,27 +268,20 @@ pub(super) fn assert_projected_shared_loans() -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-/// Prove every admitted observation shape borrows its plain parameter while the corresponding store, escape, capture
-/// or item-taking shape retains owned access. Unrelated aggregates, results, closures and matches do not weaken an
-/// otherwise read-only body.
+/// Prove every immutable plain parameter borrows at entry while stores, escapes, captures and item-taking operations
+/// keep their checked ownership facts. Unrelated aggregates, results, closures and matches do not weaken the ABI.
 pub(super) fn assert_complete_shared_read_shapes() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model Native:\n    value: int\ndef narrowed(value: str | None) -> str:\n    if value is not None:\n        return value.upper()\n    return \"missing\"\ndef discarded(item: Native) -> int:\n    _ = item\n    return 1\ndef formatted(item: Native) -> str:\n    return f\"{item:?}\"\ndef stored(item: Native) -> list[Native]:\n    return [item]\ndef compared(value: str) -> bool:\n    return value == \"chosen\"\ndef returned(value: str) -> str:\n    return value\ndef matched(item: Result[Native, str]) -> int:\n    match item:\n        Ok(_) => return 1\n        Err(_) => return 0\ndef match_take(item: Result[Native, str]) -> Native:\n    match item:\n        Ok(value) => return value\n        Err(_) => return Native(value=0)\ndef indexed(items: list[Native]) -> int:\n    return items[0].value\ndef index_take(items: list[Native]) -> Native:\n    return items[0]\ndef iterated(items: list[Native]) -> int:\n    mut total = 0\n    for item in items:\n        total += item.value\n    return total\ndef loop_take(items: list[Native]) -> Native:\n    for item in items:\n        return item\n    return Native(value=0)\ndef unrelated(item: Native) -> int:\n    values = [1, 2]\n    callback: Callable[int, int] = (value) => value + 1\n    result: Result[int, str] = Ok(callback(values[0]))\n    match result:\n        Ok(_) => pass\n        Err(_) => pass\n    return item.value\ndef captured(item: Native) -> int:\n    callback: () -> int = () => item.value\n    return callback()\n";
     let (_, _, mut module) = checked_seed(source)?;
     super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
 
-    for name in ["formatted", "compared", "matched", "indexed", "iterated", "unrelated"] {
-        let body = module
-            .bodies
-            .iter()
-            .find(|body| body.name == name)
-            .ok_or("missing admitted shared-read shape")?;
-        assert_eq!(
-            body.params[0].input_access,
-            incan_semantics_core::IncanInputAccess::InferredShared,
-            "{name}: {body:#?}"
-        );
-    }
     for name in [
+        "formatted",
+        "compared",
+        "matched",
+        "indexed",
+        "iterated",
+        "unrelated",
         "stored",
         "returned",
         "match_take",
@@ -302,18 +295,18 @@ pub(super) fn assert_complete_shared_read_shapes() -> Result<(), Box<dyn std::er
             .bodies
             .iter()
             .find(|body| body.name == name)
-            .ok_or("missing refused shared-read shape")?;
+            .ok_or("missing immutable parameter shape")?;
         assert_eq!(
             body.params[0].input_access,
-            incan_semantics_core::IncanInputAccess::Inferred,
+            incan_semantics_core::IncanInputAccess::InferredShared,
             "{name}: {body:#?}"
         );
     }
     Ok(())
 }
 
-/// Read-only string callees and every ordinary caller storage shape retain a loan, while ownership-changing bodies
-/// keep their existing access.
+/// Read-only string callees and every ordinary caller storage shape retain a loan, while mutable and partial-target
+/// parameters keep their existing access.
 #[test]
 fn read_only_string_calls_borrow_the_callers_storage() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
@@ -449,7 +442,7 @@ def mutated(mut text: str) -> int:
             "{name}: {body:#?}"
         );
     }
-    for name in ["moved", "stored", "mutated"] {
+    for name in ["moved", "stored"] {
         let body = module
             .bodies
             .iter()
@@ -457,10 +450,20 @@ def mutated(mut text: str) -> int:
             .ok_or("missing ownership-changing string control")?;
         assert_eq!(
             body.params[0].input_access,
-            incan_semantics_core::IncanInputAccess::Inferred,
+            incan_semantics_core::IncanInputAccess::InferredShared,
             "{name}: {body:#?}"
         );
     }
+    let mutated = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "mutated")
+        .ok_or("missing mutable string control")?;
+    assert_eq!(
+        mutated.params[0].input_access,
+        incan_semantics_core::IncanInputAccess::Inferred,
+        "{mutated:#?}"
+    );
     let indexed = module
         .bodies
         .iter()
@@ -489,7 +492,7 @@ def mutated(mut text: str) -> int:
         .ok_or("missing set-key control")?;
     assert_eq!(
         set_contains.params[1].input_access,
-        incan_semantics_core::IncanInputAccess::Inferred,
+        incan_semantics_core::IncanInputAccess::InferredShared,
         "{set_contains:#?}"
     );
     for (name, parameter) in [
@@ -497,7 +500,6 @@ def mutated(mut text: str) -> int:
         ("optional_dictionary_key", 1),
         ("registration_lookup", 1),
         ("registration", 1),
-        ("greet", 1),
     ] {
         let body = module
             .bodies
@@ -506,10 +508,20 @@ def mutated(mut text: str) -> int:
             .ok_or("missing retained owned-string boundary")?;
         assert_eq!(
             body.params[parameter].input_access,
-            incan_semantics_core::IncanInputAccess::Inferred,
+            incan_semantics_core::IncanInputAccess::InferredShared,
             "{name}: {body:#?}"
         );
     }
+    let greet = module
+        .bodies
+        .iter()
+        .find(|body| body.name == "greet")
+        .ok_or("missing partial-target boundary")?;
+    assert_eq!(
+        greet.params[1].input_access,
+        incan_semantics_core::IncanInputAccess::Inferred,
+        "{greet:#?}"
+    );
     for name in ["dictionary_key", "optional_dictionary_key"] {
         let body = module
             .bodies
@@ -517,10 +529,10 @@ def mutated(mut text: str) -> int:
             .find(|body| body.name == name)
             .ok_or("missing dictionary-key boundary")?;
         assert!(
-            body.locals.iter().all(|local| {
-                !matches!(local.origin, bir::LocalOrigin::Temporary)
-                    || local.ty
-                        != super::IncanType::Ref(Box::new(super::IncanType::Primitive(super::IncanPrimitiveType::Str)))
+            body.locals.iter().any(|local| {
+                matches!(local.origin, bir::LocalOrigin::Temporary)
+                    && local.ty
+                        == super::IncanType::Ref(Box::new(super::IncanType::Primitive(super::IncanPrimitiveType::Str)))
             }),
             "{name}: {body:#?}"
         );
@@ -560,14 +572,14 @@ def mutated(mut text: str) -> int:
     };
     assert_eq!(
         keyed_call.locals[read.place.local_id().ok_or("missing keyed argument local")?.index()].ty,
-        super::IncanType::Primitive(super::IncanPrimitiveType::Str),
+        super::IncanType::Ref(Box::new(super::IncanType::Primitive(super::IncanPrimitiveType::Str))),
         "{keyed_call:#?}"
     );
     Ok(())
 }
 
-/// Prove a read lent to one input and moved to another of the same call clones for the move, so the callee's loan
-/// never reads moved storage.
+/// Prove two immutable inputs borrow the same caller storage and the owned return materializes inside the callee, so
+/// the caller never makes a speculative copy.
 pub(super) fn assert_lent_and_moved_read() -> Result<(), Box<dyn std::error::Error>> {
     let source = "model Item:\n    count: int\ndef both(kept: Item, taken: Item) -> Item:\n    total = kept.count\n    return taken\ndef caller(item: Item) -> Item:\n    return both(item, item)\n";
     let (_, _, mut module) = checked_seed(source)?;
@@ -584,9 +596,16 @@ pub(super) fn assert_lent_and_moved_read() -> Result<(), Box<dyn std::error::Err
     );
     assert_eq!(
         both.params[1].input_access,
-        incan_semantics_core::IncanInputAccess::Inferred,
+        incan_semantics_core::IncanInputAccess::InferredShared,
         "{both:#?}"
     );
+    let returned = both.block.stmts.iter().find_map(|statement| match &statement.kind {
+        bir::StatementKind::Return {
+            value: Some(bir::Operand::Place(read)),
+        } => Some(read.fact),
+        _ => None,
+    });
+    assert_eq!(returned, Some(bir::OwnershipFact::Move), "{both:#?}");
     let caller = module
         .bodies
         .iter()
@@ -605,7 +624,7 @@ pub(super) fn assert_lent_and_moved_read() -> Result<(), Box<dyn std::error::Err
     });
     assert_eq!(
         facts,
-        Some(vec![bir::OwnershipFact::Borrow, bir::OwnershipFact::Clone]),
+        Some(vec![bir::OwnershipFact::Borrow, bir::OwnershipFact::Borrow]),
         "{caller:#?}"
     );
     Ok(())
