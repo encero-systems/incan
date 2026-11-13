@@ -73,6 +73,7 @@ pub(super) struct IndexedLoaf {
     pub dir: PathBuf,
     pub summary: Summary,
     entry: Arc<OnceLock<Result<LoafEntry, LoafIndexError>>>,
+    execution: Arc<OnceLock<Result<Arc<crate::library_manifest::LibraryManifest>, LoafIndexError>>>,
 }
 
 impl IndexedLoaf {
@@ -84,6 +85,7 @@ impl IndexedLoaf {
             dir: entry.artifact.dir.clone(),
             summary: Summary::from_artifact(&entry.artifact),
             entry: Arc::default(),
+            execution: Arc::default(),
         };
         let _ = indexed.entry.set(Ok(entry));
         indexed
@@ -106,6 +108,7 @@ impl IndexedLoaf {
                 rust_abi_cache: false,
             },
             entry: Arc::default(),
+            execution: Arc::default(),
         }
     }
 
@@ -127,6 +130,7 @@ impl IndexedLoaf {
                 dir,
                 summary,
                 entry: Arc::default(),
+                execution: Arc::default(),
             });
         }
         if !super::compiler_record_set::configured()
@@ -139,6 +143,7 @@ impl IndexedLoaf {
                 dir,
                 summary,
                 entry: Arc::default(),
+                execution: Arc::default(),
             });
         }
         let before = observation(&path);
@@ -175,6 +180,43 @@ impl IndexedLoaf {
             })
             .as_ref()
             .map_err(Clone::clone)
+    }
+
+    /// Read the record projection needed to admit executable declarations without demanding the complete manifest.
+    pub fn execution_manifest(&self) -> Result<Arc<crate::library_manifest::LibraryManifest>, LoafIndexError> {
+        self.execution
+            .get_or_init(|| {
+                if let Some(entry) = self.entry.get() {
+                    return entry
+                        .as_ref()
+                        .map(|entry| Arc::clone(&entry.artifact.manifest))
+                        .map_err(Clone::clone);
+                }
+                if super::compiler_record_set::configured()
+                    && let Some((manifest, digest)) =
+                        super::compiler_record_set::read_execution(&self.dir, &self.summary.identity.name)?
+                {
+                    if digest != self.summary.identity.digest {
+                        return Err(LoafIndexError::Unreadable {
+                            path: self
+                                .dir
+                                .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
+                            reason: "executable record projection differs from its admitted inventory".to_owned(),
+                        });
+                    }
+                    return Ok(manifest);
+                }
+                Ok(Arc::clone(&self.demand()?.artifact.manifest))
+            })
+            .as_ref()
+            .map(Arc::clone)
+            .map_err(Clone::clone)
+    }
+
+    /// The governed bodies sidecar can be located from admitted identity without demanding declaration records.
+    pub fn bodies_path(&self) -> PathBuf {
+        self.dir
+            .join(format!("{}.incnbody", artifact_stem(&self.summary.identity.name)))
     }
 
     /// Report a failed demand without opening an untouched manifest.
