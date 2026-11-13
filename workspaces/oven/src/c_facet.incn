@@ -1,0 +1,373 @@
+"""
+The C facet of a Loaf (RFC 159): a Clove's library, public headers, include roots, compile entries and named
+configurations, validated as manifest data. Nothing here reads the filesystem or selects a compiler.
+"""
+
+from std.toml import TomlValue
+from manifest_errors import IntakeError, IntakeErrorKind
+from cfg_predicate import identifier, parse_selector
+
+# The keys of `[c]`, `[[c.compile]]` and `[c.configurations.<name>]`.
+const FACET_KEYS: FrozenList[str] = ["library", "public-headers", "include", "std", "compile", "configurations"]
+const COMPILE_KEYS: FrozenList[str] = ["sources", "target", "include", "defines"]
+const CONFIGURATION_KEYS: FrozenList[str] = ["extends", "sources", "defines"]
+# Keys an author might reach for to pass compiler flags; each is refused with the facet's flag rule.
+const FLAG_KEYS: FrozenList[str] = ["flags", "cflags", "cxxflags", "arguments", "args", "options", "opt-level"]
+# The language standards a facet may select for its C sources.
+const C_STANDARDS: FrozenList[str] = [
+    "c89",
+    "c90",
+    "c99",
+    "c11",
+    "c17",
+    "c18",
+    "c23",
+    "gnu89",
+    "gnu90",
+    "gnu99",
+    "gnu11",
+    "gnu17",
+    "gnu18",
+    "gnu23",
+]
+pub const DEFAULT_CONFIGURATION: str = "default"
+
+
+pub enum CSourceKind(str):
+    """The source languages a compile entry may hold, each compiled into an archive with a C interface."""
+
+    C = "c"
+    Assembly = "assembly"
+    CPlusPlus = "c++"
+
+
+@derive(Eq)
+pub model CCompile:
+    """One `[[c.compile]]` entry: Loaf-relative sources or one-directory globs, and what applies to them."""
+
+    pub sources: list[str]
+    # An RFC 119 target predicate; the entry applies only where it holds.
+    pub target: Option[str] = None
+    pub include: list[str] = []
+    pub defines: Dict[str, str] = {}
+
+
+@derive(Eq)
+pub model CConfiguration:
+    """One `[c.configurations.<name>]`: definitions and additional sources, optionally extending one other."""
+
+    # The configuration this one extends (`extends`).
+    pub base: Option[str] = None
+    pub sources: list[str] = []
+    pub defines: Dict[str, str] = {}
+
+
+@derive(Eq)
+pub model CFacet:
+    """A Loaf's `[c]` table, validated; a Loaf that carries one is a Clove."""
+
+    # The archive's link name: `lib<library>.a`.
+    pub library: str
+    pub public_headers: list[str]
+    pub include: list[str] = []
+    pub std: Option[str] = None
+    pub compiles: list[CCompile] = []
+    pub configurations: Dict[str, CConfiguration] = {}
+
+
+@derive(Eq)
+pub model ResolvedConfiguration:
+    """A configuration with its `extends` chain applied: every definition and every additional source."""
+
+    pub name: str
+    pub defines: Dict[str, str] = {}
+    pub sources: list[str] = []
+
+
+pub def source_kind(path: str) -> Option[CSourceKind]:
+    """The language a source path's extension names, or none for any other file kind."""
+    if path.endswith(".c"):
+        return Some(CSourceKind.C)
+    if path.endswith(".S") or path.endswith(".s"):
+        return Some(CSourceKind.Assembly)
+    for suffix in [".cc", ".cpp", ".cxx"]:
+        if path.endswith(suffix):
+            return Some(CSourceKind.CPlusPlus)
+    return None
+
+
+pub def configuration_names(facet: CFacet) -> list[str]:
+    """The facet's configuration names in a stable order."""
+    return sorted([name for name in facet.configurations.keys()])
+
+
+pub def resolve_configuration(facet: CFacet, name: str) -> Result[ResolvedConfiguration, str]:
+    """Apply one configuration's `extends` chain; intake already refused cycles and redefinitions."""
+    if name not in facet.configurations:
+        names = ", ".join(configuration_names(facet))
+        return Err(f"unknown configuration `{name}`; the Clove declares {names}")
+    mut chain: list[str] = []
+    mut current = name
+    while true:
+        chain = [current] + chain
+        match facet.configurations[current].base:
+            Some(base) => current = base
+            None => break
+    mut defines: Dict[str, str] = {}
+    mut sources: list[str] = []
+    for member in chain:
+        configuration = facet.configurations[member]
+        for key in configuration.defines.keys():
+            defines[key] = configuration.defines[key]
+        sources = sources + configuration.sources
+    return Ok(ResolvedConfiguration(name=name, defines=defines, sources=sources))
+
+
+def refused(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str) -> IntakeError:
+    """An unlocated refusal; the caller attaches the manifest source."""
+    return IntakeError(kind=kind, manifest=manifest, field=field, detail=detail, location=None)
+
+
+def as_table(value: TomlValue, manifest: str, field: list[str]) -> Result[Dict[str, TomlValue], IntakeError]:
+    """Require a TOML table."""
+    return value.as_table().map_err((error) => refused(manifest, field, IntakeErrorKind.Invalid, error.message()))
+
+
+def as_text(value: TomlValue, manifest: str, field: list[str]) -> Result[str, IntakeError]:
+    """Require a TOML string."""
+    return value.as_str().map_err((error) => refused(manifest, field, IntakeErrorKind.Invalid, error.message()))
+
+
+def as_texts(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:
+    """Require a TOML array of strings."""
+    entries = value.as_array().map_err((error) => refused(manifest, field, IntakeErrorKind.Invalid, error.message()))?
+    mut items: list[str] = []
+    for index in range(len(entries)):
+        items.append(as_text(entries[index], manifest, field + [str(index)])?)
+    return Ok(items)
+
+
+def known_keys(
+    values: Dict[str, TomlValue],
+    keys: list[str],
+    manifest: str,
+    field: list[str],
+) -> Result[None, IntakeError]:
+    """Refuse compiler flags with the facet's flag rule and any other unknown key as outside intake."""
+    for key in sorted([key for key in values.keys()]):
+        if key in keys:
+            continue
+        if key in FLAG_KEYS:
+            return Err(
+                refused(
+                    manifest,
+                    field + [key],
+                    IntakeErrorKind.Unsupported,
+                    "a C facet declares no compiler flags beyond definitions, include roots, the language standard and target predicates",
+                ),
+            )
+        return Err(refused(manifest, field + [key], IntakeErrorKind.Unsupported, "intent is outside local intake"))
+    return Ok(None)
+
+
+pub def loaf_path_refusal(path: str) -> Option[str]:
+    """Why a facet path is not a Loaf-relative path, or none when it is one."""
+    if path == "":
+        return Some("empty path")
+    if path.startswith("/") or path.startswith("~") or (len(path) > 1 and path[1] == ":"):
+        return Some(f"`{path}` is an absolute path; a C facet names only paths inside the Loaf")
+    if "$" in path or "%" in path:
+        return Some(f"`{path}` names an environment variable; a C facet names only paths inside the Loaf")
+    for part in path.split("/"):
+        if part == "..":
+            return Some(f"`{path}` leaves the Loaf root; a C facet names only paths inside the Loaf")
+    return None
+
+
+def loaf_paths(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:
+    """A list of Loaf-relative paths."""
+    paths = as_texts(value, manifest, field)?
+    for index in range(len(paths)):
+        if let Some(reason) = loaf_path_refusal(paths[index]):
+            return Err(refused(manifest, field + [str(index)], IntakeErrorKind.Invalid, reason))
+    return Ok(paths)
+
+
+def source_paths(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:
+    """Loaf-relative sources or globs, each of a compilable file kind; a glob matches names in one directory."""
+    sources = loaf_paths(value, manifest, field)?
+    for index in range(len(sources)):
+        source = sources[index]
+        directory = "/".join(source.split("/")[:-1])
+        if "*" in directory or "?" in directory or "[" in directory:
+            return Err(
+                refused(
+                    manifest,
+                    field + [str(index)],
+                    IntakeErrorKind.Unsupported,
+                    f"`{source}`: a glob matches file names in one directory",
+                ),
+            )
+        if source_kind(source) is None:
+            return Err(
+                refused(
+                    manifest,
+                    field + [str(index)],
+                    IntakeErrorKind.Invalid,
+                    f"`{source}` is not a C (.c), assembly (.S, .s) or C++ (.cc, .cpp, .cxx) source",
+                ),
+            )
+    return Ok(sources)
+
+
+def definitions(value: TomlValue, manifest: str, field: list[str]) -> Result[Dict[str, str], IntakeError]:
+    """A table of preprocessor definitions: C identifiers to string values."""
+    values = as_table(value, manifest, field)?
+    mut defines: Dict[str, str] = {}
+    for key in sorted([key for key in values.keys()]):
+        if not identifier(key):
+            return Err(refused(manifest, field + [key], IntakeErrorKind.Invalid, f"`{key}` is not a C identifier"))
+        defines[key] = as_text(values[key], manifest, field + [key])?
+    return Ok(defines)
+
+
+def compile_entry(value: TomlValue, manifest: str, field: list[str]) -> Result[CCompile, IntakeError]:
+    """One `[[c.compile]]` entry."""
+    entry = as_table(value, manifest, field)?
+    known_keys(entry, list(COMPILE_KEYS), manifest, field)?
+    if "sources" not in entry:
+        return Err(refused(manifest, field + ["sources"], IntakeErrorKind.Missing, "required field sources"))
+    mut compile = CCompile(sources=source_paths(entry["sources"], manifest, field + ["sources"])?)
+    if "target" in entry:
+        predicate = as_text(entry["target"], manifest, field + ["target"])?
+        parse_selector(predicate).map_err(
+            (error) => refused(manifest, field + ["target"], IntakeErrorKind.Invalid, error),
+        )?
+        compile.target = Some(predicate)
+    if "include" in entry:
+        compile.include = loaf_paths(entry["include"], manifest, field + ["include"])?
+    if "defines" in entry:
+        compile.defines = definitions(entry["defines"], manifest, field + ["defines"])?
+    return Ok(compile)
+
+
+def configuration_entry(value: TomlValue, manifest: str, field: list[str]) -> Result[CConfiguration, IntakeError]:
+    """One `[c.configurations.<name>]` table."""
+    entry = as_table(value, manifest, field)?
+    known_keys(entry, list(CONFIGURATION_KEYS), manifest, field)?
+    mut configuration = CConfiguration()
+    if "extends" in entry:
+        configuration.base = Some(as_text(entry["extends"], manifest, field + ["extends"])?)
+    if "sources" in entry:
+        configuration.sources = source_paths(entry["sources"], manifest, field + ["sources"])?
+    if "defines" in entry:
+        configuration.defines = definitions(entry["defines"], manifest, field + ["defines"])?
+    return Ok(configuration)
+
+
+def configurations_table(c: Dict[str, TomlValue], manifest: str) -> Result[Dict[str, CConfiguration], IntakeError]:
+    """Every declared configuration; a facet that declares none has an empty `default`."""
+    mut configurations: Dict[str, CConfiguration] = {}
+    if "configurations" not in c:
+        configurations[str(DEFAULT_CONFIGURATION)] = CConfiguration()
+        return Ok(configurations)
+    field = ["c", "configurations"]
+    declared = as_table(c["configurations"], manifest, field)?
+    for name in sorted([name for name in declared.keys()]):
+        configurations[name] = configuration_entry(declared[name], manifest, field + [name])?
+    if str(DEFAULT_CONFIGURATION) not in configurations:
+        return Err(
+            refused(
+                manifest,
+                field + [str(DEFAULT_CONFIGURATION)],
+                IntakeErrorKind.Missing,
+                "a C facet must declare the `default` configuration",
+            ),
+        )
+    check_inheritance(configurations, manifest)?
+    return Ok(configurations)
+
+
+def check_inheritance(configurations: Dict[str, CConfiguration], manifest: str) -> Result[None, IntakeError]:
+    """Each `extends` names a declared configuration, chains end, and no inherited definition is redefined."""
+    for name in sorted([name for name in configurations.keys()]):
+        field = ["c", "configurations", name]
+        mut seen: list[str] = [name]
+        mut inherited: Dict[str, str] = {}
+        mut current = configurations[name].base
+        while true:
+            match current:
+                None => break
+                Some(base) =>
+                    if base not in configurations:
+                        return Err(
+                            refused(
+                                manifest,
+                                field + ["extends"],
+                                IntakeErrorKind.Invalid,
+                                f"unknown configuration `{base}`",
+                            ),
+                        )
+                    if base in seen:
+                        return Err(
+                            refused(
+                                manifest,
+                                field + ["extends"],
+                                IntakeErrorKind.Cycle,
+                                f"configuration `{name}` extends itself through `{base}`",
+                            ),
+                        )
+                    seen.append(base)
+                    for key in configurations[base].defines.keys():
+                        inherited[key] = base
+                    current = configurations[base].base
+        for key in sorted([key for key in configurations[name].defines.keys()]):
+            if key in inherited:
+                return Err(
+                    refused(
+                        manifest,
+                        field + ["defines", key],
+                        IntakeErrorKind.Invalid,
+                        f"`{key}` is inherited from configuration `{inherited[key]}`; an inherited definition is never redefined",
+                    ),
+                )
+    return Ok(None)
+
+
+pub def parse_c_facet(root: Dict[str, TomlValue], manifest: str) -> Result[Option[CFacet], IntakeError]:
+    """The Loaf's `[c]` table, or none when it carries no C facet."""
+    if "c" not in root:
+        return Ok(None)
+    c = as_table(root["c"], manifest, ["c"])?
+    known_keys(c, list(FACET_KEYS), manifest, ["c"])?
+    if "library" not in c:
+        return Err(refused(manifest, ["c", "library"], IntakeErrorKind.Missing, "required field library"))
+    library = as_text(c["library"], manifest, ["c", "library"])?
+    if not identifier(library):
+        return Err(
+            refused(manifest, ["c", "library"], IntakeErrorKind.Invalid, f"`{library}` is not a library link name"),
+        )
+    if "public-headers" not in c:
+        return Err(refused(manifest, ["c", "public-headers"], IntakeErrorKind.Missing, "required field public-headers"))
+    mut facet = CFacet(
+        library=library,
+        public_headers=loaf_paths(c["public-headers"], manifest, ["c", "public-headers"])?,
+    )
+    if "include" in c:
+        facet.include = loaf_paths(c["include"], manifest, ["c", "include"])?
+    if "std" in c:
+        standard = as_text(c["std"], manifest, ["c", "std"])?
+        if standard not in C_STANDARDS:
+            return Err(refused(manifest, ["c", "std"], IntakeErrorKind.Invalid, f"`{standard}` is not a C standard"))
+        facet.std = Some(standard)
+    if "compile" not in c:
+        return Err(refused(manifest, ["c", "compile"], IntakeErrorKind.Missing, "a C facet needs a [[c.compile]] entry"))
+    entries = c["compile"]
+        .as_array()
+        .map_err((error) => refused(manifest, ["c", "compile"], IntakeErrorKind.Invalid, error.message()))?
+    if len(entries) == 0:
+        return Err(refused(manifest, ["c", "compile"], IntakeErrorKind.Missing, "a C facet needs a [[c.compile]] entry"))
+    for index in range(len(entries)):
+        facet.compiles.append(compile_entry(entries[index], manifest, ["c", "compile", str(index)])?)
+    facet.configurations = configurations_table(c, manifest)?
+    return Ok(Some(facet))
