@@ -85,6 +85,7 @@ pub from records import (
     READ_SCHEMA,
     StoreRecordSource,
     encode_record_key,
+    selected_record_bytes,
 )
 pub from record_service import (
     RECORD_SERVICE_SCHEMA,

@@ -47,6 +47,7 @@ from pub::internal_models import (
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE, CheckedFamily, CheckedRecord, encode_record
 from compiler_graph_records import PublishedEvaluation, publish_evaluation, reusable_evaluation
+from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_record_envelopes import RankedActivation, RankedCheckingSweep, persist_activation
 from compiler_body_values import (
     encode_body_inventory,
@@ -67,6 +68,7 @@ from engine_capture import CapturedInput, InputRole
 from observation import file_metadata
 from std.fs import Path
 from compiler_body_fallbacks import fallback_reasons
+from compiler_plan_values import LOWERING_PROFILE
 from compiler_source_projection import project_source, publish_source_projection, signature_record
 from publication import publish_binary
 from scratch import scratch_directory
@@ -251,11 +253,7 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
     )?
     assert projected_owner(projected_bindings, "partial:stable")?.text.startswith("pub stable = partial")
     assert projected_owner(projected_bindings, "alias:forwarded")?.text.startswith("pub forwarded = alias")
-    assert compiler_source_projection.compiled_owner_source(
-        projected_bindings,
-        "src/bindings.incn",
-        "stable",
-    )?.key.facet == "partial:stable"
+    assert compiler_source_projection.compiled_owner_source(projected_bindings, "src/bindings.incn", "stable")?.key.facet == "partial:stable"
     projected_enum = project_source(
         "package",
         "src/messages.incn",
@@ -474,6 +472,58 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
     return Ok(None)
 
 
+pub def test_prepared_hex_digit_body_ir_read_uses_its_bounded_selection() -> Result[None, str]:
+    """The source-security Body IR witness reaches lowering as a bounded selection of its staged full value."""
+    identity = "function:source_security::hex_digit|incan.source-signature/2:sha256:c7eb8b5e2655ce2b3f16c90d879e3ca79b8ccd8979da0b85d5f29d8ea68a3799"
+    body = RecordKey(
+        family="body-ir",
+        identity_profile="incan.stable-declaration/1",
+        origin="oven",
+        identity=identity,
+        facet="checked",
+        context="sha256:15ee0f3936c78447af632913a51179e11313a4b360fe9e6f5345dca51e6865c4",
+    )
+    output = RecordKey(
+        family="lowering-demand",
+        identity_profile=body.identity_profile,
+        origin=body.origin,
+        identity=body.identity,
+        facet="__incan_module_15_115_111_117_114_99_101_95_115_101_99_117_114_105_116_121_5221_5388",
+        context="00a30f846a1d2c4844c74bf193c0076ca9cb49f6088a7dfa6258977f337cf37c",
+    )
+    checking_scope = ReadScope(snapshot="prepared-source-hex-digit", profile=CHECKER_PROFILE)
+    mut source = PreparedBodyRecordSource.open(checking_scope)
+    body_ir: bytes = list.repeat(90u8, 65537)
+    encoded = encode_record_key(body)?
+    source.add(encoded, body_ir)
+    lowering_scope = ReadScope(snapshot=checking_scope.snapshot, profile=LOWERING_PROFILE)
+    request = RecordRequest(
+        key=body,
+        selection=RecordSelection.Payload(PayloadSelection(reference=body.context, offset=0, length=0)),
+    )
+    preparation = PreparationEvidence(
+        output=output,
+        rank_certificate="compiled-check",
+        selector_witnesses="compiled-check",
+    )
+    mut reads = RecordReads.start(lowering_scope, preparation, [request])
+    match reads.read(source.for_profile(LOWERING_PROFILE), request):
+        RecordRead.Found(found) =>
+            assert len(found.value) == 0, f"prepared Body IR selection returned {len(found.value)} bytes"
+            assert found.evidence.scope == lowering_scope and found.evidence.request == request
+            assert found.evidence.revision != "" and found.evidence.semantic_digest != ""
+            assert found.selection_digest != ""
+        RecordRead.Failed(fault) =>
+            counters = reads.counters()
+            return Err(
+                f"prepared Body IR read failed {fault:?}: activation=valid request=valid scope=bound selected-value={counters.response_bytes} limit={request.byte_limit} revision-digest=nonempty",
+            )
+        _ => return Err("prepared Body IR read did not return the staged value")
+    receipt = reads.finish().map_err((fault) => f"prepared Body IR receipt failed: {fault:?}")?
+    assert receipt.response_bytes == 0 and len(receipt.witnesses) == 1
+    return Ok(None)
+
+
 pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[None, str]:
     """A successful sidecar witnesses editable-package sources and project declaration signatures for the next edit."""
     scratch = scratch_directory()?
@@ -489,12 +539,7 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         .map_err((error) => error.message())?
     provider_root = scratch.path().joinpath("provider").joinpath("src")
     provider_root.mkdir(true, true).map_err((error) => error.message())?
-    provider_source = (
-        "pub def value() -> int:\n    return 1\n\n"
-        + "pub enum CodecFault:\n    Invalid\n\n"
-        + "pub model ProgramOutcome:\n    transaction: Option[int] = None\n\n"
-        + "pub model NativeSelection:\n    transaction: Option[int] = None\n"
-    )
+    provider_source = ("pub def value() -> int:\n    return 1\n\n" + "pub enum CodecFault:\n    Invalid\n\n" + "pub model ProgramOutcome:\n    transaction: Option[int] = None\n\n" + "pub model NativeSelection:\n    transaction: Option[int] = None\n")
     provider_root
         .joinpath("lib.incn")
         .write_text(provider_source, "utf-8", "strict", None)
@@ -633,7 +678,8 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         ).map_err((error) => f"{error:?}")?,
     )?
     match publish_compiled_bodies(published.snapshot, unit, diagnostic_output):
-        Ok(_) => assert false, "an ambiguous dependency source unexpectedly published"
+        Ok(_) =>
+            assert false, "an ambiguous dependency source unexpectedly published"
         Err(message) =>
             assert message.contains("body_owner=src/main.incn:main; body_identity=" + identity), message
             assert message.contains("reference_subject=expr:engine_programs#120..131"), message

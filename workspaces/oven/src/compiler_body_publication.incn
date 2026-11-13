@@ -2,9 +2,7 @@
 
 from std.fs import File, Path
 from std.environ import get_or
-from std.encoding.hex import hexlify
 from std.json import JsonValue, parse
-from std.primitives.hash import sha256
 from rust::std::fs import metadata
 from rust::incan_semantics_core import encode_incan_symbol_identity
 from rust::incan_semantics_core::executable_representation import decode_owner
@@ -28,20 +26,18 @@ from pub::internal_models.checker_records import CHECKER_PROFILE
 from pub::internal_models.records import (
     PreparationEvidence,
     ReadReceipt,
-    ReadFault,
     ReadScope,
-    RevisionEvidence,
-    SelectedFact,
     RecordRead,
-    RecordSource,
     RecordKey,
     RecordReads,
     RecordRequest,
     RecordSelection,
+    PayloadSelection,
     ReadWitness,
     encode_record_key,
 )
 from compiler_graph_records import prepare_evaluation, reusable_evaluation
+from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_body_fallbacks import fallback_reasons
 from compiler_plan_values import LOWERING_PROFILE
 from compiler_body_values import SelectedBodyRecord
@@ -79,12 +75,14 @@ pub enum OwnerRecordFault(str):
     Absent = "absent"
     Ambiguous = "ambiguous"
 
+
 @derive(Eq)
 pub enum ProjectionRefusalMode(str):
     """Whether body publication stops at its first projection refusal or lists every preflight refusal."""
 
     Default = "default"
     List = "list"
+
 
 class CompiledBodyFrames:
     """Read one independently bounded binary compiler output frame without buffering the sidecar envelope."""
@@ -199,42 +197,6 @@ pub model PreparedCompiledBodies:
     pub transaction: Transaction
     pub bodies: int
     pub fallbacks: int
-
-
-class PreparedBodyRecordSource with RecordSource:
-    """Authenticate reads from the exact values staged by one compiled-body publication transaction."""
-
-    scope: ReadScope
-    values: Dict[str, bytes] = {}
-
-    @staticmethod
-    pub def open(scope: ReadScope) -> PreparedBodyRecordSource:
-        """Create an empty source bound to one compiler profile and publication preparation."""
-        return PreparedBodyRecordSource(scope=scope)
-
-    pub def add(mut self, key: str, value: bytes) -> None:
-        """Make one exact pending value available to later producers in the same transaction."""
-        self.values[key] = value
-
-    pub def for_profile(self, profile: str) -> PreparedBodyRecordSource:
-        """Bind the same staged values to the next producer profile without weakening its read-scope check."""
-        scope = ReadScope(snapshot=self.scope.snapshot, profile=profile)
-        return PreparedBodyRecordSource(scope=scope, values=self.values)
-
-    def read(self, scope: ReadScope, request: RecordRequest) -> RecordRead:
-        """Return one staged field with content evidence, or fail when publication order left it unavailable."""
-        if scope != self.scope:
-            return RecordRead.Failed(ReadFault.SnapshotMismatch)
-        key = match encode_record_key(request.key):
-            Ok(value) => value
-            Err(_) => return RecordRead.Failed(ReadFault.InvalidEvidence)
-
-        if key not in self.values:
-            return RecordRead.Failed(ReadFault.UnfinishedSupplier)
-        value = self.values[key]
-        semantic = hexlify(sha256.digest(value))
-        evidence = RevisionEvidence(scope=scope, request=request, revision=semantic, semantic_digest=semantic)
-        return RecordRead.Found(SelectedFact(evidence=evidence, value=value, selection_digest=semantic))
 
 
 pub model PublishedSourceInputs:
@@ -619,6 +581,7 @@ pub def prepare_compiled_bodies(
         )?
     return Ok(PreparedCompiledBodies(transaction=prepared, bodies=published, fallbacks=len(outputs.fallbacks)))
 
+
 def projection_refusal_mode() -> Result[ProjectionRefusalMode, str]:
     """Select the diagnosis-only preflight without changing ordinary fail-first publication."""
     selected = get_or("OVEN_BODY_REFUSALS", ProjectionRefusalMode.Default.value())
@@ -629,11 +592,7 @@ def projection_refusal_mode() -> Result[ProjectionRefusalMode, str]:
     return Err("OVEN_BODY_REFUSALS must be default or list")
 
 
-pub def projection_refusals(
-    unit: UnitDescription,
-    origin: str,
-    values: list[CompiledBodyValue],
-) -> list[str]:
+pub def projection_refusals(unit: UnitDescription, origin: str, values: list[CompiledBodyValue]) -> list[str]:
     """Preflight every body and editable-source dependency projection, retaining one refusal per reference."""
     mut refusals: list[str] = []
     editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
@@ -668,15 +627,17 @@ pub def projection_refusals(
                 None =>
                     match project_dependency_module(unit, dependency.module):
                         Err(reason) => refusals.append(
-                            dependency_projection_refusal(
-                                reason, value.module, value.name, value.identity, dependency,
-                            ),
+                            dependency_projection_refusal(reason, value.module, value.name, value.identity, dependency),
                         )
                         Ok(module) =>
                             match source_projection(unit, origin, module):
                                 Err(reason) => refusals.append(
                                     dependency_projection_refusal(
-                                        reason, value.module, value.name, value.identity, dependency,
+                                        reason,
+                                        value.module,
+                                        value.name,
+                                        value.identity,
+                                        dependency,
                                     ),
                                 )
                                 Ok(_) =>
@@ -689,7 +650,11 @@ pub def projection_refusals(
                                     ):
                                         Err(reason) => refusals.append(
                                             dependency_projection_refusal(
-                                                reason, value.module, value.name, value.identity, dependency,
+                                                reason,
+                                                value.module,
+                                                value.name,
+                                                value.identity,
+                                                dependency,
                                             ),
                                         )
                                         Ok(_) => pass
@@ -698,9 +663,7 @@ pub def projection_refusals(
 
 def body_projection_refusal(reason: str, value: CompiledBodyValue) -> str:
     """Retain the exact body owner on a source-projection or owner-selection refusal."""
-    return (
-        reason + f"; body_owner={value.module}:{value.name}; body_identity={value.identity}; module={value.module}"
-    )
+    return (reason + f"; body_owner={value.module}:{value.name}; body_identity={value.identity}; module={value.module}")
 
 
 def lowering_witnesses(
@@ -1133,11 +1096,7 @@ def dependency_projection_refusal(
     dependency: CompiledBodyDependencyRead,
 ) -> str:
     """Attach the producing body owner and checked reference subject to one dependency source refusal."""
-    return (
-        error
-        + f"; body_owner={owner_module}:{owner_name}; body_identity={owner_identity}"
-        + f"; reference_subject={dependency.reference_subject}"
-    )
+    return (error + f"; body_owner={owner_module}:{owner_name}; body_identity={owner_identity}" + f"; reference_subject={dependency.reference_subject}")
 
 
 def project_signature_record(
@@ -1161,13 +1120,11 @@ def dependency_signature_key(
     """Expose each editable callee's signature as a direct checker and lowering invalidation dependency."""
     match dependency.package:
         None =>
-            return Ok(Some(project_signature_record(
-                unit,
-                origin,
-                dependency.module,
-                dependency.name,
-                dependency.identity,
-            )?.key))
+            return Ok(
+                Some(
+                    project_signature_record(unit, origin, dependency.module, dependency.name, dependency.identity)?.key,
+                ),
+            )
         Some(_) => return Ok(None)
 
 
@@ -1270,7 +1227,10 @@ def root(encoded: bytes) -> Result[str, str]:
 
 
 def request(key: RecordKey) -> RecordRequest:
-    """Read one complete logical checker or source-projection value."""
+    """Read complete scalar facts while binding opaque Body IR through a bounded semantic witness."""
+    if key.family == "body-ir":
+        selected = PayloadSelection(reference=key.context, offset=0, length=0)
+        return RecordRequest(key=key, selection=RecordSelection.Payload(selected))
     return RecordRequest(key=key, selection=RecordSelection.Field("value"))
 
 
