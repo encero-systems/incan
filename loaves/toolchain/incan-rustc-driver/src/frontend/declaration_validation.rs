@@ -66,6 +66,12 @@ pub(super) fn validate_module_declarations(
 ) -> Result<(), String> {
     let mut refusals = Vec::new();
     for module in modules {
+        // A retained namespace was declaration-validated by the cold producer whose authenticated whole-module Body
+        // IR is selected here. Its fresh analysis intentionally contains no local checker facts; re-running the
+        // predicate against that empty local table would turn absence into a false refusal for nominal declarations.
+        if analysis.namespace_body_for_path(&module.file_path).is_some() {
+            continue;
+        }
         let type_info = analysis
             .type_info_for_path(&module.file_path)
             .ok_or("module analysis is missing")?;
