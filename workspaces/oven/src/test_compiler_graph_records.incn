@@ -555,6 +555,12 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
                                 identity="app|module:helper|value|function|module|0|() -> int",
                             ),
                             CompiledBodyDependencyRead(
+                                package=None,
+                                module="lib",
+                                name="other",
+                                identity="function:lib::other|incan.source-signature/2:sha256:fixture",
+                            ),
+                            CompiledBodyDependencyRead(
                                 package=Some("provider"),
                                 module="lib",
                                 name="CodecFault",
