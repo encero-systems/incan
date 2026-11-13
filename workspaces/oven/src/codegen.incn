@@ -46,6 +46,8 @@ pub def rust_arguments(profile: str) -> list[str]:
 pub def native_executable_arguments(profile: str) -> list[str]:
     """Strip release executable provenance without changing a library profile or its installed artifact identity."""
     mut arguments = native_arguments(profile)
+    if profile == "debug" and OS == "macos":
+        arguments.append("-Clink-arg=-no_deduplicate")
     if profile == "release":
         arguments.append("-Cstrip=debuginfo")
         if OS == "macos":
