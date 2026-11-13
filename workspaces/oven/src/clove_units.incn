@@ -25,6 +25,7 @@ from c_facet import (
     source_kind,
 )
 from cfg_predicate import Selector, evaluate_cfg, parse_selector
+from c_interop import host_triple
 from files import json_text, read, write
 from observation import trace
 
@@ -201,7 +202,7 @@ pub def entry_applies(entry: CCompile) -> Result[bool, str]:
         None => return Ok(true)
         Some(predicate) =>
             match parse_selector(predicate)?:
-                Selector.Triple(triple) => return Ok(triple.startswith(str(ARCH)) and str(OS) in triple)
+                Selector.Triple(triple) => return Ok(triple == host_triple())
                 Selector.Cfg(tokens) =>
                     flags, values = host_cfg()
                     return evaluate_cfg(tokens, flags, values)
