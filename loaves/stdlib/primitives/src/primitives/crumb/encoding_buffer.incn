@@ -1,5 +1,6 @@
 """Bounded owned byte assembly for binary encodings and their indexed cells."""
 
+from rust::incan_std_primitives::crumb import Buffer as NativeBuffer
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.framing import encode_native_unsigned
@@ -8,24 +9,23 @@ from crate.primitives.crumb.framing import encode_native_unsigned
 pub class EncodingBuffer:
     """Private output while writing; callers receive bytes only after the complete operation succeeds."""
 
-    data: list[u8]
+    native: NativeBuffer
 
     @staticmethod
     pub def create() -> Self:
         """Start an empty operation-local buffer with no externally exposed partial view."""
-        return EncodingBuffer(data=[])
+        return EncodingBuffer(native=NativeBuffer.new())
 
     pub def length(self) -> int:
         """Return the currently accumulated byte length for checked offsets and frames."""
-        return len(self.data)
+        return self.native.len().saturating_resize[int]()
 
     pub def append(mut self, value: bytes, mut budget: Budget) -> Result[None, CrumbError]:
         """Charge the copy and check host addition before modifying the buffer."""
-        if len(value) > 9223372036854775807 - len(self.data):
+        if len(value) > 9223372036854775807 - self.length():
             return Err(CrumbError.limit("encoding buffer length"))
         budget.charge_bytes(len(value))?
-        for byte in value:
-            self.data.append(byte.saturating_resize[u8]())
+        self.native.append(value)
         return Ok(None)
 
     pub def octet(mut self, value: int, mut budget: Budget) -> Result[None, CrumbError]:
@@ -33,7 +33,7 @@ pub class EncodingBuffer:
         if value < 0 or value > 255:
             return Err(CrumbError.invalid_input("encoding octet"))
         budget.charge_bytes(1)?
-        self.data.append(value.saturating_resize[u8]())
+        self.native.push(value.saturating_resize[u8]())
         return Ok(None)
 
     pub def count(mut self, value: int, mut budget: Budget) -> Result[None, CrumbError]:
@@ -61,8 +61,8 @@ pub class EncodingBuffer:
 
     pub def finish(self, mut budget: Budget) -> Result[bytes, CrumbError]:
         """Copy the completed output to an independent owned result within the same allowance."""
-        budget.charge_bytes(len(self.data))?
-        return Ok(self.data.clone())
+        budget.charge_bytes(self.length())?
+        return Ok(self.native.finish())
 
 
 pub def offset_width(length: int) -> Result[int, CrumbError]:
