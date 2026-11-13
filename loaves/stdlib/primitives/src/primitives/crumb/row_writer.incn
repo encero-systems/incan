@@ -5,7 +5,7 @@ from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.errors import CrumbError
 from crate.primitives.crumb.hashes import start_seal, append_seal
 from crate.primitives.crumb.registrations import KindRegistry
-from crate.primitives.crumb.cells import root
+from crate.primitives.crumb.cells import root, scalar_record_batch
 from crate.primitives.crumb.descriptions import Description, encode_entry
 from crate.primitives.crumb.description_dictionary import admit_dictionary, slot
 from crate.primitives.crumb.records import RowRecord
@@ -32,13 +32,20 @@ pub def write_rows(
         entries.append(encode_entry(description, budget)?)
     mut slots: list[i64] = []
     mut cells: list[bytes] = []
-    for record in records:
-        budget.charge_elements(1)?
-        index = slot(dictionary, record.key, budget)?
-        # Typed row encoding admits this value; a separate tree walk would repeat the same admission.
-        encoded = root(dictionary.entries[index], record.value, dictionary, budget)?
-        slots.append(index.saturating_resize[i64]())
-        cells.append(encoded)
+    mut batched = false
+    if len(dictionary.entries) == 1:
+        if let Some(encoded) = scalar_record_batch(dictionary.entries[0], records, budget)?:
+            cells = encoded
+            slots = [0i64 for _ in range(len(records))]
+            batched = true
+    if not batched:
+        for record in records:
+            budget.charge_elements(1)?
+            index = slot(dictionary, record.key, budget)?
+            # Typed row encoding admits this value; a separate tree walk would repeat the same admission.
+            encoded = root(dictionary.entries[index], record.value, dictionary, budget)?
+            slots.append(index.saturating_resize[i64]())
+            cells.append(encoded)
     mut seal_bytes: bytes = b""
     if sealed:
         mut seal = start_seal(len(records), budget)?
