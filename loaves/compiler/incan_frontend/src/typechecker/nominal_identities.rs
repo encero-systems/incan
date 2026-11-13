@@ -254,8 +254,8 @@ mod tests {
         let original = identities(source)?;
         assert_eq!(
             original.len(),
-            6,
-            "two owner-qualified methods, two functions and two overloads"
+            8,
+            "two owner-qualified fields, two owner-qualified methods, two functions and two overloads"
         );
         assert_eq!(original, identities(&format!("# position-only edit\n\n{source}"))?);
         let split = source.find("def read(item:").ok_or("missing function boundary")?;

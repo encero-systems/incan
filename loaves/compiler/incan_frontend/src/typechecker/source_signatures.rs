@@ -6,7 +6,7 @@ use incan_semantics_core::CanonicalSymbolId;
 use incan_semantics_core::stable_identity::source_signature::SourceSignatureContext;
 use incan_semantics_core::stable_identity::{StableDeclarationContext, StableDeclarationId};
 
-use crate::ast::{Declaration, EnumDecl, MethodDecl, Program, Receiver, Span, Spanned, TypeParam};
+use crate::ast::{Declaration, EnumDecl, FieldDecl, MethodDecl, Program, Receiver, Span, Spanned, TypeParam};
 use crate::ownership_metadata::{CheckedOwnershipContract, source_input_access};
 use crate::symbols::{CallableParam, MethodInfo, ResolvedType, SymbolKind, TypeInfo};
 
@@ -97,6 +97,14 @@ impl TypeChecker {
             let Some(stable_owner) = StableDeclarationId::from_canonical(owner, None, None) else {
                 continue;
             };
+            if let Some(fields) = nominal_fields(&declaration.node) {
+                record_field_identities(
+                    &mut identities,
+                    fields,
+                    &self.type_info.declarations.member_declaration_identities,
+                    &stable_owner,
+                );
+            }
             if let Declaration::Enum(enumeration) = &declaration.node {
                 record_enum_variant_identities(
                     &mut identities,
@@ -157,6 +165,27 @@ impl TypeChecker {
             }
         }
         self.type_info.declarations.source_identities = identities;
+    }
+}
+
+/// Project each model or class field through its checked member identity and enclosing stable declaration.
+fn record_field_identities(
+    identities: &mut BTreeMap<CanonicalSymbolId, StableDeclarationId>,
+    fields: &[Spanned<FieldDecl>],
+    members: &HashMap<Span, CanonicalSymbolId>,
+    owner: &StableDeclarationId,
+) {
+    for field in fields {
+        let Some(canonical) = members.get(&field.span) else {
+            continue;
+        };
+        let context = StableDeclarationContext {
+            owner: owner.clone(),
+            binding_ordinal: 0,
+        };
+        if let Some(identity) = StableDeclarationId::from_canonical(canonical, None, Some(context)) {
+            identities.insert(canonical.clone(), identity);
+        }
     }
 }
 
@@ -243,6 +272,15 @@ fn nominal_methods(declaration: &Declaration) -> Option<(&str, &[TypeParam], &[S
         Declaration::Trait(owner) => (&owner.name, &owner.type_params, &owner.methods),
         _ => return None,
     })
+}
+
+/// Select nominal fields that own checked member declarations.
+fn nominal_fields(declaration: &Declaration) -> Option<&[Spanned<FieldDecl>]> {
+    match declaration {
+        Declaration::Model(owner) => Some(&owner.fields),
+        Declaration::Class(owner) => Some(&owner.fields),
+        _ => None,
+    }
 }
 
 /// Borrow the collector's checked method candidates, including same-owner overloads.
@@ -362,6 +400,49 @@ mod tests {
             assert_eq!(owner.declaration_name, "CompletionStatus");
             assert_eq!(*binding_ordinal, 0);
         }
+        Ok(())
+    }
+
+    /// Same-spelled fields on distinct nominal declarations retain their distinct enclosing owners.
+    #[test]
+    fn model_field_source_identities_keep_their_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "model ProgramOutcome:\n    transaction: int\n\nmodel NativeSelection:\n    transaction: int\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["engine_programs".into()]));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+
+        let fields = checker
+            .type_info
+            .declarations
+            .member_declaration_identities
+            .values()
+            .filter(|identity| {
+                identity.kind == SemanticSourceTargetKind::Field && identity.declaration_name == "transaction"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(fields.len(), 2);
+        let mut owners = fields
+            .iter()
+            .map(|canonical| {
+                let stable = checker
+                    .type_info
+                    .declarations
+                    .source_identities
+                    .get(*canonical)
+                    .ok_or("missing stable field identity")?;
+                let StableDeclarationLocation::Nested { owner, binding_ordinal } = &stable.location else {
+                    return Err("field has no enclosing stable owner");
+                };
+                assert_eq!(*binding_ordinal, 0);
+                Ok(owner.declaration_name.clone())
+            })
+            .collect::<Result<Vec<_>, &str>>()?;
+        owners.sort();
+        assert_eq!(owners, ["NativeSelection", "ProgramOutcome"]);
         Ok(())
     }
 }
