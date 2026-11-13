@@ -51,6 +51,7 @@ from pub::incan_platform.store import (
     lookup as store_lookup,
     owned,
     put,
+    verify_segments,
 )
 from pub::incan_platform.store.files import StoreError
 from pub::incan_platform.store.repair import quarantine_record
@@ -690,11 +691,18 @@ pub def verify_all(store: Path) -> Result[list[str], str]:
     """
     current = snapshot(store).map_err(store_failure)?
     mut damaged: list[str] = []
+    mut damaged_objects: list[str] = []
+    for error in verify_segments(current):
+        damaged.append(error.message())
+        damaged_objects.append(error.object)
     for key in keys(current).map_err(store_failure)?:
         if not key.startswith("incan.bakery.unit\t"):
             continue
         match get(current, key):
-            Err(error) => damaged.append(error.message())
+            Err(error) =>
+                if error.object not in damaged_objects:
+                    damaged.append(error.message())
+                    damaged_objects.append(error.object)
             Ok(found) =>
                 if let Some(value) = found:
                     damaged.extend(verify_record(store, key, value))
