@@ -40,6 +40,26 @@ pub struct Buffer {
     data: Vec<u8>,
 }
 
+/// Operation-local text assembly without repeated generated concatenation.
+#[derive(Clone, Debug, Default)]
+pub struct TextBuilder {
+    text: String,
+}
+
+impl TextBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push(&mut self, value: String) {
+        self.text.push_str(&value);
+    }
+
+    pub fn finish(&self) -> String {
+        self.text.clone()
+    }
+}
+
 impl Buffer {
     pub fn new() -> Self {
         Self::default()
@@ -432,7 +452,7 @@ fn top_bits(value: u128) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Buffer, Reader, binary_literal, decode_scalar, encode_integer_unsigned, encode_native_signed,
+        Buffer, Reader, TextBuilder, binary_literal, decode_scalar, encode_integer_unsigned, encode_native_signed,
         encode_native_unsigned, frame, quote_text, scalar_text, spaces,
     };
 
@@ -474,6 +494,14 @@ mod tests {
         buffer.append(vec![2, 3]);
         assert_eq!(buffer.len(), 3);
         assert_eq!(buffer.finish(), [1, 2, 3]);
+    }
+
+    #[test]
+    fn text_builder_assembles_owned_scalars() {
+        let mut builder = TextBuilder::new();
+        builder.push("a".to_string());
+        builder.push("🙂".to_string());
+        assert_eq!(builder.finish(), "a🙂");
     }
 
     #[test]
