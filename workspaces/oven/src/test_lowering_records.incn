@@ -14,6 +14,7 @@ from engine_wire import zero_id
 from observation import observe
 from unit_freshness import fingerprint
 
+
 pub def test_lowering_record_worked_example() -> Result[None, str]:
     """Body edits and moves reuse callers; a callee signature edit invalidates their plans and matches cold output."""
     scratch = scratch_directory()?
@@ -38,7 +39,10 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     assert proof_count(edited, "lowering_demand_evaluations")? == 1, diagnostic
     assert proof_count(edited, "lowering_demand_reuses")? == 1, diagnostic
     assert proof_count(edited, "native_interface_evaluations")? == 1, diagnostic
-    write(source, "def greeting() -> str:\n    return \"hullo\"\n\n\n# inserted above main\ndef main() -> None:\n    println(greeting())\n")?
+    write(
+        source,
+        "def greeting() -> str:\n    return \"hullo\"\n\n\n# inserted above main\ndef main() -> None:\n    println(greeting())\n",
+    )?
     commented = lowering_example_run(binary, source, store, "hullo")?
     comment_diagnostic = commented.to_json().map_err((error) => error.message())?
     assert proof_count(commented, "plan_function_evaluations")? == 0, comment_diagnostic
@@ -51,6 +55,13 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     linked = root.joinpath("signature")
     linked.symlink_to(signature).map_err((error) => error.message())?
     return verify_signature_edit(binary, linked)
+
+
+pub def test_local_rust_source_edit_rebuilds_affected_unit() -> Result[None, str]:
+    """A local Rust source edit rebuilds its native unit, while an unchanged request does no work."""
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    return verify_rust_source_edit_rebuild(binary, scratch.path())
 
 
 def verify_signature_edit(binary: str, root: Path) -> Result[None, str]:
@@ -77,15 +88,94 @@ def verify_signature_edit(binary: str, root: Path) -> Result[None, str]:
     return stop_example_engine(binary, cold_store)
 
 
+def verify_rust_source_edit_rebuild(binary: str, root: Path) -> Result[None, str]:
+    """Build a three-layer local dependency and require exact work after editing only its Rust source."""
+    provider = root.joinpath("provider")
+    app = root.joinpath("app")
+    provider.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    provider.joinpath("rust/src").mkdir(true, true).map_err((error) => error.message())?
+    app.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(
+        provider.joinpath("loaf.toml"),
+        "[project]\nname = \"rust_edit_provider\"\nversion = \"0.1.0\"\n\n[rust]\nname = \"rust_edit_native\"\ntype = \"lib\"\nedition = \"2024\"\n\n[rust.source]\nroot = \"rust\"\n",
+    )?
+    write(
+        provider.joinpath("src/lib.incn"),
+        "from rust::rust_edit_native import native_value\n\n\npub def value() -> int:\n    return native_value()\n",
+    )?
+    native = provider.joinpath("rust/src/lib.rs")
+    write(native, "pub fn native_value() -> i64 {\n    42\n}\n")?
+    write(
+        app.joinpath("loaf.toml"),
+        "[project]\nname = \"rust_edit_app\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[dependencies]\nrust_edit_provider = { path = \"../provider\" }\n",
+    )?
+    write(
+        app.joinpath("src/main.incn"),
+        "from pub::rust_edit_provider import value\n\n\ndef main() -> None:\n    println(value())\n",
+    )?
+    store = root.joinpath("store")
+    _ = rust_source_probe_build(binary, app, store)?
+    executable = app.joinpath("target/incan/debug/bin/rust_edit_app")
+    require_probe_output(executable, "42")?
+    write(native, "pub fn native_value() -> i64 {\n    43\n}\n")?
+    edited = rust_source_probe_build(binary, app, store)?
+    edited_diagnostic = edited.to_json().map_err((error) => error.message())?
+    require_probe_output(executable, "43")?
+    assert proof_count(edited, "source_reads")? == 1, edited_diagnostic
+    assert proof_count(edited, "source_listings")? == 0, edited_diagnostic
+    assert proof_count(edited, "body_evaluations")? == 0, edited_diagnostic
+    assert proof_count(edited, "unit_evaluations")? == 1, edited_diagnostic
+    assert proof_count(edited, "native_bakes")? == 1, edited_diagnostic
+    unchanged = rust_source_probe_build(binary, app, store)?
+    unchanged_diagnostic = unchanged.to_json().map_err((error) => error.message())?
+    assert proof_count(unchanged, "source_reads")? == 0, unchanged_diagnostic
+    assert proof_count(unchanged, "source_listings")? == 0, unchanged_diagnostic
+    assert proof_count(unchanged, "body_evaluations")? == 0, unchanged_diagnostic
+    assert proof_count(unchanged, "unit_evaluations")? == 0, unchanged_diagnostic
+    assert proof_count(unchanged, "native_bakes")? == 0, unchanged_diagnostic
+    return stop_example_engine(binary, store)
+
+
+def require_probe_output(executable: Path, expected: str) -> Result[None, str]:
+    """Run the linked probe and require its exact source-selected value."""
+    outcome = Command.new(executable.0).output().map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or output != expected + "\n" or errors != "":
+        return Err(f"Rust source probe: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return Ok(None)
+
+
+def rust_source_probe_build(binary: str, app: Path, store: Path) -> Result[JsonValue, str]:
+    """Build one debug probe through records lowering and return its measured proof report."""
+    outcome = Command
+        .new(binary)
+        .arg("build")
+        .arg(app.0)
+        .args(["--profile", "debug", "--engine-report"])
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or errors != "":
+        return Err(f"Rust source probe: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return command_proof(outcome.stdout)
+
+
 def stop_example_engine(binary: str, store: Path) -> Result[None, str]:
     """Stop one disposable records engine after its final request."""
     mut identity = service_identity(store)?
     identity.service_generation = fingerprint([binary, observe(Path(binary))?.stamp])?
     mut channel = connect_with(store, identity, binary).map_err((refusal) => refusal.detail)?
-    channel.send(zero_id(), Message.Stop(Stop(reason="lowering example completed"))).map_err((refusal) => refusal.detail)?
+    channel
+        .send(zero_id(), Message.Stop(Stop(reason="lowering example completed")))
+        .map_err((refusal) => refusal.detail)?
     stopped = channel.receive().map_err((refusal) => refusal.detail)?
     match stopped.message:
-        Message.Event(value) => assert value.status == "Stopping"
+        Message.Event(value) =>
+            assert value.status == "Stopping"
         _ => return Err("lowering example did not stop its engine")
     _ = channel.transport.close()
     return Ok(None)
@@ -94,9 +184,15 @@ def stop_example_engine(binary: str, store: Path) -> Result[None, str]:
 def lowering_example_run(binary: str, source: Path, store: Path, expected: str) -> Result[JsonValue, str]:
     """Run one real engine request and require both successful native output and its measured proof."""
     outcome = Command
-        .new(binary).arg("run").arg(source.0).args(["--profile", "release", "--engine-report"])
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .args(["--profile", "release", "--engine-report"])
         .env("INCAN_NATIVE_PLAN_REPORT", source.parent().joinpath("native.plan").0)
-        .env("INCAN_ENGINE", "records").env("INCAN_BAKERY", store.0).output().map_err((error) => str(error))?
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
     output = from_utf8(outcome.stdout).map_err((error) => str(error))?
     errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
     if not outcome.status.success() or not output.endswith(expected + "\n") or errors != "":
@@ -104,13 +200,24 @@ def lowering_example_run(binary: str, source: Path, store: Path, expected: str) 
     return command_proof(outcome.stdout)
 
 
-def lowering_example_run_with_fingerprints(binary: str, source: Path, store: Path, expected: str) -> Result[JsonValue, str]:
+def lowering_example_run_with_fingerprints(
+    binary: str,
+    source: Path,
+    store: Path,
+    expected: str,
+) -> Result[JsonValue, str]:
     """Run one native request while asking the adapter for per-definition tracked-input evidence."""
     outcome = Command
-        .new(binary).arg("run").arg(source.0).args(["--profile", "release", "--engine-report"])
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .args(["--profile", "release", "--engine-report"])
         .env("INCAN_NATIVE_PLAN_REPORT", source.parent().joinpath("native.plan").0)
         .env("INCAN_NATIVE_FINGERPRINT_REPORT", source.parent().joinpath("native.fingerprints").0)
-        .env("INCAN_ENGINE", "records").env("INCAN_BAKERY", store.0).output().map_err((error) => str(error))?
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
     output = from_utf8(outcome.stdout).map_err((error) => str(error))?
     errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
     if not outcome.status.success() or not output.endswith(expected + "\n") or errors != "":

@@ -341,6 +341,7 @@ pub def test_build_captures_the_package_membership_without_its_fixtures() -> Res
     app = project(scratch.path().joinpath("app"))?
     provider = scratch.path().joinpath("provider")
     make_directory(provider.joinpath("library"))?
+    make_directory(provider.joinpath("native/src"))?
     make_directory(provider.joinpath("tests"))?
     write(
         app.joinpath("loaf.toml"),
@@ -348,10 +349,11 @@ pub def test_build_captures_the_package_membership_without_its_fixtures() -> Res
     )?
     write(
         provider.joinpath("loaf.toml"),
-        "[project]\nname = \"provider\"\nversion = \"0.1.0\"\n\n[build]\nsource-root = \"library\"\n",
+        "[project]\nname = \"provider\"\nversion = \"0.1.0\"\n\n[build]\nsource-root = \"library\"\n\n[rust]\nname = \"provider_native\"\ntype = \"lib\"\nedition = \"2024\"\n\n[rust.source]\nroot = \"native\"\n",
     )?
     write(provider.joinpath("oven.lock"), "provider-lock")?
     write(provider.joinpath("library/lib.incn"), "pub def value() -> int:\n    return 1\n")?
+    write(provider.joinpath("native/src/lib.rs"), "pub fn native_value() -> i64 {\n    1\n}\n")?
     write(provider.joinpath("tests/fixture.incn"), "def test_fixture() -> None:\n    pass\n")?
     canonical_provider = provider.resolve().map_err((error) => error.message())?
     make_directory(app.joinpath("src/.cache"))?
@@ -360,12 +362,13 @@ pub def test_build_captures_the_package_membership_without_its_fixtures() -> Res
     first = capture(request, None, admitted, 0)?
     epoch = epoch_of(first)?
     members = [Path(item.path).name() for item in epoch.inputs if item.role == InputRole.Member]
-    assert sorted(members) == ["helper.incn", "lib.incn", "main.incn"]
-    if first.counters.in_reach.listings != 2:
-        return Err(f"expected two source-root listings, got {first.counters.in_reach.listings}")
+    assert sorted(members) == ["helper.incn", "lib.incn", "lib.rs", "main.incn"]
+    if first.counters.in_reach.listings != 4:
+        return Err(f"expected four source-root listings, got {first.counters.in_reach.listings}")
     assert touched(epoch, canonical_provider.joinpath("loaf.toml"))
     assert touched(epoch, canonical_provider.joinpath("oven.lock"))
     assert touched(epoch, canonical_provider.joinpath("library/lib.incn"))
+    assert touched(epoch, canonical_provider.joinpath("native/src/lib.rs"))
     assert not touched(epoch, canonical_provider.joinpath("tests/fixture.incn"))
     second = capture(request, Some(epoch), admitted, 0)?
     assert second.outcome == CaptureOutcome.Unchanged
@@ -385,6 +388,7 @@ pub def test_build_captures_the_package_membership_without_its_fixtures() -> Res
     assert touched(unit_epoch, canonical_provider.joinpath("loaf.toml"))
     assert touched(unit_epoch, canonical_provider.joinpath("oven.lock"))
     assert touched(unit_epoch, canonical_provider.joinpath("library/lib.incn"))
+    assert touched(unit_epoch, canonical_provider.joinpath("native/src/lib.rs"))
     assert not touched(unit_epoch, app.joinpath("tests/fixture.incn"))
     assert not touched(unit_epoch, canonical_provider.joinpath("tests/fixture.incn"))
     write(app.joinpath("src/later.incn"), "pub def later() -> None:\n    pass\n")?
