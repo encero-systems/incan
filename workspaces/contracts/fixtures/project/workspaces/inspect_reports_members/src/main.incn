@@ -1,0 +1,13 @@
+# behavior: `oven workspace inspect` reports the workspace, its manifest, the selected members and the lock, as 0.5.1's `incan workspace inspect` did (#3141).
+# cli-commands:
+#   oven workspace inspect --member alpha
+#   oven workspace inspect -p ./alpha
+# expect-stdout-contains:
+#   Selected scope (explicit_members)
+#     - alpha (alpha)
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The workspace root's own program."""
+    pass

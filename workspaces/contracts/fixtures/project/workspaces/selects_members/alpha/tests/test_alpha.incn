@@ -1,0 +1,5 @@
+"""The alpha member's test."""
+
+
+def test_member() -> None:
+    assert 1 + 1 == 2

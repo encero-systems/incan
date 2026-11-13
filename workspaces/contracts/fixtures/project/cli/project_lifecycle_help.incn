@@ -1,4 +1,4 @@
-# behavior: `oven new`, `oven init` and `oven version` print usage, options, an example and the reference before touching a project (#3139).
+# behavior: `oven new`, `oven init`, `oven version` and `oven workspace inspect` print usage, options, an example and the reference before touching a project (#3139).
 # cli-commands:
 #   oven new --help
 #   oven new demo -h
@@ -6,6 +6,8 @@
 #   oven init missing --name x -h
 #   oven version --help
 #   oven version patch -h
+#   oven workspace inspect --help
+#   oven workspace -h
 # expect-stdout-contains:
 #   Options:
 #   Example:
