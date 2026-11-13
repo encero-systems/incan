@@ -15,7 +15,7 @@ from rust::std::time import Duration
 from std.fs import Path
 from std.fs.locking import FileLock
 from pub::incan_platform.ipc import Connection, Listener, listen
-from files import discard_file
+from files import discard_file, open_stream
 from home import owners_dir
 from pub::incan_worker_host.protocol import SCHEMA, completion, ready, request_document, retired
 from pub::incan_worker_host.record_protocol import (
@@ -73,6 +73,7 @@ pub def compile_resident(toolchain: Toolchain, arguments: list[str]) -> Result[O
     match capture_for(toolchain):
         Err(reason) =>
             trace(f"compiler worker: cold path ({reason})")
+            report_cold(toolchain, reason)?
             return Ok(None)
         Ok(capturing) =>
             # 2. Only a failure before submission permits the original single-process path.
@@ -98,6 +99,7 @@ pub def captured_resident(toolchain: Toolchain, arguments: list[str]) -> Result[
     match capture_for(foreground):
         Err(reason) =>
             trace(f"compiler worker: cold path ({reason})")
+            report_cold(foreground, reason)?
             return Ok(None)
         Ok(capturing) =>
             # 2. Only a failure before submission permits the original single-process path.
@@ -185,6 +187,16 @@ def console_result(result: Result[None, IoError]) -> Result[None, str]:
     return result.map_err((error) => f"cannot relay compiler console: {error}")
 
 
+def report_cold(toolchain: Toolchain, reason: str) -> Result[None, str]:
+    """Tell this request's client why no resident worker could start before using a cold compiler process."""
+    message = RustString.from(f"compiler worker unavailable: {reason}; using a cold compiler process\n").into_bytes()
+    if toolchain.console != "":
+        mut stream = open_stream(f"{toolchain.console}.err")?
+        return console_result(stream.write_all(message))
+    mut stream = stderr()
+    return console_result(stream.write_all(message))
+
+
 def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32], str]:
     """
     Run an invocation through a shared worker, or return `None` before submission for the cold path.
@@ -201,6 +213,7 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
     match found_connection:
         Err(reason) =>
             trace(f"compiler worker: cold path ({reason})")
+            report_cold(toolchain, reason)?
             return Ok(None)
         Ok(found) =>
             # The slot stays held until this request completes, so no other caller queues behind it.
@@ -300,15 +313,18 @@ pub def slot_endpoint(directory: Path, generation: str, slot: int) -> Result[End
     nonincidental environment. Its lock stays beside the console sinks; its sockets go to the user's endpoint
     directory, so their path does not grow with the home's depth.
     """
-    sockets = f"{socket_prefix(directory.0)?}c-{generation}-{slot}"
-    ready = f"{sockets}.{id()}.ready"
-    bindable(f"{sockets}.sock")?
+    prefix = socket_prefix(directory.0)?
+    worker = fingerprint([generation, str(slot)])?[0:16]
+    readiness = fingerprint([generation, str(slot), str(id())])?[0:16]
+    socket = f"{prefix}c-{worker}.sock"
+    ready = f"{prefix}r-{readiness}.ready"
+    bindable(socket)?
     bindable(ready)?
     return Ok(
         Endpoint(
             generation=generation,
             directory=directory.0,
-            socket=f"{sockets}.sock",
+            socket=socket,
             lock=directory.joinpath(f"c-{generation}-{slot}.lock").0,
             ready=ready,
             mailbox="",
