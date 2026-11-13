@@ -38,7 +38,7 @@ from pub::internal_models.records import (
 )
 from compiler_graph_records import prepare_evaluation, reusable_evaluation
 from compiler_prepared_records import PreparedBodyRecordSource
-from compiler_body_fallbacks import fallback_reasons
+from compiler_body_fallbacks import fallback_lowering_event, fallback_reasons
 from compiler_plan_values import LOWERING_PROFILE
 from compiler_body_values import SelectedBodyRecord
 from compiler_source_projection import (
@@ -469,11 +469,7 @@ pub def prepare_compiled_bodies(
         )?
         stage_put(prepared, declaration_key, value.declaration)
         source.add(declaration_key, value.declaration)
-        stage_put(
-            prepared,
-            encode_record_key(eligibility_key(origin, value.identity, value.name))?,
-            b"record-eligible",
-        )
+        stage_put(prepared, encode_record_key(eligibility_key(origin, value.identity, value.name))?, b"record-eligible")
     for fallback in outputs.fallbacks:
         match fallback.identity:
             Some(identity) =>
@@ -823,6 +819,8 @@ def prepare_lowering_records(
         if is_entry_event(event)?:
             continue
         event_identity = required_event_text(event, "identity")?
+        if fallback_lowering_event(unit, fallbacks, event_identity)?:
+            continue
         key = required_event_text(event, "key")?
         function = required_event_text(event, "function")?
         product = required_event_text(event, "product")?.encode("utf-8")
@@ -859,7 +857,10 @@ def prepare_lowering_records(
     for event in events:
         if not is_entry_event(event)?:
             continue
-        body = body_value(bodies, fallbacks, required_event_text(event, "identity")?)?
+        event_identity = required_event_text(event, "identity")?
+        if fallback_lowering_event(unit, fallbacks, event_identity)?:
+            continue
+        body = body_value(bodies, fallbacks, event_identity)?
         demand_key = body_key("lowering-demand", origin, body.identity, "main", required_event_text(event, "demand")?)
         key = body_key("plan-function", origin, body.identity, "entry", required_event_text(event, "key")?)
         product = required_event_text(event, "product")?.encode("utf-8")

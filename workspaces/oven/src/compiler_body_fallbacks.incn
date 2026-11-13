@@ -1,8 +1,49 @@
 """Retain the compiler's exact checker-record fallback reasons when a later producer refuses an owner."""
 
 from pub::internal_models import CompiledBodyFallback
+from rust::incan_semantics_core import SymbolOrigin, decode_incan_symbol_identity
+from std.fs import Path
+from unit import UnitDescription
 
 
 pub def fallback_reasons(fallbacks: list[CompiledBodyFallback]) -> list[str]:
     """Describe every excluded owner without equating a stable checker key with an emitted native symbol."""
     return [f"{fallback.module}::{fallback.name}: {fallback.reason}" for fallback in fallbacks]
+
+
+pub def fallback_lowering_event(
+    unit: UnitDescription,
+    fallbacks: list[CompiledBodyFallback],
+    identity: str,
+) -> Result[bool, str]:
+    """Skip only a self-describing lowering event that names an explicit full-source fallback owner."""
+    decoded = decode_incan_symbol_identity(identity).map_err((error) => str(error))?
+    selected = match decoded:
+        None => return Ok(false)
+        Some(value) => value
+
+    module = match selected.origin:
+        SymbolOrigin.Module(path) => "/".join(path)
+        _ => return Ok(false)
+
+    source_root = Path(unit.source_root).resolve().map_err((error) => error.message())?.0 + "/"
+    for fallback in fallbacks:
+        path = Path(unit.project_root).joinpath(fallback.module).resolve().map_err((error) => error.message())?.0
+        if path.startswith(source_root):
+            relative = path[len(source_root):]
+            if source_module(relative) == module and fallback.name == selected.declaration_name:
+                return Ok(true)
+    return Ok(false)
+
+
+def source_module(relative: str) -> str:
+    """Name a source-root-relative module the same way a canonical module origin does."""
+    mut without_extension = relative
+    if without_extension.endswith(".incn"):
+        without_extension = without_extension[:len(without_extension) - len(".incn")]
+    mut parts = without_extension.split("/")
+    if len(parts) > 0 and parts[len(parts) - 1] in ["mod", "__init__"]:
+        parts = parts[:len(parts) - 1]
+    elif len(parts) > 1 and parts[len(parts) - 1] == "prelude":
+        parts = parts[:len(parts) - 1]
+    return "/".join(parts)
