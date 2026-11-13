@@ -122,7 +122,7 @@ pub def prepare_submit(store: Path, submit: Submit) -> Result[CapturedRequest, s
 def diagnostic_features() -> list[str]:
     """Bind an explicitly selected body-refusal diagnosis to the captured unit without changing ordinary requests."""
     match get_optional("OVEN_BODY_REFUSALS"):
-        Some(mode) => return ["body-refusals:" + mode]
+        Some(mode) => return ["incan.body-refusal-list/1", "body-refusals:" + mode]
         None => return []
 
 
