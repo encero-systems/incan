@@ -2,11 +2,23 @@
 
 from std.encoding.hex import hexlify, unhexlify
 from std.hash import sha256
+from std.primitives.crumb import Budget
+from std.primitives.crumb.descriptions import Description, DescriptionMode
+from std.primitives.crumb.hashes import description_hash, value_hash
+from std.primitives.crumb.records import RowRecord
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.row_reader import read_rows
+from std.primitives.crumb.row_writer import write_rows
+from std.primitives.crumb.types import AbsentPolicy
+from std.primitives.crumb.values import Metadata, MetadataEntry, Projection, Value, ValueField
+from std.primitives.text import copy_frozen_bytes
+from std.primitives.views import MappedFile
 
-pub const CHECKER_SCHEMA: str = "incan.checker-fields/9"
-pub const CHECKER_PROFILE: str = "incan.checker-free-functions/16"
+pub const CHECKER_SCHEMA: str = "incan.checker-fields/10"
+pub const CHECKER_PROFILE: str = "incan.checker-free-functions/17"
 const MAX_RECORD_BYTES: int = 65536
 const MAX_FIELDS: int = 4096
+const CHECKER_SELECTOR: bytes = b"checkr\x00"
 const GRAPH_TRANSPORT_SCHEMA: str = "incan.checker-graph-transport/2"
 const GRAPH_NAMESPACE_SCHEMA: str = "incan.namespace-graph-transport/2"
 # One selected-input request carries bounded checker records plus native owner frames; bound that request at 64 MiB
@@ -137,72 +149,25 @@ pub enum CodecFault:
 
 
 pub def encode_record(record: CheckedRecord) -> Result[bytes, CodecFault]:
-    """
-    Encode one bounded field-addressable record, independently of native object layout.
-
-    1. Validate the supported schema and canonical field ordering.
-    2. Frame UTF-8 fields with decimal byte lengths and a colon.
-    3. Refuse a record requiring a larger schema page.
-    """
-    # 1. Validate the supported schema and canonical field ordering.
-    validate(record)?
-    # 2. Frame UTF-8 fields with decimal byte lengths and a colon.
-    mut tokens = [CHECKER_SCHEMA, record.profile, record.owner, record.root, family_name(record.family)]
-    tokens.append(str(len(record.fields)))
-    for field in record.fields:
-        tokens += [field.family, field.node, field.selector, str(len(field.values))] + field.values
-    mut fragments: list[str] = []
-    mut size = 0
-    for token in tokens:
-        raw = token.encode()
-        prefix = str(len(raw)) + ":"
-        fragments.append(prefix + token)
-        size += len(prefix) + len(raw)
-        if size > MAX_RECORD_BYTES:
-            return Err(CodecFault.Limit)
-    # 3. Refuse a record requiring a larger schema page.
-    return Ok("".join(fragments).encode())
+    """Encode one checked owner as one bounded Crumb row of the checker-record model."""
+    logical = record_value(record)?
+    mut budget = crumb_budget()?
+    registry = KindRegistry.create([], budget).map_err((_) => CodecFault.Malformed)?
+    encoded = write_rows(
+        [checker_description()],
+        [RowRecord(key=CHECKER_SELECTOR, value=logical)],
+        registry,
+        false,
+        budget,
+    ).map_err((_) => CodecFault.Malformed)?
+    if len(encoded) > MAX_RECORD_BYTES:
+        return Err(CodecFault.Limit)
+    return Ok(encoded)
 
 
 pub def decode_record(encoded: bytes, profile: str, owner: str, root: str) -> Result[CheckedRecord, CodecFault]:
-    """
-    Decode a complete canonical record, then bind its semantic identity without accepting stale coordinates.
-
-    1. Read bounded UTF-8 frames and reject truncated, ambiguous or trailing bytes.
-    2. Decode the schema's ordered fields and validate their capabilities.
-    3. Check the requested profile, owner and body root.
-    """
-    # 1. Read bounded UTF-8 frames and reject truncated, ambiguous or trailing bytes.
-    tokens = frames(encoded)?
-    if len(tokens) < 6 or tokens[0] != CHECKER_SCHEMA:
-        return Err(CodecFault.Malformed)
-    # 2. Decode the schema's ordered fields and validate their capabilities.
-    family = read_family(tokens[4])?
-    count = decimal(tokens[5])?
-    if count > MAX_FIELDS:
-        return Err(CodecFault.Limit)
-    mut fields: list[CanonicalField] = []
-    mut offset = 6
-    for _ in range(count):
-        if offset + 4 > len(tokens):
-            return Err(CodecFault.Malformed)
-        size = decimal(tokens[offset + 3])?
-        if size > MAX_FIELDS or offset + 4 + size > len(tokens):
-            return Err(CodecFault.Malformed)
-        fields.append(
-            CanonicalField(
-                family=tokens[offset],
-                node=tokens[offset + 1],
-                selector=tokens[offset + 2],
-                values=tokens[offset + 4:offset + 4 + size],
-            ),
-        )
-        offset += 4 + size
-    if offset != len(tokens):
-        return Err(CodecFault.Malformed)
-    record = CheckedRecord(profile=tokens[1], owner=tokens[2], root=tokens[3], family=family, fields=fields)
-    validate(record)?
-    # 3. Check the requested profile, owner and body root.
+    """Decode one complete Crumb row, then bind its profile, stable owner and semantic root."""
+    record = decoded_record(encoded)?
     if record.profile != profile:
         return Err(CodecFault.ProfileMismatch)
     if record.owner != owner:
@@ -212,9 +177,173 @@ pub def decode_record(encoded: bytes, profile: str, owner: str, root: str) -> Re
     return Ok(record)
 
 
-pub def semantic_digest(record: CheckedRecord) -> Result[str, CodecFault]:
-    """Hash precisely the canonical fields, including schema/profile and excluding source revision and positions."""
+pub def content_digest(record: CheckedRecord) -> Result[str, CodecFault]:
+    """Hash every encoded record byte, including the model reference and fields excluded from semantic reuse."""
     return Ok("sha256:" + hexlify(sha256.digest(encode_record(record)?)))
+
+
+pub def semantic_digest(record: CheckedRecord) -> Result[str, CodecFault]:
+    """Hash the model description and canonical fields, excluding documentation and publication-only fields."""
+    mut budget = crumb_budget()?
+    value = value_hash(record_value(record)?, Projection.Canonical, budget).map_err((_) => CodecFault.Malformed)?
+    description = description_hash(checker_description().metadata, budget).map_err((_) => CodecFault.Malformed)?
+    preimage = (hexlify(description.digest) + "\n" + hexlify(value.digest)).encode()
+    return Ok("sha256:" + hexlify(sha256.digest(preimage)))
+
+
+def record_value(record: CheckedRecord) -> Result[Value, CodecFault]:
+    """Project one validated checker record into its exact Crumb logical model."""
+    validate(record)?
+    mut flattened: list[Value] = []
+    for field in record.fields:
+        flattened += [
+            Value.Text(field.family),
+            Value.Text(field.node),
+            Value.Text(field.selector),
+            Value.Text(str(len(field.values))),
+        ]
+        for value in field.values:
+            flattened.append(Value.Text(value))
+    return Ok(
+        Value.Record(
+            [
+                required_value(b"family", Value.Text(family_name(record.family))),
+                required_value(b"fields", Value.List(flattened)),
+                required_value(b"owner_", Value.Text(record.owner)),
+                required_value(b"profil", Value.Text(record.profile)),
+                required_value(b"root__", Value.Text(record.root)),
+            ],
+        ),
+    )
+
+
+def decoded_record(encoded: bytes) -> Result[CheckedRecord, CodecFault]:
+    """Admit exactly one checker-model row and reconstruct all schema-owned fields."""
+    if len(encoded) > MAX_RECORD_BYTES:
+        return Err(CodecFault.Limit)
+    mut budget = crumb_budget()?
+    registry = KindRegistry.create([], budget).map_err((_) => CodecFault.Malformed)?
+    owner = MappedFile.owned(encoded).map_err((_) => CodecFault.Malformed)?
+    view = match owner.view(0, owner.len()):
+        Some(selected) => selected
+        None => return Err(CodecFault.Malformed)
+
+    rows = read_rows(view, [checker_description()], registry, false, budget).map_err((_) => CodecFault.Malformed)?
+    if rows.len() != 1:
+        return Err(CodecFault.Malformed)
+    row = rows.read_record(0, budget).map_err((_) => CodecFault.Malformed)?
+    if row.key != copy_frozen_bytes(CHECKER_SELECTOR):
+        return Err(CodecFault.Malformed)
+    values = match row.value:
+        Value.Record(fields) => fields
+        _ => return Err(CodecFault.Malformed)
+
+    if len(values) != 5:
+        return Err(CodecFault.Malformed)
+    family = text_value(values[0].value)?
+    flattened = text_values(values[1].value)?
+    record = CheckedRecord(
+        profile=text_value(values[3].value)?,
+        owner=text_value(values[2].value)?,
+        root=text_value(values[4].value)?,
+        family=read_family(family)?,
+        fields=decoded_fields(flattened)?,
+    )
+    validate(record)?
+    return Ok(record)
+
+
+def decoded_fields(values: list[str]) -> Result[list[CanonicalField], CodecFault]:
+    """Restore the ordered checker-field list from the Crumb list payload."""
+    mut fields: list[CanonicalField] = []
+    mut offset = 0
+    while offset < len(values):
+        if offset + 4 > len(values):
+            return Err(CodecFault.Malformed)
+        count = decimal(values[offset + 3])?
+        if count > MAX_FIELDS or offset + 4 + count > len(values):
+            return Err(CodecFault.Malformed)
+        fields.append(
+            CanonicalField(
+                family=values[offset],
+                node=values[offset + 1],
+                selector=values[offset + 2],
+                values=values[offset + 4:offset + 4 + count],
+            ),
+        )
+        offset += 4 + count
+    if len(fields) > MAX_FIELDS:
+        return Err(CodecFault.Limit)
+    return Ok(fields)
+
+
+def text_value(value: Value) -> Result[str, CodecFault]:
+    """Require one logical Crumb string value."""
+    match value:
+        Value.Text(text) => return Ok(text)
+        _ => return Err(CodecFault.Malformed)
+
+
+def text_values(value: Value) -> Result[list[str], CodecFault]:
+    """Require one logical Crumb string list without accepting nested or alternate values."""
+    match value:
+        Value.List(items) =>
+            mut result: list[str] = []
+            for item in items:
+                result.append(text_value(item)?)
+            return Ok(result)
+        _ => return Err(CodecFault.Malformed)
+
+
+def checker_description() -> Description:
+    """Declare the complete checker-record model while keeping its repeated wire header referenced."""
+    return Description(
+        metadata=Metadata.Map(
+            [
+                MetadataEntry(key="kind", value=Metadata.Text("Record")),
+                MetadataEntry(key="nominal", value=Metadata.Binary(CHECKER_SELECTOR)),
+                MetadataEntry(key="path", value=Metadata.Text(CHECKER_SCHEMA)),
+                MetadataEntry(key="properties", value=Metadata.Map([])),
+                MetadataEntry(
+                    key="fields",
+                    value=Metadata.List(
+                        [
+                            description_field(b"family", "family", "string", true),
+                            description_field(b"fields", "fields", "list<string>", true),
+                            description_field(b"owner_", "owner", "string", true),
+                            description_field(b"profil", "profile", "string", true),
+                            description_field(b"root__", "root", "string", true),
+                        ],
+                    ),
+                ),
+            ],
+        ),
+        mode=DescriptionMode.Reference,
+    )
+
+
+def description_field(identity: bytes, name: str, storage: str, canonical: bool) -> Metadata:
+    """Describe one required model field with its established six-byte identity."""
+    return Metadata.Map(
+        [
+            MetadataEntry(key="id", value=Metadata.Binary(identity)),
+            MetadataEntry(key="name", value=Metadata.Text(name)),
+            MetadataEntry(key="type", value=Metadata.Text(storage)),
+            MetadataEntry(key="canonical", value=Metadata.Boolean(canonical)),
+            MetadataEntry(key="absent", value=Metadata.Text("required")),
+            MetadataEntry(key="properties", value=Metadata.Map([])),
+        ],
+    )
+
+
+def required_value(identity: bytes, value: Value) -> ValueField:
+    """Bind one present logical field to the required checker-record contract."""
+    return ValueField(identity=identity, canonical=true, absent=AbsentPolicy.Required, value=value)
+
+
+def crumb_budget() -> Result[Budget, CodecFault]:
+    """Bound one checker row's Crumb admission, hashing and reconstruction work."""
+    return Budget.create(bytes=4194304, elements=1048576, depth=64).map_err((_) => CodecFault.Limit)
 
 
 def validate(record: CheckedRecord) -> Result[None, CodecFault]:
@@ -285,28 +414,6 @@ def read_family(value: str) -> Result[CheckedFamily, CodecFault]:
         "local" => return Ok(CheckedFamily.Local)
         "final" => return Ok(CheckedFamily.Final)
         _ => return Err(CodecFault.Unsupported(value))
-
-
-def frames(encoded: bytes) -> Result[list[str], CodecFault]:
-    """Parse canonical byte-length frames without integer conversion panics or accepting noncanonical lengths."""
-    if len(encoded) > MAX_RECORD_BYTES:
-        return Err(CodecFault.Limit)
-    mut offset = 0
-    mut tokens: list[str] = []
-    while offset < len(encoded):
-        mut end = offset
-        while end < len(encoded) and encoded[end] != 58:
-            end += 1
-        if end == len(encoded):
-            return Err(CodecFault.Malformed)
-        prefix = encoded[offset:end].decode().map_err((_) => CodecFault.Malformed)?
-        size = decimal(prefix)?
-        offset = end + 1
-        if size > len(encoded) - offset:
-            return Err(CodecFault.Malformed)
-        tokens.append(encoded[offset:offset + size].decode().map_err((_) => CodecFault.Malformed)?)
-        offset += size
-    return Ok(tokens)
 
 
 def decimal(text: str) -> Result[int, CodecFault]:
@@ -448,9 +555,20 @@ pub def decode_graph_body_page(
 
 pub def encode_graph_namespace_value(value: GraphNamespaceValue) -> Result[bytes, CodecFault]:
     """Encode one bounded namespace page without projecting its compiler-owned payloads or lowering witnesses."""
-    if value.module == "" or len(value.interface) == 0 or len(value.body_ir) == 0 or len(value.lowering_inputs) > MAX_FIELDS:
+    if (
+        value.module == ""
+        or len(value.interface) == 0
+        or len(value.body_ir) == 0
+        or len(value.lowering_inputs) > MAX_FIELDS
+    ):
         return Err(CodecFault.Malformed)
-    mut tokens = [GRAPH_NAMESPACE_SCHEMA, value.module, hexlify(value.interface), hexlify(value.body_ir), str(len(value.lowering_inputs))]
+    mut tokens = [
+        GRAPH_NAMESPACE_SCHEMA,
+        value.module,
+        hexlify(value.interface),
+        hexlify(value.body_ir),
+        str(len(value.lowering_inputs)),
+    ]
     mut previous = ""
     for input in value.lowering_inputs:
         if len(input) != 2 or input[0] == "" or input[1] == "" or input[0] <= previous:
@@ -483,15 +601,14 @@ pub def decode_graph_namespace_value(encoded: bytes) -> Result[GraphNamespaceVal
         lowering_inputs.append([identity, witness])
         previous = identity
         offset += 2
-    return Ok(GraphNamespaceValue(module=tokens[1], interface=interface, body_ir=body_ir, lowering_inputs=lowering_inputs))
+    return Ok(
+        GraphNamespaceValue(module=tokens[1], interface=interface, body_ir=body_ir, lowering_inputs=lowering_inputs),
+    )
 
 
 pub def record_root(encoded: bytes) -> Result[str, CodecFault]:
     """Read one validated checker record's position-free semantic root for its logical record key."""
-    tokens = frames(encoded)?
-    if len(tokens) < 4 or not full_digest(tokens[3]):
-        return Err(CodecFault.Malformed)
-    return Ok(tokens[3])
+    return Ok(decoded_record(encoded)?.root)
 
 
 def validate_graph_body_value(value: GraphBodyValue) -> Result[list[CheckedRecord], CodecFault]:
@@ -508,11 +625,9 @@ def validate_graph_body_value(value: GraphBodyValue) -> Result[list[CheckedRecor
 
 
 def decode_graph_record(encoded: bytes, identity: str) -> Result[CheckedRecord, CodecFault]:
-    """Read only the canonical root needed to invoke the ordinary fully bound checker-record decoder."""
-    tokens = frames(encoded)?
-    if len(tokens) < 4:
-        return Err(CodecFault.Malformed)
-    return decode_record(encoded, CHECKER_PROFILE, identity, tokens[3])
+    """Read one selected Crumb row and bind it to the graph-selected stable owner."""
+    record = decoded_record(encoded)?
+    return decode_record(encoded, CHECKER_PROFILE, identity, record.root)
 
 
 def encode_transport_tokens(tokens: list[str]) -> Result[bytes, CodecFault]:
