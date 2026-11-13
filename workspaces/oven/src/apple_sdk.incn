@@ -87,7 +87,9 @@ pub def sdk_paths(sysroot: str) -> Result[list[str], str]:
 
 def selection_identity(sysroot: str) -> str:
     """Observe rustc's selector locations, explicit developer configuration and the exact compiler installation."""
-    mut parts = ["incan.apple-sdk/1", sysroot, observed(sysroot)]
+    # The installation page has already admitted the pinned sysroot; SDK selection owns only its path and the
+    # machine's mutable developer selectors.
+    mut parts = ["incan.apple-sdk/2", sysroot]
     for name in ["DEVELOPER_DIR", "TOOLCHAINS", "SDKROOT"]:
         value = get_or(name, "")
         parts.append(f"{name}={value}")

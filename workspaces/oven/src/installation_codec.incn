@@ -11,7 +11,7 @@ from frozen_inputs import Document
 from page_values import read_value, write_value
 from payload_types import InstalledPayload, PayloadAdmission
 
-pub const PROFILE: str = "incan.installation-page/7"
+pub const PROFILE: str = "incan.installation-page/19"
 
 
 pub model StandardManifest:
@@ -149,7 +149,7 @@ def read_toolchain(mut reader: Reader) -> Result[InstalledCompiler, str]:
     abi = reader.texts()?
     mut externs: list[NativeCrate] = []
     for _index in range(reader.count(16)?):
-        externs.append(NativeCrate(name=reader.text()?, path=reader.text()?))
+        externs.append(NativeCrate(name=reader.text()?, path=reader.text()?, identity=reader.text()?))
     return Ok(
         InstalledCompiler(
             driver=driver,
@@ -158,11 +158,19 @@ def read_toolchain(mut reader: Reader) -> Result[InstalledCompiler, str]:
             externs=externs,
             search=reader.texts()?,
             registry_units=reader.text()?,
+            registry_units_identity=reader.text()?,
             codegraph_on_request=reader.count(1)? == 1,
             registry_lock=reader.text()?,
             c_compiler=reader.text()?,
             target=reader.text()?,
+            rust_version=reader.text()?,
+            default_deployment_target=reader.text()?,
+            default_sdk_identity=reader.text()?,
+            rustc_observation=reader.text()?,
+            default_trusted_publishers=reader.texts()?,
             compiler_records=read_compiler_record_pin(reader)?,
+            compiler_facts=reader.texts()?,
+            driver_observation=reader.text()?,
         ),
     )
 
@@ -176,8 +184,10 @@ def write_toolchain(buffer: _BytesIO, toolchain: InstalledCompiler) -> Result[No
     for native in toolchain.externs:
         put_text(buffer, native.name)?
         put_text(buffer, native.path)?
+        put_text(buffer, native.identity)?
     put_texts(buffer, toolchain.search)?
     put_text(buffer, toolchain.registry_units)?
+    put_text(buffer, toolchain.registry_units_identity)?
     if toolchain.codegraph_on_request:
         put_number(buffer, 1)?
     else:
@@ -185,12 +195,19 @@ def write_toolchain(buffer: _BytesIO, toolchain: InstalledCompiler) -> Result[No
     put_text(buffer, toolchain.registry_lock)?
     put_text(buffer, toolchain.c_compiler)?
     put_text(buffer, toolchain.target)?
+    put_text(buffer, toolchain.rust_version)?
+    put_text(buffer, toolchain.default_deployment_target)?
+    put_text(buffer, toolchain.default_sdk_identity)?
+    put_text(buffer, toolchain.rustc_observation)?
+    put_texts(buffer, toolchain.default_trusted_publishers)?
     match toolchain.compiler_records:
-        None => return put_number(buffer, 0)
+        None => put_number(buffer, 0)?
         Some(pin) =>
             put_number(buffer, 1)?
             put_text(buffer, pin.root)?
-            return put_text(buffer, pin.digest)
+            put_text(buffer, pin.digest)?
+    put_texts(buffer, toolchain.compiler_facts)?
+    return put_text(buffer, toolchain.driver_observation)
 
 
 def read_compiler_record_pin(mut reader: Reader) -> Result[Option[CompilerRecordPin], str]:

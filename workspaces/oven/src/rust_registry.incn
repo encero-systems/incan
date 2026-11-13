@@ -13,7 +13,7 @@ from observation import Observation, observe
 from pub::incan_platform.trace import Operation
 from jec import begin, record as record_work
 from registry_units import RegistryUnit, RegistrySelection, RegistryDemand, RegistryUnits
-from registry_metadata import complete_legacy, completion_selection
+from registry_metadata import COMPLETION, complete_legacy, completion_selection
 from registry_pages import artifact_stamps, directory_stamps, question, recall_catalog, retain_catalog
 from registry_pages import current as catalog_current
 from toolchain import load_toolchain, located, rust_compiler
@@ -41,20 +41,28 @@ pub def read_registry_units(
     """
     # 1. A settled generation can be read directly from its admitted, mapped typed page.
     clock = begin()
-    observed = observe(path)?
-    selection = completion_selection(rust_compiler(load_toolchain()?))?
+    toolchain = load_toolchain()?
+    frozen = path.0 == toolchain.registry_units and toolchain.registry_units_identity != ""
+    mut observed = Observation(stamp="", newest=0)
+    mut selection = ""
+    if frozen:
+        observed = Observation(stamp=toolchain.registry_units_identity, newest=0)
+        selection = f"{COMPLETION}:{rust_compiler(toolchain)}:{toolchain.rustc_observation}"
+    else:
+        observed = observe(path)?
+        selection = completion_selection(rust_compiler(toolchain))?
     key = question(path, observed, selection)?
     if let Some(catalog) = recall_catalog(key)?:
         record_work(Operation.RegistryIndex, path.0, clock)
         # 2. Directory membership and artifact rewrites invalidate independently of the closure file.
         completion_clock = begin()
-        if catalog_current(catalog):
+        if frozen or catalog_current(catalog):
             record_work(Operation.RegistryCompletion, path.0, completion_clock)
             return project_registry(catalog_registry(catalog.units, path)?, project, reader, use_project_lock)
     # 3. Only one caller completes a missing generation; waiters recheck after taking its claim.
     held = claim(bakery()?, f"registry/catalog/{key}")?
     if let Some(catalog) = recall_catalog(key)?:
-        if catalog_current(catalog):
+        if frozen or catalog_current(catalog):
             return project_registry(catalog_registry(catalog.units, path)?, project, reader, use_project_lock)
     return project_registry(read_registry_catalog(path, key, observed)?, project, reader, use_project_lock)
 

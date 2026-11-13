@@ -31,7 +31,8 @@ from owner_protocol import PROTOCOL, Reply, Request, discard_reply, prepares_exe
 from owner_protocol import send_document, send_quietly
 from rust_target import inherited_deployment_configuration
 from toolchain import toolchain_file
-from unit_freshness import artifact_identity, fingerprint
+from installation_page import admitted_identity
+from unit_freshness import fingerprint
 
 # How long a started owner has to say it is listening, in 2 ms polls.
 const READINESS_POLLS: int = 7500
@@ -215,10 +216,14 @@ def executable() -> Result[str, str]:
 
 
 def identity_of(path: Path) -> str:
-    """A file's identity, or `absent`."""
-    match artifact_identity(path):
-        Ok(stamp) => return stamp
-        Err(_) => return "absent"
+    """The installation page identity for the toolchain description, or `absent` before admission."""
+    match path.parent().resolve():
+        Ok(directory) =>
+            match admitted_identity(directory):
+                Ok(Some(identity)) => return identity
+                _ => pass
+        Err(_) => pass
+    return "absent"
 
 
 pub def idle_seconds() -> int:

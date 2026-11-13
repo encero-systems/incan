@@ -7,6 +7,7 @@ from std.fs import Path
 from std.json import JsonValue
 from files import read_json
 from observation import observe
+from frozen_inputs import observation as frozen_observation
 
 
 model Reading:
@@ -59,10 +60,12 @@ pub def native_bindings(path: Path, readings: NativeClosureInput) -> Result[list
 def reading(path: Path, mut store: &mut Readings) -> Result[JsonValue, str]:
     """Keep validation at each existing consumer while sharing the exact published input it validates."""
     # 1. Replacement and in-place edits both change the observed generation.
-    observed = observe(path)?
+    observed = match frozen_observation(path):
+        Some(stamp) => stamp
+        None => observe(path)?.stamp
     if path.0 in store.files:
         previous = store.files[path.0]
-        if previous.stamp == observed.stamp:
+        if previous.stamp == observed:
             return Ok(previous.fields)
     # 2. Registry receipts and other payloads are irrelevant to these linking consumers.
     document = read_json(path)?
@@ -73,6 +76,6 @@ def reading(path: Path, mut store: &mut Readings) -> Result[JsonValue, str]:
             None => pass
     selected = JsonValue.object(fields)
     # 3. No partial or concurrently replaced generation enters the shared readings.
-    if observe(path)?.stamp == observed.stamp:
-        store.files[path.0] = Reading(stamp=observed.stamp, fields=selected)
+    if frozen_observation(path) == Some(observed) or observe(path)?.stamp == observed:
+        store.files[path.0] = Reading(stamp=observed, fields=selected)
     return Ok(selected)

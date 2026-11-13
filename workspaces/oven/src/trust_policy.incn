@@ -10,11 +10,12 @@ from rust::std::env::consts import OS
 from std.environ import get_or
 from std.fs import Path
 from std.toml import TomlValue
-from files import read, read_json
-from home_paths import TOOLCHAIN, home, toolchain_directory
+from files import read
+from home_paths import TOOLCHAIN, home
 from installation_codec import Installation
 from loaf_identity import is_adopted_scope, validate_loaf_identity
 from observation import file_digest
+from toolchain import load_toolchain
 
 pub const PUBLISHER: str = "publisher"
 pub const LOAF: str = "loaf"
@@ -63,15 +64,7 @@ pub def organization_config() -> Option[Path]:
 
 pub def toolchain_defaults() -> Result[list[str], str]:
     """The ordinary default publisher entries carried by the installed toolchain release."""
-    path = toolchain_directory()?.joinpath("toolchain.json")
-    document = read_json(path)?
-    match document.get("default_trusted_publishers"):
-        None => return Ok([])
-        Some(value) =>
-            mut result: list[str] = []
-            for item in value.expect_array().map_err((error) => error.message())?:
-                result.append(item.expect_str().map_err((error) => error.message())?)
-            return Ok(sorted(result))
+    return Ok(load_toolchain()?.default_trusted_publishers)
 
 
 pub def load(project_root: Option[Path] = None) -> Result[TrustPolicy, str]:

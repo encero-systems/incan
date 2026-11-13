@@ -19,6 +19,7 @@ from observation import SETTLE_SECONDS, Observation, file_digest, now_seconds, o
 from publication import publish
 from pub::incan_platform.trace import Operation
 from jec import begin, record, text_size
+from frozen_inputs import observation as frozen_observation
 
 const SCHEMA: str = "incan.oven.retained-reading/2"
 # The selection under which an installed file's SHA-256 is retained.
@@ -41,7 +42,7 @@ pub def retained_reading(source: Path, selected: list[str]) -> Result[Reading, s
     3. Retain that reading for the file's identity.
     """
     # 1. The identity covers replacement, in-place rewrites and restored modification times.
-    observed = observe(source)?
+    observed = admitted_observation(source)?
     selection = ",".join(selected)
     if let Some(value) = recall(source, selection, observed.stamp):
         return Ok(Reading(fields=nested(value, "fields"), digest=text(value, "digest")))
@@ -71,7 +72,7 @@ pub def installed_digest(source: Path) -> Result[str, str]:
     A toolchain file such as the pinned `rustc_driver` library belongs to the installation, not to a project, so a
     new project or checkout finds the digest instead of hashing the file again.
     """
-    observed = observe(source)?
+    observed = admitted_observation(source)?
     if let Some(value) = recall(source, INSTALLED_DIGEST, observed.stamp):
         if let Some(digest) = value.as_str():
             return Ok(digest)
@@ -92,11 +93,23 @@ pub def recall(source: Path, selection: str, stamp: str) -> Option[JsonValue]:
                 Err(_) => return None
 
 
+def admitted_observation(source: Path) -> Result[Observation, str]:
+    """Use the selected installation generation without re-observing a frozen source."""
+    match frozen_observation(source):
+        Some(stamp) => return Ok(Observation(stamp=stamp, newest=0))
+        None => return observe(source)
+
+
 pub def retain(source: Path, selection: str, observed: Observation, value: JsonValue) -> None:
     """
     Retain `value` for the identity `source` had when the work began, if that identity had settled and is still the
     file's. A cache that cannot be written only costs the next command the same work.
     """
+    if frozen_observation(source) == Some(observed.stamp):
+        match reading_record(source, selection):
+            None => pass
+            Some(record) => _ = remember(record, source, selection, observed.stamp, value)
+        return
     if now_seconds() < observed.newest + SETTLE_SECONDS:
         return
     match observe(source):

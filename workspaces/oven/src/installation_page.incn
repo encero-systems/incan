@@ -6,7 +6,9 @@ from rust::std::sync import Arc
 from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.encoding.hex import hexlify
+from std.environ import get_or
 from std.fs import Path
+from std.json import JsonValue
 from std.primitives.locking import LockGuard
 from std.hash import sha256
 from std.tempfile import TemporaryDirectory
@@ -16,10 +18,15 @@ from intake import ManifestReader, load_project
 from installation_codec import PROFILE, Installation, StandardManifest, decode, encode
 from jec import begin as begin_work, record as record_work
 from observation import observe
+from compiler_facts import fact_identity
+from apple_sdk import selected_sdk
+from files import json_text
+from unit_publication import published_identity
+from rust_target import compiler_version, deployment_target
 from sealed_set import Profile, Record, SetSpec, admit, export_set, mapped_value, selected_value
 from pub::incan_platform.store import Snapshot, begin, commit, get, lease, put
 from store_path_conversion import claim, snapshot
-from toolchain_types import Toolchain
+from toolchain_types import NativeCrate, Toolchain
 from installation_documents import capture as capture_documents
 from frozen_inputs import clear as clear_documents, select as select_documents
 
@@ -89,6 +96,19 @@ pub def end_command() -> None:
     SCOPE.end_command()
 
 
+pub def admitted_identity(directory: Path) -> Result[Option[str], str]:
+    """Name the immutable page admitted for an installation without opening that page or any installed input."""
+    view = snapshot(installation_catalog()?).map_err((error) => error.message())?
+    match get(view, binding(question(directory))).map_err((error) => error.message())?:
+        None => return Ok(None)
+        Some(value) =>
+            digest = RustString
+                .from_utf8(value)
+                .map((value) => str(value))
+                .map_err((_) => "invalid installation page binding")?
+            return Ok(Some(digest))
+
+
 pub def recall(directory: Path) -> Result[Option[Installation], str]:
     """
     Read the selected admitted page without touching the frozen installation it records.
@@ -123,7 +143,12 @@ pub def recall(directory: Path) -> Result[Option[Installation], str]:
             # 3. Installation admission, not each command, owns validation of the frozen installed generation.
             reading = f"{cache_key}\n{generation}"
             SCOPE.remember(reading, directory)
-            select_documents(page.documents, page.payloads)
+            select_documents(
+                page.documents,
+                page.payloads,
+                page.paths,
+                page.stamps,
+            )
             return Ok(Some(page))
 
 
@@ -244,7 +269,12 @@ def admit_generation(
     if not current(page):
         return Err(f"{directory.0}: installation changed during admission")
     commit(put(begin(admitted), binding(key), digest.encode("utf-8"))).map_err((error) => error.message())?
-    select_documents(page.documents, page.payloads)
+    select_documents(
+        page.documents,
+        page.payloads,
+        page.paths,
+        page.stamps,
+    )
     return Ok(page)
 
 
@@ -298,8 +328,27 @@ def capture(directory: Path, toolchain: Toolchain, generation: str) -> Result[In
     # 3. A page whose inputs changed while it was read describes no single generation.
     observations = one_stamp_per_path(paths, stamps)?
     ordered = sorted([path for path in observations.keys()])
+    mut installed = toolchain.installed()
+    installed.compiler_facts = [fact_identity(Path(toolchain.driver))?]
+    installed.compiler_facts.extend([fact_identity(Path(path))? for path in toolchain.rust_abi])
+    installed.driver_observation = observe(Path(toolchain.driver))?.stamp
+    rustc = Path(toolchain.sysroot).joinpath("bin").joinpath("rustc").0
+    installed.rust_version = compiler_version(rustc)?
+    installed.default_deployment_target = deployment_target(rustc, installed.rust_version, [])?
+    installed.default_sdk_identity = default_sdk_identity(toolchain.sysroot)?
+    installed.rustc_observation = observe(Path(rustc))?.stamp
+    installed.registry_units_identity = observe(Path(toolchain.registry_units))?.stamp
+    installed.externs = []
+    for native in toolchain.externs:
+        installed.externs.append(
+            NativeCrate(
+                name=native.name,
+                path=native.path,
+                identity=published_identity(Path(native.path))?,
+            ),
+        )
     page = Installation(
-        toolchain=toolchain.installed(),
+        toolchain=installed,
         manifests=standard.manifests,
         paths=ordered,
         stamps=[observations[path] for path in ordered],
@@ -309,6 +358,18 @@ def capture(directory: Path, toolchain: Toolchain, generation: str) -> Result[In
     if not current(page):
         return Err(f"{directory.0}: installation changed while reading its manifests")
     return Ok(page)
+
+
+def default_sdk_identity(sysroot: str) -> Result[str, str]:
+    """Capture the default SDK settings identity while the installation page owns platform admission."""
+    mut root = selected_sdk(sysroot)?
+    if root == "":
+        root = get_or("SDKROOT", "")
+    if root == "":
+        return Ok("")
+    identity = fact_identity(Path(root).joinpath("SDKSettings.json"))?
+    framed = json_text(JsonValue.array([JsonValue.string(identity)]))?
+    return Ok(hexlify(sha256.digest(framed.encode("utf-8"))))
 
 
 model StandardPackages:

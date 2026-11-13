@@ -15,12 +15,13 @@ from std.json import JsonValue
 from files import json_text
 from home import home
 from loaf_local_graph import unique
-from observation import observe
+from observation import Observation
 from publication import publish
 from retained_readings import recall, retain
 from rust_registry import read_registry_units
 from registry_units import RegistryUnits
 from toolchain import Toolchain, toolchain_file
+from frozen_inputs import observation as frozen_observation
 
 const SCHEMA: str = "incan.search-index/1"
 const SELECTION: str = "search-index/1"
@@ -37,7 +38,10 @@ pub def search_index(toolchain: Toolchain, registry: Option[RegistryUnits] = Non
     """
     # 1. Both identities are taken before anything is derived from the files.
     description = toolchain_file()?
-    observed = observe(description)?
+    generation = match frozen_observation(description):
+        Some(stamp) => stamp
+        None => return Err("search index requires the admitted toolchain generation")
+    observed = Observation(stamp=generation, newest=0)
     selection = f"{SELECTION} {registry_identity(toolchain)}"
     # 2. An index never changes once published, so a retained path is used while the file is there.
     if let Some(value) = recall(description, selection, observed.stamp):
@@ -54,9 +58,9 @@ def registry_identity(toolchain: Toolchain) -> str:
     """The identity of the toolchain's registry closure, or why there is none to read."""
     if toolchain.registry_units == "":
         return "no registry"
-    match observe(Path(toolchain.registry_units)):
-        Ok(observed) => return observed.stamp
-        Err(_) => return "no registry closure"
+    if toolchain.registry_units_identity != "":
+        return toolchain.registry_units_identity
+    return "no registry closure"
 
 
 def published_index(toolchain: Toolchain, available: Option[RegistryUnits]) -> Result[str, str]:

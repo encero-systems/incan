@@ -110,8 +110,8 @@ pub def published_identity(path: Path) -> Result[str, str]:
     Missing producer records and changed generations refuse; relocation must be admitted before naming the unit. An
     artifact of an installed registry entry is admitted under that entry's identity the first time it is named.
     """
-    if let Some(admission) = frozen_payload(path)?:
-        return Ok(admission.identity)
+    if let Some(identity) = admitted_identity(path)?:
+        return Ok(identity)
     mut record = available_record(path)?
     if not record.is_file():
         if let Some(entry) = registry_entry(path):
@@ -127,6 +127,13 @@ pub def published_identity(path: Path) -> Result[str, str]:
     if observe(path)?.stamp != required_text(document, "observation")?:
         return Err(f"{path.0}: published payload changed; admission is required")
     return required_text(document, "unit")
+
+
+pub def admitted_identity(path: Path) -> Result[Option[str], str]:
+    """Return an installed payload's admitted producer identity without reopening its bytes or record."""
+    if let Some(admission) = frozen_payload(path)?:
+        return Ok(Some(admission.identity))
+    return Ok(registry_entry(path))
 
 
 def registry_entry(path: Path) -> Option[str]:

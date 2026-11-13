@@ -331,6 +331,9 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
     # 3. The Rust fact caches and the search directories are lists of paths, nothing else.
     abi = strings(field(document, "rust_abi", [])?, ["rust_abi"])?
     search = strings(field(document, "search", [])?, ["search"])?
+    mut default_trusted_publishers: list[str] = []
+    if let Some(value) = document.get("default_trusted_publishers"):
+        default_trusted_publishers = strings(value, ["default_trusted_publishers"])?
     # 4. A path is relative to the toolchain directory, which is what makes a toolchain relocatable.
     return Ok(
         Toolchain(
@@ -346,6 +349,7 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             native_closures=NativeClosureInput(),
             registry_lock=optional_path(document, "registry_lock", directory)?,
             c_compiler=optional_path(document, "c_compiler", directory)?,
+            default_trusted_publishers=sorted(default_trusted_publishers),
             compiler_records=optional_compiler_records(document, directory)?,
         ),
     )
