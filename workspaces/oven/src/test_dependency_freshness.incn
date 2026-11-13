@@ -1090,6 +1090,9 @@ def verify_published_installation(scratch: Path, original: Path) -> Result[None,
     """Installation verifies each staged payload once; first selection reads only the admission marker and description."""
     stage = scratch.joinpath("installation-stage")
     write(stage.joinpath("driver"), "fixture compiler")?
+    rustc = stage.joinpath("sysroot/bin/rustc")
+    write(rustc, "#!/bin/sh\n[ \"$1\" = -vV ] || exit 1\nprintf 'rustc fixture\\nhost: x86_64-unknown-linux-gnu\\n'\n")?
+    make_executable(rustc)?
     write(stage.joinpath("std.rustabi"), "fixture Rust facts")?
     write(stage.joinpath("stdlib/primitives/loaf.toml"), "[project]\nname='primitives'\nversion='1.0.0'\n")?
     write(stage.joinpath("stdlib/primitives/src/lib.incn"), "pub def value() -> int:\n    return 1\n")?
