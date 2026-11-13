@@ -1,0 +1,1 @@
+#define LOCAL_OFFSET SHIM_OFFSET

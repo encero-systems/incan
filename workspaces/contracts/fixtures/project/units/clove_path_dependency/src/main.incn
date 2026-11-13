@@ -1,0 +1,16 @@
+# behavior: a path dependency that is a Clove compiles its C into its default configuration's archive during an ordinary build, and its Incan facade's `c.loaf_library` binding links that archive into the consumer's program (#3133)
+# environment:
+#   INCAN_C_COMPILER=host
+# cli-commands:
+#   oven run src/main.incn
+# expect-stdout:
+#   42
+# expect-trace-contains:
+#   unit counter clove default:
+
+from pub::counter import next_after
+
+
+def main() -> None:
+    """Print a value the dependency's C computed."""
+    println(next_after(41))
