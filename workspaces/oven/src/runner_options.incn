@@ -1,0 +1,221 @@
+"""
+The test runner options `incan test` and `oven test` accept beside the unit options: selection, ordering, stop and
+failure policy, parallel workers, time limits, output and reports. Their spellings and meanings are 0.5.1's.
+"""
+
+pub enum ReportFormat(str):
+    """How the runner reports outcomes on stdout."""
+
+    Console = "console"
+    Json = "json"
+
+
+pub model RunnerOptions:
+    """One test invocation's runner policy; the defaults run every collected test once, in order, one at a time."""
+
+    pub list: bool = false
+    # A `-k` keyword expression, matched against each test's identifier.
+    pub keyword: str = ""
+    # A `-m` marker expression, matched against each test's markers.
+    pub markers: str = ""
+    pub strict_markers: bool = false
+    pub slow: bool = false
+    pub exitfirst: bool = false
+    pub run_xfail: bool = false
+    pub shuffle: bool = false
+    pub seed: Option[int] = None
+    pub durations: int = 0
+    pub nocapture: bool = false
+    pub fail_on_empty: bool = false
+    pub verbose: bool = false
+    pub format: ReportFormat = ReportFormat.Console
+    pub junit: str = ""
+    pub jobs: int = 1
+    # Each test's time limit in milliseconds; zero sets none.
+    pub timeout_ms: int = 0
+    # Collection-time testing features `std.testing.feature(NAME)` observes.
+    pub features: list[str] = []
+
+
+# Runner options that take a value, by every spelling.
+const VALUED: FrozenList[str] = [
+    "-k",
+    "-m",
+    "--markers",
+    "-j",
+    "--jobs",
+    "--seed",
+    "--durations",
+    "--format",
+    "--junit",
+    "--timeout",
+    "--feature",
+]
+const DIGITS: FrozenList[str] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+# Runner flags, by every spelling.
+const FLAGS: FrozenList[str] = [
+    "--list",
+    "--strict-markers",
+    "--slow",
+    "-x",
+    "--exitfirst",
+    "--run-xfail",
+    "--shuffle",
+    "--nocapture",
+    "--fail-on-empty",
+    "-v",
+    "--verbose",
+]
+# Value options as help recognizes them, so a value is never read as a help flag.
+pub const RUNNER_VALUE_OPTIONS: FrozenList[str] = VALUED
+
+
+pub def split_runner_options(arguments: list[str]) -> Result[tuple[RunnerOptions, list[str]], str]:
+    """
+    Take the runner options out of a test command's arguments and return them with the remaining unit arguments.
+
+    A value option takes the next argument, or the text after `=` in its long spelling.
+    """
+    mut runner = RunnerOptions()
+    mut rest: list[str] = []
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        mut name = argument
+        mut inline: Option[str] = None
+        if argument.startswith("--") and "=" in argument:
+            parts = argument.split("=")
+            name = parts[0]
+            inline = Some(argument[len(name) + 1:])
+        if name in VALUED:
+            mut value = ""
+            match inline:
+                Some(text) => value = text
+                None =>
+                    if index + 1 >= len(arguments):
+                        return Err(f"`{name}` needs a value")
+                    value = arguments[index + 1]
+                    index += 1
+            apply_value(runner, name, value)?
+        elif argument in FLAGS:
+            apply_flag(runner, argument)
+        else:
+            rest.append(argument)
+        index += 1
+    if runner.seed != None and not runner.shuffle:
+        return Err("`--seed` requires --shuffle")
+    return Ok((runner, rest))
+
+
+def apply_flag(mut runner: RunnerOptions, name: str) -> None:
+    """Set one runner flag."""
+    if name == "--list":
+        runner.list = true
+    elif name == "--strict-markers":
+        runner.strict_markers = true
+    elif name == "--slow":
+        runner.slow = true
+    elif name in ["-x", "--exitfirst"]:
+        runner.exitfirst = true
+    elif name == "--run-xfail":
+        runner.run_xfail = true
+    elif name == "--shuffle":
+        runner.shuffle = true
+    elif name == "--nocapture":
+        runner.nocapture = true
+    elif name == "--fail-on-empty":
+        runner.fail_on_empty = true
+    else:
+        runner.verbose = true
+
+
+def apply_value(mut runner: RunnerOptions, name: str, value: str) -> Result[None, str]:
+    """Set one runner option that takes a value, refusing a value outside its domain."""
+    if name == "-k":
+        runner.keyword = value
+    elif name in ["-m", "--markers"]:
+        runner.markers = value
+    elif name in ["-j", "--jobs"]:
+        runner.jobs = count(name, value)?
+        if runner.jobs == 0:
+            return Err(f"`{name}` takes a positive count, got `{value}`")
+    elif name == "--seed":
+        runner.seed = Some(count(name, value)?)
+    elif name == "--durations":
+        runner.durations = count(name, value)?
+    elif name == "--format":
+        match ReportFormat.from_value(value):
+            Some(format) => runner.format = format
+            None => return Err(f"`--format` is console or json, got `{value}`")
+    elif name == "--junit":
+        runner.junit = value
+    elif name == "--timeout":
+        runner.timeout_ms = duration_ms(value)?
+    else:
+        runner.features.append(value)
+    return Ok(None)
+
+
+def count(name: str, value: str) -> Result[int, str]:
+    """A nonnegative decimal count of at most nine digits."""
+    if len(value) == 0 or len(value) > 9:
+        return Err(f"`{name}` takes a nonnegative count, got `{value}`")
+    mut total = 0
+    for character in value:
+        if character < "0" or character > "9":
+            return Err(f"`{name}` takes a nonnegative count, got `{value}`")
+        total = total * 10 + digit(character)
+    return Ok(total)
+
+
+def digit(character: str) -> int:
+    """The value of one decimal digit."""
+    for index in range(10):
+        if DIGITS[index] == character:
+            return index
+    return 0
+
+
+pub def duration_ms(value: str) -> Result[int, str]:
+    """Milliseconds of a duration such as `250ms`, `5s` or `2m`; a bare count is seconds."""
+    refusal = f"invalid --timeout value `{value}`; use a duration like 250ms, 5s, or 2m"
+    mut number = value
+    mut scale = 1000
+    if value.endswith("ms"):
+        number = value[:len(value) - 2]
+        scale = 1
+    elif value.endswith("s"):
+        number = value[:len(value) - 1]
+    elif value.endswith("m"):
+        number = value[:len(value) - 1]
+        scale = 60000
+    match count("--timeout", number):
+        Err(_) => return Err(refusal)
+        Ok(amount) =>
+            if amount == 0:
+                return Err(refusal)
+            return Ok(amount * scale)
+
+
+pub def help_lines() -> list[str]:
+    """The runner options as command help lists them."""
+    return [
+        "  --list                 List the selected tests without running them.",
+        "  -k EXPR                Select tests whose identifier matches a keyword expression.",
+        "  -m, --markers EXPR     Select tests whose markers match an expression.",
+        "  --strict-markers       Refuse a marker that the test module does not register.",
+        "  --slow                 Include tests marked slow.",
+        "  -x, --exitfirst        Stop after the first failure.",
+        "  --fail-on-empty        Fail when no test is selected.",
+        "  --run-xfail            Run expected failures as ordinary tests.",
+        "  --shuffle              Run the selected tests in a random order.",
+        "  --seed N               Seed the --shuffle order.",
+        "  -j, --jobs N           Run at most N tests at once (default 1).",
+        "  --timeout DURATION     Fail a test that runs longer, such as 250ms, 5s or 2m.",
+        "  --durations N          Report the N slowest tests.",
+        "  --nocapture            Show what passing tests print.",
+        "  -v, --verbose          Report each module before its tests and a summary after them.",
+        "  --format console|json  Report format (default console); json prints one record per line.",
+        "  --junit PATH           Write a JUnit XML report.",
+        "  --feature NAME         Enable a testing feature for std.testing.feature; repeatable.",
+    ]

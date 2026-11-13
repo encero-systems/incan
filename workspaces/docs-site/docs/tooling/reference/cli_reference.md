@@ -11,7 +11,7 @@ oven lock [--versions lowest|lowest-direct|newest] [PATH]
 oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE
 oven run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 oven check PATH [--format text|json] [UNIT OPTIONS]
-oven test [PATH] [UNIT OPTIONS]
+oven test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
 oven describe-unit PATH [--unattended] [UNIT OPTIONS]
 oven build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 oven owner stop
@@ -24,7 +24,7 @@ incan --version
 incan run [--direct] PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 incan check PATH [--format text|json] [UNIT OPTIONS]
 incan explain CODE
-incan test [PATH] [UNIT OPTIONS]
+incan test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
 incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 incan fmt [--check] PATH...
 incan inspect codegraph PATH [GRAPH OPTIONS]
@@ -90,7 +90,32 @@ The JSON report has `schema_version: 2`, Boolean `ok`, and a `diagnostics` array
 
 ## `oven test`
 
-`PATH` names a source file containing test functions, a Loaf directory or another directory; without `PATH` it is the current directory. For a Loaf directory, the command runs the Loaf's Rust facet tests when it declares a Rust facet, then every test module below its source root and its `tests` directory; a Loaf with neither is refused. For another directory, it runs every test module below it and prints `No tests collected` when there is none. A test module is a `test_*.incn` or `*_test.incn` file; hidden directories, `target` directories and nested Loaves are not searched. The command compiles the collected tests and executes each in its own process on every invocation. The compiled tests of a source file reside under `target/incan/<profile>/tests/<STEM>/<crate>`, where `STEM` is the file's name without `.incn`, so invocations for different files of one project can run at once. Each test prints one line: `FILE::TEST` followed by `PASSED`, `FAILED`, `SKIPPED (REASON)`, `XFAIL (REASON)` or `XPASS (REASON)`, where `FILE` is the source file's name. A failed test's output follows on stderr. A compilation error, a failing test or an `XPASS` returns nonzero. `-k`, `--jobs`, `--list`, JSON and JUnit output flags are not accepted by this command.
+`PATH` names a source file containing test functions, a Loaf directory or another directory; without `PATH` it is the current directory. For a Loaf directory, the command runs the Loaf's Rust facet tests when it declares a Rust facet, then every test module below its source root and its `tests` directory; a Loaf with neither is refused. For another directory, it runs every test module below it and prints `No tests collected` when there is none. A test module is a `test_*.incn` or `*_test.incn` file; hidden directories, `target` directories and nested Loaves are not searched. The command compiles the collected tests and executes each in its own process on every invocation. The compiled tests of a source file reside under `target/incan/<profile>/tests/<STEM>/<crate>`, where `STEM` is the file's name without `.incn`, so invocations for different files of one project can run at once. Each test prints one line: `FILE::TEST` followed by `PASSED`, `FAILED`, `SKIPPED (REASON)`, `XFAIL (REASON)` or `XPASS (REASON)`, where `FILE` is the source file's name. A failed test's output follows on stderr. A compilation error, a failing test, a test that exceeds `--timeout` or an `XPASS` returns nonzero. Every module is compiled before any test runs.
+
+Runner options select, order and report the collected tests. Each option that takes a value also accepts `--OPTION=VALUE`.
+
+| Option | Value and default | Contract |
+| --- | --- | --- |
+| `--list` | Boolean, false | Prints each selected test as `MODULE::TEST`, `MODULE` relative to the selected directory, and runs none. |
+| `-k EXPR` | Expression, empty | Selects tests for which the expression holds; a term holds when `MODULE::TEST` contains it, ignoring case. |
+| `-m`, `--markers EXPR` | Expression, empty | Selects tests whose markers satisfy the expression: `skip`, `xfail`, `slow` and each `@mark` name. |
+| `--strict-markers` | Boolean, false | Refuses a run in which a test carries a `@mark` name its module does not register in `TEST_MARKERS`. |
+| `--slow` | Boolean, false | Includes tests marked `@slow`, which are otherwise not selected. |
+| `-x`, `--exitfirst` | Boolean, false | Starts no test after the first failure. |
+| `--fail-on-empty` | Boolean, false | Returns nonzero when no test is selected. |
+| `--run-xfail` | Boolean, false | Runs `@xfail` tests as ordinary tests. |
+| `--shuffle` | Boolean, false | Runs the selected tests in a random order and prints `shuffle seed: N`. |
+| `--seed N` | Integer, from the clock | Fixes the `--shuffle` order. Requires `--shuffle`. |
+| `-j`, `--jobs N` | Positive integer, `1` | Runs at most `N` tests at once. Outcomes print in selection order. |
+| `--timeout DURATION` | `250ms`, `5s`, `2m` or seconds, none | Stops a test that runs longer and reports it as `FAILED (timed out after Nms)`. |
+| `--durations N` | Integer, `0` | Prints the `N` slowest tests after the run. |
+| `--nocapture` | Boolean, false | Prints what passing tests print. |
+| `-v`, `--verbose` | Boolean, false | Prints `collected N test(s)` before the run and a summary line after it. |
+| `--format console\|json` | `console` | `json` prints one `incan.test.v1` record per test and a final summary record instead of console lines. |
+| `--junit PATH` | Path, none | Writes a JUnit XML report. Skipped tests and expected failures are skipped cases. |
+| `--feature NAME` | Name, repeatable | Enables a testing feature that `std.testing.feature(NAME)` observes during collection. A module compiled with a testing feature is compiled in this process rather than by a resident owner. |
+
+An expression combines terms with `and`, `or`, `not` and parentheses. With no test selected, the command prints `No tests collected`, or only the summary record with `--format json`. Marker selection and `--strict-markers` require a compiler that reports test markers; another compiler's report is refused.
 
 Collected test functions take no arguments and return `None` or `Result[None, E]`. A result-returning test passes with `Ok(None)` and fails with `Err(error)`; `E` must satisfy the `Debug` trait bound. `@skip`, `@skipif`, `@xfail` and `@xfailif` set a test's outcome policy; `@test`, `@slow`, `@mark` and `@serial` are accepted and do not change execution. Fixtures, parametrized tests, `@timeout` and `@resource` are refused.
 

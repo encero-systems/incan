@@ -7,12 +7,13 @@ from graph_mcp import USAGE as MCP_USAGE, help_text as mcp_help
 from home_paths import TOOLCHAIN
 from surfaces import OVEN, owner_of
 from toolchain_archive import PACK_USAGE, INSTALL_USAGE, help_text as archive_help
+from runner_options import RUNNER_VALUE_OPTIONS, help_lines as runner_help_lines
 
 # The project commands both surfaces run follow the invoked surface's name.
 const RUN_OPERANDS: str = "run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
 const INCAN_RUN_OPERANDS: str = "run [--direct] PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
 const CHECK_OPERANDS: str = "check PATH [--format text|json] [UNIT OPTIONS]"
-const TEST_OPERANDS: str = "test [PATH] [UNIT OPTIONS]"
+const TEST_OPERANDS: str = "test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]"
 const BUILD_OPERANDS: str = "build PATH [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
 const EXPLAIN_USAGE: str = "incan explain CODE"
 const DESCRIBE_USAGE: str = "oven describe-unit PATH [--unattended] [UNIT OPTIONS]"
@@ -70,7 +71,7 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
     if owner_of(command, arguments) not in ["", surface]:
         return None
     if command in ["run", "check", "test", "describe-unit", "build"]:
-        if requested(arguments, list(UNIT_VALUE_OPTIONS) + ["--format"]):
+        if requested(arguments, unit_valued()):
             return Some(unit_help(surface, command))
     elif command == "explain" and requested(arguments):
         return Some(render(EXPLAIN_USAGE, [], "incan explain INCAN-T0001"))
@@ -172,7 +173,7 @@ def unit_help(surface: str, command: str) -> str:
     if command == "test":
         return render(
             f"{surface} {TEST_OPERANDS}",
-            options + ["  --locked              Refuse a missing or stale oven.lock."],
+            options + ["  --locked              Refuse a missing or stale oven.lock."] + runner_help_lines(),
             f"{surface} test tests/test_example.incn",
         )
     if command == "describe-unit":
@@ -213,3 +214,12 @@ def direct_options(surface: str) -> list[str]:
 pub def version_text(surface: str) -> str:
     """What `--version` prints on `surface`: its name and the toolchain this Oven builds with."""
     return f"{surface} {TOOLCHAIN}"
+
+
+def unit_valued() -> list[str]:
+    """The value options of the unit commands, so help never reads an option's value as a help flag."""
+    mut valued = list(UNIT_VALUE_OPTIONS)
+    valued.append("--format")
+    for option in RUNNER_VALUE_OPTIONS:
+        valued.append(option)
+    return valued

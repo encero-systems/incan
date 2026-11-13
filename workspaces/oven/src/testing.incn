@@ -1,8 +1,17 @@
-"""Discover Incan test modules and report the observed outcomes of compiled Incan and Rust harnesses."""
+"""
+Discover Incan test modules, then select, run and report the tests compiled Incan and Rust harnesses collect: each
+test in its own process, every invocation afresh, under the runner options of one invocation.
+"""
 
-from rust::std::process import Command
-from rust::std::io import Write, stderr
+from rust::std::cell import RefCell
+from rust::std::env import temp_dir
+from rust::std::fs import File
+from rust::std::process import Child, Command, Stdio, id as process_id
+from rust::std::io import Write, stderr, stdout
+from rust::std::rc import Rc
 from rust::std::string import String as RustString
+from rust::std::thread import sleep
+from rust::std::time import Duration, Instant
 from std.fs import Path
 from std.json import JsonValue
 from files import parse_json, read
@@ -10,6 +19,9 @@ from incan_units import compile_unit, stored_executable, test_report, test_sourc
 from intake import read_project, source_root_of
 from json_fields import array, text_field
 from observation import trace_launch
+from runner_options import ReportFormat, RunnerOptions
+from runner_reports import Outcome, Status, json_record, json_summary, junit, slowest, summary_line
+from runner_selection import keyword_matches, markers_match, shuffle_seed, shuffled
 from rust_target import decoded
 from toolchain import Toolchain
 from unit import UnitDescription
@@ -65,66 +77,124 @@ pub def tests_binary(unit: UnitDescription) -> Path:
     return stored_executable(unit, f"tests/{test_source_name(unit)}")
 
 
+
+pub def compile_tests(unit: UnitDescription, toolchain: Toolchain) -> Result[tuple[i32, Path], str]:
+    """Compile a test unit once, unless its stored executable is current; the compiler's status and the executable."""
+    binary = tests_binary(unit)
+    return Ok((compile_unit(unit, toolchain, binary, true)?, binary))
+
+
 pub def run_tests(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:
     """Compile once, unless the stored executable is current, and run the collected tests."""
-    binary = tests_binary(unit)
-    compiled = compile_unit(unit, toolchain, binary, true)?
+    compiled, binary = compile_tests(unit, toolchain)?
     if compiled != 0:
         return Ok(compiled)
     return run_collected(binary, Path(unit.source).name())
 
 
 pub def run_collected(binary: Path, file: str) -> Result[i32, str]:
-    """
-    Run each collected test of a compiled test unit in its own process, so one panic never hides a later test.
-
-    The tests always execute afresh; only their compilation is ever reused.
-
-    1. Read the report of the tests the compiler collected.
-    2. Run every test, whether or not an earlier one failed.
-    3. The exit code is 1 when any test failed.
-    """
-    # 1. The compiler's report names every collected test, so none is run that the compiler did not collect.
-    document = parse_json(read(test_report(binary))?)?
-    tests = array(document, []).map_err((_) => "compiler test report must be an array")?
-    # 2. Every test runs, so one failure never hides a later one.
-    mut failed = false
-    for test in tests:
-        if not run_test(binary, file, test)?:
-            failed = true
-    # 3. The run fails if any test did.
-    if failed:
-        return Ok(1)
-    return Ok(0)
+    """Run each collected test of a compiled test unit in its own process, every test afresh, with no runner options."""
+    return run_session(collected_cases(binary, file, file)?, RunnerOptions(), 0)
 
 
 pub def run_rust_harness(binary: Path, project: Path) -> Result[i32, str]:
-    """
-    Report each discovered Rust unit test with the same outcome and exit semantics as Incan tests.
+    """Report each discovered Rust unit test with the same outcome and exit semantics as Incan tests."""
+    return run_session(rust_cases(binary, project)?, RunnerOptions(), 0)
 
-    1. Ask the harness for its exact test names, refusing a failed discovery.
-    2. Run every discovered test in isolation, from the owning project directory.
-    3. Fail the invocation if any test failed, without hiding later tests.
-    """
-    # 1. The harness, rather than source scanning, is the test inventory authority.
+
+pub model TestCase:
+    """One collected test: where reports name it, its native entry and executable, and its markers."""
+
+    # The module as listings and reports name it, relative to the selected directory.
+    pub file: str
+    # The module's file name, as console lines name it.
+    pub label: str
+    pub name: str
+    pub native: str
+    pub binary: str
+    # The directory a Rust harness runs in; empty for an Incan test.
+    pub project: str = ""
+    pub skip: Option[str] = None
+    pub xfail: Option[str] = None
+    pub slow: bool = false
+    pub marks: list[str] = []
+    pub unregistered: list[str] = []
+    # Whether the compiler reported the test's selection markers.
+    pub marked: bool = true
+
+    pub def markers(self) -> list[str]:
+        """The marker names reports and `-m` expressions see."""
+        mut names: list[str] = []
+        if self.skip != None:
+            names.append("skip")
+        if self.xfail != None:
+            names.append("xfail")
+        if self.slow:
+            names.append("slow")
+        for mark in self.marks:
+            names.append(mark)
+        return names
+
+
+pub def collected_cases(binary: Path, file: str, label: str) -> Result[list[TestCase], str]:
+    """The tests the compiler collected into `binary`, in its order; reading its report never runs a test."""
+    document = parse_json(read(test_report(binary))?)?
+    tests = array(document, []).map_err((_) => "compiler test report must be an array")?
+    mut cases: list[TestCase] = []
+    for test in tests:
+        mut test_case = TestCase(
+            file=file,
+            label=label,
+            name=text_field(test, "name", []).map_err((_) => "compiler test report has no name")?,
+            native=text_field(test, "native", []).map_err((_) => "compiler test report has no native entry")?,
+            binary=binary.0,
+            skip=reason(test, "skip"),
+            xfail=reason(test, "xfail"),
+        )
+        match test.get("marks"):
+            None => test_case.marked = false
+            Some(_) =>
+                test_case.marks = names(test, "marks")
+                test_case.unregistered = names(test, "unregistered")
+                match test.get("slow"):
+                    Some(value) => test_case.slow = value.as_bool() == Some(true)
+                    None => pass
+        cases.append(test_case)
+    return Ok(cases)
+
+
+def names(test: JsonValue, field: str) -> list[str]:
+    """A report field's list of names; an absent field has none."""
+    mut found: list[str] = []
+    match test.get(field):
+        None => pass
+        Some(value) =>
+            match value.as_array():
+                None => pass
+                Some(items) =>
+                    for item in items:
+                        match item.as_str():
+                            Some(text) => found.append(text)
+                            None => pass
+    return found
+
+
+pub def rust_cases(binary: Path, project: Path) -> Result[list[TestCase], str]:
+    """The tests a Rust harness lists, which is their inventory authority rather than source scanning."""
     mut command = Command.new(binary.0)
     command.arg("--list").arg("--format").arg("terse").current_dir(project.0)
     output = command.output().map_err((error) => f"cannot list {binary.0}: {error}")?
     if not output.status.success():
         return Err(f"cannot list {binary.0}: {decoded(output.stderr)}")
-    # 2. Every test runs, including those after a failure.
-    mut failed = false
+    mut cases: list[TestCase] = []
     for line in decoded(output.stdout).split("\n"):
         if not line.endswith(": test"):
             continue
         name = line[0:len(line) - len(": test")]
-        test = JsonValue.object({"name": JsonValue.string(name), "native": JsonValue.string(name)})
-        if not run_test(binary, binary.name(), test, project.0)?:
-            failed = true
-    # 3. A failed Rust test fails the same public command as a failed Incan test.
-    if failed:
-        return Ok(1)
-    return Ok(0)
+        cases.append(
+            TestCase(file=binary.name(), label=binary.name(), name=name, native=name, binary=binary.0, project=project.0),
+        )
+    return Ok(cases)
 
 
 def reason(test: JsonValue, marker: str) -> Option[str]:
@@ -134,58 +204,281 @@ def reason(test: JsonValue, marker: str) -> Option[str]:
         None => return None
 
 
-def run_test(binary: Path, file: str, test: JsonValue, project: str = "") -> Result[bool, str]:
+pub def run_session(cases: list[TestCase], runner: RunnerOptions, compiled: i32) -> Result[i32, str]:
     """
-    Observe one exact native test and apply its collected skip or expected-failure policy. Whether it counts as held.
+    Select, list or run collected tests and report them; `compiled` is a failed compilation's status, or zero.
 
-    1. A skipped test is reported and not run.
-    2. The test runs in its own process.
-    3. An expected failure that fails holds; one that passes does not.
-    4. Any other test holds when it passed, and a failure shows what the test printed.
+    1. Select and order the tests; a listing prints them and runs nothing.
+    2. With no test selected, report that, failing only on request or after a failed compilation.
+    3. Run the tests and write the requested reports; any failed test or unexpected pass fails the run.
     """
-    name = text_field(test, "name", []).map_err((_) => "compiler test report has no name")?
-    native = text_field(test, "native", []).map_err((_) => "compiler test report has no native entry")?
-    label = f"{file}::{name}"
-    # 1. A skipped test is reported with its reason and never started.
-    match reason(test, "skip"):
+    started = Instant.now()
+    # 1. Selection reads only the compiler's report.
+    selected, seed = selection(cases, runner)?
+    if runner.list:
+        for test_case in selected:
+            println(f"{test_case.file}::{test_case.name}")
+        if len(selected) == 0 and runner.fail_on_empty:
+            return Ok(1)
+        return Ok(compiled)
+    # 2. An empty selection is reported rather than treated as a passing run.
+    if len(selected) == 0 and compiled != 0:
+        return Ok(compiled)
+    if len(selected) == 0:
+        if runner.format == ReportFormat.Json:
+            println(json_summary([], 0, seed)?)
+        else:
+            println("No tests collected")
+        if runner.fail_on_empty:
+            return Ok(1)
+        return Ok(0)
+    # 3. Outcomes print in selection order as they settle.
+    if runner.verbose and runner.format == ReportFormat.Console:
+        println(f"collected {len(selected)} test(s)")
+    if let Some(value) = seed:
+        if runner.format == ReportFormat.Console:
+            println(f"shuffle seed: {value}")
+    outcomes = execute(selected, runner)?
+    elapsed = int(started.elapsed().as_millis())
+    report_session(outcomes, runner, elapsed, seed)?
+    for outcome in outcomes:
+        if outcome.failed():
+            return Ok(1)
+    return Ok(compiled)
+
+
+def selection(cases: list[TestCase], runner: RunnerOptions) -> Result[tuple[list[TestCase], Option[int]], str]:
+    """
+    The tests a run selects, in run order, and the shuffle seed when it shuffles. Slow tests need `--slow`; marker
+    selection needs the compiler's marker report.
+    """
+    marker_policy = runner.markers != "" or runner.strict_markers
+    for test_case in cases:
+        if marker_policy and not test_case.marked:
+            return Err("marker selection needs a compiler that reports test markers; this toolchain's does not")
+        if runner.strict_markers and len(test_case.unregistered) > 0:
+            return Err(f"unknown marker `{test_case.unregistered[0]}` with --strict-markers; register it in TEST_MARKERS")
+    mut chosen: list[TestCase] = []
+    for test_case in cases:
+        if test_case.slow and not runner.slow:
+            continue
+        if not keyword_matches(runner.keyword, f"{test_case.file}::{test_case.name}")?:
+            continue
+        if not markers_match(runner.markers, test_case.markers())?:
+            continue
+        chosen.append(test_case)
+    if not runner.shuffle:
+        return Ok((chosen, None))
+    seed = shuffle_seed(runner.seed)
+    return Ok(([chosen[index] for index in shuffled(len(chosen), seed)], Some(seed)))
+
+
+model Running:
+    """One started test: its position in the selection, when it started and where its output goes."""
+
+    position: int
+    started: Instant
+    child: Rc[RefCell[Child]]
+    output: Path
+    errors: Path
+
+
+model Finished:
+    """One settled test: its outcome, what it printed and why it failed when its output does not say."""
+
+    outcome: Outcome
+    output: bytes = b""
+    errors: bytes = b""
+    note: str = ""
+
+
+def execute(selected: list[TestCase], runner: RunnerOptions) -> Result[list[Outcome], str]:
+    """
+    Run the selected tests, at most `--jobs` at once, each in a process of its own, and print each outcome in
+    selection order as soon as every earlier one has settled. `--exitfirst` starts no test after a failure.
+    """
+    scratch = scratch_directory()?
+    mut settled: list[Option[Finished]] = [None for _ in selected]
+    mut active: list[Running] = []
+    mut outcomes: list[Outcome] = []
+    mut next = 0
+    mut stopping = false
+    while (next < len(selected) and not stopping) or len(active) > 0:
+        while not stopping and next < len(selected) and len(active) < runner.jobs:
+            test_case = selected[next]
+            match test_case.skip:
+                Some(why) => settled[next] = Some(Finished(outcome=outcome_of(test_case, Status.Skipped, why, 0)))
+                None => active.append(launch(test_case, next, scratch)?)
+            next += 1
+        active = reaped(selected, active, settled, runner, next >= len(selected) or len(active) >= runner.jobs)?
+        while len(outcomes) < len(selected):
+            match settled[len(outcomes)]:
+                None => break
+                Some(finished) =>
+                    print_finished(finished, runner)
+                    outcomes.append(finished.outcome)
+                    if finished.outcome.failed() and runner.exitfirst:
+                        stopping = true
+    _ = scratch.remove_tree()
+    return Ok(outcomes)
+
+
+def reaped(
+    selected: list[TestCase],
+    active: list[Running],
+    mut settled: list[Option[Finished]],
+    runner: RunnerOptions,
+    full: bool,
+) -> Result[list[Running], str]:
+    """
+    Settle every started test that has ended or run out of time, and return those still running. Without a time
+    limit, a full set of workers waits for its oldest test, so polling never spins while every slot is busy.
+    """
+    mut running: list[Running] = []
+    for index in range(len(active)):
+        item = active[index]
+        mut ended: Option[bool] = None
+        if index == 0 and full and runner.timeout_ms == 0:
+            status = item.child.borrow_mut().wait().map_err((error) => str(error))?
+            ended = Some(status.success())
+        else:
+            match item.child.borrow_mut().try_wait().map_err((error) => str(error))?:
+                Some(status) => ended = Some(status.success())
+                None => pass
+        elapsed = int(item.started.elapsed().as_millis())
+        match ended:
+            Some(passed) => settled[item.position] = Some(judged(selected[item.position], item, passed, elapsed, runner)?)
+            None =>
+                if runner.timeout_ms > 0 and elapsed >= runner.timeout_ms:
+                    _ = item.child.borrow_mut().kill()
+                    _ = item.child.borrow_mut().wait()
+                    settled[item.position] = Some(timed_out(selected[item.position], item, elapsed, runner)?)
+                else:
+                    running.append(item)
+    if len(running) > 0 and len(running) == len(active):
+        sleep(Duration.from_millis(2))
+    return Ok(running)
+
+
+def launch(test_case: TestCase, position: int, scratch: Path) -> Result[Running, str]:
+    """Start one exact native test with its streams in files of its own, so no pipe can fill and stall it."""
+    output = scratch.joinpath(f"{position}.out")
+    errors = scratch.joinpath(f"{position}.err")
+    mut command = Command.new(test_case.binary)
+    command.arg("--exact").arg(test_case.native).arg("--nocapture")
+    if test_case.project != "":
+        command.current_dir(test_case.project)
+    command.stdin(Stdio.null())
+    command.stdout(File.create(output.0).map_err((error) => f"{output.0}: {error}")?)
+    command.stderr(File.create(errors.0).map_err((error) => f"{errors.0}: {error}")?)
+    trace_launch(test_case.binary)
+    child = command.spawn().map_err((error) => f"cannot run {test_case.binary}: {error}")?
+    return Ok(Running(position=position, started=Instant.now(), child=Rc.new(RefCell.new(child)), output=output, errors=errors))
+
+
+def judged(test_case: TestCase, item: Running, passed: bool, elapsed: int, runner: RunnerOptions) -> Result[Finished, str]:
+    """
+    One ended test's outcome under its collected policy.
+
+    1. An exact selection that ran no native test failed, whatever its status.
+    2. A Rust test its harness ignored is skipped.
+    3. An expected failure holds when it fails and does not when it passes, unless `--run-xfail` runs it plainly.
+    4. Any other test passed or failed by its status.
+    """
+    printed = item.output.read_bytes().map_err((error) => error.message())?
+    complained = item.errors.read_bytes().map_err((error) => error.message())?
+    mut finished = Finished(outcome=outcome_of(test_case, Status.Passed, "", elapsed), output=printed, errors=complained)
+    # 1. An exact selection that names no native test runs nothing and still succeeds; that never counts as a pass.
+    if passed and not ran_one_test(printed):
+        finished.outcome.status = Status.Failed
+        finished.note = f"{test_case.binary} has no test named {test_case.native}\n"
+        return Ok(finished)
+    # 2. The harness reports a Rust test it ignored as one ignored test.
+    if test_case.project != "" and passed and "1 ignored" in decoded(printed):
+        finished.outcome.status = Status.Skipped
+        finished.outcome.reason = "Rust ignore attribute"
+        return Ok(finished)
+    # 3. An expected failure inverts the observed status.
+    match test_case.xfail:
         Some(why) =>
-            println(f"{label} SKIPPED ({why})")
-            return Ok(true)
+            if not runner.run_xfail:
+                finished.outcome.reason = why
+                if passed:
+                    finished.outcome.status = Status.XPassed
+                else:
+                    finished.outcome.status = Status.XFailed
+                return Ok(finished)
         None => pass
-    # 2. The test runs in a process of its own, so a panic ends only that test.
-    mut command = Command.new(binary.0)
-    command.arg("--exact").arg(native).arg("--nocapture")
-    if project != "":
-        command.current_dir(project)
-    trace_launch(binary.0)
-    output = command.output().map_err((error) => f"cannot run {binary.0}: {error}")?
-    passed = output.status.success()
-    # An exact selection that names no native test runs nothing and still succeeds; that never counts as a pass.
-    if passed and not ran_one_test(output.stdout):
-        println(f"{label} FAILED")
-        mut err = stderr()
-        # A closed standard error cannot be told about, so a failed write is ignored.
-        _ = err.write_all(RustString.from(f"{binary.0} has no test named {native}\n").into_bytes())
-        return Ok(false)
-    if project != "" and passed and "1 ignored" in decoded(output.stdout):
-        println(f"{label} SKIPPED (Rust ignore attribute)")
-        return Ok(true)
-    # 3. A test expected to fail holds when it fails, and does not when it unexpectedly passes.
-    match reason(test, "xfail"):
-        Some(why) =>
-            if passed:
-                println(f"{label} XPASS ({why})")
-                return Ok(false)
-            println(f"{label} XFAIL ({why})")
-            return Ok(true)
-        None => pass
-    # 4. Any other test holds when it passed; one that failed shows what it printed.
-    if passed:
-        println(f"{label} PASSED")
-        return Ok(true)
-    println(f"{label} FAILED")
-    show_output(output.stdout, output.stderr)
-    return Ok(false)
+    # 4. Any other test holds when it passed.
+    if not passed:
+        finished.outcome.status = Status.Failed
+    return Ok(finished)
+
+
+def timed_out(test_case: TestCase, item: Running, elapsed: int, runner: RunnerOptions) -> Result[Finished, str]:
+    """A test stopped at its time limit failed, with what it printed before it was stopped."""
+    printed = item.output.read_bytes().map_err((error) => error.message())?
+    complained = item.errors.read_bytes().map_err((error) => error.message())?
+    reason = f"timed out after {runner.timeout_ms}ms"
+    return Ok(Finished(outcome=outcome_of(test_case, Status.Failed, reason, elapsed), output=printed, errors=complained))
+
+
+def outcome_of(test_case: TestCase, status: Status, reason: str, elapsed: int) -> Outcome:
+    """An outcome for `test_case`, named as its reports name it."""
+    return Outcome(
+        file=test_case.file,
+        label=test_case.label,
+        name=test_case.name,
+        status=status,
+        reason=reason,
+        duration_ms=elapsed,
+        markers=test_case.markers(),
+    )
+
+
+def print_finished(finished: Finished, runner: RunnerOptions) -> None:
+    """Print one settled test: its line or record, and what it printed when it failed or `--nocapture` asks."""
+    failed = finished.outcome.status == Status.Failed
+    if runner.nocapture and not failed:
+        write_out(finished.output)
+        write_err(finished.errors)
+    if runner.format == ReportFormat.Json:
+        match json_record(finished.outcome):
+            Ok(record) => println(record)
+            Err(reason) => write_err(RustString.from(f"cannot encode a test record: {reason}\n").into_bytes())
+    else:
+        println(finished.outcome.console_line())
+    if not failed:
+        return
+    if finished.note != "":
+        write_err(RustString.from(finished.note).into_bytes())
+    else:
+        # A failed test shows what it printed on its two streams, on standard error, the first stream first.
+        write_err(finished.output)
+        write_err(finished.errors)
+
+
+def report_session(outcomes: list[Outcome], runner: RunnerOptions, elapsed: int, seed: Option[int]) -> Result[None, str]:
+    """Write the reports a run asked for after its last outcome: durations, a summary and JUnit XML."""
+    if runner.format == ReportFormat.Json:
+        println(json_summary(outcomes, elapsed, seed)?)
+    elif runner.durations > 0:
+        for line in slowest(outcomes, runner.durations):
+            println(line)
+    if runner.verbose and runner.format == ReportFormat.Console:
+        println(summary_line(outcomes, elapsed))
+    if runner.junit != "":
+        Path(runner.junit)
+            .write_bytes(RustString.from(junit(outcomes, elapsed)).into_bytes())
+            .map_err((error) => f"cannot write JUnit report {runner.junit}: {error.message()}")?
+    return Ok(None)
+
+
+def scratch_directory() -> Result[Path, str]:
+    """A directory of this process's own for its tests' output files."""
+    directory = Path(str(temp_dir().display())).joinpath(f"incan-test-{process_id()}")
+    directory.mkdir(true, true).map_err((error) => f"cannot create test output directory: {error.message()}")?
+    return Ok(directory)
 
 
 def ran_one_test(printed: bytes) -> bool:
@@ -199,9 +492,14 @@ def ran_one_test(printed: bytes) -> bool:
     return decoded(printed[:len(header)]) == header
 
 
-def show_output(printed: bytes, complained: bytes) -> None:
-    """Show what a failed test printed on its two streams, on standard error, the first stream first."""
+def write_out(data: bytes) -> None:
+    """Write bytes to standard output; a closed stream cannot be told about, so a failed write is ignored."""
+    mut out = stdout()
+    _ = out.write_all(data)
+    _ = out.flush()
+
+
+def write_err(data: bytes) -> None:
+    """Write bytes to standard error; a closed stream cannot be told about, so a failed write is ignored."""
     mut err = stderr()
-    for stream in [printed, complained]:
-        # A closed standard error cannot be told about, so a failed write is ignored.
-        _ = err.write_all(stream)
+    _ = err.write_all(data)
