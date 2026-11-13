@@ -191,9 +191,8 @@ def build_driver(relink: Relink, sysroot: str, compiler_home: Path, log: Path) -
     log.parent().mkdir(true, true).map_err((error) => error.message())?
     mut command = Command.new(relink.builder)
     command.current_dir(relink.repo.0).arg("build").arg(str(DRIVER_LOAF)).arg("--profile").arg(relink.profile)
-    environment = driver_build_environment(relink, sysroot, compiler_home, get_or("INCAN_BAKERY", ""))?
-    for name in sorted([name for name in environment.keys()]):
-        command.env(name, environment[name])
+    command.env("OVEN_TRACE", "-").env("RUSTC", f"{sysroot}/bin/rustc")
+    command.env("INCAN_STDLIB", relink.stdlib).env("INCAN_HOME", compiler_home.0)
     output = command.output().map_err((error) => f"cannot run {relink.builder}: {error.to_string()}")?
     stdout = RustString.from_utf8_lossy(output.stdout).into_owned()
     stderr = RustString.from_utf8_lossy(output.stderr).into_owned()
@@ -206,32 +205,6 @@ def build_driver(relink: Relink, sysroot: str, compiler_home: Path, log: Path) -
         first = len(lines) - 40
     write_stderr("\n".join(lines[first:]) + "\n")
     return Err(f"driver build failed; log: {log.0}")
-
-
-pub def driver_build_environment(
-    relink: Relink,
-    sysroot: str,
-    compiler_home: Path,
-    requested_bakery: str,
-) -> Result[Dict[str, str], str]:
-    """
-    The driver build's environment: the compiler home, and the installation's own bakery unless one is requested.
-
-    The compiler home is a second home only so that it can select the installation's trees; its units belong in the
-    bakery every later build in the installation reads, so a crate compiled once for the driver is not compiled again.
-    """
-    mut bakery = requested_bakery
-    if bakery == "":
-        bakery = relink.toolchain_home.resolve().map_err((error) => error.message())?.joinpath("bakery").0
-    return Ok(
-        {
-            "OVEN_TRACE": "-",
-            "RUSTC": f"{sysroot}/bin/rustc",
-            "INCAN_STDLIB": relink.stdlib,
-            "INCAN_HOME": compiler_home.0,
-            "INCAN_BAKERY": bakery,
-        },
-    )
 
 
 def install_driver(toolchain: Path, built: Path, sysroot: str) -> Result[Path, str]:
