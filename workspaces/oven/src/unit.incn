@@ -333,7 +333,7 @@ def project_unit(
             rust_crates=rust_crates_of(own, active.facets),
             contract_models=own.intent.contract_models,
             c_headers=own.intent.c_headers,
-            cloves=project_cloves(own, profile, artifact_root, active, projects)?,
+            cloves=project_cloves(own, profile, active, projects)?,
             vocab_entry=own.intent.vocab_entry,
             toolchain_access=own.intent.toolchain_access,
             facets=active.facets,
@@ -346,18 +346,20 @@ def project_unit(
 def project_cloves(
     own: LocalProject,
     profile: str,
-    artifact_root: str,
     active: ActiveGraph,
     projects: Dict[str, LocalProject],
 ) -> Result[list[CloveUnit], str]:
-    """The project's own C facet and every reached project's, each compiled or reused as its own unit (RFC 159)."""
+    """
+    The project's own C facet and every reached project's, each compiled or reused as its own unit (RFC 159) under
+    the Clove's own `target`, so every unit that reaches one Clove shares its archives.
+    """
     mut cloves: list[CloveUnit] = []
     for root in reachable_roots(own.root, active):
         if root not in projects:
             continue
         project = projects[root]
         if let Some(facet) = project.intent.c_facet:
-            cloves.append(clove_unit(project.intent.name, root, facet, profile, artifact_root)?)
+            cloves.append(clove_unit(project.intent.name, root, facet, profile, root)?)
     return Ok(cloves)
 
 

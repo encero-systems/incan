@@ -3,7 +3,7 @@ Clove units (RFC 159): one configuration of a local Loaf's C facet compiled into
 
 Until the Incan toolchain names a managed C toolchain release, a Clove compiles only through RFC 159's explicit,
 non-portable local override, `INCAN_C_COMPILER=host`; the unit records that the host compiler built it and is not
-publishable. Each configuration is its own unit under the root project's `target/incan/cloves`, reused while its
+publishable. Each configuration is its own unit under the Clove's own `target/incan/cloves`, reused while its
 declared inputs and every file its last compile read are unchanged.
 """
 
