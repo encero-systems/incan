@@ -15,7 +15,7 @@ from native_build import (
     StandardGeneration,
     StandardProfile,
     build_runtime,
-    build_candidate_standard_and_start_lsp,
+    build_candidate_standard_with_lsp,
     build_oven_with_standard_profile,
     build_source_interfaces,
     build_source_tools,
@@ -26,6 +26,7 @@ from native_build import (
     readmit_build_home,
     require_unique_runtime_root,
     standard_profiles,
+    start_candidate_lsp,
 )
 from oven_tests import host_memory, shared_memory
 from release_support import (
@@ -499,18 +500,30 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
     retain_driver_build_evidence(run)?
     context = native_context(run, candidate.oven, run.paths.home)
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
+    pending_lsp = start_candidate_lsp(context)?
+    match build_candidate_providers(context, helper):
+        Ok(_) => pass
+        Err(message) =>
+            if let Some(pending) = pending_lsp:
+                _ = cancel_tool_build(pending)
+            return Err(message)
+    lsp, pending = build_candidate_standard_with_lsp(context, helper, "candidate-", pending_lsp)?
+    return Ok(Candidate(context=context, oven=candidate.oven, lsp=lsp, pending_lsp=pending))
+
+
+def build_candidate_providers(context: NativeContext, helper: Path) -> Result[None, str]:
+    """Produce candidate interfaces, runtime and provider prerequisites while the independent LSP builds."""
     readmit_build_home(context, helper, "candidate-driver-readmit")?
     interfaces_started = Instant.now()
     interfaces = build_source_interfaces(context, helper, "candidate-")?
     append_timing(
-        run.paths.output.joinpath("timings.tsv"),
+        context.timings,
         "candidate-source-interfaces",
         interfaces_started.elapsed().as_secs_f64(),
     )?
     _ = build_runtime(context, helper, Some(interfaces), true)?
     require_unique_runtime_root(context)?
-    lsp, pending = build_candidate_standard_and_start_lsp(context, helper, "candidate-")?
-    return Ok(Candidate(context=context, oven=candidate.oven, lsp=lsp, pending_lsp=pending))
+    return Ok(None)
 
 
 def retain_driver_build_evidence(run: ReleaseRun) -> Result[None, str]:
