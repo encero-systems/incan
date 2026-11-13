@@ -2,8 +2,12 @@
 
 from rust::incan_std_primitives::crumb import evaluate_semantic_case
 from std.fs import Path
+from std.json import JsonValue
 from std.primitives.crumb import Budget
-from std.primitives.crumb.identity import member_identity
+from std.primitives.crumb.encoding_buffer import EncodingBuffer
+from std.primitives.crumb.framing import frame
+from std.primitives.crumb.identity import member_identity, declaration_identity, declaration_preimage
+from std.primitives.hash import sha256
 from case_data import CaseOperation, text
 from corpus import load
 
@@ -32,6 +36,10 @@ def test_native_semantic_codec_covers_all_444_corpus_cases() -> Result[None, str
                 )?
                 if outcome.kind == 0u8 and outcome.encoded == incan and outcome.decoded == incan:
                     completed += 1
+            CaseOperation.NominalIdentity =>
+                incan = nominal_twin(item.document)?
+                if outcome.kind == 0u8 and outcome.encoded == incan and outcome.decoded == incan:
+                    completed += 1
             _ =>
                 if outcome.kind == 0u8:
                     return Err(f"native operation has no independent twin assertion: {item.operation.value()}")
@@ -39,3 +47,21 @@ def test_native_semantic_codec_covers_all_444_corpus_cases() -> Result[None, str
     assert binary == 188
     assert completed == 444, f"native semantic corpus completed {completed}/444; encode_ns={encoded_nanoseconds}; decode_ns={decoded_nanoseconds}"
     return Ok(None)
+
+
+def nominal_twin(document: JsonValue) -> Result[bytes, str]:
+    """Encode the independent Incan nominal-identity result in the harness's canonical comparison frame."""
+    mut budget = Budget.create(bytes=1048576, elements=1048576, depth=128).map_err((error) => error.message())?
+    registry = text(document, "registry")?
+    package = text(document, "package")?
+    earliest_path = text(document, "earliest_path")?
+    identity = declaration_identity(registry, package, earliest_path, budget).map_err((error) => error.message())?
+    preimage = declaration_preimage(registry, package, earliest_path, budget).map_err((error) => error.message())?
+    digest = sha256.digest(preimage)
+    mut output = EncodingBuffer.create()
+    output.append(identity, budget).map_err((error) => error.message())?
+    output
+        .append(frame(preimage, budget).map_err((error) => error.message())?, budget)
+        .map_err((error) => error.message())?
+    output.append(digest, budget).map_err((error) => error.message())?
+    return output.finish(budget).map_err((error) => error.message())
