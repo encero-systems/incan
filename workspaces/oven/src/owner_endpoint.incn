@@ -5,7 +5,8 @@ An owner is identified by a generation: a digest of the protocol, this Oven exec
 never talks to an older owner), the project, the home, the standard library and the toolchain description. Only
 semantic configuration is in it, so an incidental environment variable does not start another owner. Its lock and
 mailbox live in the private `owners` directory of the home; its socket and readiness socket live in the user's private
-endpoint directory, named after a digest of that `owners` directory, so a deep home still has a short socket path.
+endpoint directory under the selected temporary root, named after a digest of that `owners` directory, so a deep home
+still has a short socket path.
 
 Starting is arbitrated: whoever finds no owner takes an exclusive lock, looks again, and only then starts one, so
 simultaneous commands start exactly one. A stale socket (nothing listens) is removed; a socket that something refuses
@@ -47,7 +48,7 @@ const PRIVATE_DIRECTORY: u32 = 448
 const LIFECYCLE_SECONDS: u64 = 5
 # The suffix of an owner's socket file name.
 const SOCKET_SUFFIX: str = ".sock"
-# The short root of every user's private endpoint directory.
+# The fallback root of every user's private endpoint directory.
 const ENDPOINT_ROOT: str = "/tmp"
 # The digits of a directory's digest that name its sockets in the endpoint directory.
 const DIRECTORY_DIGITS: int = 12
@@ -96,7 +97,7 @@ pub def socket_prefix(directory: str) -> Result[str, str]:
     The short, depth-independent path prefix of the sockets that belong to the private `directory`.
 
     1. Make `directory` private; the user who owns it owns its sockets.
-    2. Make that user's private endpoint directory: `i-<uid>` under the fixed short endpoint root.
+    2. Make that user's private endpoint directory: `i-<uid>` under the selected short temporary root.
     3. Name the sockets by a digest of `directory`, so different homes never share one.
     """
     # 1. The directory the sockets belong to is private to its user before anything is named after it.
@@ -110,7 +111,10 @@ pub def socket_prefix(directory: str) -> Result[str, str]:
 
 
 def endpoint_root() -> str:
-    """The fixed short root whose private per-user directory keeps every socket path bindable."""
+    """An absolute selected temporary root, or `/tmp` when the environment does not provide one."""
+    temporary = get_or("TMPDIR", "")
+    if temporary != "" and temporary.startswith("/"):
+        return temporary
     return ENDPOINT_ROOT
 
 
