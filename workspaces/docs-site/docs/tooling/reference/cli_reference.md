@@ -26,14 +26,14 @@ incan check PATH [--format text|json] [UNIT OPTIONS]
 incan explain CODE
 incan test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]
 incan build [PATH] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
-incan fmt [--check] PATH...
+incan fmt [--check] [--diff] [PATH...]
 incan inspect codegraph PATH [GRAPH OPTIONS]
 incan mcp PATH [--profile NAME]
 incan toolchain pack OUT
 incan toolchain install ARCHIVE
 ```
 
-There is no implicit command. Without `PATH`, `run` and `build` select the Loaf at or above the current directory, `test` uses the current directory, and every other command that takes `PATH` requires it. A command only `oven` runs that 0.5.1 ran as an `incan` command names its `oven` spelling: `incan lock` reports ``incan: unknown command `lock`: run `oven lock` ``. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
+There is no implicit command. Without `PATH`, `run` and `build` select the Loaf at or above the current directory, `test` and `fmt` use the current directory, and every other command that takes `PATH` requires it. A command only `oven` runs that 0.5.1 ran as an `incan` command names its `oven` spelling: `incan lock` reports ``incan: unknown command `lock`: run `oven lock` ``. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
 
 ## Help and version
 
@@ -157,7 +157,7 @@ Writes the selected source's unit description as a JSON object. Execution-only o
 
 ## `incan fmt`
 
-Formats one or more files or directory trees. `--check` leaves files unchanged and exits `1` when formatting would change a file. `--` ends option parsing. Only `.incn` files are selected; hidden directories, `target`, `node_modules` and nested symbolic links are skipped. Explicitly named files retain their single-file selection. Directory-read errors and no discovered source files are errors. Files that cannot be formatted are reported; other selected files are still processed. Formatting changes layout only: a formatted file reads as the same program, with its comments and docstrings kept. The [code style](../../language/reference/code_style.md) specifies formatting rules.
+Formats one or more files or directory trees, or the current directory without `PATH`. `--check` leaves files unchanged and exits `1` when formatting would change a file. `--diff` leaves files unchanged, prints each file formatting would change as `--- FILE`, `--- original` and `+++ formatted` followed by its removed lines as `-   N | TEXT` and added lines as `+   N | TEXT`, with each line's number in its own version, then `N file(s) need formatting`, and exits `1`; when no file would change it prints `✓ N file(s) already formatted` and exits `0`. `--` ends option parsing. Only `.incn` files are selected; hidden directories, `target`, `node_modules` and nested symbolic links are skipped. Explicitly named files retain their single-file selection. Directory-read errors and no discovered source files are errors. Files that cannot be formatted are reported; other selected files are still processed. Formatting changes layout only: a formatted file reads as the same program, with its comments and docstrings kept. The [code style](../../language/reference/code_style.md) specifies formatting rules.
 
 ## `oven owner stop`
 
