@@ -1,0 +1,11 @@
+[project]
+name = "inspect_features_json"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[project.features]
+default = ["fast"]
+fast = []
+extra = ["fast"]

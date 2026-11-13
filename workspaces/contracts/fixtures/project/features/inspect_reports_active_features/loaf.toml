@@ -1,0 +1,11 @@
+[project]
+name = "inspect_reports_active_features"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[project.features]
+default = ["fast"]
+fast = []
+extra = ["fast"]

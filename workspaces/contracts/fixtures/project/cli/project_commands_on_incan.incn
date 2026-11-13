@@ -7,6 +7,7 @@
 #   workspace inspect
 #   env list
 #   env run ci test
+#   inspect features .
 # expect-stdout:
 # expect-stderr-contains:
 #   is an Oven command: run `oven
