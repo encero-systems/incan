@@ -292,17 +292,18 @@ pub fn checked_owner_record_outputs(
                 .filter(|dependency| &dependency.target != canonical)
                 .filter(|dependency| projectable_source_dependency(&dependency.target))
                 .filter_map(|dependency| match &dependency.target.origin {
-                    incan_semantics_core::SymbolOrigin::Package { library, module_path } => {
-                        StableDeclarationId::from_canonical(&dependency.target, None, None).map(|stable| {
-                            CheckedOwnerDependencyRead {
-                                package: Some(library.clone()),
-                                module_path: module_path.clone(),
-                                declaration_name: dependency.target.declaration_name.clone(),
-                                declaration_identity: stable.render_compact(),
-                                reference_subject: dependency.subject.to_string(),
-                            }
-                        })
-                    }
+                    incan_semantics_core::SymbolOrigin::Package { library, module_path } => checker
+                        .stable_dependency_identity_with_context(
+                            &dependency.target,
+                            stable_contexts.get(&dependency.target),
+                        )
+                        .map(|stable| CheckedOwnerDependencyRead {
+                            package: Some(library.clone()),
+                            module_path: module_path.clone(),
+                            declaration_name: dependency.target.declaration_name.clone(),
+                            declaration_identity: stable.render_compact(),
+                            reference_subject: dependency.subject.to_string(),
+                        }),
                     incan_semantics_core::SymbolOrigin::Module(dependency_module) => checker
                         .stable_dependency_identity_with_context(
                             &dependency.target,
@@ -609,6 +610,42 @@ mod tests {
         assert_ne!(
             signature,
             local_callee_identity(&base.replace("-> int", "-> str").replace("return 1", "return \"one\""))?
+        );
+        Ok(())
+    }
+
+    /// Public-package fields with the same spelling retain the selected model in each dependency identity.
+    #[test]
+    fn public_package_member_reads_keep_their_selected_nominal() -> Result<(), Box<dyn std::error::Error>> {
+        let provider =
+            "pub model First:\n    pub pin: Option[int] = None\n\npub model Second:\n    pub pin: Option[int] = None\n";
+        let (loaves, _directory) = provider_index(provider)?;
+        let source = "from pub::provider import First, Second\n\ndef first(value: First) -> Option[int]:\n    return value.pin\n\ndef second(value: Second) -> Option[int]:\n    return value.pin\n";
+        let consumer = program(source)?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["main".into()]));
+        checker.set_loaves(loaves);
+        checker
+            .check_program(&consumer)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let facts = checker.type_info().semantic_fact_store(&["main".into()]);
+        let contexts = stable_dependency_contexts(&facts);
+        let mut reads = contexts
+            .iter()
+            .filter(|(identity, _)| identity.declaration_name == "pin")
+            .filter_map(|(identity, context)| {
+                checker
+                    .stable_dependency_identity_with_context(identity, Some(context))
+                    .map(|identity| identity.render_compact())
+            })
+            .collect::<Vec<_>>();
+        reads.sort();
+        assert_eq!(
+            reads,
+            vec![
+                "member/field:pub::provider::lib::pin#in(model:pub::provider::lib::First)[0]",
+                "member/field:pub::provider::lib::pin#in(model:pub::provider::lib::Second)[0]",
+            ]
         );
         Ok(())
     }
