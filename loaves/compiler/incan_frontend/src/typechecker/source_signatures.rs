@@ -6,7 +6,7 @@ use incan_semantics_core::CanonicalSymbolId;
 use incan_semantics_core::stable_identity::source_signature::SourceSignatureContext;
 use incan_semantics_core::stable_identity::{StableDeclarationContext, StableDeclarationId};
 
-use crate::ast::{Declaration, MethodDecl, Program, Receiver, Spanned, TypeParam};
+use crate::ast::{Declaration, EnumDecl, MethodDecl, Program, Receiver, Span, Spanned, TypeParam};
 use crate::ownership_metadata::{CheckedOwnershipContract, source_input_access};
 use crate::symbols::{CallableParam, MethodInfo, ResolvedType, SymbolKind, TypeInfo};
 
@@ -97,6 +97,14 @@ impl TypeChecker {
             let Some(stable_owner) = StableDeclarationId::from_canonical(owner, None, None) else {
                 continue;
             };
+            if let Declaration::Enum(enumeration) = &declaration.node {
+                record_enum_variant_identities(
+                    &mut identities,
+                    enumeration,
+                    &self.type_info.declarations.member_declaration_identities,
+                    &stable_owner,
+                );
+            }
             let Some(symbol) = self.symbols.lookup(name).and_then(|id| self.symbols.get(id)) else {
                 continue;
             };
@@ -149,6 +157,27 @@ impl TypeChecker {
             }
         }
         self.type_info.declarations.source_identities = identities;
+    }
+}
+
+/// Project each enum variant through its checked member identity and enclosing stable declaration.
+fn record_enum_variant_identities(
+    identities: &mut BTreeMap<CanonicalSymbolId, StableDeclarationId>,
+    enumeration: &EnumDecl,
+    members: &HashMap<Span, CanonicalSymbolId>,
+    owner: &StableDeclarationId,
+) {
+    for variant in &enumeration.variants {
+        let Some(canonical) = members.get(&variant.span) else {
+            continue;
+        };
+        let context = StableDeclarationContext {
+            owner: owner.clone(),
+            binding_ordinal: 0,
+        };
+        if let Some(identity) = StableDeclarationId::from_canonical(canonical, None, Some(context)) {
+            identities.insert(canonical.clone(), identity);
+        }
     }
 }
 
@@ -233,6 +262,8 @@ fn checked_methods(
 #[cfg(test)]
 mod tests {
     use super::TypeChecker;
+    use incan_semantics_core::SemanticSourceTargetKind;
+    use incan_semantics_core::stable_identity::StableDeclarationLocation;
     use std::collections::BTreeMap;
 
     /// Source identities remain inspectable while the explicit execution diagnostic deliberately refuses these bodies.
@@ -292,6 +323,45 @@ mod tests {
         )
         .ok_or("missing expected source signature")?;
         assert_eq!(direct.get("take").map(String::as_str), Some(expected.as_str()));
+        Ok(())
+    }
+
+    /// Enum variants retain their enclosing declaration in persistent identities even when a top-level declaration
+    /// has the same spelling as one variant.
+    #[test]
+    fn enum_variant_source_identities_keep_their_owner() -> Result<(), Box<dyn std::error::Error>> {
+        let source =
+            "model Cancelled:\n    reason: str\n\nenum CompletionStatus:\n    Success\n    Failed\n    Cancelled\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["engine_messages".into()]));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+
+        for name in ["Failed", "Cancelled"] {
+            let canonical = checker
+                .type_info
+                .declarations
+                .member_declaration_identities
+                .values()
+                .find(|identity| {
+                    identity.kind == SemanticSourceTargetKind::Variant && identity.declaration_name == name
+                })
+                .ok_or_else(|| format!("missing canonical variant identity for {name}"))?;
+            let stable = checker
+                .type_info
+                .declarations
+                .source_identities
+                .get(canonical)
+                .ok_or_else(|| format!("missing stable variant identity for {name}"))?;
+            let StableDeclarationLocation::Nested { owner, binding_ordinal } = &stable.location else {
+                return Err(format!("variant {name} has no enclosing stable owner").into());
+            };
+            assert_eq!(owner.declaration_name, "CompletionStatus");
+            assert_eq!(*binding_ordinal, 0);
+        }
         Ok(())
     }
 }
