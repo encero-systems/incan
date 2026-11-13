@@ -32,37 +32,40 @@ pub(super) fn retain_native_type_identities(modules: &mut [BodyIrModule], native
 pub(super) fn runtime_declarations(
     session: &CompilationSession,
     local: Option<&LibraryManifest>,
-) -> Vec<incan_semantics_core::body_ir::RuntimeCallableBinding> {
-    ["incan_native_runtime", "incan_stdlib_primitives"]
-        .into_iter()
-        .filter_map(|package| {
+) -> Result<Vec<incan_semantics_core::body_ir::RuntimeCallableBinding>, String> {
+    let mut bindings = Vec::new();
+    for package in ["incan_native_runtime", "incan_stdlib_primitives"] {
+        let projected;
+        let manifest = if let Some(local) = local.filter(|manifest| manifest.name == package) {
             local
-                .filter(|manifest| manifest.name == package)
-                .or_else(|| session.loaves().manifest(package))
-        })
-        .flat_map(|manifest| {
+        } else {
+            projected = session
+                .loaves()
+                .execution_manifest(package)
+                .map_err(|error| error.to_string())?;
+            let Some(projected) = projected.as_deref() else {
+                continue;
+            };
+            projected
+        };
+        bindings.extend(
             manifest
                 .contract_metadata
                 .identity_graph
                 .exports
                 .iter()
                 .filter(|export| export.public_path.len() == 2)
-                .filter(|export| {
-                    manifest
-                        .exports
-                        .functions
-                        .iter()
-                        .any(|function| function.name == export.public_name)
-                })
                 .filter_map(|export| Some(incan_semantics_core::body_ir::RuntimeCallableBinding {
                     path: export.public_path.join("::"),
                     canonical: export.canonical.as_ref()?.hydrate()?,
                 }))
                 .filter(|binding| {
-                    matches!(&binding.canonical.origin, SymbolOrigin::Package { library, .. } if library == &manifest.name)
-                })
-        })
-        .collect()
+                    binding.canonical.kind == SemanticSourceTargetKind::Function
+                        && matches!(&binding.canonical.origin, SymbolOrigin::Package { library, .. } if library == &manifest.name)
+                }),
+        );
+    }
+    Ok(bindings)
 }
 
 /// Collect and analyze the described unit's source through its compilation session, retaining canonical checked facts.
@@ -159,7 +162,7 @@ pub(super) fn checked_modules(
     )
     .ok_or("unsupported Body IR string conversion contract identity")?;
     let checked_local = checked_local_identities(manifest.as_ref());
-    let runtime_callable_bindings = runtime_declarations(&session, manifest.as_ref());
+    let runtime_callable_bindings = runtime_declarations(&session, manifest.as_ref())?;
     let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
     drop(body_ir_inputs_invocation);
 
