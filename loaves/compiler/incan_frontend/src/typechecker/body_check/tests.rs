@@ -740,10 +740,8 @@ fn assert_canonical_record_controls() -> Result<(), Box<dyn std::error::Error>> 
         assert!(super::records::verify_fixture(source, "main", malformed).is_err());
     }
     let matched = "def main() -> int:\n    match 1:\n        1 => return 2\n        _ => return 3\n";
-    assert!(matches!(
-        super::records::fixture_record(matched, "main", false),
-        Err(NodeBindingError::Unsupported("ProtocolArtifacts.loan_free_scrutinees"))
-    ));
+    let fields = super::records::fixture_record(matched, "main", false)?;
+    super::records::verify_fixture(matched, "main", fields)?;
     let ordered = "def touch(mut items: list[int]) -> None:\n    pass\n\ndef caller() -> None:\n    items = [1]\n    touch(items)\n\ndef later() -> int:\n    return 1\n";
     let later = super::records::fixture_record(ordered, "later", true)?;
     super::records::verify_fixture(ordered, "later", later)?;

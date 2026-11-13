@@ -1086,6 +1086,11 @@ fn restore_local(
                 return Err(NodeBindingError::MissingNode);
             }
         }
+        "protocol" if row[2] == "loan-free-scrutinee" => {
+            if next(&mut values)? != "true" || !local.protocols.loan_free_scrutinees.insert(span) {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
         "builtin" if row[2] == "call" => {
             let builtin =
                 incan_lang::lang::builtins::from_str(next(&mut values)?).ok_or(NodeBindingError::MissingNode)?;
