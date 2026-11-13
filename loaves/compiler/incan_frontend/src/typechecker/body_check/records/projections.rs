@@ -135,6 +135,15 @@ pub(super) fn project_calls(
     local: &BodyLocal,
     fields: &mut Fields,
 ) -> Result<(), NodeBindingError> {
+    for (span, (field, owner)) in &local.calls.body_ir_constructor_field_requirements {
+        fields.push(vec![
+            "requirement".into(),
+            positions.nodes.anchor(*span)?.path,
+            "constructor-field".into(),
+            positions.identity(field)?,
+            positions.type_identity(owner)?,
+        ]);
+    }
     for (span, builtin) in &local.calls.resolved_builtin_calls {
         fields.push(vec![
             "builtin".into(),
