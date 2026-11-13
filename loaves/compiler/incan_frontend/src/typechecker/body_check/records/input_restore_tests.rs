@@ -5,6 +5,35 @@ use std::collections::BTreeMap;
 use super::super::{BodyLocal, Positions, fixture};
 use super::{InputFlow, Reader, restore};
 
+/// Structural checked types keep their enum shape instead of falling back to a native Debug spelling.
+#[test]
+fn structural_checked_type_variants_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::symbols::ResolvedType;
+
+    let values = vec![
+        ResolvedType::Never,
+        ResolvedType::FrozenStr,
+        ResolvedType::FrozenBytes,
+        ResolvedType::FrozenList(Box::new(ResolvedType::Int)),
+        ResolvedType::FrozenDict(Box::new(ResolvedType::Str), Box::new(ResolvedType::Int)),
+        ResolvedType::FrozenSet(Box::new(ResolvedType::Bool)),
+        ResolvedType::TypeToken(Box::new(ResolvedType::Named("Item".into()))),
+        ResolvedType::Tuple(vec![ResolvedType::Int, ResolvedType::Str]),
+        ResolvedType::SelfType,
+        ResolvedType::Ref(Box::new(ResolvedType::Int)),
+        ResolvedType::RefMut(Box::new(ResolvedType::Int)),
+        ResolvedType::CallSiteInfer,
+    ];
+    for expected in values {
+        let mut fields = Vec::new();
+        super::super::type_fields(&expected, &mut fields)?;
+        let mut encoded = fields.iter();
+        assert_eq!(super::super::read_type(&mut encoded)?, expected);
+        assert!(encoded.next().is_none());
+    }
+    Ok(())
+}
+
 /// A checked native result type survives the record boundary without falling back to its source-facing type.
 #[test]
 fn native_call_refinement_types_roundtrip() -> Result<(), Box<dyn std::error::Error>> {

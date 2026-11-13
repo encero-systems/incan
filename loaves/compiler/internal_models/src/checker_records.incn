@@ -822,19 +822,33 @@ def type_end(values: list[str], offset: int, depth: int) -> Result[int, CodecFau
     if depth > 32 or offset >= len(values):
         return Err(CodecFault.Malformed)
     tag = values[offset]
-    if tag in ["int", "float", "bool", "str", "bytes", "unit", "unknown"]:
+    if tag in [
+        "never",
+        "int",
+        "float",
+        "bool",
+        "str",
+        "bytes",
+        "frozen-str",
+        "frozen-bytes",
+        "unit",
+        "self-type",
+        "call-site-infer",
+        "unknown",
+    ]:
         return Ok(offset + 1)
-    if tag in ["named", "type-var"]:
+    if tag in ["named", "type-var", "numeric", "rust-path"]:
         if offset + 1 >= len(values) or values[offset + 1] == "":
             return Err(CodecFault.Malformed)
         return Ok(offset + 2)
     if tag == "result":
         after = type_end(values, offset + 1, depth + 1)?
         return type_end(values, after, depth + 1)
-    if tag == "option":
+    if tag in ["option", "list", "frozen-list", "frozen-set", "type-token", "ref", "ref-mut"]:
         return type_end(values, offset + 1, depth + 1)
-    if tag == "list":
-        return type_end(values, offset + 1, depth + 1)
+    if tag == "frozen-dict":
+        after = type_end(values, offset + 1, depth + 1)?
+        return type_end(values, after, depth + 1)
     if tag == "ownership":
         if offset + 1 >= len(values) or values[offset + 1] not in ["Borrowed", "BorrowedMut", "Owned", "Reference"]:
             return Err(CodecFault.Malformed)
@@ -842,6 +856,21 @@ def type_end(values: list[str], offset: int, depth: int) -> Result[int, CodecFau
     if tag == "callable":
         after = parameters_end(values, offset + 1, depth + 1)?
         return type_end(values, after, depth + 1)
+    if tag in ["generic", "tuple"]:
+        if offset + 1 >= len(values):
+            return Err(CodecFault.Malformed)
+        mut end = offset + 1
+        if tag == "generic":
+            if values[end] == "":
+                return Err(CodecFault.Malformed)
+            end += 1
+        count = decimal(values[end])?
+        end += 1
+        if count > len(values) - end:
+            return Err(CodecFault.Malformed)
+        for _ in range(count):
+            end = type_end(values, end, depth + 1)?
+        return Ok(end)
     return Err(CodecFault.Unsupported("type:" + tag))
 
 
