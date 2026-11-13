@@ -617,10 +617,9 @@ mod tests {
     /// Public-package fields with the same spelling retain the selected model in each dependency identity.
     #[test]
     fn public_package_member_reads_keep_their_selected_nominal() -> Result<(), Box<dyn std::error::Error>> {
-        let provider =
-            "pub model First:\n    pub pin: Option[int] = None\n\npub model Second:\n    pub pin: Option[int] = None\n";
+        let provider = "pub model First:\n    pub pin: Option[int] = None\n\n    pub def message(self) -> str:\n        return \"first\"\n\npub model Second:\n    pub pin: Option[int] = None\n\n    pub def message(self) -> str:\n        return \"second\"\n";
         let (loaves, _directory) = provider_index(provider)?;
-        let source = "from pub::provider import First, Second\n\ndef first(value: First) -> Option[int]:\n    return value.pin\n\ndef second(value: Second) -> Option[int]:\n    return value.pin\n";
+        let source = "from pub::provider import First, Second\n\ndef first(value: First) -> Option[int]:\n    return value.pin\n\ndef second(value: Second) -> Option[int]:\n    return value.pin\n\ndef first_message(value: First) -> str:\n    return value.message()\n\ndef second_message(value: Second) -> str:\n    return value.message()\n";
         let consumer = program(source)?;
         let mut checker = TypeChecker::new();
         checker.set_current_module_path(Some(vec!["main".into()]));
@@ -632,7 +631,7 @@ mod tests {
         let contexts = stable_dependency_contexts(&facts);
         let mut reads = contexts
             .iter()
-            .filter(|(identity, _)| identity.declaration_name == "pin")
+            .filter(|(identity, _)| identity.declaration_name == "pin" || identity.declaration_name == "message")
             .filter_map(|(identity, context)| {
                 checker
                     .stable_dependency_identity_with_context(identity, Some(context))
@@ -645,6 +644,8 @@ mod tests {
             vec![
                 "member/field:pub::provider::lib::pin#in(model:pub::provider::lib::First)[0]",
                 "member/field:pub::provider::lib::pin#in(model:pub::provider::lib::Second)[0]",
+                "member/method:pub::provider::lib::message#in(model:pub::provider::lib::First)[0]",
+                "member/method:pub::provider::lib::message#in(model:pub::provider::lib::Second)[0]",
             ]
         );
         Ok(())

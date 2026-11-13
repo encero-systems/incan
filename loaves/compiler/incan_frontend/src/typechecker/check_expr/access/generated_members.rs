@@ -173,6 +173,13 @@ impl TypeChecker {
         };
         let identity = Self::synthetic_member_identity(&owner, member, SemanticSourceTargetKind::Method);
         self.type_info.record_resolved_identity(span, identity.clone());
+        self.type_info.references.stable_declaration_contexts.insert(
+            span,
+            incan_semantics_core::CanonicalStableDeclarationContext {
+                owner: owner.clone(),
+                binding_ordinal: 0,
+            },
+        );
         self.type_info
             .record_compiler_generated_member_identity(identity, owner);
     }
