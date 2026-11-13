@@ -4,7 +4,8 @@ from std.fs import Path
 from std.json import JsonValue, parse
 from pub::incan_mir_plan import Plan, PlanType
 from rust::incan_semantics_core::semantic_digest import semantic_digest
-from record_plan_codec import encode_record_plan, encode_entry_binding
+from record_plan_codec import encode_record_plan_products, encode_entry_binding
+from record_positions import relocate_product
 
 
 pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[None, str]:
@@ -15,11 +16,7 @@ pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[
         if has_scalar_refusal(report_path)?:
             return Ok(None)
         return Err("native-interface refuses generated functions without graph body witnesses")
-    encoded = encode_record_plan(plan)?
-    for function in plan.functions:
-        matches = [event for event in events if text(event, "function").unwrap_or("") == function.name]
-        if len(matches) != 1:
-            return Err("native-interface has an unwitnessed or ambiguous plan-function member")
+    encoded = encode_record_plan_products(plan, exact_plan_products(plan, events)?)?
     main = ordinary_entry(plan)?
     mut selected = JsonValue.null()
     for event in events:
@@ -57,6 +54,19 @@ pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[
         "entry": JsonValue.string(key),
     }))?
     return Ok(None)
+
+
+def exact_plan_products(plan: &Plan, events: &list[JsonValue]) -> Result[list[str], str]:
+    """Relocate each keyed product to its current position without changing its native instructions or demands."""
+    mut products: list[str] = []
+    for function in plan.functions:
+        matches = [event for event in events if text(event, "function").unwrap_or("") == function.name]
+        if len(matches) != 1:
+            return Err("native-interface has an unwitnessed or ambiguous plan-function member")
+        record = parse(text(matches[0], "product")?).map_err((error) => error.message())?
+        product = text(record, "function")?
+        products.append(relocate_product(product, str(function.span.file), function.span.line)?)
+    return Ok(products)
 
 
 def has_scalar_refusal(report: Path) -> Result[bool, str]:
