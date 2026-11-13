@@ -85,12 +85,9 @@ fn encode_base128(mut value: u128, continued: bool) -> Vec<u8> {
 }
 
 fn zigzag_groups(magnitude: u128, negative: bool) -> Vec<u8> {
-    let low = if negative {
-        magnitude.wrapping_mul(2).wrapping_sub(1)
-    } else {
-        magnitude.wrapping_mul(2)
-    };
-    let high = magnitude >> 127;
+    let doubled = magnitude.wrapping_mul(2);
+    let low = if negative { doubled.wrapping_sub(1) } else { doubled };
+    let high = zigzag_high(magnitude, doubled, negative);
     let mut groups = Vec::with_capacity(19);
     for index in 0..19 {
         let group = if index < 18 {
@@ -132,10 +129,19 @@ fn zigzag_bit_length(magnitude: u128, negative: bool) -> u64 {
     } else {
         magnitude.wrapping_mul(2)
     };
-    if magnitude >> 127 != 0 {
+    if zigzag_high(magnitude, magnitude.wrapping_mul(2), negative) != 0 {
         129
     } else {
         u64::from(128 - doubled.leading_zeros())
+    }
+}
+
+fn zigzag_high(magnitude: u128, doubled: u128, negative: bool) -> u128 {
+    let high = magnitude >> 127;
+    if negative && doubled == 0 && high != 0 {
+        high - 1
+    } else {
+        high
     }
 }
 
@@ -163,6 +169,7 @@ mod tests {
         assert_eq!(encode_native_signed(0).data, [0x00]);
         assert_eq!(encode_native_signed(-1).data, [0x01]);
         assert_eq!(encode_native_signed(-128).data, [0xff, 0x01]);
+        assert_eq!(encode_native_signed(i128::MIN).data[18], 0x03);
         assert_eq!(frame(b"abc".to_vec()).data, b"\x03abc");
     }
 
