@@ -58,7 +58,7 @@ pub def served_resident(arguments: list[str]) -> bool:
     if len(arguments) == 0:
         return false
     command = arguments[0]
-    return command == "--unit" or command == "--check" or command == "--fmt"
+    return command == "--unit" or command == "--check" or command == "--fmt" or command == "--rust-imports"
 
 
 pub def compile_resident(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32], str]:
