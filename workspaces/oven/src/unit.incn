@@ -191,13 +191,20 @@ pub def discovered_project(source: Path) -> Result[Option[Path], str]:
     for manifest in manifest_candidates(source):
         if manifest.is_file():
             return Ok(Some(manifest.parent()))
-        match retired_manifest(manifest.parent()):
-            Some(retired) =>
-                return Err(
-                    f"{retired.0}: `incan.toml` is not a project manifest; rename it to loaf.toml once its tables satisfy the Loaf schema",
-                )
+        match retired_refusal(manifest.parent()):
+            Some(reason) => return Err(reason)
             None => pass
     return Ok(None)
+
+
+pub def retired_refusal(directory: Path) -> Option[str]:
+    """Why a directory that holds `incan.toml` and no `loaf.toml` is not a project, naming the file and the rename."""
+    match retired_manifest(directory):
+        Some(retired) =>
+            return Some(
+                f"{retired.0}: `incan.toml` is not a project manifest; rename it to loaf.toml once its tables satisfy the Loaf schema",
+            )
+        None => return None
 
 
 def retired_manifest(directory: Path) -> Option[Path]:

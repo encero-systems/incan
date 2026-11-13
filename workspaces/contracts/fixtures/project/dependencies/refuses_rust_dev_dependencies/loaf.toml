@@ -1,0 +1,9 @@
+[project]
+name = "refuses_rust_dev_dependencies"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[rust-dev-dependencies]
+tempfile = "3"
