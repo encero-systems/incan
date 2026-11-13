@@ -1,0 +1,13 @@
+# behavior: Oven refuses 0.5.1's Rust test dependency table and shows the test environment's Loaf dependency that replaces it (#3147).
+# cli-commands:
+#   oven build .
+# expect-stdout:
+# expect-stderr-contains:
+#   loaf.toml: ["rust-dev-dependencies"]: unsupported
+#   use [envs.test.dependencies] tempfile = { loaf = "crates-io/tempfile", version = "3" }
+# expect-exit: 1
+
+
+def main() -> None:
+    """Remain unbuilt because the manifest is refused at intake."""
+    pass

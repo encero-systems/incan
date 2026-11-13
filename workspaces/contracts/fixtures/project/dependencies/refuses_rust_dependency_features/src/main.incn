@@ -1,0 +1,13 @@
+# behavior: the replacement shown for a retired Rust dependency keeps the features it selects, so following it selects the same crate features as 0.5.1 did (#3147).
+# cli-commands:
+#   oven build .
+# expect-stdout:
+# expect-stderr-contains:
+#   loaf.toml: ["rust-dependencies"]: unsupported
+#   use [dependencies] serde = { loaf = "crates-io/serde", version = "1.0", features = ["derive", "rc"] }
+# expect-exit: 1
+
+
+def main() -> None:
+    """Remain unbuilt because the manifest is refused at intake."""
+    pass
