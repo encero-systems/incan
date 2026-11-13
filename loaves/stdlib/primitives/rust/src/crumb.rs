@@ -35,6 +35,21 @@ pub struct ParsedDecimal {
     pub coefficient: i128,
 }
 
+/// One decoded source scalar retained for crossing-free COMIC token scanning.
+#[derive(Clone, Debug)]
+pub struct TextScalar {
+    pub text: String,
+    pub width: i64,
+}
+
+/// A complete UTF-8 and raw-bidirectional-control validation result.
+pub struct DecodedText {
+    pub kind: u8,
+    pub line: i64,
+    pub column: i64,
+    pub scalars: Vec<TextScalar>,
+}
+
 /// One bounded scan result; numeric tags keep Incan's typed error surface authoritative.
 #[derive(Clone, Copy)]
 pub struct Scan {
@@ -222,6 +237,75 @@ pub fn decode_scalar(data: &Vec<u8>, index: i64) -> DecodedScalar {
 pub fn scalar_text(value: i64) -> Option<String> {
     let value = u32::try_from(value).ok()?;
     Some(char::from_u32(value)?.to_string())
+}
+
+/// Decode source once so Incan token scanning does not cross the native boundary per scalar.
+pub fn decode_text(data: &Vec<u8>) -> DecodedText {
+    let text = match std::str::from_utf8(data) {
+        Ok(value) => value,
+        Err(error) => {
+            let (line, column) = source_position(&data[..error.valid_up_to()]);
+            return DecodedText {
+                kind: 1,
+                line,
+                column,
+                scalars: Vec::new(),
+            };
+        }
+    };
+    let mut scalars = Vec::with_capacity(text.chars().count());
+    let mut line = 1;
+    let mut column = 1;
+    for character in text.chars() {
+        if matches!(character, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}') {
+            return DecodedText {
+                kind: 2,
+                line,
+                column,
+                scalars: Vec::new(),
+            };
+        }
+        let width = match character.len_utf8() {
+            1 => 1,
+            2 => 2,
+            3 => 3,
+            _ => 4,
+        };
+        scalars.push(TextScalar {
+            text: character.to_string(),
+            width,
+        });
+        if character == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+    DecodedText {
+        kind: 0,
+        line: 1,
+        column: 1,
+        scalars,
+    }
+}
+
+/// Locate one UTF-8 byte boundary using Unicode-scalar line and column counts.
+fn source_position(prefix: &[u8]) -> (i64, i64) {
+    let Ok(text) = std::str::from_utf8(prefix) else {
+        return (1, 1);
+    };
+    let mut line = 1;
+    let mut column = 1;
+    for character in text.chars() {
+        if character == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+    (line, column)
 }
 
 impl Reader {
@@ -714,9 +798,9 @@ fn top_bits(value: u128) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Buffer, Reader, TextBuilder, binary_literal, decode_scalar, encode_integer_unsigned, encode_native_signed,
-        encode_native_unsigned, frame, indexed, parse_decimal, parse_float, parse_integer, quote_text, scalar_text,
-        spaces,
+        Buffer, Reader, TextBuilder, binary_literal, decode_scalar, decode_text, encode_integer_unsigned,
+        encode_native_signed, encode_native_unsigned, frame, indexed, parse_decimal, parse_float, parse_integer,
+        quote_text, scalar_text, spaces,
     };
 
     #[test]
@@ -814,5 +898,18 @@ mod tests {
         assert_eq!(decode_scalar(&vec![0xc0, 0x80], 0).kind, 1);
         assert_eq!(scalar_text(0x1f642).as_deref(), Some("🙂"));
         assert_eq!(scalar_text(0xd800), None);
+    }
+
+    #[test]
+    fn text_decode_batches_scalars_and_reports_raw_bidi_positions() {
+        let decoded = decode_text(&"aé\n🙂".as_bytes().to_vec());
+        assert_eq!(decoded.kind, 0);
+        assert_eq!(decoded.scalars.len(), 4);
+        assert_eq!(decoded.scalars[1].width, 2);
+        assert_eq!(decoded.scalars[3].text, "🙂");
+
+        let bidi = decode_text(&"ok\nq\u{202e}".as_bytes().to_vec());
+        assert_eq!((bidi.kind, bidi.line, bidi.column), (2, 2, 2));
+        assert_eq!(decode_text(&vec![0xff]).kind, 1);
     }
 }
