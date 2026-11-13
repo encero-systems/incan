@@ -112,11 +112,11 @@ Runner options select, order and report the collected tests. Each option that ta
 | `--durations N` | Integer, `0` | Prints the `N` slowest tests after the run. |
 | `--nocapture` | Boolean, false | Prints what passing tests print. |
 | `-v`, `--verbose` | Boolean, false | Prints `collected N test(s)` before the run and a summary line after it. |
-| `--format console\|json` | `console` | `json` prints one `incan.test.v1` record per test and a final summary record instead of console lines. |
-| `--junit PATH` | Path, none | Writes a JUnit XML report. Skipped tests and expected failures are skipped cases. |
+| `--format console\|json` | `console` | `json` prints one `incan.test.v1` record per test, naming its module relative to the working directory, and a final summary record instead of console lines. |
+| `--junit PATH` | Path, none | Writes a JUnit XML report whose class names are modules relative to the working directory. Skipped tests and expected failures are skipped cases. |
 | `--feature NAME` | Name, repeatable | Enables a testing feature that `std.testing.feature(NAME)` observes during collection. A module compiled with a testing feature is compiled in this process rather than by a resident owner. |
 
-An expression combines terms with `and`, `or`, `not` and parentheses. With no test selected, the command prints `No tests collected`, or only the summary record with `--format json`. Marker selection and `--strict-markers` require a compiler that reports test markers; another compiler's report is refused.
+An expression combines terms with `and`, `or`, `not` and parentheses. With no test selected, the command prints `No tests collected`, also with `--list`, or only the summary record with `--format json`. Marker selection and `--strict-markers` require a compiler that reports test markers; another compiler's report is refused.
 
 Collected test functions take no arguments and return `None` or `Result[None, E]`. A result-returning test passes with `Ok(None)` and fails with `Err(error)`; `E` must satisfy the `Debug` trait bound. `@skip`, `@skipif`, `@xfail` and `@xfailif` set a test's outcome policy. `@slow` leaves a test out of a run without `--slow`, and `@mark(NAME)` gives it a marker that `-m` selects; a module registers its marker names in `TEST_MARKERS`. `@timeout(DURATION)` gives a test its own time limit in place of `--timeout`. Tests that share a `@resource(NAME)` never run at once, and a `@serial` test runs with no other test. `@test` is accepted and does not change execution. Fixtures and parametrized tests are refused.
 
