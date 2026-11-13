@@ -47,10 +47,12 @@ const PRIVATE_DIRECTORY: u32 = 448
 const LIFECYCLE_SECONDS: u64 = 5
 # The suffix of an owner's socket file name.
 const SOCKET_SUFFIX: str = ".sock"
-# Where the user's endpoint directory is made when the platform names no user runtime directory.
+# Where the user's endpoint directory is made when no environment root can keep every endpoint bounded.
 const ENDPOINT_ROOT: str = "/tmp"
 # The digits of a directory's digest that name its sockets in the endpoint directory.
 const DIRECTORY_DIGITS: int = 12
+# The longest fixed endpoint name after the directory prefix (`e-` plus 20 digest digits and `.sock`).
+const MAX_ENDPOINT_NAME: int = 27
 
 
 pub model Endpoint:
@@ -96,25 +98,36 @@ pub def socket_prefix(directory: str) -> Result[str, str]:
     The short, depth-independent path prefix of the sockets that belong to the private `directory`.
 
     1. Make `directory` private; the user who owns it owns its sockets.
-    2. Make that user's private endpoint directory: `i-<uid>` under the user runtime directory, or under `/tmp`.
-    3. Name the sockets by a digest of `directory`, so different homes never share one.
+    2. Select an absolute environment root only when the longest endpoint still fits, otherwise use `/tmp`.
+    3. Make that user's private endpoint directory: `i-<uid>` under the selected root.
+    4. Name the sockets by a digest of `directory`, so different homes never share one.
     """
     # 1. The directory the sockets belong to is private to its user before anything is named after it.
     prepare_directory(directory)?
     uid = owner_of(directory)?
-    # 2. The endpoint directory belongs to the same user and nobody else can enter it.
-    endpoints = f"{endpoint_root()}/i-{uid}"
+    # 2. and 3. The endpoint directory belongs to the same user and nobody else can enter it.
+    endpoints = f"{endpoint_root(uid)}/i-{uid}"
     prepare_endpoints(endpoints, uid)?
-    # 3. A digest of the directory keeps the sockets of every home apart at a fixed length.
+    # 4. A digest of the directory keeps the sockets of every home apart at a fixed length.
     return Ok(f"{endpoints}/{fingerprint([directory])?[0:DIRECTORY_DIGITS]}-")
 
 
-def endpoint_root() -> str:
-    """The user runtime directory when the platform names one, else `/tmp`."""
-    runtime = get_or("XDG_RUNTIME_DIR", "")
-    if runtime != "" and runtime.startswith("/"):
-        return runtime
+def endpoint_root(uid: u32) -> str:
+    """The first absolute environment root whose longest fixed endpoint fits, else the fixed short root."""
+    for configured in [get_or("XDG_RUNTIME_DIR", ""), get_or("TMPDIR", "")]:
+        root = without_trailing_slashes(configured)
+        prefix_length = len(root) + len(f"/i-{uid}/") + DIRECTORY_DIGITS + 1
+        if root.startswith("/") and prefix_length + MAX_ENDPOINT_NAME <= MAX_SOCKET_PATH:
+            return root
     return ENDPOINT_ROOT
+
+
+def without_trailing_slashes(path: str) -> str:
+    """Remove incidental trailing separators without changing the filesystem location."""
+    mut normalized = path
+    while len(normalized) > 1 and normalized.endswith("/"):
+        normalized = normalized[:-1]
+    return normalized
 
 
 def owner_of(directory: str) -> Result[u32, str]:

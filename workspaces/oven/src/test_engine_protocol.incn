@@ -267,9 +267,14 @@ def check_project_directory_selection() -> Result[None, str]:
 
 
 def check_worker_residency() -> Result[None, str]:
-    """One compiler serves both activations without retaining bulk decoded manifests, and reads frozen records."""
+    """One compiler serves both activations under a deep runtime path, retains no bulk manifests, and reads frozen records."""
     scratch = scratch_directory()?
     root = scratch.path()
+    mut runtime = root.joinpath("var/folders/yd/1lgl20914vn4nhg0hgpjd4gr0000gn/T")
+    while len(runtime.0) <= 100:
+        runtime = runtime.joinpath("a-runtime-directory-deeper-than-a-socket-path-may-be")
+    runtime.mkdir(true, true).map_err((error) => error.message())?
+    fallback_runtime = get_or("XDG_RUNTIME_DIR", "/tmp")
     project = root.joinpath("project")
     project.mkdir(true, true).map_err((error) => error.message())?
     source = project.joinpath("hello.incn")
@@ -294,6 +299,8 @@ def check_worker_residency() -> Result[None, str]:
         .env("INCAN_ENGINE_RUN", "host-clock-proof")
         .env("INCAN_ENGINE_REQUEST", "worker-order")
         .env("INCAN_TRACE_DIR", observations.0)
+        .env("TMPDIR", fallback_runtime)
+        .env("XDG_RUNTIME_DIR", runtime.0)
         .output()
         .map_err((error) => str(error))?
     if not outcome.status.success() or outcome.stdout != b"hello\x0a" or outcome.stderr != b"":
@@ -316,6 +323,8 @@ def check_worker_residency() -> Result[None, str]:
         .env("INCAN_ENGINE_RUN", "host-clock-proof")
         .env("INCAN_ENGINE_REQUEST", "worker-order-edited")
         .env("INCAN_TRACE_DIR", observations.0)
+        .env("TMPDIR", fallback_runtime)
+        .env("XDG_RUNTIME_DIR", runtime.0)
         .output()
         .map_err((error) => str(error))?
     if not edited.status.success() or edited.stdout != b"hullo\x0a" or edited.stderr != b"":
