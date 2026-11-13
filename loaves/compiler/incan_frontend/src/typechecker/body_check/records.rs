@@ -998,6 +998,18 @@ fn restore_local(
                 .resolved_write_types
                 .insert((span, row[2].clone()), read_type(&mut values)?);
         }
+        "native-value" if row[2] == "type" => {
+            let identity = positions.canonical(next(&mut values)?)?;
+            if span_of(&identity) != span
+                || local
+                    .rust
+                    .value_native_types
+                    .insert(identity, read_type(&mut values)?)
+                    .is_some()
+            {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
         "identity-context" if row[2] == "reference" => {
             restore_identity_context(positions, local, record_identities, span, &mut values)?;
         }

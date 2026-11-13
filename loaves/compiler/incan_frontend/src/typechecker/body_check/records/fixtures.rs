@@ -435,6 +435,16 @@ pub(super) fn local_fields(positions: &Positions, local: &BodyLocal) -> Result<F
     project_expressions(positions, local, &mut fields)?;
     project_references(positions, local, &mut fields)?;
     project_calls(positions, local, &mut fields)?;
+    for (canonical, ty) in &local.rust.value_native_types {
+        let mut row = vec![
+            "native-value".into(),
+            positions.nodes.anchor(span_of(canonical))?.path,
+            "type".into(),
+            positions.identity(canonical)?,
+        ];
+        type_fields(ty, &mut row)?;
+        fields.push(row);
+    }
     for span in &local.protocols.loan_free_scrutinees {
         fields.push(vec![
             "protocol".into(),
