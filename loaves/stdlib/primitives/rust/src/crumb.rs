@@ -20,6 +20,13 @@ pub struct Scan {
     pub detail: i64,
 }
 
+/// One UTF-8 scalar decode result for the COMIC tokenizer.
+pub struct DecodedScalar {
+    pub kind: u8,
+    pub text: String,
+    pub width: i64,
+}
+
 /// An owned native cursor for bounded U, L, and F byte scanning.
 #[derive(Clone, Debug)]
 pub struct Reader {
@@ -127,6 +134,48 @@ fn push_unicode_escape(output: &mut String, value: u32) {
 
 fn hex_digit(value: u8) -> char {
     char::from(if value < 10 { b'0' + value } else { b'a' + value - 10 })
+}
+
+/// Decode exactly one UTF-8 scalar without validating unrelated following input.
+pub fn decode_scalar(data: &Vec<u8>, index: i64) -> DecodedScalar {
+    let invalid = || DecodedScalar {
+        kind: 1,
+        text: String::new(),
+        width: 0,
+    };
+    let Ok(index) = usize::try_from(index) else {
+        return invalid();
+    };
+    let Some(lead) = data.get(index).copied() else {
+        return invalid();
+    };
+    let width = match lead {
+        0..=127 => 1,
+        194..=223 => 2,
+        224..=239 => 3,
+        240..=244 => 4,
+        _ => return invalid(),
+    };
+    let Some(end) = index.checked_add(width) else {
+        return invalid();
+    };
+    let Some(encoded) = data.get(index..end) else {
+        return invalid();
+    };
+    let Ok(text) = std::str::from_utf8(encoded) else {
+        return invalid();
+    };
+    DecodedScalar {
+        kind: 0,
+        text: text.to_string(),
+        width: width as i64,
+    }
+}
+
+/// Convert one checked code point to an owned scalar spelling.
+pub fn scalar_text(value: i64) -> Option<String> {
+    let value = u32::try_from(value).ok()?;
+    Some(char::from_u32(value)?.to_string())
 }
 
 impl Reader {
@@ -383,8 +432,8 @@ fn top_bits(value: u128) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Buffer, Reader, binary_literal, encode_integer_unsigned, encode_native_signed, encode_native_unsigned, frame,
-        quote_text, spaces,
+        Buffer, Reader, binary_literal, decode_scalar, encode_integer_unsigned, encode_native_signed,
+        encode_native_unsigned, frame, quote_text, scalar_text, spaces,
     };
 
     #[test]
@@ -438,5 +487,14 @@ mod tests {
             "b\"a\\\"\\\\\\x00\\xff\""
         );
         assert_eq!(spaces(4), "    ");
+    }
+
+    #[test]
+    fn scalar_helpers_validate_one_code_point() {
+        let decoded = decode_scalar(&"éz".as_bytes().to_vec(), 0);
+        assert_eq!((decoded.kind, decoded.text.as_str(), decoded.width), (0, "é", 2));
+        assert_eq!(decode_scalar(&vec![0xc0, 0x80], 0).kind, 1);
+        assert_eq!(scalar_text(0x1f642).as_deref(), Some("🙂"));
+        assert_eq!(scalar_text(0xd800), None);
     }
 }
