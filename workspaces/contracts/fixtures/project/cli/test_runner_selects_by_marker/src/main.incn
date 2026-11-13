@@ -1,0 +1,10 @@
+# behavior: `incan test -m EXPR` selects tests by the markers the compiler reports and leaves `@slow` tests out, with or without `--strict-markers` for registered markers, as 0.5.1 does (#3138).
+# cli-commands:
+#   test --list -m db
+#   test . --list -m db --strict-markers
+#   test --list --markers=db
+# expect-stdout:
+#   tests/test_marked.incn::test_database
+
+def main() -> None:
+    println("main")
