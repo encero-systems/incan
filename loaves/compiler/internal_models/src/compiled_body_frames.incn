@@ -121,6 +121,13 @@ def encode_compiled_namespace_value(value: CompiledNamespaceValue) -> Result[byt
         or len(value.lowering_inputs) > MAX_FIELDS
     ):
         return Err(CodecFault.Malformed)
+    mut raw_bytes = len(value.interface) + len(value.body_ir) + len(value.module.encode())
+    for dependency in value.dependencies:
+        raw_bytes += len(dependency.encode())
+    for input in value.lowering_inputs:
+        for field in input:
+            raw_bytes += len(field.encode())
+    require_frame_room(raw_bytes)?
     mut dependencies: list[Value] = []
     mut previous = ""
     for dependency in value.dependencies:
@@ -155,6 +162,18 @@ def encode_compiled_body_value(value: CompiledBodyValue) -> Result[bytes, CodecF
     if value.module == "" or value.name == "" or value.identity == "":
         return Err(CodecFault.Malformed)
     validate_compiled_body_value(value)?
+    mut raw_bytes = (
+        len(value.declaration) + len(value.local) + len(value.final) + len(value.body_ir) + len(value.module.encode()) + len(
+            value.name.encode(),
+        ) + len(value.identity.encode())
+    )
+    for read in value.dependency_reads:
+        raw_bytes += (
+            len(optional_identity(read.package).encode()) + len(read.module.encode()) + len(read.name.encode()) + len(
+                read.identity.encode(),
+            ) + len(read.reference_subject.encode())
+        )
+    require_frame_room(raw_bytes)?
     mut dependency_reads: list[Value] = []
     mut previous = ""
     for read in value.dependency_reads:
@@ -334,6 +353,13 @@ def encoded_frame(description: Description, row: RowRecord) -> Result[bytes, Cod
     append_bytes(framed, fixed_width(len(payload)))
     append_bytes(framed, payload)
     return Ok(framed)
+
+
+def require_frame_room(raw_bytes: int) -> Result[None, CodecFault]:
+    """Refuse payload bytes that already exceed the frame before Crumb adds its model and row structure."""
+    if raw_bytes > MAX_FRAME_BYTES:
+        return Err(CodecFault.LimitExceeded("compiled-output-frame-bytes", raw_bytes, MAX_FRAME_BYTES))
+    return Ok(None)
 
 
 def record_fields(value: Value, expected: int) -> Result[list[ValueField], CodecFault]:
