@@ -555,19 +555,16 @@ def build_candidate_compiler(run: ReleaseRun, candidate: Candidate) -> Result[Ca
     retain_driver_build_evidence(run)?
     context = native_context(run, candidate.oven, run.paths.home)
     helper = run.paths.lane.joinpath("out/native-builds/toolchain-native")
+    # The language server records the compiler identity in its lock when it starts, and the readmit of the relinked
+    # driver changes that identity; it starts once the candidate interfaces and runtime are published.
+    build_candidate_providers(context, helper)?
     pending_lsp = start_candidate_lsp(context)?
-    match build_candidate_providers(context, helper):
-        Ok(_) => pass
-        Err(message) =>
-            if let Some(pending) = pending_lsp:
-                _ = cancel_tool_build(pending)
-            return Err(message)
     lsp, pending = build_candidate_standard_with_lsp(context, helper, "candidate-", pending_lsp)?
     return Ok(Candidate(context=context, oven=candidate.oven, lsp=lsp, pending_lsp=pending))
 
 
 def build_candidate_providers(context: NativeContext, helper: Path) -> Result[None, str]:
-    """Produce candidate interfaces, runtime and provider prerequisites while the independent LSP builds."""
+    """Readmit the relinked compiler, then produce the candidate interfaces and runtime the providers link."""
     readmit_build_home(context, helper, "candidate-driver-readmit")?
     interfaces_started = Instant.now()
     interfaces = build_source_interfaces(context, helper, "candidate-")?
