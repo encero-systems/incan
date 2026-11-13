@@ -82,6 +82,7 @@ def test_admission_keeps_reservations_within_memory() -> Result[None, str]:
     assert admitted(reservations, [4, 5], [4 * GIB, 4 * GIB], 4, large) == [4]
     assert admitted(reservations, [5], [6 * GIB, 4 * GIB, 4 * GIB], 4, large) == []
     assert admitted(reservations, [4, 5], [6 * GIB], 4, large) == [4]
+    assert admitted(reservations, [1, 2, 3], [4 * GIB], 4, large, ["a", "a", "b", "c"], ["a"]) == [2, 3]
     return Ok(None)
 
 
@@ -213,7 +214,7 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
     fixture(root)?
     evidence = root.joinpath("evidence")
     logs = evidence.joinpath("oven-tests")
-    planned = invocations(root, evidence, logs)?
+    planned = invocations(root, evidence, logs, 2)?
     oven_a = root.joinpath(".agents/state/release-oven-tests/evidence/0/workspaces/oven")
     oven_b = root.joinpath(".agents/state/release-oven-tests/evidence/1/workspaces/oven")
     models = root.joinpath("loaves/compiler/internal_models")
@@ -223,6 +224,7 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
     assert [item.arguments for item in planned] == [
         ["test", oven_a.joinpath("src/test_alpha.incn").0],
         ["test", oven_b.joinpath("src/test_beta.incn").0],
+        ["test", oven_a.joinpath("src/test_engine_protocol.incn").0],
         ["test", models.joinpath("tests/test_record_scope.incn").0, "--profile", "release"],
         ["test", lowering.joinpath("tests/test_three.incn").0, "--profile", "release"],
         ["test", loaf_b.joinpath("tests/test_one.incn").0, "--profile", "release"],
@@ -232,6 +234,7 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
     assert [item.directory for item in planned] == [
         oven_a.0,
         oven_b.0,
+        oven_a.0,
         models.0,
         lowering.0,
         loaf_b.0,
@@ -240,15 +243,25 @@ def test_invocations_follow_the_declared_order_and_package_ownership() -> Result
     ]
     assert oven_test_state_root(root, "").0 == root.joinpath(".agents/state/release-oven-tests").0
     assert oven_test_state_root(root, "/outside/oven-tests").0 == "/outside/oven-tests"
-    assert [item.reservation for item in planned] == [4 * GIB, 4 * GIB, 6 * GIB, 6 * GIB, 4 * GIB, 4 * GIB, 4 * GIB]
-    assert [item.alone for item in planned] == [false, false, false, false, false, false, false]
-    assert [item.scratch is not None for item in planned] == [true, true, false, false, false, false, false]
+    assert [item.reservation for item in planned] == [
+        4 * GIB,
+        4 * GIB,
+        4 * GIB,
+        6 * GIB,
+        6 * GIB,
+        4 * GIB,
+        4 * GIB,
+        4 * GIB,
+    ]
+    assert [item.alone for item in planned] == [false, false, true, false, false, false, false, false]
+    assert [item.group for item in planned] == [oven_a.0, oven_b.0, oven_a.0, "", "", "", "", ""]
+    assert [item.scratch is not None for item in planned] == [false, true, true, false, false, false, false, false]
     assert oven_a.joinpath("src/test_beta.incn").is_file()
     assert oven_b.joinpath("src/test_alpha.incn").is_file()
     assert oven_a.joinpath("tests/fixture.txt").is_file()
     assert oven_a.parent().parent().joinpath("workbench/app/loaf.toml").is_file()
     assert oven_a.parent().parent().joinpath("loaves").is_symlink()
-    assert planned[2].log.0 == logs.joinpath("002-test_record_scope.log").0
+    assert planned[3].log.0 == logs.joinpath("003-test_record_scope.log").0
     return Ok(None)
 
 
@@ -258,7 +271,7 @@ def test_missing_oven_sources_fail_the_step() -> Result[None, str]:
     root = temporary.path()
     write(root, "workspaces/oven/src/main.incn", "")?
     evidence = root.joinpath("evidence")
-    assert refusal(invocations(root, evidence, evidence)) == "Oven test sources are absent"
+    assert refusal(invocations(root, evidence, evidence, 1)) == "Oven test sources are absent"
     return Ok(None)
 
 
@@ -301,6 +314,7 @@ def fixture(root: Path) -> Result[None, str]:
     write(root, "workspaces/oven/loaf.toml", "[project]\nname = \"oven\"\nversion = \"0.1.0\"\n")?
     write(root, "workspaces/oven/src/test_beta.incn", "")?
     write(root, "workspaces/oven/src/test_alpha.incn", "")?
+    write(root, "workspaces/oven/src/test_engine_protocol.incn", "")?
     write(root, "workspaces/oven/src/main.incn", "")?
     write(root, "workspaces/oven/tests/fixture.txt", "fixture")?
     write(root, "workbench/app/loaf.toml", "[project]\nname = \"workbench\"\nversion = \"0.1.0\"\n")?
