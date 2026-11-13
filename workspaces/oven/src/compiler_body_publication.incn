@@ -1223,10 +1223,10 @@ def eligibility_key(origin: str, identity: str, name: str) -> RecordKey:
 
 
 pub def source_origin(unit: UnitDescription) -> str:
-    """Use the package authority, or the standalone namespace whose view already isolates manifest-free sources."""
+    """Use the package authority, or isolate one manifest-free entry by its exact source path."""
     if unit.package != "":
         return unit.package
-    return "standalone"
+    return "standalone:" + unit.source
 
 
 def root(encoded: bytes) -> Result[str, str]:
