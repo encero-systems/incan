@@ -627,3 +627,42 @@ fn unreadable(dir: &Path, name: &str, reason: String) -> LoafIndexError {
         reason,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use sha2::{Digest, Sha256};
+
+    use super::open_value;
+
+    /// The canonical lowercase SHA-256 spelling of `bytes`.
+    fn content_name(bytes: &[u8]) -> String {
+        Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    #[test]
+    fn a_payload_that_still_parses_but_differs_from_its_content_name_is_refused()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::create_dir(root.path().join("payloads"))?;
+        let original = br#"{"name":"BindingDeclaration"}"#;
+        let digest = content_name(original);
+        let payload = root.path().join("payloads").join(&digest);
+        fs::write(&payload, original)?;
+        assert_eq!(open_value(root.path(), &digest)?, original);
+
+        // One byte changed in place: the value still decodes, but it is no longer the content its name promises.
+        fs::write(&payload, br#"{"name":"BindingXeclaration"}"#)?;
+        let refusal = match open_value(root.path(), &digest) {
+            Ok(_) => return Err("a damaged compiler-record payload was accepted".into()),
+            Err(reason) => reason,
+        };
+        assert!(refusal.contains(&digest), "the refusal names the payload: {refusal}");
+        assert!(
+            refusal.contains("does not match its content name"),
+            "the refusal says why: {refusal}"
+        );
+        Ok(())
+    }
+}
