@@ -1,4 +1,4 @@
-# behavior: A command on a workspace member resolves and locks at the workspace root, which holds the one `oven.lock` for every member; no member gets a lock of its own, as in 0.5.1 (RFC 117).
+# behavior: A command on a workspace member resolves and locks at the workspace root, which holds the one `oven.lock` for every member, each with its own version of a shared Loaf; no member gets a lock of its own, as in 0.5.1 (RFC 117).
 # cli-commands:
 #   oven build alpha
 #   oven test beta

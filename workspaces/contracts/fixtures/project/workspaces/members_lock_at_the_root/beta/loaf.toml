@@ -4,3 +4,6 @@ version = "0.1.0"
 
 [project.scripts]
 main = "src/main.incn"
+
+[dependencies]
+random3 = { loaf = "crates-io/getrandom", version = "0.3" }
