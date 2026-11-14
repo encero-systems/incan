@@ -979,7 +979,8 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
     setup = fixture(scratch)?
     attempts = scratch.joinpath("attempts")
     driver = Path(setup.toolchain.driver)
-    mut script = "#!/bin/sh\nset -eu\n[ \"$1\" = --resident ] && exit 1\n" + f"printf x >> '{attempts.0}'\n"
+    mut script = "#!/bin/sh\n[ \"${3:-}\" = --source-graph ] && exit 2\nset -eu\n"
+    script += "[ \"$1\" = --resident ] && exit 1\n" + f"printf x >> '{attempts.0}'\n"
     script += "directory=${4%/*}\nmkdir -p \"$directory\"\n"
     script += "for name in libapp.rlib app.incnlib app.incnbody app.native.json app.incngraph app.rustabi; do\n"
     script += "printf published > \"$directory/$name\"\ndone\n"

@@ -37,3 +37,17 @@ pub def entry_scope(source: Path, root: Path) -> str:
     if directory.startswith(root.0 + "/"):
         return directory[len(root.0) + 1:].replace("/", "::")
     return "root"
+
+
+pub def absent_inputs(paths: list[str], root: Path) -> list[str]:
+    """The absent lookup paths a source graph depends on, bound like sources so a checkout's location stays out."""
+    return sorted(unique_texts([source_binding(path, root) for path in paths]))
+
+
+def unique_texts(values: list[str]) -> list[str]:
+    """Keep each text once, in first-seen order."""
+    mut kept: list[str] = []
+    for value in values:
+        if value not in kept:
+            kept.append(value)
+    return kept

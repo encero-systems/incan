@@ -80,7 +80,39 @@ pub fn collect_document_modules(
         session,
         vec![(path.to_string_lossy().to_string(), module_name, path_segments)],
         open_sources,
+        &mut SourceGraphReads::default(),
     )
+}
+
+/// The files one source graph's collection read and the paths its import resolution looked for and found absent.
+///
+/// Together they are everything the collection depends on: the same file contents and the same absent paths collect
+/// the same graph, so a build's identity may cover them instead of every file under the source root.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SourceGraphReads {
+    /// Each source file read, in reading order.
+    pub read: Vec<PathBuf>,
+    /// Each absent path an import looked for, in lookup order; repeated lookups are kept once.
+    pub absent: Vec<PathBuf>,
+}
+
+/// Collect a command entry's source graph only for what it reads and probes, keeping them when collection refuses: a
+/// refusal is as much a function of those inputs as a graph is, so creating a missing module must reach it.
+pub fn collect_source_graph_reads(
+    path: PathBuf,
+    session: &CompilationSession,
+) -> (SourceGraphReads, Result<(), CliDiagnosticFailure>) {
+    let path_segments = entry_module_segments(&session.source_root, &path);
+    let module_name = path_segments.join("_");
+    let mut reads = SourceGraphReads::default();
+    let collected = collect_modules_detailed_from_seeds(
+        path.clone(),
+        session,
+        vec![(path.to_string_lossy().to_string(), module_name, path_segments)],
+        &HashMap::new(),
+        &mut reads,
+    );
+    (reads, collected.map(|_| ()))
 }
 
 /// Collect every authored source module for library publication, including modules not imported by `src/lib.incn`.
@@ -96,7 +128,13 @@ pub fn collect_library_modules_detailed_with_session(
             (source_file.to_string_lossy().to_string(), module_name, path_segments)
         })
         .collect();
-    let mut modules = collect_modules_detailed_from_seeds(path.clone(), session, seeds, &HashMap::new())?;
+    let mut modules = collect_modules_detailed_from_seeds(
+        path.clone(),
+        session,
+        seeds,
+        &HashMap::new(),
+        &mut SourceGraphReads::default(),
+    )?;
     if let Some(entry_index) = modules.iter().position(|module| {
         module
             .file_path
@@ -203,6 +241,7 @@ fn collect_modules_detailed_from_seeds(
     session: &CompilationSession,
     mut to_process: Vec<(String, String, Vec<String>)>,
     open_sources: &HashMap<PathBuf, String>,
+    reads: &mut SourceGraphReads,
 ) -> Result<Vec<ParsedModule>, CliDiagnosticFailure> {
     let base_dir = path.parent().unwrap_or(Path::new("."));
     let mut modules = Vec::new();
@@ -216,6 +255,7 @@ fn collect_modules_detailed_from_seeds(
         processed.insert(file_key.clone());
         dependency_edges.entry(file_key.clone()).or_default();
 
+        reads.read.push(PathBuf::from(&file_path));
         let source = match open_sources.get(Path::new(&file_path)) {
             Some(source) => source.clone(),
             None => read_source_for_diagnostics(&file_path)?,
@@ -248,6 +288,11 @@ fn collect_modules_detailed_from_seeds(
         let mut missing_modules = Vec::new();
         for resolved in resolve_program_source_imports(&ast, current_base, Some(&session.source_root)) {
             let span = resolved.span;
+            for absent in resolved.probed {
+                if !reads.absent.contains(&absent) {
+                    reads.absent.push(absent);
+                }
+            }
             let module_ref = match resolved.resolution {
                 SourceModuleImportResolution::Stdlib { module_path } => {
                     let Some(module_ref) = own_standard_module(session, &module_path) else {

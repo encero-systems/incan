@@ -19,7 +19,7 @@ from unit_freshness import fingerprint
 pub def test_lowering_record_worked_example() -> Result[None, str]:
     """
     Body edits and moves reuse callers; comment and documentation edits check nothing; a callee signature edit
-    invalidates their plans and matches cold output.
+    invalidates their plans and matches cold output; a file nothing imports leaves the unit as it was.
     """
     scratch = scratch_directory()?
     root = scratch.path()
@@ -81,7 +81,31 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     linked = root.joinpath("signature")
     linked.symlink_to(signature).map_err((error) => error.message())?
     verify_signature_edit(binary, linked)?
+    verify_unit_reads_only_its_graph(binary, root.joinpath("graph"))?
     return verify_rust_closure_debug_reproducibility(binary, root.joinpath("rust-closure"))
+
+
+def verify_unit_reads_only_its_graph(binary: str, root: Path) -> Result[None, str]:
+    """
+    A unit is keyed by what its collection read and probed: a module created where an import looked rebuilds it, and a
+    file nothing imports leaves it as it was, with no unit evaluation and no bake.
+    """
+    root.mkdir(true, true).map_err((error) => error.message())?
+    source = root.joinpath("main.incn")
+    store = root.joinpath("store")
+    write(source, "from helpers import shout\n\n\ndef main() -> None:\n    println(shout(\"graph\"))\n")?
+    _ = refused_run(binary, source, store)?
+    write(root.joinpath("helpers.incn"), "pub def shout(text: str) -> str:\n    return text + \"!\"\n")?
+    created = lowering_example_run(binary, source, store, "graph!")?
+    created_diagnostic = created.to_json().map_err((error) => error.message())?
+    assert proof_count(created, "unit_evaluations")? == 1, created_diagnostic
+    assert proof_count(created, "native_bakes")? == 1, created_diagnostic
+    write(root.joinpath("other.incn"), "pub def unrelated() -> int:\n    return 1\n")?
+    sibling = lowering_example_run(binary, source, store, "graph!")?
+    sibling_diagnostic = sibling.to_json().map_err((error) => error.message())?
+    assert proof_count(sibling, "unit_evaluations")? == 0, sibling_diagnostic
+    assert proof_count(sibling, "native_bakes")? == 0, sibling_diagnostic
+    return stop_example_engine(binary, store)
 
 
 pub def test_local_rust_source_edit_rebuilds_affected_unit() -> Result[None, str]:
