@@ -620,9 +620,12 @@ pub(super) fn complete_dependency_context_in_place(
         .loaf_callables = loaf_callables;
     // A Rust layout's storage stays rustc's: find the Rust items bodies hold only once the layouts are taken, so a
     // field no body reads does not pull its type's private items into the unit. A read field's value is a checked
-    // body local or external signature type, which still counts.
+    // body local or external signature type, which still counts. A constructed layout writes every field, so its field
+    // types count too, even when only a dependency names them.
     let layouts = take_rust_layouts(&mut program.modules)?;
-    let opaque = incan_semantics_core::body_ir::held_rust_items(&program.modules);
+    let mut opaque = incan_semantics_core::body_ir::held_rust_items(&program.modules);
+    let constructed = incan_semantics_core::body_ir::constructed_rust_field_items(&program.modules, &layouts, &opaque);
+    opaque.extend(constructed);
     let native_enums = take_rust_enums(&mut program.modules)?;
     let owners: std::collections::HashSet<_> = layouts
         .iter()
