@@ -43,7 +43,7 @@ from jec import begin, record
 from installation_check import verify_installed_runtime
 from surfaces import expose_entry_points
 from compiler_record_admission import CompilerRecordPin, convert, installed_records, shipped_pin
-from release_trust import CARRIED_TRUST, admit_release, adopt, ship
+from release_trust import CARRIED_TRUST, admit_release, anchor, record as record_signer, ship, stamped
 
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
@@ -103,16 +103,17 @@ pub def toolchain_command(request: tuple[str, str]) -> Result[i32, str]:
 pub def verify_asset(asset: Path) -> Result[None, str]:
     """
     Verify a release asset's signature bundle, `ASSET.sigstore.json` beside it, against the signer and trust root
-    this home carries (DD-0016). This is the one verifier: every install channel calls it, and none falls back to a
-    checksum, so a home that carries no signer refuses instead of reporting an unverified asset as fine.
+    this `incan` was built with (DD-0016). This is the one verifier: every install channel calls it, and none falls
+    back to a checksum, so a local build, which carries no signer, refuses instead of reporting an unverified asset
+    as fine.
     """
-    match admit_release(asset, home()?)?:
+    match admit_release(asset, anchor(stamped()?, home()?)?)?:
         Some(verified) =>
             println(f"verified release signature: {verified.identity}, log entry {verified.log_index}")
             return Ok(None)
         None =>
             return Err(
-                f"cannot verify {asset.0}: this home carries no release signer, which a signed release installs",
+                f"cannot verify {asset.0}: this incan is a local build and carries no release signer",
             )
 
 
@@ -792,20 +793,21 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
     """
     Verify a staged archive before replacing the installed toolchain; a refused archive preserves the old one.
 
-    0. A home that carries a release signer verifies the archive's signature before anything is unpacked (DD-0016).
+    0. A release build of `incan` verifies the archive's signature before anything is unpacked, in a fresh home
+       as in any other; a local build carries no signer and says that it installs unverified (DD-0016).
     1. Unpack the archive into a staging directory beside the installation.
     2. Verify the staged toolchain and publish it, then remove the staging directory and any decompressed archive
        whatever happened.
     3. Expose this program as both `oven` and `incan` beside it (RFC 118).
-    4. The home carries the release trust the installed archive ships.
+    4. The home records the signer the archive ships, only when the archive verified.
     """
     target = toolchain_directory()?
     # 0. An unsigned or altered archive is refused here, by name, before it costs or changes anything.
     carrier = home()?
-    match admit_release(archive, carrier)?:
-        Some(verified) =>
-            println(f"verified release signature: {verified.identity}, log entry {verified.log_index}")
-        None => pass
+    verified = admit_release(archive, anchor(stamped()?, carrier)?)?
+    match verified:
+        Some(proof) => println(f"verified release signature: {proof.identity}, log entry {proof.log_index}")
+        None => println(f"installing {archive.0} unverified: this incan is a local build and carries no release signer")
     make_directory(target.parent())?
     # 1. The archive is unpacked beside the installation, never over it, so a refused archive costs nothing.
     stage = target.parent().joinpath(f".install-{TOOLCHAIN}")
@@ -821,9 +823,9 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
     # 3. One installed program answers to both command surfaces.
     directory = expose_entry_points()?
     println(f"entry points: oven and incan in {directory.0}")
-    # 4. Later installs into this home verify against what this release ships.
-    if adopt(target, carrier)?:
-        println(f"this home now installs only releases signed as {carrier.joinpath(CARRIED_TRUST).0} states")
+    # 4. No archive is trusted for the signer it claims: only a verified one is recorded.
+    if record_signer(verified, target, carrier)?:
+        println(f"recorded the release signer in {carrier.joinpath(CARRIED_TRUST).0}")
     return Ok(None)
 
 
