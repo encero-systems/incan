@@ -274,6 +274,10 @@ binding NAME in FILE: header HEADER, link CAPABILITY("LIBRARY")
 
 `FILE` is relative to the project. `--format json` prints `incan.bindings/1`: each binding's `file`, `name`, `header`, `link_capability`, `system_library`, `binding_identity`, `symbols`, `enums`, `structs` and `resources`, as the codegraph records them.
 
+## `incan tools metadata api`
+
+`incan tools metadata api [PATH] [--format json]` prints the [checked API metadata](checked_api_metadata.md) of the source or project at `PATH` (default `.`): the `contract_metadata.api` its library manifest would carry, checked as a dependent sees it, without native compilation.
+
 ## `oven inspect dependencies`
 
 Prints the packages the unit at `PATH` reaches, as a build of the same unit links them. The unit is checked and planned as for `oven build`; nothing is generated or published. Execution-only options are refused. The text report is:

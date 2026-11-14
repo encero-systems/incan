@@ -1,0 +1,122 @@
+"""
+Checked compiler metadata for tooling and documentation: a source package's public API.
+
+Each view reads the library manifest the compiler publishes for the package's checked source interface, the same
+`contract_metadata` a compiled Loaf's `.incnlib` carries. Nothing is compiled natively and no module is executed.
+"""
+
+from rust::incan_loaf_names import artifact_stem
+from rust::std::fs import remove_dir_all
+from std.fs import Path
+from std.json import JsonValue
+from features import FeatureRequest
+from files import make_directory, read_json
+from cli_help import render
+from intake import ManifestReader, entry_source
+from unit import describe
+from unit_compiler import crate_name, run_compiler, write_unit
+from unit_rust import prepare_native, toolchain_for
+
+pub const API_USAGE: str = "incan tools metadata api [PATH] [--format json]"
+
+
+@derive(Eq)
+pub enum MetadataView(str):
+    """Which checked metadata a request prints."""
+
+    Api = "api"
+
+
+pub model MetadataRequest:
+    """One metadata command: the view, the source or project it reads and the format."""
+
+    pub view: MetadataView
+    pub path: str = "."
+    pub format: str = "json"
+
+
+pub def parse_metadata(arguments: list[str]) -> Result[MetadataRequest, str]:
+    """`tools metadata api [PATH] [--format json]`."""
+    if len(arguments) == 0:
+        return Err("expected `api`")
+    if arguments[0] != "api":
+        if arguments[0].startswith("-"):
+            return Err(f"unknown option `{arguments[0]}`")
+        return Err(f"unknown command `{arguments[0]}`")
+    mut format = "json"
+    mut operands: list[str] = []
+    mut index = 1
+    while index < len(arguments):
+        if arguments[index] == "--format" and index + 1 < len(arguments):
+            format = arguments[index + 1]
+            index += 2
+            continue
+        if arguments[index].startswith("-"):
+            return Err(f"unknown option `{arguments[index]}`")
+        operands.append(arguments[index])
+        index += 1
+    if len(operands) > 1:
+        return Err(f"unexpected argument `{operands[1]}`")
+    if format != "json":
+        return Err(f"`--format` is json, got `{format}`")
+    mut path = "."
+    if len(operands) == 1:
+        path = operands[0]
+    return Ok(MetadataRequest(view=MetadataView.Api, path=path, format=format))
+
+
+pub def checked_metadata(request: MetadataRequest) -> Result[i32, str]:
+    """Print the requested view from the package's checked library manifest."""
+    metadata = contract_metadata(checked_manifest(Path(request.path))?)?
+    match metadata.get("api"):
+        Some(api) =>
+            println(api.to_pretty_json().map_err((error) => error.message())?)
+            return Ok(0)
+        None => return Err(f"{request.path}: the compiler published no checked API metadata")
+
+
+def checked_manifest(path: Path) -> Result[Path, str]:
+    """
+    The library manifest of the package at or around `path`, as the compiler checks its source interface.
+
+    1. Select the source: a file as named, or a directory's library entry, then its program entry.
+    2. Describe it as a library unit and bind its exact dependencies.
+    3. Publish the checked source interface into a private directory.
+    """
+    # 1. A directory names its Loaf's conventional entry.
+    mut source = path
+    if path.is_dir():
+        match entry_source(path, ManifestReader())?:
+            Some(entry) => source = entry
+            None => return Err(f"{path.0}: the Loaf has no Incan entry to inspect; name a source file")
+    # 2. Every declaration a library would export is checked exactly as a dependent sees it.
+    mut unit = describe(source, "debug", FeatureRequest(), ManifestReader())?
+    unit.kind = "library"
+    toolchain = toolchain_for(unit)?
+    ready = prepare_native(unit, toolchain)?
+    description = write_unit(ready, crate_name(ready))?
+    # 3. A source interface never replaces an earlier publication, so each request starts from an empty directory.
+    directory = Path(ready.project_root).joinpath("target/incan/metadata").joinpath(artifact_stem(ready.package))
+    if directory.exists():
+        remove_dir_all(directory.0).map_err((error) => f"cannot clear {directory.0}: {error}")?
+    make_directory(directory)?
+    code = run_compiler(toolchain, ["--source-interface", description.0, toolchain.sysroot, directory.0])?
+    if code != 0:
+        return Err(f"{source.0}: the compiler could not check the source interface (exit {code})")
+    return Ok(directory.joinpath(f"{artifact_stem(ready.package)}.incnlib"))
+
+
+def contract_metadata(manifest: Path) -> Result[JsonValue, str]:
+    """The checked `contract_metadata` a library manifest carries."""
+    match read_json(manifest)?.get("contract_metadata"):
+        Some(metadata) => return Ok(metadata)
+        None => return Err(f"{manifest.0}: the library manifest carries no checked metadata")
+
+
+pub def metadata_help(view: MetadataView) -> str:
+    """`incan tools metadata api --help`."""
+    return render(
+        API_USAGE,
+        ["  --format json  Checked public API metadata, the `contract_metadata.api` a library publishes."],
+        "incan tools metadata api src/lib.incn",
+    )

@@ -143,6 +143,21 @@ pub def library_source(root: Path, reader: ManifestReader = ManifestReader()) ->
     return Ok(Path(source_root_of(project)).joinpath("lib.incn"))
 
 
+pub def entry_source(path: Path, reader: ManifestReader) -> Result[Option[Path], str]:
+    """Select an explicit source or a directory's conventional Incan entry; other directories name Rust projects."""
+    if path.is_file():
+        return Ok(Some(path))
+    if not path.joinpath("loaf.toml").is_file():
+        return Ok(None)
+    project = read_project(path, reader).map_err((error) => error.message())?
+    root = Path(source_root_of(project))
+    for name in ["lib.incn", "main.incn"]:
+        source = root.joinpath(name)
+        if source.is_file():
+            return Ok(Some(source))
+    return Ok(None)
+
+
 pub def load_project(root: Path, reader: ManifestReader = ManifestReader()) -> Result[LocalProject, IntakeError]:
     """Validate script paths against one snapshot; conventional libraries and test-only packages need no script."""
     project = read_project(root, reader)?
