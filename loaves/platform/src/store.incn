@@ -346,7 +346,15 @@ pub def manifest_path(root: Path, generation: int, digest: str) -> Path:
 
 
 pub def read_manifest(root: Path, generation: int, digest: str, view: str) -> Result[Snapshot, StoreError]:
-    """One committed generation, after checking its manifest's digest, seen through `view`."""
+    """One committed generation, after checking its manifest's digest, seen through `view`; traced as one read."""
+    clock = begin_work()
+    selected = checked_manifest(root, generation, digest, view)
+    record_work(Operation.StoreManifestRead, manifest_path(root, generation, digest).value, clock)
+    return selected
+
+
+def checked_manifest(root: Path, generation: int, digest: str, view: str) -> Result[Snapshot, StoreError]:
+    """Read, check and decode one committed generation's manifest."""
     path = manifest_path(root, generation, digest)
     data = path.store_read_bytes().map_err((error) => failure("integrity", path.value, error.message()))?
     if hexlify(sha256.digest(data)) != digest:
@@ -744,15 +752,19 @@ pub def durable_commits() -> int:
 
 def stage_view(root: Path, latest: Snapshot, writes: list[Write], staged: Path) -> Result[tuple[str, str], StoreError]:
     """Install a view's immutable objects without selecting them; the caller holds publication's lock."""
+    staging = begin_work()
     encoded = encoded_frames(writes)?
     delta = staged.joinpath("delta.seg")
     place_synced(delta, encoded.data)?
     segment = install_segment(root, encoded.data, delta)?
+    record_work(Operation.StoreDeltaStage, delta.value, staging)
     publication_boundary("segment-installed")
+    paging = begin_work()
     pages = staged.joinpath("pages")
     index = insert(root, latest.index, pages, leaf_entries(encoded, segment)).map_err(index_failure)?
     publication_boundary("pages-staged")
     install_pages(root, pages, [index])?
+    record_work(Operation.StorePagesStage, pages.value, paging)
     publication_boundary("pages-installed")
     return Ok((index, segment))
 
@@ -897,6 +909,7 @@ def publish_switch(
     execution_view: str,
 ) -> Result[Publication, StoreError]:
     """Write and sync the next manifest, then replace `CURRENT`; the caller holds the publication lock."""
+    writing = begin_work()
     following = latest.generation + 1
     mut lines = [MANIFEST_SCHEMA, f"generation {following}", f"parent {latest.generation} {latest.digest}"]
     lines.append(f"transaction {transaction}")
@@ -912,6 +925,7 @@ def publish_switch(
     manifest = manifest_path(root, following, digest)
     ensure_directory(manifest.parent())?
     place_synced(manifest, document)?
+    record_work(Operation.StoreManifestWrite, manifest.value, writing)
     sync_directory(manifest.parent())?
     publication_boundary("manifest-directory-synced")
     marker = root.joinpath("FORMAT")
