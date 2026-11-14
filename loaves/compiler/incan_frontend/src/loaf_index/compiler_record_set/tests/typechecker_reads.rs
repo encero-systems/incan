@@ -97,3 +97,89 @@ fn a_program_checks_an_imported_function_from_its_declaration_records() -> Resul
     );
     Ok(())
 }
+
+/// The package a program reaches as `std.encoding`.
+const CODECS: &str = "incan_stdlib_codecs";
+
+/// A standard Loaf whose namespace `encoding` holds the modules `base64`, declaring `b64encode`, and `hex`, each beside
+/// many other functions, so the parent namespace `encoding` publishes both modules' members.
+fn codecs() -> Result<LibraryManifest, Box<dyn std::error::Error>> {
+    let mut api = CheckedApiMetadataPackage {
+        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        package: None,
+        modules: Vec::new(),
+        public_namespaces: Vec::new(),
+    };
+    let mut exports = Vec::new();
+    for (module, first) in [("base64", "b64encode"), ("hex", "hexlify")] {
+        let mut source = format!("pub def {first}(data: bytes) -> str:\n    return \"\"\n");
+        for index in 0..OTHER_FUNCTIONS {
+            source.push_str(&format!(
+                "\npub def {module}_{index}(data: bytes) -> str:\n    return \"\"\n"
+            ));
+        }
+        let tokens = crate::lexer::lex(&source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let path = vec!["encoding".to_owned(), module.to_owned()];
+        let mut checker = crate::typechecker::TypeChecker::new();
+        checker.set_current_package_identity(Some(CODECS.into()));
+        checker.set_current_module_path(Some(path.clone()));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        exports.push((
+            path.clone(),
+            crate::library_exports::collect_checked_public_exports(&program, &checker),
+        ));
+        api.modules.push(collect_checked_api_metadata(&program, &checker, path));
+    }
+    materialize_checked_api_public_namespaces(&mut api)?;
+    let mut manifest = LibraryManifest::new(CODECS, "0.1.0");
+    manifest
+        .contract_metadata
+        .identity_graph
+        .extend_checked_api_exports(CODECS, &api, &exports)?;
+    manifest.contract_metadata.api = Some(api);
+    Ok(manifest)
+}
+
+/// Check `from std.encoding import base64` and a call of `base64.b64encode` the way the driver checks a program's
+/// module, sealing its interface after the check, and return the keys of the records it read, in reading order.
+fn standard_import_reads() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let _selection = thread_selection::select(installed_library(root.path(), &codecs()?)?);
+    let index = LoafIndex::deferred([(CODECS.to_owned(), CODECS.to_owned(), root.path().join("debug"), true)])?;
+    let source =
+        "from std.encoding import base64\n\ndef main() -> str:\n    return base64.b64encode(b\"two loaves\")\n";
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let exports: Arc<[crate::module::ExportedSymbol]> = Arc::from(crate::module::exported_symbols(&program));
+    let mut checker = crate::typechecker::TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["main".to_owned()]));
+    checker.set_loaves(Arc::new(index));
+    checker
+        .check_with_imports_and_exports(&program, &[], Default::default())
+        .map_err(|errors| format!("{errors:?}"))?;
+    checker.seal_current_module_dependency_interface("main", &program, exports, true);
+    Ok(thread_selection::read_keys())
+}
+
+/// A program importing a standard module and calling one of its functions is checked, and its interface sealed, from
+/// that module's records: it reads `b64encode`'s signature by name and never the Loaf's contract metadata.
+#[test]
+fn a_program_checks_a_standard_module_import_from_its_records() -> Result<(), Box<dyn std::error::Error>> {
+    let read = standard_import_reads()?;
+    let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
+    let named = format!("/{}", content_name(b"encoding::base64::b64encode"));
+    assert!(
+        read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
+        "checking reads `b64encode`'s signature by name; it read {read:?}"
+    );
+    let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
+    let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
+    assert!(
+        whole.is_empty(),
+        "checking read the Loaf's contract metadata: {whole:?}"
+    );
+    Ok(())
+}
