@@ -115,7 +115,7 @@ impl CheckedNamespaceInterface {
     pub fn installable(&self) -> Result<Arc<ModuleDependencyInterface>, String> {
         self.validate()?;
         let mut converter = TypeChecker::new();
-        let mut remapping = checked_namespace_foreign_nominal_remapping(&self.api);
+        let (mut remapping, foreign_nominal_scope) = checked_namespace_foreign_nominal_remapping(&self.api);
         let identities = self
             .identities
             .iter()
@@ -190,6 +190,7 @@ impl CheckedNamespaceInterface {
             .flat_map(namespace_exports)
             .collect::<Vec<_>>();
         converter.retain_nominal_scope_carriers(&nominal_scope);
+        converter.retain_nominal_scope_carriers(&foreign_nominal_scope);
         let (transitive_public_types, transitive_public_traits) = provider_transitive_semantics(&symbols, &identities);
         let symbols = Arc::new(symbols);
         let identities = Arc::new(identities);
@@ -263,14 +264,18 @@ impl CheckedNamespaceInterface {
     }
 }
 
-/// Convert artifact-qualified API leaves to the canonical carrier spellings used by editable dependency interfaces.
+/// Convert artifact-qualified API leaves to canonical carriers and retain the exact identities those carriers name.
 fn checked_namespace_foreign_nominal_remapping(
     api: &crate::api_metadata::CheckedApiMetadata,
-) -> HashMap<String, String> {
+) -> (
+    HashMap<String, String>,
+    std::collections::BTreeMap<String, CanonicalSymbolId>,
+) {
     use crate::library_manifest::{TypeRef, VisitTypeRefs};
 
     let mut projection = api.clone();
     let mut remapping = HashMap::new();
+    let mut identities = std::collections::BTreeMap::new();
     projection.visit_type_refs(&mut |ty| {
         let origin = match ty {
             TypeRef::Named { origin, .. } | TypeRef::Applied { origin, .. } => origin.as_ref(),
@@ -283,9 +288,11 @@ fn checked_namespace_foreign_nominal_remapping(
         let Some(carrier) = incan_semantics_core::body_ir::nominal_carrier_key(&identity) else {
             return;
         };
-        remapping.insert(origin.binding_key(), carrier);
+        let binding = origin.binding_key();
+        remapping.insert(binding.clone(), carrier);
+        identities.insert(binding, identity);
     });
-    remapping
+    (remapping, identities)
 }
 
 /// Return the declaration spelling shared by the frozen API row, symbol table and stable identity map.
@@ -351,7 +358,7 @@ mod tests {
     /// A retained editable interface must install the same nominal ownership tables used by ordinary dependencies.
     #[test]
     fn installable_retains_nominal_scopes_carriers_and_layouts() -> Result<(), String> {
-        let source = "pub model Order:\n    pub quantity: int\n    pub unit_price: float\n\npub model Failure:\n    pub message: str\n\npub def total(order: Order) -> float:\n    return float(order.quantity) * order.unit_price\n\npub def identity(order: Order) -> Order:\n    return order\n\npub def load() -> Result[Order, Failure]:\n    return Ok(Order(quantity=1, unit_price=1.0))\n";
+        let source = "pub model Order:\n    pub quantity: int\n    pub unit_price: float\n\npub model Failure:\n    pub message: str\n\npub def total(order: Order) -> float:\n    return float(order.quantity) * order.unit_price\n\npub def identity(order: Order) -> Order:\n    return order\n\npub def load() -> Result[Order, Failure]:\n    return Ok(Order(quantity=1, unit_price=1.0))\n\npub def foreign_load() -> int:\n    return 1\n";
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let module_path = vec!["domain".to_string()];
@@ -360,8 +367,49 @@ mod tests {
         checker
             .check_program(&program)
             .map_err(|errors| format!("{errors:?}"))?;
-        let retained = CheckedNamespaceInterface::from_checked("domain", &module_path, &program, &checker)?
+        let mut retained = CheckedNamespaceInterface::from_checked("domain", &module_path, &program, &checker)?
             .ok_or("model namespace was not retained")?;
+        let mut foreign_identity = retained
+            .identities
+            .get("Order")
+            .ok_or("missing Order identity")?
+            .clone();
+        foreign_identity.origin = incan_semantics_core::SymbolOrigin::Package {
+            library: "foreign".to_string(),
+            module_path: vec!["types".to_string()],
+        };
+        foreign_identity.declaration_name = "ForeignOrder".to_string();
+        let foreign_origin = crate::library_manifest::NominalTypeOriginExport {
+            provider: crate::loaf_index::LoafIdentity {
+                name: "foreign".to_string(),
+                version: "1.0.0".to_string(),
+                digest: "foreign-digest".to_string(),
+                feature_projection: std::collections::BTreeSet::new(),
+            },
+            canonical: crate::library_manifest::CanonicalIdentityExport::from_canonical("foreign", &foreign_identity)
+                .ok_or("foreign identity cannot be exported")?,
+        };
+        for declaration in &mut retained.api.declarations {
+            let crate::api_metadata::ApiDeclaration::Function(function) = declaration else {
+                continue;
+            };
+            if function.name == "foreign_load" {
+                function.return_type = crate::library_manifest::TypeRef::Applied {
+                    name: "Result".to_string(),
+                    args: vec![
+                        crate::library_manifest::TypeRef::Named {
+                            name: "ForeignOrder".to_string(),
+                            origin: Some(foreign_origin.clone()),
+                        },
+                        crate::library_manifest::TypeRef::Named {
+                            name: "str".to_string(),
+                            origin: None,
+                        },
+                    ],
+                    origin: None,
+                };
+            }
+        }
         let installed = retained.installable()?;
         let order = retained.identities.get("Order").ok_or("missing Order identity")?;
         let scope = installed
@@ -372,6 +420,12 @@ mod tests {
         let carrier =
             incan_semantics_core::body_ir::nominal_carrier_key(order).ok_or("missing Order nominal carrier")?;
         assert_eq!(installed.retained_nominal_carriers.get(order), Some(&carrier));
+        let foreign_carrier = incan_semantics_core::body_ir::nominal_carrier_key(&foreign_identity)
+            .ok_or("missing foreign nominal carrier")?;
+        assert_eq!(
+            installed.retained_nominal_carriers.get(&foreign_identity),
+            Some(&foreign_carrier)
+        );
         assert!(installed.transitive_public_types.contains_key("Order"));
         assert!(installed.transitive_public_types.contains_key(&carrier));
         let SymbolKind::Type(TypeInfo::Model(model)) = installed
