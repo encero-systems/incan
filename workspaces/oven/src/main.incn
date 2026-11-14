@@ -233,12 +233,14 @@ def dispatch(command: str, rest: list[str]) -> None:
             Err(reason) => argument_error("trust", reason)
             Ok(report) => println(report)
         return
-    match select_engine(get_or("INCAN_ENGINE", "legacy")):
-        Err(reason) => fail(f"{invoked()} {command}: engine refusal {refusal_code(reason.kind)}: {reason.detail}", 2)
-        Ok(Engine.Records) =>
-            records_command(command, rest)
-            return
-        Ok(Engine.Legacy) => pass
+    if records_route(command, rest):
+        match select_engine(get_or("INCAN_ENGINE", "legacy")):
+            Err(reason) =>
+                fail(f"{invoked()} {command}: engine refusal {refusal_code(reason.kind)}: {reason.detail}", 2)
+            Ok(Engine.Records) =>
+                records_command(command, rest)
+                return
+            Ok(Engine.Legacy) => pass
     if command == "run":
         run(rest)
         return
@@ -496,6 +498,12 @@ def records_command(command: str, arguments: list[str]) -> None:
             Ok(text) => println(text)
             Err(reason) => fail(f"oven inspect: {reason}", 1)
         return
+    if command == "test":
+        test(arguments)
+        return
+    if command == "describe-unit":
+        describe_unit(arguments)
+        return
     if command not in ["run", "build", "check"]:
         fail(f"{invoked()} {command}: records engine does not implement `{command}`", 1)
     mut own: list[str] = []
@@ -512,7 +520,7 @@ def records_command(command: str, arguments: list[str]) -> None:
     match parse_options(own, "."):
         Err(reason) => syntax_error(command, reason)
         Ok(parsed) =>
-            options = located(command, parsed)
+            options = validated(command, located(command, parsed))
             if (
                 options.feature_options
                 or len(options.substitutes) > 0
@@ -538,6 +546,13 @@ def records_command(command: str, arguments: list[str]) -> None:
                 execute_records(command, source, options.profile, passed, options.argv0, format, options.engine_report),
                 format,
             )
+
+
+def records_route(command: str, arguments: list[str]) -> bool:
+    """Whether engine selection applies to this command; language tooling and syntax handling remain engine-neutral."""
+    if command in ["run", "check", "test", "build", "describe-unit"]:
+        return true
+    return command == "inspect" and len(arguments) > 0 and arguments[0] == "run"
 
 
 def records_check_arguments(arguments: list[str]) -> Result[tuple[list[str], str], str]:
