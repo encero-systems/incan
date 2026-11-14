@@ -22,20 +22,12 @@ pub def test_shipped_compiler_records_are_admitted_without_running_a_compiler() 
     export.joinpath("objects").mkdir(true, true).map_err((error) => error.message())?
     value = b"shipped record"
     revision = hexlify(sha256.digest(value))
-    export.joinpath(f"objects/{revision}").write_bytes(value).map_err((error) => error.message())?
-    record = JsonValue.object(
-        {
-            "key": JsonValue.string(f"loaf/debug/probe/metadata/00000000/{revision}"),
-            "revision": JsonValue.string(revision),
-            "object": JsonValue.string(f"objects/{revision}"),
-        },
-    )
-    index = JsonValue.object(
-        {
-            "schema": JsonValue.string("incan.compiler-record-export/2"),
-            "records": JsonValue.array([record]),
-        },
-    )
+    object = f"objects/{revision}"
+    export.joinpath(object).write_bytes(value).map_err((error) => error.message())?
+    key = JsonValue.string(f"loaf/debug/probe/metadata/00000000/{revision}")
+    record = JsonValue.object({"key": key, "revision": JsonValue.string(revision), "object": JsonValue.string(object)})
+    schema = JsonValue.string("incan.compiler-record-export/2")
+    index = JsonValue.object({"schema": schema, "records": JsonValue.array([record])})
     text = index.to_json().map_err((error) => error.message())?
     export.joinpath("index.json").write_bytes(text.encode("utf-8")).map_err((error) => error.message())?
     # 2. The driver exists, so its digest can name the producer, but running it would fail.
