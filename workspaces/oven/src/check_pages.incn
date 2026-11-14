@@ -1,9 +1,11 @@
 """
 A check's selected checked-body pages, kept between keystrokes.
 
-Each program an editor view checks keeps one page directory. Its pages are selected, encoded and written once, when the
-view's checked-body records first appear or change; a later keystroke only parks the pages of the owners its edit
-reaches and returns the pages of those it no longer reaches. The compiler reads the directory exactly as a build's.
+Each program an editor view checks keeps one page directory. Its pages are selected, encoded and written when the view's
+checked-body records first appear; a later keystroke only parks the pages of the owners its edit reaches and returns the
+pages of those it no longer reaches. When the view's records change, as on a save, only the owners whose evaluations
+changed are selected and written again; another compiler context selects every owner again. The compiler reads the
+directory exactly as a build's.
 
 The directory's selection is recorded beside it, so every request finds it, whichever engine process serves it.
 """
@@ -15,10 +17,11 @@ from std.primitives.hash import sha256
 from rust::std::fs import remove_dir_all
 from pub::incan_platform.store import Snapshot
 from pub::internal_models.checker_records import CHECKER_PROFILE
-from compiler_body_values import encode_body_inventory, select_body_inventory_except
-from compiler_graph_records import family_outputs
+from compiler_body_values import encode_body_inventory, select_body_inventory_except, select_body_inventory_of
+from compiler_graph_records import family_outputs, owner_evaluations
+from files import discard_file
 from observation import trace
-from publication import place, publish
+from publication import place, publish, publish_binary
 from unit import UnitDescription
 from unit_compiler import write_selected_records
 
@@ -27,11 +30,23 @@ const PAGE_FAMILIES: FrozenList[str] = ["local", "final", "body-ir"]
 
 
 model KeptPages:
-    """One page directory's selection: what it was selected from, each owner's page key, and the owners parked now."""
+    """
+    One page directory's selection: what it was selected from, under which compiler context, each owner's page key and
+    evaluation digest, and the owners parked now.
+    """
 
     pub source: str
+    pub context: str = ""
     pub pages: Dict[str, str] = {}
+    pub owners: Dict[str, str] = {}
     pub parked: list[str] = []
+
+
+model RefreshedPages:
+    """A refreshed selection and how many pages the refresh wrote."""
+
+    state: KeptPages
+    written: int
 
 
 pub model CheckPages:
@@ -59,18 +74,25 @@ pub def keep_check_pages(
     Offer the compiler every selected owner's page except those of the owners `invalid` names.
 
     1. Name what the pages are selected from: the compiler context and the view's checked-body outputs.
-    2. Select, encode and write every owner's page only when that changed, or when the directory is gone.
+    2. When that changed, write again only the pages of the owners whose evaluations changed; under another compiler
+       context, or without a directory, select, encode and write every owner's page.
     3. Park the page of each owner this request invalidates, and return each page it no longer does.
     """
     # 1. The output index names each current evaluation without reading or validating it.
     source = selection_source(graph, unit)?
     mut state = recorded_selection(directory)
     mut written = 0
-    # 2. A new evaluation in the view, another compiler context or a removed directory selects every owner again.
+    # 2. A new evaluation in the view selects its owners again; another compiler context or a removed directory, all.
     if state.source != source or not directory.is_dir():
-        trace(f"check pages {directory.0}: selected again; recorded source '{state.source}', current '{source}'")
-        state = select_pages(graph, origin, unit, directory, source)?
-        written = len(state.pages)
+        context = checked_context(unit)?
+        if state.context == context and directory.is_dir() and parked_directory(directory).is_dir():
+            refreshed = refresh_pages(graph, origin, directory, state, source)?
+            state = refreshed.state
+            written = refreshed.written
+        else:
+            trace(f"check pages {directory.0}: selected again; recorded source '{state.source}', current '{source}'")
+            state = select_pages(graph, origin, unit, directory, source)?
+            written = len(state.pages)
     # 3. Each move is one rename: no page is selected, encoded or written again.
     parked = parked_directory(directory)
     mut resting: list[str] = []
@@ -91,6 +113,44 @@ pub def keep_check_pages(
     return Ok(CheckPages(directory=directory, offered=offered, written=written))
 
 
+def refresh_pages(
+    graph: Snapshot,
+    origin: str,
+    directory: Path,
+    state: KeptPages,
+    source: str,
+) -> Result[RefreshedPages, str]:
+    """
+    Keep the page of every owner whose evaluations are unchanged, remove the pages of owners whose evaluations changed
+    or left the view, and select, encode and write pages for the changed owners alone.
+    """
+    current = owner_evaluations(graph, [family for family in PAGE_FAMILIES], CHECKER_PROFILE, origin)?
+    mut changed: list[str] = []
+    for identity in sorted([owner for owner in current.keys()]):
+        if state.owners.get(identity, "") != current[identity]:
+            changed.append(identity)
+    parked = parked_directory(directory)
+    mut pages: Dict[str, str] = {}
+    mut resting: list[str] = []
+    for identity in state.pages.keys():
+        key = state.pages[identity]
+        if identity in current and identity not in changed:
+            pages[identity] = key
+            if identity in state.parked:
+                resting.append(identity)
+        else:
+            discard_file(directory.joinpath(key))
+            discard_file(parked.joinpath(key))
+    records = select_body_inventory_of(graph, CHECKER_PROFILE, origin, changed)?
+    written = encode_body_inventory(records)?
+    for index in range(len(records)):
+        publish_binary(directory.joinpath(written[index].key), written[index].value)?
+        pages[records[index].identity] = written[index].key
+    trace(f"check pages {directory.0}: {len(changed)} owners changed, {len(written)} pages written")
+    kept = KeptPages(source=source, context=state.context, pages=pages, owners=current, parked=resting)
+    return Ok(RefreshedPages(state=kept, written=len(written)))
+
+
 def recorded_selection(directory: Path) -> KeptPages:
     """The selection recorded beside `directory`; an absent or unreadable record selects every page again."""
     match read_selection(directory):
@@ -106,16 +166,24 @@ def read_selection(directory: Path) -> Result[KeptPages, str]:
     text = file.read_text("utf-8", "strict").map_err((error) => error.message())?
     value = parse(text).map_err((error) => error.message())?
     source = value.require("source").and_then((field) => field.expect_str()).map_err((error) => error.message())?
-    keyed = value.require("pages").map_err((error) => error.message())?
-    listed: Dict[str, JsonValue] = keyed.expect_object().map_err((error) => error.message())?
-    mut pages: Dict[str, str] = {}
+    context = value.require("context").and_then((field) => field.expect_str()).map_err((error) => error.message())?
+    pages = text_fields(value, "pages")?
     mut parked: list[str] = []
-    for identity in sorted([owner for owner in listed.keys()]):
-        key = listed[identity].expect_str().map_err((error) => error.message())?
-        pages[identity] = key
-        if parked_directory(directory).joinpath(key).is_file():
+    for identity in sorted([owner for owner in pages.keys()]):
+        if parked_directory(directory).joinpath(pages[identity]).is_file():
             parked.append(identity)
-    return Ok(KeptPages(source=source, pages=pages, parked=parked))
+    owners = text_fields(value, "owners")?
+    return Ok(KeptPages(source=source, context=context, pages=pages, owners=owners, parked=parked))
+
+
+def text_fields(value: JsonValue, name: str) -> Result[Dict[str, str], str]:
+    """One recorded object of text fields by name."""
+    keyed = value.require(name).map_err((error) => error.message())?
+    listed: Dict[str, JsonValue] = keyed.expect_object().map_err((error) => error.message())?
+    mut fields: Dict[str, str] = {}
+    for field in listed.keys():
+        fields[field] = listed[field].expect_str().map_err((error) => error.message())?
+    return Ok(fields)
 
 
 def record_selection(directory: Path, state: KeptPages) -> Result[None, str]:
@@ -123,17 +191,25 @@ def record_selection(directory: Path, state: KeptPages) -> Result[None, str]:
     mut pages: Dict[str, JsonValue] = {}
     for identity in state.pages.keys():
         pages[identity] = JsonValue.string(state.pages[identity])
-    document = JsonValue.object({"source": JsonValue.string(state.source), "pages": JsonValue.object(pages)})
-    return publish(selection_file(directory), document.to_json().map_err((error) => error.message())?)
+    mut owners: Dict[str, JsonValue] = {}
+    for identity in state.owners.keys():
+        owners[identity] = JsonValue.string(state.owners[identity])
+    mut fields = {"source": JsonValue.string(state.source), "context": JsonValue.string(state.context)}
+    fields["pages"] = JsonValue.object(pages)
+    fields["owners"] = JsonValue.object(owners)
+    return publish(selection_file(directory), JsonValue.object(fields).to_json().map_err((error) => error.message())?)
+
+
+def checked_context(unit: UnitDescription) -> Result[str, str]:
+    """The complete compiler context the pages are selected under."""
+    match unit.checked_context:
+        Some(value) => return Ok(value)
+        None => return Err("checked-body pages require the complete compiler context")
 
 
 def selection_source(graph: Snapshot, unit: UnitDescription) -> Result[str, str]:
     """The compiler context and every current checked-body output key in the view, as one digest."""
-    context = match unit.checked_context:
-        Some(value) => value
-        None => return Err("checked-body pages require the complete compiler context")
-
-    mut parts = [context]
+    mut parts = [checked_context(unit)?]
     for family in PAGE_FAMILIES:
         parts.extend(family_outputs(graph, family, CHECKER_PROFILE)?)
     return Ok(hexlify(sha256.digest("\n".join(parts).encode("utf-8"))))
@@ -157,7 +233,15 @@ def select_pages(
     mut keys: Dict[str, str] = {}
     for index in range(len(records)):
         keys[records[index].identity] = pages[index].key
-    return Ok(KeptPages(source=source, pages=keys, parked=[]))
+    return Ok(
+        KeptPages(
+            source=source,
+            context=checked_context(unit)?,
+            pages=keys,
+            owners=owner_evaluations(graph, [family for family in PAGE_FAMILIES], CHECKER_PROFILE, origin)?,
+            parked=[],
+        ),
+    )
 
 
 def parked_directory(directory: Path) -> Path:
