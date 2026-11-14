@@ -8,7 +8,8 @@ it read, and is asked of the compiler again only when one of those files changed
 the only edits that can change what collection reads.
 
 A unit is asked for under each scope it is keyed in: its compiler and description, which preparation extends. One
-record per entry keeps the current graph of each scope, so that neither evicts the other.
+record per entry keeps the current graph of each scope, at a location the records engine's request capture derives from
+the request alone, so that capture checks the paths the graphs name instead of listing the source root.
 """
 
 from std.encoding.hex import hexlify
@@ -19,11 +20,12 @@ from compiler_worker import captured_resident
 from driver_command import driver_command
 from files import json_text, make_directory, parse_json, read_json, write
 from json_fields import required_items, required_text
+from loaf_local_graph import unique
 from observation import Ledger, trace
 from publication import publish
 from rust_target import decoded
 from toolchain import Toolchain
-from unit import UnitDescription
+from unit import UnitDescription, manifest_candidates
 from pub::incan_platform.trace import Operation
 from jec import begin, record
 
@@ -89,8 +91,8 @@ pub def source_graph(
 
 pub def graph_location(project_root: str, profile: str, kind: str, entry: str) -> Path:
     """
-    Where the graphs of one entry's unit are recorded: one record per project, profile, kind and resolved entry, for
-    every scope it is asked for under.
+    Where the graphs of one entry's unit are recorded: one record per project, profile, kind and resolved entry, which
+    a request capture derives without the unit's description.
     """
     mut resolved = entry
     match Path(entry).resolve():
@@ -98,6 +100,31 @@ pub def graph_location(project_root: str, profile: str, kind: str, entry: str) -
         Err(_) => pass
     name = hexlify(sha256.digest(f"{profile}\n{kind}\n{resolved}".encode("utf-8")))[:24]
     return Path(project_root).joinpath("target/incan/units/source-graphs").joinpath(f"{name}.json")
+
+
+pub def recorded_reach(source: Path, profile: str) -> Option[SourceGraph]:
+    """
+    Every file the recorded graphs of the program at `source` read and every absent path they probed, under each
+    scope; `None` without a readable record, which leaves a request capture listing the source root.
+
+    The program's project is the directory of the nearest `loaf.toml`, else the file's own, as its description
+    finds it. A capture checks these paths itself, so their recorded digests are not consulted here.
+    """
+    mut project = source.parent()
+    for candidate in manifest_candidates(source):
+        if candidate.is_file():
+            project = candidate.parent()
+            break
+    mut read: list[str] = []
+    mut absent: list[str] = []
+    for entry in recorded_entries(graph_location(project.0, profile, "program", source.0)):
+        for item in required_items(entry, "read").unwrap_or([]):
+            read.append(required_text(item, "path").unwrap_or(""))
+        for item in required_items(entry, "absent").unwrap_or([]):
+            absent.append(item.as_str().unwrap_or(""))
+    if len(read) == 0 or "" in read or "" in absent:
+        return None
+    return Some(SourceGraph(read=unique(read), absent=unique(absent)))
 
 
 def recorded_graph(location: Path, scope: str, mut project: Ledger) -> Result[Option[SourceGraph], str]:

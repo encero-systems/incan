@@ -27,6 +27,7 @@ from engine_proofs import retain as retain_report, report as read_report
 from observation import observe
 from std.json import parse
 from trace_adapter import count_frozen_work, finish_frozen_counting
+from unit_sources import SourceGraph
 
 const PIN: str = """{"schema": "incan.toolchain/1", "driver": "bin/driver", "sysroot": "sysroot",
 "rust_abi": ["rust-abi/std.rustabi"], "externs": [{"name": "runtime", "path": "native/runtime-1/libruntime.rlib"}],
@@ -377,6 +378,42 @@ pub def test_a_new_file_at_an_absent_lookup_is_picked_up_and_an_unrelated_siblin
     assert after.input(wanted.0) is not None
     assert not touched(after, sibling)
     assert later.counters.in_reach.stats == first.counters.in_reach.inputs + 1
+    return Ok(None)
+
+
+pub def test_a_whole_unit_with_a_recorded_graph_checks_its_paths_and_lists_nothing() -> Result[None, str]:
+    """
+    A whole unit captured with its recorded source graph checks what the graph read and probed by name: a sibling
+    created or edited beside those files is never listed or read, and a file created at a probed path is picked up.
+    """
+    scratch = scratch_directory()?
+    admitted = installed_home(scratch.path())?
+    app = project(scratch.path().joinpath("app"))?
+    main = app.joinpath("src/main.incn")
+    helper = app.joinpath("src/helper.incn")
+    probed = app.joinpath("src/greetings.incn")
+    sibling = app.joinpath("src/unrelated.incn")
+    request = CaptureRequest(
+        roots=[main.0],
+        selection=InputSelection(command="run"),
+        whole_unit=true,
+        reach=Some(SourceGraph(read=[main.0, helper.0], absent=[probed.0])),
+    )
+    first = capture(request, None, admitted, 0)?
+    epoch = epoch_of(first)?
+    assert first.counters.in_reach.listings == 0
+    assert epoch.input(helper.0) is not None and touched(epoch, probed)
+    assert not touched(epoch, app.joinpath("tests/fixture.incn"))
+    for text in ["pub def unrelated() -> None:\n    pass\n", "pub def unrelated() -> int:\n    return 2\n"]:
+        write(sibling, text)?
+        beside = capture(request, Some(epoch), admitted, 0)?
+        assert beside.outcome == CaptureOutcome.Unchanged
+        assert beside.counters.in_reach.reads == 0 and beside.counters.in_reach.listings == 0
+    write(probed, "pub def hello() -> None:\n    pass\n")?
+    found = capture(request, Some(epoch), admitted, 0)?
+    assert found.outcome == CaptureOutcome.Changed
+    assert epoch_of(found)?.input(probed.0) is not None
+    assert found.counters.in_reach.reads == 1 and found.counters.in_reach.listings == 0
     return Ok(None)
 
 

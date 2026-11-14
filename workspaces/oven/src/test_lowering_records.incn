@@ -101,8 +101,9 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
 
 def verify_unit_reads_only_its_graph(binary: str, root: Path) -> Result[None, str]:
     """
-    A unit is keyed by what its collection read and probed: a module created where an import looked rebuilds it, and a
-    file nothing imports leaves it as it was, with no unit evaluation and no bake.
+    A unit is keyed and captured by what its collection read and probed: a module created where an import looked is
+    found by name and rebuilds it, and a file nothing imports is never listed or read, so creating or editing one
+    leaves the unit as it was, with no unit evaluation and no bake.
     """
     root.mkdir(true, true).map_err((error) => error.message())?
     source = root.joinpath("main.incn")
@@ -114,11 +115,15 @@ def verify_unit_reads_only_its_graph(binary: str, root: Path) -> Result[None, st
     created_diagnostic = created.to_json().map_err((error) => error.message())?
     assert proof_count(created, "unit_evaluations")? == 1, created_diagnostic
     assert proof_count(created, "native_bakes")? == 1, created_diagnostic
-    write(root.joinpath("other.incn"), "pub def unrelated() -> int:\n    return 1\n")?
-    sibling = lowering_example_run(binary, source, store, "graph!")?
-    sibling_diagnostic = sibling.to_json().map_err((error) => error.message())?
-    assert proof_count(sibling, "unit_evaluations")? == 0, sibling_diagnostic
-    assert proof_count(sibling, "native_bakes")? == 0, sibling_diagnostic
+    assert proof_count(created, "source_listings")? == 0, created_diagnostic
+    for text in ["pub def unrelated() -> int:\n    return 1\n", "pub def unrelated() -> int:\n    return 2\n"]:
+        write(root.joinpath("other.incn"), text)?
+        sibling = lowering_example_run(binary, source, store, "graph!")?
+        sibling_diagnostic = sibling.to_json().map_err((error) => error.message())?
+        assert proof_count(sibling, "unit_evaluations")? == 0, sibling_diagnostic
+        assert proof_count(sibling, "native_bakes")? == 0, sibling_diagnostic
+        assert proof_count(sibling, "source_reads")? == 0, sibling_diagnostic
+        assert proof_count(sibling, "source_listings")? == 0, sibling_diagnostic
     return stop_example_engine(binary, store)
 
 
