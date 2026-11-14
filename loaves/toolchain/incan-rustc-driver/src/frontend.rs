@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use crate::dependency_report::RootOrigin;
-use crate::rustc_process::RustcOutcome;
 use incan_driver::body_ir::{load_loaf_modules, required_loaf_identities};
 use incan_driver::diagnostics::CliDiagnosticFailure;
 use incan_driver::loaf_publication::{PublicationFacts, prepare_loaf_publication, publish_native_unions, write_loaf};
@@ -48,14 +47,14 @@ const REFUSAL_CERTIFICATE: &str = "incan.compiler-refusal/1\n";
 
 /// Where a compilation certifies a known deterministic refusal, which permits Oven to retain it; never an arbitrary
 /// failure. Without `--certify PATH` it certifies nothing. The path travels with the request, so a short-lived process
-/// and the resident worker certify the same outcomes.
-#[derive(Clone)]
-struct RefusalReceipt(Option<PathBuf>);
+/// and the resident worker certify the same outcomes, and it crosses a rustc handoff to the process that runs rustc.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct RefusalReceipt(Option<PathBuf>);
 
 impl RefusalReceipt {
     /// Certify a refusal that unchanged inputs reproduce. A receipt that cannot be written only means the next
     /// unchanged compilation runs again.
-    fn deterministic(&self) {
+    pub(crate) fn deterministic(&self) {
         if let Some(path) = &self.0 {
             let _ = std::fs::write(path, REFUSAL_CERTIFICATE);
         }
@@ -528,7 +527,15 @@ fn read_graph_body_records(path: &Path) -> Result<incan_frontend::checker_record
 /// refusal classification instead of appearing as debug-form plan errors.
 /// An exact-body census selection reports only that diagnostic lowering pass and returns without compiling an artifact.
 pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    compile_unit(arguments, false)
+    compile_unit(arguments, false, None).map(|_| ())
+}
+
+/// Where a compiled unit's native compilation ran.
+pub(crate) enum UnitCompiled {
+    /// rustc ran in this process, or the unit needed no native compilation.
+    InProcess,
+    /// This worker wrote the rustc handoff at this path for its caller to run in a fresh process.
+    HandedOff(PathBuf),
 }
 
 /// Print the unit's settled dependency closure. Checking and planning run exactly as for compilation, so the report
@@ -647,17 +654,26 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
 }
 
 /// Compile through the same native pipeline with a full canonical session, borrowing only generation-guarded
-/// immutable readings. A resident worker has no use for a persisted unchanged-source lookup footprint.
-pub(crate) fn compile_resident(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    compile_unit(arguments, true)
+/// immutable readings. A resident worker has no use for a persisted unchanged-source lookup footprint. After lowering,
+/// `hands_off` decides whether this worker writes the rustc handoff for its caller instead of running rustc.
+pub(crate) fn compile_resident(
+    arguments: &[String],
+    hands_off: &dyn Fn() -> bool,
+) -> Result<UnitCompiled, Box<dyn std::error::Error>> {
+    compile_unit(arguments, true, Some(hands_off))
 }
 
 /// Compile one unit with the invocation's immutable-input retention policy; source checking and native execution
 /// remain fresh for both short-lived and resident callers. A leading `--certify PATH` option names where a refusal
 /// that unchanged inputs reproduce writes its receipt. Checking, lowering and native compilation retain their
-/// separate refusal boundaries; only successful compilation publishes library artifacts. Native compilation runs in a
-/// fresh driver process from the unit's handoff (`crate::rustc_process`), so rustc never inherits this heap.
-fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std::error::Error>> {
+/// separate refusal boundaries; only successful compilation publishes library artifacts. Native compilation runs in
+/// this process unless `hands_off` answers yes after lowering, when the unit's handoff goes to the caller instead
+/// (`crate::rustc_process`).
+fn compile_unit(
+    arguments: &[String],
+    resident: bool,
+    hands_off: Option<&dyn Fn() -> bool>,
+) -> Result<UnitCompiled, Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err(
             "usage: --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [--rustc-arg ARG] [--library] [--shared-native DIR] [--toolchain-root DIR] [--bakery-root DIR] [--graph-body-records PATH] [--graph-body-output PATH]"
@@ -672,8 +688,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     let source_path = unit.source.clone();
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::compile_unit", input = %source_path.display()).entered();
     crate::native_timing::observe_frontend(true);
-    // The rustc process verifies the identity again from the sysroot; checking it here keeps the refusal order.
-    crate::identity::verify(Path::new(&arguments[3]))?;
+    let identity = crate::identity::verify(Path::new(&arguments[3]))?;
     let output = Path::new(&arguments[2]);
     let (certificate, options) = crate::certified_options(&arguments[4..]);
     let receipt = RefusalReceipt(certificate.map(Path::to_path_buf));
@@ -710,7 +725,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         dependencies.collect_codegraph,
     )?;
     if census_complete(&mut program, kind, overflow_checks)? {
-        return Ok(());
+        return Ok(UnitCompiled::InProcess);
     }
     // Checking is done, and the Rust items it decoded are not lowering inputs. Lowering keeps the index for runtime
     // resolution, so release the items rather than carry them through lowering and rustc.
@@ -773,8 +788,8 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     };
     drop(program);
     drop(dependencies.graph_body_records);
-    // The checked program, its Body IR and the lowering's temporaries are gone; return their pages before the
-    // handoff is encoded, so encoding does not stack on the frontend's freed heap.
+    // The checked program, its Body IR and the lowering's temporaries are gone; return their pages before rustc runs
+    // here or the footprint that decides a handoff is read, so neither counts the frontend's freed heap.
     crate::heap::release_free_memory();
     timing.mark("frontend_heap_released");
     // Clove archives a checked binding links are found in the directories Oven compiled them into (RFC 159).
@@ -797,25 +812,18 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         overflow_checks,
         library_facades,
         plan_record_report: dependencies.plan_record_report,
+        tests: (kind == UnitKind::Test)
+            .then(|| serde_json::to_vec(&tests))
+            .transpose()?,
+        publication,
+        receipt,
     };
-    // The rustc process printed any failure itself, so this process adds no message of its own.
-    match crate::rustc_process::run(handoff, &mut timing)? {
-        RustcOutcome::Compiled => {}
-        RustcOutcome::PlanRefused => {
-            receipt.deterministic();
-            return Err(String::new().into());
-        }
-        RustcOutcome::Failed => return Err(String::new().into()),
+    // A worker over its footprint ceiling answers with the handoff and retires; its caller runs rustc fresh.
+    if hands_off.is_some_and(|hands_off| hands_off()) {
+        return Ok(UnitCompiled::HandedOff(handoff.hand_off(&mut timing)?));
     }
-    if kind == UnitKind::Test {
-        std::fs::write(output.with_extension("tests.json"), serde_json::to_vec(&tests)?)?;
-    }
-
-    // ---- The Loaf beside a library unit's rlib (DD-0007) ----
-    if let Some((directory, publication)) = publication {
-        publication.write(&directory).map_err(|error| error.to_string())?;
-    }
-    Ok(())
+    handoff.compile(&identity)?;
+    Ok(UnitCompiled::InProcess)
 }
 
 /// Check owned invocation inputs on the compiler stack and preserve the source refusal report on failure. The

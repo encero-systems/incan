@@ -134,7 +134,7 @@ fn command() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(unix)]
         Some("--resident") => worker::serve(&args[1..]),
         Some("--unit") => frontend::compile(&args[1..]),
-        Some("--rustc-handoff") => exit_with(rustc_process::serve(&args[1..])?),
+        Some("--rustc-handoff") => rustc_process::serve(&args[1..]),
         Some("--source-interface") => frontend::source_interface(&args[1..]),
         Some("--dependencies") => frontend::dependency_report(&args[1..]),
         Some("--compiler-records") => compiler_records::export(&args[1..]),

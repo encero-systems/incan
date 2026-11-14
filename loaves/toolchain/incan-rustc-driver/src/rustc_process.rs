@@ -1,31 +1,30 @@
-//! rustc in a fresh driver process, so the back end starts on a clean heap.
+//! Native compilation of a checked and lowered unit, in the process that lowered it or in a fresh one.
 //!
 //! Checking and lowering leave the driver's heap fragmented: the allocator keeps the pages of freed checking and
-//! lowering values, the process footprint counts them, and rustc's analysis and LLVM would allocate on top of them.
-//! The driver that checked and lowered a unit therefore writes everything native compilation reads into one handoff
-//! file beside the unit's output, frees its own heap, and runs rustc in a fresh driver process from that file
-//! (`--rustc-handoff PATH`). That process never checks or lowers. The file is removed as soon as the process ends.
-//! The process inherits the console, working directory and environment, so rustc's diagnostics and timing records
-//! reach the same places they did in process.
+//! lowering values dirty, the process footprint counts them, and rustc's analysis and LLVM allocate on top of them. A
+//! resident worker whose footprint after lowering is above its ceiling therefore does not run rustc: it writes
+//! everything native compilation needs into one handoff file beside the unit's output, answers its caller with that
+//! file and retires, so the caller runs `--rustc-handoff PATH` in a fresh driver process once the worker's heap is
+//! gone. Within the ceiling, and in a short-lived `--unit` process, the same [`RustcHandoff`] compiles in process.
+//! Either way native compilation, the test report, the Loaf publication and the refusal receipt happen in one place.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
+use incan_driver::loaf_publication::PreparedLoafPublication;
 use incan_driver::unit::{ToolchainAccess, UnitKind};
 use serde::{Deserialize, Serialize};
 
 use crate::adapter::DriverError;
+use crate::frontend::RefusalReceipt;
+use crate::identity::DriverIdentity;
 use crate::library_exports::LibraryFacade;
 use crate::native_timing::Timing;
 use crate::plan::Plan;
 
-/// The status the rustc process exits with when preflight refuses the plan itself, a deterministic refusal.
-const PLAN_REFUSAL: i32 = 3;
-
-/// Everything native compilation reads, owned so a fresh driver process can decode it. The driver identity is not
-/// carried: the rustc process verifies it again from the sysroot.
+/// Everything native compilation reads and what it publishes after succeeding, owned so a fresh driver process can
+/// decode it. The driver identity is not carried: a fresh process verifies it again from the sysroot.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct RustcHandoff {
     pub(crate) plan: Plan,
@@ -41,46 +40,65 @@ pub(crate) struct RustcHandoff {
     pub(crate) overflow_checks: bool,
     pub(crate) library_facades: Vec<LibraryFacade>,
     pub(crate) plan_record_report: Option<PathBuf>,
+    /// A test unit's collected tests, written beside the executable once it links.
+    pub(crate) tests: Option<Vec<u8>>,
+    /// A library unit's Loaf and the directory it is published in once the rlib exists (DD-0007).
+    pub(crate) publication: Option<(PathBuf, PreparedLoafPublication)>,
+    pub(crate) receipt: RefusalReceipt,
 }
 
-/// How native compilation in the rustc process ended. That process already printed any failure.
-pub(crate) enum RustcOutcome {
-    Compiled,
-    PlanRefused,
-    Failed,
-}
-
-/// Write the handoff beside its output, return this process's freed heap, run rustc in a fresh driver process, and
-/// remove the handoff whether or not that process succeeded.
-pub(crate) fn run(handoff: RustcHandoff, timing: &mut Timing) -> Result<RustcOutcome, Box<dyn std::error::Error>> {
-    let path = handoff.output.with_extension("rustc-handoff");
-    let written = write(&handoff, &path);
-    drop(handoff);
-    if let Err(error) = written {
-        let _ = std::fs::remove_file(&path);
-        return Err(error);
+impl RustcHandoff {
+    /// Run rustc, then write the test report and publish the Loaf; a refused plan certifies its refusal.
+    pub(crate) fn compile(self, identity: &DriverIdentity) -> Result<(), Box<dyn std::error::Error>> {
+        let receipt = self.receipt;
+        crate::adapter::compile(
+            self.plan,
+            &self.crate_name,
+            &self.output,
+            identity,
+            &self.externs,
+            &self.dependency_search_paths,
+            &self.rustc_args,
+            &self.access,
+            self.shared_store.as_deref(),
+            self.kind,
+            self.overflow_checks,
+            self.library_facades,
+            self.plan_record_report.as_deref(),
+        )
+        .map_err(|error| {
+            if matches!(error, DriverError::Plan(_)) {
+                receipt.deterministic();
+            }
+            error.to_string()
+        })?;
+        if let Some(tests) = self.tests {
+            std::fs::write(self.output.with_extension("tests.json"), tests)?;
+        }
+        if let Some((directory, publication)) = self.publication {
+            publication.write(&directory).map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
-    // The plan was the last checking or lowering value this process held; return its pages before rustc runs.
-    crate::heap::release_free_memory();
-    timing.mark("rustc_handoff_written");
-    let status = Command::new(std::env::current_exe()?)
-        .arg("--rustc-handoff")
-        .arg(&path)
-        .status();
-    let removed = std::fs::remove_file(&path);
-    let status = status.map_err(|error| format!("the rustc process could not start: {error}"))?;
-    removed.map_err(|error| format!("the rustc handoff {} could not be removed: {error}", path.display()))?;
-    timing.mark("rustc_process_exited");
-    Ok(match status.code() {
-        Some(0) => RustcOutcome::Compiled,
-        Some(PLAN_REFUSAL) => RustcOutcome::PlanRefused,
-        Some(_) => RustcOutcome::Failed,
-        None => return Err(format!("the rustc process ended without a status: {status}").into()),
-    })
+
+    /// Write the handoff beside its output, encoded straight into the file without a whole-plan buffer, and return
+    /// its path for the caller that runs it.
+    pub(crate) fn hand_off(self, timing: &mut Timing) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let path = self.output.with_extension("rustc-handoff");
+        let written = write(&self, &path);
+        drop(self);
+        if let Err(error) = written {
+            let _ = std::fs::remove_file(&path);
+            return Err(error);
+        }
+        timing.mark("rustc_handoff_written");
+        Ok(path)
+    }
 }
 
-/// Run native compilation from a handoff file (`--rustc-handoff PATH`) and return the status the process exits with.
-pub(crate) fn serve(arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
+/// Run native compilation from a handoff file (`--rustc-handoff PATH`) in this fresh process, removing the file once
+/// it is read. A failure is printed and exits as the unit's short-lived command would.
+pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let [path] = arguments else {
         return Err("usage: incan-rustc-driver --rustc-handoff PATH".into());
     };
@@ -88,53 +106,14 @@ pub(crate) fn serve(arguments: &[String]) -> Result<i32, Box<dyn std::error::Err
     let encoded = std::fs::read(Path::new(path))?;
     let handoff: RustcHandoff = postcard::from_bytes(&encoded)?;
     drop(encoded);
+    std::fs::remove_file(Path::new(path))?;
     timing.mark("rustc_handoff_read");
-    let RustcHandoff {
-        plan,
-        crate_name,
-        output,
-        sysroot,
-        externs,
-        dependency_search_paths,
-        rustc_args,
-        access,
-        shared_store,
-        kind,
-        overflow_checks,
-        library_facades,
-        plan_record_report,
-    } = handoff;
-    let identity = crate::identity::verify(&sysroot)?;
+    let identity = crate::identity::verify(&handoff.sysroot)?;
     timing.mark("rustc_identity_verified");
-    let compiled = crate::adapter::compile(
-        plan,
-        &crate_name,
-        &output,
-        &identity,
-        &externs,
-        &dependency_search_paths,
-        &rustc_args,
-        &access,
-        shared_store.as_deref(),
-        kind,
-        overflow_checks,
-        library_facades,
-        plan_record_report.as_deref(),
-    );
-    match compiled {
-        Ok(()) => Ok(0),
-        Err(error) => {
-            eprintln!("{error}");
-            Ok(if matches!(error, DriverError::Plan(_)) {
-                PLAN_REFUSAL
-            } else {
-                1
-            })
-        }
-    }
+    handoff.compile(&identity)
 }
 
-/// Encode the handoff straight into its file, without a whole-plan buffer.
+/// Encode the handoff into its file.
 fn write(handoff: &RustcHandoff, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut writer = postcard::to_io(handoff, BufWriter::new(File::create(path)?))?;
     writer.flush()?;
