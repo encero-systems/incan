@@ -59,11 +59,11 @@ const PROTOCOL_ARTIFACT_SCHEMA: &[ArtifactFieldSchema] = &[
     },
     ArtifactFieldSchema {
         name: "loan_free_scrutinees",
-        codec: "legacy",
+        codec: "span-set",
     },
 ];
 
-const GENERATOR_SHA256: &str = "7f32afa3f0a02e23a64e11789d7c10f042e10c89cfedb302282e35e1ba055042";
+const GENERATOR_SHA256: &str = "acc3945d17249ed84fc6fffa57fb0b00de9c3f9c2bbcc1e0e03dfab22340edce";
 
 pub(super) fn project(
     positions: &Positions,
@@ -81,6 +81,7 @@ pub(super) fn project(
     for (selector, spans) in [
         ("item_taking_iterations", &protocols.item_taking_iterations),
         ("in_place_match_scrutinees", &protocols.in_place_match_scrutinees),
+        ("loan_free_scrutinees", &protocols.loan_free_scrutinees),
     ] {
         for span in spans {
             fields.push(vec![
@@ -126,6 +127,11 @@ pub(super) fn restore(
         }
         "in_place_match_scrutinees" => {
             if next(&mut values)? != "true" || !protocols.in_place_match_scrutinees.insert(span) {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "loan_free_scrutinees" => {
+            if next(&mut values)? != "true" || !protocols.loan_free_scrutinees.insert(span) {
                 return Err(NodeBindingError::MissingNode);
             }
         }
@@ -181,6 +187,7 @@ mod generated_tests {
         protocols.body_ir_truthiness_receivers.insert(*span, identity.clone());
         protocols.item_taking_iterations.insert(*span);
         protocols.in_place_match_scrutinees.insert(*span);
+        protocols.loan_free_scrutinees.insert(*span);
         protocols.comprehension_source_consumption.insert(*span, false);
         let mut fields = Vec::new();
         super::project(&positions, &protocols, &mut fields)?;
@@ -194,6 +201,7 @@ mod generated_tests {
         );
         assert_eq!(restored.item_taking_iterations, protocols.item_taking_iterations);
         assert_eq!(restored.in_place_match_scrutinees, protocols.in_place_match_scrutinees);
+        assert_eq!(restored.loan_free_scrutinees, protocols.loan_free_scrutinees);
         assert_eq!(
             restored.comprehension_source_consumption,
             protocols.comprehension_source_consumption,

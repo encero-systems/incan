@@ -944,7 +944,7 @@ mod tests {
             owner
                 .final_value
                 .iter()
-                .any(|row| row[0] == "protocol" && row[2] == "loan-free-scrutinee" && row[3] == "true")
+                .any(|row| row[0] == "artifact-protocol" && row[2] == "loan_free_scrutinees" && row[3] == "true")
         );
         Ok(())
     }
