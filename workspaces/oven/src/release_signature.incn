@@ -16,6 +16,8 @@ from x509 import Certificate, PublicKey, SignatureHash, certificate, public_key,
 
 const BUNDLE_MEDIA_TYPE: str = "application/vnd.dev.sigstore.bundle.v0.3+json"
 const TRUST_ROOT_MEDIA_TYPE: str = "application/vnd.dev.sigstore.trustedroot+json;version=0.1"
+# The ref a release is signed for follows the workflow in its certificate identity.
+const TAG_REF: str = "@refs/tags/"
 const PEM_BEGIN: str = "-----BEGIN CERTIFICATE-----"
 const PEM_END: str = "-----END CERTIFICATE-----"
 # A checkpoint's signature lines begin with an em dash and a space.
@@ -23,9 +25,14 @@ const NOTE_SIGNATURE_PREFIX: str = "— "
 
 
 pub model Signer:
-    """The identity a release must be signed by: the workflow's certificate identity and its token issuer."""
+    """
+    Who signs releases: the release workflow, as its certificate identity before the ref, and its token issuer.
 
-    pub identity: str
+    A release is that workflow run for a tag, so one carried signer admits every later release and nothing the
+    workflow signs for a branch or a pull request.
+    """
+
+    pub workflow: str
     pub issuer: str
 
 
@@ -47,6 +54,7 @@ pub model Verified:
     """What a verified bundle proved: who signed, and when and where the log recorded it."""
 
     pub identity: str
+    pub tag: str
     pub issuer: str
     pub integrated_time: int
     pub log_index: int
@@ -136,8 +144,10 @@ pub def verify_bundle(text: str, digest: bytes, root: TrustRoot, signer: Signer)
     chain = issuing_chain(leaf, root)?
     if not leaf.code_signing or leaf.authority:
         return Err("the signing certificate is not a code-signing certificate")
-    if signer.identity not in leaf.uris:
-        return Err(f"the release is signed by {named(leaf.uris)}, not by {signer.identity}")
+    mut tag = ""
+    match release_tag(leaf.uris, signer.workflow):
+        Some(found) => tag = found
+        None => return Err(f"the release is signed by {named(leaf.uris)}, not by {signer.workflow} at a tag")
     if leaf.token_issuer != signer.issuer:
         return Err(f"the signer's token came from `{leaf.token_issuer}`, not from {signer.issuer}")
     # 3. The signature over the digest.
@@ -159,7 +169,8 @@ pub def verify_bundle(text: str, digest: bytes, root: TrustRoot, signer: Signer)
             return Err("the transparency log recorded the signature outside its certificates' validity")
     return Ok(
         Verified(
-            identity=signer.identity,
+            identity=f"{signer.workflow}{TAG_REF}{tag}",
+            tag=tag,
             issuer=signer.issuer,
             integrated_time=found.integrated_time,
             log_index=found.log_index,
@@ -369,3 +380,20 @@ def hashed(parts: list[bytes]) -> bytes:
     for part in parts:
         hasher.update(part)
     return hasher.finalize_bytes()
+
+
+def release_tag(uris: list[str], workflow: str) -> Option[str]:
+    """The tag a certificate's identity names for `workflow`: letters, digits, dots, dashes, underscores and pluses."""
+    prefix = workflow + TAG_REF
+    for uri in uris:
+        if uri.startswith(prefix) and len(uri) > len(prefix):
+            tag = uri[len(prefix):]
+            mut plain = true
+            for octet in tag.encode("utf-8"):
+                letter = (int(octet) >= 97 and int(octet) <= 122) or (int(octet) >= 65 and int(octet) <= 90)
+                digit = int(octet) >= 48 and int(octet) <= 57
+                if not letter and not digit and int(octet) not in [43, 45, 46, 95]:
+                    plain = false
+            if plain:
+                return Some(tag)
+    return None
