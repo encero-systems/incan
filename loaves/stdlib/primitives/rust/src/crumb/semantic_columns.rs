@@ -20,9 +20,26 @@ const DEFAULT_ELEMENTS: u64 = 4_194_304;
 pub(super) struct Budget {
     bytes: u64,
     elements: u64,
+    depth: u64,
 }
 
 impl Budget {
+    /// A budget of exactly these bytes, elements and nesting depth.
+    pub(super) fn new(bytes: u64, elements: u64, depth: u64) -> Self {
+        Self { bytes, elements, depth }
+    }
+
+    /// Enter one nested level; exhausting the depth allowance is `limit_exceeded`.
+    pub(super) fn enter(&mut self) -> Result<(), Refused> {
+        self.depth = self.depth.checked_sub(1).ok_or("limit_exceeded")?;
+        Ok(())
+    }
+
+    /// Leave one nested level.
+    pub(super) fn leave(&mut self) {
+        self.depth += 1;
+    }
+
     pub(super) fn bytes(&mut self, count: u64) -> Result<(), Refused> {
         self.bytes = self.bytes.checked_sub(count).ok_or("limit_exceeded")?;
         Ok(())
@@ -199,6 +216,7 @@ pub(super) fn case_budget(document: &Json) -> Option<Budget> {
     let mut budget = Budget {
         bytes: DEFAULT_BYTES,
         elements: DEFAULT_ELEMENTS,
+        depth: 128,
     };
     if let Some(limits) = document.get("limits") {
         for key in ["elements", "records", "dictionary_entries", "bits"] {

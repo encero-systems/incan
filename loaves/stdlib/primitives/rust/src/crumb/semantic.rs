@@ -17,6 +17,10 @@ mod hash;
 mod print;
 #[path = "semantic_read.rs"]
 mod read;
+#[path = "semantic_row_write.rs"]
+mod row_write;
+#[path = "semantic_rows.rs"]
+mod rows;
 #[path = "semantic_scan.rs"]
 mod scan;
 
@@ -55,6 +59,7 @@ pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCa
         "text_print" => print::text_print(&parsed),
         "text_read" => read::text_read(&parsed),
         "column_codec" => columns::encode(&parsed),
+        "binary_decode" => rows::encode(&parsed),
         _ => None,
     };
     let encode_ns = elapsed_ns(encode_started);
@@ -65,6 +70,7 @@ pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCa
     let decoded = match operation.as_str() {
         "hash_preimage" => verify_preimage(&encoded),
         "column_codec" => columns::decode(&parsed),
+        "binary_decode" => rows::decode(&parsed),
         _ => Some(encoded.clone()),
     };
     let decode_ns = elapsed_ns(decode_started);
@@ -584,6 +590,27 @@ mod tests {
         let refused = evaluate_semantic_case("text_read".to_string(), format!(r#"{{"input_hex":"{hex}"}}"#));
         assert_eq!(refused.kind, 0);
         assert_eq!(refused.encoded, b"\x01\x0fduplicate_field\x02\x18");
+    }
+
+    #[test]
+    fn row_envelopes_round_trip_references_and_refuse_seal_mismatches() {
+        let description = r#"[{"kind":"map","entries":[[{"kind":"string","value":"nominal"},{"kind":"binary","hex":"1ddb0b3ce6d300"}],[{"kind":"string","value":"kind"},{"kind":"string","value":"Record"}],[{"kind":"string","value":"path"},{"kind":"string","value":"example.Value"}],[{"kind":"string","value":"fields"},{"kind":"list","items":[]}],[{"kind":"string","value":"properties"},{"kind":"map","entries":[]}]]}]"#;
+        let refused = evaluate_semantic_case(
+            "binary_decode".to_string(),
+            format!(
+                r#"{{"input_hex":"43524d42010101500101071ddb0b3ce6d3009e98c15038948f7d341f1889af1dbdfa8509d3e6f8f6bb8ec783cce0a6d723770100020100013aba437d836d09b8dd1267631069d769c96ffe569621bbd420ac5a2cfb0a25e7","supplied_descriptions":{description}}}"#
+            ),
+        );
+        assert_eq!(refused.kind, 0);
+        assert!(refused.encoded.is_empty());
+        assert_eq!(refused.decoded, b"\x01\x0dseal_mismatch");
+
+        let missing = evaluate_semantic_case(
+            "binary_decode".to_string(),
+            r#"{"input_hex":"43524d420101002d010109070dcdc804d5010154000000000000000000000000000000000000000000000000000000000000000000","supplied_descriptions":[]}"#.to_string(),
+        );
+        assert_eq!(missing.kind, 0);
+        assert_eq!(missing.decoded, b"\x01\x10invalid_selector");
     }
 
     #[test]

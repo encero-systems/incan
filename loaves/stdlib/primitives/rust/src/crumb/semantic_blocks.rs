@@ -522,7 +522,7 @@ fn cell(node: &CellType, raw: &[u8], budget: &mut Budget) -> Result<Value, Refus
 }
 
 /// Decode fixed little-endian two's-complement or unsigned bytes.
-fn fixed_integer(raw: &[u8], signed: bool) -> Value {
+pub(super) fn fixed_integer(raw: &[u8], signed: bool) -> Value {
     let value = raw
         .iter()
         .rev()
@@ -539,7 +539,7 @@ fn fixed_integer(raw: &[u8], signed: bool) -> Value {
 }
 
 /// Decode a little-endian IEEE cell, refusing any NaN that is not the canonical quiet NaN.
-fn float_cell(raw: &[u8], width: usize) -> Result<Value, Refused> {
+pub(super) fn float_cell(raw: &[u8], width: usize) -> Result<Value, Refused> {
     if raw.len() != width {
         return Err("invalid_cell");
     }

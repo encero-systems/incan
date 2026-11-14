@@ -49,6 +49,7 @@ pub(super) enum Node {
     Record(String, Vec<Shape>),
     Enum(String, Vec<(Vec<u8>, Vec<Shape>)>),
     Recursive(String),
+    Reference(Box<Node>),
 }
 
 /// One structural field shape used by S spellings.
@@ -67,7 +68,7 @@ pub(super) enum Projection {
     Canonical,
 }
 
-const SCALARS: [&str; 18] = [
+pub(super) const SCALARS: [&str; 18] = [
     "boolean",
     "i8",
     "i16",
@@ -722,7 +723,7 @@ fn compare_maps(left: &[(Value, Value)], right: &[(Value, Value)], projection: P
 }
 
 /// Order nominal members by framed K, others by hashed N with a full spelling tie-break.
-fn selector_key(node: &Node) -> Option<(u8, Vec<u8>, String)> {
+pub(super) fn selector_key(node: &Node) -> Option<(u8, Vec<u8>, String)> {
     match node {
         Node::Nominal(kind, ..) => Some((1, closed_selector(node)?, kind.clone())),
         _ => {
@@ -837,6 +838,13 @@ fn spell(node: &Node, nominal: bool, active: &mut Vec<String>) -> Option<String>
             let result = variant_fields(variants, nominal, active);
             active.pop();
             result
+        }
+        Node::Reference(item) => {
+            if nominal {
+                Some(format!("ref<{}>", spell(item, true, active)?))
+            } else {
+                Some("reference".to_string())
+            }
         }
         Node::Recursive(key) => {
             let offset = active.iter().rev().position(|item| item == key)?;
@@ -1039,4 +1047,9 @@ pub(super) fn frame(output: &mut Vec<u8>, data: &[u8]) {
 /// Spell octets as lowercase hexadecimal.
 pub(super) fn hex_string(data: &[u8]) -> String {
     data.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Append one value's object contribution without validating it again.
+pub(super) fn emit_object(value: &Value, output: &mut Vec<u8>) -> Option<()> {
+    emit(value, Projection::Object, output)
 }
