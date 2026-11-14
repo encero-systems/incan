@@ -63,7 +63,7 @@ from rust::incan_std_web import (
     response_redirect as native_response_redirect,
     response_status as native_response_status,
 )
-from rust::incan_web_macros import IntoResponse
+pub from rust::incan_web_macros import IntoResponse
 
 def response_html(content: str) -> AxumRawResponse:
     """Create an HTML response (200 OK)."""
