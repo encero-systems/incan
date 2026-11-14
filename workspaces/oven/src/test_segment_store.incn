@@ -593,6 +593,45 @@ def body_listing(root: Path) -> Result[str, str]:
     return Ok("\n".join(family_listing(latest, "body-ir", "profile")?))
 
 
+pub def test_an_edit_leaves_the_incoming_entry_of_an_unchanged_read_as_it_is() -> Result[None, str]:
+    """
+    Each edit evaluates one declaration's slot in a new context, and the slot reads the same unchanged dependency. The
+    incoming entry's value names the reading slot, the profile and the record read, none of which the edit changes, so
+    the commit finds the entry unchanged: after any number of edits it is still the frame the first evaluation wrote.
+    A reader lookup names the slot's current record.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    dependency = graph_key("final", "function:helper", "checked")
+    read = RecordRequest(key=dependency, selection=RecordSelection.Field("value"))
+    _ = write_one(root, encode_record_key(dependency)?, "helper").map_err((error) => error.message())?
+    mut reader = graph_key("body-ir", "function:main", "edit 0")
+    publish_reader(snapshot(root).map_err((error) => error.message())?, reader, [read])?
+    first = incoming_segments(root)?
+    assert len(first) == 1, f"one read left {len(first)} incoming entries"
+    mut written = 0
+    for edit in range(11):
+        reader = graph_key("body-ir", "function:main", f"edit {edit + 1}")
+        publish_reader(snapshot(root).map_err((error) => error.message())?, reader, [read])?
+        if incoming_segments(root)? != first:
+            written += 1
+    assert written == 0, f"{written} of 11 edits wrote the incoming entry of a read they did not change"
+    latest = snapshot(root).map_err((error) => error.message())?
+    assert readers_of(latest, [dependency], "profile")? == [reader]
+    return Ok(None)
+
+
+def incoming_segments(root: Path) -> Result[list[str], str]:
+    """The segment that holds each incoming edge entry's frame in the store's latest generation, in key order."""
+    latest = snapshot(root).map_err((error) => error.message())?
+    mut found: list[str] = []
+    for entry in index_entries(store_path(root), latest.index).map_err((error) => error.detail)?:
+        if entry.key.startswith("incan.engine.edge-in\t"):
+            if let Some(location) = entry.location:
+                found.append(location.segment)
+    return Ok(found)
+
+
 def graph_key(family: str, identity: str, context: str) -> RecordKey:
     """A compiler record key in the one identity profile, origin and facet these graph tests use."""
     return RecordKey(
