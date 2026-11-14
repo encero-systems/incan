@@ -11,6 +11,7 @@ from release_signature_fixtures import (
     archive,
     branch_bundle,
     bundle,
+    forged_checkpoint_bundle,
     forged_log_bundle,
     late_bundle,
     other_trusted_root,
@@ -103,7 +104,7 @@ pub def test_a_changed_signature_or_log_record_is_refused() -> Result[None, str]
 
     1. Another signature of the right shape does not verify under the certificate.
     2. A changed entry timestamp, a changed proof hash and a checkpoint for another tree size are each refused.
-    3. A log record signed by a key that is not the trusted log's is refused.
+    3. A log record signed by a key that is not the trusted log's is refused, and so is a checkpoint alone signed by it.
     4. A signature the log recorded after the certificate expired is refused.
     """
     asset = raw(archive())?
@@ -131,6 +132,10 @@ pub def test_a_changed_signature_or_log_record_is_refused() -> Result[None, str]
     assert (
         refusal(text(forged_log_bundle())?, asset, trusted()?, signer())? ==
         "the transparency log's signed entry timestamp does not verify"
+    )
+    assert (
+        refusal(text(forged_checkpoint_bundle())?, asset, trusted()?, signer())? ==
+        "the transparency-log checkpoint is not signed by its log"
     )
     # 4. The log's time decides whether the short-lived certificate was valid.
     assert (
