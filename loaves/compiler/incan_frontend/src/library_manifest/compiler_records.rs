@@ -7,10 +7,11 @@
 //! - The **record-content digest** covers every record, documentation included: each record's key, model description
 //!   hash and object hash (the SHA-256 of its bytes), in key order.
 //! - The **semantic facts digest** covers every record except documentation: each record's key, kind, model description
-//!   hash and canonical hash, in key order. The metadata record's canonical value leaves out its publication fields:
-//!   the Loaf's version, the version of the toolchain that checked it and the digest of the manifest file, which covers
-//!   docstrings. Republishing a Loaf under another version, or changing only its documentation, keeps its semantic
-//!   facts digest.
+//!   hash and canonical hash, in key order. A canonical hash leaves out source positions: anchor spans and the spans
+//!   inside canonical identities. The metadata record's canonical value also leaves out its publication fields: the
+//!   Loaf's version, the version of the toolchain that checked it and the digest of the manifest file, which covers
+//!   docstrings. Republishing a Loaf under another version, or changing only its documentation, whatever its length,
+//!   keeps its semantic facts digest.
 //!
 //! The digest fields themselves are left out of the metadata value both digests cover.
 
@@ -25,6 +26,9 @@ pub const COMPILER_RECORD_PROFILE: &str = "incan.compiler-records/2";
 
 /// The metadata fields that describe a publication rather than what consumers compile against.
 const PUBLICATION_FIELDS: [&str; 3] = ["version", "incan_version", "manifest_digest"];
+
+/// The fields that hold source positions: an anchor's span and a canonical identity's declaration span.
+const POSITION_FIELDS: [&str; 2] = ["span", "declaration_span"];
 
 /// The closed record families of one Loaf's installed compiler records.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -274,18 +278,45 @@ fn digests(
             ]
         })
         .collect::<Vec<_>>();
-    let mut semantic = records
+    let mut semantic = Vec::new();
+    for record in records
         .iter()
         .filter(|record| record.family != RecordFamily::Documentation)
-        .map(|record| semantic_entry(record, &record.value))
-        .chain(std::iter::once(semantic_entry(&metadata_record, &metadata_canonical)))
-        .collect::<Vec<_>>();
+    {
+        semantic.push(semantic_entry(record, &canonical_value(&record.value)?));
+    }
+    semantic.push(semantic_entry(&metadata_record, &metadata_canonical));
     content.sort();
     semantic.sort();
     Ok(FactDigests {
         record_content: framed_digest(&content)?,
         semantic_facts: framed_digest(&semantic)?,
     })
+}
+
+/// The bytes a record's canonical hash covers: its value without source positions.
+///
+/// Spans locate a declaration in its producer's source, and a declaration's canonical identity carries its span; a
+/// docstring that changes length moves every later one. What a declaration is stays in its identity's namespace,
+/// origin and name, the parts `StableDeclarationId` keeps, and in the rest of its record.
+fn canonical_value(value: &[u8]) -> Result<Vec<u8>, LibraryManifestError> {
+    let mut decoded: Value = LibraryManifest::decode_compiler_record_value(value)?;
+    without_positions(&mut decoded);
+    LibraryManifest::encode_compiler_record_value(&decoded)
+}
+
+/// Remove every source position from a decoded record value.
+fn without_positions(value: &mut Value) {
+    match value {
+        Value::Object(fields) => {
+            for field in POSITION_FIELDS {
+                fields.remove(field);
+            }
+            fields.values_mut().for_each(without_positions);
+        }
+        Value::Array(items) => items.iter_mut().for_each(without_positions),
+        _ => {}
+    }
 }
 
 /// One record's semantic facts entry: key, kind, model description hash and canonical hash.
