@@ -1,0 +1,16 @@
+from std.async.channel import Error
+
+
+model ChannelFailure with Error:
+    detail: str
+
+    def message(self) -> str:
+        return self.detail
+
+    def source(self) -> Option[str]:
+        return None
+
+
+pub def channel_line() -> str:
+    """Adopt the Error name `std.async.channel` published in 0.5.1."""
+    return f"channel {ChannelFailure(detail="channel failed").message()}"
