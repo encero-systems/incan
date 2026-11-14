@@ -273,7 +273,8 @@ def registered_snapshot(root: Path, view: str) -> Result[Snapshot, StoreError]:
         Some(generation) =>
             mut selected = read_manifest(root, generation, fields[1], view)?
             if selected.index != "":
-                selected.pin = Some(Rc.new(lease_registered(selected)?))
+                # The lease names the root just decoded from this manifest under the same gate; it needs no second read.
+                selected.pin = Some(Rc.new(register_lease(selected)?))
             return Ok(selected)
 
 
@@ -1020,17 +1021,26 @@ pub def lease(view: Snapshot) -> Result[LockGuard, StoreError]:
 
 def lease_registered(view: Snapshot) -> Result[LockGuard, StoreError]:
     """Register a validated immutable root while its caller holds the lifecycle gate; expired roots cannot reopen."""
-    check_retained(view)?
-    leases = view.root.joinpath("leases")
-    ensure_directory(leases)?
-    name = hexlify(sha256.digest(view.view.encode("utf-8")))
-    path = leases.joinpath(f"{view.generation}-{view.digest}-{name}")
-    held = path.store_lock_shared().map_err((error) => io_failure(path, error))?
+    held = register_lease(view)?
     if view.generation > 0:
         checked = read_manifest(view.root, view.generation, view.digest, view.view)?
         if checked.index != view.index:
-            return Err(failure("integrity", path.value, "lease disagrees with its immutable manifest"))
+            return Err(failure("integrity", lease_path(view).value, "lease disagrees with its immutable manifest"))
     return Ok(held)
+
+
+def register_lease(view: Snapshot) -> Result[LockGuard, StoreError]:
+    """Hold the lease of a root the caller decoded from its manifest under the lifecycle gate; expired roots refuse."""
+    check_retained(view)?
+    path = lease_path(view)
+    ensure_directory(path.parent())?
+    return path.store_lock_shared().map_err((error) => io_failure(path, error))
+
+
+def lease_path(view: Snapshot) -> Path:
+    """The lock file naming one generation, manifest digest and view."""
+    name = hexlify(sha256.digest(view.view.encode("utf-8")))
+    return view.root.joinpath("leases").joinpath(f"{view.generation}-{view.digest}-{name}")
 
 
 # ---- Compaction ----
