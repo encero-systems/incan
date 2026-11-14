@@ -940,3 +940,46 @@ mod scoped_name_tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod resolved_item_tests {
+    use super::LoafIndex;
+    use incan_lang::interop::{RustItemKind, RustItemMetadata, RustTypeInfo, RustVisibility};
+    use std::sync::Arc;
+
+    /// Releasing decoded items after checking drops every shared item the index held, and a later lookup answers
+    /// again through the same lookup order instead of from a retained copy.
+    #[test]
+    fn released_items_leave_the_index_and_decode_again() -> Result<(), Box<dyn std::error::Error>> {
+        let path = "native::Header";
+        let mut index = LoafIndex::default();
+        index.add_rust_facts(
+            &Default::default(),
+            [(
+                path.to_owned(),
+                RustItemMetadata {
+                    canonical_path: path.to_owned(),
+                    definition_path: None,
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Type(RustTypeInfo::default()),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        );
+        let first = index.rust_abi_item(path).ok_or("the installed fact did not answer")?;
+        assert_eq!(Arc::strong_count(&first), 2, "the index shares the item it decoded");
+
+        index.release_resolved_rust_items();
+
+        assert_eq!(
+            Arc::strong_count(&first),
+            1,
+            "the released index still holds the decoded item"
+        );
+        let again = index.rust_abi_item(path).ok_or("a released item no longer answers")?;
+        assert!(!Arc::ptr_eq(&first, &again), "the lookup answered from a retained copy");
+        assert_eq!(again.canonical_path, path);
+        Ok(())
+    }
+}
