@@ -22,7 +22,8 @@ from bakery import (
     repair_derived,
 )
 from bakery_records import Fact, claim_file, staging_root
-from bakery_roots import collect, register_root
+from bakery_roots import collect, lease_unit, leased_units, register_root
+from pub::incan_platform.process_lease import ProcessLease
 from pub::incan_platform.store import begin, commit, delete, fork, get, keys, put
 from store_path_conversion import payload_path, put_payload, readmit_payload, snapshot
 from files import make_directory, read, write as write_file
@@ -360,6 +361,47 @@ pub def test_prefixed_unit_identities_register_and_expire() -> Result[None, str]
     collected = collect(store, -1)?
     assert collected.removed == 1 and not found(find(store, old)?), "a replaced program unit was kept"
     assert found(find(store, recent)?), "the current program unit expired"
+    return Ok(None)
+
+
+pub def test_a_running_program_keeps_its_leased_unit_through_collection() -> Result[None, str]:
+    """
+    The proving lane's sequence: version 3 of a program is registered and starts; version 4 supersedes it while it
+    runs; collection then keeps version 3, and removes it once the program has exited.
+
+    1. Version 3 is registered, and collection keeps it.
+    2. Its run leases it, and the program it starts holds the lease after the run's own hold ends, as when the run's
+       process became the program or its owner restarted.
+    3. Version 4 supersedes version 3 while the program runs; collection keeps version 3.
+    4. Once the program has exited, collection removes version 3 and keeps version 4.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    third = "sha256:" + digest_of("d3")
+    fourth = "sha256:" + digest_of("d4")
+    project = scratch.path().joinpath("project")
+    make_directory(project)?
+    # 1. The registered unit stays.
+    assert bake(store, third, "version 3", [], "pinned-3")?
+    register_root(store, project.0, "unit\tpinned\tprogram", [third])?
+    assert collect(store, 0)?.removed == 0, "a registered unit expired"
+    # 2. The program inherits the run's lease; the run's own hold ends while the program runs.
+    mut lease: Option[ProcessLease] = Some(lease_unit(store, third)?)
+    mut program = Command.new("/bin/sleep").arg("60").spawn().map_err((error) => str(error))?
+    lease = None
+    # 3. Superseded while it runs, the leased unit is kept.
+    assert bake(store, fourth, "version 4", [], "pinned-4")?
+    register_root(store, project.0, "unit\tpinned\tprogram", [fourth])?
+    during = collect(store, 0)?
+    assert during.removed == 0, f"collection removed {during.removed} units while their program ran"
+    assert found(find(store, third)?), "a running program's unit was collected"
+    # 4. After the program exits, the superseded unit goes, and only it.
+    program.kill().map_err((error) => str(error))?
+    _ = program.wait().map_err((error) => str(error))?
+    after = collect(store, 0)?
+    assert after.removed == 1 and not found(find(store, third)?), "an exited program's superseded unit was kept"
+    assert found(find(store, fourth)?), "the current unit expired"
+    assert len(leased_units(store)?) == 0, "an ended lease is still listed"
     return Ok(None)
 
 
