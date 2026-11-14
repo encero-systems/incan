@@ -278,9 +278,11 @@ binding NAME in FILE: header HEADER, link CAPABILITY("LIBRARY")
 
 `incan inspect registry IDENTITY [--project PATH] [--format json]` prints one public typed registry (see [checked and loaded registries](../../language/explanation/checked_and_loaded_registries.md)) of the project at `PATH` (default `.`) as the compiler checks it, without running any module. `IDENTITY` is the registry's `<module>::<binding>`, or the same prefixed with the package name. The document has `schema_version` `1`, `provenance` `checked`, `package` (`name`, `version`), `registry` (the definition: `identity`, `binding`, `public`, `key_type`, `descriptor_type`, `subjects`, and `reexport_paths` when nonempty) and `entries`, each with `registry_identity`, `registry_public`, `key`, `descriptor`, `subject_kind`, `subject_identity`, `registration_anchor`, `subject_anchor` and `provenance`. An identity the package does not define exits `1` with ``checked registry `IDENTITY` was not found; available registries: ...``, listing package-qualified identities.
 
-## `incan tools metadata api`
+## `incan tools metadata api` and `model`
 
 `incan tools metadata api [PATH] [--format json]` prints the [checked API metadata](checked_api_metadata.md) of the source or project at `PATH` (default `.`): the `contract_metadata.api` its library manifest would carry, checked as a dependent sees it, without native compilation.
+
+`incan tools metadata model PATH MODEL [--format incan|json]` prints one [contract-backed model](contract_metadata.md) by its `logical_type_name` or `stable_model_id`. `PATH` is a project directory or source, whose publishable declared bundles are read through its checked library manifest, a bundle JSON file, or a `.incnlib` artifact. `incan` (default) prints the formatted model source; `json` prints the canonical bundle. A model that is not there exits `1` with ``model `MODEL` was not found in checked model metadata for PATH (available: ...)``.
 
 ## `oven inspect dependencies`
 
