@@ -9,6 +9,11 @@ summaries, timelines and command logs retain the human evidence.
 The standard-package stand-in and contract runner must stay within the selected budget on every run, and Oven, the
 toolchain's lowering compile, within the 6 GiB lowering budget (`LOWERING_RESERVATION_BYTES`). The floor build is
 recorded without gating.
+
+Oven's run is also traced: its compiler processes sample their footprint and live heap and mark each point where they
+return freed heap to the system. The record keeps the greatest live heap beside the footprint, and the run is refused
+when a compiler's footprint just after a release stands more than `RELEASE_MARGIN_BYTES` above its live heap: the
+footprint is what the budget holds, so memory the compiler has freed must not stay charged to it.
 """
 
 from rust::std::env import args
@@ -18,6 +23,7 @@ from rust::std::string import String as RustString
 from rust::std::thread import sleep
 from rust::std::time import Duration, Instant, SystemTime, UNIX_EPOCH
 from std.fs import Path
+from std.json import JsonValue
 from pub::incan_platform.probes import ProcessResource, parse_process_table, process_table
 from check_support import repository_root, write_stderr
 from oven_tests import LOWERING_RESERVATION_BYTES
@@ -28,6 +34,11 @@ pub const DEFAULT_RUNS: int = 3
 pub const INTERVAL_MS: u64 = 50
 const GATED_COMMANDS: FrozenList[str] = ["stdlib-primitives", "contracts"]
 const LOWERING_COMMANDS: FrozenList[str] = ["oven"]
+# Compiler trace records that carry a process's footprint and live heap: the heap sampler's readings and the timing
+# marks.
+const HEAP_RECORDS: FrozenList[str] = ["heap-sample: ", "native-time: "]
+# A timing mark whose boundary ends so was taken just after its process returned freed heap to the system.
+const RELEASE_BOUNDARY: str = "heap_released"
 # How far a compiler's footprint may stand above its live heap just after it returned freed heap.
 pub const RELEASE_MARGIN_BYTES: int = 256 * MIB
 const USAGE: str = "usage: memory_budget.incn OVEN OUT [--runs N] [--budget MIB]"
@@ -95,6 +106,15 @@ pub model HeapTrace:
     pub releases: int
     pub release_excess_bytes: int
     pub release_excess_at: str
+
+
+model HeapReading:
+    """One trace record's process, its footprint and live heap, and the timing boundary a mark names."""
+
+    process: int
+    footprint: int
+    live: int
+    boundary: str
 
 
 def main() -> None:
@@ -165,7 +185,7 @@ pub def measure(options: Options) -> Result[str, str]:
     1. Resolve the exact committed source once.
     2. Give every command run a fresh clone, target, bakery and worker generation.
     3. Write the stable TSV and human table after every run succeeds.
-    4. Require every standard-package and contract-runner measurement to fit the selected budget.
+    4. Require every gated measurement to fit its budget, and every traced run to return the heap it frees.
     """
     root = repository_root()?
     source = committed_source(root)?
@@ -182,6 +202,7 @@ pub def measure(options: Options) -> Result[str, str]:
         .write_text(report, "utf-8", "strict", None)
         .map_err((error) => error.message())?
     require_budget(results, options.budget_bytes)?
+    require_released_heap(results)?
     return Ok(report)
 
 
@@ -200,7 +221,7 @@ def measure_once(
     clone_source(root, source, source_commit)?
     bakery.mkdir(true, true).map_err((error) => error.message())?
     prefix = options.output.joinpath(f"memory-{planned.name}-{run}")
-    outcome = sample_command(options, planned, run, source, bakery, prefix)
+    outcome = sample_command(options, planned, run, source, bakery, run_root.joinpath("trace"), prefix)
     cleanup = remove_dir_all(run_root.0).map_err((error) => f"cannot remove {run_root.0}: {error}")
     match outcome:
         Err(message) =>
@@ -219,9 +240,13 @@ def sample_command(
     run: int,
     source: Path,
     bakery: Path,
+    trace: Path,
     prefix: Path,
 ) -> Result[Measurement, str]:
-    """Start one build and sample its complete descendant tree until the root command exits."""
+    """
+    Start one build and sample its complete descendant tree until the root command exits. Oven's run is traced: each
+    compiler process samples its footprint and live heap into `trace`, and the run keeps what `heap_trace` reads.
+    """
     log = File.create(f"{prefix.0}.log").map_err((error) => f"{prefix.0}.log: {error}")?
     errors = log.try_clone().map_err((error) => str(error))?
     mut command = Command.new(options.oven)
@@ -236,14 +261,28 @@ def sample_command(
     for key in ["INCAN", "INCAN_STDLIB", "INCAN_SOURCE_ROOT", "RUSTC_BOOTSTRAP", "INCAN_LSP"]:
         command.env_remove(key)
     command.env("INCAN_STDLIB", source.joinpath("loaves/stdlib").0)
+    if planned.name in LOWERING_COMMANDS:
+        trace.mkdir(true, true).map_err((error) => error.message())?
+        command.env("INCAN_ENGINE_TRACE", trace.0)
+        command.env("INCAN_NATIVE_TIMING", "heap")
     command.stdin(Stdio.null()).stdout(log).stderr(errors)
     started = Instant.now()
     child = command.spawn().map_err((error) => f"cannot start {planned.name}: {error}")?
-    return sample_child(planned.name, run, child, started, prefix)
+    mut result = sample_child(planned.name, run, child, started, prefix)?
+    heap = traced_heap(trace)?
+    result.live_peak_bytes = heap.live_peak_bytes
+    result.live_peak_process = heap.live_peak_process
+    result.releases = heap.releases
+    result.release_excess_bytes = heap.release_excess_bytes
+    result.release_excess_at = heap.release_excess_at
+    Path(prefix.0 + ".summary.txt")
+        .write_text(summary(result), "utf-8", "strict", None)
+        .map_err((error) => error.message())?
+    return Ok(result)
 
 
 def sample_child(name: str, run: int, mut child: Child, started: Instant, prefix: Path) -> Result[Measurement, str]:
-    """Observe one child at 50 ms intervals and write its timeline, per-process maxima and summary."""
+    """Observe one child at 50 ms intervals and write its timeline and per-process maxima."""
     root = int(child.id())
     mut timeline = "elapsed_ms\ttree_footprint\ttree_resident\tprocesses\tlargest_pid\tlargest_name\tlargest_footprint\n"
     mut seen: Dict[int, SeenProcess] = {}
@@ -272,22 +311,106 @@ def sample_child(name: str, run: int, mut child: Child, started: Instant, prefix
     largest_name, largest_peak = largest_lifetime(seen, order)
     Path(prefix.0 + ".timeline.tsv").write_text(timeline, "utf-8", "strict", None).map_err((error) => error.message())?
     write_processes(prefix, seen, order)?
-    result = Measurement(
-        command=name,
-        run=run,
-        status=status,
-        tree_peak_bytes=tree_peak,
-        peak_at_ms=peak_at,
-        peak_holder=peak_holder,
-        peak_holder_bytes=peak_holder_bytes,
-        largest_process=largest_name,
-        largest_process_peak_bytes=largest_peak,
-        wall_ms=wall_ms,
+    return Ok(
+        Measurement(
+            command=name,
+            run=run,
+            status=status,
+            tree_peak_bytes=tree_peak,
+            peak_at_ms=peak_at,
+            peak_holder=peak_holder,
+            peak_holder_bytes=peak_holder_bytes,
+            largest_process=largest_name,
+            largest_process_peak_bytes=largest_peak,
+            wall_ms=wall_ms,
+        ),
     )
-    Path(prefix.0 + ".summary.txt")
-        .write_text(summary(result), "utf-8", "strict", None)
-        .map_err((error) => error.message())?
-    return Ok(result)
+
+
+pub def no_heap_trace() -> HeapTrace:
+    """The reading of a run no compiler process traced."""
+    return HeapTrace(live_peak_bytes=-1, live_peak_process=0, releases=0, release_excess_bytes=0, release_excess_at="")
+
+
+pub def traced_heap(trace: Path) -> Result[HeapTrace, str]:
+    """Fold every compiler trace in `trace` into one reading; a run that traced nothing reads as `no_heap_trace`."""
+    mut heap = no_heap_trace()
+    if not trace.is_dir():
+        return Ok(heap)
+    for file in trace.glob("*.jsonl").map_err((error) => error.message())?:
+        heap = heap_trace(file.read_text("utf-8", "strict").map_err((error) => f"{file.0}: {error.message()}")?, heap)?
+    return Ok(heap)
+
+
+pub def heap_trace(trace: str, seen: HeapTrace) -> Result[HeapTrace, str]:
+    """
+    Fold one compiler trace into `seen`.
+
+    Every heap sample and timing mark names its process with that process's footprint and live heap. The greatest
+    live heap wins. A mark taken just after a heap release counts as a release, and the greatest footprint above the
+    live heap at any release wins. Other records are skipped; a heap record that cannot be read refuses.
+    """
+    mut folded = HeapTrace(
+        live_peak_bytes=seen.live_peak_bytes,
+        live_peak_process=seen.live_peak_process,
+        releases=seen.releases,
+        release_excess_bytes=seen.release_excess_bytes,
+        release_excess_at=seen.release_excess_at,
+    )
+    for line in trace.split("\n"):
+        reading = heap_reading(line)?
+        if reading.live < 0 or reading.footprint < 0:
+            continue
+        if reading.live > folded.live_peak_bytes:
+            folded.live_peak_bytes = reading.live
+            folded.live_peak_process = reading.process
+        if not reading.boundary.endswith(RELEASE_BOUNDARY):
+            continue
+        excess = reading.footprint - reading.live
+        if folded.releases == 0 or excess > folded.release_excess_bytes:
+            folded.release_excess_bytes = excess
+            folded.release_excess_at = f"{reading.boundary} in process {reading.process}"
+        folded.releases += 1
+    return Ok(folded)
+
+
+def heap_reading(line: str) -> Result[HeapReading, str]:
+    """The heap reading one trace record carries; a record that carries none reads as -1 bytes."""
+    none = HeapReading(process=0, footprint=-1, live=-1, boundary="")
+    mut marked = false
+    for marker in HEAP_RECORDS:
+        if marker in line:
+            marked = true
+    if not marked:
+        return Ok(none)
+    record = JsonValue.parse(line).map_err((error) => f"unreadable trace record: {error.message()}")?
+    mut key = ""
+    match record.get("key"):
+        Some(value) => key = value.as_str().unwrap_or("")
+        None => pass
+    for marker in HEAP_RECORDS:
+        if key.startswith(marker):
+            body = JsonValue.parse(key[len(marker):]).map_err((error) => f"unreadable heap record: {error.message()}")?
+            mut boundary = ""
+            match body.get("boundary"):
+                Some(value) => boundary = value.as_str().unwrap_or("")
+                None => pass
+            return Ok(
+                HeapReading(
+                    process=json_int(body, "process", 0),
+                    footprint=json_int(body, "footprint", -1),
+                    live=json_int(body, "live", -1),
+                    boundary=boundary,
+                ),
+            )
+    return Ok(none)
+
+
+def json_int(record: JsonValue, field: str, missing: int) -> int:
+    """One integer field of a trace record, or `missing` when the record has no such integer."""
+    match record.get(field):
+        Some(value) => return value.as_int().unwrap_or(missing)
+        None => return missing
 
 
 pub def process_tree(rows: list[ProcessResource], root: int) -> list[ProcessResource]:
@@ -364,22 +487,43 @@ def write_processes(prefix: Path, seen: Dict[int, SeenProcess], order: list[int]
 
 
 pub def measurements_tsv(results: list[Measurement], budget_bytes: int) -> str:
-    """Render the stable six-column release evidence record, each row with the budget its command is held to."""
-    mut text = "command\trun\ttree_peak_bytes\tlargest_process\tlargest_process_peak_bytes\tbudget_bytes\n"
+    """
+    Render the stable release evidence record: each row's footprint peak with the budget its command is held to, and
+    beside them the live heap peak and the greatest footprint above the live heap at a heap release, -1 and 0 for a run
+    that was not traced.
+    """
+    mut text = "command\trun\ttree_peak_bytes\tlargest_process\tlargest_process_peak_bytes\tlive_peak_bytes\trelease_excess_bytes\tbudget_bytes\n"
     for result in results:
-        text += f"{result.command}\t{result.run}\t{result.tree_peak_bytes}\t{result.largest_process}\t{result.largest_process_peak_bytes}\t{command_budget(result.command, budget_bytes)}\n"
+        text += f"{result.command}\t{result.run}\t{result.tree_peak_bytes}\t{result.largest_process}\t{result.largest_process_peak_bytes}\t{result.live_peak_bytes}\t{result.release_excess_bytes}\t{command_budget(result.command, budget_bytes)}\n"
     return text
 
 
 pub def measurements_report(results: list[Measurement], budget_bytes: int) -> str:
-    """Render the human table with tree peak, peak holder, wall time and informational budget outcome."""
-    mut text = "command\trun\tpeak_mib\tpeak_holder\tholder_mib\twall_seconds\tbudget\n"
+    """
+    Render the human table with tree peak, peak holder, live heap peak, the greatest footprint above the live heap at
+    a heap release, wall time and informational budget outcome.
+    """
+    mut text = "command\trun\tpeak_mib\tpeak_holder\tholder_mib\tlive_mib\trelease_excess_mib\twall_seconds\tbudget\n"
     for result in results:
-        text += f"{result.command}\t{result.run}\t{result.tree_peak_bytes // MIB}\t{result.peak_holder}\t{result.peak_holder_bytes // MIB}\t{result.wall_ms // 1000}\t{budget_outcome(
+        text += f"{result.command}\t{result.run}\t{result.tree_peak_bytes // MIB}\t{result.peak_holder}\t{result.peak_holder_bytes // MIB}\t{mib_text(result.live_peak_bytes)}\t{release_excess_text(result)}\t{result.wall_ms // 1000}\t{budget_outcome(
             result.tree_peak_bytes,
             command_budget(result.command, budget_bytes),
         )}\n"
     return text
+
+
+def mib_text(bytes: int) -> str:
+    """Whole MiB for the human report, or `-` for a reading the run did not record."""
+    if bytes < 0:
+        return "-"
+    return str(bytes // MIB)
+
+
+def release_excess_text(result: Measurement) -> str:
+    """Whole MiB of footprint above the live heap at the run's worst heap release, or `-` when it traced none."""
+    if result.releases == 0:
+        return "-"
+    return str(result.release_excess_bytes // MIB)
 
 
 pub def command_budget(command: str, budget_bytes: int) -> int:
@@ -410,18 +554,23 @@ pub def require_budget(results: list[Measurement], budget_bytes: int) -> Result[
     return Ok(None)
 
 
-pub def no_heap_trace() -> HeapTrace:
-    """The reading of a run no compiler process traced."""
-    return HeapTrace(live_peak_bytes=-1, live_peak_process=0, releases=0, release_excess_bytes=0, release_excess_at="")
-
-
-pub def heap_trace(trace: str, seen: HeapTrace) -> Result[HeapTrace, str]:
-    """Fold one compiler trace into `seen`. It reads nothing yet."""
-    return Ok(no_heap_trace())
-
-
 pub def require_released_heap(results: list[Measurement]) -> Result[None, str]:
-    """Refuse any Oven run whose footprint stays above its live heap after a heap release. It refuses nothing yet."""
+    """
+    Refuse any Oven run that traced no heap release, or whose compiler's footprint just after one stood more than
+    `RELEASE_MARGIN_BYTES` above its live heap: the allocator still held memory the compiler had freed.
+    """
+    mut kept: list[str] = []
+    for result in results:
+        if result.command not in LOWERING_COMMANDS:
+            continue
+        if result.releases == 0:
+            kept.append(f"{result.command} run {result.run}: no heap release traced")
+        elif result.release_excess_bytes > RELEASE_MARGIN_BYTES:
+            kept.append(
+                f"{result.command} run {result.run}: {result.release_excess_bytes} > {RELEASE_MARGIN_BYTES} bytes at {result.release_excess_at}",
+            )
+    if len(kept) > 0:
+        return Err("footprint above the live heap after a heap release: " + "; ".join(kept))
     return Ok(None)
 
 
@@ -439,6 +588,12 @@ def summary(result: Measurement) -> str:
     text += f"tree_peak_holder_mib\t{result.peak_holder_bytes // MIB}\n"
     text += f"largest_process\t{result.largest_process}\n"
     text += f"largest_process_lifetime_peak_mib\t{result.largest_process_peak_bytes // MIB}\n"
+    text += f"live_peak_bytes\t{result.live_peak_bytes}\n"
+    text += f"live_peak_mib\t{mib_text(result.live_peak_bytes)}\n"
+    text += f"live_peak_process\t{result.live_peak_process}\n"
+    text += f"heap_releases\t{result.releases}\n"
+    text += f"release_excess_bytes\t{result.release_excess_bytes}\n"
+    text += f"release_excess_at\t{result.release_excess_at}\n"
     return text
 
 
