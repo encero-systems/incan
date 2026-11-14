@@ -61,6 +61,8 @@ pub model Workspace:
     pub manifest: Path
     pub members: list[Member]
     pub default_members: list[str]
+    # The `members` glob patterns that matched no directory holding a `loaf.toml`.
+    pub unmatched: list[str] = []
 
 
 pub def selected(selection: Selection) -> bool:
@@ -121,9 +123,13 @@ def read_workspace(root: Path, manifest: Path, document: TomlValue) -> Result[Wo
         members.append(Member(name=name, relative=".", root=root, is_root_member=true))
     excluded = [normalized(item) for item in strings(document, "workspace.exclude", manifest)]
     mut directories: list[str] = []
+    mut unmatched: list[str] = []
     for item in listed:
         if has_glob(item):
-            for relative in matched_members(root, normalized(item))?:
+            matched = matched_members(root, normalized(item))?
+            if len(matched) == 0:
+                unmatched.append(item)
+            for relative in matched:
                 if relative not in directories:
                     directories.append(relative)
         elif normalized(item) not in directories:
@@ -145,7 +151,7 @@ def read_workspace(root: Path, manifest: Path, document: TomlValue) -> Result[Wo
     if len(members) == 0:
         return Err(f"{manifest.0}: a virtual workspace must declare at least one member")
     defaults = [normalized(item) for item in strings(document, "workspace.default-members", manifest)]
-    return Ok(Workspace(root=root, manifest=manifest, members=members, default_members=defaults))
+    return Ok(Workspace(root=root, manifest=manifest, members=members, default_members=defaults, unmatched=unmatched))
 
 
 def strings(document: TomlValue, key: str, manifest: Path) -> list[str]:
@@ -154,6 +160,16 @@ def strings(document: TomlValue, key: str, manifest: Path) -> list[str]:
         Ok(Some(values)) => return values
         Ok(None) => return []
         Err(_) => return []
+
+
+def unmatched_warnings(workspace: Workspace) -> list[JsonValue]:
+    """One `unmatched_glob` warning, in 0.5.1's shape, for each `members` pattern that names no member."""
+    mut warnings: list[JsonValue] = []
+    for pattern in workspace.unmatched:
+        warnings.append(
+            JsonValue.object({"kind": JsonValue.string("unmatched_glob"), "pattern": JsonValue.string(pattern)}),
+        )
+    return warnings
 
 
 def has_glob(pattern: str) -> bool:
@@ -326,6 +342,7 @@ def inspection_document(
             {"canonical_path": JsonValue.string(lock.0), "exists": JsonValue.bool(lock.is_file())},
         ),
     }
+    fields["warnings"] = JsonValue.array(unmatched_warnings(workspace))
     # The root's shared tables, in 0.5.1's shape (`workspace_shared`).
     shared = shared_tables(workspace.root, workspace.manifest)?
     for key in sorted([key for key in shared.keys()]):
