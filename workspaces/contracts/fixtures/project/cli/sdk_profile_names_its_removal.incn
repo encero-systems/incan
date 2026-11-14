@@ -1,0 +1,19 @@
+# behavior: 0.5.1's `--sdk-profile` is refused on every command that took it, naming its removal with SDK profiles and `[sdk]` and what selects a build in 0.6 (#3144)
+# cli-commands:
+#   check --sdk-profile minimal src/main.incn
+#   build --sdk-profile minimal
+#   run --sdk-profile minimal src/main.incn
+#   test --sdk-profile minimal
+#   oven lock --sdk-profile minimal
+#   inspect bindings --sdk-profile minimal
+#   inspect codegraph . --sdk-profile minimal
+#   oven inspect features --sdk-profile minimal
+#   check --sdk-profile=minimal src/main.incn
+# expect-stdout:
+# expect-stderr-contains:
+#   unknown option `--sdk-profile`: 0.6 removed SDK profiles and `[sdk]` (#3144); a Loaf's `[dependencies]` and `[project.features]` select what it builds
+# expect-exit: 2
+
+def main() -> None:
+    """Provide a source that refused invocations never compile."""
+    pass
