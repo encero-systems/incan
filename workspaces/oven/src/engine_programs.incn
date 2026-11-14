@@ -9,6 +9,7 @@ from std.json import JsonValue, parse
 from bakery import find, fact_file
 from bakery_records import Fact
 from bakery_roots import register_root
+from check_pages import check_page_directory, keep_check_pages
 from compiler_body_publication import (
     PreparedSourceInputs,
     prepare_captured_source_inputs,
@@ -83,7 +84,8 @@ pub model ProgramOutcome:
     pub body_evaluations: int = 0
     # Checked bodies the compiler restored from the request view's records instead of checking them, as it reports.
     pub body_reuses: int = 0
-    # Restored pages the compiler decoded itself, rather than found decoded by an earlier check.
+    # Checked-body pages the request selected, encoded and wrote; and restored pages the compiler had to decode.
+    pub body_page_writes: int = 0
     pub body_page_decodes: int = 0
     pub body_ir_evaluations: int = 0
     pub native_bakes: int = 0
@@ -115,8 +117,18 @@ pub model CheckOutcome:
     # Top-level function bodies the check checked, and those it restored from the request view's records.
     pub body_evaluations: int = 0
     pub body_reuses: int = 0
-    # Restored pages the compiler decoded itself, rather than found decoded by an earlier check.
+    # Pages the check wrote for its view, and restored pages the compiler decoded itself.
+    pub body_page_writes: int = 0
     pub body_page_decodes: int = 0
+
+
+pub model BodyReading:
+    """A request view's graph, the request's source projections, and the owners whose bodies those changed."""
+
+    pub graph: Snapshot
+    pub projected: PreparedSourceInputs
+    # Owners whose earlier evaluations read a source projection this request changed; they are checked afresh.
+    pub invalid: list[str]
 
 
 pub model BodySelection:
@@ -124,7 +136,6 @@ pub model BodySelection:
 
     pub graph: Snapshot
     pub projected: PreparedSourceInputs
-    # Owners whose earlier evaluations read a source projection this request changed; they are checked afresh.
     pub invalid: list[str]
     pub retained: list[SelectedBodyRecord]
 
@@ -156,7 +167,7 @@ pub def check_program(
 ) -> Result[CheckOutcome, str]:
     """
     Describe and check one captured build reach without requesting code generation or a native selection. The check
-    restores each unchanged checked body from the request view's records, selected exactly as a build selects them.
+    restores each unchanged checked body from the request view's records, from pages the view keeps between requests.
     """
     epoch = request_epoch(store, revision, captured, "check")?
     if len(epoch.roots) != 1:
@@ -179,17 +190,35 @@ pub def check_program(
     ):
         return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
     ready = prepare_native(described, toolchain)?
-    selection = select_bodies(store, view, ready, epoch.inputs, false)?
-    checked = check_prepared(ready, toolchain, format, Some(encode_body_inventory(selection.retained)?))?
+    # Only the owners this request's edit reaches change between keystrokes; the view's pages are kept for the rest.
+    reading = body_reading(store, view, ready, epoch.inputs)?
+    directory = check_page_directory(store, view, ready)
+    pages = keep_check_pages(reading.graph, source_origin(ready), reading.invalid, ready, directory)?
+    checked = check_prepared(ready, toolchain, format, Some(pages.directory))?
     return Ok(
         CheckOutcome(
             code=checked.code,
             console=console,
             body_evaluations=checked.bodies.checked,
             body_reuses=checked.bodies.reused,
+            body_page_writes=pages.written,
             body_page_decodes=checked.bodies.decoded,
         ),
     )
+
+
+def body_reading(store: Path, view: str, ready: UnitDescription, inputs: list[CapturedInput]) -> Result[BodyReading, str]:
+    """
+    Read the graph a request selects checked bodies from: an editor view reads its own records, any other view the
+    shared ones. An owner whose earlier evaluation read a source projection this request changed is invalid.
+    """
+    mut graph_view = str(HOME_VIEW)
+    if is_editor_view(view):
+        graph_view = view
+    graph = snapshot(store, graph_view).map_err((error) => error.message())?
+    projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs)?
+    invalid = body_owners_reading(graph, projected.keys, CHECKER_PROFILE)?
+    return Ok(BodyReading(graph=graph, projected=projected, invalid=invalid))
 
 
 def select_bodies(
@@ -200,21 +229,19 @@ def select_bodies(
     listing_refusals: bool,
 ) -> Result[BodySelection, str]:
     """
-    Select the checked bodies a request reuses: an editor view reads its own records, any other view the shared ones.
-    An owner whose earlier evaluation read a source projection this request changed is left to be checked afresh;
-    listing refusals checks every owner afresh.
+    Select the checked bodies a build reuses: every owner of the request's graph its edit leaves valid. Listing
+    refusals checks every owner afresh.
     """
-    mut graph_view = str(HOME_VIEW)
-    if is_editor_view(view):
-        graph_view = view
-    graph = snapshot(store, graph_view).map_err((error) => error.message())?
-    projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs)?
+    reading = body_reading(store, view, ready, inputs)?
     origin = source_origin(ready)
-    mut invalid = body_owners_reading(graph, projected.keys, CHECKER_PROFILE)?
+    mut invalid = reading.invalid
     if listing_refusals:
-        invalid = [record.identity for record in select_body_inventory_except(graph, CHECKER_PROFILE, origin, [])?]
-    retained = select_body_inventory_except(graph, CHECKER_PROFILE, origin, invalid)?
-    return Ok(BodySelection(graph=graph, projected=projected, invalid=invalid, retained=retained))
+        invalid = [
+            record.identity
+            for record in select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, [])?
+        ]
+    retained = select_body_inventory_except(reading.graph, CHECKER_PROFILE, origin, invalid)?
+    return Ok(BodySelection(graph=reading.graph, projected=reading.projected, invalid=invalid, retained=retained))
 
 
 pub def obtain(
@@ -323,6 +350,7 @@ pub def obtain(
                 code=produced.code,
                 evaluations=produced.evaluations,
                 body_evaluations=len(invalid),
+                body_page_writes=len(retained_bodies),
                 console=console,
                 epoch_reads=epoch_reads,
                 plan_function_evaluations=plan_counts.plan_evaluations,
@@ -391,6 +419,7 @@ pub def obtain(
             evaluations=produced.evaluations,
             body_evaluations=body_evaluations,
             body_reuses=body_reuses,
+            body_page_writes=len(retained_bodies),
             body_ir_evaluations=body_ir_evaluations,
             native_bakes=produced.native_bakes,
             plan_function_evaluations=plan_counts.plan_evaluations,
