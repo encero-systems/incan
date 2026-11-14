@@ -46,7 +46,6 @@ from engine_wire import zero_id
 from freshness_fixtures import fixture, make_executable, reconcile, unit_key, write
 from dependency_freshness_archive import verify_archive_members
 
-
 pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     """Dependency rebuilds rekey consumers; exact relocated native artifacts and fresh ABI publication stay valid."""
     scratch = scratch_directory()?
@@ -90,7 +89,6 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     verify_semantic_edit_matrix(scratch.path().joinpath("semantic-edit-matrix"))?
     return Ok(None)
 
-
 pub def test_installed_inputs_are_admitted_once() -> Result[None, str]:
     """An installed generation is selected from its admitted page without reopening any frozen input."""
     scratch = scratch_directory()?
@@ -98,7 +96,6 @@ pub def test_installed_inputs_are_admitted_once() -> Result[None, str]:
     write(original, "runtime interface")?
     record_payload(original, "runtime producer")?
     return verify_published_installation(scratch.path(), original)
-
 
 @derive(Eq)
 enum SemanticEdit(str):
@@ -127,7 +124,6 @@ enum SemanticEdit(str):
     NamespaceReexport = "namespace-reexport"
     NamespaceForeignNominal = "namespace-foreign-nominal"
 
-
 @derive(Eq)
 enum MatrixFixture(str):
     """The three Incan-only fixture shapes whose compiler records E2 compares."""
@@ -137,7 +133,6 @@ enum MatrixFixture(str):
     Library = "library"
     Namespaces = "namespaces"
 
-
 @derive(Eq)
 enum MatrixBuildKind(str):
     """The three builds that establish one matrix row's retained and cold states."""
@@ -145,7 +140,6 @@ enum MatrixBuildKind(str):
     Base = "base"
     Warm = "warm"
     Cold = "cold"
-
 
 model MatrixCase:
     """One edit's complete base and edited source trees and the build request that observes them."""
@@ -158,7 +152,6 @@ model MatrixCase:
     expected_module_checks: int = -1
     expected_body_ir_modules: int = -1
     expected_lowered_modules: int = -1
-
 
 model PhaseCounts:
     """Actual producer work at the five executing compiler phases retained by the existing work trace."""
@@ -196,7 +189,6 @@ model PhaseCounts:
             lowering_items=lowering_items,
         )
 
-
 def lowering_module_count(items: list[str]) -> int:
     """Count unique source modules in one non-cumulative lowering trace slice."""
     mut modules: set[str] = set()
@@ -206,14 +198,12 @@ def lowering_module_count(items: list[str]) -> int:
             modules.add(fields[4])
     return len(modules)
 
-
 model MatrixBuild:
     """The comparable outputs and work evidence from one completed edited or cold build."""
 
     artifacts: Dict[str, str]
     counts: PhaseCounts
     wall_ms: int
-
 
 model SemanticEditMatrix:
     """Own one E2 run's fixtures, compiler process, failures and optional measurement rows."""
@@ -446,12 +436,10 @@ model SemanticEditMatrix:
                 .map_err((error) => error.message())?
         return Ok(None)
 
-
 def verify_semantic_edit_matrix(root: Path) -> Result[None, str]:
     """Run DD-0015's fixed Incan-only E2 matrix through the installed compiler selected by this Oven test."""
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     return SemanticEditMatrix(root=root, binary=binary).verify()
-
 
 def comparable_matrix_output(relative: str) -> bool:
     """Select semantic compiler records and final artifact bytes while excluding ledgers and publication receipts."""
@@ -465,7 +453,6 @@ def comparable_matrix_output(relative: str) -> bool:
         if relative.endswith(suffix):
             return true
     return false
-
 
 def semantic_edit_cases() -> list[MatrixCase]:
     """Define the fixed E2 matrix over hello, sibling declarations and one sibling library module."""
@@ -775,7 +762,6 @@ def semantic_edit_cases() -> list[MatrixCase]:
         namespace_foreign_nominal_case(),
     ]
 
-
 def namespace_family_case(edit: SemanticEdit, declarations: list[str], append_stable: bool = true) -> MatrixCase:
     """Require one unchanged declaration-family namespace to stay admitted across a sibling body edit."""
     main = fixture_source(
@@ -808,7 +794,6 @@ def namespace_family_case(edit: SemanticEdit, declarations: list[str], append_st
         expected_lowered_modules=1,
     )
 
-
 def namespace_reexport_case() -> MatrixCase:
     """Require a real public source re-export namespace to stay admitted across an unrelated body edit."""
     main = fixture_source(
@@ -832,7 +817,6 @@ def namespace_reexport_case() -> MatrixCase:
         expected_body_ir_modules=1,
         expected_lowered_modules=1,
     )
-
 
 def namespace_foreign_nominal_case() -> MatrixCase:
     """Retain one compiled-Loaf nominal in a sibling signature while rebuilding only its caller."""
@@ -859,11 +843,9 @@ def namespace_foreign_nominal_case() -> MatrixCase:
         expected_lowered_modules=1,
     )
 
-
 def fixture_source(lines: list[str]) -> str:
     """Render readable source-line fixtures with one final newline."""
     return "\n".join(lines) + "\n"
-
 
 def verify_checked_product_context(scratch: Path) -> Result[None, str]:
     """Unchanged semantic inputs retain one selection; unrelated frozen toolchain files do not rekey it."""
@@ -899,7 +881,6 @@ def verify_checked_product_context(scratch: Path) -> Result[None, str]:
     assert first_program.checked_products == second_program.checked_products
     return Ok(None)
 
-
 def verify_request_artifact_identities(scratch: Path) -> Result[None, str]:
     """One request observes each artifact once and refuses a generation changed before the request commits."""
     artifact = scratch.joinpath("libshared.rlib")
@@ -918,7 +899,6 @@ def verify_request_artifact_identities(scratch: Path) -> Result[None, str]:
             assert artifact.0 in reason
     assert ArtifactIdentities().identity(artifact)? != first
     return Ok(None)
-
 
 def verify_worker_publication(scratch: Path) -> Result[None, str]:
     """Carried workers keep their baked identity; payload admission stays separate from library identity."""
@@ -949,7 +929,6 @@ def verify_worker_publication(scratch: Path) -> Result[None, str]:
             assert "payload changed" in reason
     return Ok(None)
 
-
 def verify_requested_loaf_roots(scratch: Path) -> Result[None, str]:
     """Requested native roots keep their offered identity; unrelated published bindings do not become graph anchors."""
     setup = fixture(scratch)?
@@ -961,7 +940,6 @@ def verify_requested_loaf_roots(scratch: Path) -> Result[None, str]:
     assert published_bindings(unit, setup.toolchain, ["wanted"])? == [directory.joinpath("libwanted.rlib").0]
     assert published_bindings(unit, setup.toolchain, ["other"])? == []
     return Ok(None)
-
 
 def verify_native_alias_artifacts(scratch: Path) -> Result[None, str]:
     """Retain one alias for byte-identical relocated artifacts, refusing different or unreadable candidates."""
@@ -987,7 +965,6 @@ def verify_native_alias_artifacts(scratch: Path) -> Result[None, str]:
         Err(reason) =>
             assert copy.0 in reason
     return Ok(None)
-
 
 def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
     """
@@ -1025,7 +1002,6 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
     assert library_directory(bakery()?, output.parent())?.0 == output.parent().0
     assert read(attempts)? == "xx"
     return Ok(None)
-
 
 def verify_toolchain_interface_admission(scratch: Path, toolchain: Toolchain) -> Result[None, str]:
     """A selected toolchain admits transported native, standard and registry payloads and refuses changed bytes."""
