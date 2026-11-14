@@ -33,7 +33,7 @@ mod declaration_records;
 mod runtime_bindings;
 #[cfg(test)]
 mod thread_selection;
-pub(super) use declaration_records::read_declaration;
+pub(super) use declaration_records::{names_record, read_declaration};
 pub(super) use runtime_bindings::read_runtime_bindings;
 
 /// The record family holding a Loaf's checked API documentation, which compiles never open (RFC 179).

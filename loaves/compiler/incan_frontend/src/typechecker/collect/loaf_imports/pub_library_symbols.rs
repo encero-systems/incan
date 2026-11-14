@@ -146,6 +146,9 @@ impl TypeChecker {
                 source_name: member.to_string(),
             }));
         }
+        if let Some(resolved) = self.record_module_member(library, module_path, member) {
+            return Ok(Some(resolved));
+        }
         let Some(manifest) = self
             .loaves
             .entry(library)
@@ -174,6 +177,10 @@ impl TypeChecker {
         member: &str,
         binding_name: &str,
     ) -> Option<PartialProjectionInfo> {
+        // A plain function its records settle projects no partial call.
+        if self.record_module_member(library, module_path, member).is_some() {
+            return None;
+        }
         let manifest = std::sync::Arc::clone(&self.loaves.entry(library)?.artifact.manifest);
         let mut projection = self
             .public_module_member(library, &manifest, module_path, member)

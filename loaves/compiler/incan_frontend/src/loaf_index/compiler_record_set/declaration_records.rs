@@ -97,3 +97,38 @@ pub(super) fn read_declaration_in(
     );
     Ok(Some((values, summary.identity.digest)))
 }
+
+/// Whether the installed Loaf `name` holds a record of one of `families`, named `record` when one is given, answered
+/// from the set's receipt alone without opening any value. `None` outside records mode, and for a Loaf the set does not
+/// hold.
+pub(in crate::loaf_index) fn names_record(
+    dir: &Path,
+    name: &str,
+    families: &[&str],
+    record: Option<&str>,
+) -> Result<Option<bool>, LoafIndexError> {
+    let Some(set) = installed().map_err(|reason| unreadable(dir, name, reason))? else {
+        return Ok(None);
+    };
+    let profile = dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
+    let group = format!("loaf/{profile}/{name}/");
+    let held = set
+        .entries
+        .iter()
+        .filter_map(|entry| entry.key.strip_prefix(&group))
+        .collect::<Vec<_>>();
+    if held.is_empty() {
+        return Ok(None);
+    }
+    let suffix = record.map(|record| format!("/{:x}", Sha256::digest(record.as_bytes())));
+    Ok(Some(held.iter().any(|key| {
+        families.iter().any(|family| {
+            key.strip_prefix(*family).is_some_and(|rest| {
+                rest.starts_with('/') && suffix.as_ref().is_none_or(|suffix| rest.ends_with(suffix))
+            })
+        })
+    })))
+}

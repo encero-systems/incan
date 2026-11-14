@@ -156,6 +156,10 @@ impl TypeChecker {
         items: &[ImportItem],
         span: Span,
     ) {
+        // Importing only public namespaces needs their records alone, never the Loaf's whole checked API.
+        if self.collect_record_namespace_imports(import, items, span) {
+            return;
+        }
         let library = import.key.as_str();
         let path = import.module.as_slice();
         let Some(manifest) = self.loaf_manifest_or_refuse(library, span) else {
