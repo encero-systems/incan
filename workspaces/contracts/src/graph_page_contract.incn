@@ -24,8 +24,8 @@ const PREPARATION: FrozenList[str] = [
 
 pub def check_warm_pages(incan: str, project: Path) -> Result[None, str]:
     """
-    A warm graph request on an Incan project answers from the bakery's records: it prepares nothing and hashes no file.
-    A Rust project's graph is not paged: rustc reports its inputs, its environment among them, only when it runs.
+    A warm graph request, on an Incan or a Rust project, answers from its page in the bakery: it prepares nothing and
+    hashes no file.
 
     1. Make the check's own working directory first, so no later file of the check changes the project's entries.
     2. Ask twice, a settle period apart, so the answer is paged under settled inputs.
@@ -33,8 +33,6 @@ pub def check_warm_pages(incan: str, project: Path) -> Result[None, str]:
     4. An MCP session's `graph_query` for the same selection reads the same page, and a second session's
        `context_for_task` reads the page the first session's left.
     """
-    if project.joinpath("src").joinpath("lib.rs").is_file():
-        return Ok(None)
     # 1. Traces and MCP requests stay in this one directory.
     work_directory = project.joinpath(".page-work")
     traces = work_directory.joinpath("traces")
