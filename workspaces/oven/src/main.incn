@@ -14,9 +14,8 @@ from engine_service import serve as serve_engine, refusal_code
 from bakery import bakery, bakery_command, parse_bakery, repair_payload_command
 from storage_admission import take_decision
 from store_status import parse_status, status_command
-from features import FeatureRequest
 from home import dependency_artifact_dir
-from intake import read_project, source_root_of, ManifestReader, entry_source
+from intake import read_project, source_root_of, entry_source
 from files import read
 from manifest_tolerance import tolerated_warnings
 from unit import describe, project_root_of, retired_refusal, with_c_abi_target
@@ -59,8 +58,9 @@ from binding_inspection import binding_options, inspect_bindings
 from graph_incan import inspect_prepared, publish_prepared_graph
 from graph_mcp import serve_graph, options as mcp_options
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
-from cli_help import help_hint, refused_option, unknown_option
-from command_help import UNIT_VALUE_OPTIONS, command_help, usage, version_text
+from cli_help import help_hint, unknown_option
+from command_help import command_help, usage, version_text
+from unit_options import Options, parse_options, program_arguments
 from surfaces import INTEROP_BAKE_MOVED, OVEN, invoked, misplaced
 from trust_commands import trust_command
 from project_scaffold import ScaffoldCommand, parse_scaffold, scaffold
@@ -77,30 +77,6 @@ from pub::incan_platform.store.files import observe_work
 from trace_adapter import finish as finish_trace, notice_former_compiler_variables
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
-
-
-pub model Options:
-    """The options shared by the commands that describe a unit."""
-
-    pub path: str = ""
-    pub profile: str = "debug"
-    pub request: FeatureRequest = FeatureRequest()
-    pub substitutes: Dict[str, str] = {}
-    pub program_entries: list[str] = []
-    pub argv0: Option[str] = None
-    pub feature_options: bool = false
-    pub engine_report: bool = false
-    pub locked: bool = false
-    pub direct: bool = false
-    pub unattended: bool = false
-    pub codegraph: bool = false
-    # A build's OUTPUT_DIR, which also receives the program it builds; empty for none.
-    pub output: str = ""
-    # The declared `[[interop.c.targets]]` entry checked C bindings verify against instead of the host; empty for the
-    # host.
-    pub interop_target: str = ""
-    # One CLI preparation owns its source readings, including its provider callbacks.
-    pub manifests: ManifestReader = ManifestReader()
 
 
 def main() -> None:
@@ -476,54 +452,6 @@ def fail(message: str, code: i32) -> None:
     exit(code)
 
 
-def parse_options(arguments: list[str], default_path: str = "", outputs: bool = false) -> Result[Options, str]:
-    """The unit options: one PATH, or `default_path` when the command has one, and the profile and feature flags."""
-    mut options = Options()
-    mut index = 0
-    while index < len(arguments):
-        argument = arguments[index]
-        if argument in UNIT_VALUE_OPTIONS:
-            if index + 1 >= len(arguments):
-                return Err(f"`{argument}` needs a value")
-            apply_option(options, argument, arguments[index + 1])?
-            if argument == "--features":
-                options.feature_options = true
-            index += 2
-            continue
-        if argument == "--engine-report":
-            options.engine_report = true
-        elif argument == "--locked":
-            options.locked = true
-        elif argument == "--release":
-            return Err("unknown option `--release`: select the release profile with `--profile release`")
-        elif argument == "--direct":
-            options.direct = true
-        elif argument == "--unattended":
-            options.unattended = true
-        elif argument == "--codegraph":
-            options.codegraph = true
-        elif argument == "--no-default-features":
-            options.feature_options = true
-            options.request.default_features = false
-        elif argument == "--all-features":
-            options.feature_options = true
-            options.request.all_features = true
-        elif argument.startswith("-"):
-            return Err(refused_option(argument))
-        elif options.path != "" and outputs and options.output == "":
-            options.output = argument
-        elif options.path != "":
-            return Err(f"one PATH is described at a time; `{argument}` is a second")
-        else:
-            options.path = argument
-        index += 1
-    if options.path == "":
-        options.path = default_path
-    if options.path == "":
-        return Err("a PATH is required")
-    return Ok(options)
-
-
 def records_command(command: str, arguments: list[str]) -> None:
     """Dispatch only connected records capabilities; unsupported commands never enter the legacy path."""
     if command == "inspect" and len(arguments) == 3 and arguments[0] == "run" and arguments[2] == "--proofs":
@@ -616,31 +544,6 @@ def records_check_arguments(arguments: list[str]) -> Result[tuple[list[str], str
     return Ok((own, format))
 
 
-def apply_option(mut options: Options, name: str, value: str) -> Result[None, str]:
-    """
-    Apply one option that takes a value: the profile, features, a substitute, a program entry, `--argv0` or the
-    interop target.
-    """
-    if name == "--argv0":
-        options.argv0 = Some(value)
-    elif name == "--program-entry":
-        options.program_entries.append(value)
-    elif name == "--substitute":
-        parts = value.split("=")
-        if len(parts) != 2 or parts[0] == "" or parts[1] == "":
-            return Err(f"`--substitute` takes NAME=DIR, got `{value}`")
-        options.substitutes[parts[0]] = parts[1]
-    elif name == "--interop-target":
-        options.interop_target = value
-    elif name == "--profile":
-        options.profile = value
-    else:
-        for feature in value.split(","):
-            if feature.strip() != "":
-                options.request.features.append(feature.strip())
-    return Ok(None)
-
-
 def run(arguments: list[str]) -> None:
     """
     Compile the program whose entry source is PATH and run it with the arguments after `--`. Without PATH, or with a
@@ -661,21 +564,6 @@ def run(arguments: list[str]) -> None:
                 Ok(None) => pass
             prepared_lock("run", selected)
             finish("run", ran(selected, passed))
-
-
-def program_arguments(arguments: list[str]) -> tuple[list[str], list[str]]:
-    """Separate command options from the program's arguments without forwarding internal selectors."""
-    mut own: list[str] = []
-    mut passed: list[str] = []
-    mut after = false
-    for argument in arguments:
-        if after:
-            passed.append(argument)
-        elif argument == "--":
-            after = true
-        else:
-            own.append(argument)
-    return (own, passed)
 
 
 def located(command: str, options: Options) -> Options:
