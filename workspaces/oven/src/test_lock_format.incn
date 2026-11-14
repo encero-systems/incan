@@ -20,7 +20,7 @@ from lock_format import (
     read_lock,
     write_lock,
 )
-from project_lock import ensure_project_lock, local_interop, selected_mode
+from project_lock import ensure_project_lock, local_interop, selected_mode, untested_bounds
 from registry_units import RegistryUnit, RegistryUnits
 from rust_activation import DependencyDomain
 from rust_registry import resolve_registry
@@ -367,10 +367,10 @@ def versioned_unit(name: str, version: str) -> RegistryUnit:
     )
 
 
-def requesting_facet(project: str, loaves: list[str]) -> LocalFacet:
-    """A local target facet that requests each of `loaves` at `1`."""
+def requesting_facet(project: str, loaves: list[str], requirement: str = "1") -> LocalFacet:
+    """A local target facet that requests each of `loaves` at `requirement`."""
     requests = [JsonValue.object(
-        {"loaf": JsonValue.string(loaf), "req": JsonValue.string("1"), "features": JsonValue.array([])},
+        {"loaf": JsonValue.string(loaf), "req": JsonValue.string(requirement), "features": JsonValue.array([])},
     ) for loaf in loaves]
     return LocalFacet(
         project=project,
@@ -382,13 +382,18 @@ def requesting_facet(project: str, loaves: list[str]) -> LocalFacet:
     )
 
 
-def selected_versions(mode: str, facets: list[LocalFacet]) -> Result[list[str], str]:
-    """Each selected Loaf as `NAME@VERSION` under `mode`, with 1.0.0 and 1.1.0 of alpha and beta published."""
+def published_pairs() -> list[RegistryUnit]:
+    """1.0.0 and 1.1.0 of `crates-io/alpha` and of `crates-io/beta`."""
     mut units: list[RegistryUnit] = []
     for name in ["alpha", "beta"]:
         for version in ["1.0.0", "1.1.0"]:
             units.append(versioned_unit(name, version))
-    registry = RegistryUnits(units=units, search=[], resolution_mode=mode)
+    return units
+
+
+def selected_versions(mode: str, facets: list[LocalFacet]) -> Result[list[str], str]:
+    """Each selected Loaf as `NAME@VERSION` under `mode`, with 1.0.0 and 1.1.0 of alpha and beta published."""
+    registry = RegistryUnits(units=published_pairs(), search=[], resolution_mode=mode)
     selected = resolve_registry(registry, facets, "release", "/app")?
     return Ok(sorted([f"{unit.loaf}@{unit.version}" for unit in selected.units]))
 
@@ -416,4 +421,31 @@ pub def test_lowest_direct_takes_the_lowest_version_for_the_project_s_own_depend
     assert first == ["crates-io/alpha@1.0.0", "crates-io/beta@1.1.0"], f"root first selected {first}"
     last = selected_versions("lowest-direct", [shared, app])?
     assert last == ["crates-io/alpha@1.0.0", "crates-io/beta@1.1.0"], f"root last selected {last}"
+    return Ok(None)
+
+
+pub def test_oven_lock_reports_a_lower_bound_that_is_not_published() -> Result[None, str]:
+    """
+    RFC 125: when a lower bound names a version that is not published, the lowest published version that satisfies
+    the requirement is locked, and the report of `oven lock` shows that the bound itself was not tested.
+
+    1. `1.0.5` is not published, so 1.1.0 is locked and reported; `1`'s bound, 1.0.0, is published and tested.
+    2. A bound the registry publishes is not reported under any mode.
+    """
+    facets = [
+        requesting_facet("/app", ["crates-io/alpha"], "1.0.5"),
+        requesting_facet("/app/deps/helper", ["crates-io/beta"]),
+    ]
+    # 1. Only the unpublished bound is reported, with the version locked in its place.
+    for mode in ["lowest", "lowest-direct"]:
+        registry = RegistryUnits(units=published_pairs(), search=[], resolution_mode=mode)
+        selected = resolve_registry(registry, facets, "release", "/app")?
+        reported = untested_bounds(facets, registry.units, selected)?
+        expected = ["untested lower bound: crates-io/alpha 1.0.5 is not published; locked 1.1.0"]
+        assert reported == expected, f"{mode} reported {reported}"
+    # 2. A published bound is tested whenever `lowest` selects it.
+    exact = [requesting_facet("/app", ["crates-io/alpha", "crates-io/beta"], "1.1")]
+    registry = RegistryUnits(units=published_pairs(), search=[], resolution_mode="newest")
+    selected = resolve_registry(registry, exact, "release", "/app")?
+    assert untested_bounds(exact, registry.units, selected)? == []
     return Ok(None)
