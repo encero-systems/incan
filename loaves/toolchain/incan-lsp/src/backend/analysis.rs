@@ -35,6 +35,27 @@ impl IncanLanguageServer {
                 return;
             }
         }
+        // With the engine selected, diagnostics are the overlay request's answer, published as soon as it arrives; the
+        // in-process analysis below still keeps the document state hover and navigation read.
+        let overlay = engine_overlay::selected();
+        if overlay && let Ok(path) = uri.to_file_path() {
+            let text = source.to_owned();
+            let answered =
+                tokio::task::spawn_blocking(move || engine_overlay::diagnostics(&path, &text, version)).await;
+            let diagnostics = match answered {
+                Ok(Ok(found)) => found,
+                Ok(Err(reason)) => vec![lsp_root_error_diagnostic(reason)],
+                Err(error) => vec![lsp_root_error_diagnostic(format!("overlay request failed: {error}"))],
+            };
+            let tickets = self.analysis_tickets.read().await;
+            if !tickets.get(uri).is_some_and(|latest| Arc::ptr_eq(latest, &ticket)) {
+                return;
+            }
+            drop(tickets);
+            self.client
+                .publish_diagnostics(uri.clone(), diagnostics, Some(version))
+                .await;
+        }
         let open_sources = self.open_sources(uri, source).await;
         let analysis_uri = uri.clone();
         let sessions = Arc::clone(&self.analysis_sessions);
@@ -80,6 +101,9 @@ impl IncanLanguageServer {
             }
         }
         drop(documents);
+        if overlay {
+            return;
+        }
         self.client
             .publish_diagnostics(uri.clone(), diagnostics, Some(version))
             .await;
