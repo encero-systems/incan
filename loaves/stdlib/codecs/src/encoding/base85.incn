@@ -8,8 +8,8 @@ Base85 packs four bytes into five printable characters. The variants differ most
 public helpers keep those names explicit while private helpers share the block conversion.
 """
 
-pub from std.encoding._shared import EncodingError
 from std.encoding._shared import (
+    EncodingError,
     _ascii_bytes,
     _ascii_text,
     _encoding_error,
@@ -19,9 +19,8 @@ from std.encoding._shared import (
     _write_sink_bytes,
     _write_stream_bytes,
 )
-pub from std.fs import Path
-pub from std.io import BytesIO
-from std.io import _BytesIO
+from std.fs import Path
+from std.io import BytesIO, _BytesIO
 
 const _A85_ALPHABET: str = "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu"
 const _B85_ALPHABET: str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~"

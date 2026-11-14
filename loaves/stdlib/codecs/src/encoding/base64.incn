@@ -8,8 +8,8 @@ Base64 packs three bytes into four six-bit symbols. The public helpers below sta
 codec helpers make the bit packing and padding rules explicit enough to audit without knowing the Rust backend.
 """
 
-pub from std.encoding._shared import EncodingError
 from std.encoding._shared import (
+    EncodingError,
     _ascii_bytes,
     _ascii_text,
     _encoding_error,
@@ -19,9 +19,8 @@ from std.encoding._shared import (
     _write_sink_bytes,
     _write_stream_bytes,
 )
-pub from std.fs import Path
-pub from std.io import BytesIO
-from std.io import _BytesIO
+from std.fs import Path
+from std.io import BytesIO, _BytesIO
 from std.primitives import decode_utf8 as _decode_utf8, encode_utf8 as _encode_utf8
 
 const _STD_ALPHABET: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"

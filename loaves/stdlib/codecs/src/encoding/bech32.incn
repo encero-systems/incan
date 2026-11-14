@@ -8,8 +8,7 @@ public helpers keep Bech32 and Bech32m explicit because the two checksum constan
 interchangeable.
 """
 
-pub from std.encoding._shared import EncodingError
-from std.encoding._shared import _encoding_error
+from std.encoding._shared import EncodingError, _encoding_error
 from std.primitives import decode_utf8 as _decode_utf8, encode_utf8 as _encode_utf8
 
 const _CHARSET: str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
