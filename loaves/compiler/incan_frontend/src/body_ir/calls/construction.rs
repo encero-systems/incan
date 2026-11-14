@@ -275,9 +275,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .is_some_and(|default| self.default_source_is_effect_free(default, &mut HashSet::new()))
     }
 
-    /// Prove fresh default construction from source declarations without executing a user callable.
+    /// Prove fresh default construction from source declarations without executing a user callable. A fieldless or
+    /// value enum variant the checker resolved, such as `Kind.Plain`, calls nothing either.
     fn default_source_is_effect_free(&self, value: &ast::Spanned<ast::Expr>, visiting: &mut HashSet<String>) -> bool {
         if value.is_literal_construction(&|span| self.type_info.resolved_collection_constructor(span).is_some()) {
+            return true;
+        }
+        if let ast::Expr::Field(base, variant) = &value.node
+            && (self
+                .local_fieldless_enum_variant_target(base, variant, value.span)
+                .is_some()
+                || self.local_value_enum_variant_target(base, value.span).is_some())
+        {
             return true;
         }
         let (owner, arguments) = match &value.node {
