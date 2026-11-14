@@ -68,6 +68,7 @@ pub enum Operation(str):
     InstallationPageReuse = "installation_page_reuse"
     InstallationPage = "installation_page"
     FileStat = "file_stat"
+    PathResolve = "path_resolve"
     Reason = "reason"
 
 

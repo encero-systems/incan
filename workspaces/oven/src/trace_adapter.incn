@@ -22,6 +22,7 @@ pub model WorkCounts:
     pub stats: int
     pub pages: int
     pub identities: int
+    pub resolutions: int = 0
 
 
 model ObservationChannels:
@@ -126,6 +127,7 @@ model ObservationChannels:
             stats=self.counts.get("file_stat", 0),
             pages=self.counts.get("installation_page", 0),
             identities=self.counts.get("artifact_identity", 0),
+            resolutions=self.counts.get("path_resolve", 0),
         )
         self.counting_prefix = ""
         self.counts = {}
@@ -146,6 +148,7 @@ model ObservationChannels:
             stats=self.frozen_counts.get("file_stat", 0),
             pages=self.frozen_counts.get("installation_page", 0),
             identities=self.frozen_counts.get("artifact_identity", 0),
+            resolutions=self.frozen_counts.get("path_resolve", 0),
         )
         self.frozen_prefixes = []
         self.frozen_counts = {}

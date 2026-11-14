@@ -1,0 +1,46 @@
+"""Checked-source selection contracts: a selection resolves each native path it compares once."""
+
+from std.fs import Path
+from std.json import JsonValue
+from callable_products import retain_callable_products
+from files import json_text
+from freshness_fixtures import fixture, write
+from scratch import scratch_directory
+from trace_adapter import count_work, finish_counting
+from unit import UnitLoaf
+
+
+pub def test_a_checked_source_selection_resolves_each_native_path_once() -> Result[None, str]:
+    """
+    Loaves whose native closures name one shared archive and search directory resolve each of them once per selection.
+
+    Every standard Loaf's closure names the same native archives, so a unit reaching eleven of them compared about five
+    hundred resolutions of about a hundred paths.
+    """
+    scratch = scratch_directory()?
+    setup = fixture(scratch.path())?
+    native = scratch.path().joinpath("native")
+    shared = native.joinpath("libshared.rlib")
+    write(shared, "shared native archive")?
+    mut loaves: list[UnitLoaf] = []
+    for name in ["left", "middle", "right"]:
+        directory = scratch.path().joinpath("loaves").joinpath(name)
+        write(directory.joinpath(f"lib{name}.rlib"), f"{name} archive")?
+        binding = JsonValue.array([JsonValue.string("shared"), JsonValue.string(f"absolute:{shared.0}")])
+        closure = JsonValue.object(
+            {
+                "externs": JsonValue.array([binding]),
+                "macro_externs": JsonValue.array([]),
+                "search": JsonValue.array([JsonValue.string(f"absolute:{native.0}")]),
+            },
+        )
+        write(directory.joinpath(f"{name}.native.json"), json_text(closure)?)?
+        loaves.append(UnitLoaf(key=name, name=name, dir=directory.0, standard=true))
+    mut unit = setup.unit
+    unit.loaves = loaves
+    count_work(native.0)
+    selected = retain_callable_products(unit, setup.toolchain)?
+    observed = finish_counting()
+    assert selected.checked_context is not None, "the selection named no checked-source context"
+    assert observed.resolutions == 2, f"three closures naming one archive and its directory resolved {observed.resolutions} paths"
+    return Ok(None)
