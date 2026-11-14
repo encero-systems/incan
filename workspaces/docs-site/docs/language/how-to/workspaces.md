@@ -1,6 +1,6 @@
 # Work with several projects
 
-Give each project its own `loaf.toml`, source tree and package identity. Connect reusable libraries through explicit path dependencies. Dev.8 does not accept `[workspace]`, inherited workspace declarations or `--member` selection.
+Give each project its own `loaf.toml`, source tree and package identity. Connect reusable libraries through explicit path dependencies, and declare dependencies several projects share once in a workspace root.
 
 ## Connect a consumer to a producer
 
@@ -37,3 +37,30 @@ incan run consumer/src/main.incn
 The source path selects the consumer's manifest even when invoked from the repository root. Oven prepares its path dependencies. There is no shared workspace lock or implicit fan-out.
 
 Follow [Build and consume a library](../../tooling/tutorials/build_and_consume_library.md) for the complete source.
+
+## Share dependencies across members
+
+A workspace root lists its members and declares the dependencies they share:
+
+```toml
+[project]
+name = "pricing"
+version = "0.1.0"
+
+[workspace]
+members = ["consumer"]
+
+[workspace.dependencies]
+pricing = { path = "." }
+json = { loaf = "crates-io/serde_json", version = "1" }
+```
+
+A member inherits an entry by name:
+
+```toml
+[dependencies]
+pricing = { workspace = true }
+json = { workspace = true, features = ["preserve_order"] }
+```
+
+The root's `path = "."` reaches the member as `path = ".."`: a local path is spelled from the root and rebased onto each member. See [`[workspace]`](../../tooling/reference/project_configuration.md#workspace).

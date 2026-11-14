@@ -4,11 +4,11 @@ A project manifest is a TOML file named `loaf.toml`. Source commands select the 
 
 ## Root tables
 
-The accepted root tables are `project`, `dependencies`, `build`, `rust`, `vocab`, `tool`, `interop`, `c` and `envs`. Unknown root tables are refused. `sdk`, `workspace`, `rust-dependencies` and `rust-dev-dependencies` are not accepted.
+The accepted root tables are `project`, `dependencies`, `build`, `rust`, `vocab`, `tool`, `interop`, `c`, `envs` and `workspace`. Unknown root tables are refused. `sdk`, `rust-dependencies` and `rust-dev-dependencies` are not accepted.
 
 ## `[project]`
 
-`name` and `version` are required nonempty strings. Accepted metadata fields are `description`, `authors`, `maintainers`, `license`, `license-files`, `readme`, `homepage`, `repository`, `documentation`, `issues`, `keywords`, `classifiers`, `requires-incan` and `private`. Accepting a metadata field does not enforce a compiler-version requirement.
+`name` and `version` are required nonempty strings. Accepted metadata fields are `description`, `authors`, `maintainers`, `license`, `license-files`, `readme`, `homepage`, `repository`, `documentation`, `issues`, `keywords`, `classifiers`, `requires-incan` and `private`. `requires-incan` is a version requirement that the active toolchain must satisfy before `run`, `check`, `build` or `test` compiles anything. A prerelease toolchain satisfies it by its release version: `0.6.0-dev.8` meets `>=0.5` and misses `>=0.5.0,<0.6.0`, as `0.6.0` does, unless the requirement names a prerelease of that release, such as `>=0.6.0-dev.5`.
 
 ```toml
 [project]
@@ -115,6 +115,16 @@ Each `[[rust.bin]]` requires string fields `name` and `path`; the source path is
 ## `[vocab]`
 
 Accepts a required nonempty string `entry`; `crate` and other keys are refused. [Vocabulary entries](vocabulary.md) specifies the entry contract.
+
+## `[workspace]`
+
+A manifest with a `[workspace]` table is a workspace root. `members`, `default-members` and `exclude` are arrays of member directories relative to the root; [Workspaces](../../language/how-to/workspaces.md) covers member selection.
+
+`[workspace.dependencies]` declares dependencies the members share. Each entry names a local `path`, relative to the root, or a registry `loaf` with its `version`, and accepts the fields of a `[dependencies]` entry. A member inherits one with `NAME = { workspace = true }` in its own `[dependencies]`, optionally with `features`, added to the entry's, and `optional`. The member must be the root or one of its `members`; a local `path` is rebased from the root onto the member. `[workspace.rust-dependencies]` is refused with the corresponding `[workspace.dependencies]` Loaf form.
+
+## `[tool.incan]`
+
+`metadata` and `codegraph` are read as below. Any other `[tool.incan]` key is tolerated, as 0.5.1 tolerated it, and `run`, `check`, `build` and `test` print one warning naming each such key. `[tool.incan.envs]` is refused in favor of `[envs.NAME]`.
 
 ## `[tool.incan.metadata]`
 
