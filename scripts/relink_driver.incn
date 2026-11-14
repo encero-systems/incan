@@ -215,18 +215,49 @@ pub def prepare_compiler_home(installed_home: Path, compiler_home: Path) -> Resu
 
 
 def share_tree(selected: Path, destination: Path, tree: str) -> Result[None, str]:
-    """Link one installed tree into the compiler home, refusing a home that already selects another."""
+    """
+    Link one installed tree into the compiler home, refusing a home that already selects another.
+
+    A compiler home inside its installation names each tree relative to itself, so a copied or moved home selects its
+    own trees. A link such a compiler home carries from the home it was copied from is replaced, never followed.
+    """
     source = selected.joinpath(tree)
     if not source.exists():
         return Ok(None)
     link = destination.joinpath(tree)
-    if link.is_symlink() or link.exists():
-        current = link.resolve().map_err((error) => error.message())?
-        wanted = source.resolve().map_err((error) => error.message())?
-        if not link.is_symlink() or current.0 != wanted.0:
+    target = tree_link_target(selected, destination, tree)
+    if link.is_symlink():
+        if selects(link, source):
+            return Ok(None)
+        if target.startswith("/"):
             return Err(f"compiler home already selects another {tree} tree: {link.0}")
-        return Ok(None)
-    return link.symlink_to(source).map_err((error) => error.message())
+        link.unlink().map_err((error) => error.message())?
+    elif link.exists():
+        return Err(f"compiler home already selects another {tree} tree: {link.0}")
+    return link.symlink_to(target).map_err((error) => error.message())
+
+
+def selects(link: Path, source: Path) -> bool:
+    """Whether a tree link resolves to `source`; a link whose target is gone selects nothing."""
+    match link.resolve():
+        Err(_) => return false
+        Ok(current) =>
+            match source.resolve():
+                Err(_) => return false
+                Ok(wanted) => return current.0 == wanted.0
+
+
+def tree_link_target(selected: Path, destination: Path, tree: str) -> str:
+    """
+    What a compiler home's tree link names: the installed tree relative to the link when the compiler home is a
+    directory of the installation's own home, as a relink makes it, and the installed tree's absolute path otherwise.
+    """
+    version = selected.name()
+    home = selected.parent().parent()
+    compiler = destination.parent().parent()
+    if destination.name() == version and compiler.parent().0 == home.0:
+        return f"../../../toolchains/{version}/{tree}"
+    return selected.joinpath(tree).0
 
 
 def compiler_manifest(manifest: JsonValue, base: str) -> Result[str, str]:
