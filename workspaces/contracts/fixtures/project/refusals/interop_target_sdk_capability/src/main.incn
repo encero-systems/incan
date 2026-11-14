@@ -1,0 +1,28 @@
+# behavior: a selected target's SDK capability requirement is checked against the SDK the verification selects, and a missing or incompatible one is refused by name (#3135)
+# cli-commands:
+#   oven check --interop-target aarch64-apple-darwin src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   interop target `aarch64-apple-darwin` requires SDK capability `macosx` (`>=999`)
+
+from std.interop import c
+
+
+binding Probe:
+    header = "interop/include/probe.h"
+    link = c.system_library("c")
+
+    struct Pair:
+        native = "struct probe_pair"
+        first: c.i32 = first
+        padding: c.i32 = padding
+        second: c.i32 = second
+
+    symbol absolute(value: c.i32) -> c.i32:
+        native = "abs"
+
+
+def main() -> None:
+    """Call through a binding verified against the selected target's layout."""
+    unsafe:
+        println(Probe.absolute(-5))
