@@ -499,6 +499,10 @@ def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> 
         return Err("the development links recorded no input digests")
     if len(hashed) > 0:
         return Err(f"one-body edit's link hashed {len(hashed)} unchanged archives again: {hashed}")
+    # The links run the dedicated linker shipped beside the driver, never the driver itself.
+    for linker in link_processes(observations)?:
+        if not Path(linker).name().startswith("incan-link"):
+            return Err(f"a development link ran {linker} instead of the dedicated linker")
     return Ok(None)
 
 
@@ -549,6 +553,34 @@ def compiler_records_read(directory: Path) -> Result[int, str]:
             )?
             count += fields["records"].expect_int().map_err((error) => error.message())?
     return Ok(count)
+
+
+def link_processes(directory: Path) -> Result[list[str], str]:
+    """The executables of the processes that hashed link inputs, from their invocation trace files."""
+    mut executables: list[str] = []
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.is_file():
+            continue
+        text = entry.read_text("utf-8", "strict").map_err((error) => error.message())?
+        mut executable = ""
+        mut linked = false
+        for line in text.split("\n"):
+            if line == "":
+                continue
+            document = parse(line).map_err((error) => error.message())?
+            if json_text_is(document, "kind", "process"):
+                match document.get("executable"):
+                    Some(value) => executable = value.as_str().unwrap_or("")
+                    None => pass
+            elif json_text_is(document, "kind", "begin") and json_text_is(
+                document,
+                "function",
+                "incan_rustc_driver::link_input_digest",
+            ):
+                linked = true
+        if linked and executable not in executables:
+            executables.append(executable)
+    return Ok(executables)
 
 
 def link_input_digests(directory: Path) -> Result[Dict[str, int], str]:

@@ -353,7 +353,7 @@ fn build(
         "incan-shared-native".into(),
     ];
     if identity.target.ends_with("-apple-darwin") {
-        let linker = std::env::current_exe().map_err(io_error)?;
+        let linker = crate::adapter::development_linker().map_err(io_error)?;
         args.push(format!("-Clinker={}", linker.display()));
         args.push("-Clinker-flavor=ld".into());
         args.push(format!(

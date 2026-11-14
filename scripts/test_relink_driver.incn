@@ -107,3 +107,34 @@ def executable(path: Path, text: str) -> Result[None, str]:
     if not status.success():
         return Err(f"cannot make {path.0} executable")
     return Ok(None)
+
+
+def test_a_relinked_driver_ships_its_development_linker_and_retires_the_earlier_one() -> Result[None, str]:
+    """
+    The development linker built beside the driver is installed beside it under the driver's digest, where the driver
+    looks for it, and the linker an earlier relinked driver shipped is removed with that driver.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    toolchain = temporary.path().joinpath("home").joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.joinpath("rust-abi").mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("bin").mkdir(true, true).map_err((error) => error.message())?
+    toolchain.joinpath("bin/incan-rustc-driver-a").write_bytes(b"earlier").map_err((error) => error.message())?
+    toolchain.joinpath("bin/incan-link-a").write_bytes(b"earlier linker").map_err((error) => error.message())?
+    toolchain
+        .joinpath("toolchain.json")
+        .write_bytes(b"{\"driver\":\"bin/incan-rustc-driver-a\",\"rust_abi\":[],\"sysroot\":\"sysroot\",\"externs\":[]}")
+        .map_err((error) => error.message())?
+    built = temporary.path().joinpath("incan-rustc-driver")
+    built.write_bytes(b"driver").map_err((error) => error.message())?
+    temporary.path().joinpath("incan-link").write_bytes(b"linker").map_err((error) => error.message())?
+    digest = hexlify(file_digest(built, "sha256").map_err((error) => error.message())?)
+    toolchain
+        .joinpath(f"rust-abi/std-incan-rustc-driver-{digest[:12]}.rustabi")
+        .write_bytes(b"abi")
+        .map_err((error) => error.message())?
+    _ = install_driver(toolchain, built, "sysroot")?
+    installed = toolchain.joinpath(f"bin/incan-link-{digest[:12]}")
+    assert installed.read_bytes().map_err((error) => error.message())? == b"linker"
+    assert not toolchain.joinpath("bin/incan-link-a").exists(), "the earlier driver's linker stayed installed"
+    assert not toolchain.joinpath("bin/incan-rustc-driver-a").exists()
+    return Ok(None)

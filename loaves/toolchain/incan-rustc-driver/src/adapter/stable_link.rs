@@ -96,7 +96,7 @@ fn stable_input(store: &Path, source: &Path, suffix: &str) -> io::Result<PathBuf
     let number = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
     let temporary = directory.join(format!(".{digest}.{}.{number}.tmp", std::process::id()));
     let copied = copy_object(source, &temporary).and_then(|()| {
-        if file_digest(&temporary)? != digest {
+        if link_input_digest(&temporary)? != digest {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "stable linker object changed while copying",
@@ -104,7 +104,9 @@ fn stable_input(store: &Path, source: &Path, suffix: &str) -> io::Result<PathBuf
         }
         match fs::hard_link(&temporary, &target) {
             Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists && file_digest(&target)? == digest => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists && link_input_digest(&target)? == digest => {
+                Ok(())
+            }
             Err(error) => Err(error),
         }
     });
@@ -142,7 +144,7 @@ fn identified_digest(store: &Path, path: &Path) -> io::Result<String> {
             }
         }
     }
-    let digest = file_digest(path)?;
+    let digest = link_input_digest(path)?;
     if file_identity(&fs::metadata(path)?) == before {
         record_identity(&record, &format!("{before} {digest}\n"));
     }
@@ -178,9 +180,14 @@ fn record_identity(record: &Path, text: &str) {
     }
 }
 
+/// Hash one link input, as an invocation span a test can count: the linker's every read of an input's bytes.
+fn link_input_digest(path: &Path) -> io::Result<String> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::link_input_digest", input = %path.display()).entered();
+    file_digest(path)
+}
+
 /// Hash one complete native input without retaining a program-sized allocation.
 pub(crate) fn file_digest(path: &Path) -> io::Result<String> {
-    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::link_input_digest", input = %path.display()).entered();
     let mut file = File::open(path)?;
     let mut hash = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
