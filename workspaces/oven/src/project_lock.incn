@@ -246,7 +246,7 @@ def reconcile(
     if let Some(known) = existing:
         if keeps_existing(known, requested_mode, mode):
             registry.recorded_bindings = retained_bindings(known, facets, registry.units)?
-    selected = resolve_registry(registry, facets, profile)?
+    selected = resolve_registry(registry, facets, profile, root.0)?
     mut generated = resolved_lock(root, mode, identity, configuration.triple, facets, selected)?
     projects = [("", root.0)] + [(facet_package(facet), facet.project) for facet in facets]
     generated.interop = local_interop(root.0, projects, reader)?

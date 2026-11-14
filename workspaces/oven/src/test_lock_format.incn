@@ -2,11 +2,13 @@
 
 from rust::std::thread import sleep
 from rust::std::time import Duration
+from std.json import JsonValue
 from c_interop import CArtifactKind, CArtifactOrigin, CInteropArtifact, CInteropTarget
 from features import FeatureRequest
 from files import make_directory, read, write
 from intake import ManifestReader
 from interop_lock import interop_difference, locked_interop
+from loaf_local_graph import LocalFacet
 from lock_format import (
     LockDependency,
     LockFeatures,
@@ -19,6 +21,9 @@ from lock_format import (
     write_lock,
 )
 from project_lock import ensure_project_lock, local_interop, selected_mode
+from registry_units import RegistryUnit, RegistryUnits
+from rust_activation import DependencyDomain
+from rust_registry import resolve_registry
 from scratch import scratch_directory
 from trace_adapter import count_work, finish_counting
 
@@ -321,4 +326,69 @@ pub def test_a_recorded_version_mode_survives_a_toolchain_change() -> Result[Non
     assert selected_mode(Some(lock), "") == "newest"
     assert selected_mode(Some(lock), "lowest-direct") == "lowest-direct"
     assert selected_mode(None, "") == "lowest"
+    return Ok(None)
+
+
+def versioned_unit(name: str, version: str) -> RegistryUnit:
+    """A source-free compiled producer of one version of `crates-io/NAME`, with no dependencies."""
+    entry = f"{name}-{version}"
+    return RegistryUnit(
+        loaf=f"crates-io/{name}",
+        version=version,
+        domain="target",
+        directory=entry,
+        entry=entry,
+        profile="release",
+    )
+
+
+def requesting_facet(project: str, loaves: list[str]) -> LocalFacet:
+    """A local target facet that requests each of `loaves` at `1`."""
+    requests = [JsonValue.object(
+        {"loaf": JsonValue.string(loaf), "req": JsonValue.string("1"), "features": JsonValue.array([])},
+    ) for loaf in loaves]
+    return LocalFacet(
+        project=project,
+        domain=DependencyDomain.Target,
+        features=[],
+        local=[],
+        registry=requests,
+        registry_aliases=[loaf.split("/")[-1] for loaf in loaves],
+    )
+
+
+def selected_versions(mode: str, facets: list[LocalFacet]) -> Result[list[str], str]:
+    """Each selected Loaf as `NAME@VERSION` under `mode`, with 1.0.0 and 1.1.0 of alpha and beta published."""
+    mut units: list[RegistryUnit] = []
+    for name in ["alpha", "beta"]:
+        for version in ["1.0.0", "1.1.0"]:
+            units.append(versioned_unit(name, version))
+    registry = RegistryUnits(units=units, search=[], resolution_mode=mode)
+    selected = resolve_registry(registry, facets, "release", "/app")?
+    return Ok(sorted([f"{unit.loaf}@{unit.version}" for unit in selected.units]))
+
+
+pub def test_lowest_direct_takes_the_lowest_version_for_the_project_s_own_dependencies_only() -> Result[None, str]:
+    """
+    RFC 125: `lowest-direct` selects the lowest satisfying version for the project's own dependencies and the highest
+    for everything else, while `lowest` and `newest` select one end everywhere.
+
+    1. The root `/app` asks for alpha and its path dependency for beta, each at `1`.
+    2. A requirement the root also declares is the project's own, whichever facet comes first.
+    """
+    app = requesting_facet("/app", ["crates-io/alpha"])
+    helper = requesting_facet("/app/deps/helper", ["crates-io/beta"])
+    # 1. Only the root's requirement takes the lowest version under `lowest-direct`.
+    split = selected_versions("lowest-direct", [app, helper])?
+    assert split == ["crates-io/alpha@1.0.0", "crates-io/beta@1.1.0"], f"lowest-direct selected {split}"
+    lowest = selected_versions("lowest", [app, helper])?
+    assert lowest == ["crates-io/alpha@1.0.0", "crates-io/beta@1.0.0"], f"lowest selected {lowest}"
+    newest = selected_versions("newest", [app, helper])?
+    assert newest == ["crates-io/alpha@1.1.0", "crates-io/beta@1.1.0"], f"newest selected {newest}"
+    # 2. The root's own declaration keeps a shared requirement direct.
+    shared = requesting_facet("/app/deps/helper", ["crates-io/alpha", "crates-io/beta"])
+    first = selected_versions("lowest-direct", [app, shared])?
+    assert first == ["crates-io/alpha@1.0.0", "crates-io/beta@1.1.0"], f"root first selected {first}"
+    last = selected_versions("lowest-direct", [shared, app])?
+    assert last == ["crates-io/alpha@1.0.0", "crates-io/beta@1.1.0"], f"root last selected {last}"
     return Ok(None)
