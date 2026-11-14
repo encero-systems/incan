@@ -26,7 +26,7 @@ from home import dependency_artifact_dir, standard_artifact_dir, standard_packag
 from json_fields import field, required_items, required_text, strings
 from intake import library_source, ManifestReader
 from native_closure_input import NativeClosureInput
-from native_references import closure_reference, native_anchors
+from native_references import closure_reference, native_anchors, rust_native_document
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from observation import trace
 from publication import place, publish
@@ -588,18 +588,11 @@ pub def publish_native_inputs(
     search: list[str],
     unit: BuiltUnit,
 ) -> Result[None, str]:
-    """Record a new producer's selected inputs without rewriting an immutable reused producer."""
+    """Record a new producer's selected inputs, anchored in the current home, without rewriting a reused producer."""
     if unit.reused:
         return Ok(None)
     bindings = facet_bindings(facet, built, request.registry)?
-    mut externs: list[JsonValue] = []
-    for binding in bindings:
-        externs.append(JsonValue.array([JsonValue.string(binding.name), JsonValue.string(binding.path)]))
-    document = JsonValue.object(
-        {"schema": JsonValue.string("incan.rust-native/1"), "externs": JsonValue.array(externs), "search": JsonValue.array(
-            [JsonValue.string(directory) for directory in search + [unit.directory]],
-        )},
-    )
+    document = rust_native_document(bindings, search + [unit.directory], native_anchors()?)
     return publish(Path(unit.directory).joinpath("native.json"), json_text(document)?)
 
 

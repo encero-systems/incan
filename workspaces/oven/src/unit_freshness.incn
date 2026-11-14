@@ -19,6 +19,7 @@ from pub::incan_platform.trace import Operation
 from jec import begin, record as record_work
 from publication import place, publish
 from toolchain import NativeCrate, Toolchain, rust_compiler
+from native_references import NATIVE_CLOSURE_SCHEMA, RUST_NATIVE_SCHEMA
 from unit import UnitDescription
 from unit_publication import admitted_identity as admitted_payload_identity, published_identity, record_payload
 from frozen_inputs import observation as frozen_observation
@@ -215,6 +216,8 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
     2. Read the identities the linked native units were produced under.
     3. Bind the target and deployment selection without including installation paths. SDK contents belong only to
        units that read or link them, through `selected_unit_compiler`.
+    4. Bind the native-closure schemas the compiler and Oven publish, so records from an earlier closure form are
+       misses rather than closures this generation cannot resolve.
     """
     # 1. Installed selections carry the identities admitted with their immutable page. Synthetic and staged
     # toolchains without a page retain the direct fact lookup used by installation preparation and focused tests.
@@ -236,6 +239,8 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
     if len(selection) > 0 or toolchain.rust_version == "":
         deployment = deployment_target(rust_compiler(toolchain), target, selection)?
     facts.extend([target, deployment])
+    # 4. The schemas name the reference form of every native closure a unit of this compiler publishes or reads.
+    facts.extend([NATIVE_CLOSURE_SCHEMA, RUST_NATIVE_SCHEMA])
     return fingerprint(facts + natives)
 
 

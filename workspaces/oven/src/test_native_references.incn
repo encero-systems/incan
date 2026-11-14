@@ -1,6 +1,16 @@
 """Anchored native-closure references resolve in every home that shares a bakery."""
 
-from native_references import NativeAnchors, anchor_arguments, anchored_reference, closure_reference
+from files import json_text
+from json_fields import required_text
+from native_references import (
+    RUST_NATIVE_SCHEMA,
+    NativeAnchors,
+    anchor_arguments,
+    anchored_reference,
+    closure_reference,
+    rust_native_document,
+)
+from toolchain_types import NativeCrate
 from std.fs import Path
 
 
@@ -49,6 +59,19 @@ pub def test_sibling_and_legacy_references_resolve_from_the_loaf() -> Result[Non
     # 3. Mixed forms are not guessed.
     assert closure_reference(directory, "toolchain:/native", anchors).is_err()
     assert closure_reference(directory, "absolute:native", anchors).is_err()
+    return Ok(None)
+
+
+pub def test_rust_facet_inputs_are_anchored_under_their_schema() -> Result[None, str]:
+    """A Rust facet's recorded inputs carry the anchored schema and name no home's toolchain or bakery path."""
+    anchors = NativeAnchors(toolchain="/homes/a/toolchains/t", bakery="/shared/bakery")
+    serde = NativeCrate(name="serde", path="/homes/a/toolchains/t/registry/entries/e/artifacts/libserde.rlib")
+    document = rust_native_document([serde], ["/shared/bakery/rust/unit"], anchors)
+    assert required_text(document, "schema")? == RUST_NATIVE_SCHEMA
+    text = json_text(document)?
+    assert "toolchain:registry/entries/e/artifacts/libserde.rlib" in text, text
+    assert "bakery:rust/unit" in text, text
+    assert "/homes/a" not in text and "/shared/bakery" not in text, text
     return Ok(None)
 
 
