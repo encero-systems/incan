@@ -307,6 +307,8 @@ model Discovery:
     incan: str
     scratch: Path
     costs: Costs
+    # How many parts a group refused without a named case splits into: a job's worth, so the parts build side by side.
+    parts: int
     # The cases given their own command so far.
     queued: set[str]
     # Each group build's request index and its group.
@@ -344,7 +346,7 @@ def compile_groups(
     3. Once the pool is idle, record each own command's outcome and the entries of each build taken.
     """
     mut pool = open_pool(jobs)
-    mut discovery = Discovery(incan=incan, scratch=scratch, costs=costs, queued=set())
+    mut discovery = Discovery(incan=incan, scratch=scratch, costs=costs, parts=max([2, jobs]), queued=set())
     # 1. The partition's groups and the isolated cases share one pool.
     submit(pool, discovery, groups, separate, partition, projects, false)
     # 2. A settled build's retries join the pool at once, ahead of the requests still queued.
@@ -399,7 +401,7 @@ def submit(
             if len(entries) < 2:
                 continue
             match prepare_group(discovery.scratch, entries):
-                Err(_) => split_group(entries, again, "combined preparation failed")
+                Err(_) => split_group(entries, again, "combined preparation failed", discovery.parts)
                 Ok(group) =>
                     # 2. One build per prepared group.
                     discovery.attempts[base + len(requests)] = group
@@ -457,14 +459,14 @@ def settled_group(
         built.append(group)
         discovery.taken.append((index, group))
     elif refusal == OUTPUT_ATTRIBUTION:
-        if let Some(kept) = kept_build(group, evidence, retry):
+        if let Some(kept) = kept_build(group, evidence, retry, discovery.parts):
             built.append(kept)
             discovery.taken.append((index, kept))
     elif refusal == SHARED_ENTRIES_REFUSED:
         discovery.sharing = false
         retry = dissolved([group.entries])
     else:
-        refine_group(group, retry, refusal, evidence)
+        refine_group(group, retry, refusal, evidence, discovery.parts)
     return retry
 
 
@@ -520,7 +522,12 @@ def record_entries(
             outcomes[selected[offset]] = results[first + offset]
 
 
-def kept_build(group: GroupProject, evidence: str, mut retry: list[list[Entry]]) -> Option[GroupProject]:
+def kept_build(
+    group: GroupProject,
+    evidence: str,
+    mut retry: list[list[Entry]],
+    parts: int,
+) -> Option[GroupProject]:
     """
     Keep a successful shared build whose output names some of its cases, and show that output. The program it built
     is valid for every case: the cases the output does not name run from it, and each named case runs its own command,
@@ -528,7 +535,7 @@ def kept_build(group: GroupProject, evidence: str, mut retry: list[list[Entry]])
     """
     named, kept = owners(group, evidence)
     if len(named) == 0:
-        split_group(group.entries, retry, OUTPUT_ATTRIBUTION)
+        split_group(group.entries, retry, OUTPUT_ATTRIBUTION, parts)
         return None
     first = group.entries[0].fixture.case_name()
     last = group.entries[-1].fixture.case_name()
@@ -557,11 +564,11 @@ def owners(group: GroupProject, evidence: str) -> tuple[list[Entry], list[Entry]
     return (named, remaining)
 
 
-def refine_group(group: GroupProject, mut retry: list[list[Entry]], refusal: str, evidence: str) -> None:
+def refine_group(group: GroupProject, mut retry: list[list[Entry]], refusal: str, evidence: str, parts: int) -> None:
     """Use diagnostic paths only as partition advice; recompile the remainder and run named cases in isolation."""
     named, remaining = owners(group, evidence)
     if len(named) == 0 or len(remaining) == 0:
-        split_group(group.entries, retry, refusal)
+        split_group(group.entries, retry, refusal, parts)
         return
     println(
         f"BATCH-REFINE {len(group.entries)} cases: {len(named)} diagnostic owners isolated; {len(remaining)} retried",
@@ -580,14 +587,21 @@ def prepare_group(scratch: Path, entries: list[Entry]) -> Result[GroupProject, s
     return Ok(GroupProject(entries=entries, project=project))
 
 
-def split_group(entries: list[Entry], mut retry: list[list[Entry]], refusal: str) -> None:
-    """Retain canonical isolation when preparation, compilation or compiler-output attribution refuses sharing."""
+def split_group(entries: list[Entry], mut retry: list[list[Entry]], refusal: str, parts: int) -> None:
+    """
+    Retain canonical isolation when preparation, compilation or compiler-output attribution refuses sharing. No case
+    is named, so the group splits at once into `parts` parts of nearly equal size, at least two and at most one per
+    case, which then build side by side instead of being halved one wave after another.
+    """
     first = entries[0].fixture.case_name()
     last = entries[-1].fixture.case_name()
-    println(f"BATCH-SPLIT {first} .. {last} ({len(entries)} cases): {refusal}; retrying separately")
-    middle = len(entries) // 2
-    retry.append(entries[0:middle])
-    retry.append(entries[middle:])
+    count = max([2, min([parts, len(entries)])])
+    println(f"BATCH-SPLIT {first} .. {last} ({len(entries)} cases): {refusal}; retrying in {count} parts")
+    mut start = 0
+    for part in range(count):
+        end = len(entries) * (part + 1) // count
+        retry.append(entries[start:end])
+        start = end
 
 
 def queue_entries(scratch: Path, group: GroupProject, parent: int, mut requests: list[Invocation]) -> list[str]:
