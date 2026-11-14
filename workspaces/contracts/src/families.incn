@@ -186,3 +186,12 @@ pub def command(fixture: Fixture, header: Header) -> list[str]:
     if header.accepted or len(header.diagnostics) > 0:
         return ["check", "src/main.incn", "--format", "json"]
     return ["run", "src/main.incn"]
+
+
+pub def work_order(families: list[str], graph_cases: list[str]) -> list[str]:
+    """
+    The order family workers start in: the first graph case, the other selected families, then the other graph
+    cases. Each graph case is one sequential protocol and runs in a worker of its own.
+    """
+    others = [family for family in families if family != "graph"]
+    return graph_cases[0:min([1, len(graph_cases)])] + others + graph_cases[min([1, len(graph_cases)]):]
