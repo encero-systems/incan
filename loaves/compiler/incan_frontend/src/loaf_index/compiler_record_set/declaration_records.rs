@@ -1,5 +1,5 @@
-//! A Loaf's declaration records, read by name from the installed set (RFC 179): a consumer that needs one
-//! declaration's signature, layout or defaults opens that declaration's record of that family alone.
+//! A Loaf's records read by name from the installed set (RFC 179): a consumer that needs one declaration's signature,
+//! layout or defaults, or one public namespace, opens that record of that family alone.
 
 use std::path::Path;
 
@@ -7,12 +7,13 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::{
-    DECLARATION_FAMILIES, LoafIndexError, RecordSet, installed, open_value, read_summary, record_failure, unreadable,
+    LoafIndexError, NAMED_FAMILIES, RecordSet, installed, open_value, read_summary, record_failure, unreadable,
     validate_payload_directory,
 };
 use crate::library_manifest::LibraryManifest;
 
-/// Read the `family` records of the declaration named `declaration` in one installed Loaf.
+/// Read the `family` records named `declaration` (a declaration, or a public namespace by its path) in one installed
+/// Loaf.
 pub(in crate::loaf_index) fn read_declaration(
     dir: &Path,
     name: &str,
@@ -36,11 +37,11 @@ pub(super) fn read_declaration_in(
     family: &str,
     declaration: &str,
 ) -> Result<Option<(Vec<Value>, String)>, LoafIndexError> {
-    if !DECLARATION_FAMILIES.contains(&family) {
+    if !NAMED_FAMILIES.contains(&family) {
         return Err(unreadable(
             dir,
             name,
-            format!("`{family}` is not a declaration record family"),
+            format!("`{family}` is not a record family read by name"),
         ));
     }
     let profile = dir

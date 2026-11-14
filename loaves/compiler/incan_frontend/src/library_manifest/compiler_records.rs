@@ -4,8 +4,8 @@
 //! per made-private type, vocabulary and soft-keyword activation, the Loaf's contract metadata, its documentation, its
 //! Rust ABI, its executable descriptor and public executable identities (all executable resolution reads besides the
 //! metadata), its runtime callable bindings (all native lowering reads of it), each checked declaration's signature,
-//! layout and defaults (what a consumer reads of one declaration), and the Loaf's metadata record, which
-//! carries the digests.
+//! layout and defaults (what a consumer reads of one declaration), each public namespace of its checked API (what a
+//! consumer reads to resolve an import of it), and the Loaf's metadata record, which carries the digests.
 //!
 //! - The **record-content digest** covers every record, documentation included: each record's key, model description
 //!   hash and object hash (the SHA-256 of its bytes), in key order.
@@ -71,6 +71,8 @@ pub enum RecordFamily {
     Layout,
     /// Which parameters and fields of one declaration have a default, and the defaults.
     Default,
+    /// One public namespace of the checked API: its members, child modules and the identities of its public paths.
+    PublicNamespace,
     RustAbi,
 }
 
@@ -101,6 +103,7 @@ impl RecordFamily {
             Self::DeclarationSignature => "declaration-signature",
             Self::Layout => "layout",
             Self::Default => "default",
+            Self::PublicNamespace => "public-namespace",
             Self::RustAbi => "rust-abi",
         }
     }
@@ -170,6 +173,7 @@ impl LibraryManifest {
         // A consumer reads one declaration's signature, layout or defaults by name, never the whole checked API.
         if let Some(api) = &contract_facts.api {
             records.extend(declaration_fact_records(api)?);
+            records.extend(namespace_records(api, &contract_facts.identity_graph, &self.name)?);
         }
         if !documentation.is_empty() {
             records.push(record(RecordFamily::Documentation, 0, &self.name, &documentation)?);
@@ -305,6 +309,39 @@ fn declaration_fact_records(
         let ordinal = ordinals.entry(family.as_str()).or_insert(0usize);
         records.push(record(family, *ordinal, &fact.name, &fact.value)?);
         *ordinal += 1;
+    }
+    Ok(records)
+}
+
+/// One record per public namespace of the documentation-free `api`, named by its path: its members, its child modules
+/// and the identities of the public paths directly under it, so a consumer resolves an import of it from that record.
+fn namespace_records(
+    api: &crate::api_metadata::CheckedApiMetadataPackage,
+    graph: &super::LibraryIdentityGraph,
+    package: &str,
+) -> Result<Vec<CompilerRecord>, LibraryManifestError> {
+    let mut records = Vec::with_capacity(api.public_namespaces.len());
+    for (index, namespace) in api.public_namespaces.iter().enumerate() {
+        let prefix = std::iter::once(package.to_owned())
+            .chain(namespace.path.iter().cloned())
+            .collect::<Vec<_>>();
+        let identities = graph
+            .exports
+            .iter()
+            .filter(|export| export.public_path.len() == prefix.len() + 1 && export.public_path.starts_with(&prefix))
+            .collect::<Vec<_>>();
+        let value = json!({
+            "path": namespace.path,
+            "members": namespace.members,
+            "child_modules": namespace.child_modules,
+            "identities": identities,
+        });
+        records.push(record(
+            RecordFamily::PublicNamespace,
+            index,
+            &namespace.path.join("::"),
+            &value,
+        )?);
     }
     Ok(records)
 }
