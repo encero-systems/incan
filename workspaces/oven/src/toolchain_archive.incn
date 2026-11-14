@@ -780,7 +780,7 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
     carrier = home()?
     match admit_release(archive, carrier)?:
         Some(verified) =>
-            println(f"verified release signature: {verified.identity}, transparency log entry {verified.log_index}")
+            println(f"verified release signature: {verified.identity}, log entry {verified.log_index}")
         None => pass
     make_directory(target.parent())?
     # 1. The archive is unpacked beside the installation, never over it, so a refused archive costs nothing.

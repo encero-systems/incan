@@ -1,7 +1,7 @@
 """
 The release signer and trust root a home carries, and the admission of a release asset against them (DD-0016).
 
-A signed toolchain archive ships `release-signer.json`: the identity that signs releases and the Sigstore trust root.
+A signed toolchain archive ships `release-signer.json`: the workflow that signs releases and the Sigstore trust root.
 Installing it makes the home carry those facts, and from then on the home admits only assets whose signature bundle,
 `ASSET.sigstore.json` beside the asset, verifies against them. A home that carries none is a development home: it
 has nothing to verify against, and says so by returning no verification.
@@ -24,14 +24,14 @@ pub model Carried:
 
 
 pub def read_trust(path: Path) -> Result[Carried, str]:
-    """Read a `release-signer.json`: a signer's identity and issuer, and a Sigstore trusted root whose chains verify."""
+    """Read a `release-signer.json`: the signing workflow, its issuer, and a trusted root whose chains verify."""
     text = path.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
     document = JsonValue.parse(text).map_err((error) => f"malformed {path.0}: {error.message()}")?
     signer = document.require("signer").map_err((error) => f"malformed {path.0}: {error.message()}")?
     root = document.require("trusted_root").map_err((error) => f"malformed {path.0}: {error.message()}")?
     return Ok(
         Carried(
-            signer=Signer(identity=text_member(signer, "identity", path)?, issuer=text_member(signer, "issuer", path)?),
+            signer=Signer(workflow=text_member(signer, "workflow", path)?, issuer=text_member(signer, "issuer", path)?),
             root=trust_root(root.to_json().map_err((error) => f"malformed {path.0}: {error.message()}")?)?,
         ),
     )
@@ -62,7 +62,7 @@ pub def admit_release(asset: Path, home: Path) -> Result[Option[Verified], str]:
             if not bundle.is_file():
                 return Err(
                     f"{asset.0} is not signed: there is no signature bundle {bundle.0}, and this home installs " +
-                    f"only releases signed by {facts.signer.identity}",
+                    f"only releases signed by {facts.signer.workflow} at a tag",
                 )
             # 3. The one verifier.
             text = bundle.read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
