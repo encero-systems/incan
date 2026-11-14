@@ -1,6 +1,7 @@
 use super::*;
 use crate::{lexer, parser, typechecker};
 
+mod documentation;
 mod public_namespaces;
 
 fn metadata_for(source: &str) -> Result<CheckedApiMetadata, Vec<crate::diagnostics::CompileError>> {

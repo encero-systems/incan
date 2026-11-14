@@ -80,13 +80,15 @@ enum Projection {
     /// public members that representation coverage must admit. Callable, alias, constant, static, vocabulary and Rust
     /// ABI values are unrelated to this demand and remain unopened.
     Execution,
+    /// The complete library manifest with its checked API documentation, for readers that show documentation.
+    Documented,
 }
 
 impl Projection {
     /// Whether records of `family` belong to this projection.
     fn admits(self, family: &str) -> bool {
         match self {
-            Self::Complete => true,
+            Self::Complete | Self::Documented => true,
             Self::Execution => matches!(
                 family,
                 "metadata" | "contract-metadata" | "model" | "class" | "trait" | "enum" | "newtype"
@@ -230,6 +232,14 @@ pub(super) fn read(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest
 /// Read only the manifest records executable-resolution admission actually consults.
 pub(super) fn read_execution(dir: &Path, name: &str) -> Result<Option<(Arc<LibraryManifest>, String)>, LoafIndexError> {
     read_selected(dir, name, Projection::Execution)
+}
+
+/// Read one installed Loaf with its checked API documentation, which compiles never read.
+pub(super) fn read_documented(
+    dir: &Path,
+    name: &str,
+) -> Result<Option<(Arc<LibraryManifest>, String)>, LoafIndexError> {
+    read_selected(dir, name, Projection::Documented)
 }
 
 /// Read one semantic projection from the process's installed set without opening unselected values.
@@ -762,6 +772,9 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     use super::{Metadata, Projection, RecordEntry, RecordReads, RecordSet, open_value, read_group};
+    use crate::api_metadata::{
+        CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+    };
     use crate::library_manifest::{LibraryContractMetadata, LibraryManifest};
 
     /// The canonical lowercase SHA-256 spelling of `bytes`.
@@ -855,6 +868,105 @@ mod tests {
         assert!(
             refusal.contains("does not match its content name"),
             "the refusal says why: {refusal}"
+        );
+        Ok(())
+    }
+
+    /// The metadata record of the probe Loaf.
+    fn probe_metadata() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        Ok(LibraryManifest::encode_compiler_record_value(&Metadata {
+            name: "probe_loaf".to_owned(),
+            version: "0.1.0".to_owned(),
+            incan_version: "0.6.0".to_owned(),
+            manifest_format: 1,
+            manifest_digest: content_name(b"probe_loaf manifest"),
+            vocabulary: false,
+            provider_operations: false,
+            native_unions: false,
+            rust_paths: BTreeSet::new(),
+            rust_abi_cache_declared: false,
+        })?)
+    }
+
+    /// Contract metadata whose checked API documents one function.
+    fn documented_contract() -> Result<LibraryContractMetadata, Box<dyn std::error::Error>> {
+        let source = "pub def price() -> int:\n    \"\"\"The list price.\"\"\"\n    return 1999\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = crate::typechecker::TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let module = collect_checked_api_metadata(&program, &checker, vec!["prices".to_owned()]);
+        Ok(LibraryContractMetadata {
+            api: Some(CheckedApiMetadataPackage {
+                schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+                package: None,
+                modules: vec![module],
+                public_namespaces: Vec::new(),
+            }),
+            ..LibraryContractMetadata::default()
+        })
+    }
+
+    /// The probe Loaf installed with its contract facts and their documentation as separate records, the contract
+    /// metadata it was split from, and what reading only the facts reads.
+    fn documented_set(
+        root: &Path,
+    ) -> Result<(RecordSet, LibraryContractMetadata, RecordReads), Box<dyn std::error::Error>> {
+        let original = documented_contract()?;
+        let (facts, documentation) = original.split_documentation();
+        let metadata = probe_metadata()?;
+        let contract = LibraryManifest::encode_compiler_record_value(&facts)?;
+        let documentation = LibraryManifest::encode_compiler_record_value(&documentation)?;
+        let facts_read = RecordReads {
+            records: 2,
+            bytes: metadata.len() + contract.len(),
+        };
+        let set = record_set(
+            root,
+            "probe_loaf",
+            &[
+                ("metadata", metadata),
+                ("contract-metadata", contract),
+                ("documentation", documentation),
+            ],
+        )?;
+        Ok((set, original, facts_read))
+    }
+
+    #[test]
+    fn a_compile_reads_no_documentation_records() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let (set, _, facts_read) = documented_set(root.path())?;
+        let dir = root.path().join("debug");
+        for projection in [Projection::Complete, Projection::Execution] {
+            read_group(&set, &dir, "probe_loaf", projection)?.ok_or("the group is installed")?;
+        }
+        assert_eq!(
+            set.reads(),
+            facts_read,
+            "compiles open the metadata and contract facts, never the documentation"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_documented_read_restores_the_documentation_records() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let (set, original, _) = documented_set(root.path())?;
+        let dir = root.path().join("debug");
+        let (compiled, _) =
+            read_group(&set, &dir, "probe_loaf", Projection::Complete)?.ok_or("the group is installed")?;
+        let (documented, _) =
+            read_group(&set, &dir, "probe_loaf", Projection::Documented)?.ok_or("the group is installed")?;
+        assert_ne!(
+            compiled.contract_metadata, original,
+            "the compile's manifest carries no documentation"
+        );
+        assert_eq!(
+            documented.contract_metadata, original,
+            "a documented read gives back the checked API with its documentation"
         );
         Ok(())
     }
