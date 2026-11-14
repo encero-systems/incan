@@ -1,0 +1,45 @@
+# behavior: C `int` crosses a checked call as an ordinary Incan integer, as a parameter, a result and an in/out slot, as 0.5.1's `c.c_int` did (#3132).
+# pending: a `c.c_int` parameter or slot is refused at lowering (`unsupported checked C parameter carrier`); 0.5.1 built this program
+# expect-stdout:
+#   9 12
+#   0.5 4 3
+
+from std.interop import c
+
+
+binding LibC:
+    header = "stdlib.h"
+    link = c.system_library("c")
+
+    symbol absolute_int(value: c.c_int) -> c.c_int:
+        native = "abs"
+
+
+binding LibMath:
+    header = "math.h"
+    link = c.system_library("m")
+
+    symbol frexp_int(value: c.f64, exponent: c.InOut[c.c_int]) -> c.f64:
+        native = "frexp"
+
+
+def absolute_int(value: int) -> int:
+    """Cross C `int` in both directions as an ordinary Incan integer."""
+    unsafe:
+        magnitude = LibC.absolute_int(value)
+        return magnitude + LibC.absolute_int(-3)
+
+
+def split_int(value: f64) -> str:
+    """Read a C `int` in/out slot as an ordinary Incan integer."""
+    unsafe:
+        exponent = c.inout(0)
+        mantissa = LibMath.frexp_int(value, exponent)
+        written: int = exponent.take()
+        return f"{mantissa} {written} {written - 1}"
+
+
+def main() -> None:
+    """Print the C `int` call results and the slot read."""
+    println(f"{absolute_int(-6)} {absolute_int(9)}")
+    println(split_int(8.0))
