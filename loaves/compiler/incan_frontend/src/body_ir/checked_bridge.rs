@@ -180,6 +180,9 @@ impl BodyBuilder<'_, '_> {
         let authority = selected_slot
             .and_then(|slot| super::parameter_types::retained_nominal_identity(&slot.binding, self.type_info).cloned())
             .or_else(|| namespace(self.type_info));
+        // A C `int` slot stores `i32`; reading it yields the Incan `int` the checker gave the read.
+        let widened = operation == bir::CheckedBridgeOperation::TakeOutputSlot
+            && selected_slot.is_some_and(|slot| checked_foreign::is_c_int(&slot.value));
         let Some(authority) = authority else {
             return Some(self.unsupported_typed_operand(
                 "checked C bridge lost its declaration authority".into(),
@@ -219,18 +222,27 @@ impl BodyBuilder<'_, '_> {
             }
             values.push(bir::ArgumentElement::One(value));
         }
-        Some(self.push_call_temp(
+        let carried = if widened {
+            IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::I32))
+        } else {
+            result_type.clone()
+        };
+        let value = self.push_call_temp(
             bir::Callee::CheckedBridge(Box::new(bir::CheckedBridgeCall {
                 authority,
                 operation,
-                return_type: result_type.clone(),
+                return_type: carried.clone(),
             })),
             values,
-            result_type,
+            carried,
             scope,
             hir_span(span),
             false,
             out,
-        ))
+        );
+        if !widened {
+            return Some(value);
+        }
+        Some(self.push_assign_temp(bir::Rvalue::Use(value), result_type, scope, hir_span(span), out))
     }
 }
