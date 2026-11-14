@@ -1,0 +1,87 @@
+"""
+The dependency commands (RFC 118, RFC 125): change the root project's `[dependencies]` as `dependency_plans` plans,
+then lock the project. A lock that fails restores the manifest's exact text.
+"""
+
+from std.fs import Path
+from cli_help import refused_option
+from dependency_plans import plan_add
+from files import read, write
+from intake import ManifestReader
+from project_lock import LockCommand, lock_project, locked_report, root_project
+from rust_registry import read_registry_units
+from toolchain import load_toolchain
+
+
+pub enum DependencyVerb(str):
+    """The commands that change a project's registry dependencies."""
+
+    Add = "add"
+
+
+pub model DependencyRequest:
+    """One dependency command's invocation."""
+
+    pub verb: DependencyVerb
+    pub name: str = ""
+    pub version: str = ""
+    pub key: str = ""
+    pub project: str = "."
+
+
+pub def parse_dependency_command(verb: DependencyVerb, arguments: list[str]) -> Result[DependencyRequest, str]:
+    """Parse `oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]`."""
+    mut request = DependencyRequest(verb=verb)
+    mut index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in ["--version", "--key", "--project"]:
+            if index + 1 >= len(arguments):
+                return Err(f"`{argument}` needs a value")
+            value = arguments[index + 1]
+            if argument == "--version":
+                request.version = value
+            elif argument == "--key":
+                request.key = value
+            else:
+                request.project = value
+            index += 2
+            continue
+        if argument.startswith("-"):
+            return Err(refused_option(argument))
+        if request.name != "":
+            return Err(f"one NAME at a time; `{argument}` is a second")
+        request.name = argument
+        index += 1
+    if request.name == "":
+        return Err("a NAME is required, as SCOPE/NAME")
+    return Ok(request)
+
+
+pub def dependency_command(request: DependencyRequest) -> Result[list[str], str]:
+    """
+    Change the root project's `loaf.toml` as planned, then lock it; return the lines to print.
+
+    1. Find the root project, its manifest's text, and the toolchain's published registry units.
+    2. Plan the change; an unchanged manifest is reported and neither written nor locked.
+    3. Write it and lock; a failed lock restores the manifest's exact text and refuses with the lock's reason.
+    """
+    # 1. The root project at or above PATH.
+    match root_project(Path(request.project))?:
+        None => return Err(f"{request.project}: no loaf.toml in this directory or above it")
+        Some(root) =>
+            manifest = root.joinpath("loaf.toml")
+            original = read(manifest)?
+            toolchain = load_toolchain()?
+            units = read_registry_units(Path(toolchain.registry_units), "", ManifestReader(), false)?.units
+            # 2. Only a changed text is written.
+            planned = plan_add(request.name, request.version, request.key, original, manifest.0, units)?
+            if planned.text == original:
+                return Ok(planned.report)
+            # 3. The lock decides; a refused lock leaves the manifest as it was.
+            write(manifest, planned.text)?
+            match lock_project(LockCommand(path=root.0)):
+                Ok(locked) => return Ok(planned.report + locked_report(locked))
+                Err(reason) =>
+                    write(manifest, original)?
+                    return Err(f"{reason}\n{manifest.0} is unchanged")

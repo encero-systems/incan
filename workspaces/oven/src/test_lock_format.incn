@@ -4,6 +4,7 @@ from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.json import JsonValue
 from c_interop import CArtifactKind, CArtifactOrigin, CInteropArtifact, CInteropTarget
+from dependency_plans import plan_add
 from features import FeatureRequest
 from files import make_directory, read, write
 from intake import ManifestReader
@@ -423,4 +424,58 @@ pub def test_oven_lock_reports_a_lower_bound_that_is_not_published() -> Result[N
     registry = RegistryUnits(units=published_pairs(), search=[], resolution_mode="newest")
     selected = resolve_registry(registry, exact, "release", "/app")?
     assert untested_bounds(exact, registry.units, selected)? == []
+    return Ok(None)
+
+
+def published_units() -> list[RegistryUnit]:
+    """Published versions of four Loaves, two of them sharing the short name `getrandom`."""
+    mut units = [versioned_unit("getrandom", version) for version in ["0.2.3", "0.2.17", "0.3.4"]]
+    units = units + [versioned_unit("serde", version) for version in ["1.0.228", "1.0.230"]]
+    units = units + [versioned_unit("tilde", version) for version in ["1.0.0", "1.4.2"]]
+    units.append(RegistryUnit(loaf="acme/getrandom", version="1.0.0", domain="target", directory="acme", entry="acme"))
+    return units
+
+
+pub def test_oven_add_records_the_newest_published_version_and_never_guesses_a_short_name() -> Result[None, str]:
+    """
+    RFC 125: `oven add` writes the newest published version as the requirement, unless one is named, under the last
+    part of the name as its key. It never guesses a full name from a short one, and refuses a capital.
+
+    1. A project without `[dependencies]` gains the table and one line.
+    2. A short name lists every published full name it ends; a capital is refused.
+    3. The line goes after the table's last entry; a taken key is refused, naming `oven update` or `--key`.
+    """
+    units = published_units()
+    project = "[project]\nname = \"app\"\nversion = \"0.1.0\"\n"
+    # 1. The newest published version, spelled in full.
+    added = plan_add("crates-io/getrandom", "", "", project, "loaf.toml", units)?
+    line = "getrandom = { loaf = \"crates-io/getrandom\", version = \"0.3.4\" }"
+    assert added.text == project + "\n[dependencies]\n" + line + "\n", added.text
+    assert added.report == ["added crates-io/getrandom, version = \"0.3.4\""], f"{added.report}"
+    named = plan_add("crates-io/getrandom", "0.2", "", project, "loaf.toml", units)?
+    assert "version = \"0.2\" }" in named.text, named.text
+    # 2. Oven never guesses, and never folds a capital.
+    match plan_add("getrandom", "", "", project, "loaf.toml", units):
+        Ok(_) => return Err("a short name was resolved")
+        Err(reason) =>
+            assert "name one of: acme/getrandom, crates-io/getrandom" in reason, reason
+    match plan_add("crates-io/Getrandom", "", "", project, "loaf.toml", units):
+        Ok(_) => return Err("a name with a capital letter was accepted")
+        Err(reason) =>
+            assert "has a capital letter" in reason, reason
+    # 3. One more line in the existing table, before the next one.
+    existing = added.text + "\n[tool.other]\nkey = 1\n"
+    second = plan_add("crates-io/serde", "", "", existing, "loaf.toml", units)?
+    serde = "serde = { loaf = \"crates-io/serde\", version = \"1.0.230\" }"
+    assert second.text == existing.replace(line + "\n", line + "\n" + serde + "\n"), second.text
+    match plan_add("crates-io/getrandom", "", "", existing, "loaf.toml", units):
+        Ok(_) => return Err("a key naming the same Loaf was added twice")
+        Err(reason) =>
+            assert "raise it with `oven update crates-io/getrandom`" in reason, reason
+    match plan_add("acme/getrandom", "", "", existing, "loaf.toml", units):
+        Ok(_) => return Err("a taken key was replaced")
+        Err(reason) =>
+            assert "choose another with `--key KEY`" in reason, reason
+    keyed = plan_add("acme/getrandom", "", "acme_random", existing, "loaf.toml", units)?
+    assert "acme_random = { loaf = \"acme/getrandom\", version = \"1.0.0\" }" in keyed.text, keyed.text
     return Ok(None)
