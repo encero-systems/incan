@@ -314,35 +314,8 @@ impl TypeChecker {
                 .iter()
                 .all(|argument| self.capture_has_native_auto_trait(argument, marker, depth + 1));
         }
-        let source_model = match ty {
-            ResolvedType::Named(name) => self.lookup_semantic_type_info(name),
-            ResolvedType::RustPath(path) => path
-                .rsplit("::")
-                .next()
-                .and_then(|name| self.lookup_semantic_type_info(name)),
-            _ => None,
-        };
-        match source_model {
-            Some(TypeInfo::Model(model)) => {
-                return model
-                    .fields
-                    .values()
-                    .all(|field| self.capture_has_native_auto_trait(&field.ty, marker, depth + 1));
-            }
-            Some(TypeInfo::Class(class)) => {
-                return class
-                    .fields
-                    .values()
-                    .all(|field| self.capture_has_native_auto_trait(&field.ty, marker, depth + 1));
-            }
-            Some(TypeInfo::Enum(enum_info)) => {
-                return enum_info
-                    .variant_fields
-                    .values()
-                    .flatten()
-                    .all(|field| self.capture_has_native_auto_trait(field, marker, depth + 1));
-            }
-            _ => {}
+        if let Some(proven) = self.source_capture_has_native_auto_trait(ty, marker, depth) {
+            return proven;
         }
         let native = match ty {
             ResolvedType::Int => ResolvedType::RustPath("i64".into()),
@@ -426,6 +399,38 @@ impl TypeChecker {
                 let subject = crate::resolved_type_subst::substitute_resolved_type(&subject, &bindings);
                 self.capture_has_native_auto_trait(&subject, required, depth + 1)
             })
+        })
+    }
+
+    /// Prove one closed source nominal structurally, including transparent newtype storage.
+    /// Returning `None` keeps native carriers on the retained Rust-metadata path below this source-only boundary.
+    fn source_capture_has_native_auto_trait(&self, ty: &ResolvedType, marker: &str, depth: usize) -> Option<bool> {
+        let source = match ty {
+            ResolvedType::Named(name) => self.lookup_semantic_type_info(name),
+            ResolvedType::RustPath(path) => path
+                .rsplit("::")
+                .next()
+                .and_then(|name| self.lookup_semantic_type_info(name)),
+            _ => None,
+        }?;
+        Some(match source {
+            TypeInfo::Model(model) => model
+                .fields
+                .values()
+                .all(|field| self.capture_has_native_auto_trait(&field.ty, marker, depth + 1)),
+            TypeInfo::Class(class) => class
+                .fields
+                .values()
+                .all(|field| self.capture_has_native_auto_trait(&field.ty, marker, depth + 1)),
+            TypeInfo::Enum(enum_info) => enum_info
+                .variant_fields
+                .values()
+                .flatten()
+                .all(|field| self.capture_has_native_auto_trait(field, marker, depth + 1)),
+            TypeInfo::Newtype(newtype) if !newtype.is_rusttype => {
+                self.capture_has_native_auto_trait(&newtype.underlying, marker, depth + 1)
+            }
+            _ => return None,
         })
     }
 
