@@ -348,33 +348,66 @@ def refused_run(binary: str, source: Path, store: Path) -> Result[str, str]:
 
 pub def test_unrelated_edit_rechecks_no_generic_body() -> Result[None, str]:
     """Editing the function beside a generic re-checks and re-plans only that function, and warm matches cold."""
-    scratch = scratch_directory()?
-    root = scratch.path()
-    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
-    source = root.joinpath("generic.incn")
-    warm_store = root.joinpath("warm-store")
-    write(source, generic_source("0"))?
-    _ = lowering_example_run(binary, source, warm_store, "1\na\n42")?
-    write(source, generic_source("0").replace("value + 1", "value + 2"))?
-    edited = lowering_example_run(binary, source, warm_store, "1\na\n43")?
-    plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
-    executable = root.joinpath("target/incan/release/bin/generic").read_bytes().map_err((error) => error.message())?
-    stop_example_engine(binary, warm_store)?
-    root.joinpath("target").remove_tree().map_err((error) => error.message())?
-    cold_store = root.joinpath("cold-store")
-    _ = lowering_example_run(binary, source, cold_store, "1\na\n43")?
-    cold_plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
-    cold_executable = root.joinpath("target/incan/release/bin/generic").read_bytes().map_err((error) => error.message())?
-    stop_example_engine(binary, cold_store)?
+    edited, cold = unrelated_edit_reports("generic", generic_source("0"), "1\na\n42", "1\na\n43")?
     diagnostic = edited.to_json().map_err((error) => error.message())?
     assert proof_count(edited, "body_evaluations")? == 1, diagnostic
     assert proof_count(edited, "body_ir_evaluations")? == 1, diagnostic
     assert proof_count(edited, "plan_function_evaluations")? == 1, diagnostic
-    # `main` and both `pick` instances; the runtime Loaf's list instances keep no product, so no interface publishes.
-    assert proof_count(edited, "plan_function_reuses")? == 3, diagnostic
-    assert plan == cold_plan, "warm and cold plans differ after the unrelated edit"
-    assert executable == cold_executable, "warm and cold executables differ after the unrelated edit"
+    # `main`, both `pick` instances and the runtime Loaf's list and copy instances they request: every other function.
+    planned = proof_count(cold, "plan_function_evaluations")?
+    assert proof_count(edited, "plan_function_reuses")? == planned - 1, diagnostic
     return Ok(None)
+
+
+pub def test_unrelated_edit_reuses_runtime_list_instances() -> Result[None, str]:
+    """A list program's runtime instances keep products: an unrelated edit reuses them, and the interface publishes."""
+    edited, cold = unrelated_edit_reports("lists", list_source(), "4\nb\n42", "4\nb\n43")?
+    diagnostic = edited.to_json().map_err((error) => error.message())?
+    assert proof_count(cold, "native_interface_evaluations")? == 1, cold.to_json().map_err((error) => error.message())?
+    assert proof_count(edited, "body_evaluations")? == 1, diagnostic
+    assert proof_count(edited, "plan_function_evaluations")? == 1, diagnostic
+    planned = proof_count(cold, "plan_function_evaluations")?
+    assert proof_count(edited, "plan_function_reuses")? == planned - 1, diagnostic
+    assert proof_count(edited, "native_interface_evaluations")? == 1, diagnostic
+    return Ok(None)
+
+
+def unrelated_edit_reports(name: str, text: str, before: str, after: str) -> Result[tuple[JsonValue, JsonValue], str]:
+    """
+    Build `text`, then its `unrelated` edit in the same store, then the edited source in a fresh store.
+
+    Return the warm edit's report and the fresh build's; the warm plan and executable must equal the fresh ones.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath(f"{name}.incn")
+    warm_store = root.joinpath("warm-store")
+    write(source, text)?
+    _ = lowering_example_run(binary, source, warm_store, before)?
+    write(source, text.replace("value + 1", "value + 2"))?
+    edited = lowering_example_run(binary, source, warm_store, after)?
+    binary_path = f"target/incan/release/bin/{name}"
+    plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
+    executable = root.joinpath(binary_path).read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, warm_store)?
+    root.joinpath("target").remove_tree().map_err((error) => error.message())?
+    cold_store = root.joinpath("cold-store")
+    cold = lowering_example_run(binary, source, cold_store, after)?
+    cold_plan = root.joinpath("native.plan").read_bytes().map_err((error) => error.message())?
+    cold_executable = root.joinpath(binary_path).read_bytes().map_err((error) => error.message())?
+    stop_example_engine(binary, cold_store)?
+    assert plan == cold_plan, f"warm and cold plans differ after the unrelated edit of {name}"
+    assert executable == cold_executable, f"warm and cold executables differ after the unrelated edit of {name}"
+    return Ok((edited, cold))
+
+
+def list_source() -> str:
+    """Lists of `int` and `str` beside an unrelated function, so lowering requests the runtime Loaf's list instances."""
+    unrelated = "def unrelated(value: int) -> int:\n    return value + 1\n\n\n"
+    lists = "    mut items = [1, 2, 3]\n    items.append(4)\n    names = [\"a\", \"b\"]\n"
+    entry = "def main() -> None:\n" + lists + "    println(items[3])\n    println(names[1])\n    println(unrelated(41))\n"
+    return unrelated + entry
 
 
 def generic_source(index: str) -> str:

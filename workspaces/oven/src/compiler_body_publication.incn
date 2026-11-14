@@ -23,6 +23,7 @@ from pub::internal_models import (
     record_root,
 )
 from pub::internal_models.checker_records import CHECKER_PROFILE
+from pub::internal_models.compiler_records import RUNTIME_INSTANCE_IDENTITY
 from pub::internal_models.records import (
     PreparationEvidence,
     ReadReceipt,
@@ -875,25 +876,27 @@ def prepare_lowering_records(
         if is_entry_event(event)?:
             continue
         event_identity = required_event_text(event, "identity")?
-        if fallback_lowering_event(unit, fallbacks, event_identity)?:
+        # A toolchain runtime instance reads no authored record: lowering keys it by the runtime body's checked meaning.
+        runtime = event_identity.startswith(RUNTIME_INSTANCE_IDENTITY)
+        if not runtime and fallback_lowering_event(unit, fallbacks, event_identity)?:
             continue
         key = required_event_text(event, "key")?
         function = required_event_text(event, "function")?
         product = required_event_text(event, "product")?.encode("utf-8")
-        body = body_value(bodies, fallbacks, event_identity)?
-        # A retained body is already byte-matched to this selected graph above. Its native plan may still be fresh
-        # when a linked Rust unit changed without changing the checked source body or its callable signature.
-        identity = body.identity
-        body_ir_key = body_key("body-ir", origin, identity, "checked", root(body.final)?)
+        mut identity = event_identity
+        mut signature_reads: list[RecordRequest] = []
+        mut body_reads: list[RecordRequest] = []
+        if not runtime:
+            body = body_value(bodies, fallbacks, event_identity)?
+            # A retained body is already byte-matched to this selected graph above. Its native plan may still be fresh
+            # when a linked Rust unit changed without changing the checked source body or its callable signature.
+            identity = body.identity
+            signature_reads = [prepared_product_request(key) for key in body.signature_reads]
+            body_ir_key = body_key("body-ir", origin, identity, "checked", root(body.final)?)
+            body_reads = [prepared_product_request(body_ir_key)] + signature_reads
         demand_key = body_key("lowering-demand", origin, identity, function, key)
         demand_value = lowering_demand(product)?
-        signature_reads = [prepared_product_request(key) for key in body.signature_reads]
-        demand_receipt = prepared_receipt(
-            staged_source,
-            scope,
-            demand_key,
-            [prepared_product_request(body_ir_key)] + signature_reads,
-        )?
+        demand_receipt = prepared_receipt(staged_source, scope, demand_key, body_reads)?
         check_reused_output(selected, event, demand_key, demand_value)?
         _ = prepare_evaluation(
             prepared,
