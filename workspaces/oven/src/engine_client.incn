@@ -20,7 +20,7 @@ from incan_units import run_program
 from json_fields import required_text
 from observation import file_metadata, trace
 from retained_readings import installed_digest
-from pub::incan_platform.store import Snapshot, begin, commit, put, view_snapshot
+from pub::incan_platform.store import HOME_VIEW, Snapshot, begin, commit, put, view_snapshot
 from store_path_conversion import claim, snapshot
 from toolchain import load_toolchain, toolchain_directory
 from installation_page import admitted_identity
@@ -222,23 +222,37 @@ def physical_store_identity(store: Path) -> Result[str, str]:
 
 
 def installation_compiler(store: Path) -> Result[str, str]:
-    """Admit a toolchain once per installation in the home catalog, independent of project or alternate stores."""
+    """
+    Admit a toolchain once per installation, in the home's own view of the bakery (the shared `home` view for an
+    `INCAN_BAKERY` invocation), independent of project or alternate stores.
+    """
     directory = toolchain_directory()?
     admission = selected_installation(directory)?
     configuration = inherited_deployment_configuration()? + [get_or("SDKROOT", ""), get_or("INCAN_STDLIB", "")]
     key = f"incan.engine.installation\t{fingerprint([directory.0, admission] + configuration)?}"
-    selected = snapshot(store).map_err((error) => error.message())?
-    if let Some(compiler) = admitted_compiler(selected, key, admission)?:
+    mut view = str(HOME_VIEW)
+    if let Some(bound) = selected_home_view()?:
+        view = bound
+    if let Some(compiler) = admitted_installation(store, view, key, admission)?:
         return Ok(compiler)
-    held = claim(store, "incan.engine.installation").map_err((error) => error.message())?
-    checked = snapshot(store).map_err((error) => error.message())?
-    if let Some(compiler) = admitted_compiler(checked, key, admission)?:
+    _held = claim(store, f"incan.engine.installation\t{view}").map_err((error) => error.message())?
+    if let Some(compiler) = admitted_installation(store, view, key, admission)?:
         return Ok(compiler)
-    compiler = compiler_fingerprint(load_toolchain()?)?
+    return record_installation(store, view, key, admission, compiler_fingerprint(load_toolchain()?)?)
+
+
+pub def admitted_installation(store: Path, view: str, key: str, admission: str) -> Result[Option[str], str]:
+    """The compiler admitted for one installation in `view` of the bakery, if any."""
+    return admitted_compiler(snapshot(store, view).map_err((error) => error.message())?, key, admission)
+
+
+pub def record_installation(store: Path, view: str, key: str, admission: str, compiler: str) -> Result[str, str]:
+    """Record `compiler` as the admitted compiler of one installation in `view` of the bakery."""
     value = json_text(
         JsonValue.object({"admission": JsonValue.string(admission), "compiler": JsonValue.string(compiler)}),
     )?
-    _ = commit(put(begin(checked), key, value.encode("utf-8"))).map_err((error) => error.message())?
+    selected = snapshot(store, view).map_err((error) => error.message())?
+    _ = commit(put(begin(selected), key, value.encode("utf-8"))).map_err((error) => error.message())?
     return Ok(compiler)
 
 
