@@ -11,7 +11,7 @@ This page lists the Language Server Protocol methods `incan-lsp` serves and what
 | `textDocument/didChange` | Full-document sync: each change carries the whole text, which is analyzed again. |
 | `textDocument/didClose` | Drops the document and publishes an empty diagnostic list for it. |
 | `textDocument/hover` | See [Hover](#hover). |
-| `textDocument/signatureHelp` | The signature of a function declared in the same document, at a call to it inside a function or method body. Triggered by `(` and `,`, and retriggered by `,`. |
+| `textDocument/signatureHelp` | The signature of a function declared in the same document, at a call to it inside a function or method body, including a call inside an embedded fragment's expression hole. Triggered by `(` and `,`, and retriggered by `,`. |
 | `textDocument/definition` | For an `@describe` decorator, the subject it describes; for a raw C call, its binding declaration; for a standard-library module named in an import, or the module of a decorator, that module's source; for a symbol of a library vocabulary, the `pub::` import that brings it into scope; for any other checked name, such as a local partial or its target, the declaration of its canonical identity. A token inside an embedded fragment has no definition. |
 | `textDocument/references` | The locations of the checked declaration under the cursor across the open documents, matched by canonical identity; the declaration itself is included when the request asks for it. |
 | `textDocument/documentSymbol` | The document outline, including module-level partial declarations. |
