@@ -70,6 +70,16 @@ oven build --locked .
 
 A missing or stale lock is refused and names `oven lock`. Ordinary run, build and test commands create or refresh the root lock silently.
 
+## Raise a requirement
+
+A newly published version never reaches your project on its own. Raise a requirement when you want it:
+
+```bash
+oven update crates-io/regex
+```
+
+`oven update` moves the requirement to the newest published version it already admits, so a requirement of `1` can rise to a later `1.x.y` but never to `2`. Then it locks the project again. Every other dependency keeps its locked version. Without a name, `oven update` raises every registry requirement.
+
 ## Inspect the selection
 
 ```bash

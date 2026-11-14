@@ -30,6 +30,7 @@ const BAKERY_USAGE: str = "oven bakery gc [--keep-days N] | status [--format tex
 const DEPENDENCIES_USAGE: str = "oven inspect dependencies PATH [UNIT OPTIONS]"
 const LOCK_USAGE: str = "oven lock [--versions lowest|lowest-direct|newest] [PATH]"
 const ADD_USAGE: str = "oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]"
+const UPDATE_USAGE: str = "oven update [NAME] [--project PATH]"
 const TRUST_USAGE: str = "oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE"
 const INTEROP_USAGE: str = "oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [--format text|json] [PATH]"
 pub const UNIT_VALUE_OPTIONS: FrozenList[str] = [
@@ -63,6 +64,7 @@ pub def usage(surface: str) -> str:
                 INTEROP_USAGE,
                 LOCK_USAGE,
                 ADD_USAGE,
+                UPDATE_USAGE,
                 TRUST_USAGE,
                 NEW_USAGE,
                 INIT_USAGE,
@@ -127,6 +129,14 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
                     "  --project PATH         The project at or above PATH (default the current directory).",
                 ],
                 "oven add crates-io/serde",
+            ),
+        )
+    elif command == "update" and requested(arguments, ["--project"]):
+        return Some(
+            render(
+                UPDATE_USAGE,
+                ["  --project PATH  The project at or above PATH (default the current directory)."],
+                "oven update crates-io/serde",
             ),
         )
     elif command == "trust" and requested(arguments):

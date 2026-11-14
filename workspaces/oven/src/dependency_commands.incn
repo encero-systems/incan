@@ -5,7 +5,7 @@ then lock the project. A lock that fails restores the manifest's exact text.
 
 from std.fs import Path
 from cli_help import refused_option
-from dependency_plans import plan_add
+from dependency_plans import ManifestChange, plan_add, plan_update
 from files import read, write
 from intake import ManifestReader
 from project_lock import LockCommand, lock_project, locked_report, root_project
@@ -17,6 +17,7 @@ pub enum DependencyVerb(str):
     """The commands that change a project's registry dependencies."""
 
     Add = "add"
+    Update = "update"
 
 
 pub model DependencyRequest:
@@ -30,12 +31,15 @@ pub model DependencyRequest:
 
 
 pub def parse_dependency_command(verb: DependencyVerb, arguments: list[str]) -> Result[DependencyRequest, str]:
-    """Parse `oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]`."""
+    """
+    Parse `oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]` or
+    `oven update [NAME] [--project PATH]`.
+    """
     mut request = DependencyRequest(verb=verb)
     mut index = 0
     while index < len(arguments):
         argument = arguments[index]
-        if argument in ["--version", "--key", "--project"]:
+        if argument == "--project" or (argument in ["--version", "--key"] and verb == DependencyVerb.Add):
             if index + 1 >= len(arguments):
                 return Err(f"`{argument}` needs a value")
             value = arguments[index + 1]
@@ -53,7 +57,7 @@ pub def parse_dependency_command(verb: DependencyVerb, arguments: list[str]) -> 
             return Err(f"one NAME at a time; `{argument}` is a second")
         request.name = argument
         index += 1
-    if request.name == "":
+    if verb == DependencyVerb.Add and request.name == "":
         return Err("a NAME is required, as SCOPE/NAME")
     return Ok(request)
 
@@ -75,7 +79,11 @@ pub def dependency_command(request: DependencyRequest) -> Result[list[str], str]
             toolchain = load_toolchain()?
             units = read_registry_units(Path(toolchain.registry_units), "", ManifestReader(), false)?.units
             # 2. Only a changed text is written.
-            planned = plan_add(request.name, request.version, request.key, original, manifest.0, units)?
+            mut planned = ManifestChange(text=original, report=[])
+            if request.verb == DependencyVerb.Add:
+                planned = plan_add(request.name, request.version, request.key, original, manifest.0, units)?
+            else:
+                planned = plan_update(request.name, original, manifest.0, units)?
             if planned.text == original:
                 return Ok(planned.report)
             # 3. The lock decides; a refused lock leaves the manifest as it was.
