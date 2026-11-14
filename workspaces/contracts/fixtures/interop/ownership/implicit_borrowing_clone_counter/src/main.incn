@@ -1,4 +1,4 @@
-# behavior: private helpers that only read a Rust tree value or a source model wrapping it walk from a field, parameter, helper chain, cursor, format, enum match, indexed list, indexed model field, builtin iteration and bodies with unrelated aggregates, results and closures without copying the tree (the crate's clone counter stays at 0); an explicit clone counts once; a child taken as an owned value counts its subtree; a snapshot taken before the owner is replaced counts the whole tree; a tree handed to functions declared over a reference, to a returned callable, to a trait default's callable, to a returned cursor, to a helper that clears it and to a walk over a reference parameter adds nothing; a helper handed the same tree twice costs one copy of it; forwarding an explicit exclusive reference mutates the original tree without copying it
+# behavior: private helpers that only read a Rust tree value or a source model wrapping it walk from a field, parameter, helper chain, cursor, format, enum match, indexed list, indexed model field, builtin iteration and bodies with unrelated aggregates, results and closures without copying the tree; a parameter its body consumes on entry, by a model field, owned cursor, owned return or mutable local, receives a caller's last use by move without a copy; a conditional storing helper keeps its by-value input, so a value its caller keeps is copied once at the call on either path while a fresh value moves in on either path; an explicit clone counts once; a child taken as an owned value counts its subtree; a snapshot taken before the owner is replaced counts the whole tree; a tree handed to functions declared over a reference, to a returned callable, to a trait default's callable and to a walk over a reference parameter adds nothing; a helper handed the same tree twice borrows it twice; forwarding an explicit exclusive reference mutates the original tree without copying it
 # expect-stdout:
 #   observe true clones 0
 #   is_table true clones 0
@@ -24,11 +24,15 @@
 #   ref param true true clones 9
 #   ref traverse true clones 9
 #   callback true clones 9
-#   pair true clones 12
-#   select true clones 12
-#   clear 0 clones 12
-#   trait callback true clones 12
-#   exclusive forward 0 clones 12
+#   pair true clones 9
+#   select true clones 9
+#   clear 0 clones 9
+#   trait callback true clones 9
+#   exclusive forward 0 clones 9
+#   skipped store true clones 12
+#   stored copy true original 0 clones 15
+#   fresh store true clones 15
+#   fresh skip true clones 15
 
 # `Clone for Item` counts one per node it copies; `../README.md` derives every expected count.
 
@@ -45,6 +49,10 @@ model Envelope:
 model ByteEnvelope:
     identity: bytes
     tree: Item
+
+
+model SavedItem:
+    item: Item
 
 
 def read_envelope(envelope: Envelope) -> bool:
@@ -103,11 +111,7 @@ def label_length(label: str) -> int:
 
 
 def indexed_current(envelopes: list[Envelope]) -> bool:
-    return (
-        label_length(envelopes[0].label) == 7
-        and envelopes[0].label == "current"
-        and envelopes[0].item.is_table()
-    )
+    return (label_length(envelopes[0].label) == 7 and envelopes[0].label == "current" and envelopes[0].item.is_table())
 
 
 def indexed_values(envelopes: list[Envelope]) -> int:
@@ -128,6 +132,13 @@ def indexed_items(envelopes: list[Envelope]) -> bool:
         if item.is_table():
             return true
     return false
+
+
+def store_if(item: Item, enabled: bool) -> Option[SavedItem]:
+    """Copy the input only on the path that gives an independent owner to the result."""
+    if enabled:
+        return Some(SavedItem(item=item))
+    return None
 
 
 def iterated(envelope: Envelope) -> bool:
@@ -283,9 +294,7 @@ def main() -> None:
     println(
         f"indexed field {indexed_field([Envelope(item=document(), values=[1, 2], items=[], label="payload")])} clones {clones()}",
     )
-    println(
-        f"indexed bytes {indexed_identity([ByteEnvelope(identity=b"ABCDEF", tree=document())])} clones {clones()}",
-    )
+    println(f"indexed bytes {indexed_identity([ByteEnvelope(identity=b"ABCDEF", tree=document())])} clones {clones()}")
     mut envelopes = [Envelope(item=document(), values=[1, 2], items=[document()], label="before")]
     envelopes[0].label = "current"
     println(f"indexed current {indexed_current(envelopes)} clones {clones()}")
@@ -331,3 +340,17 @@ def main() -> None:
     mut exclusive = document()
     forward_clear_ref(exclusive)
     println(f"exclusive forward {exclusive.child_count()} clones {clones()}")
+    mut original = document()
+    skipped = store_if(original, false).is_none()
+    println(f"skipped store {skipped} clones {clones()}")
+    stored = store_if(original, true)
+    original.clear()
+    mut stored_table = false
+    match stored:
+        Some(saved) => stored_table = saved.item.is_table()
+        None => pass
+    println(f"stored copy {stored_table} original {original.child_count()} clones {clones()}")
+    fresh_stored = store_if(document(), true).is_some()
+    println(f"fresh store {fresh_stored} clones {clones()}")
+    fresh_skipped = store_if(document(), false).is_none()
+    println(f"fresh skip {fresh_skipped} clones {clones()}")
