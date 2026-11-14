@@ -43,6 +43,17 @@ pub model CheckerRecordCounts:
     pub artifact_refusals: Dict[str, int] = {}
 
 
+# The schema of the sidecar a check writes with `--checked-bodies`.
+const CHECKED_BODIES_SCHEMA: str = "incan.checked-bodies/1"
+
+
+pub model CheckedBodyCounts:
+    """One check's top-level function bodies: checked afresh, and restored from the engine's selected records."""
+
+    pub checked: int = 0
+    pub reused: int = 0
+
+
 pub def compile_prepared_unit(
     unit: UnitDescription,
     toolchain: Toolchain,
@@ -86,16 +97,7 @@ pub def compile_prepared_unit(
         native.append("--no-codegraph")
     if let Some(records) = graph_body_records:
         records_path = Path(f"{path.0}.graph-body-records")
-        if records_path.exists():
-            remove_dir_all(records_path.0).map_err((error) => f"cannot replace selected plan inputs: {error}")?
-        records_path.mkdir(true, true).map_err((error) => f"{records_path.0}: {error.message()}")?
-        generation = match unit.checked_context:
-            Some(value) => value
-            None => return Err("records lowering requires the complete compiler context")
-
-        publish_binary(records_path.joinpath("producer-profile"), generation.encode("utf-8"))?
-        for page in records:
-            publish_binary(records_path.joinpath(page.key), page.value)?
+        write_selected_records(records_path, unit, records)?
         native += ["--graph-body-records", records_path.0]
         native += ["--plan-record-products", records_path.0]
         output_path = Path(f"{path.0}.graph-body-output")
@@ -114,6 +116,43 @@ pub def compile_prepared_unit(
     if code == 0 and executable:
         normalize_release_executable(output, unit.profile)?
     return Ok(code)
+
+
+pub def write_selected_records(directory: Path, unit: UnitDescription, records: list[SelectedBodyPage]) -> Result[None, str]:
+    """
+    Replace `directory` with the engine's selected record pages, each at the key the driver reads it by, beside the
+    compiler context they were selected under. Builds and checks read their records from this one writer.
+    """
+    if directory.exists():
+        remove_dir_all(directory.0).map_err((error) => f"cannot replace selected plan inputs: {error}")?
+    directory.mkdir(true, true).map_err((error) => f"{directory.0}: {error.message()}")?
+    generation = match unit.checked_context:
+        Some(value) => value
+        None => return Err("records lowering requires the complete compiler context")
+
+    publish_binary(directory.joinpath("producer-profile"), generation.encode("utf-8"))?
+    for page in records:
+        publish_binary(directory.joinpath(page.key), page.value)?
+    return Ok(None)
+
+
+pub def checked_body_counts(report: Path) -> Result[CheckedBodyCounts, str]:
+    """
+    Read a check's `incan.checked-bodies/1` sidecar: how many top-level function bodies it checked and how many it
+    restored from selected records. A replayed check runs no compiler, writes none, and checked nothing.
+    """
+    if not report.is_file():
+        return Ok(CheckedBodyCounts())
+    value = parse(report.read_text("utf-8", "strict").map_err((error) => error.message())?).map_err(
+        (error) => f"cannot decode checked bodies report {report.0}: {error.message()}",
+    )?
+    schema = value.require("schema").and_then((field) => field.expect_str()).map_err((error) => error.message())?
+    if schema != CHECKED_BODIES_SCHEMA:
+        return Err(f"unsupported checked bodies report {schema}")
+    checked = value.require("checked").and_then((field) => field.expect_int()).map_err((error) => error.message())?
+    reused = value.require("reused").and_then((field) => field.expect_int()).map_err((error) => error.message())?
+    discard_file(report)
+    return Ok(CheckedBodyCounts(checked=checked, reused=reused))
 
 
 pub def graph_body_output_path(unit: UnitDescription, key: Key) -> Path:

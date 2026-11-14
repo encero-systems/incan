@@ -4,13 +4,19 @@ from std.fs import Path
 from std.environ import get_or
 from std.primitives.locking import LockGuard
 from rust::std::rc import Rc
-from engine_capture import BuildEpoch, InputRole, SelectedHome
+from engine_capture import BuildEpoch, CapturedInput, InputRole, SelectedHome
 from std.json import JsonValue, parse
 from bakery import find, fact_file
 from bakery_records import Fact
 from bakery_roots import register_root
-from compiler_body_publication import prepare_captured_source_inputs, prepare_compiled_bodies, source_origin
+from compiler_body_publication import (
+    PreparedSourceInputs,
+    prepare_captured_source_inputs,
+    prepare_compiled_bodies,
+    source_origin,
+)
 from compiler_body_values import (
+    SelectedBodyRecord,
     body_owners_reading,
     encode_body_inventory,
     invalid_namespace_modules,
@@ -22,13 +28,13 @@ from engine_epochs import record_text, load_epoch
 from features import FeatureRequest
 from files import json_text
 from home import StandardPackage
-from incan_units import check_unit, obtain_executable, program_binary, executable_view, view_executable
+from incan_units import check_prepared, obtain_executable, program_binary, executable_view, view_executable
 from json_fields import required_text
 from pub::incan_platform.store import EXPECT_ABSENT, HOME_VIEW, Snapshot, Transaction, begin, commit, put
 from engine_overlay import is_editor_view
 from store_path_conversion import snapshot
 from toolchain import Toolchain, load_toolchain, toolchain_directory
-from unit import describe
+from unit import UnitDescription, describe
 from unit_compiler import (
     CheckerRecordCounts,
     PlanRecordCounts,
@@ -74,6 +80,8 @@ pub model ProgramOutcome:
     pub unit: Option[NativeUnit] = None
     pub evaluations: int = 0
     pub body_evaluations: int = 0
+    # Checked bodies a check restored from the request view's records; a build reports its reuse as `checker_reuse`.
+    pub body_reuses: int = 0
     pub body_ir_evaluations: int = 0
     pub native_bakes: int = 0
     pub plan_function_evaluations: int = 0
@@ -98,6 +106,19 @@ pub model CheckOutcome:
 
     pub code: i32
     pub console: str
+    # Top-level function bodies the check checked, and those it restored from the request view's records.
+    pub body_evaluations: int = 0
+    pub body_reuses: int = 0
+
+
+pub model BodySelection:
+    """A request view's checked-body records for one prepared unit, selected before the compiler checks it."""
+
+    pub graph: Snapshot
+    pub projected: PreparedSourceInputs
+    # Owners whose earlier evaluations read a source projection this request changed; they are checked afresh.
+    pub invalid: list[str]
+    pub retained: list[SelectedBodyRecord]
 
 
 model ProgramHome:
@@ -123,8 +144,12 @@ pub def check_program(
     format: str,
     captured: Option[BuildEpoch] = None,
     selected_home: Option[SelectedHome] = None,
+    view: str = "",
 ) -> Result[CheckOutcome, str]:
-    """Describe and check one captured build reach without requesting code generation or a native selection."""
+    """
+    Describe and check one captured build reach without requesting code generation or a native selection. The check
+    restores each unchanged checked body from the request view's records, selected exactly as a build selects them.
+    """
     epoch = request_epoch(store, revision, captured, "check")?
     if len(epoch.roots) != 1:
         return Err("unit records require exactly one program root")
@@ -145,8 +170,42 @@ pub def check_program(
         or len(described.c_headers) > 0
     ):
         return Err("unit records currently support ordinary program units without vocabulary or foreign headers")
-    code = check_unit(described, toolchain, format)?
-    return Ok(CheckOutcome(code=code, console=console))
+    ready = prepare_native(described, toolchain)?
+    selection = select_bodies(store, view, ready, epoch.inputs, false)?
+    checked = check_prepared(ready, toolchain, format, Some(encode_body_inventory(selection.retained)?))?
+    return Ok(
+        CheckOutcome(
+            code=checked.code,
+            console=console,
+            body_evaluations=checked.bodies.checked,
+            body_reuses=checked.bodies.reused,
+        ),
+    )
+
+
+def select_bodies(
+    store: Path,
+    view: str,
+    ready: UnitDescription,
+    inputs: list[CapturedInput],
+    listing_refusals: bool,
+) -> Result[BodySelection, str]:
+    """
+    Select the checked bodies a request reuses: an editor view reads its own records, any other view the shared ones.
+    An owner whose earlier evaluation read a source projection this request changed is left to be checked afresh;
+    listing refusals checks every owner afresh.
+    """
+    mut graph_view = str(HOME_VIEW)
+    if is_editor_view(view):
+        graph_view = view
+    graph = snapshot(store, graph_view).map_err((error) => error.message())?
+    projected = prepare_captured_source_inputs(graph, begin(graph), ready, inputs)?
+    origin = source_origin(ready)
+    mut invalid = body_owners_reading(graph, projected.keys, CHECKER_PROFILE)?
+    if listing_refusals:
+        invalid = [record.identity for record in select_body_inventory_except(graph, CHECKER_PROFILE, origin, [])?]
+    retained = select_body_inventory_except(graph, CHECKER_PROFILE, origin, invalid)?
+    return Ok(BodySelection(graph=graph, projected=projected, invalid=invalid, retained=retained))
 
 
 pub def obtain(
@@ -226,17 +285,13 @@ pub def obtain(
     # writes its source and checked-body records in its own view, so it never changes what a build reads.
     request_view = program_view(handle)?
     editor = is_editor_view(request_view)
-    mut graph_view = str(HOME_VIEW)
-    if editor:
-        graph_view = request_view
-    graph = snapshot(store, graph_view).map_err((error) => error.message())?
-    projected = prepare_captured_source_inputs(graph, begin(graph), ready, epoch.inputs)?
-    mut invalid = body_owners_reading(graph, projected.keys, CHECKER_PROFILE)?
+    selection = select_bodies(store, request_view, ready, epoch.inputs, listing_refusals)?
+    graph = selection.graph
+    projected = selection.projected
+    invalid = selection.invalid
     origin = source_origin(ready)
-    if listing_refusals:
-        invalid = [record.identity for record in select_body_inventory_except(graph, CHECKER_PROFILE, origin, [])?]
     invalid_namespaces = invalid_namespace_modules(graph, projected.keys, CHECKER_PROFILE)?
-    retained_bodies = select_body_inventory_except(graph, CHECKER_PROFILE, origin, invalid)?
+    retained_bodies = selection.retained
     mut selected_bodies = encode_body_inventory(retained_bodies)?
     selected_bodies.extend(select_namespace_inventory_except(graph, CHECKER_PROFILE, origin, invalid_namespaces)?)
     # Lowering revalidates its exact checked inputs; a changed raw source slice may still produce equal meaning.
