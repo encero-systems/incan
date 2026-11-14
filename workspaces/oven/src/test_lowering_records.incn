@@ -66,6 +66,15 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     documented_diagnostic = documented.to_json().map_err((error) => error.message())?
     assert proof_count(documented, "body_evaluations")? == 0, documented_diagnostic
     assert proof_count(documented, "body_ir_evaluations")? == 0, documented_diagnostic
+    # Rewording the docstring moves no code, so not even `greeting`'s plan is evaluated again.
+    write(
+        source,
+        "def greeting() -> str:\n    \"\"\"Greet the reader.\"\"\"\n    return \"hullo\"\n\n\n# inserted above main\ndef main() -> None:\n    println(greeting())\n",
+    )?
+    reworded = lowering_example_run(binary, source, store, "hullo")?
+    reworded_diagnostic = reworded.to_json().map_err((error) => error.message())?
+    assert proof_count(reworded, "body_evaluations")? == 0, reworded_diagnostic
+    assert proof_count(reworded, "plan_function_evaluations")? == 0, reworded_diagnostic
     stop_example_engine(binary, store)?
     signature = root.joinpath("signature-source")
     signature.mkdir(true, true).map_err((error) => error.message())?
