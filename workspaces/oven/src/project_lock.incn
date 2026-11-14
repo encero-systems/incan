@@ -499,7 +499,7 @@ pub def toolchain_entry(
     bindings: Dict[str, str],
     target: str,
 ) -> Result[LockLoaf, str]:
-    """Record one selected shipped unit and its exact producer dependency entries."""
+    """Record one selected shipped unit, the source digest its closure records, and its exact dependency entries."""
     mut dependencies: list[LockDependency] = []
     for dependency in unit.dependencies:
         child = unit_for(dependency, units)?
@@ -518,6 +518,7 @@ pub def toolchain_entry(
             version=unit.version,
             origin="toolchain",
             registry=unit.registry,
+            checksum=unit.source_digest,
             entry=unit.entry,
             dependencies=dependencies,
             features=[

@@ -30,7 +30,7 @@ from lock_format import (
     read_lock,
     write_lock,
 )
-from project_lock import ensure_project_lock, local_interop, selected_mode, untested_bounds
+from project_lock import ensure_project_lock, local_interop, selected_mode, toolchain_entry, untested_bounds
 from registry_units import RegistryUnit, RegistryUnits
 from rust_activation import DependencyDomain
 from rust_registry import resolve_registry
@@ -674,4 +674,20 @@ pub def test_oven_add_asks_which_loaf_a_short_name_means_on_a_terminal() -> Resu
             Ok(chosen) => return Err(f"the answer `{answer}` chose {chosen}")
             Err(reason) =>
                 assert "name one of: acme/getrandom, crates-io/getrandom" in reason, reason
+    return Ok(None)
+
+
+pub def test_a_toolchain_loaf_s_lock_entry_carries_its_source_digest() -> Result[None, str]:
+    """
+    RFC 117 and RFC 125: the lock records each Loaf's immutable source digest, which an advisory against an adopted
+    source is keyed on. A toolchain-origin entry carries the digest its registry closure records for the unit; a unit
+    the closure gives no digest records none.
+    """
+    digest = "sha256:5d3c46a4b2b3c4a8f6b9fd9e5a0f0b8a1f7cbbd7f4d3c1c0e2b8c7f6a5d4e3b2"
+    mut unit = versioned_unit("getrandom", "0.3.4")
+    unit.source_digest = digest
+    entry = toolchain_entry(unit, [unit], [], {}, "aarch64-apple-darwin")?
+    assert entry.checksum == digest, f"the lock entry's checksum is `{entry.checksum}`"
+    bare = toolchain_entry(versioned_unit("getrandom", "0.3.4"), [], [], {}, "aarch64-apple-darwin")?
+    assert bare.checksum == "", bare.checksum
     return Ok(None)
