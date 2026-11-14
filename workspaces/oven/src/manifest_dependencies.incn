@@ -130,7 +130,7 @@ pub def parse_dependencies(
                         ),
                     )
                 if "workspace" in entry:
-                    edge = inherited_edge(alias, entry, manifest, group)?
+                    edge = inherited_edge(alias, entry, manifest, [group, alias])?
                     if let Some(local) = edge.local:
                         dependencies.append(local)
                     if let Some(request) = edge.facet:
@@ -181,11 +181,11 @@ pub model InheritedEdge:
     pub facet: Option[RustInputRequest] = None
 
 
-def inherited_edge(
+pub def inherited_edge(
     alias: str,
     entry: Dict[str, TomlValue],
     manifest: str,
-    group: str,
+    field: list[str],
 ) -> Result[InheritedEdge, IntakeError]:
     """
     A member's `{ workspace = true }` edge, taken from its workspace root's `[workspace.dependencies]` entry
@@ -193,7 +193,6 @@ def inherited_edge(
     entry's and its `optional` kept. Its own path, Loaf, version or other identity field is refused, as in 0.5.1: the
     root's entry owns them.
     """
-    field = [group, alias]
     if not flag(entry, "workspace", false, manifest, field)?:
         detail = "workspace inheritance is spelled `workspace = true`"
         return Err(refusal(manifest, field + ["workspace"], IntakeErrorKind.Invalid, detail))
@@ -203,7 +202,7 @@ def inherited_edge(
             detail = f"{spelled} belong to [workspace.dependencies]"
             return Err(refusal(manifest, field + [key], IntakeErrorKind.Invalid, detail))
     allowed(entry, ["workspace", "features", "optional"], manifest, field)?
-    shared = inherited(alias, manifest)?
+    shared = inherited(alias, manifest, field)?
     root_field = ["workspace", "dependencies", alias]
     root = table(shared.value, shared.root_manifest, root_field)?
     mut features: list[str] = []
