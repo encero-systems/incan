@@ -21,6 +21,7 @@ pub def compare_cli(incan: str, project: Path, header: Header) -> Result[list[st
     3. Require each declared trace substring in the Oven trace that command added.
     4. Launch the `cli-concurrent:` commands together, comparing each the same way.
     5. Require each `expect-trace-at-most-once:` substring at most once in everything the case traced.
+    6. Require each `expect-files:` path, and refuse each `expect-no-files:` path, once every command has run.
     """
     mut failures: list[str] = []
     start = trace_lines(trace_file(project))
@@ -60,7 +61,8 @@ pub def compare_cli(incan: str, project: Path, header: Header) -> Result[list[st
         count = len(traced.split(expected)) - 1
         if count > 1:
             failures.append(f"Oven's trace contains `{expected}` {count} times, not at most once")
-    return Ok(failures)
+    # 6. What the commands wrote, and did not write, in the case's own project.
+    return Ok(failures + left_files(project, header.items("expect-files"), header.items("expect-no-files")))
 
 
 def concurrent(incan: str, project: Path, header: Header) -> Result[list[str], str]:
@@ -112,6 +114,21 @@ pub def located(outcome: Outcome, project: Path) -> Outcome:
     for spelling in spellings:
         stdout = stdout.replace(spelling, PROJECT)
     return Outcome(stdout=stdout, stderr=outcome.stderr, code=outcome.code)
+
+
+pub def left_files(project: Path, present: list[str], absent: list[str]) -> list[str]:
+    """
+    The file expectations the case's commands broke: each `present` path, relative to the case project, that does not
+    exist, then each `absent` path that does.
+    """
+    mut failures: list[str] = []
+    for name in present:
+        if not project.joinpath(name).exists():
+            failures.append(f"the commands left no `{name}`")
+    for name in absent:
+        if project.joinpath(name).exists():
+            failures.append(f"the commands left `{name}`")
+    return failures
 
 
 def settings(project: Path, header: Header) -> Result[list[str], str]:

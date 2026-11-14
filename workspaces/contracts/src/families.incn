@@ -128,10 +128,12 @@ pub def admit(fixture: Fixture, header: Header) -> Result[None, str]:
         or header.declares("cli-concurrent")
         or header.declares("expect-trace-at-most-once")
         or header.declares("trace-invariant")
+        or header.declares("expect-files")
+        or header.declares("expect-no-files")
     ):
         if not header.declares("cli-commands"):
             return Err(
-                "only fixtures with `cli-commands:` declare `environment:`, `cli-concurrent:`, `expect-trace-contains:`, `expect-trace-at-most-once:` or `trace-invariant:`",
+                "only fixtures with `cli-commands:` declare `environment:`, `cli-concurrent:`, `expect-trace-contains:`, `expect-trace-at-most-once:`, `trace-invariant:`, `expect-files:` or `expect-no-files:`",
             )
     if header.declares("check-edits"):
         check_edits(fixture, header)?
