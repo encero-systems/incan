@@ -1,0 +1,10 @@
+[project]
+name = "rust_struct_built_with_none_for_a_type_only_its_dependency_names"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+badges = { path = "deps/badges" }
+scopes = { loaf = "scopes", path = "deps/scopes" }

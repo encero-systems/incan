@@ -1,0 +1,15 @@
+# behavior: a consumer constructs a Rust struct with `None` for an Option field whose type only its dependency names, then hands the struct to that dependency
+# pending: the driver collects the Rust items a unit holds after it takes the Rust layouts out, so a field type that no local or signature of the consumer names is not held, and lowering leaves the Option field opaque: `unsupported Body IR type Option[Named[scopes::Scope]]`
+# expect-stdout:
+#   7
+#   badge 7 depth -1
+
+from pub::badges import described
+from rust::scopes import Badge
+
+
+def main() -> None:
+    """Build a badge without naming its scope type."""
+    badge = Badge(id=7, scope=None)
+    println(badge.id)
+    println(described(badge))
