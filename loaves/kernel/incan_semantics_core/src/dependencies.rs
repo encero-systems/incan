@@ -83,6 +83,26 @@ impl CheckedDependencyGraph {
             .flat_map(|edges| edges.iter().map(|edge| &edge.target))
     }
 
+    /// Return only the checked edges introduced by the selected roots, retaining each compiler-owned subject.
+    pub fn direct_dependencies_from(
+        &self,
+        roots: impl IntoIterator<Item = CanonicalSymbolId>,
+    ) -> BTreeSet<CheckedDependency> {
+        let mut dependencies = BTreeSet::new();
+        for identity in roots {
+            let Some(edges) = self.dependencies.get(&identity) else {
+                continue;
+            };
+            for edge in edges {
+                dependencies.insert(CheckedDependency {
+                    target: edge.target.clone(),
+                    subject: edge.subject.clone(),
+                });
+            }
+        }
+        dependencies
+    }
+
     /// Follow checked relationships while retaining the exact semantic subject that introduced every reachable edge.
     pub fn reachable_dependencies_from(
         &self,
