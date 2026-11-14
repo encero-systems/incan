@@ -125,6 +125,7 @@ enum SemanticEdit(str):
     NamespaceNewtype = "namespace-newtype"
     NamespaceTypeAlias = "namespace-type-alias"
     NamespaceReexport = "namespace-reexport"
+    NamespaceForeignNominal = "namespace-foreign-nominal"
 
 
 @derive(Eq)
@@ -771,6 +772,7 @@ def semantic_edit_cases() -> list[MatrixCase]:
         namespace_family_case(SemanticEdit.NamespaceNewtype, ["pub type EvidenceId = newtype str"]),
         namespace_family_case(SemanticEdit.NamespaceTypeAlias, ["pub type Answer = int | str"]),
         namespace_reexport_case(),
+        namespace_foreign_nominal_case(),
     ]
 
 
@@ -826,6 +828,32 @@ def namespace_reexport_case() -> MatrixCase:
               "src/independent.incn": facade},
         edited={"loaf.toml": manifest, "src/main.incn": main, "src/provider.incn": edited_provider, "src/origin.incn": origin,
                 "src/independent.incn": facade},
+        expected_module_checks=1,
+        expected_body_ir_modules=1,
+        expected_lowered_modules=1,
+    )
+
+
+def namespace_foreign_nominal_case() -> MatrixCase:
+    """Retain one compiled-Loaf nominal in a sibling signature while rebuilding only its caller."""
+    manifest = "[project]\nname = \"app\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+    helper = fixture_source(
+        ["from std.fs import Path", "", "", "pub def accepts(value: Path) -> bool:", "    return true"],
+    )
+    base = fixture_source(
+        ["from std.fs import Path", "from helper import accepts", "", "", "def main() -> None:",
+         "    assert accepts(Path(\"base\"))"],
+    )
+    edited = fixture_source(
+        ["from std.fs import Path", "from helper import accepts", "", "", "def main() -> None:",
+         "    assert accepts(Path(\"edited\"))"],
+    )
+    return MatrixCase(
+        edit=SemanticEdit.NamespaceForeignNominal,
+        fixture=MatrixFixture.Namespaces,
+        target="src/main.incn",
+        base={"loaf.toml": manifest, "src/main.incn": base, "src/helper.incn": helper},
+        edited={"loaf.toml": manifest, "src/main.incn": edited, "src/helper.incn": helper},
         expected_module_checks=1,
         expected_body_ir_modules=1,
         expected_lowered_modules=1,
