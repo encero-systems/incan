@@ -859,11 +859,13 @@ def publish_switch(
     marker = root.joinpath("FORMAT")
     if not marker.is_file():
         place_synced(marker, f"{FORMAT}\n".encode("utf-8"))?
-    # Order every referenced object and name before one drive flush, before CURRENT can name the graph.
+    # Order every referenced object and name ahead of CURRENT on stable storage before CURRENT can name the graph.
+    # CURRENT's own flush below is the request's one drive flush: it makes the graph and the selection durable
+    # together, and a crash before it leaves the previous selection, whose graph was flushed with it.
     sync_directory(root)?
     sync_directory(root.parent())?
-    sync_durable(manifest)?
-    publication_boundary("objects-durable")
+    sync_graph(manifest)?
+    publication_boundary("objects-ordered")
     # The manifest is the pin's durable descriptor; its live OS lock precedes visibility.
     mut returned_view = latest.view
     if execution_view != "":
@@ -1067,6 +1069,23 @@ pub def sync_durable(path: Path) -> Result[None, StoreError]:
 pub def durable_syncs() -> int:
     """Completed strong storage barriers in this process, independent of ordinary file and directory ordering."""
     return counted.get("durable_syncs", 0)
+
+
+pub def sync_graph(path: Path) -> Result[None, StoreError]:
+    """
+    Order a published graph ahead of the selection that will name it: the placement's barrier, with no drive-cache
+    flush. The selection's own `sync_durable` then makes both durable before the request is answered.
+    """
+    clock = begin_work()
+    path.store_barrier().map_err((error) => io_failure(path, error))?
+    counted["graph_barriers"] = counted.get("graph_barriers", 0) + 1
+    record_work(Operation.StoreGraphBarrier, path.value, clock)
+    return Ok(None)
+
+
+pub def graph_barriers() -> int:
+    """Completed graph-ordering barriers in this process, each ahead of a selection's one drive flush."""
+    return counted.get("graph_barriers", 0)
 
 
 # ---- Explicit obsolete-layout collection ----

@@ -39,6 +39,7 @@ from pub::incan_platform.store import (
     lease,
     view_snapshot,
     durable_syncs,
+    graph_barriers,
 )
 from pub::incan_platform.store import snapshot as placed_snapshot
 from pub::incan_platform.store.memory import root as memory_root
@@ -203,12 +204,14 @@ pub def test_concurrent_disjoint_writes_both_land_and_conflicting_writes_are_ref
     # A transaction retains only its final index pages, never intermediate roots from inserting its entries.
     page_store = scratch.path().joinpath("page-store")
     barriers = durable_syncs()
+    ordered = graph_barriers()
     mut batch = begin(snapshot(page_store).map_err((error) => error.message())?)
     for key in ["a", "b", "c", "d"]:
         batch = put(batch, key, b"value")
     _ = commit(batch).map_err((error) => error.message())?
     # The graph needs only ordering before CURRENT names it; the acknowledgment is the request's one drive flush.
     assert durable_syncs() - barriers == 1, "a request flushed the drive more than once"
+    assert graph_barriers() - ordered == 1, "a request did not order its graph ahead of its selection"
     assert count_files(page_store.joinpath("indexes")) == 1, "publication retained intermediate index pages"
     # One request updates independent views under one CURRENT switch; a conflict changes neither view.
     other = snapshot(root, "project").map_err((error) => error.message())?
@@ -580,7 +583,7 @@ def prove_crash_boundaries(base: Path) -> Result[None, str]:
         "manifest-synced",
         "manifest-replaced",
         "manifest-directory-synced",
-        "objects-durable",
+        "objects-ordered",
         "pin-acquired",
         "current-written",
         "current-synced",
@@ -753,7 +756,7 @@ def observed_finish(operation: Operation, key: str, clock: Option[Clock], bytes:
 
 
 def verify_work_observer(root: Path) -> Result[None, str]:
-    """A caller sees all six work spans, and removing it disables further callbacks."""
+    """A caller sees all seven work spans, and removing it disables further callbacks."""
     observe_work(WorkObserver(start=Some(observed_start), finish=Some(observed_finish)))
     _ = write_one(root, "key", "value").map_err((error) => error.message())?
     for operation in [
@@ -763,6 +766,7 @@ def verify_work_observer(root: Path) -> Result[None, str]:
         "store_file_rename",
         "store_directory_sync",
         "store_durable_sync",
+        "store_graph_barrier",
     ]:
         assert observed_work.get(operation, 0) > 0, f"missing store observation: {operation}"
     calls = observed_work.get("store_lock", 0)

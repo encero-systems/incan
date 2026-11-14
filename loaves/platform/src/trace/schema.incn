@@ -41,6 +41,7 @@ pub enum Operation(str):
     StoreFileRename = "store_file_rename"
     StoreDirectorySync = "store_directory_sync"
     StoreDurableSync = "store_durable_sync"
+    StoreGraphBarrier = "store_graph_barrier"
     EngineUnit = "engine_unit"
     EngineSelect = "engine_select"
     EngineLease = "engine_lease"

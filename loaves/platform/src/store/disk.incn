@@ -4,7 +4,7 @@ from std.primitives.hash import sha256
 from std.primitives.locking import LockGuard
 from std.primitives.fs import MappedFile, Path, exclusive, map_read, try_exclusive, shared
 from std.primitives.fs import open_read, read_chunk
-from crate.durability import sync_ordered
+from crate.durability import barrier, sync_ordered
 from crate.store.path import StoreContextRef, StorePath, StorePathOps, store_context
 
 
@@ -35,6 +35,7 @@ def _operations() -> StorePathOps:
         replace=_replace,
         sync=_sync,
         sync_ordered=_sync_ordered,
+        barrier=_barrier,
         map_read=_map_read,
         lock_shared=_lock_shared,
         lock_exclusive=_lock_exclusive,
@@ -155,6 +156,11 @@ def _sync(_context: StoreContextRef, path: str) -> Result[None, str]:
 def _sync_ordered(_context: StoreContextRef, path: str) -> Result[None, str]:
     """Apply the qualified disk publication barrier."""
     return sync_ordered(path)
+
+
+def _barrier(_context: StoreContextRef, path: str) -> Result[None, str]:
+    """Order earlier disk writes ahead of later ones on stable storage, without a drive-cache flush."""
+    return barrier(path)
 
 
 def _map_read(_context: StoreContextRef, path: str) -> Result[MappedFile, str]:

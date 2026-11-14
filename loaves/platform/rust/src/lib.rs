@@ -1,7 +1,9 @@
-//! The platform's only unsafe Rust: sanctioned host clock and resource-probe bindings behind safe functions.
+//! The platform's only unsafe Rust: sanctioned host clock, resource-probe and storage-barrier bindings behind safe
+//! functions.
 //!
 //! RFC 005 refuses unsafe Rust calls from Incan. This facet contains only the OS calls needed to expose host-aligned
-//! nanoseconds and process resource readings; observation, process-tree policy and encoding stay in Incan. Neither
+//! nanoseconds, process resource readings and the storage barrier a store publication orders its graph with;
+//! observation, process-tree policy, publication and encoding stay in Incan. Neither
 //! supported clock advances during suspend or follows wall-clock adjustments. Values compare across processes on the
 //! same host boot.
 
@@ -242,4 +244,26 @@ pub fn raw_uptime_ns() -> io::Result<u64> {
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn raw_uptime_ns() -> io::Result<u64> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "raw host clock unavailable"))
+}
+
+/// Order a file's earlier writes on its device ahead of every later write, without flushing the drive's cache.
+///
+/// Apple filesystems take `F_BARRIERFSYNC`: it synchronizes the file as `fsync` does, then issues a barrier, so
+/// writes queued before it reach stable storage before writes queued after it. A filesystem that refuses the barrier
+/// gets `F_FULLFSYNC` (`sync_all`) instead, which is stronger, never weaker.
+#[cfg(target_os = "macos")]
+pub fn barrier_sync(path: &str) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let file = std::fs::File::open(path)?;
+    // SAFETY: `file` keeps its descriptor open for the call, and `F_BARRIERFSYNC` takes no third argument.
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_BARRIERFSYNC) } != -1 {
+        return Ok(());
+    }
+    file.sync_all()
+}
+
+/// Elsewhere `fsync` (`sync_all`) already reaches stable storage in the order it is called.
+#[cfg(not(target_os = "macos"))]
+pub fn barrier_sync(path: &str) -> io::Result<()> {
+    std::fs::File::open(path)?.sync_all()
 }

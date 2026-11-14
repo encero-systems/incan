@@ -67,6 +67,7 @@ pub model StorePathOps:
     pub replace: (StoreContextRef, str, str) -> Result[None, str]
     pub sync: (StoreContextRef, str) -> Result[None, str]
     pub sync_ordered: (StoreContextRef, str) -> Result[None, str]
+    pub barrier: (StoreContextRef, str) -> Result[None, str]
     pub map_read: (StoreContextRef, str) -> Result[MappedFile, str]
     pub lock_shared: (StoreContextRef, str) -> Result[LockGuard, str]
     pub lock_exclusive: (StoreContextRef, str) -> Result[LockGuard, str]
@@ -211,6 +212,11 @@ pub model StorePath:
         """Apply the placement's qualified publication-order barrier."""
         sync_ordered = self.operations.sync_ordered
         return sync_ordered(self.context.clone(), self.value).map_err((detail) => self.io_error(detail))
+
+    pub def store_barrier(self) -> Result[None, StoreIoError]:
+        """Order the placement's earlier writes ahead of its later ones on stable storage, without a drive flush."""
+        barrier = self.operations.barrier
+        return barrier(self.context.clone(), self.value).map_err((detail) => self.io_error(detail))
 
     pub def store_map_read(self) -> Result[MappedFile, StoreIoError]:
         """Anchor this immutable object behind the shared bounded-view contract."""
