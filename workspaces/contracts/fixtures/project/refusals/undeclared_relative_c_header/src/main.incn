@@ -1,0 +1,22 @@
+# behavior: a binding header that is a relative path the manifest does not declare under `[interop.c]` is only a system header: it is never found through the working directory, so the project's own file is not read and the binding is refused (#3150)
+# cli-commands:
+#   oven check src/main.incn
+#   oven run src/main.incn
+# expect-exit: 1
+# expect-stderr-contains:
+#   C binding `Magnitude` verification failed
+
+from std.interop import c
+
+
+binding Magnitude:
+    header = "interop/include/magnitude.h"
+    link = c.system_library("c")
+
+    symbol absolute(value: c.i32) -> c.i32:
+        native = "abs"
+
+
+def main() -> None:
+    unsafe:
+        println(Magnitude.absolute(-7))
