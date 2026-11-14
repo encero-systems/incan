@@ -9,6 +9,10 @@ from codegen import DARWIN_UUID_SALT
 from toolchain import Toolchain
 
 
+# libmalloc reads this variable once, when the process starts; nothing in a running process can select the mode.
+const DARWIN_ALLOCATOR_MODE: str = "MallocSpaceEfficient"
+
+
 pub def driver_command(toolchain: Toolchain) -> Result[Command, str]:
     """Bind the selected driver and SDK, removing shell-owned Rust bootstrap permissions."""
     mut command = Command.new(toolchain.driver)
@@ -23,6 +27,10 @@ pub def driver_command(toolchain: Toolchain) -> Result[Command, str]:
         None => pass
     if OS == "macos":
         command.env("RC_UUID_SALT", DARWIN_UUID_SALT)
+        # The compiler frees gigabytes between phases. macOS's allocator keeps freed pages charged to the process
+        # footprint until the kernel reclaims them some seconds later, and its pressure relief returns nothing. In
+        # its space-efficient mode it returns them as they are freed, so the footprint follows the live heap.
+        command.env(DARWIN_ALLOCATOR_MODE, "1")
     # C ABI checks use an explicit `INCAN_C_ABI_CLANG`, else the toolchain's own Clang when it carries one, never
     # whichever compiler the machine has.
     clang = selected_abi_clang(toolchain.c_compiler, get_or("INCAN_C_ABI_CLANG", ""))
