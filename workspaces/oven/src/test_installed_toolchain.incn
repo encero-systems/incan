@@ -13,7 +13,8 @@ from home_paths import TOOLCHAIN, home
 from rust_target import decoded
 from scratch import scratch_directory
 from toolchain import finish_installation, load_toolchain_at, prepare_installation
-from toolchain_archive import close_stage, open_stage
+from installation_page import admitted_identity
+from toolchain_archive import close_stage, open_stage, parse_arguments, toolchain_command
 from unit_publication import published_identity, record_path, record_payload
 
 
@@ -156,14 +157,62 @@ pub def test_an_installation_leaves_no_admission_record_of_its_staging_directory
     library = target.joinpath(PROVIDER).joinpath("libfixture.rlib")
     assert published_identity(library)? == "fixture producer of libfixture.rlib"
     # 3. Neither the payload admissions nor the compiler facts remember the stage.
+    left = records_naming(stage)?
+    assert len(left) == 0, f"admission records of the closed stage remain: {", ".join(left)}"
+    return Ok(None)
+
+
+pub def test_a_removed_toolchain_is_gone_with_the_records_this_home_kept_of_it() -> Result[None, str]:
+    """
+    `incan toolchain remove VERSION` deletes one installed toolchain (RFC 118): its directory, the page this home
+    admitted for it and the admission records of its files. What the bakery holds is left to collection.
+
+    1. Install a fixture toolchain in this home, under a name no other toolchain or test has.
+    2. Remove it by its name.
+    3. Its directory is gone, the home selects no page for it, and no admission record names a path in it.
+    4. Removing it again is refused, and so is a name that is not one directory of the home's toolchains.
+    """
+    scratch = scratch_directory()?
+    name = f"removal-fixture-{scratch.path().name()}"
+    directory = home()?.joinpath("toolchains").joinpath(name)
+    # 1. The fixture is admitted where it lies, as a published installation is.
+    _, admission = prepare_installation(staged_installation(directory)?)?
+    finish_installation(directory, admission)?
+    assert admitted_identity(directory)? != None, "the fixture installation has no admitted page"
+    assert len(records_naming(directory)?) > 0, "the fixture installation has no admission record"
+    # 2. The command is parsed and run as `incan toolchain remove` runs it.
+    removal = parse_arguments(["remove", name])?
+    assert toolchain_command(removal)? == 0
+    # 3. Nothing of the installation is left to select, and nothing vouches for a file at its paths.
+    assert not directory.exists(), f"{directory.0} is still there"
+    assert admitted_identity(directory)? == None, "the home still selects a page for the removed toolchain"
+    left = records_naming(directory)?
+    assert len(left) == 0, f"admission records of the removed toolchain remain: {", ".join(left)}"
+    # 4. There is nothing to remove twice, and a name never reaches outside the toolchains directory.
+    match toolchain_command(removal):
+        Ok(_) => return Err("a toolchain that is not installed was removed")
+        Err(reason) =>
+            assert f"no toolchain {name} is installed" in reason, reason
+    for unsafe in ["", ".", "..", f"../toolchains/{name}", ".install-fixture", "a/b"]:
+        match toolchain_command(("remove", unsafe)):
+            Ok(_) => return Err(f"`{unsafe}` was removed as a toolchain")
+            Err(reason) =>
+                assert "is not a toolchain name" in reason, reason
+    return Ok(None)
+
+
+def records_naming(directory: Path) -> Result[list[str], str]:
+    """The home's payload-admission and compiler-fact records that name a path inside `directory`."""
+    mut found: list[str] = []
     for cache in ["cache/unit-admissions", "cache/compiler-facts"]:
         for record in home()?.joinpath(cache).iterdir().map_err((error) => error.message())?:
-            # Another test may be publishing a record of its own; one that is gone again names no stage of this test.
+            # Another test may be publishing a record of its own; one that is gone again names no path of this test.
             match record.read_text("utf-8", "strict"):
                 Err(_) => pass
                 Ok(text) =>
-                    assert f"{stage.0}/" not in text, f"{cache}/{record.name()} records a path of the closed stage"
-    return Ok(None)
+                    if f"{directory.0}/" in text:
+                        found.append(f"{cache}/{record.name()}")
+    return Ok(found)
 
 
 def staged_installation(stage: Path, build: str = "fixture") -> Result[Path, str]:
