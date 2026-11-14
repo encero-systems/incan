@@ -3,6 +3,7 @@
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -75,12 +76,12 @@ fn link_input_suffix(path: &Path) -> io::Result<Option<&'static str>> {
 
 /// Publish one link input once beneath its digest; an existing content name must still contain those exact bytes.
 fn stable_input(store: &Path, source: &Path, suffix: &str) -> io::Result<PathBuf> {
-    let digest = file_digest(source)?;
+    let digest = identified_digest(store, source)?;
     let directory = store.join("link-inputs/sha256").join(&digest[..2]);
     let target = directory.join(format!("{digest}.{suffix}"));
     fs::create_dir_all(&directory)?;
     if target.is_file() {
-        if file_digest(&target)? == digest {
+        if identified_digest(store, &target)? == digest {
             return Ok(target);
         }
         return Err(io::Error::new(
@@ -123,8 +124,63 @@ fn copy_object(source: &Path, target: &Path) -> io::Result<()> {
     fs::set_permissions(target, permissions)
 }
 
+/// A link input's digest, hashed once per file identity: device, inode, size, and modification and change times.
+///
+/// The store keeps one record per device and inode with the identity it was hashed at. A record whose identity still
+/// matches answers without reading the file; any write changes the identity, so the file is hashed again. A file whose
+/// identity changed while it was hashed is not recorded.
+fn identified_digest(store: &Path, path: &Path) -> io::Result<String> {
+    let metadata = fs::metadata(path)?;
+    let before = file_identity(&metadata);
+    let record = store
+        .join("link-inputs/identities")
+        .join(format!("{}-{}", metadata.dev(), metadata.ino()));
+    if let Ok(text) = fs::read_to_string(&record) {
+        if let Some((identity, digest)) = text.trim_end().rsplit_once(' ') {
+            if identity == before && digest.len() == 64 {
+                return Ok(digest.to_owned());
+            }
+        }
+    }
+    let digest = file_digest(path)?;
+    if file_identity(&fs::metadata(path)?) == before {
+        record_identity(&record, &format!("{before} {digest}\n"));
+    }
+    Ok(digest)
+}
+
+/// The identity a file's content is recorded under; a write changes its size, modification time or change time.
+fn file_identity(metadata: &fs::Metadata) -> String {
+    format!(
+        "{} {} {} {}.{} {}.{}",
+        metadata.dev(),
+        metadata.ino(),
+        metadata.len(),
+        metadata.mtime(),
+        metadata.mtime_nsec(),
+        metadata.ctime(),
+        metadata.ctime_nsec()
+    )
+}
+
+/// Replace one identity record atomically; a record that cannot be written only costs the next link a hash.
+fn record_identity(record: &Path, text: &str) {
+    let Some(directory) = record.parent() else {
+        return;
+    };
+    if fs::create_dir_all(directory).is_err() {
+        return;
+    }
+    let number = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
+    let temporary = directory.join(format!(".{}.{number}.tmp", std::process::id()));
+    if fs::write(&temporary, text).is_err() || fs::rename(&temporary, record).is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+}
+
 /// Hash one complete native input without retaining a program-sized allocation.
 pub(crate) fn file_digest(path: &Path) -> io::Result<String> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::link_input_digest", input = %path.display()).entered();
     let mut file = File::open(path)?;
     let mut hash = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
