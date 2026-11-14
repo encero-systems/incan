@@ -390,6 +390,13 @@ def check_worker_residency_case(inject_failure: bool) -> Result[None, str]:
     assert compilations > 0 and frontend_releases == compilations, f"{frontend_releases} of {compilations} compilations released the frontend heap before rustc"
     # Each compilation also returns its checking heap before lowering builds its contexts.
     assert checked_releases == compilations, f"{checked_releases} of {compilations} compilations released the checking heap before lowering"
+    # rustc runs in a fresh driver process, so its back end never starts on the heap checking and lowering left.
+    checking_processes = [mark_process(line) for line in lines if "checked_heap_released" in line or "frontend_heap_released" in line]
+    rustc_processes = [mark_process(line) for line in lines if "rustc_codegen_link_teardown" in line]
+    unnamed = len([process for process in rustc_processes if process == ""])
+    assert unnamed == 0, f"{unnamed} of {compilations} rustc timing records name no driver process"
+    shared = [process for process in rustc_processes if process in checking_processes]
+    assert len(shared) == 0, f"{len(shared)} of {compilations} compilations ran rustc in the driver process that checked and lowered the unit"
     # Both activations restore the same resident worker and release its free heap before the next request.
     assert waits == 2 and detached == 0 and releases == 2, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
     released_requests = [line for line in lines if "engine request released:" in line]
@@ -397,6 +404,14 @@ def check_worker_residency_case(inject_failure: bool) -> Result[None, str]:
     assert "captures=0 verification=0" in released_requests[0]
     check_worker_clock(root.joinpath("observations"))?
     return Ok(None)
+
+
+def mark_process(line: str) -> str:
+    """The driver process a native timing record names, or an empty string when the record names none."""
+    parts = line.split("\"process\":")
+    if len(parts) < 2:
+        return ""
+    return parts[1].split("}")[0].split(",")[0]
 
 
 def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> Result[None, str]:
