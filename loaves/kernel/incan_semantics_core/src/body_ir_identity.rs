@@ -21,6 +21,8 @@ use crate::{
 
 mod declaration_checks;
 mod nominal_checks;
+#[cfg(test)]
+mod tests;
 
 /// Match an initialized method's explicit passing reference against its receiver frame's nominal type and mode.
 /// Ordinary inputs must agree exactly; this does not authorize another owner or a different receiver mode.

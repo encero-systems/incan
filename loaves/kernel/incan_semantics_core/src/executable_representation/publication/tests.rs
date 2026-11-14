@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::tests::module;
-use super::{PublicationAudit, generic_metadata_belongs_to};
+use super::{PublicationAudit, generic_metadata_belongs_to, is_generated_value_enum_member};
 use crate::body_ir::{MethodTarget, ReflectionOperation};
 use crate::{
     CanonicalSymbolId, HirSourceSpan, ScopeDiscriminant, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
@@ -131,4 +131,25 @@ fn metadata_projection_rebases_both_identities_without_a_callable_dependency() -
     assert!(target.has_valid_generic_metadata());
     assert!(audit.requirements.is_empty());
     Ok(())
+}
+
+/// A generated scalar-enum member authenticates only for the enum it names: another enum's member that carries this
+/// enum's declaration site is refused.
+#[test]
+fn a_generated_value_member_belongs_to_the_enum_it_names() {
+    let enumeration = |name: &str, start: usize, end: usize| {
+        CanonicalSymbolId::module_declaration(
+            vec!["library".to_owned()],
+            name,
+            SemanticSourceTargetKind::Enum,
+            HirSourceSpan::new(start, end),
+        )
+    };
+    let color = enumeration("Color", 10, 50);
+    let value = color.generated_member("value", SemanticSourceTargetKind::Method);
+    assert!(is_generated_value_enum_member(&value, &color));
+    let shade = enumeration("Shade", 60, 90);
+    let mut foreign = shade.generated_member("from_value", SemanticSourceTargetKind::Method);
+    foreign.declaration_span = color.declaration_span;
+    assert!(!is_generated_value_enum_member(&foreign, &color));
 }
