@@ -109,7 +109,7 @@ def protocol_fields() -> list[ArtifactField]:
         ArtifactField(name="body_ir_iterations", codec="refused"),
         ArtifactField(name="iterations", codec="refused"),
         ArtifactField(name="item_taking_iterations", codec="span-set"),
-        ArtifactField(name="comprehension_source_consumption", codec="refused"),
+        ArtifactField(name="comprehension_source_consumption", codec="span-bool"),
         ArtifactField(name="in_place_match_scrutinees", codec="span-set"),
         ArtifactField(name="loan_free_scrutinees", codec="legacy"),
     ]
@@ -524,6 +524,14 @@ pub(super) fn project(
             ]);
         }
     }
+    for (span, consumed) in &protocols.comprehension_source_consumption {
+        fields.push(vec![
+            "artifact-protocol".into(),
+            positions.nodes.anchor(*span)?.path,
+            "comprehension_source_consumption".into(),
+            consumed.to_string(),
+        ]);
+    }
     Ok(())
 }
 
@@ -551,6 +559,16 @@ pub(super) fn restore(
         }
         "in_place_match_scrutinees" => {
             if next(&mut values)? != "true" || !protocols.in_place_match_scrutinees.insert(span) {
+                return Err(NodeBindingError::MissingNode);
+            }
+        }
+        "comprehension_source_consumption" => {
+            let consumed = match next(&mut values)? {
+                "true" => true,
+                "false" => false,
+                _ => return Err(NodeBindingError::MissingNode),
+            };
+            if protocols.comprehension_source_consumption.insert(span, consumed).is_some() {
                 return Err(NodeBindingError::MissingNode);
             }
         }
@@ -586,6 +604,7 @@ mod generated_tests {
         protocols.body_ir_truthiness_receivers.insert(*span, identity.clone());
         protocols.item_taking_iterations.insert(*span);
         protocols.in_place_match_scrutinees.insert(*span);
+        protocols.comprehension_source_consumption.insert(*span, false);
         let mut fields = Vec::new();
         super::project(&positions, &protocols, &mut fields)?;
         let mut restored = crate::typechecker::type_info::ProtocolArtifacts::default();
@@ -595,6 +614,10 @@ mod generated_tests {
         assert_eq!(restored.body_ir_truthiness_receivers, protocols.body_ir_truthiness_receivers);
         assert_eq!(restored.item_taking_iterations, protocols.item_taking_iterations);
         assert_eq!(restored.in_place_match_scrutinees, protocols.in_place_match_scrutinees);
+        assert_eq!(
+            restored.comprehension_source_consumption,
+            protocols.comprehension_source_consumption,
+        );
         Ok(())
     }
 }

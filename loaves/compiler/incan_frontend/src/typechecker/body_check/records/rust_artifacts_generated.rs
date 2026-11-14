@@ -147,7 +147,7 @@ const RUST_ARTIFACT_SCHEMA: &[ArtifactFieldSchema] = &[
     },
 ];
 
-const GENERATOR_SHA256: &str = "ee94e85874aa027fb66681dc66f30e9e1dfc53c06094e7ca1fb31acc6addbc2b";
+const GENERATOR_SHA256: &str = "7f32afa3f0a02e23a64e11789d7c10f042e10c89cfedb302282e35e1ba055042";
 
 pub(super) fn project(
     positions: &Positions,
