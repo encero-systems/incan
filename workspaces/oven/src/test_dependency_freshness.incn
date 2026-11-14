@@ -90,6 +90,7 @@ enum SemanticEdit(str):
     Documentation = "documentation"
     GenericInstantiation = "generic-instantiation"
     Dependency = "dependency"
+    DependencySiblingCall = "dependency-sibling-call"
     NamespaceBody = "namespace-body-only"
     NamespaceSignature = "namespace-signature"
     NamespaceModel = "namespace-model"
@@ -612,6 +613,28 @@ def semantic_edit_cases() -> list[MatrixCase]:
                 ["from values import selected", "", "", "def main() -> None:", "    println(selected())"],
             ), "values.incn": fixture_source(
                 ["pub def selected() -> int:", "    return 2", "", "", "pub def stable() -> int:", "    return 7"],
+            )},
+        ),
+        MatrixCase(
+            edit=SemanticEdit.DependencySiblingCall,
+            fixture=MatrixFixture.Library,
+            target="main.incn",
+            base={"main.incn": fixture_source(
+                ["from provider import selected", "", "", "def main() -> None:", "    println(selected())"],
+            ), "provider.incn": fixture_source(
+                ["pub def selected() -> int:", "    return 1", "", "", "pub def stable() -> int:", "    return 7"],
+            )},
+            edited={"main.incn": fixture_source(
+                ["from provider import selected", "", "", "def main() -> None:", "    println(selected())"],
+            ), "provider.incn": fixture_source(
+                [
+                    "pub def selected() -> int:",
+                    "    return stable()",
+                    "",
+                    "",
+                    "pub def stable() -> int:",
+                    "    return 7",
+                ],
             )},
         ),
         MatrixCase(
