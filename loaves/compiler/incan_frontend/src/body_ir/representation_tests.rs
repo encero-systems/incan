@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 mod baselines;
 mod carriers;
 mod comparison;
+mod context_tables;
 mod equality;
 mod metadata;
 mod read_patterns;
