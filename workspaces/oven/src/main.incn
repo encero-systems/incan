@@ -63,7 +63,7 @@ from toolchain_archive import toolchain_command, parse_arguments as archive_opti
 from cli_help import help_hint, unknown_option
 from command_help import command_help, usage, version_text
 from unit_options import Options, parse_options, program_arguments
-from surfaces import INTEROP_BAKE_MOVED, OVEN, invoked, misplaced
+from surfaces import INSPECT_OVEN_MOVED, INTEROP_BAKE_MOVED, OVEN, invoked, misplaced
 from trust_commands import trust_command
 from project_scaffold import ScaffoldCommand, parse_scaffold, scaffold
 from project_version import change_version, parse_version_request
@@ -327,6 +327,8 @@ def dispatch(command: str, rest: list[str]) -> None:
             Ok(options) => finish("inspect", inspect_interop_plan(options))
         return
     if command == "inspect" and invoked() == OVEN:
+        if len(rest) > 0 and rest[0] == "oven":
+            syntax_error("inspect", f"`{OVEN} {INSPECT_OVEN_MOVED}")
         if len(rest) > 0 and rest[0] != "run":
             syntax_error("inspect", f"unknown command `{rest[0]}`")
         syntax_error(

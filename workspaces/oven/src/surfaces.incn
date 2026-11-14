@@ -18,7 +18,7 @@ pub const OVEN: str = "oven"
 pub const INCAN: str = "incan"
 # Commands only `oven` runs; `inspect` is split by its subcommand below.
 const OVEN_COMMANDS: FrozenList[str] = ["describe-unit", "owner", "bakery", "lock", "add", "update", "trust", "interop"]
-const OVEN_INSPECTIONS: FrozenList[str] = ["dependencies", "interop-plan", "run", "features"]
+const OVEN_INSPECTIONS: FrozenList[str] = ["dependencies", "interop-plan", "run", "features", "oven"]
 # Oven commands 0.5.1 ran as `incan` commands; on `incan` they name their Oven spelling instead of being unknown.
 const MOVED_FROM_INCAN: FrozenList[str] = ["new", "init", "workspace", "env"]
 # Commands only `incan` runs.
@@ -27,6 +27,9 @@ const INCAN_COMMANDS: FrozenList[str] = ["explain", "fmt", "mcp", "toolchain", "
 const MOVED_TO_OVEN: FrozenList[str] = ["lock"]
 # 0.5.1's interop bake is an ordinary build; the refusal of either spelling names it.
 pub const INTEROP_BAKE_MOVED: str = "interop bake` is `oven build` now: an ordinary build compiles each [c] Clove and links the static archives [interop.c] declares"
+# 0.5.1's `inspect oven --receipt` read an Oven Alpha receipt, which 0.6 does not write; either spelling names what
+# reports a run's evidence now.
+pub const INSPECT_OVEN_MOVED: str = "inspect oven` read 0.5's Oven Alpha receipts, which 0.6 does not write: run `oven inspect run ID --proofs` with INCAN_ENGINE=records for a run's evidence"
 
 
 pub def invoked() -> str:
@@ -70,6 +73,8 @@ pub def misplaced(surface: str, command: str, arguments: list[str]) -> Option[st
         return None
     if surface == INCAN:
         if command == "inspect":
+            if arguments[0] == "oven":
+                return Some(f"{INCAN}: `incan {INSPECT_OVEN_MOVED}")
             if arguments[0] in ["features", "interop-plan"]:
                 return Some(f"{INCAN}: `incan inspect {arguments[0]}` is an Oven command: run `oven inspect {arguments[0]}`")
             return Some(f"{INCAN} inspect: unknown command `{arguments[0]}`")
