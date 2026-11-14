@@ -8,7 +8,7 @@ from std.hash import sha256
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
 from pub::incan_platform.store import Snapshot, begin, commit, put
-from files import read_json
+from files import make_directory, read_json
 from json_fields import required_items, required_text
 from observation import file_digest
 from sealed_set import Profile, Record, SetSpec, admit, export_set
@@ -45,7 +45,7 @@ pub def convert(driver: str, installed: Path, installation: Path) -> Result[Comp
     mut converted = shipped
     if not shipped.joinpath("index.json").is_file():
         converted = temporary.path().joinpath("converted")
-        export_records(driver, installed, converted)?
+        export_records(driver, installed, converted, temporary.path())?
     index = read_json(converted.joinpath("index.json"))?
     if required_text(index, "schema")? != EXPORT_SCHEMA:
         return Err("candidate compiler returned an unsupported record export")
@@ -118,17 +118,41 @@ pub def shipped_pin(document: JsonValue) -> Result[Option[CompilerRecordPin], st
             )
 
 
-def export_records(driver: str, installed: Path, output: Path) -> Result[None, str]:
-    """Have the candidate compiler validate the installed manifests and export their compiler records into `output`."""
+def export_records(driver: str, installed: Path, output: Path, scratch: Path) -> Result[None, str]:
+    """
+    Have the candidate compiler validate the manifests below `installed` and export their compiler records.
+
+    The compiler is shown a copy that holds those manifests alone, each a regular file at its own relative path. It
+    reads no linked file, and a packing stage names everything it ships by links, so the copy is what lets a stage's
+    own manifests, and no other manifest of the builder's installation, reach the sealed set.
+    """
+    manifests = scratch.joinpath("manifests")
+    make_directory(manifests)?
+    copy_manifests(installed, manifests)?
     result = Command
         .new(driver)
         .arg("--compiler-records")
-        .arg(installed.0)
+        .arg(manifests.0)
         .arg(output.0)
         .output()
         .map_err((error) => f"cannot convert installed compiler records: {error}")?
     if not result.status.success():
         return Err("cannot convert installed compiler records: " + decoded(result.stderr))
+    return Ok(None)
+
+
+def copy_manifests(source: Path, destination: Path) -> Result[None, str]:
+    """Copy every Loaf manifest below `source`, linked or not, to its relative path below `destination`."""
+    for entry in source.iterdir().map_err((error) => f"cannot {error.message()}")?:
+        name = entry.name()
+        if entry.is_dir():
+            # A linked directory, such as the machine's sysroot, is not part of what the directory itself holds.
+            if not entry.is_symlink():
+                copy_manifests(entry, destination.joinpath(name))?
+        elif entry.is_file() and name.endswith(".incnlib"):
+            make_directory(destination)?
+            content = entry.read_bytes().map_err((error) => f"cannot {error.message()}")?
+            destination.joinpath(name).write_bytes(content).map_err((error) => f"cannot {error.message()}")?
     return Ok(None)
 
 

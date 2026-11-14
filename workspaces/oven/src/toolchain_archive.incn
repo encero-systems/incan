@@ -137,8 +137,8 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     stage_loaves(directory.joinpath("loaves"), stage)?
     stage_standard_sources(stage)?
     # The standard Loaves' compiler records ship sealed and admitted, in the store's own format, so installing the
-    # archive converts and copies nothing.
-    records = convert(toolchain.driver, directory, stage)?
+    # archive converts and copies nothing. They are exported from the stage, so the set holds what ships and no more.
+    records = convert(toolchain.driver, stage, stage)?
     # 4. The description names only paths inside the toolchain, so the archive installs wherever it is unpacked.
     mut description = portable_description(driver, abi, externs, search)
     description = replaced(description, "compiler_records", records.to_json())?
