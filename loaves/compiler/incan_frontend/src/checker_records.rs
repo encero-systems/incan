@@ -102,6 +102,8 @@ pub struct CheckedOwnerRecordFallback {
     pub identity: Option<String>,
     /// Exact producer-stage refusal or missing-output invariant that excluded this owner.
     pub reason: String,
+    /// Every unsupported checked artifact grouped by its canonical family and native field.
+    pub artifact_refusals: Vec<String>,
 }
 
 /// Complete publication decision for one checked top-level free function.
@@ -244,6 +246,7 @@ pub fn checked_owner_record_outputs(
                     name: function.name.clone(),
                     identity: None,
                     reason: "checked owner has no function binding".into(),
+                    artifact_refusals: Vec::new(),
                 })));
             };
             let canonical = match binding.identity.as_ref() {
@@ -254,6 +257,7 @@ pub fn checked_owner_record_outputs(
                         name: function.name.clone(),
                         identity: None,
                         reason: "checked owner has no canonical declaration identity".into(),
+                        artifact_refusals: Vec::new(),
                     })));
                 }
             };
@@ -265,6 +269,7 @@ pub fn checked_owner_record_outputs(
                         name: function.name.clone(),
                         identity: None,
                         reason: "checked owner has no stable declaration identity".into(),
+                        artifact_refusals: Vec::new(),
                     })));
                 }
             };
@@ -328,6 +333,11 @@ pub fn checked_owner_record_outputs(
                     name: function.name.clone(),
                     identity: Some(identity),
                     reason,
+                    artifact_refusals: checker
+                        .body_artifact_refusals(declaration.span)
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect(),
                 })));
             }
             let Some(declaration_record) = checker.available_declaration_record(declaration.span).cloned() else {

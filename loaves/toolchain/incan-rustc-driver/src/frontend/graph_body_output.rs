@@ -3,6 +3,8 @@
 //! The Incan codec owns validation and bytes. This adapter only collects field primitives at their existing checked
 //! boundary, binds them to the source projection owner, and atomically writes the invocation-requested sidecar.
 
+use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -38,6 +40,7 @@ struct PendingBodyFallback {
     name: String,
     identity: Option<String>,
     reason: String,
+    artifact_refusals: Vec<String>,
 }
 
 /// Invocation-local collector for the optional graph-publication sidecar.
@@ -120,6 +123,7 @@ impl GraphBodyOutput {
                             name: fields.name,
                             identity: Some(fields.identity),
                             reason,
+                            artifact_refusals: Vec::new(),
                         }),
                     }
                 }
@@ -129,6 +133,7 @@ impl GraphBodyOutput {
                         name: fallback.name,
                         identity: fallback.identity,
                         reason: fallback.reason,
+                        artifact_refusals: fallback.artifact_refusals,
                     });
                 }
             }
@@ -216,6 +221,32 @@ impl GraphBodyOutput {
             (&left.module, &left.name, &left.identity).cmp(&(&right.module, &right.name, &right.identity))
         });
         self.namespaces.sort_by(|left, right| left.module.cmp(&right.module));
+        let reusable_declarations = self.values.len();
+        let all_declarations = reusable_declarations + self.fallbacks.len();
+        let mut artifact_refusals = BTreeMap::<String, usize>::new();
+        for fallback in &self.fallbacks {
+            for refusal in &fallback.artifact_refusals {
+                *artifact_refusals.entry(refusal.clone()).or_default() += 1;
+            }
+        }
+        let refusal_text = artifact_refusals
+            .iter()
+            .map(|(name, count)| format!("{name}={count}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let summary = if refusal_text.is_empty() {
+            format!("{reusable_declarations}/{all_declarations} reusable declarations")
+        } else {
+            format!("{reusable_declarations}/{all_declarations} reusable declarations; refusals {refusal_text}")
+        };
+        let report = serde_json::to_vec(&serde_json::json!({
+            "schema": "incan.checker-reuse/1",
+            "summary": summary,
+            "reusable_declarations": reusable_declarations,
+            "all_declarations": all_declarations,
+            "artifact_refusals": artifact_refusals,
+        }))
+        .map_err(|error| format!("cannot encode checker reuse report: {error}"))?;
         let body_ir_bytes: usize = self.values.iter().map(|value| value.body_ir.len()).sum();
         let values: Vec<internal_models::CompiledBodyValue> = self
             .values
@@ -264,7 +295,8 @@ impl GraphBodyOutput {
                     "compiled graph output refused: {error:?} ({body_count} owner frames, {body_ir_bytes} raw Body IR bytes)"
                 )
             })?;
-        publish(&path, frames)
+        publish(&path, frames)?;
+        publish(&checker_report_path(&path), vec![report])
     }
 }
 
@@ -338,7 +370,14 @@ fn dependency_module(module_path: &[String]) -> String {
     }
 }
 
-/// Replace one sidecar atomically so a failed invocation cannot leave a partially encoded output.
+/// Name the structured checker-admission report beside the graph body frames that produced it.
+fn checker_report_path(path: &Path) -> PathBuf {
+    let mut report = OsString::from(path.as_os_str());
+    report.push(".checker-report.json");
+    PathBuf::from(report)
+}
+
+/// Replace one compiler sidecar atomically so a failed invocation cannot leave a partially encoded output.
 fn publish(path: &Path, frames: Vec<Vec<u8>>) -> Result<(), String> {
     let parent = path.parent().ok_or("compiled graph output has no parent directory")?;
     std::fs::create_dir_all(parent)

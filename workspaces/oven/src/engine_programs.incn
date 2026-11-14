@@ -28,7 +28,14 @@ from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, Transaction, begi
 from store_path_conversion import snapshot
 from toolchain import Toolchain, load_toolchain, toolchain_directory
 from unit import describe
-from unit_compiler import PlanRecordCounts, graph_body_output_path, plan_record_counts, plan_record_report_path
+from unit_compiler import (
+    CheckerRecordCounts,
+    PlanRecordCounts,
+    checker_record_counts,
+    graph_body_output_path,
+    plan_record_counts,
+    plan_record_report_path,
+)
 from unit_rust import prepare_native
 from unit_freshness import Key, fingerprint, unit_key
 from observation import FileMetadata, file_metadata
@@ -73,6 +80,10 @@ pub model ProgramOutcome:
     pub lowering_demand_evaluations: int = 0
     pub lowering_demand_reuses: int = 0
     pub native_interface_evaluations: int = 0
+    pub reusable_declarations: int = 0
+    pub all_declarations: int = 0
+    pub checker_reuse: str = "0/0 reusable declarations"
+    pub artifact_refusals: Dict[str, int] = {}
     pub console: str = ""
     pub epoch_reads: int = 0
     pub transaction: Option[Transaction] = None
@@ -251,7 +262,9 @@ pub def obtain(
     mut request_transaction = merge_request_transaction(produced.transaction, projected.transaction)
     mut body_evaluations = 0
     mut body_ir_evaluations = 0
+    mut checker_counts = CheckerRecordCounts()
     if produced.native_bakes == 1:
+        checker_counts = checker_record_counts(ready, compiled_key)?
         bodies = prepare_compiled_bodies(
             request_transaction,
             ready,
@@ -278,6 +291,10 @@ pub def obtain(
             lowering_demand_evaluations=plan_counts.lowering_demand_evaluations,
             lowering_demand_reuses=plan_counts.lowering_demand_reuses,
             native_interface_evaluations=plan_counts.native_interface_evaluations,
+            reusable_declarations=checker_counts.reusable_declarations,
+            all_declarations=checker_counts.all_declarations,
+            checker_reuse=checker_counts.summary,
+            artifact_refusals=checker_counts.artifact_refusals,
             console=console,
             epoch_reads=epoch_reads,
             transaction=index_program(store, selector, unit, Some(request_transaction))?,

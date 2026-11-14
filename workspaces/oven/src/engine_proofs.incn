@@ -25,6 +25,10 @@ pub def prepare_report(
     """Prepare an explicitly requested report for the same request publication boundary."""
     editable = capture.in_reach
     frozen = capture.frozen
+    refusals = {
+        name: JsonValue.int(produced.artifact_refusals[name])
+        for name in sorted([key for key in produced.artifact_refusals.keys()])
+    }
     document = JsonValue.object(
         {"schema": JsonValue.string("incan.engine.proofs/3"), "run": JsonValue.string(run), "granularity": JsonValue.string(
             "unit-record",
@@ -32,6 +36,10 @@ pub def prepare_report(
             produced.body_evaluations,
         ), "body_ir_evaluations": JsonValue.int(produced.body_ir_evaluations), "native_bakes": JsonValue.int(
             produced.native_bakes,
+        ), "reusable_declarations": JsonValue.int(produced.reusable_declarations), "all_declarations": JsonValue.int(
+            produced.all_declarations,
+        ), "checker_reuse": JsonValue.string(produced.checker_reuse), "artifact_refusals": JsonValue.object(
+            refusals,
         ), "source_stats": JsonValue.int(editable.stats), "source_reads": JsonValue.int(
             editable.reads,
         ), "source_hashes": JsonValue.int(editable.hashes), "source_listings": JsonValue.int(editable.listings), "epoch_reads": JsonValue.int(
