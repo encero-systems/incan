@@ -1,8 +1,14 @@
-"""Stage leased compiler snapshot descriptors in the owner's physical bakery before worker activation."""
+"""
+Stage leased compiler snapshot descriptors in the owner's physical bakery before worker activation, under the owner
+home's own view of that bakery.
+"""
 
+from std.encoding.hex import hexlify
 from std.fs import Path
+from std.json import JsonValue
 from publication import publish
-from pub::incan_platform.store import HOME_VIEW, Snapshot, begin, commit, lease_token, put, snapshot as placed_snapshot
+from pub::incan_platform.ipc import session_id
+from pub::incan_platform.store import Snapshot, begin, commit, lease_token, put, snapshot as placed_snapshot
 from pub::incan_platform.store import store_identity
 from pub::incan_worker_host.record_snapshot import (
     SnapshotHandle,
@@ -13,7 +19,12 @@ from pub::incan_worker_host.record_snapshot import (
     snapshot_handle_digest,
     snapshot_record_key,
 )
-from store_path_conversion import store_path
+from store_path_conversion import claim, store_path
+
+# A home's view key: this prefix and 128 bits of OS entropy, drawn once when the home first binds a bakery.
+const HOME_VIEW_PREFIX: str = "home-"
+# The record that makes a new home view's root durable before its descriptor is published.
+const HOME_VIEW_RECORD: str = "incan.home-view"
 
 
 pub class StagedSnapshot:
@@ -37,7 +48,7 @@ pub def stage_snapshot(
     format_profile: str,
 ) -> Result[StagedSnapshot, str]:
     """
-    Stage one content-named `SnapshotHandle`, then atomically bind the owner's home to that physical bakery.
+    Stage one content-named `SnapshotHandle` in the owner home's own view of that physical bakery.
 
     The returned value keeps the target revision and descriptor publication leased across `Prepare` or `Evaluate`;
     the worker receives only its digest and independently resolves `<home>/bakery.view`.
@@ -61,10 +72,64 @@ pub def stage_snapshot(
     )
     encoded = encode_snapshot_handle(handle)?
     digest = snapshot_handle_digest(handle)?
-    home_view = placed_snapshot(root, HOME_VIEW).map_err((error) => error.message())?
-    published = commit(put(begin(home_view), snapshot_record_key(digest), encoded.encode("utf-8"))).map_err(
+    view = home_view(home, store, identity)?
+    home_snapshot = placed_snapshot(root, view).map_err((error) => error.message())?
+    published = commit(put(begin(home_snapshot), snapshot_record_key(digest), encoded.encode("utf-8"))).map_err(
         (error) => error.message(),
     )?
-    binding = encode_store_view(StoreView(store_id=identity, locator=store.0, home_view=HOME_VIEW))?
-    publish(home.joinpath("bakery.view"), binding + "\n")?
     return Ok(StagedSnapshot.retained(digest, selected, published))
+
+
+pub def home_view(home: Path, store: Path, identity: str) -> Result[str, str]:
+    """
+    The home's own view of the physical bakery `store` (`incan.store-view/1`), created when the home first binds it.
+
+    1. A descriptor naming this store keeps its view, even after the store moved: copying or moving a descriptor
+       never forks a view. A descriptor naming another store is refused, never silently replaced.
+    2. Otherwise, under the home's claim, a new view key is drawn and its root made durable; only then is the
+       descriptor published.
+    """
+    descriptor = home.joinpath("bakery.view")
+    # 1. An existing binding answers without a claim.
+    if let Some(view) = bound_view(descriptor, store, identity)?:
+        return Ok(view)
+    # 2. One process creates the view; a racing one finds the descriptor the winner published.
+    _held = claim(store, f"{HOME_VIEW_RECORD}\t{home.0}").map_err((error) => error.message())?
+    if let Some(view) = bound_view(descriptor, store, identity)?:
+        return Ok(view)
+    view = HOME_VIEW_PREFIX + hexlify(session_id()?)
+    created = placed_snapshot(store_path(store), view).map_err((error) => error.message())?
+    _ = commit(put(begin(created), HOME_VIEW_RECORD, view.encode("utf-8"))).map_err((error) => error.message())?
+    publish(descriptor, encode_store_view(StoreView(store_id=identity, locator=store.0, home_view=view))? + "\n")?
+    return Ok(view)
+
+
+def bound_view(descriptor: Path, store: Path, identity: str) -> Result[Option[str], str]:
+    """
+    The view a home's descriptor binds in this store, or none. A store found at another locator keeps its view, and
+    the descriptor is republished with the new locator.
+    """
+    if not descriptor.is_file():
+        return Ok(None)
+    text = descriptor.read_text("utf-8", "strict").map_err((error) => f"cannot read {error.message()}")?
+    document = JsonValue.parse(text).map_err((error) => f"{descriptor.0}: {error.message()}")?
+    bound = StoreView(
+        store_id=descriptor_field(document, "store_id"),
+        locator=descriptor_field(document, "locator"),
+        home_view=descriptor_field(document, "home_view"),
+    )
+    if bound.store_id != identity:
+        return Err(f"{descriptor.0} binds bakery {bound.store_id} at {bound.locator}, not {identity} at {store.0}")
+    if bound.home_view == "":
+        return Err(f"{descriptor.0} names no home view")
+    if bound.locator != store.0:
+        rebound = StoreView(store_id=identity, locator=store.0, home_view=bound.home_view)
+        publish(descriptor, encode_store_view(rebound)? + "\n")?
+    return Ok(Some(bound.home_view))
+
+
+def descriptor_field(document: JsonValue, key: str) -> str:
+    """A string field of a home's bakery descriptor, or an empty string."""
+    match document.get(key):
+        None => return ""
+        Some(found) => return found.as_str().unwrap_or("")
