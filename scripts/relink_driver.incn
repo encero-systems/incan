@@ -28,7 +28,7 @@ from native_build import (
     require_unique_runtime_root,
     standard_profiles,
 )
-from oven_tests import host_memory, shared_memory
+from oven_tests import default_jobs, host_memory, shared_memory
 from release_support import TOOLCHAIN_DIRECTORY
 
 const DRIVER_LOAF: str = "loaves/toolchain/incan-rustc-driver"
@@ -169,7 +169,7 @@ pub def standard_context(relink: Relink) -> Result[NativeContext, str]:
             stdlib=relink.stdlib,
             evidence=evidence,
             timings=evidence.joinpath("timings.tsv"),
-            jobs=4,
+            jobs=default_jobs(get_or("INCAN_JOBS", ""), 4),
             memory=shared_memory(host_memory()),
             timeout_seconds=3600,
         ),
@@ -518,22 +518,18 @@ def report_relink_timing(timings: list[tuple[str, float]]) -> None:
                 mut sink = opened
                 for name, seconds in timings:
                     record = JsonValue.object(
-                        {
-                            "schema": JsonValue.string("incan.engine.trace/1"),
-                            "kind": JsonValue.string("line"),
-                            "producer": JsonValue.string("relink"),
-                            "operation": JsonValue.string("relink"),
-                            "key": JsonValue.string(f"relink timing {name}: {seconds}"),
-                            "process": JsonValue.int(int(id())),
-                        },
+                        {"schema": JsonValue.string("incan.engine.trace/1"), "kind": JsonValue.string("line"), "producer": JsonValue.string(
+                            "relink",
+                        ), "operation": JsonValue.string("relink"), "key": JsonValue.string(
+                            f"relink timing {name}: {seconds}",
+                        ), "process": JsonValue.int(int(id()))},
                     )
                     match record.to_json():
                         Ok(text) => _ = sink.write(text + "\n")
                         Err(_) => pass
     if get_or("INCAN_RELINK_TRACE", "0") == "1":
         println(
-            "relink: `INCAN_RELINK_TRACE` is replaced by `INCAN_ENGINE_TRACE`, whose `relink` records carry what it "
-            + "selected; it is read for one more release",
+            "relink: `INCAN_RELINK_TRACE` is replaced by `INCAN_ENGINE_TRACE`, whose `relink` records carry what it " + "selected; it is read for one more release",
         )
         for name, seconds in timings:
             println(f"relink timing {name}: {seconds}")
