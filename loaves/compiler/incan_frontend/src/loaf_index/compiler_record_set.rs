@@ -60,6 +60,8 @@ struct RecordSet {
     bytes_read: AtomicUsize,
     /// Record groups this process already read, authenticated and decoded, by package prefix and projection.
     admitted: Mutex<BTreeMap<(String, Projection), AdmittedGroup>>,
+    /// Inventory summaries this process already read and authenticated, by metadata key prefix.
+    summaries: Mutex<BTreeMap<String, Summary>>,
 }
 
 /// One authenticated, decoded record group and the manifest digest its metadata names.
@@ -120,6 +122,7 @@ impl RecordSet {
             records_read: AtomicUsize::new(0),
             bytes_read: AtomicUsize::new(0),
             admitted: Mutex::new(BTreeMap::new()),
+            summaries: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -181,13 +184,21 @@ pub(super) fn summary(dir: &Path, name: &str) -> Result<Option<Summary>, LoafInd
     read_summary(set, dir, name)
 }
 
-/// Read the inventory record of one Loaf group of `set`.
+/// Read the inventory record of one Loaf group of `set`, once per process.
 fn read_summary(set: &RecordSet, dir: &Path, name: &str) -> Result<Option<Summary>, LoafIndexError> {
     let profile = dir
         .file_name()
         .and_then(|value| value.to_str())
         .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
     let prefix = format!("loaf/{profile}/{name}/metadata/");
+    if let Some(summary) = set
+        .summaries
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&prefix)
+    {
+        return Ok(Some(summary.clone()));
+    }
     let entries = set
         .entries
         .iter()
@@ -227,7 +238,7 @@ fn read_summary(set: &RecordSet, dir: &Path, name: &str) -> Result<Option<Summar
         ));
     }
     valid_digest(&metadata.manifest_digest).map_err(|reason| unreadable(dir, name, reason))?;
-    Ok(Some(Summary {
+    let summary = Summary {
         identity: LoafIdentity {
             name: metadata.name,
             version: metadata.version,
@@ -240,7 +251,12 @@ fn read_summary(set: &RecordSet, dir: &Path, name: &str) -> Result<Option<Summar
         rust_paths: metadata.rust_paths,
         rust_abi_cache_declared: metadata.rust_abi_cache_declared,
         rust_abi_cache: metadata.rust_abi_cache_declared,
-    }))
+    };
+    set.summaries
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(prefix, summary.clone());
+    Ok(Some(summary))
 }
 
 /// Read one installed standard/runtime Loaf through its independently addressed records.
