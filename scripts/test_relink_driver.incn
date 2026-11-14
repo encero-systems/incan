@@ -6,7 +6,13 @@ from std.fs import Path
 from std.hash import file_digest
 from std.json import JsonValue
 from std.tempfile import TemporaryDirectory
-from native_build import NativeContext, build_support_tool, runtime_root, share_seed_generations
+from native_build import (
+    NativeContext,
+    build_support_tool,
+    runtime_root,
+    share_seed_generations,
+    update_runtime_manifest,
+)
 from relink_driver import install_driver, prepare_compiler_home, readmit
 from release_support import TOOLCHAIN_DIRECTORY
 
@@ -381,4 +387,41 @@ def require_own_trees(home: Path) -> Result[None, str]:
         link = home.joinpath("compiler-build").joinpath(TOOLCHAIN_DIRECTORY).joinpath(tree)
         selected = link.resolve().map_err((error) => error.message())?
         assert selected.0 == installed.joinpath(tree).0, f"{link.0} selects {selected.0}"
+    return Ok(None)
+
+
+def test_a_standard_relink_names_its_installed_runtime_from_the_toolchain() -> Result[None, str]:
+    """
+    A standard relink installs its runtime inside the toolchain directory and names it from there, as an installed
+    manifest names every artifact, so a copied or moved home links its own runtime, never the one in the home it was
+    relinked in.
+
+    1. The runtime binding and its search directory are relative to the toolchain directory.
+    2. The runtime the manifest named before leaves the search directories, and the other entries stay as written.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    toolchain = temporary.path().joinpath("home").joinpath(TOOLCHAIN_DIRECTORY)
+    installed = runtime_root(toolchain).joinpath("generation")
+    installed.mkdir(true, true).map_err((error) => error.message())?
+    lang = "{\"name\":\"incan_lang\",\"path\":\"native/a/libincan_lang.rlib\"},"
+    earlier = "{\"name\":\"incan_native_runtime\",\"path\":\"native/b/libincan_native_runtime.rlib\"}"
+    write_manifest(toolchain, "{\"externs\":[" + lang + earlier + "],\"search\":[\"native/a\",\"native/b\"]}")?
+    update_runtime_manifest(toolchain, installed)?
+    text = toolchain.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    manifest = JsonValue.parse(text).map_err((error) => error.message())?
+    # 1. Neither names the home.
+    bindings: list[JsonValue] = manifest
+        .require("externs")
+        .and_then((value) => value.expect_array())
+        .map_err((error) => error.message())?
+    assert len(bindings) == 2, text
+    runtime = bindings[1].require("path").and_then((value) => value.expect_str()).map_err((error) => error.message())?
+    assert runtime == "native/generation/libincan_native_runtime.rlib", runtime
+    # 2. The replaced runtime's directory is searched no longer.
+    search: list[JsonValue] = manifest
+        .require("search")
+        .and_then((value) => value.expect_array())
+        .map_err((error) => error.message())?
+    directories = [entry.expect_str().map_err((error) => error.message())? for entry in search]
+    assert directories == ["native/a", "native/generation"], text
     return Ok(None)
