@@ -28,8 +28,21 @@ from unit_freshness import compiler_fingerprint, fingerprint
 from rust_target import inherited_deployment_configuration
 from home import home
 from home_paths import installation_catalog
+from home_views import selected_home_view
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
+
+
+pub def project_view_name(scope: str, source: str, profile: str, refusals: Option[str]) -> Result[str, str]:
+    """
+    The records engine's project view of one program in one home: named from the home's view key (`scope`), so it
+    survives moving the home and two homes over one bakery never share it, then from the source and the profile. A
+    selected body-refusal diagnosis is a view of its own.
+    """
+    mut identity = [scope, source, profile]
+    if let Some(mode) = refusals:
+        identity.append("body-refusals:" + mode)
+    return Ok(f"project-{fingerprint(identity)?}")
 
 
 pub def execute(
@@ -49,11 +62,12 @@ pub def execute(
     """
     # 1. The admitted compiler identity is derived once per installation, never probed on an unchanged request.
     absolute = source.absolute().map_err((error) => f"cannot make absolute {error.message()}")?
-    mut view_identity = [home()?.0, absolute.0, profile]
-    match get_optional("OVEN_BODY_REFUSALS"):
-        Some(mode) => view_identity.append("body-refusals:" + mode)
-        None => pass
-    view = f"project-{fingerprint(view_identity)?}"
+    # A home that has bound its view names its project views from it; one without (an `INCAN_BAKERY` invocation)
+    # keeps naming them from its path.
+    mut scope = home()?.0
+    if let Some(bound) = selected_home_view()?:
+        scope = bound
+    view = project_view_name(scope, absolute.0, profile, get_optional("OVEN_BODY_REFUSALS"))?
     mut policy = ""
     if proofs:
         policy = "proofs"
