@@ -80,6 +80,22 @@ from trace_adapter import finish as finish_trace, notice_former_compiler_variabl
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 
+# The commands that begin an installation command record before they read the installation.
+const INSTALLATION_COMMANDS: FrozenList[str] = [
+    "run",
+    "check",
+    "lint",
+    "test",
+    "build",
+    "describe-unit",
+    "fmt",
+    "inspect",
+    "lock",
+    "add",
+    "update",
+    "trust",
+]
+
 
 def main() -> None:
     """Dispatch the CLI and drain observations on normal return; explicit exits drain at their own boundary."""
@@ -166,7 +182,7 @@ def dispatch(command: str, rest: list[str]) -> None:
         require_no_arguments(command, rest)
         println(version_text(invoked()))
         return
-    if command in ["run", "check", "lint", "test", "build", "describe-unit", "fmt", "inspect", "lock", "add", "trust"]:
+    if command in INSTALLATION_COMMANDS:
         begin_installation_command()
     # A build binds the home's own view of its bakery the first time the home builds (BE-01).
     if command in ["run", "test", "build", "lint"]:
@@ -225,7 +241,7 @@ def dispatch(command: str, rest: list[str]) -> None:
     if command == "explain":
         explain(rest)
         return
-    if command in ["lock", "add"]:
+    if command in ["lock", "add", "update"]:
         lock(command, rest)
         return
     if command == "run":
@@ -438,7 +454,10 @@ def lock(command: str, arguments: list[str]) -> None:
                     Err(reason) => outcome = Err(reason)
                     Ok(result) => outcome = Ok(locked_report(result))
     else:
-        match parse_dependency_command(DependencyVerb.Add, arguments):
+        mut verb = DependencyVerb.Add
+        if command == "update":
+            verb = DependencyVerb.Update
+        match parse_dependency_command(verb, arguments):
             Err(reason) => syntax_error(command, reason)
             Ok(request) =>
                 match command_admission(command, [request.project]):

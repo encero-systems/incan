@@ -4,7 +4,7 @@ from rust::std::fs import OpenOptions, metadata
 from std.fs import Path
 from std.json import JsonValue
 from c_interop import CArtifactKind, CArtifactOrigin, CInteropArtifact, CInteropTarget
-from dependency_plans import plan_add
+from dependency_plans import plan_add, plan_update
 from features import FeatureRequest
 from files import make_directory, read, write
 from intake import ManifestReader
@@ -503,4 +503,44 @@ pub def test_oven_add_records_the_newest_published_version_and_never_guesses_a_s
             assert "choose another with `--key KEY`" in reason, reason
     keyed = plan_add("acme/getrandom", "", "acme_random", existing, "loaf.toml", units)?
     assert "acme_random = { loaf = \"acme/getrandom\", version = \"1.0.0\" }" in keyed.text, keyed.text
+    return Ok(None)
+
+
+pub def test_oven_update_raises_a_requirement_within_its_bounds_and_changes_nothing_else() -> Result[None, str]:
+    """
+    RFC 125: `oven update` raises a requirement on request to the newest published version it admits, keeping its
+    operator and upper bound, and changes only that requirement's quoted value.
+
+    1. A named Loaf's requirement alone is raised.
+    2. Without a name, every registry requirement is raised or reported as kept.
+    3. A raised manifest has nothing more to raise; a short name lists the dependencies it ends.
+    """
+    units = published_units()
+    head = "[project]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\n"
+    random = "getrandom = { loaf = \"crates-io/getrandom\", version = \"0.2\" }\n"
+    serde = "serde = { loaf = \"crates-io/serde\", version = \"1.0.228\", features = [\"derive\"] }\n"
+    pinned = "pinned = { loaf = \"crates-io/getrandom\", version = \"=0.2.3\" }\nhelper = { path = \"../helper\" }\n"
+    tilde = "\n[dependencies.tilde]\nloaf = \"crates-io/tilde\"\nversion = \"~1\"\n"
+    manifest = head + random + serde + pinned + tilde
+    # 1. Only the named requirement's value changes.
+    named = plan_update("crates-io/serde", manifest, "loaf.toml", units)?
+    assert named.text == manifest.replace("\"1.0.228\"", "\"1.0.230\""), named.text
+    assert named.report == ["crates-io/serde 1.0.228 → 1.0.230"], f"{named.report}"
+    # 2. `0.2` stays below 0.3; a pin and a narrowing raise are kept.
+    every = plan_update("", manifest, "loaf.toml", units)?
+    expected = manifest.replace("\"0.2\"", "\"0.2.17\"").replace("\"1.0.228\"", "\"1.0.230\"")
+    assert every.text == expected, every.text
+    assert every.report == [
+        "crates-io/getrandom 0.2 → 0.2.17",
+        "crates-io/getrandom =0.2.3: kept, it has no `^`, `~` or `>=` bound to raise",
+        "crates-io/serde 1.0.228 → 1.0.230",
+        "crates-io/tilde ~1: kept, raising it to 1.4.2 would lower its upper bound",
+    ], f"{every.report}"
+    # 3. Nothing more to raise, and no guessing.
+    again = plan_update("crates-io/serde", every.text, "loaf.toml", units)?
+    assert again.text == every.text and again.report == ["nothing to raise"], f"{again.report}"
+    match plan_update("serde", manifest, "loaf.toml", units):
+        Ok(_) => return Err("a short name was resolved")
+        Err(reason) =>
+            assert "name one of: crates-io/serde" in reason, reason
     return Ok(None)

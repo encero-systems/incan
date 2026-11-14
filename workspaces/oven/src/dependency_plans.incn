@@ -8,9 +8,12 @@ from std.toml import TomlValue
 from loaf_identity import crate_name, refuse_capitals, validate_loaf_identity
 from registry_units import RegistryUnit
 from semver_req import (
+    Comparator,
+    Operator,
     Version,
     VersionReq,
     compare_versions,
+    named_version,
     parse_requirement,
     parse_version,
     requirement_matches,
@@ -33,6 +36,13 @@ pub model RegistryDependency:
     pub key: str
     pub loaf: str
     pub requirement: str
+
+
+model Raise:
+    """One requirement's planned raise: its new text, or why it stays; both empty when it is already current."""
+
+    requirement: str = ""
+    reason: str = ""
 
 
 pub def plan_add(
@@ -75,6 +85,39 @@ pub def plan_add(
     changed = inserted(text, line)
     read_back(changed, manifest, chosen, loaf, requirement)?
     return Ok(ManifestChange(text=changed, report=[f"added {loaf}, version = \"{requirement}\""]))
+
+
+pub def plan_update(name: str, text: str, manifest: str, units: list[RegistryUnit]) -> Result[ManifestChange, str]:
+    """
+    Raise the manifest's registry requirements on request (RFC 125).
+
+    1. With a name, the entries that name that Loaf; without one, every registry entry.
+    2. A requirement's one `^`, `~` or `>=` comparator moves to the newest published version it admits, keeping its
+       operator and its upper bound. A pin, a wildcard or a requirement with two such bounds is reported and kept.
+    3. Only that requirement's quoted value changes, and the result must read back as planned.
+    """
+    # 1. A named Loaf must be a dependency, named in full.
+    dependencies = registry_dependencies(text, manifest)?
+    mut selected = dependencies
+    if name != "":
+        loaf = full_name(name, [dependency.loaf for dependency in dependencies], "registry dependency")?
+        selected = [dependency for dependency in dependencies if dependency.loaf == loaf]
+        if len(selected) == 0:
+            return Err(f"{loaf} is not a registry dependency in {manifest}")
+    # 2. and 3. Each raise changes one quoted value.
+    mut changed = text
+    mut report: list[str] = []
+    for dependency in selected:
+        planned = raised(dependency, units)?
+        if planned.reason != "":
+            report.append(f"{dependency.loaf} {dependency.requirement}: kept, {planned.reason}")
+        elif planned.requirement != "":
+            changed = replaced_requirement(changed, manifest, dependency, planned.requirement)?
+            read_back(changed, manifest, dependency.key, dependency.loaf, planned.requirement)?
+            report.append(f"{dependency.loaf} {dependency.requirement} → {planned.requirement}")
+    if len(report) == 0:
+        report.append("nothing to raise")
+    return Ok(ManifestChange(text=changed, report=report))
 
 
 pub def full_name(name: str, candidates: list[str], noun: str) -> Result[str, str]:
@@ -213,3 +256,110 @@ def section_of(line: str) -> str:
     if rest != "" and not rest.startswith("#"):
         return ""
     return header
+
+
+def raised(dependency: RegistryDependency, units: list[RegistryUnit]) -> Result[Raise, str]:
+    """The requirement `dependency` is raised to, keeping its operator and upper bound, or why it is kept."""
+    wanted = parse_requirement(dependency.requirement).map_err(
+        (reason) => f"{dependency.loaf} `{dependency.requirement}`: {reason}",
+    )?
+    mut bounds: list[int] = []
+    for index in range(len(wanted.comparators)):
+        operator = wanted.comparators[index].operator
+        if operator == Operator.Caret or operator == Operator.Tilde or operator == Operator.GreaterEqual:
+            bounds.append(index)
+    if len(bounds) != 1:
+        if len(bounds) == 0:
+            return Ok(Raise(reason="it has no `^`, `~` or `>=` bound to raise"))
+        return Ok(Raise(reason="it has more than one bound to raise"))
+    comparator = wanted.comparators[bounds[0]]
+    if len(comparator.prerelease) > 0:
+        return Ok(Raise(reason="its bound names a pre-release"))
+    match newest_published(units, dependency.loaf, dependency.requirement)?:
+        None => return Ok(Raise(reason="no published version satisfies it"))
+        Some(newest) =>
+            if compare_versions(newest, named_version(comparator)) <= 0:
+                return Ok(Raise())
+            target = Comparator(
+                operator=comparator.operator,
+                parts=[newest.major, newest.minor, newest.patch],
+                prerelease=[],
+            )
+            if upper_prefix(target) != upper_prefix(comparator):
+                return Ok(Raise(reason=f"raising it to {version_text(newest)} would lower its upper bound"))
+            mut members = dependency.requirement.split(",")
+            members[bounds[0]] = respelled(members[bounds[0]], version_text(newest))
+            return Ok(Raise(requirement=",".join(members)))
+
+
+def upper_prefix(comparator: Comparator) -> list[str]:
+    """
+    The components that decide a comparator's exclusive upper bound: `^` raises its first nonzero component, or its
+    last; `~` its minor, or its major alone; `>=` has none. Equal prefixes exclude the same versions from above.
+    """
+    parts = comparator.parts
+    if comparator.operator == Operator.GreaterEqual:
+        return []
+    if comparator.operator == Operator.Tilde:
+        if len(parts) == 1:
+            return parts
+        return parts[:2]
+    mut index = 0
+    while index < len(parts) - 1 and parts[index] == "0":
+        index += 1
+    return parts[:index + 1]
+
+
+def respelled(member: str, version: str) -> str:
+    """One comparator's text with its version replaced, keeping its leading spaces and its operator."""
+    mut start = 0
+    while start < len(member) and member[start] == " ":
+        start += 1
+    rest = member[start:].strip()
+    mut operator = ""
+    for prefix in [">=", "^", "~"]:
+        if rest.startswith(prefix):
+            operator = prefix
+            break
+    mut gap = ""
+    if operator != "" and rest[len(operator):].startswith(" "):
+        gap = " "
+    return member[:start] + operator + gap + version
+
+
+def replaced_requirement(
+    text: str,
+    manifest: str,
+    dependency: RegistryDependency,
+    requirement: str,
+) -> Result[str, str]:
+    """`text` with `dependency`'s quoted requirement replaced on the one line that sets it; nothing else changes."""
+    lines = text.split("\n")
+    old = "\"" + dependency.requirement + "\""
+    index = requirement_line(lines, dependency.key)
+    if index < 0 or len(lines[index].split(old)) != 2:
+        return Err(f"{manifest}: no one line sets `{dependency.key}`'s version as {old}; edit it by hand")
+    mut changed = lines
+    changed[index] = lines[index].replace(old, "\"" + requirement + "\"")
+    return Ok("\n".join(changed))
+
+
+def requirement_line(lines: list[str], key: str) -> int:
+    """The line that sets `key`'s version: `KEY = { ... }` in `[dependencies]`, or `version` in its own table."""
+    mut section = ""
+    for index in range(len(lines)):
+        header = section_of(lines[index])
+        if header != "":
+            section = header
+            continue
+        stripped = lines[index].strip()
+        if section == DEPENDENCIES and assigns(stripped, key):
+            return index
+        if section == f"[dependencies.{key}]" and assigns(stripped, "version"):
+            return index
+    return -1
+
+
+def assigns(line: str, key: str) -> bool:
+    """Whether `line` assigns the bare key `key`."""
+    return line.startswith(key) and line[len(key):].strip().startswith("=")
