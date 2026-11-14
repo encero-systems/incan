@@ -7,6 +7,8 @@ use sha2::{Digest, Sha256};
 
 #[path = "semantic_adaptation.rs"]
 mod adaptation;
+#[path = "semantic_columns.rs"]
+mod columns;
 #[path = "semantic_hash.rs"]
 mod hash;
 #[path = "semantic_print.rs"]
@@ -45,6 +47,7 @@ pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCa
         "hash_preimage" => hash_preimage(&parsed),
         "adaptation" => adaptation::adaptation(&parsed),
         "text_print" => print::text_print(&parsed),
+        "column_codec" => columns::encode(&parsed),
         _ => None,
     };
     let encode_ns = elapsed_ns(encode_started);
@@ -54,6 +57,7 @@ pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCa
     let decode_started = Instant::now();
     let decoded = match operation.as_str() {
         "hash_preimage" => verify_preimage(&encoded),
+        "column_codec" => columns::decode(&parsed),
         _ => Some(encoded.clone()),
     };
     let decode_ns = elapsed_ns(decode_started);
@@ -512,6 +516,30 @@ mod tests {
             b"example.Point = Record { x: i64, y: i64 }\n\nexample.Point << [\n    (1, 2),\n    (3, 4),\n]\n"
         );
         assert_eq!(printed.encoded, printed.decoded);
+    }
+
+    #[test]
+    fn column_dictionaries_round_trip_prefixes_and_refuse_zero_deltas() {
+        let accepted = evaluate_semantic_case(
+            "column_codec".to_string(),
+            r#"{"operation":"column_dictionary","type":"string","input_hex":"030d01000a00026161010162000162","expected":{"status":"accepted","keys_hex":["6161","6162","62"]}}"#.to_string(),
+        );
+        assert_eq!(accepted.kind, 0);
+        assert_eq!(
+            accepted.encoded,
+            [
+                0x03, 0x0d, 0x01, 0x00, 0x0a, 0x00, 0x02, 0x61, 0x61, 0x01, 0x01, 0x62, 0x00, 0x01, 0x62
+            ]
+        );
+        assert_eq!(accepted.decoded[0], 0);
+
+        let refused = evaluate_semantic_case(
+            "column_codec".to_string(),
+            r#"{"operation":"column_dictionary","type":"i8","input_hex":"020701000401000100","expected":{"status":"refused","kind":"nonminimal_delta"}}"#.to_string(),
+        );
+        assert_eq!(refused.kind, 0);
+        assert!(refused.encoded.is_empty());
+        assert_eq!(refused.decoded, b"\x01\x10nonminimal_delta");
     }
 
     #[test]
