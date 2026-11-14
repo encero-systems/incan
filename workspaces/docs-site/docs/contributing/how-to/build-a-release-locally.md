@@ -6,9 +6,10 @@ Use this procedure to produce the toolchain archive for your host from one commi
 
 - **An installed seed toolchain.** The release is built by an installed toolchain, never by the checkout. Select it with `INCAN_HOME`; it must contain `bin/incan` and `bin/incan-lsp`. Set `INCAN_LSP` when the language server lives elsewhere. [Install and run](../../tooling/how-to/install_and_run.md) shows how to install a toolchain archive.
 - **Rust 1.98.0 with `rustc-dev`.** Installing the seed already requires it.
+- **`git`, `tar` and `zstd` on `PATH`, and `oras` on Linux.** The release clones with `git` and packs and installs the archive with `tar` and `zstd`. On Linux it also pulls the pinned Clang toolchain with `oras`; macOS uses the machine's Xcode instead.
 - **A commit.** The release clones the exact commit you name and builds that. Uncommitted changes are not part of it.
 - **A new output directory.** The release refuses a directory that already exists.
-- **A clean environment.** Leave `INCAN_STDLIB` and `INCAN_SOURCE_ROOT` unset. They select checkout sources, which is the opposite of what this procedure verifies.
+- **A clean environment.** Leave `INCAN_STDLIB` and `INCAN_SOURCE_ROOT` unset. They select checkout sources, which is the opposite of what this procedure verifies. The one exception is a seed installed from the published `0.6.0-dev.8` archive, which ships no standard sources: set `INCAN_STDLIB` to the checkout's `loaves/stdlib` so that seed can run at all.
 
 ## Run the release
 
