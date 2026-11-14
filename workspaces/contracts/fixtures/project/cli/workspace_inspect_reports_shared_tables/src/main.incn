@@ -1,4 +1,4 @@
-# behavior: `oven workspace inspect --format json` reports the root's shared tables as 0.5.1's `incan workspace inspect` did: `shared_dependencies` (`libraries`, `rust`, `rust_dev`), `shared_environments`, `shared_policy` and `shared_sources` (#3141).
+# behavior: `oven workspace inspect --format json` reports the root's shared tables as 0.5.1's `incan workspace inspect` did: `shared_dependencies` (`libraries`, `rust`, `rust_dev`), `shared_environments`, `shared_policy` and `shared_sources`; the declared `exclusions`; the `invocation` directory; and per member its `effective_dependencies`, each entry with its `origin` and the member's and workspace's features, and its `workspace_environment_extends` (#3141).
 # cli-commands:
 #   oven workspace inspect --format json
 # expect-stdout-contains:
@@ -19,6 +19,17 @@
 #         "approval": "required"
 #     "shared_sources": {
 #         "url": "https://packages.example.test"
+#     "exclusions": [
+#       "scratch"
+#     "invocation": {
+#         "effective_dependencies": {
+#               "origin": "workspace",
+#               "member_features": [
+#                 "derive"
+#               "workspace_features": []
+#         "workspace_environment_extends": {
+#           "ci": [
+#             "workspace:ci"
 # expect-exit: 0
 
 def main() -> None:
