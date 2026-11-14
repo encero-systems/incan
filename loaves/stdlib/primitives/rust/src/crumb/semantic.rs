@@ -5,6 +5,8 @@ use std::time::Instant;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+#[path = "semantic_adaptation.rs"]
+mod adaptation;
 #[path = "semantic_hash.rs"]
 mod hash;
 
@@ -39,6 +41,7 @@ pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCa
         "shape_admission" => shape_admission(&parsed),
         "value_relation" => value_relation(&parsed),
         "hash_preimage" => hash_preimage(&parsed),
+        "adaptation" => adaptation::adaptation(&parsed),
         _ => None,
     };
     let encode_ns = elapsed_ns(encode_started);
@@ -473,6 +476,25 @@ mod tests {
         let unsupported = evaluate_semantic_case("binary_decode".to_string(), "{\"id\":\"red\"}".to_string());
         assert_eq!(unsupported.kind, 1);
         assert!(unsupported.encoded.is_empty());
+    }
+
+    #[test]
+    fn adaptation_widens_integers_and_refuses_other_nominals() {
+        let widen = evaluate_semantic_case(
+            "adaptation".to_string(),
+            r#"{"written":{"nominal":"example.Customer","fields":[{"id":"013f54400c82","type":"i32","canonical":true,"absent":"required"}]},"requested":{"nominal":"example.Customer","fields":[{"id":"013f54400c82","type":"i64","canonical":true,"absent":"required"}]},"values":[{"kind":"int","type":"i32","value":"12"}]}"#.to_string(),
+        );
+        assert_eq!(widen.kind, 0);
+        assert_eq!(widen.encoded[0], 0);
+        assert_eq!(&widen.encoded[widen.encoded.len() - 3..], [0, 0, 1]);
+
+        let refused = evaluate_semantic_case(
+            "adaptation".to_string(),
+            r#"{"written":{"nominal":"example.Customer","fields":[]},"requested":{"nominal":"example.Supplier","fields":[]},"values":[]}"#.to_string(),
+        );
+        assert_eq!(refused.kind, 0);
+        assert_eq!(&refused.encoded[..17], b"\x01\x0fNominalMismatch");
+        assert_eq!(&refused.encoded[17..], b"\x08/nominal");
     }
 
     #[test]
