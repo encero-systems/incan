@@ -29,6 +29,7 @@ const OWNER_USAGE: str = "oven owner stop"
 const BAKERY_USAGE: str = "oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"
 const DEPENDENCIES_USAGE: str = "oven inspect dependencies PATH [UNIT OPTIONS]"
 const LOCK_USAGE: str = "oven lock [--versions lowest|lowest-direct|newest] [PATH]"
+const ADD_USAGE: str = "oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]"
 const TRUST_USAGE: str = "oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE"
 const INTEROP_USAGE: str = "oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [--format text|json] [PATH]"
 pub const UNIT_VALUE_OPTIONS: FrozenList[str] = [
@@ -61,6 +62,7 @@ pub def usage(surface: str) -> str:
                 DEPENDENCIES_USAGE,
                 INTEROP_USAGE,
                 LOCK_USAGE,
+                ADD_USAGE,
                 TRUST_USAGE,
                 NEW_USAGE,
                 INIT_USAGE,
@@ -113,6 +115,18 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
                 LOCK_USAGE,
                 ["  --versions MODE  Select lowest, lowest-direct or newest; an omitted mode remains sticky."],
                 "oven lock --versions lowest .",
+            ),
+        )
+    elif command == "add" and requested(arguments, ["--version", "--key", "--project"]):
+        return Some(
+            render(
+                ADD_USAGE,
+                [
+                    "  --version REQUIREMENT  Record this requirement instead of the newest published version.",
+                    "  --key KEY              The [dependencies] key, instead of the name's last part.",
+                    "  --project PATH         The project at or above PATH (default the current directory).",
+                ],
+                "oven add crates-io/serde",
             ),
         )
     elif command == "trust" and requested(arguments):
