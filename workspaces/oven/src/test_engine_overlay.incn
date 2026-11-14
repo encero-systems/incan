@@ -79,6 +79,27 @@ pub def test_a_package_document_is_answered_through_the_package_entry() -> Resul
     return Ok(None)
 
 
+pub def test_a_manifest_free_module_is_answered_through_its_programs_main() -> Result[None, str]:
+    """A module without `main` beside a `main.incn` builds that program; a document with its own `main` is its entry."""
+    scratch = scratch_directory()?
+    program = scratch.path().joinpath("program")
+    program.mkdir(true, true).map_err((error) => error.message())?
+    entry = program.joinpath("main.incn")
+    write(entry, "from helper import value\n\n\ndef main() -> None:\n    println(f\"{value()}\")\n")?
+    helper = program.joinpath("helper.incn")
+    write(helper, "pub def value() -> int:\n    return 1\n")?
+    script = program.joinpath("script.incn")
+    write(script, "def helper_text() -> str:\n    return \"def main(\"\n\n\ndef main() -> None:\n    pass\n")?
+    assert overlay_entry(helper)?.0 == entry.0, "a module without main was built as its own entry"
+    assert overlay_entry(entry)?.0 == entry.0
+    assert overlay_entry(script)?.0 == script.0, "a script with its own main was built through main.incn"
+    lone = scratch.path().joinpath("lone").joinpath("library.incn")
+    lone.parent().mkdir(true, true).map_err((error) => error.message())?
+    write(lone, "pub def value() -> int:\n    return 1\n")?
+    assert overlay_entry(lone)?.0 == lone.0
+    return Ok(None)
+
+
 pub def test_a_served_request_is_one_line_naming_document_buffer_and_version() -> Result[None, str]:
     """A persistent overlay server takes at most a profile, then reads one JSON line per request."""
     line = "{\"source\": \"/program/main.incn\", \"buffer\": \"/tmp/buffer\", \"version\": 7}"
