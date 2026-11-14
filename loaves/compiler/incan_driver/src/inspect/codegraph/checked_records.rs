@@ -276,7 +276,12 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 binding_identity: binding_identity.clone(),
                 header: descriptor.header.clone(),
                 system_library: descriptor.system_library.clone(),
-                link_capability: link_capability_as_str(descriptor.link_capability).to_string(),
+                // A Clove link is carried by its configuration until the kernel's capability set names it.
+                link_capability: if descriptor.configuration.is_empty() {
+                    link_capability_as_str(descriptor.link_capability).to_string()
+                } else {
+                    "loaf_library".to_string()
+                },
                 resources: descriptor.resources.iter().map(c_binding_resource_record).collect(),
                 symbols: descriptor.symbols.iter().map(c_binding_symbol_record).collect(),
                 enums: descriptor.enums.iter().map(c_binding_enum_record).collect(),
