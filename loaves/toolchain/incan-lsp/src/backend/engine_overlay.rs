@@ -55,12 +55,29 @@ pub(super) fn diagnostics(path: &Path, source: &str, version: i32) -> Result<Vec
         .map_err(|error| format!("cannot write overlay buffer {}: {error}", buffer.display()))?;
     let version = version.max(0);
     let answered = if per_process() {
-        process_answer(path, &buffer, version)
+        process_answer(path, &buffer, version, false)
     } else {
-        served_answer(&mut server, path, &buffer, version)
+        served_answer(&mut server, path, &buffer, version, false)
     };
     let _ = std::fs::remove_file(&buffer);
     document_diagnostics(path, &answered?, version)
+}
+
+/// Build the saved document in its editor view, so the project's next build of the same bytes reuses the unit.
+pub(super) fn saved(path: &Path) -> Result<(), String> {
+    let mut server = REQUESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let answered = if per_process() {
+        process_answer(path, path, 0, true)?
+    } else {
+        served_answer(&mut server, path, path, 0, true)?
+    };
+    if let Some(reason) = answered["error"].as_str() {
+        return Err(reason.to_string());
+    }
+    if answered["ok"] != true {
+        return Err("the saved document's build overlay did not build".into());
+    }
+    Ok(())
 }
 
 /// One answer from the persistent Oven, starting it when none runs and once more if it stopped answering.
@@ -69,8 +86,9 @@ fn served_answer(
     path: &Path,
     buffer: &Path,
     version: i32,
+    build: bool,
 ) -> Result<serde_json::Value, String> {
-    let request = serde_json::json!({"source": path, "buffer": buffer, "version": version}).to_string();
+    let request = serde_json::json!({"source": path, "buffer": buffer, "version": version, "build": build}).to_string();
     let mut last = String::new();
     for _ in 0..2 {
         if server.is_none() {
@@ -128,8 +146,9 @@ fn exchange(server: &mut OverlayServer, request: &str) -> Result<serde_json::Val
 }
 
 /// One answer from an Oven started for this analysis alone.
-fn process_answer(path: &Path, buffer: &Path, version: i32) -> Result<serde_json::Value, String> {
-    let output = Command::new(oven()?)
+fn process_answer(path: &Path, buffer: &Path, version: i32, build: bool) -> Result<serde_json::Value, String> {
+    let mut command = Command::new(oven()?);
+    command
         .arg("check")
         .arg(path)
         .arg("--overlay")
@@ -137,7 +156,11 @@ fn process_answer(path: &Path, buffer: &Path, version: i32) -> Result<serde_json
         .arg("--document-version")
         .arg(version.to_string())
         .arg("--format")
-        .arg("json")
+        .arg("json");
+    if build {
+        command.arg("--build");
+    }
+    let output = command
         .output()
         .map_err(|error| format!("cannot run the overlay request: {error}"))?;
     serde_json::from_slice(&output.stdout).map_err(|error| {
