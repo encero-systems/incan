@@ -939,7 +939,8 @@ def prepare_support_project(context: NativeContext) -> Result[Path, str]:
         .joinpath("workspaces/oven/src")
         .copy(project.joinpath("src"), true, false)
         .map_err((error) => error.message())?
-    root.joinpath("loaves").symlink_to(context.repo.joinpath("loaves")).map_err((error) => error.message())?
+    # A lane relinks into one home many times and prepares this project again over its previous one.
+    replace_symlink(context.repo.joinpath("loaves"), root.joinpath("loaves"))?
     return Ok(project)
 
 
