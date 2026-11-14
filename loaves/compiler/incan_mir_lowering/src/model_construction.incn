@@ -42,7 +42,7 @@ from operators import operand_type
 from statements import authenticated_component_operand, borrowed_payload, carrier_payload
 from call_arguments import tuple_pointer_element
 from builtin_calls import clone_enum_reference, clone_model_reference, coerce_numeric_operand
-from formatting import display_operand, lower_format
+from formatting import display_operand, display_plan_operand, lower_format
 from list_values import value_operand
 from carrier_operands import boundary_operand
 from result_carriers import frozen_operand
@@ -154,12 +154,18 @@ pub def checked_aggregate(
                                 boundary_operand(builder, value, tuple_element_type(element_types[slot]), span)?,
                             )
                             continue
+                        owns_text = (
+                            slot < len(element_types)
+                            and tuple_element_type(element_types[slot]) == PlanType.String
+                        )
                         match value:
                             RustOperand.Constant(constant) =>
                                 match constant:
                                     RustConstant.Str(text) =>
                                         operands.append(read_place(owned_literal(builder, str(text), span), true, span))
-                                    _ => operands.append(scalar_operand(builder, value, span)?)
+                                    _ => operands.append(
+                                        owned_text(builder, scalar_operand(builder, value, span)?, owns_text, span)?,
+                                    )
                             RustOperand.Place(read) =>
                                 # A list or dictionary element is already a materialized copy the tuple can own.
                                 if is_element_place(builder, read.place)?:
@@ -169,7 +175,9 @@ pub def checked_aggregate(
                                 if place_type(builder.locals, target) == PlanType.String:
                                     operands.append(read_place(display_operand(builder, value, span)?, true, span))
                                 else:
-                                    operands.append(scalar_operand(builder, value, span)?)
+                                    operands.append(
+                                        owned_text(builder, scalar_operand(builder, value, span)?, owns_text, span)?,
+                                    )
                     None => return Err("unsupported Body IR spread tuple element")
             return Ok(tuple_aggregate(operands))
         RustAggregateKind.Constructor(target) =>
@@ -184,6 +192,16 @@ pub def checked_aggregate(
             return Ok(RvalueKind.Model(index, operands))
         RustAggregateKind.Range => return range_value(builder, elements, expected, span)
         _ => return Err("unsupported Body IR Aggregate outside plain models")
+
+
+def owned_text(mut builder: Builder, operand: Operand, owns_text: bool, span: SourceSpan) -> Result[Operand, str]:
+    """
+    Turn frozen text into owned text for a tuple element the checker typed `str`: a `str` constant reads as frozen
+    text, and the tuple owns its text as a list element does. Any other operand is returned unchanged.
+    """
+    if owns_text and operand_type(builder, operand)? == PlanType.FrozenStr:
+        return Ok(read_place(display_plan_operand(builder, operand, span)?, true, span))
+    return Ok(operand)
 
 
 def range_value(
