@@ -5,6 +5,7 @@ A payload that is itself a union is tested by its member tag after the Option's 
 union payload is never inspected through an absent Option.
 """
 
+from pub::incan_mir_plan import carrier_position
 from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     BinaryOp,
@@ -23,7 +24,7 @@ from unions import union_test_slots, test_union_tag
 
 pub def is_option_carrier(mut builder: Builder, owner: int) -> bool:
     """Whether a retained enum owner is the intrinsic Option carrier rather than a source enum or a union."""
-    index = owner - len(builder.enums)
+    index = carrier_position(owner)
     return index >= 0 and index < len(builder.intrinsics) and builder.intrinsics[index].carrier == Carrier.Option
 
 
@@ -35,7 +36,7 @@ pub def option_isinstance(
     span: SourceSpan,
 ) -> Result[RvalueKind, str]:
     """Test a present Option payload against the checked target type without consuming the Option."""
-    payload = builder.intrinsics[owner - len(builder.enums)].variants[1].fields[0]
+    payload = builder.intrinsics[carrier_position(owner)].variants[1].fields[0]
     match payload:
         PlanType.Enum(inner, _name) =>
             if is_union_carrier(builder, inner):
@@ -95,7 +96,7 @@ def union_payload_test(
 
 pub def is_union_carrier(mut builder: Builder, owner: int) -> bool:
     """Whether a retained enum owner is an anonymous union, the intrinsic carrier without a standard name."""
-    index = owner - len(builder.enums)
+    index = carrier_position(owner)
     return index >= 0 and index < len(builder.intrinsics) and builder.intrinsics[index].carrier == Carrier.Declared
 
 

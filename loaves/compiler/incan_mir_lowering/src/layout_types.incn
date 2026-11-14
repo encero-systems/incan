@@ -1,5 +1,6 @@
 """Resolve complete checked carrier and collection types against one retained native layout context."""
 
+from pub::incan_mir_plan import carrier_index, carrier_position, is_carrier_index
 from rust::incan_semantics_core import (
     IncanType as RustType,
     IncanCallableParam,
@@ -105,7 +106,7 @@ pub def native_source_type(
         for index in range(len(intrinsics)):
             declaration = borrowed_at(intrinsics, index)
             if semantic_key_matches_native(declaration.semantic_key, ty)?:
-                return Ok(PlanType.Enum(len(enums) + index, declaration.name))
+                return Ok(PlanType.Enum(carrier_index(index), declaration.name))
     match enum_type(enums, ty):
         Some(result) => return Ok(result)
         None => pass
@@ -350,9 +351,9 @@ def layout_reaches(
                     Err(_reason) => pass
             return false
         PlanType.Enum(index, _name) =>
-            if index < len(enums) or index >= len(enums) + len(intrinsics):
+            if not is_carrier_index(index) or carrier_position(index) >= len(intrinsics):
                 return false
-            for variant in intrinsics[index - len(enums)].variants:
+            for variant in intrinsics[carrier_position(index)].variants:
                 for payload in variant.fields:
                     if layout_reaches(constructors, nominals, enums, unions, intrinsics, owner, payload, path):
                         return true
@@ -528,13 +529,13 @@ def hashed_leaf(
                 for argument in arguments:
                     hashed_leaf(constructors, nominals, enums, argument, intrinsics)?
                 mut index = 0
-                for carrier_position in range(len(intrinsics)):
-                    carrier = borrowed_at(intrinsics, carrier_position)
+                for retained_position in range(len(intrinsics)):
+                    carrier = borrowed_at(intrinsics, retained_position)
                     if (
                         carrier.carrier != Carrier.Declared
                         and semantic_key_matches_native(carrier.semantic_key, ty)?
                     ):
-                        return Ok(ListLeaf.Enum(len(enums) + index, carrier.name))
+                        return Ok(ListLeaf.Enum(carrier_index(index), carrier.name))
                     index += 1
                 return Err(f"unsupported Body IR unretained carrier hashed key {ty}")
         _ => pass

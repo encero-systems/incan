@@ -1,5 +1,6 @@
 """Bind runtime operations to authenticated compiled frames or ordinary governed body instances."""
 
+from pub::incan_mir_plan import carrier_position
 from pub::incan_mir_plan import Carrier
 from pub::incan_mir_plan import (
     source_span,
@@ -863,7 +864,7 @@ def runtime_enum_argument(
     if owner < len(module.enum_declarations):
         source_enum = borrowed_at(module.enum_declarations, owner)
         return Ok(RustType.Named(str(source_enum.name)))
-    slot = owner - len(module.enum_declarations)
+    slot = carrier_position(owner)
     if slot >= len(intrinsics) or intrinsics[slot].name != name:
         return Err("invalid governed runtime intrinsic enum owner")
     declaration = borrowed_at(intrinsics, slot)

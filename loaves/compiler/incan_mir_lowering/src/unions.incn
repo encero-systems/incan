@@ -1,5 +1,6 @@
 """Anonymous unions reuse native enum layouts and legacy's normalized payload order and names."""
 
+from pub::incan_mir_plan import carrier_position
 from rust::incan_semantics_core import IncanType as RustType
 from rust::std::collections import BTreeSet
 from native_type_identity import ConstructorIndex
@@ -445,7 +446,7 @@ def retained_union(
     intrinsics: &list[EnumDeclaration],
 ) -> Result[RustType, str]:
     """Resolve a union by its exact retained layout slot, independently of neighboring Option and Result layouts."""
-    index = owner - len(enums)
+    index = carrier_position(owner)
     if index < 0 or index >= len(intrinsics) or intrinsics[index].carrier != Carrier.Declared:
         return Err("unsupported Body IR nonunion enum isinstance")
     carrier = borrowed_at(intrinsics, index)
@@ -501,7 +502,7 @@ pub def union_test_slot(
 ) -> Result[int, str]:
     """A primitive target absent from the union is always false; source enum tests remain refused."""
     _ = retained_union(enums, unions, owner, intrinsics)?
-    variants = intrinsics[owner - len(enums)].variants
+    variants = intrinsics[carrier_position(owner)].variants
     for slot in range(len(variants)):
         if variants[slot].fields == [member]:
             return Ok(slot)
@@ -527,7 +528,7 @@ pub def carrier_injection(
         PlanType.Enum(owner, _name) =>
             if owner < len(enums) or source == target:
                 return Ok(RvalueKind.Use(operand))
-            index = owner - len(enums)
+            index = carrier_position(owner)
             if index >= len(intrinsics):
                 return Err("invalid Body IR union destination owner")
             if intrinsics[index].carrier == Carrier.Option:
@@ -552,7 +553,7 @@ pub def union_test_slots(
     """Match either string identity against both carriers while preserving exact construction and narrowing slots."""
     _ = retained_union(enums, unions, owner, intrinsics)?
     mut slots: list[int] = []
-    variants = intrinsics[owner - len(enums)].variants
+    variants = intrinsics[carrier_position(owner)].variants
     for slot in range(len(variants)):
         payload = variants[slot].fields
         same_string_identity = (
@@ -604,7 +605,7 @@ pub def union_projection(mut builder: Builder, value: &RustPlace, span: SourceSp
                         builder.intrinsics,
                     )?
                     slot = union_slot(builder.nominals, builder.enums, builder.unions, owner, member, builder.intrinsics)?
-                    payload = builder.intrinsics[owner - len(builder.enums)].variants[slot].fields[0]
+                    payload = builder.intrinsics[carrier_position(owner)].variants[slot].fields[0]
                     return Ok(Some(Place(local=index, projection=Projection.VariantField(slot, 0, payload), span=span)))
                 None => return Err("unsupported Body IR global union narrowing")
         None => return Ok(None)

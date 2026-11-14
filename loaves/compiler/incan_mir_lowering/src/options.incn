@@ -1,5 +1,6 @@
 """Concrete standard Option and Result layouts shared with native enum operations."""
 
+from pub::incan_mir_plan import carrier_position
 from rust::incan_semantics_core import IncanType as RustType, SymbolOrigin, SemanticSourceTargetKind, generic
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
 from rust::incan_lang::lang::surface::constructors import from_str as builtin_constructor, ConstructorId
@@ -84,7 +85,7 @@ pub def result_layout(mut builder: Builder, ty: PlanType) -> Result[tuple[int, E
         PlanType.Enum(owner, _name) =>
             if owner < len(builder.enums):
                 return Err("unsupported Body IR TryPropagate outside Result")
-            declaration = builder.intrinsics[owner - len(builder.enums)]
+            declaration = builder.intrinsics[carrier_position(owner)]
             if declaration.carrier != Carrier.Result:
                 return Err("unsupported Body IR TryPropagate outside Result")
             return Ok((owner, declaration))
@@ -537,7 +538,7 @@ pub def carrier_layout(mut builder: Builder, ty: PlanType) -> Result[tuple[int, 
     match ty:
         PlanType.Enum(owner, _name) =>
             if owner >= len(builder.enums):
-                return Ok((owner, builder.intrinsics[owner - len(builder.enums)]))
+                return Ok((owner, builder.intrinsics[carrier_position(owner)]))
         _ => pass
     return Err("unsupported Body IR intrinsic carrier receiver")
 
