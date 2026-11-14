@@ -24,7 +24,7 @@
 //!   accepted, and lowering passes it as the parameter's own marker (`CallableParam::is_mut`) says; one whose type
 //!   cannot be copied, such as a `Generator`, is refused (`INCAN-T0117`) instead.
 //!
-//! A caller-visible parameter cannot be rebound to a new value in its body: the caller would not see the rebinding.
+//! An assignment to a caller-visible parameter in its body replaces the caller's value through the borrow (RFC 129).
 //! Temporaries (literals, call results) are always accepted; nothing but the callee holds them.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};

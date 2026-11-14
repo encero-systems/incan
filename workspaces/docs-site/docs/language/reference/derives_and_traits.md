@@ -525,7 +525,7 @@ trait Counter:
 A `mut` parameter of a trait method, required or default, and of each method that implements it, follows the rules of [`mut` parameters](functions.md#mut-parameters):
 
 - A parameter of type `int`, `float` or `bool`, or an alias of one, is the method's own copy.
-- A parameter of any other type, except a Rust type, `*args` and `**kwargs`, shows the method's changes to the caller. The body does not rebind it or hold it in another name or value (`INCAN-T0001`). The argument of a call that changes it is a `mut` binding or parameter, `self` in a `mut self` method, a field of one of those, or a temporary; another argument is refused (`INCAN-T0117`).
+- A parameter of any other type, except a Rust type, `*args` and `**kwargs`, shows the method's changes to the caller, an assignment to it included. The body does not hold it in another name or value (`INCAN-T0001`). The argument of a call that changes it is a `mut` binding or parameter, `self` in a `mut self` method, a field of one of those, or a temporary; another argument is refused (`INCAN-T0117`).
 - A method call through a type parameter's bound, on `self` in a default method, or on a trait-typed value changes such a parameter, whichever method runs.
 
 ```incan

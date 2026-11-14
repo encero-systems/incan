@@ -323,6 +323,28 @@ fn place_migration_warning_labels_the_copied_place() -> Result<(), Box<dyn std::
     Ok(())
 }
 
+/// Assigning to a caller-visible `mut` parameter replaces the caller's value, so the body is accepted and a call
+/// needs an argument the caller may change.
+#[test]
+fn mut_parameter_assignment_is_a_change_of_the_parameter() -> Result<(), Box<dyn std::error::Error>> {
+    let accepted = checked(
+        "def reset(mut items: list[int]) -> None:\n    items = [0]\ndef shout(mut label: str) -> None:\n    label += \"!\"\ndef main() -> None:\n    mut items: list[int] = [1]\n    reset(items)\n    mut label = \"a\"\n    shout(label)\n",
+    )?;
+    assert!(accepted.errors.is_empty(), "{:?}", accepted.errors);
+    let refused = checked(
+        "def reset(mut items: list[int]) -> None:\n    items = [0]\ndef main() -> None:\n    items: list[int] = [1]\n    reset(items)\n",
+    )?;
+    assert!(
+        refused
+            .errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0117")),
+        "{:?}",
+        refused.errors
+    );
+    Ok(())
+}
+
 /// Compatible annotations, scalar fields and read-only locals do not accidentally request independent copies.
 #[test]
 fn place_migration_includes_annotations_scalars_and_readonly() -> Result<(), Box<dyn std::error::Error>> {

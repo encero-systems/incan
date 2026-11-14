@@ -218,7 +218,7 @@ impl TypeChecker {
                         self.errors
                             .push(errors::mutation_without_mut(&compound.name, stmt.span));
                     } else {
-                        self.refuse_caller_visible_mut_param_rebinding(&compound.name, stmt.span);
+                        self.note_caller_visible_mut_param_assignment(&compound.name, stmt.span);
                     }
                     // Type check the value expression
                     let value_ty = self.check_expr(&compound.value);

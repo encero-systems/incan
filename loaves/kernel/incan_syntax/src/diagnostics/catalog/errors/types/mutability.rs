@@ -333,23 +333,6 @@ fn mut_argument_hint(place: &MutArgumentPlace, parameter: MutParameterLabel<'_>)
     }
 }
 
-/// Refuse rebinding a `mut` parameter whose changes reach the caller inside its own body (#1773).
-///
-/// The caller sees what the callee does to such a parameter's value, not a new value bound to its name, so an
-/// assignment or compound assignment to the parameter itself could only be lost. Changes in place (appending, element
-/// or field assignment) stay allowed; a parameter of type `int`, `float` or `bool` is the callee's own copy and may be
-/// rebound freely.
-pub fn caller_visible_mut_parameter_rebinding(name: &str, span: Span) -> CompileError {
-    CompileError::type_error(
-        format!("Cannot rebind the 'mut' parameter '{name}': its changes are visible to the caller"),
-        span,
-    )
-    .with_hint(format!(
-        "Change '{name}' in place (append to it, assign its elements or fields), or bind the new value to a new name"
-    ))
-    .with_note("The caller sees changes made to the value it passed, not a new value bound to the parameter's name")
-}
-
 /// How the hint of a refused hold on a caller-visible `mut` parameter spells an independent copy of its value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MutParameterCopy {
