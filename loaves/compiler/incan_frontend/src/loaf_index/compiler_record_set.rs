@@ -29,6 +29,7 @@ use crate::api_metadata::ApiDocumentation;
 use crate::library_manifest::executable_surface::ExecutableSurface;
 use incan_semantics_core::body_ir::RuntimeCallableBinding;
 
+mod declaration_records;
 mod runtime_bindings;
 pub(super) use runtime_bindings::read_runtime_bindings;
 
@@ -928,6 +929,7 @@ mod tests {
 
     use sha2::{Digest, Sha256};
 
+    use super::declaration_records::read_declaration_in;
     use super::runtime_bindings::read_runtime_bindings_in;
     use super::{
         Metadata, Projection, RecordEntry, RecordReads, RecordSet, open_value, read_group, read_summary,
@@ -1239,6 +1241,27 @@ mod tests {
         assert_eq!(
             records, 1,
             "native lowering read {records} records, {bytes} bytes; it needs the runtime bindings record alone"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_consumer_reads_one_declarations_signature_record_alone() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let manifest = surfaced_library()?;
+        let set = installed_library(root.path(), &manifest)?;
+        let dir = root.path().join("debug");
+        // The index admits an installed Loaf by its inventory summary before anything demands its records.
+        read_summary(&set, &dir, "prices")?.ok_or("the Loaf is installed")?;
+        let indexed = set.reads();
+        let (signatures, _) = read_declaration_in(&set, &dir, "prices", "declaration-signature", "prices::price")?
+            .ok_or("the signature record is installed")?;
+        assert_eq!(signatures.len(), 1, "one declaration named `prices::price`");
+        assert_eq!(signatures[0]["name"], "price", "the signature of `price`");
+        let (records, bytes) = (set.reads().records - indexed.records, set.reads().bytes - indexed.bytes);
+        assert_eq!(
+            records, 1,
+            "the consumer read {records} records, {bytes} bytes; it needs the signature record alone"
         );
         Ok(())
     }
