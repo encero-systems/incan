@@ -1,0 +1,183 @@
+"""
+Graph pages: a warm graph request answered from the bakery's records.
+
+A cold request prepares its graph as before, and its answer is published in the bakery as one page record under the
+request's identity, with the metadata of every file and directory its preparation observed and the snapshot it
+answered from. A warm request with the same identity reads that record, checks those metadata with status queries
+only, and answers from it: it prepares nothing, reads no source and hashes nothing. A changed, missing or unsettled
+input, another installation or another Oven makes the request cold again, and its answer replaces the page.
+
+The request identity covers the Oven program, the installation, the resolved path and every graph option; an answer
+within a page is selected by the request's ranking preferences, so `incan mcp` pages share the records the CLI writes.
+"""
+
+from rust::std::str import from_utf8
+from std.fs import Path
+from std.json import JsonValue, parse
+from bakery import bakery
+from core_process import executable
+from files import json_text
+from home import home
+from installation_page import admitted_identity
+from json_fields import required_items, required_text, string_value
+from observation import SETTLE_SECONDS, file_metadata, trace
+from pub::incan_platform.store import Lookup, begin, commit, lookup, owned, put
+from store_path_conversion import snapshot
+from toolchain import toolchain_directory
+from unit_freshness import fingerprint
+
+const PAGE_SCHEMA: str = "incan.graph.page/1"
+# How many preference selections one page keeps answers for; the oldest is dropped first.
+const ANSWERS: int = 8
+
+
+pub model GraphPage:
+    """A validated page: its request identity, the identity of the inputs it was answered from, and its snapshot."""
+
+    pub key: str
+    pub inputs: str
+    pub snapshot: str
+    # Each answer by its ranking preferences, and those preferences from the oldest answer to the newest.
+    pub answers: Dict[str, str] = {}
+    pub order: list[str] = []
+
+    pub def answer(self, preferences: Dict[str, int]) -> Option[str]:
+        """The page's answer for these ranking preferences, if it has one."""
+        return self.answers.get(preference_key(preferences))
+
+
+pub def request_key(parts: list[str]) -> Result[str, str]:
+    """
+    The identity of a graph request: the Oven program and installation answering it, and the request's own parts.
+
+    Status queries only: the program and the installation are named by their metadata and their admitted page.
+    """
+    program = Path(executable()?)
+    mut stamp = ""
+    if let Some(info) = file_metadata(program)?:
+        stamp = info.stamp()
+    directory = toolchain_directory()?
+    installation = admitted_identity(directory)?.unwrap_or("")
+    return fingerprint([PAGE_SCHEMA, program.0, stamp, directory.0, installation] + parts)
+
+
+pub def warm_page(key: str) -> Result[Option[GraphPage], str]:
+    """The page of `key` when every input it was answered from still has the metadata it had."""
+    match record(key)?:
+        None => return Ok(None)
+        Some(document) =>
+            for item in required_items(document, "inputs")?:
+                fields = item.expect_array().map_err((error) => error.message())?
+                path = string_value(fields[0])?
+                if current_stamp(Path(path))? != string_value(fields[1])?:
+                    trace(f"graph page {key[:12]}: {path} changed")
+                    return Ok(None)
+            return Ok(Some(page_of(key, document)?))
+
+
+pub def publish_page(
+    key: str,
+    observed: Dict[str, str],
+    snapshot_id: str,
+    preferences: Dict[str, int],
+    answer: str,
+) -> Result[bool, str]:
+    """
+    Publish `answer` in the page of `key`, beside the answers it already has for the same inputs.
+
+    1. Recheck every observed input: one that changed during the request, or an authored file that changed too
+       recently for its metadata to vouch for its bytes, publishes nothing. Files under the home are Oven's own
+       content-named publications, written once and replaced only by rename, so their metadata vouch at once.
+    2. Keep the page's other answers when it was answered from the same inputs, dropping the oldest beyond `ANSWERS`.
+    3. Replace the page in one transaction.
+    """
+    # 1. The metadata recorded are those of the inputs after the request, and only settled authored files are trusted.
+    owned = home()?.0 + "/"
+    mut inputs: list[JsonValue] = []
+    for path in sorted([name for name in observed.keys()]):
+        mut now = ""
+        match file_metadata(Path(path))?:
+            Some(found) =>
+                now = found.stamp()
+                fresh = not found.settled(SETTLE_SECONDS) and not path.startswith(owned)
+                if found.is_file() and (now != observed[path] or fresh):
+                    return Ok(false)
+            None =>
+                if observed[path] != "":
+                    return Ok(false)
+        inputs.append(JsonValue.array([JsonValue.string(path), JsonValue.string(now)]))
+    identity = fingerprint([key, json_text(JsonValue.array(inputs))?])?
+    # 2. Answers for other preferences survive while the inputs are the same.
+    mut answers: Dict[str, str] = {}
+    mut order: list[str] = []
+    if let Some(document) = record(key)?:
+        prior = page_of(key, document)?
+        if prior.inputs == identity:
+            answers = prior.answers
+            order = prior.order
+    selected = preference_key(preferences)
+    order = [item for item in order if item != selected] + [selected]
+    answers[selected] = answer
+    if len(order) > ANSWERS:
+        order = order[len(order) - ANSWERS:]
+    # 3. One record per request identity: a changed input replaces the page, it never adds one.
+    mut entries: list[JsonValue] = []
+    for item in order:
+        entries.append(JsonValue.object({"preferences": JsonValue.string(item), "answer": JsonValue.string(answers[item])}))
+    document = JsonValue.object(
+        {
+            "schema": JsonValue.string(PAGE_SCHEMA),
+            "identity": JsonValue.string(identity),
+            "snapshot": JsonValue.string(snapshot_id),
+            "inputs": JsonValue.array(inputs),
+            "answers": JsonValue.array(entries),
+        },
+    )
+    store = bakery()?
+    view = snapshot(store).map_err((error) => error.message())?
+    _ = commit(put(begin(view), page_name(key), json_text(document)?.encode("utf-8"))).map_err((error) => error.message())?
+    return Ok(true)
+
+
+def record(key: str) -> Result[Option[JsonValue], str]:
+    """The page record of `key` in the bakery, decoded; a page of another schema is no page."""
+    store = bakery()?
+    if not store.is_dir():
+        return Ok(None)
+    view = snapshot(store).map_err((error) => error.message())?
+    match lookup(view, page_name(key)).map_err((error) => error.message())?:
+        Lookup.Found(value) =>
+            text = str(from_utf8(owned(value)).map_err((error) => str(error))?)
+            document = parse(text).map_err((error) => error.message())?
+            if required_text(document, "schema")? != PAGE_SCHEMA:
+                return Ok(None)
+            return Ok(Some(document))
+        Lookup.Absent => return Ok(None)
+        Lookup.Deleted => return Ok(None)
+
+
+def page_of(key: str, document: JsonValue) -> Result[GraphPage, str]:
+    """A page record's identity, snapshot and answers."""
+    mut page = GraphPage(key=key, inputs=required_text(document, "identity")?, snapshot=required_text(document, "snapshot")?)
+    for entry in required_items(document, "answers")?:
+        selected = required_text(entry, "preferences")?
+        page.answers[selected] = required_text(entry, "answer")?
+        page.order.append(selected)
+    return Ok(page)
+
+
+def current_stamp(path: Path) -> Result[str, str]:
+    """A path's metadata as a page records them; empty when nothing is there."""
+    match file_metadata(path)?:
+        Some(info) => return Ok(info.stamp())
+        None => return Ok("")
+
+
+def preference_key(preferences: Dict[str, int]) -> str:
+    """Ranking preferences in a stable order, as one text."""
+    return ",".join([f"{name}={preferences[name]}" for name in sorted([name for name in preferences.keys()])])
+
+
+def page_name(key: str) -> str:
+    """The bakery record of one request's page."""
+    return f"incan.graph.page\t{key}"
