@@ -9,6 +9,7 @@ from std.primitives.crumb.hashes import HashResult, description_hash, model_hash
 from std.primitives.crumb.identity import member_identity, declaration_identity, declaration_preimage
 from std.primitives.crumb.identity import closed_selector, check_arity
 from std.primitives.crumb.spelling import selector_spelling
+from std.primitives.crumb.text_printer import print_comic
 from std.primitives.crumb.types import NominalKind, TypeNode
 from std.primitives.crumb.values import Projection
 from std.primitives.hash import sha256
@@ -17,6 +18,7 @@ from adaptation_cases import absent_value, convert
 from case_data import CaseOperation, HashKind, array, field, fields as fixture_fields, hex_bytes, node, nodes, text
 from corpus import CorpusCase
 from fixture_adapter import logical, logical_items, metadata, record
+from text_cases import case_context, corpus_document
 
 
 pub def twin_encode(item: CorpusCase) -> Result[Option[bytes], str]:
@@ -32,6 +34,7 @@ pub def twin_encode(item: CorpusCase) -> Result[Option[bytes], str]:
         CaseOperation.ValueRelation => return Ok(Some(relation_twin(item.document)?))
         CaseOperation.HashPreimage => return Ok(Some(hash_twin(item.document)?))
         CaseOperation.Adaptation => return Ok(Some(adaptation_twin(item.document)?))
+        CaseOperation.TextPrint => return Ok(Some(print_twin(item.document)?))
         _ => return Ok(None)
 
 
@@ -225,3 +228,11 @@ def changed(left: HashResult, right: HashResult) -> int:
     if left.digest == right.digest:
         return 0
     return 1
+
+
+def print_twin(document: JsonValue) -> Result[bytes, str]:
+    """Print the independently built typed document through the Incan COMIC printer."""
+    mut budget = twin_budget()?
+    context = case_context(document, budget)?
+    typed = corpus_document(field(document, "document")?, context, budget)?
+    return print_comic(typed, context, budget).map_err((error) => error.message())
