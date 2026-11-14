@@ -12,7 +12,9 @@ impl TypeChecker {
             traits: export.traits.clone(),
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             derives: export.derives.clone(),
-            fields: self.fields_from_manifest(&export.name, &export.fields, false),
+            // An omitted field is filled by the provider's published field-default frame, as for a class with private
+            // fields, so a default counts whether or not its value is materializable in the consumer.
+            fields: self.fields_from_manifest(&export.name, &export.fields, true),
             field_order: export.fields.iter().map(|field| field.name.clone()).collect(),
             properties: self.properties_from_manifest(&export.name, &export.properties),
             method_overloads,
