@@ -1,0 +1,172 @@
+"""The 0.6 installer installs a release served from disk, and refuses any file the release's checksums do not match."""
+
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from check_support import repository_root
+from check_test_support import Outcome
+
+const TARGET: str = "aarch64-apple-darwin"
+const ARCHIVE: str = "toolchain-aarch64-apple-darwin.tar.zst"
+const OVEN: str = "incan-aarch64-apple-darwin"
+const LANGUAGE_SERVER: str = "incan-lsp-aarch64-apple-darwin"
+
+
+def test_the_installer_installs_a_release_served_from_disk() -> Result[None, str]:
+    """
+    A release directory read through a `file://` URL is installed into the chosen home.
+
+    1. The installer runs the release's Oven once, on the release's archive, for the chosen home.
+    2. `incan`, `oven` and `incan-lsp` land in the home's `bin`.
+    3. It says where they are, how to put them on `PATH`, and that no release signature was checked.
+    4. A dry run names the release and writes nothing.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    release = release_directory(temporary.path(), "toolchain")?
+    home = temporary.path().joinpath("home")
+    outcome = install(f"file://{release.0}", home, [])?
+    assert outcome.code == 0, outcome.stderr
+    # 1. One install request, for this home and this release's archive.
+    requests = read(temporary.path().joinpath("requests"))?
+    assert requests.startswith(f"{home.0} toolchain install /") and requests.endswith(f"/{ARCHIVE}\n"), requests
+    # 2. The three programs are in the home's `bin`.
+    assert read(home.joinpath("bin/incan"))? == read(release.joinpath(OVEN))?
+    assert home.joinpath("bin/oven").is_symlink()
+    assert read(home.joinpath("bin/oven"))? == read(release.joinpath(OVEN))?
+    assert read(home.joinpath("bin/incan-lsp"))? == "language server\n"
+    # 3. The report names the directory, the `PATH` line and the signature state.
+    assert f"incan, oven and incan-lsp are in {home.0}/bin" in outcome.stdout, outcome.stdout
+    assert f"export PATH=\"{home.0}/bin:$PATH\"" in outcome.stdout, outcome.stdout
+    assert f"export INCAN_HOME=\"{home.0}\"" in outcome.stdout, outcome.stdout
+    assert "release signature: not verified" in outcome.stdout, outcome.stdout
+    # 4. A dry run resolves the same release without touching the home.
+    untouched = temporary.path().joinpath("dry-home")
+    dry = install(f"file://{release.0}", untouched, ["--dry-run"])?
+    assert dry.code == 0, dry.stderr
+    assert f"file://{release.0}/{ARCHIVE}" in dry.stdout, dry.stdout
+    assert not untouched.exists()
+    return Ok(None)
+
+
+def test_the_installer_refuses_a_file_its_checksums_do_not_match() -> Result[None, str]:
+    """
+    Every downloaded file is checked against the release's `SHA256SUMS` before anything runs.
+
+    1. An archive changed after the checksums were written is refused by name, and nothing is installed.
+    2. A file the checksums do not list is refused by name.
+    3. A release without `SHA256SUMS` is refused.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    release = release_directory(temporary.path(), "toolchain")?
+    home = temporary.path().joinpath("home")
+    # 1. A changed archive never reaches the Oven.
+    write(release.joinpath(ARCHIVE), "another toolchain")?
+    changed = install(release.0, home, [])?
+    assert changed.code == 1, changed.stdout
+    assert f"checksum mismatch for {ARCHIVE}" in changed.stderr, changed.stderr
+    assert not temporary.path().joinpath("requests").exists()
+    assert not home.joinpath("bin").exists()
+    # 2. An unlisted file has no checksum to meet.
+    shell(f"cd '{release.0}' && shasum -a 256 {OVEN} {ARCHIVE} > SHA256SUMS")?
+    unlisted = install(release.0, home, [])?
+    assert unlisted.code == 1, unlisted.stdout
+    assert f"SHA256SUMS does not list {LANGUAGE_SERVER}" in unlisted.stderr, unlisted.stderr
+    assert not temporary.path().joinpath("requests").exists()
+    # 3. Without the checksums nothing is trusted.
+    shell(f"rm '{release.0}/SHA256SUMS'")?
+    bare = install(release.0, home, [])?
+    assert bare.code == 1, bare.stdout
+    assert "SHA256SUMS" in bare.stderr, bare.stderr
+    return Ok(None)
+
+
+def test_the_installer_replaces_an_earlier_oven_only_when_the_install_succeeds() -> Result[None, str]:
+    """
+    A home that already holds an Oven is upgraded as a whole or left as it was.
+
+    1. A refused archive leaves the earlier `incan` in place.
+    2. An accepted one replaces `incan` and `incan-lsp`, and leaves nothing set aside.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    home = temporary.path().joinpath("home")
+    home.joinpath("bin").mkdir(true, true).map_err((error) => error.message())?
+    write(home.joinpath("bin/incan"), "earlier oven\n")?
+    write(home.joinpath("bin/incan-lsp"), "earlier language server\n")?
+    # 1. The stub Oven refuses an archive that says so.
+    refused_parent = temporary.path().joinpath("refused")
+    refused_parent.mkdir(true, true).map_err((error) => error.message())?
+    refused = release_directory(refused_parent, "refuse this toolchain")?
+    failed = install(refused.0, home, [])?
+    assert failed.code == 1, failed.stdout
+    assert "refused archive" in failed.stderr, failed.stderr
+    assert read(home.joinpath("bin/incan"))? == "earlier oven\n"
+    assert read(home.joinpath("bin/incan-lsp"))? == "earlier language server\n"
+    # 2. A good release replaces both.
+    release = release_directory(temporary.path(), "toolchain")?
+    outcome = install(release.0, home, [])?
+    assert outcome.code == 0, outcome.stderr
+    assert read(home.joinpath("bin/incan"))? == read(release.joinpath(OVEN))?
+    assert read(home.joinpath("bin/incan-lsp"))? == "language server\n"
+    names = shell(f"ls -A '{home.0}/bin'")?
+    assert names == "incan\nincan-lsp\noven\n", names
+    return Ok(None)
+
+
+def release_directory(parent: Path, archive: str) -> Result[Path, str]:
+    """
+    Lay out one release as it is published: the Oven, the language server, the archive and their checksums.
+
+    The Oven is a stub that records its home and arguments in the parent's `requests`, refuses an archive whose text
+    starts with `refuse`, and otherwise exposes itself as `incan` and `oven` in the home's `bin`, as an Oven does.
+    """
+    release = parent.joinpath("release")
+    release.mkdir(true, true).map_err((error) => error.message())?
+    record = parent.joinpath("requests")
+    mut stub = "#!/bin/sh\n"
+    stub += "printf '%s %s\\n' \"$INCAN_HOME\" \"$*\" >> '" + record.0 + "'\n"
+    stub += "[ \"$1 $2\" = 'toolchain install' ] || exit 2\n"
+    stub += "case \"$(cat \"$3\")\" in refuse*) echo 'refused archive' >&2; exit 1 ;; esac\n"
+    stub += "mkdir -p \"$INCAN_HOME/bin\"\n"
+    stub += "[ ! -e \"$INCAN_HOME/bin/incan\" ] || { echo 'incan exists and is not this Oven' >&2; exit 1; }\n"
+    stub += "cp \"$0\" \"$INCAN_HOME/bin/incan\"\n"
+    stub += "[ -L \"$INCAN_HOME/bin/oven\" ] || ln -s incan \"$INCAN_HOME/bin/oven\"\n"
+    stub += "echo \"entry points: oven and incan in $INCAN_HOME/bin\"\n"
+    write(release.joinpath(OVEN), stub)?
+    write(release.joinpath(LANGUAGE_SERVER), "language server\n")?
+    write(release.joinpath(ARCHIVE), archive)?
+    shell(f"cd '{release.0}' && shasum -a 256 {OVEN} {LANGUAGE_SERVER} {ARCHIVE} > SHA256SUMS")?
+    return Ok(release)
+
+
+def install(release: str, home: Path, options: list[str]) -> Result[Outcome, str]:
+    """Run the checked-in installer on one release for one home, with a `PATH` that does not hold that home."""
+    script = repository_root()?.joinpath("workspaces/release/install-incan.sh")
+    mut command = Command.new("bash")
+    command.arg(script.0).arg("--release").arg(release).arg("--incan-home").arg(home.0).arg("--target").arg(TARGET)
+    for option in options:
+        command.arg(option)
+    command.env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+    command.env_remove("INCAN_HOME")
+    output = command.output().map_err((error) => error.to_string())?
+    stdout = RustString.from_utf8(output.stdout).map_err((error) => error.to_string())?
+    stderr = RustString.from_utf8(output.stderr).map_err((error) => error.to_string())?
+    return Ok(Outcome(code=output.status.code().unwrap_or(-1), stdout=stdout, stderr=stderr))
+
+
+def shell(script: str) -> Result[str, str]:
+    """Run one fixture step through `sh` and return its output."""
+    output = Command.new("sh").arg("-c").arg(script).output().map_err((error) => error.to_string())?
+    if not output.status.success():
+        return Err(RustString.from_utf8(output.stderr).map_err((error) => error.to_string())?)
+    return RustString.from_utf8(output.stdout).map_err((error) => error.to_string())
+
+
+def read(path: Path) -> Result[str, str]:
+    """Read a fixture file as strict UTF-8."""
+    return path.read_text("utf-8", "strict").map_err((error) => error.message())
+
+
+def write(path: Path, text: str) -> Result[None, str]:
+    """Write a fixture file as strict UTF-8."""
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())

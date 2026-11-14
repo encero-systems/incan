@@ -1,32 +1,38 @@
 #!/usr/bin/env bash
+# Install an Incan 0.6 release: the `incan` program (which is also `oven`), the language server and the toolchain.
+#
+# A release is one directory, read from a URL or from disk, that holds for each host target:
+#
+#   SHA256SUMS                    one `<sha256>  <name>` line for each file below
+#   incan-<target>                Oven, the program that answers to `incan` and `oven`
+#   incan-lsp-<target>            the language server
+#   toolchain-<target>.tar.zst    the toolchain archive `incan toolchain install` reads
+#
+# The installer downloads the three files for this host, checks each against `SHA256SUMS`, and runs the downloaded
+# Oven's `toolchain install` on the archive. That command checks the local Rust prerequisite, verifies the toolchain,
+# and puts `incan` and `oven` in `INCAN_HOME/bin`; the installer adds `incan-lsp` beside them.
 set -euo pipefail
 
-default_manifest_url="https://github.com/encero-systems/incan/releases/latest/download/manifest.json"
-manifest_ref="${INCAN_TOOLCHAIN_MANIFEST:-$default_manifest_url}"
+releases="https://github.com/encero-systems/incan/releases"
+release="${INCAN_RELEASE:-$releases/latest/download}"
 incan_home="${INCAN_HOME:-$HOME/.incan}"
-bin_dir="${INCAN_BIN_DIR:-$HOME/.local/bin}"
-skip_rust_install="${INCAN_SKIP_RUST_INSTALL:-false}"
-rustup_init_ref="${INCAN_RUSTUP_INIT:-https://sh.rustup.rs}"
-target_override=""
-archive_override=""
+target=""
 dry_run="false"
 
 usage() {
   cat <<'USAGE'
-Install the Incan toolchain from a versioned release manifest.
+Install the Incan toolchain from a release.
 
 Usage:
   install-incan.sh [options]
 
 Options:
-  --manifest <URL|PATH>   Release manifest to use (default: GitHub Releases latest manifest)
-  --target <TRIPLE>       Host target override for tests or cross-install staging
-  --archive <PATH>        Use an already-downloaded archive while still verifying the manifest checksum
-  --incan-home <PATH>     toolchain install root (default: $INCAN_HOME or ~/.incan)
-  --bin-dir <PATH>        Directory where command symlinks are created (default: $INCAN_BIN_DIR or ~/.local/bin)
-  --skip-rust             Do not install or update the Rust backend toolchain
-  --dry-run               Resolve manifest and target without downloading, extracting, or writing files
-  -h, --help              Show this help
+  --version <TAG>       Install the release with this tag instead of the latest one
+  --release <URL|DIR>   Read the release from this URL or directory (default: $INCAN_RELEASE or the latest release)
+  --incan-home <PATH>   Install into this home (default: $INCAN_HOME or ~/.incan)
+  --target <TRIPLE>     Install this host target's files instead of the detected one
+  --dry-run             Print what would be downloaded and where it would go, and write nothing
+  -h, --help            Show this help
 USAGE
 }
 
@@ -35,47 +41,17 @@ fail() {
   exit 1
 }
 
-truthy() {
-  case "${1:-}" in
-    1|true|TRUE|yes|YES|on|ON) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-has_command() {
-  command -v "$1" >/dev/null 2>&1
-}
-
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --manifest)
-      [ "$#" -ge 2 ] || fail "--manifest requires a value"
-      manifest_ref="$2"
+    --version|--release|--incan-home|--target)
+      [ "$#" -ge 2 ] || fail "$1 requires a value"
+      case "$1" in
+        --version) release="$releases/download/$2" ;;
+        --release) release="${2%/}" ;;
+        --incan-home) incan_home="$2" ;;
+        --target) target="$2" ;;
+      esac
       shift 2
-      ;;
-    --target)
-      [ "$#" -ge 2 ] || fail "--target requires a value"
-      target_override="$2"
-      shift 2
-      ;;
-    --archive)
-      [ "$#" -ge 2 ] || fail "--archive requires a value"
-      archive_override="$2"
-      shift 2
-      ;;
-    --incan-home)
-      [ "$#" -ge 2 ] || fail "--incan-home requires a value"
-      incan_home="$2"
-      shift 2
-      ;;
-    --bin-dir)
-      [ "$#" -ge 2 ] || fail "--bin-dir requires a value"
-      bin_dir="$2"
-      shift 2
-      ;;
-    --skip-rust)
-      skip_rust_install="true"
-      shift
       ;;
     --dry-run)
       dry_run="true"
@@ -91,411 +67,134 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-require_command() {
-  has_command "$1" || fail "required command not found: $1"
-}
-
 detect_target() {
   local os arch
   os="$(uname -s)"
   arch="$(uname -m)"
   case "${os}:${arch}" in
-    Darwin:arm64|Darwin:aarch64) printf '%s\n' "aarch64-apple-darwin" ;;
-    Darwin:x86_64) printf '%s\n' "x86_64-apple-darwin" ;;
-    Linux:x86_64|Linux:amd64) printf '%s\n' "x86_64-unknown-linux-gnu" ;;
-    Linux:arm64|Linux:aarch64) fail "Linux arm64 toolchain archives are not shipped in 0.4; use a source build or x86_64 Linux host for now" ;;
-    MINGW*|MSYS*|CYGWIN*|Windows_NT:*) fail "native Windows is not supported by the 0.4 toolchain installer; use WSL2 for now" ;;
-    *) fail "unsupported host: ${os} ${arch}" ;;
+    Darwin:arm64|Darwin:aarch64) printf 'aarch64-apple-darwin\n' ;;
+    Linux:x86_64|Linux:amd64) printf 'x86_64-unknown-linux-gnu\n' ;;
+    *) fail "no Incan release is built for this host: ${os} ${arch}" ;;
   esac
 }
 
-copy_or_download() {
-  local ref="$1"
-  local out="$2"
-  case "$ref" in
-    http://*|https://*)
-      require_command curl
-      curl -fL --progress-bar "$ref" -o "$out"
-      ;;
-    file://*)
-      cp "${ref#file://}" "$out"
+# Copy one release file to `out`, from a URL or a directory.
+fetch() {
+  local name="$1" out="$2"
+  case "$release" in
+    http://*|https://*|file://*)
+      command -v curl >/dev/null 2>&1 || fail "required command not found: curl"
+      curl -fsSL "$release/$name" -o "$out" || fail "cannot download $release/$name"
       ;;
     *)
-      cp "$ref" "$out"
+      cp "$release/$name" "$out" 2>/dev/null || fail "cannot read $release/$name"
       ;;
   esac
-}
-
-json_top_value() {
-  local file="$1"
-  local field="$2"
-  if command -v jq >/dev/null 2>&1; then
-    jq -r --arg field "$field" '.[$field] // empty' "$file"
-  else
-    require_command python3
-    python3 - "$file" "$field" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    payload = json.load(handle)
-value = payload.get(sys.argv[2], "")
-if isinstance(value, (dict, list)):
-    print(json.dumps(value, separators=(",", ":")))
-else:
-    print(value)
-PY
-  fi
-}
-
-json_host_value() {
-  local file="$1"
-  local target="$2"
-  local field="$3"
-  if command -v jq >/dev/null 2>&1; then
-    jq -r --arg target "$target" --arg field "$field" '.hosts[$target][$field] // empty' "$file"
-  else
-    require_command python3
-    python3 - "$file" "$target" "$field" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    payload = json.load(handle)
-value = payload.get("hosts", {}).get(sys.argv[2], {}).get(sys.argv[3], "")
-if isinstance(value, (dict, list)):
-    print(json.dumps(value, separators=(",", ":")))
-else:
-    print(value)
-PY
-  fi
-}
-
-json_command_path() {
-  local file="$1"
-  local target="$2"
-  local command_name="$3"
-  if command -v jq >/dev/null 2>&1; then
-    jq -r --arg target "$target" --arg command "$command_name" '.hosts[$target].commands[$command] // empty' "$file"
-  else
-    require_command python3
-    python3 - "$file" "$target" "$command_name" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    payload = json.load(handle)
-print(payload.get("hosts", {}).get(sys.argv[2], {}).get("commands", {}).get(sys.argv[3], ""))
-PY
-  fi
-}
-
-json_commands() {
-  local file="$1"
-  if command -v jq >/dev/null 2>&1; then
-    jq -r '.commands[]?' "$file"
-  else
-    require_command python3
-    python3 - "$file" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    payload = json.load(handle)
-for command_name in payload.get("commands", []):
-    print(command_name)
-PY
-  fi
-}
-
-json_hosts() {
-  local file="$1"
-  if command -v jq >/dev/null 2>&1; then
-    jq -r '.hosts | keys[]?' "$file"
-  else
-    require_command python3
-    python3 - "$file" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    payload = json.load(handle)
-for host in payload.get("hosts", {}):
-    print(host)
-PY
-  fi
-}
-
-json_rust_toolchain_value() {
-  local file="$1"
-  local field="$2"
-  if command -v jq >/dev/null 2>&1; then
-    jq -r --arg field "$field" '.rust_toolchain[$field] // empty' "$file"
-  else
-    require_command python3
-    python3 - "$file" "$field" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    payload = json.load(handle)
-value = payload.get("rust_toolchain", {}).get(sys.argv[2], "")
-if isinstance(value, (dict, list)):
-    print(json.dumps(value, separators=(",", ":")))
-else:
-    print(value)
-PY
-  fi
-}
-
-json_rust_targets() {
-  local file="$1"
-  if command -v jq >/dev/null 2>&1; then
-    jq -r '.rust_toolchain.targets[]?' "$file"
-  else
-    require_command python3
-    python3 - "$file" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    payload = json.load(handle)
-for target in payload.get("rust_toolchain", {}).get("targets", []):
-    print(target)
-PY
-  fi
 }
 
 sha256_file() {
-  local file="$1"
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$file" | awk '{print $1}'
+    sha256sum "$1" | awk '{print $1}'
   elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$file" | awk '{print $1}'
+    shasum -a 256 "$1" | awk '{print $1}'
   else
     fail "required command not found: sha256sum or shasum"
   fi
 }
 
-# Install rustup itself, without giving it a default toolchain.
+# The release-signature hook.
 #
-# Incan provisions the exact channel it needs into its own Rustup home immediately after this. Letting rustup-init
-# also install a default toolchain would download the very same compiler a second time, into a second location, so
-# a machine with no Rust would pay twice for one toolchain. `--default-toolchain none` installs only rustup, and
-# the caller reports how to set up a default afterwards for anyone who wants Rust for their own use.
-install_rustup() {
-  printf 'Installing rustup (Incan provisions its own Rust toolchain separately)...\n'
-  case "$rustup_init_ref" in
-    http://*|https://*)
-      require_command curl
-      curl --proto '=https' --tlsv1.2 -sSf "$rustup_init_ref" | sh -s -- -y --profile minimal --default-toolchain none
-      ;;
-    file://*)
-      sh "${rustup_init_ref#file://}" -y --profile minimal --default-toolchain none
-      ;;
-    *)
-      sh "$rustup_init_ref" -y --profile minimal --default-toolchain none
-      ;;
-  esac
-  export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
-  rustup_was_bootstrapped="true"
+# `SHA256SUMS` is the one file every other download is checked against, so a signed release signs that file, and this
+# is the one place the installer verifies it: before any checksum in it is believed. It receives the downloaded
+# `SHA256SUMS` and must refuse (`fail`) a release whose signature does not verify against the release trust root.
+# This installer checks checksums only, and says so.
+verify_release_signature() {
+  local sums="$1"
+  [ -s "$sums" ] || fail "the release's SHA256SUMS is empty"
+  printf 'release signature: not verified (this installer checks SHA-256 checksums only)\n'
 }
 
-# Run rustup against Incan's own Rustup home, ignoring ambient toolchain selection.
-#
-# `RUSTUP_TOOLCHAIN` (and a directory `rust-toolchain` override) outrank a home's default, so leaving either in
-# place would make rustup look inside Incan's home for a toolchain the user selected globally, which is not there.
-# Make `rust-lld` loadable when its toolchain ships LLVM as a dylib it cannot find.
-#
-# Rust 1.98.0 for aarch64-apple-darwin links `rust-lld` against `libLLVM.dylib` with an `@rpath` that resolves to
-# `lib/rustlib/<target>/lib/`, but ships the dylib only in the toolchain's own `lib/`. Nothing then links for a target
-# that uses `rust-lld` -- on Incan that is the `wasm32-wasip1` vocab companion, which fails with
-# "Library not loaded: @rpath/libLLVM.dylib". Neighboring releases are unaffected: earlier ones link LLVM statically
-# and nightly ships the dylib in both locations.
-#
-# Linking the shipped dylib into the location its own rpath names is the smallest repair, and it is confined to the
-# Incan-owned toolchain. It is a no-op wherever the file is already present or LLVM is static, so it needs no version
-# test and will simply stop applying once upstream ships the copy.
-repair_rust_lld_llvm_rpath() {
-  channel="$1"
-  toolchain_root="$(incan_rustup which --toolchain "$channel" rustc 2>/dev/null)" || return 0
-  toolchain_root="$(dirname "$(dirname "$toolchain_root")")"
-  [ -d "$toolchain_root" ] || return 0
-  source_lib="${toolchain_root}/lib/libLLVM.dylib"
-  [ -f "$source_lib" ] || return 0
-  for target_lib_dir in "${toolchain_root}"/lib/rustlib/*/lib; do
-    [ -d "$target_lib_dir" ] || continue
-    [ -x "$(dirname "$target_lib_dir")/bin/rust-lld" ] || continue
-    [ -e "${target_lib_dir}/libLLVM.dylib" ] && continue
-    ln -sf "$source_lib" "${target_lib_dir}/libLLVM.dylib" 2>/dev/null || true
+# Download one release file and refuse it unless `SHA256SUMS` lists it with the digest it has.
+fetch_verified() {
+  local name="$1" out="$2" expected actual
+  expected="$(awk -v name="$name" '$2 == name || $2 == "*" name { print $1 }' "$sums")"
+  [ -n "$expected" ] || fail "SHA256SUMS does not list $name"
+  printf 'downloading %s\n' "$name"
+  fetch "$name" "$out"
+  actual="$(sha256_file "$out")"
+  [ "$actual" = "$expected" ] || fail "checksum mismatch for $name: SHA256SUMS records $expected, the download is $actual"
+}
+
+# Put the earlier programs back after a refused installation.
+restore_earlier() {
+  for name in incan incan-lsp; do
+    if [ -e "$bin_dir/.$name.earlier" ]; then
+      rm -f "$bin_dir/$name"
+      mv "$bin_dir/.$name.earlier" "$bin_dir/$name"
+    fi
   done
 }
 
-incan_rustup() {
-  env -u RUSTUP_TOOLCHAIN RUSTUP_HOME="$incan_rustup_home" rustup "$@"
-}
-
-ensure_rust_backend() {
-  local manifest_file="$1"
-  local channel
-  channel="$(json_rust_toolchain_value "$manifest_file" "channel")"
-  [ -n "$channel" ] || channel="stable"
-
-  if truthy "$skip_rust_install"; then
-    printf 'Rust backend provisioning skipped.\n'
-    return 0
-  fi
-
-  if ! has_command rustup; then
-    install_rustup
-  fi
-  has_command rustup || fail "rustup was not available after Rust backend installation"
-
-  # Incan's Loafs are sealed against the exact compiler that baked them, so building with whatever toolchain the
-  # user has made their global default fails closed with a Loaf-incompatibility error. Provision the release's own
-  # required channel into an Incan-owned Rustup home and make it the default *there only*.
-  #
-  # An existing Rustup installation is never reconfigured: its default toolchain, targets and settings are left
-  # exactly as the user set them. (Installing Rustup in the first place, above, necessarily creates one for a
-  # machine that had none.)
-  incan_rustup_home="${incan_home}/rust"
-  mkdir -p "$incan_rustup_home"
-  printf 'Provisioning Incan-owned Rust toolchain %s...\n' "$channel"
-  incan_rustup toolchain install "$channel" --profile minimal \
-    || fail "could not install the Incan-owned Rust toolchain ${channel}"
-  incan_rustup default "$channel" \
-    || fail "could not select the Incan-owned Rust toolchain ${channel}"
-
-  # Record which channel this home carries. The compiler reads the installed layout directly rather than asking
-  # rustup, because `RUSTUP_TOOLCHAIN` and directory overrides would otherwise let ambient configuration pick a
-  # toolchain that does not exist here. This pointer keeps that resolution exact when an upgrade leaves an older
-  # channel behind.
-  printf '%s\n' "$channel" > "${incan_rustup_home}/incan-channel.txt"
-
-  incan_rustc="$(incan_rustup which --toolchain "$channel" rustc)" \
-    || fail "the Incan-owned Rust toolchain did not provide rustc"
-  incan_cargo="$(incan_rustup which --toolchain "$channel" cargo)" \
-    || fail "the Incan-owned Rust toolchain did not provide cargo"
-
-  printf 'Rust backend (Incan-owned, independent of your default toolchain):\n'
-  printf '  rustc: %s\n' "$("$incan_rustc" --version)"
-  printf '  cargo: %s\n' "$("$incan_cargo" --version)"
-  while IFS= read -r rust_target; do
-    [ -n "$rust_target" ] || continue
-    printf '  target: %s\n' "$rust_target"
-    incan_rustup target add --toolchain "$channel" "$rust_target" \
-      || fail "could not add Rust target ${rust_target} to the Incan-owned toolchain"
-  done <<RUST_TARGETS
-$(json_rust_targets "$manifest_file")
-RUST_TARGETS
-
-  repair_rust_lld_llvm_rpath "$channel"
-
-  # Incan deliberately leaves the machine without a default toolchain when it installed rustup itself, so nothing
-  # is downloaded twice and no default is chosen on the user's behalf. Say so, and how to pick one.
-  if truthy "${rustup_was_bootstrapped:-false}"; then
-    printf 'rustup is installed with no default toolchain; Incan uses its own copy.\n'
-    printf 'To use Rust directly as well, pick a default:\n'
-    printf '  rustup default stable\n'
+# Say how a new shell finds the installed commands and their home.
+path_advice() {
+  local profile="your shell's startup file"
+  case "${SHELL:-}" in
+    */zsh) profile="~/.zshrc" ;;
+    */bash) profile="~/.bashrc" ;;
+  esac
+  case ":${PATH}:" in
+    *":${bin_dir}:"*) ;;
+    *)
+      printf '%s is not on PATH. Add this line to %s:\n' "$bin_dir" "$profile"
+      printf '  export PATH="%s:$PATH"\n' "$bin_dir"
+      ;;
+  esac
+  if [ "$incan_home" != "$HOME/.incan" ]; then
+    printf 'This home is not the default ~/.incan. Add this line as well:\n'
+    printf '  export INCAN_HOME="%s"\n' "$incan_home"
   fi
 }
 
-target="${target_override:-$(detect_target)}"
-tmp_dir="$(mktemp -d)"
-trap 'rm -rf "$tmp_dir"' EXIT
-manifest_file="${tmp_dir}/manifest.json"
-copy_or_download "$manifest_ref" "$manifest_file"
+[ -n "$target" ] || target="$(detect_target)"
+bin_dir="$incan_home/bin"
+oven_name="incan-$target"
+lsp_name="incan-lsp-$target"
+archive_name="toolchain-$target.tar.zst"
 
-schema_version="$(json_top_value "$manifest_file" "schema_version")"
-[ "$schema_version" = "1" ] || fail "unsupported toolchain manifest schema_version: ${schema_version:-missing}"
-
-toolchain_version="$(json_top_value "$manifest_file" "toolchain_version")"
-[ -n "$toolchain_version" ] || fail "manifest is missing toolchain_version"
-
-archive_url="$(json_host_value "$manifest_file" "$target" "archive_url")"
-archive_sha256="$(json_host_value "$manifest_file" "$target" "archive_sha256")"
-archive_format="$(json_host_value "$manifest_file" "$target" "archive_format")"
-if [ -z "$archive_url" ] || [ -z "$archive_sha256" ]; then
-  printf 'Available targets:\n' >&2
-  json_hosts "$manifest_file" >&2
-  fail "manifest does not contain an archive for target ${target}"
-fi
-[ "${archive_format:-tar.gz}" = "tar.gz" ] || fail "unsupported archive format for ${target}: ${archive_format}"
-
-printf 'Incan toolchain %s\n' "$toolchain_version"
+printf 'Incan release %s\n' "$release"
 printf '  target:     %s\n' "$target"
-printf '  archive:    %s\n' "$archive_url"
 printf '  incan home: %s\n' "$incan_home"
-printf '  bin dir:    %s\n' "$bin_dir"
-
 if [ "$dry_run" = "true" ]; then
+  for name in SHA256SUMS "$oven_name" "$lsp_name" "$archive_name"; do
+    printf '  would read: %s/%s\n' "$release" "$name"
+  done
   printf 'Dry run only; no files were written.\n'
   exit 0
 fi
 
-ensure_rust_backend "$manifest_file"
-require_command tar
-archive_file="${archive_override:-${tmp_dir}/toolchain.tar.gz}"
-if [ -n "$archive_override" ]; then
-  [ -f "$archive_override" ] || fail "archive override does not exist: $archive_override"
-else
-  printf 'Downloading toolchain archive...\n'
-  copy_or_download "$archive_url" "$archive_file"
-fi
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+sums="$work/SHA256SUMS"
+fetch SHA256SUMS "$sums"
+verify_release_signature "$sums"
+fetch_verified "$oven_name" "$work/incan"
+fetch_verified "$lsp_name" "$work/incan-lsp"
+fetch_verified "$archive_name" "$work/$archive_name"
+chmod 755 "$work/incan" "$work/incan-lsp"
 
-printf 'Verifying toolchain archive checksum...\n'
-actual_sha256="$(sha256_file "$archive_file")"
-[ "$actual_sha256" = "$archive_sha256" ] || fail "checksum mismatch for ${archive_file}: expected ${archive_sha256}, got ${actual_sha256}"
-
-toolchain_dir="${incan_home}/toolchains/${toolchain_version}"
-if [ -e "$toolchain_dir" ]; then
-  fail "toolchain directory already exists: ${toolchain_dir}"
-fi
-extract_dir="${tmp_dir}/toolchain"
-mkdir -p "$extract_dir"
-printf 'Extracting toolchain archive...\n'
-tar -xzf "$archive_file" -C "$extract_dir"
-
-while IFS= read -r command_name; do
-  [ -n "$command_name" ] || continue
-  command_path="$(json_command_path "$manifest_file" "$target" "$command_name")"
-  [ -n "$command_path" ] || command_path="bin/${command_name}"
-  source_path="${extract_dir}/${command_path}"
-  [ -f "$source_path" ] || fail "archive did not contain ${command_name} at ${command_path}"
-done <<COMMANDS
-$(json_commands "$manifest_file")
-COMMANDS
-
-[ -f "${extract_dir}/share/incan/sdk/sdk-inventory.json" ] \
-  || fail "archive did not contain share/incan/sdk/sdk-inventory.json"
-for support_crate in incan_lang incan_derive incan_std_primitives incan_std_data incan_std_async incan_std_web incan_std_testing incan_vocab incan_web_macros; do
-  [ -f "${extract_dir}/crates/${support_crate}/Cargo.toml" ] || fail "archive did not contain crates/${support_crate}/Cargo.toml"
-done
-[ -f "${extract_dir}/crates/Cargo.toml" ] || fail "archive did not contain crates/Cargo.toml"
-
-mkdir -p "$(dirname "$toolchain_dir")" "$bin_dir"
-mv "$extract_dir" "$toolchain_dir"
-
-while IFS= read -r command_name; do
-  [ -n "$command_name" ] || continue
-  command_path="$(json_command_path "$manifest_file" "$target" "$command_name")"
-  [ -n "$command_path" ] || command_path="bin/${command_name}"
-  source_path="${toolchain_dir}/${command_path}"
-  chmod +x "$source_path"
-  link_path="${bin_dir}/${command_name}"
-  if [ -e "$link_path" ] && [ ! -L "$link_path" ]; then
-    fail "refusing to replace non-symlink command path: ${link_path}"
+# An Oven never replaces another Oven's entry point, so an earlier one is set aside until this one is installed.
+mkdir -p "$bin_dir"
+for name in incan incan-lsp; do
+  if [ -e "$bin_dir/$name" ] || [ -L "$bin_dir/$name" ]; then
+    mv "$bin_dir/$name" "$bin_dir/.$name.earlier"
   fi
-  ln -sfn "$source_path" "$link_path"
-  printf 'Linked %s -> %s\n' "$link_path" "$source_path"
-done <<COMMANDS
-$(json_commands "$manifest_file")
-COMMANDS
-
-current_link="${incan_home}/current"
-if [ -e "$current_link" ] && [ ! -L "$current_link" ]; then
-  fail "refusing to replace non-symlink current toolchain path: ${current_link}"
+done
+if ! INCAN_HOME="$incan_home" "$work/incan" toolchain install "$work/$archive_name"; then
+  restore_earlier
+  fail "the toolchain was not installed"
 fi
-ln -sfn "$toolchain_dir" "$current_link"
+cp "$work/incan-lsp" "$bin_dir/incan-lsp"
+rm -f "$bin_dir/.incan.earlier" "$bin_dir/.incan-lsp.earlier"
 
-printf 'Installed Incan toolchain %s into %s\n' "$toolchain_version" "$toolchain_dir"
+printf 'incan, oven and incan-lsp are in %s\n' "$bin_dir"
+path_advice
