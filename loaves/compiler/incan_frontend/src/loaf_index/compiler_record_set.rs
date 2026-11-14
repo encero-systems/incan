@@ -178,6 +178,11 @@ pub(super) fn summary(dir: &Path, name: &str) -> Result<Option<Summary>, LoafInd
     let Some(set) = installed().map_err(|reason| unreadable(dir, name, reason))? else {
         return Ok(None);
     };
+    read_summary(set, dir, name)
+}
+
+/// Read the inventory record of one Loaf group of `set`.
+fn read_summary(set: &RecordSet, dir: &Path, name: &str) -> Result<Option<Summary>, LoafIndexError> {
     let profile = dir
         .file_name()
         .and_then(|value| value.to_str())
@@ -793,7 +798,7 @@ mod tests {
 
     use sha2::{Digest, Sha256};
 
-    use super::{Metadata, Projection, RecordEntry, RecordReads, RecordSet, open_value, read_group};
+    use super::{Metadata, Projection, RecordEntry, RecordReads, RecordSet, open_value, read_group, read_summary};
     use crate::api_metadata::{
         CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
     };
@@ -989,6 +994,28 @@ mod tests {
         assert_eq!(
             documented.contract_metadata, original,
             "a documented read gives back the checked API with its documentation"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_inventory_summary_is_read_once_per_process() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let metadata = probe_metadata()?;
+        let expected = RecordReads {
+            records: 1,
+            bytes: metadata.len(),
+        };
+        let set = record_set(root.path(), "probe_loaf", &[("metadata", metadata)])?;
+        let dir = root.path().join("debug");
+        for _ in 0..2 {
+            let summary = read_summary(&set, &dir, "probe_loaf")?.ok_or("the group is installed")?;
+            assert_eq!(summary.identity.name, "probe_loaf");
+        }
+        assert_eq!(
+            set.reads(),
+            expected,
+            "a summary this process already authenticated is not read or hashed again"
         );
         Ok(())
     }
