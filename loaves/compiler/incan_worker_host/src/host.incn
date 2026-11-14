@@ -59,13 +59,9 @@ pub model HostSettings:
     pub ready: str
     # The private directory of the home the worker serves; once it is gone, the worker retires.
     pub home: str
-    # The physical footprint after process start, in bytes; negative when it cannot be read.
-    pub baseline: int
     pub bounds: Bounds
     # The only user served; `None` serves the user that owns the socket, which is the worker's own.
     pub owner: Option[u32]
-    # The bytes in live allocations after process start; negative when they cannot be read.
-    pub live_baseline: int = -1
 
 
 pub enum Phase:
@@ -354,11 +350,10 @@ pub class WorkerHost:
         self.phase = Phase.Draining
 
 
-pub def start(arguments: list[str], baseline: int, live_baseline: int = -1) -> Result[WorkerHost, str]:
+pub def start(arguments: list[str]) -> Result[WorkerHost, str]:
     """
-    Start the worker host of `--resident SOCKET GENERATION READY HOME`, whose physical footprint after process start
-    was `baseline` bytes, `live_baseline` of them in live allocations (each negative when unknown). HOME is the
-    private directory of the home the worker serves.
+    Start the worker host of `--resident SOCKET GENERATION READY HOME`. HOME is the private directory of the home the
+    worker serves.
 
     1. The endpoints and the home are absolute, because the worker leaves its caller's directory.
     2. A worker can outlive the project that started it, so its own directory is the root.
@@ -378,8 +373,6 @@ pub def start(arguments: list[str], baseline: int, live_baseline: int = -1) -> R
             generation=arguments[1],
             ready=arguments[2],
             home=arguments[3],
-            baseline=baseline,
-            live_baseline=live_baseline,
             bounds=Bounds(idle_millis=IDLE_SECONDS * 1000, margin=FOOTPRINT_MARGIN, ceiling=footprint_ceiling()),
             owner=None,
         ),
@@ -407,7 +400,7 @@ pub def host_for(settings: HostSettings) -> Result[WorkerHost, str]:
         socket=bound,
         listener=listener,
         owner=served_owner(bound.uid, settings.owner),
-        policy=lifecycle(settings.baseline, settings.bounds, settings.live_baseline),
+        policy=lifecycle(settings.bounds),
         observer=worker_observer(),
     )
     # 2. A worker that cannot announce itself is never sent a request.
