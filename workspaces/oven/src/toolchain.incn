@@ -19,6 +19,9 @@ Its description is `<home>/toolchains/<toolchain>/toolchain.json` (`incan.toolch
   on macOS).
 - `codegraph_on_request`: this compiler accepts `--no-codegraph`, so native compilation and graph publication have
   separate proofs. Its absence preserves bootstrap compatibility with the preceding Oven generation.
+- `closure_anchors`: this compiler accepts `--toolchain-root` and `--bakery-root` and publishes anchored native
+  closures. Its absence keeps those options away from a driver that predates them, as in a release's source closure,
+  which the preceding release's driver builds.
 
 Every path is relative to the toolchain directory, which is what makes a toolchain relocatable; an absolute path is
 used as written (a bootstrap home that has not been packed).
@@ -344,6 +347,7 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             search=[located(directory, item) for item in search],
             registry_units=located(directory, text_field(document, "registry_units", [])?),
             codegraph_on_request=optional_flag(document, "codegraph_on_request")?,
+            closure_anchors=optional_flag(document, "closure_anchors")?,
             console="",
             worker_generation="",
             native_closures=NativeClosureInput(),

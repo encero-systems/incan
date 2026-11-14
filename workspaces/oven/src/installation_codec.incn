@@ -11,7 +11,7 @@ from frozen_inputs import Document
 from page_values import read_value, write_value
 from payload_types import InstalledPayload, PayloadAdmission
 
-pub const PROFILE: str = "incan.installation-page/19"
+pub const PROFILE: str = "incan.installation-page/20"
 
 
 pub model StandardManifest:
@@ -160,6 +160,7 @@ def read_toolchain(mut reader: Reader) -> Result[InstalledCompiler, str]:
             registry_units=reader.text()?,
             registry_units_identity=reader.text()?,
             codegraph_on_request=reader.count(1)? == 1,
+            closure_anchors=reader.count(1)? == 1,
             registry_lock=reader.text()?,
             c_compiler=reader.text()?,
             target=reader.text()?,
@@ -189,6 +190,10 @@ def write_toolchain(buffer: _BytesIO, toolchain: InstalledCompiler) -> Result[No
     put_text(buffer, toolchain.registry_units)?
     put_text(buffer, toolchain.registry_units_identity)?
     if toolchain.codegraph_on_request:
+        put_number(buffer, 1)?
+    else:
+        put_number(buffer, 0)?
+    if toolchain.closure_anchors:
         put_number(buffer, 1)?
     else:
         put_number(buffer, 0)?

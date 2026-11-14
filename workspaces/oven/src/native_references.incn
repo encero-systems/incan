@@ -1,0 +1,87 @@
+"""
+Anchored native-closure references, shared by every Oven reader and writer of a published native closure.
+
+A Loaf's `<name>.native.json` and a Rust facet's `native.json` name each native input from one anchor: the Loaf's
+own directory (`sibling:`), the selected toolchain directory (`toolchain:`) or the bakery root (`bakery:`). Only a
+path under none of them is written `absolute:`. Homes that install the same toolchain and share one bakery therefore
+publish the same bytes, and each reader resolves the anchors against its own home. A reference without an anchor
+prefix is a legacy spelling: relative to the Loaf's directory, or absolute as written.
+"""
+
+from std.fs import Path
+from home_paths import bakery, toolchain_directory
+from toolchain import located
+
+# The schema of a published Loaf native closure whose references are anchored.
+pub const NATIVE_CLOSURE_SCHEMA: str = "incan.native-closure/2"
+# The schema of a Rust facet's anchored `native.json`.
+pub const RUST_NATIVE_SCHEMA: str = "incan.rust-native/2"
+
+
+@derive(Eq)
+pub enum NativeAnchor(str):
+    """Where one published reference is anchored."""
+
+    Sibling = "sibling"
+    Toolchain = "toolchain"
+    Bakery = "bakery"
+    Absolute = "absolute"
+
+
+pub model NativeAnchors:
+    """The current home's physical toolchain directory and bakery root, which anchored references resolve against."""
+
+    pub toolchain: str
+    pub bakery: str
+
+    pub def arguments(self) -> list[str]:
+        """The compiler options that give a unit compilation the same anchors."""
+        return ["--toolchain-root", self.toolchain, "--bakery-root", self.bakery]
+
+
+pub def native_anchors() -> Result[NativeAnchors, str]:
+    """The selected toolchain's directory and this process's bakery, each in its physical spelling when it exists."""
+    return Ok(NativeAnchors(toolchain=physical(toolchain_directory()?)?, bakery=physical(bakery()?)?))
+
+
+def physical(path: Path) -> Result[str, str]:
+    """Resolve an existing directory so references compare against the spelling readers resolve to."""
+    if not path.exists():
+        return Ok(path.0)
+    return Ok(path.resolve().map_err((error) => f"cannot resolve {error.message()}")?.0)
+
+
+pub def anchor_arguments(advertised: bool) -> Result[list[str], str]:
+    """
+    The anchor options for a unit compilation: none unless the driver's installation `advertised` them with
+    `closure_anchors`. A driver from before anchored closures refuses the options; it publishes bare paths, which
+    every reader still resolves.
+    """
+    if not advertised:
+        return Ok([])
+    return Ok(native_anchors()?.arguments())
+
+
+pub def closure_reference(directory: Path, reference: str, anchors: NativeAnchors) -> Result[str, str]:
+    """Resolve one reference read from the closure in `directory` to a usable path in the current home."""
+    for anchor in [NativeAnchor.Sibling, NativeAnchor.Toolchain, NativeAnchor.Bakery, NativeAnchor.Absolute]:
+        prefix = f"{anchor.value()}:"
+        if not reference.startswith(prefix):
+            continue
+        path = reference[len(prefix):]
+        if (anchor == NativeAnchor.Absolute) != path.startswith("/"):
+            return Err(f"native closure reference `{reference}` has the wrong path form")
+        match anchor:
+            NativeAnchor.Sibling => return Ok(located(directory, path))
+            NativeAnchor.Toolchain => return Ok(located(Path(anchors.toolchain), path))
+            NativeAnchor.Bakery => return Ok(located(Path(anchors.bakery), path))
+            NativeAnchor.Absolute => return Ok(path)
+    return Ok(located(directory, reference))
+
+
+pub def anchored_reference(path: str, anchors: NativeAnchors) -> str:
+    """The reference naming an absolute `path` from the toolchain or the bakery when it is under one of them."""
+    for anchor, root in [(NativeAnchor.Toolchain, anchors.toolchain), (NativeAnchor.Bakery, anchors.bakery)]:
+        if root != "" and path.startswith(root + "/"):
+            return f"{anchor.value()}:{path[len(root) + 1:]}"
+    return f"{NativeAnchor.Absolute.value()}:{path}"
