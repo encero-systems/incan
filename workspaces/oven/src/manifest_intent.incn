@@ -24,6 +24,7 @@ from manifest_environments import parse_environment_dependencies
 from manifest_features import parse_features
 from manifest_tables import parse_c_headers, parse_vocab_entry, refuse_moved_tables, validate_facets, validate_workspace
 from manifest_tool import parse_contract_models
+from rust_lints import declared_lints
 pub from manifest_fields import refusal, table
 pub from manifest_models import (
     FeatureDeclaration,
@@ -237,5 +238,6 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
             c_targets=parse_c_targets(root, manifest)?,
             vocab_entry=parse_vocab_entry(root, manifest)?,
             toolchain_access=access,
+            rust_lints=declared_lints(root, manifest)?,
         ),
     )

@@ -1,0 +1,177 @@
+"""
+The `[rust.lints]` table of a Loaf's manifest: rustc and clippy lint levels for its Rust units.
+
+`[rust.lints.rust]` and `[rust.lints.clippy]` each map a lint or lint group to a level, or to a table of `level` and an
+optional integer `priority`. The settings become `-A`, `-W`, `-D` and `-F` flags, lowest priority first and by lint
+name within a priority, so a later, more specific setting overrides its group. Any other key is refused by name.
+"""
+
+from std.toml import TomlKind, TomlValue
+from manifest_errors import IntakeError, IntakeErrorKind
+from c_facet import as_table, as_text, refused
+
+const SETTING_KEYS: FrozenList[str] = ["level", "priority"]
+
+
+pub enum LintTool(str):
+    """The lint tools a `[rust.lints]` table configures."""
+
+    Rust = "rust"
+    Clippy = "clippy"
+
+
+pub enum LintLevel(str):
+    """The level a lint or lint group is set to."""
+
+    Allow = "allow"
+    Warn = "warn"
+    Deny = "deny"
+    Forbid = "forbid"
+
+
+@derive(Eq, Clone)
+pub model LintSetting:
+    """One lint or lint group of one tool at one level; a higher priority applies later."""
+
+    pub tool: LintTool
+    pub name: str
+    pub level: LintLevel
+    pub priority: int = 0
+
+    pub def lint(self) -> str:
+        """The lint as the compiler names it: `clippy::` for clippy's, the bare name for rustc's."""
+        if self.tool == LintTool.Clippy:
+            return f"clippy::{self.name}"
+        return self.name
+
+    pub def flag(self) -> list[str]:
+        """The compiler flag pair for this setting, such as `-W clippy::pedantic`."""
+        match self.level:
+            LintLevel.Allow => return ["-A", self.lint()]
+            LintLevel.Warn => return ["-W", self.lint()]
+            LintLevel.Deny => return ["-D", self.lint()]
+            LintLevel.Forbid => return ["-F", self.lint()]
+
+
+@derive(Eq, Clone)
+pub model RustLints:
+    """The settings of one `[rust.lints]` table, in the order their flags apply."""
+
+    pub settings: list[LintSetting] = []
+
+    pub def flags(self) -> list[str]:
+        """The `-A/-W/-D/-F` flags of every setting, in order."""
+        mut flags: list[str] = []
+        for setting in self.settings:
+            flags.extend(setting.flag())
+        return flags
+
+
+pub def parse_rust_lints(value: TomlValue, manifest: str) -> Result[RustLints, IntakeError]:
+    """
+    Read a `[rust.lints]` table.
+
+    1. Only the `rust` and `clippy` tool tables are defined; another key is refused by name.
+    2. Each entry is a level, or a table of `level` and an optional integer `priority`.
+    3. The settings apply lowest priority first, then by lint name.
+    """
+    field = ["rust", "lints"]
+    tools = as_table(value, manifest, field)?
+    mut settings: list[LintSetting] = []
+    for key in sorted([key for key in tools.keys()]):
+        # 1. A tool table this Oven does not run is refused, not ignored.
+        match LintTool.from_value(key):
+            None =>
+                return Err(
+                    refused(manifest, field + [key], IntakeErrorKind.Unsupported, "lint tables are `rust` and `clippy`"),
+                )
+            Some(tool) =>
+                entries = as_table(tools[key], manifest, field + [key])?
+                # 2. Each lint or group of the tool, in name order.
+                for name in sorted([name for name in entries.keys()]):
+                    settings.append(lint_setting(tool, name, entries[name], manifest, field + [key, name])?)
+    # 3. Lower priorities apply first, so a later, higher one overrides them.
+    return Ok(RustLints(settings=applied_order(settings)))
+
+
+def lint_setting(
+    tool: LintTool,
+    name: str,
+    value: TomlValue,
+    manifest: str,
+    field: list[str],
+) -> Result[LintSetting, IntakeError]:
+    """One entry: a level, or a table of `level` and an optional integer `priority`."""
+    if "::" in name:
+        return Err(
+            refused(
+                manifest,
+                field,
+                IntakeErrorKind.Invalid,
+                "a lint name carries no tool prefix; its table names the tool",
+            ),
+        )
+    if value.kind() == TomlKind.String:
+        return Ok(LintSetting(tool=tool, name=name, level=level_of(value, manifest, field)?))
+    entry = as_table(value, manifest, field)?
+    for key in sorted([key for key in entry.keys()]):
+        if key not in SETTING_KEYS:
+            return Err(
+                refused(
+                    manifest,
+                    field + [key],
+                    IntakeErrorKind.Unsupported,
+                    "a lint entry takes `level` and `priority`",
+                ),
+            )
+    if "level" not in entry:
+        return Err(refused(manifest, field + ["level"], IntakeErrorKind.Missing, "required field level"))
+    level = level_of(entry["level"], manifest, field + ["level"])?
+    mut priority = 0
+    if "priority" in entry:
+        priority = entry["priority"]
+            .as_int()
+            .map_err((error) => refused(manifest, field + ["priority"], IntakeErrorKind.Invalid, error.message()))?
+    return Ok(LintSetting(tool=tool, name=name, level=level, priority=priority))
+
+
+def level_of(value: TomlValue, manifest: str, field: list[str]) -> Result[LintLevel, IntakeError]:
+    """A level spelling: `allow`, `warn`, `deny` or `forbid`."""
+    text = as_text(value, manifest, field)?
+    match LintLevel.from_value(text):
+        Some(level) => return Ok(level)
+        None =>
+            return Err(
+                refused(
+                    manifest,
+                    field,
+                    IntakeErrorKind.Invalid,
+                    f"unknown lint level `{text}`: allow, warn, deny or forbid",
+                ),
+            )
+
+
+def applied_order(settings: list[LintSetting]) -> list[LintSetting]:
+    """The settings by ascending priority, then by the lint name the compiler sees."""
+    mut priorities: list[int] = []
+    for setting in settings:
+        if setting.priority not in priorities:
+            priorities.append(setting.priority)
+    mut ordered: list[LintSetting] = []
+    for priority in sorted(priorities):
+        names = sorted([setting.lint() for setting in settings if setting.priority == priority])
+        for name in names:
+            for setting in settings:
+                if setting.priority == priority and setting.lint() == name:
+                    ordered.append(setting)
+    return ordered
+
+
+pub def declared_lints(root: Dict[str, TomlValue], manifest: str) -> Result[RustLints, IntakeError]:
+    """The Loaf's `[rust.lints]` settings; none when the manifest declares no such table."""
+    if "rust" not in root:
+        return Ok(RustLints())
+    facet = as_table(root["rust"], manifest, ["rust"])?
+    if "lints" not in facet:
+        return Ok(RustLints())
+    return parse_rust_lints(facet["lints"], manifest)
