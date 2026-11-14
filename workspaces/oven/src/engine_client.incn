@@ -213,11 +213,18 @@ pub def service_identity(store: Path) -> Result[Identity, str]:
 
 
 def installed_compiler() -> Result[str, str]:
-    """Read this home's installation admission once, before deciding whether a service is needed."""
+    """
+    Read this home's installation admission once, before deciding whether a service is needed: in the home's own view
+    of its bakery, or, for an `INCAN_BAKERY` invocation, which binds no view, in the home's installation catalog.
+    """
     admitting = begin_work()
-    catalog = installation_catalog()?
-    compiler = installation_compiler(catalog)?
-    record_work(Operation.EngineAdmission, catalog.0, admitting)
+    mut store = installation_catalog()?
+    mut view = str(HOME_VIEW)
+    if let Some(bound) = selected_home_view()?:
+        store = bakery()?
+        view = bound
+    compiler = installation_compiler(store, view)?
+    record_work(Operation.EngineAdmission, store.0, admitting)
     return Ok(compiler)
 
 
@@ -248,18 +255,12 @@ def physical_store_identity(store: Path) -> Result[str, str]:
         None => return Err("engine store root disappeared during admission")
 
 
-def installation_compiler(store: Path) -> Result[str, str]:
-    """
-    Admit a toolchain once per installation, in the home's own view of the bakery (the shared `home` view for an
-    `INCAN_BAKERY` invocation), independent of project or alternate stores.
-    """
+def installation_compiler(store: Path, view: str) -> Result[str, str]:
+    """Admit a toolchain once per installation in `view` of `store`, independent of project or alternate stores."""
     directory = toolchain_directory()?
     admission = selected_installation(directory)?
     configuration = inherited_deployment_configuration()? + [get_or("SDKROOT", ""), get_or("INCAN_STDLIB", "")]
     key = f"incan.engine.installation\t{fingerprint([directory.0, admission] + configuration)?}"
-    mut view = str(HOME_VIEW)
-    if let Some(bound) = selected_home_view()?:
-        view = bound
     if let Some(compiler) = admitted_installation(store, view, key, admission)?:
         return Ok(compiler)
     _held = claim(store, f"incan.engine.installation\t{view}").map_err((error) => error.message())?
