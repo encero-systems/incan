@@ -11,8 +11,11 @@ from workers import Invocation, invoke_many
 
 # The largest partition file read back; a bigger one is discarded and discovered again.
 const MAX_PLAN_BYTES: int = 2_000_000
-# Oven's refusal of entry selection by an engine that cannot compile several programs into one unit.
-const ENGINE_REFUSES_ENTRIES: str = "do not implement feature, substitution or program-entry options"
+# Oven's refusal of entry selection by an engine that cannot compile several programs into one unit: one line that
+# names the engine's refusal and the entry option among the options it refuses. Oven gives the refusal no code, and the
+# list of other options it names grows, so only these two parts are matched.
+const ENGINE_REFUSES_OPTIONS: str = "unit records do not implement"
+const ENTRY_OPTION: str = "program-entry"
 # Why every case keeps its own command once the engine refuses shared entries: no partition can make it share.
 pub const SHARED_ENTRIES_REFUSED: str = "the selected engine refuses shared program entries"
 
@@ -414,13 +417,21 @@ pub def compilation_refusal(result: Result[Outcome, str]) -> tuple[str, str]:
             evidence = outcome.stdout + outcome.stderr
             if "contract invocation timed out" in outcome.stderr:
                 return ("combined compilation exceeded its deadline", evidence)
-            if outcome.code != Some(0) and ENGINE_REFUSES_ENTRIES in outcome.stderr:
+            if outcome.code != Some(0) and refuses_entries(outcome.stderr):
                 return (str(SHARED_ENTRIES_REFUSED), evidence)
             if outcome.code != Some(0):
                 return ("combined compilation refused", evidence)
             if outcome.stdout != "" or outcome.stderr != "":
                 return ("compiler output requires isolated attribution", evidence)
             return ("", "")
+
+
+def refuses_entries(stderr: str) -> bool:
+    """Whether one line of `stderr` is the engine's refusal of options that include program entries."""
+    for line in stderr.split("\n"):
+        if ENGINE_REFUSES_OPTIONS in line and ENTRY_OPTION in line:
+            return true
+    return false
 
 
 def refine_group(group: GroupProject, mut retry: list[list[Entry]], refusal: str, evidence: str) -> None:
