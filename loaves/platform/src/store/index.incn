@@ -9,19 +9,26 @@ the pages on the paths it changes and leaves every other page shared with older 
 Page layout (little-endian): magic, level (0 for a leaf), entry count, then per entry the full key's length and bytes,
 then for a leaf the frame's segment name, offset, length, SHA-256 and kind byte, or for an inner page the child page
 name. Entries are sorted by key, and an inner entry's key is the smallest key below its child.
+
+A process checks each page against its name once. It keeps each page it has read, at most `CHECKED_PAGE_LIMIT` of
+them, laid out over its own copy of the checked bytes, and a later read of the same page uses that layout instead of
+mapping, hashing and laying out the file again. A page is content-named and never rewritten, so its name still names
+those bytes, and damage to the file after the check cannot reach an answer.
 """
 
 from rust::std::process import id
 from rust::std::string import String as RustString
 from std.primitives.hash import sha256
 from std.primitives.hex import hexlify
-from std.primitives.views import MappedView
+from std.primitives.views import MappedFile, MappedView
 from crate.store.bytes import append_bytes, append_u64
 from crate.store.path import StorePath as Path
 
 const FANOUT: int = 32
 const NAME_BYTES: int = 64
 const DIGEST_BYTES: int = 32
+# The checked pages one process keeps; a process that meets more starts again from none.
+const CHECKED_PAGE_LIMIT: int = 2048
 
 
 pub model Location:
@@ -79,8 +86,28 @@ model Layout:
     spans: list[Span]
 
 
+model CheckedPages:
+    """Each index page this process has checked against its name, laid out over its own copy of the checked bytes."""
+
+    pages: Dict[str, Layout] = {}
+
+    def checked(self, name: str) -> Option[Layout]:
+        """The page named `name`, when this process has checked it."""
+        if name not in self.pages:
+            return None
+        return Some(self.pages[name])
+
+    def keep(mut self, name: str, page: Layout) -> None:
+        """Keep one checked page; past `CHECKED_PAGE_LIMIT` pages the process starts again from none."""
+        if len(self.pages) >= CHECKED_PAGE_LIMIT:
+            self.pages = {}
+        self.pages[name] = page
+
+
 # Index pages this process has read, and the bytes it copied out of them, for measuring what a lookup touches.
 static pages_read: dict[str, int] = {}
+# The pages this process has checked; a lookup reads them in place through the model's own methods.
+static CHECKED: CheckedPages = CheckedPages()
 
 
 pub def page_reads() -> int:
@@ -247,10 +274,13 @@ def decoded_page(path: Path, name: str) -> Result[Page, IndexError]:
 
 def mapped_page(path: Path, name: str) -> Result[Layout, IndexError]:
     """
-    The page at `path` mapped and hashed in place, checked against its content name, and laid out.
+    The page at `path` checked against its content name and laid out: mapped and hashed in place on this process's
+    first read of it, and kept over a copy of its checked bytes for every later one.
 
     Index pages are content-named and never rewritten in place, so their inodes stay unchanged while mapped.
     """
+    if let Some(checked) = CHECKED.checked(name):
+        return Ok(checked)
     mapped = path.store_map_read().map_err((error) => IndexError(object=path.value, detail=error.message()))?
     match mapped.view(0, mapped.len()):
         None => return Err(malformed(path, "the mapping has no whole view"))
@@ -258,7 +288,18 @@ def mapped_page(path: Path, name: str) -> Result[Layout, IndexError]:
             pages_read["pages"] = pages_read.get("pages", 0) + 1
             if hexlify(view_digest(view)) != name:
                 return Err(IndexError(object=path.value, detail="index page does not match its name"))
-            return layout(view).map_err((detail) => malformed(path, detail))
+            CHECKED.keep(name, layout(checked_copy(path, view)?).map_err((detail) => malformed(path, detail))?)
+            match CHECKED.checked(name):
+                Some(checked) => return Ok(checked)
+                None => return Err(malformed(path, "a checked page was not kept"))
+
+
+def checked_copy(path: Path, view: MappedView) -> Result[MappedView, IndexError]:
+    """A whole view of this process's own copy of a page's checked bytes, which the kept layout reads."""
+    copy = MappedFile.owned(view.to_bytes()).map_err((detail) => malformed(path, detail))?
+    match copy.view(0, copy.len()):
+        None => return Err(malformed(path, "the page copy has no whole view"))
+        Some(whole) => return Ok(whole)
 
 
 pub def view_digest(view: MappedView) -> bytes:
