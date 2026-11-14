@@ -1,9 +1,10 @@
 """Resolve, compare and atomically publish the one oven.lock owned by a root project."""
 
 from std.fs import Path
+from c_interop import parse_c_targets
 from features import FeatureRequest
 from home_paths import TOOLCHAIN
-from intake import ManifestReader, intake
+from intake import ManifestReader, read_manifest_snapshot
 from interop_lock import LockInterop, interop_difference, locked_interop
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets, unique
 from lock_format import (
@@ -164,12 +165,15 @@ def reconcile(
 
 
 def root_interop(root: Path, reader: ManifestReader) -> Result[list[LockInterop], str]:
-    """The root project's `[[interop.c.targets]]` contracts, each declared file identified by its bytes."""
-    graph = intake(root, reader).map_err((error) => error.message())?
-    for project in graph.projects:
-        if project.root == root.0:
-            return locked_interop(project.root, project.intent.c_targets)
-    return Ok([])
+    """
+    The root manifest's `[[interop.c.targets]]` contracts, each declared file identified by its bytes. Only the
+    `[interop]` table is read here, so a root of any kind, a Rust facet's included, locks as before.
+    """
+    snapshot = read_manifest_snapshot(root, reader).map_err((error) => error.message())?
+    manifest = root.joinpath("loaf.toml").0
+    table = snapshot.parsed.as_table().map_err((error) => f"{manifest}: {error.message()}")?
+    targets = parse_c_targets(table, manifest).map_err((error) => error.message())?
+    return locked_interop(root.0, targets)
 
 
 def selected_mode(existing: Option[OvenLock], requested: str, identity: str) -> str:
