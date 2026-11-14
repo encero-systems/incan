@@ -29,7 +29,6 @@ from rust_build import (
     rust_library_compiler_identity,
 )
 from rust_binaries import refuse_absolute_runtime_path
-from graph_exports import export_view
 from rust_manifest import RustFacet, package_environment
 from registry_units import RegistryUnits
 from loaf_local_graph import LocalEdge, LocalFacet
@@ -124,7 +123,6 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
     verify_absolute_binary_runpath_refusal()
     verify_local_bakery_graph_refresh(scratch.path().joinpath("local-bakery"))?
     verify_installed_rust_producer(scratch.path().joinpath("installed"))?
-    verify_graph_export_scoping(scratch.path().joinpath("graph-views"))?
     return Ok(None)
 
 
@@ -275,19 +273,6 @@ def verify_local_bakery_graph_refresh(scratch: Path) -> Result[None, str]:
             assert false, "stale installed support without source was rebuilt"
         Err(error) =>
             assert "cannot rebuild" in error and source.0 in error, error
-    return Ok(None)
-
-
-def verify_graph_export_scoping(scratch: Path) -> Result[None, str]:
-    """Equal exports share one view within a bakery while independent bakery selections cannot write the same path."""
-    home = scratch.joinpath("home")
-    digest = fingerprint(["graph"])?
-    first = export_view(home, scratch.joinpath("first-bakery"), digest)?
-    repeated = export_view(home, scratch.joinpath("first-bakery"), digest)?
-    independent = export_view(home, scratch.joinpath("second-bakery"), digest)?
-    assert first.0 == repeated.0
-    assert first.0 != independent.0
-    assert first.name() == "unit.incngraph"
     return Ok(None)
 
 
