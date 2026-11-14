@@ -17,7 +17,10 @@ from unit_freshness import fingerprint
 
 
 pub def test_lowering_record_worked_example() -> Result[None, str]:
-    """Body edits and moves reuse callers; a callee signature edit invalidates their plans and matches cold output."""
+    """
+    Body edits and moves reuse callers; comment and documentation edits check nothing; a callee signature edit
+    invalidates their plans and matches cold output.
+    """
     scratch = scratch_directory()?
     root = scratch.path()
     source = root.joinpath("hello.incn")
@@ -48,10 +51,21 @@ pub def test_lowering_record_worked_example() -> Result[None, str]:
     )?
     commented = lowering_example_run(binary, source, store, "hullo")?
     comment_diagnostic = commented.to_json().map_err((error) => error.message())?
+    assert proof_count(commented, "body_evaluations")? == 0, comment_diagnostic
+    assert proof_count(commented, "body_ir_evaluations")? == 0, comment_diagnostic
     assert proof_count(commented, "plan_function_evaluations")? == 0, comment_diagnostic
     assert proof_count(commented, "plan_function_reuses")? == 3, comment_diagnostic
     assert proof_count(commented, "lowering_demand_evaluations")? == 0, comment_diagnostic
     assert proof_count(commented, "native_interface_evaluations")? == 1, comment_diagnostic
+    # Documentation never reaches checking: a docstring added to `greeting` checks no body and builds no Body IR.
+    write(
+        source,
+        "def greeting() -> str:\n    \"\"\"Greet.\"\"\"\n    return \"hullo\"\n\n\n# inserted above main\ndef main() -> None:\n    println(greeting())\n",
+    )?
+    documented = lowering_example_run(binary, source, store, "hullo")?
+    documented_diagnostic = documented.to_json().map_err((error) => error.message())?
+    assert proof_count(documented, "body_evaluations")? == 0, documented_diagnostic
+    assert proof_count(documented, "body_ir_evaluations")? == 0, documented_diagnostic
     stop_example_engine(binary, store)?
     signature = root.joinpath("signature-source")
     signature.mkdir(true, true).map_err((error) => error.message())?

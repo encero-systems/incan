@@ -1,0 +1,206 @@
+"""
+The text of an Incan source slice that can change what the slice means.
+
+Comments, blank lines and trailing whitespace never change a program, so two slices that differ only there have the
+same semantic text. Documentation is a string-literal statement that can be neither a value nor a placeholder (a
+docstring); it never reaches checking, so the documentation-free form drops it too. String literals are otherwise kept
+exactly, wherever they are.
+
+The scanner reads the slice once, character by character, and keeps each logical line: a statement whose brackets or
+trailing backslash continue it over several physical lines is one line, so a string literal inside brackets is an
+expression, never documentation.
+"""
+
+
+@derive(Eq)
+enum ScanMode(str):
+    """Where the scanner is within a physical line."""
+
+    Code = "code"
+    Comment = "comment"
+    Opening = "opening"
+    Text = "text"
+
+
+model LogicalLine:
+    """One kept logical line, its indentation and whether it is only string literals."""
+
+    pub text: str
+    pub indentation: str
+    pub only_strings: bool
+
+
+class SemanticScanner:
+    """A single-pass scanner over one source slice; its state never outlives the slice."""
+
+    mode: ScanMode = ScanMode.Code
+    quote: str = ""
+    triple: bool = false
+    escaped: bool = false
+    opening: int = 0
+    closing: int = 0
+    depth: int = 0
+    pending: str = ""
+    line: str = ""
+    indentation: str = ""
+    line_output: bool = false
+    has_content: bool = false
+    only_strings: bool = true
+    tail: str = ""
+    pub lines: list[LogicalLine] = []
+
+    pub def scan(mut self, source: str) -> None:
+        """Read every character of `source`, then close its last line."""
+        for character in source:
+            self.feed(character)
+        self.feed("\n")
+
+    def feed(mut self, character: str) -> None:
+        """Advance by one character in the current mode."""
+        match self.mode:
+            ScanMode.Comment =>
+                if character == "\n":
+                    self.mode = ScanMode.Code
+                    self.code(character)
+            ScanMode.Opening => self.open_string(character)
+            ScanMode.Text => self.string(character)
+            ScanMode.Code => self.code(character)
+
+    def code(mut self, character: str) -> None:
+        """Keep code, hold whitespace until more code follows on the line, and end lines outside brackets."""
+        if character == "#":
+            self.mode = ScanMode.Comment
+        elif character == "\n":
+            self.end_physical_line()
+        elif character in " \t\r":
+            self.pending += character
+        elif character in "\"'":
+            self.emit(character)
+            self.quote = character
+            self.opening = 1
+            self.mode = ScanMode.Opening
+        else:
+            self.emit(character)
+            self.only_strings = false
+            self.remember(character)
+            if character in "([{":
+                self.depth += 1
+            elif character in ")]}" and self.depth > 0:
+                self.depth -= 1
+
+    def open_string(mut self, character: str) -> None:
+        """Tell an empty string, a one-line string and a triple-quoted string apart by the quotes that open them."""
+        if character == self.quote and self.opening < 3:
+            self.opening += 1
+            self.line += character
+            if self.opening == 3:
+                self.triple = true
+                self.mode = ScanMode.Text
+            return
+        if self.opening == 2:
+            # Two quotes were an empty string; the character is code again.
+            self.mode = ScanMode.Code
+            self.code(character)
+            return
+        self.triple = false
+        self.mode = ScanMode.Text
+        self.string(character)
+
+    def string(mut self, character: str) -> None:
+        """Keep a string literal's characters exactly, ending it at its unescaped closing quotes."""
+        if self.escaped:
+            self.escaped = false
+            self.closing = 0
+            self.line += character
+        elif character == "\\":
+            self.escaped = true
+            self.closing = 0
+            self.line += character
+        elif character == self.quote:
+            self.line += character
+            self.closing += 1
+            if not self.triple or self.closing == 3:
+                self.closing = 0
+                self.mode = ScanMode.Code
+        elif character == "\n" and not self.triple:
+            # An unterminated one-line string ends with its line, as the lexer reports it.
+            self.mode = ScanMode.Code
+            self.code(character)
+        else:
+            self.closing = 0
+            self.line += character
+
+    def remember(mut self, character: str) -> None:
+        """Keep the last two code characters; a trailing backslash continues the statement on the next line."""
+        mut tail = self.tail + character
+        if len(tail) > 2:
+            tail = tail[len(tail) - 2:]
+        self.tail = tail
+
+    def emit(mut self, character: str) -> None:
+        """Keep held whitespace before new content; the first content of a line fixes its indentation."""
+        if not self.has_content:
+            self.indentation = self.pending
+            self.has_content = true
+        self.line += self.pending + character
+        self.pending = ""
+        self.line_output = true
+
+    def end_physical_line(mut self) -> None:
+        """Drop trailing whitespace; continue a bracketed or backslash-continued statement, otherwise close it."""
+        self.pending = ""
+        if self.depth > 0 or self.tail.endswith("\\"):
+            if self.line_output:
+                self.line += "\n"
+                self.line_output = false
+            self.tail = ""
+            return
+        if self.has_content:
+            self.lines.append(LogicalLine(text=self.line, indentation=self.indentation, only_strings=self.only_strings))
+        self.line = ""
+        self.indentation = ""
+        self.line_output = false
+        self.has_content = false
+        self.only_strings = true
+        self.tail = ""
+
+
+pub def documentation_free(source: str) -> str:
+    """
+    The semantic text of a statement slice: no comments, blank lines, trailing whitespace or documentation strings.
+
+    A string-literal statement is documentation only when a later statement of its block is neither `pass` nor its
+    end: a block's last statement can be its value (`def name() -> str:` ending in `"text"`), and a docstring followed
+    only by `pass` keeps a trait method a documented placeholder. Those strings stay.
+    """
+    lines = scanned(source)
+    mut kept: list[str] = []
+    for index in range(len(lines)):
+        if not (lines[index].only_strings and documents(lines, index)):
+            kept.append(lines[index].text)
+    return "\n".join(kept)
+
+
+pub def comment_free(source: str) -> str:
+    """The semantic text of an expression slice: no comments, blank lines or trailing whitespace; strings stay."""
+    lines = scanned(source)
+    return "\n".join([line.text for line in lines])
+
+
+def scanned(source: str) -> list[LogicalLine]:
+    """The kept logical lines of one slice."""
+    mut scanner = SemanticScanner()
+    scanner.scan(source)
+    return scanner.lines
+
+
+def documents(lines: list[LogicalLine], index: int) -> bool:
+    """Whether a later statement of the string statement's block, before the block ends, is real code other than `pass`."""
+    indent = len(lines[index].indentation)
+    for later in range(index + 1, len(lines)):
+        level = len(lines[later].indentation)
+        if level < indent:
+            return false
+        if level == indent and lines[later].text.strip() != "pass":
+            return true
+    return false

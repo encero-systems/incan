@@ -1,9 +1,15 @@
-"""Project one source file into independently digestible owner, default-expression and module-header records."""
+"""
+Project one source file into independently digestible owner, default-expression and module-header records.
+
+A record holds its slice's semantic text (see `semantic_text`): an edit to comments, blank lines or documentation
+changes no record, so it invalidates no checked body or plan.
+"""
 
 from std.encoding.hex import hexlify
 from std.primitives.hash import sha256
 from pub::incan_platform.store import Snapshot, begin, commit, put
 from pub::internal_models.records import RecordKey, encode_record_key
+from semantic_text import comment_free, documentation_free
 
 const SOURCE_PROFILE: str = "incan.source-projection/1"
 
@@ -106,24 +112,25 @@ class SourceProjector:
                 if boundary.owner == "":
                     header += text
                 else:
-                    declarations += boundary.owner + "\n" + declaration_surface(text) + "\n"
+                    semantic = documentation_free(text)
+                    declarations += boundary.owner + "\n" + declaration_surface(semantic) + "\n"
                     owners.append(
                         SourceProjectionRecord(
                             key=source_key("owner-source", self.origin, self.path, boundary.owner),
-                            text=text,
+                            text=semantic,
                             start=boundary.start,
                             end=end,
                         ),
                     )
                     for field in field_records(boundary.owner, text, boundary.start, self.origin, self.path):
-                        owners.append(field)
+                        owners.append(semantic_record(field, documentation_free(field.text)))
                     for default in field_default_records(boundary.owner, text, boundary.start, self.origin, self.path):
-                        owners.append(default)
+                        owners.append(semantic_record(default, comment_free(default.text)))
         return Ok(
             SourceProjection(
                 header=SourceProjectionRecord(
                     key=source_key("module-header", self.origin, self.path, "module"),
-                    text=header,
+                    text=documentation_free(header),
                     start=0,
                     end=len(self.source),
                 ),
@@ -219,6 +226,11 @@ pub def signature_record(owner: &SourceProjectionRecord) -> SourceProjectionReco
     mut key = owner.key
     key.family = "declaration-signature"
     return SourceProjectionRecord(key=key, text=declaration_surface(owner.text), start=owner.start, end=owner.end)
+
+
+def semantic_record(record: SourceProjectionRecord, text: str) -> SourceProjectionRecord:
+    """Keep one nested record's key and source coordinates with its semantic text."""
+    return SourceProjectionRecord(key=record.key, text=text, start=record.start, end=record.end)
 
 
 pub def publish_source_projection(
