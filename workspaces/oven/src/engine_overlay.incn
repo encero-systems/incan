@@ -114,11 +114,16 @@ def mirror_directory(source: Path, destination: Path, relative: str, document: s
 
 
 def remove_absent(source: Path, destination: Path, relative: str, document: str) -> Result[None, str]:
-    """Remove mirrored files and directories the program no longer has; the document always stays."""
+    """
+    Remove mirrored files and directories the program no longer has; the document always stays. What the mirror leaves
+    out is never mirrored, so it is the overlay's own: its build output and hidden entries stay too.
+    """
     if not destination.is_dir():
         return Ok(None)
     for entry in destination.iterdir().map_err((error) => f"cannot list {destination.0}: {error.message()}")?:
         name = entry.name()
+        if name.startswith(".") or name == "target":
+            continue
         mut path = name
         if relative != "":
             path = f"{relative}/{name}"
