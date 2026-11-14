@@ -942,6 +942,7 @@ fn unreadable(dir: &Path, name: &str, reason: String) -> LoafIndexError {
 
 #[cfg(test)]
 mod tests {
+    mod member_families;
     mod namespace_records;
     mod typechecker_reads;
 
