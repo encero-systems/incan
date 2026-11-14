@@ -195,7 +195,7 @@ pub class RecordReads:
         """Create one activation's read scope while keeping its evidence and request envelope private."""
         return RecordReads(scope=scope, preparation=preparation, allowed=allowed)
 
-    pub def read[S with RecordSource](mut self, source: S, request: RecordRequest) -> RecordRead:
+    pub def read[S with RecordSource](mut self, source: &S, request: RecordRequest) -> RecordRead:
         """1. Validate the activation. 2. Read once. 3. Bind evidence and count the selected bytes."""
         # 1. Validate the activation before touching the source.
         if self.closed:
