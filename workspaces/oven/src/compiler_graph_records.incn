@@ -137,10 +137,13 @@ pub def prepare_evaluation(
     stage_put(transaction, evaluation_key, evaluation)
     stage_put(transaction, output_index_key(receipt.scope.profile, value_key), evaluation_key.encode("utf-8"))
     outgoing = outgoing_prefix(receipt.scope.profile, record_slot(value_key)?)
-    for index in range(len(edges)):
-        edge = encode_edge(value_key, receipt.scope.profile, edges[index])?
-        stage_put(transaction, f"{outgoing}{index}", edge)
-        stage_put(transaction, incoming_key(edge)?, edge)
+    mut encoded: list[bytes] = []
+    for fact in edges:
+        encoded.append(encode_edge(value_key, receipt.scope.profile, fact)?)
+    incoming = incoming_keys(encoded)?
+    for index in range(len(encoded)):
+        stage_put(transaction, f"{outgoing}{index}", encoded[index])
+        stage_put(transaction, incoming[index], encoded[index])
     return Ok(
         PreparedEvaluation(
             value_key=value_key,
@@ -224,16 +227,21 @@ pub def reusable_family_records(selected: Snapshot, family: str, profile: str) -
 pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -> Result[list[RecordKey], str]:
     """
     Read the prior graph's reverse edges for changed records without entering any compiler or whole-program check,
-    reading only each changed record's range of edges.
+    reading only the range of edges into each changed record's slot and keeping those whose target is the record.
     """
     mut readers: Dict[str, RecordKey] = {}
     for target in changed:
-        prefix = "incan.engine.edge-in\t" + encode_record_key(target)? + "\t"
+        exact = encode_record_key(target)?
+        prefix = "incan.engine.edge-in\t" + record_slot(exact)? + "\t"
         for indexed in keys_with_prefix(selected, prefix).map_err((error) => error.message())?:
             edge = parse(required_value(selected, indexed)?.decode().map_err((_) => "compiler graph edge is not UTF-8")?).map_err(
                 (error) => error.message(),
             )?
-            if required_text(edge, "schema")? != EDGE_SCHEMA or required_text(edge, "profile")? != profile:
+            if (
+                required_text(edge, "schema")? != EDGE_SCHEMA
+                or required_text(edge, "profile")? != profile
+                or required_text(edge, "target")? != exact
+            ):
                 continue
             reader = required_text(edge, "reader")?
             readers[reader] = decode_record_key(reader)?
@@ -247,11 +255,12 @@ pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> R
 
     An output's slot is its profile, family, identity profile, origin, identity and facet; its context is the
     evaluated content, which an edit changes. Every other output of a slot the transaction writes leaves the output
-    index. A slot's edges are keyed by the slot and the read, not by the evaluated context or the read's evidence, so
-    the new evaluation writes its edges over the earlier one's, under the same keys; only the earlier edges it does not
-    write again leave. A family selection and a reader lookup then meet one output per slot and one edge per current
-    read instead of one per earlier edit, and the edge indexes do not grow with edits. The superseded values,
-    evaluations and receipts stay, content named.
+    index. A slot's edges are keyed by the slot and the read, and an incoming entry by the slot of the record it reads,
+    not by an evaluated context or the read's evidence, so the new evaluation writes its edges over the earlier one's,
+    under the same keys, also when the edit replaced the records it reads; only the earlier edges it does not write
+    again leave. A family selection and a reader lookup then meet one output per slot and one edge per current read
+    instead of one per earlier edit, and the edge indexes do not grow with edits. The superseded values, evaluations
+    and receipts stay, content named.
     """
     mut writing: set[str] = set()
     for write in transaction.writes:
@@ -278,13 +287,16 @@ def retire_edges(
     writing: set[str],
 ) -> Result[None, str]:
     """Remove a slot's earlier outgoing edges and their incoming entries, except those written again."""
+    mut earlier: list[bytes] = []
     for key in keys_with_prefix(selected, outgoing).map_err((error) => error.message())?:
-        encoded = required_value(selected, key)?
+        earlier.append(required_value(selected, key)?)
         if key not in writing:
             stage_delete(transaction, key)
-        incoming = incoming_key(encoded)?
-        if incoming not in writing:
+    mut retired: set[str] = set()
+    for incoming in incoming_keys(earlier)?:
+        if incoming not in writing and incoming not in retired:
             stage_delete(transaction, incoming)
+            retired.add(incoming)
     return Ok(None)
 
 
@@ -296,19 +308,38 @@ def outgoing_prefix(profile: str, slot: str) -> str:
     return f"incan.engine.edge-out\t{profile}\t{slot}\t"
 
 
-def incoming_key(encoded: bytes) -> Result[str, str]:
+def incoming_keys(encoded: list[bytes]) -> Result[list[str], str]:
     """
-    The reverse index entry of one encoded edge: its target and kind, then the identity of the read itself, made of the
-    reading slot, profile and selection. Its evidence and the reader's evaluated context are left out, so the next
-    evaluation of the slot that makes the same read replaces the entry in place instead of adding one beside it.
+    The reverse index entries of one evaluation's encoded edges, in their order. Each is the slot of the edge's target
+    and its kind, the identity of the read itself (the reading slot, profile and selection), and the edge's place among
+    the evaluation's edges with that read, counted in the order of their exact targets.
+
+    Neither the target's evaluated context, the read's evidence nor the reader's context is in the key, so the next
+    evaluation of the slot that makes the same read writes over the entry in place, also when the edit replaced the
+    record it reads. An evaluation that makes the same read of two contexts of one record keeps an entry for each.
     """
-    edge = parse(encoded.decode().map_err((_) => "compiler graph edge is not UTF-8")?).map_err(
-        (error) => error.message(),
-    )?
-    selection = json_text(edge.require("selection").map_err((error) => error.message())?)?
-    read = record_slot(required_text(edge, "reader")?)? + "\n" + required_text(edge, "profile")? + "\n" + selection
-    target = required_text(edge, "target")?
-    return Ok(f"incan.engine.edge-in\t{target}\t{required_text(edge, "kind")?}\t{digest(read.encode("utf-8"))}")
+    mut reads: list[str] = []
+    mut targets: list[str] = []
+    mut by_read: Dict[str, set[str]] = {}
+    for edge in encoded:
+        document = parse(edge.decode().map_err((_) => "compiler graph edge is not UTF-8")?).map_err(
+            (error) => error.message(),
+        )?
+        selection = json_text(document.require("selection").map_err((error) => error.message())?)?
+        identity = record_slot(required_text(document, "reader")?)? + "\n" + required_text(document, "profile")?
+        target = required_text(document, "target")?
+        kind = required_text(document, "kind")?
+        read = f"{record_slot(target)?}\t{kind}\t{digest((identity + "\n" + selection).encode("utf-8"))}"
+        mut seen = by_read.get(read).unwrap_or(set())
+        seen.add(target)
+        by_read[read] = seen
+        reads.append(read)
+        targets.append(target)
+    mut keys: list[str] = []
+    for index in range(len(reads)):
+        place = len([other for other in by_read[reads[index]] if other < targets[index]])
+        keys.append(f"incan.engine.edge-in\t{reads[index]}\t{place}")
+    return Ok(keys)
 
 
 def record_slot(key: str) -> Result[str, str]:
