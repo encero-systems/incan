@@ -42,7 +42,7 @@ pub def set_case_jobs(jobs: int) -> None:
 pub def invoke_side_by_side(incan: str, commands: list[list[str]], project: Path) -> list[Result[Outcome, str]]:
     """
     Run commands that do not depend on each other in one project, each capturing its streams under its own name, and
-    return their outcomes in command order. They run one at a time.
+    return their outcomes in command order. Up to the case's jobs run at once.
     """
     mut requests: list[Invocation] = []
     for index in range(len(commands)):
@@ -55,7 +55,7 @@ pub def invoke_side_by_side(incan: str, commands: list[list[str]], project: Path
                 capture=f"side-{index}",
             ),
         )
-    return invoke_many(requests, 1)
+    return invoke_many(requests, case_jobs)
 
 
 pub def surface(arguments: list[str]) -> tuple[Option[str], list[str]]:

@@ -23,7 +23,7 @@ from std.tempfile import TemporaryDirectory
 from compare import compare
 from families import AdmittedProgram, FAMILIES, command, read_program, work_order
 from fixture import Fixture, discover_family, materialize
-from run import Outcome, clear_trace, invoke, set_timeout, trace_file, unit_notes
+from run import Outcome, clear_trace, invoke, set_case_jobs, set_timeout, trace_file, unit_notes
 from formatting import compare_format
 from graph import compare_graph
 from check_edits import compare_check_edits
@@ -134,6 +134,8 @@ def main() -> None:
         Ok(settings) =>
             if let Some(seconds) = settings.timeout:
                 set_timeout(seconds)
+            # A case's independent commands share its runner's jobs.
+            set_case_jobs(settings.jobs)
             # 2. The cases run in the scratch directory given, or in a temporary one that goes with the run.
             match TemporaryDirectory.try_new():
                 Err(error) =>
