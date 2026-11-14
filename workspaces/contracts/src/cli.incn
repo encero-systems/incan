@@ -1,9 +1,10 @@
 """Compare each public CLI invocation in a project case with the case's output and status contract."""
 
 from std.fs import Path
+from std.json import parse
 from compare import compare
 from header import Header
-from run import invoke, surface, trace_file
+from run import Outcome, invoke, surface, trace_file
 from workers import Invocation, invoke_many
 
 
@@ -11,7 +12,8 @@ pub def compare_cli(incan: str, project: Path, header: Header) -> Result[list[st
     """
     Return the expectations broken by each command, identifying the invocation beside every failure.
 
-    1. Run each whitespace-separated command in the fixture project with the case's declared settings.
+    1. Run each whitespace-separated command in the fixture project with the case's declared settings; under
+       `trace-invariant:` run it traced first, and require the same bytes and status and a trace of every category.
     2. Compare each command's streams and status independently.
     3. Require each declared trace substring in the Oven trace that command added.
     4. Launch the `cli-concurrent:` commands together, comparing each the same way.
@@ -19,11 +21,22 @@ pub def compare_cli(incan: str, project: Path, header: Header) -> Result[list[st
     """
     mut failures: list[str] = []
     start = trace_text(project)
+    mut index = 0
     for command in header.items("cli-commands"):
-        # 1. Each command runs afresh with its own streams and status.
+        # 1. Each command runs afresh with its own streams and status; under `trace-invariant:` it first runs traced.
         name, arguments = surface(words(command))
+        mut traced: Option[Outcome] = None
+        channel = project.joinpath("target").joinpath("trace-invariant").joinpath(str(index))
+        index += 1
+        if header.trace_invariant:
+            channel.mkdir(true, true).map_err((error) => error.message())?
+            environment = header.items("environment") + [f"INCAN_ENGINE_TRACE={channel.0}"]
+            traced = Some(invoke(incan, arguments, project, environment, name)?)
         before = trace_text(project)
         outcome = invoke(incan, arguments, project, header.items("environment"), name)?
+        if let Some(seen) = traced:
+            for failure in trace_invariance(seen, outcome, channel)?:
+                failures.append(f"{shown(command)}: {failure}")
         # 2. A successful sibling cannot hide another command's failure.
         for failure in compare("cli", header, outcome):
             failures.append(f"{shown(command)}: {failure}")
@@ -91,3 +104,43 @@ def trace_text(project: Path) -> str:
     match trace.read_text("utf-8", "strict"):
         Ok(text) => return text
         Err(_) => return ""
+
+
+def trace_invariance(traced: Outcome, plain: Outcome, channel: Path) -> Result[list[str], str]:
+    """
+    A command traced into `channel` printed exactly what it printed untraced; its trace holds Oven's reasoning, and
+    every compiler process that wrote to the channel wrote its invocation records there too.
+    """
+    mut failures: list[str] = []
+    if traced.stdout != plain.stdout:
+        failures.append(f"tracing changed stdout: traced `{traced.stdout}`, untraced `{plain.stdout}`")
+    if traced.stderr != plain.stderr:
+        failures.append(f"tracing changed stderr: traced `{traced.stderr}`, untraced `{plain.stderr}`")
+    if traced.code != plain.code:
+        failures.append(f"tracing changed the exit status: traced {traced.exit_text()}, untraced {plain.exit_text()}")
+    mut reasoned = false
+    for path in channel.iterdir().map_err((error) => error.message())?:
+        categories = file_categories(path)?
+        if "reason" in categories:
+            reasoned = true
+        compiler = path.name().startswith("engine-compiler-") or path.name().startswith("engine-worker-")
+        if compiler and "invocation" not in categories:
+            failures.append(f"the compiler's trace file {path.name()} holds no `invocation` record")
+    if not reasoned:
+        failures.append(f"the trace channel {channel.0} holds no `reason` record")
+    return Ok(failures)
+
+
+def file_categories(path: Path) -> Result[list[str], str]:
+    """The `operation` of every record in one trace file."""
+    mut found: list[str] = []
+    text = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    for line in text.split("\n"):
+        if line == "":
+            continue
+        record = parse(line).map_err((error) => f"{path.0}: {error.message()}")?
+        if let Some(value) = record.get("operation"):
+            category = value.expect_str().map_err((error) => error.message())?
+            if category not in found:
+                found.append(category)
+    return Ok(found)

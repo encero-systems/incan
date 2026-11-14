@@ -31,6 +31,7 @@ const DIRECTIVES: FrozenList[str] = [
     "expect-formatted",
     "pending",
     "hosts",
+    "trace-invariant",
 ]
 # The directives whose lines follow them as an indented block.
 const BLOCKS: FrozenList[str] = [
@@ -99,6 +100,8 @@ pub model Header:
     pub diagnostics: list[str]
     # Whether the program must check cleanly (`# expect-accepted:`).
     pub accepted: bool
+    # Whether every `cli-commands:` invocation must print the same bytes with tracing on (`# trace-invariant:`).
+    pub trace_invariant: bool = false
     # The hosts the case runs on (`# hosts:`); empty for every host. Another host reports the case skipped.
     pub hosts: list[str] = []
     # Why the fixture does not hold yet (`# pending:`).
@@ -122,6 +125,8 @@ pub model Header:
             return len(self.diagnostics) > 0
         if key == "expect-accepted":
             return self.accepted
+        if key == "trace-invariant":
+            return self.trace_invariant
         return false
 
     pub def expected_exit(self) -> int:
@@ -242,7 +247,7 @@ def directive_into(header: Header, number: int, key: str, value: str) -> Result[
 
 
 def scalar_directive(header: Header, number: int, key: str, value: str) -> Result[Header, str]:
-    """Admit `expect-exit`, `expect-diagnostic`, `expect-accepted`, `hosts` and `pending`."""
+    """Admit `expect-exit`, `expect-diagnostic`, `expect-accepted`, `trace-invariant`, `hosts` and `pending`."""
     mut next = header
     if key == "expect-exit":
         if next.declares(key):
@@ -257,6 +262,11 @@ def scalar_directive(header: Header, number: int, key: str, value: str) -> Resul
         if value in next.diagnostics:
             return Err(f"line {number}: `expect-diagnostic: {value}` is declared twice")
         next.diagnostics.append(value)
+        return Ok(next)
+    if key == "trace-invariant":
+        if value != "" or next.trace_invariant:
+            return Err(f"line {number}: `trace-invariant:` takes no value and is declared once")
+        next.trace_invariant = true
         return Ok(next)
     if key == "hosts":
         return hosts_directive(next, number, value)
