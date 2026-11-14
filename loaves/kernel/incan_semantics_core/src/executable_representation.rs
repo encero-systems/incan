@@ -86,12 +86,14 @@ use crate::body_ir::{
 /// field lifecycle, original-position and literal-empty-default facts. The positional schema requires fresh producers.
 /// Version 55 retains unresolved source-result independence obligations in checked input profiles. Generic
 /// templates carry their exact result types until the consuming instantiation proves independent storage.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 55;
+/// Version 56 passes eligible immutable parameters through inferred shared storage. Owned uses still materialize at
+/// their typed operation, so older owners with by-value parameter frames cannot be reused under this ABI.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 56;
 
 /// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
 /// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations, returned
 /// views, conditional profiles or the component carrying a view.
-const OLDEST_SUPPORTED_VERSION: u32 = 55;
+const OLDEST_SUPPORTED_VERSION: u32 = 56;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]
