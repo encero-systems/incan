@@ -1,0 +1,49 @@
+"""Every home binds its own view of the bakery its configuration selects on its first build (BE-01)."""
+
+from std.fs import Path
+from std.json import JsonValue
+from home_paths import BAKERY_OVERRIDE, BakeryLocation
+from home_views import bind_home_view
+from scratch import scratch_directory
+
+
+pub def test_each_home_binds_its_own_view_of_its_configured_bakery() -> Result[None, str]:
+    """
+    Two homes configured onto one bakery bind two views of it on their first build and keep them on the next; a
+    bakery `INCAN_BAKERY` selects for one invocation binds nothing, so the home's descriptor never names it.
+    """
+    scratch = scratch_directory()?
+    shared = scratch.path().joinpath("shared")
+    first = scratch.path().joinpath("first")
+    second = scratch.path().joinpath("second")
+    third = scratch.path().joinpath("third")
+    for directory in [first, second, third]:
+        directory.mkdir(true, true).map_err((error) => error.message())?
+    configured = BakeryLocation(path=shared, source="config")
+    first_view = bound(bind_home_view(first, configured)?)?
+    second_view = bound(bind_home_view(second, configured)?)?
+    assert first_view.startswith("home-"), first_view
+    assert first_view != second_view, "two homes bound one view"
+    assert field(first, "home_view")? == first_view
+    assert field(first, "locator")? == shared.0
+    assert bound(bind_home_view(first, configured)?)? == first_view, "a second build drew another view"
+    override = BakeryLocation(path=scratch.path().joinpath("override"), source=BAKERY_OVERRIDE)
+    match bind_home_view(third, override)?:
+        Some(view) => return Err(f"an invocation's INCAN_BAKERY was bound to the home as {view}")
+        None => pass
+    assert not third.joinpath("bakery.view").exists()
+    return Ok(None)
+
+
+def bound(view: Option[str]) -> Result[str, str]:
+    """The view a configured bakery must bind."""
+    match view:
+        Some(found) => return Ok(found)
+        None => return Err("a configured bakery bound no home view")
+
+
+def field(home: Path, key: str) -> Result[str, str]:
+    """One string field of a home's `bakery.view`."""
+    text = home.joinpath("bakery.view").read_text("utf-8", "strict").map_err((error) => error.message())?
+    document = JsonValue.parse(text).map_err((error) => error.message())?
+    return document.require(key).and_then((value) => value.expect_str()).map_err((error) => error.message())
