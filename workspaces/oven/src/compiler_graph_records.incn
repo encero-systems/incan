@@ -217,6 +217,64 @@ pub def reusable_family_records(selected: Snapshot, family: str, profile: str) -
     return Ok(records)
 
 
+pub def reusable_owner_records(
+    selected: Snapshot,
+    family: str,
+    profile: str,
+    origin: str,
+    owners: list[str],
+) -> Result[list[ReusableRecord], str]:
+    """
+    Select the witnessed values of one family/profile for only the owners of `origin` that `owners` names, reading and
+    validating no other owner's evaluation.
+    """
+    prefix = "incan.engine.output\t" + profile + "\t"
+    mut records: list[ReusableRecord] = []
+    for indexed in family_outputs(selected, family, profile)?:
+        key = decode_record_key(indexed[len(prefix):])?
+        if key.family != family or key.origin != origin or key.identity not in owners:
+            continue
+        match reusable_evaluation(selected, key, profile)?:
+            Some(reused) => records.append(ReusableRecord(key=key, value=reused.value, receipt=reused.receipt))
+            None => pass
+    return Ok(records)
+
+
+pub def owner_evaluations(
+    selected: Snapshot,
+    families: list[str],
+    profile: str,
+    origin: str,
+) -> Result[Dict[str, str], str]:
+    """
+    Each owner of `origin` with current outputs in `families`, and one digest of its outputs' keys and the value
+    digests their evaluations record. Another output, or another value under an output's old key, changes the owner's
+    digest; evaluating the same value again does not. No value is read or validated.
+    """
+    prefix = "incan.engine.output\t" + profile + "\t"
+    mut parts: Dict[str, list[str]] = {}
+    for family in families:
+        for indexed in family_outputs(selected, family, profile)?:
+            value_key = indexed[len(prefix):]
+            key = decode_record_key(value_key)?
+            if key.origin != origin:
+                continue
+            mut evaluation = ""
+            if let Some(document) = get(selected, evaluation_record_key(profile, value_key)).map_err(
+                (error) => error.message(),
+            )?:
+                evaluation = required_digest(evaluation_document(document)?, "value_digest")?
+            mut listed: list[str] = []
+            if key.identity in parts:
+                listed = parts[key.identity]
+            listed.append(f"{value_key}\n{evaluation}")
+            parts[key.identity] = listed
+    mut owners: Dict[str, str] = {}
+    for identity in parts.keys():
+        owners[identity] = digest("\n".join(sorted(parts[identity])).encode("utf-8"))
+    return Ok(owners)
+
+
 pub def family_outputs(selected: Snapshot, family: str, profile: str) -> Result[list[str], str]:
     """
     List one family/profile's current outputs in the graph's output index, by key, without reading, decoding or

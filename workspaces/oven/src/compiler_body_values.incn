@@ -12,6 +12,7 @@ from compiler_graph_records import (
     readers_of,
     reusable_evaluation,
     reusable_family_records,
+    reusable_owner_records,
 )
 
 
@@ -96,23 +97,7 @@ pub def select_body_inventory(selected: Snapshot, profile: str) -> Result[list[S
     locals = reusable_family_records(selected, "local", profile)?
     finals = reusable_family_records(selected, "final", profile)?
     bodies = reusable_family_records(selected, "body-ir", profile)?
-    mut selected_records: list[SelectedBodyRecord] = []
-    for local in locals:
-        match matching_record(finals, local):
-            Some(final) =>
-                match matching_record(bodies, local):
-                    Some(body) =>
-                        selected_records.append(
-                            SelectedBodyRecord(
-                                identity=local.key.identity,
-                                local=local.value,
-                                final=final.value,
-                                body_ir=body.value,
-                            ),
-                        )
-                    None => pass
-            None => pass
-    return Ok(selected_records)
+    return Ok(paired_records(locals, finals, bodies))
 
 
 pub def select_body_inventory_except(
@@ -125,10 +110,31 @@ pub def select_body_inventory_except(
     locals = reusable_family_records(selected, "local", profile)?
     finals = reusable_family_records(selected, "final", profile)?
     bodies = reusable_family_records(selected, "body-ir", profile)?
+    owned = [local for local in locals if local.key.origin == origin and local.key.identity not in invalid]
+    return Ok(paired_records(owned, finals, bodies))
+
+
+pub def select_body_inventory_of(
+    selected: Snapshot,
+    profile: str,
+    origin: str,
+    owners: list[str],
+) -> Result[list[SelectedBodyRecord], str]:
+    """Select the complete owners of this project origin that `owners` names, validating no other owner's records."""
+    locals = reusable_owner_records(selected, "local", profile, origin, owners)?
+    finals = reusable_owner_records(selected, "final", profile, origin, owners)?
+    bodies = reusable_owner_records(selected, "body-ir", profile, origin, owners)?
+    return Ok(paired_records(locals, finals, bodies))
+
+
+def paired_records(
+    locals: list[ReusableRecord],
+    finals: list[ReusableRecord],
+    bodies: list[ReusableRecord],
+) -> list[SelectedBodyRecord]:
+    """Each local value whose final value and Body IR frame were selected too, as one owner's complete record."""
     mut selected_records: list[SelectedBodyRecord] = []
     for local in locals:
-        if local.key.origin != origin or local.key.identity in invalid:
-            continue
         match matching_record(finals, local):
             Some(final) =>
                 match matching_record(bodies, local):
@@ -143,7 +149,7 @@ pub def select_body_inventory_except(
                         )
                     None => pass
             None => pass
-    return Ok(selected_records)
+    return selected_records
 
 
 pub def encode_body_inventory(records: list[SelectedBodyRecord]) -> Result[list[SelectedBodyPage], str]:
