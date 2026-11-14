@@ -7,7 +7,7 @@ from json_fields import required_text
 from observation import file_digest, observe
 from toolchain_types import Toolchain
 from payload_types import InstalledPayload, PayloadAdmission
-from unit_publication import verified_payload
+from unit_publication import recorded_facts, verified_payload
 
 
 pub model Captured:
@@ -119,5 +119,6 @@ def legacy_payload(payload: Path, record: Path) -> Result[PayloadAdmission, str]
             payload=expected,
             observation=before,
             provenance=[payload.0],
+            facts=recorded_facts(document)?,
         ),
     )

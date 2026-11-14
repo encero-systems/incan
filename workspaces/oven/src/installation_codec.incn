@@ -11,7 +11,7 @@ from frozen_inputs import Document
 from page_values import read_value, write_value
 from payload_types import InstalledPayload, PayloadAdmission
 
-pub const PROFILE: str = "incan.installation-page/20"
+pub const PROFILE: str = "incan.installation-page/21"
 
 
 pub model StandardManifest:
@@ -122,13 +122,14 @@ def read_payload(mut reader: Reader) -> Result[InstalledPayload, str]:
                 payload=reader.text()?,
                 observation=reader.text()?,
                 provenance=reader.texts()?,
+                facts=reader.text()?,
             ),
         ),
     )
 
 
 def write_payload(buffer: _BytesIO, payload: InstalledPayload) -> Result[None, str]:
-    """Keep producer, payload digest, provenance and filesystem observations distinct in the typed page."""
+    """Keep producer, payload digest, provenance, filesystem observations and published facts distinct in the page."""
     admission = payload.admission
     for value in [
         payload.path,
@@ -139,7 +140,8 @@ def write_payload(buffer: _BytesIO, payload: InstalledPayload) -> Result[None, s
         admission.observation,
     ]:
         put_text(buffer, value)?
-    return put_texts(buffer, admission.provenance)
+    put_texts(buffer, admission.provenance)?
+    return put_text(buffer, admission.facts)
 
 
 def read_toolchain(mut reader: Reader) -> Result[InstalledCompiler, str]:
