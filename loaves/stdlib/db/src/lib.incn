@@ -3,6 +3,7 @@
 import db.errors
 import db.handle
 import db.names
+import db.receipts
 import db.records
 import db.snapshots
 import db.transactions

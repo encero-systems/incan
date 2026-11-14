@@ -4,6 +4,7 @@ from pub::incan_platform.store import begin_compared, commit as substrate_commit
 from pub::incan_platform.store import stage_delete, stage_put
 from crate.db.errors import DbError, DbErrorKind, DbOperation, store_failure
 from crate.db.handle import StoreHandle
+from crate.db.receipts import CommitReceipt
 from crate.db.records import RecordKey, RecordState, RecordVersion, Tombstone, check_record_key
 from crate.db.snapshots import Snapshot, selection_of
 
@@ -96,13 +97,14 @@ pub class Transaction:
         self.end(TransactionState.Aborted)
         return Ok(None)
 
-    pub def commit(mut self) -> Result[None, DbError]:
+    pub def commit(mut self) -> Result[CommitReceipt, DbError]:
         """
-        Publish every staged change to the view in one generation, or none of them.
+        Publish every staged change to the view in one generation, or none of them, and return what was published.
 
         1. Refuse a transaction that is not open, and one whose store was closed.
         2. Stage every change in key order, comparing against the revision the transaction began from.
-        3. Publish. A view that moved on since is a conflict, and nothing is published.
+        3. Publish. A view that moved on since is a conflict, and nothing is published. The receipt names the
+           transaction, the revisions before and after, and the durability its placement achieved.
         4. Classify a failure: when the view still has its base revision nothing was published; otherwise the
            publication may have become visible, and the outcome is indeterminate.
         """
@@ -119,11 +121,13 @@ pub class Transaction:
                 Some(value) => stage_put(staging, stored, value)
                 None => stage_delete(staging, stored)
 
-        # 3. The substrate validates and publishes under its publication lock.
+        # 3. The substrate validates and publishes under its publication lock, and leases what it published.
+        transaction = staging.id
         match substrate_commit(staging):
-            Ok(_) =>
+            Ok(published) =>
+                receipt = CommitReceipt.of(self.handle.clone(), transaction, self.base_revision(), published)
                 self.end(TransactionState.Committed)
-                return Ok(None)
+                return Ok(receipt)
             Err(error) =>
                 # 4. The transaction ends as failed either way; only abort remains.
                 self.current = TransactionState.Failed

@@ -1,0 +1,68 @@
+"""Commit receipts name what one commit published and claim only the durability its placement achieves."""
+
+from std.tempfile import TemporaryDirectory
+from db.errors import DbError
+from db.receipts import Durability
+from db.records import RecordKey, RecordState
+from db.store import memory, open
+
+
+pub def test_a_receipt_names_its_transaction_revisions_and_selection() -> Result[None, str]:
+    """A receipt names its transaction, its view's revisions before and after, and reads exactly what it published."""
+    store = checked(memory())?
+    published = checked(store.view("published"))?
+    mut first = checked(published.begin())?
+    checked(first.write(page("guide"), b"Guide"))?
+    receipt = checked(first.commit())?
+    assert receipt.view == "published" and receipt.transaction != ""
+    assert receipt.prior == "" and receipt.successor != "" and receipt.changed()
+    assert receipt.successor == checked(published.snapshot())?.revision()
+    assert receipt.durability == Durability.Memory, receipt.durability.value()
+    mut second = checked(published.begin())?
+    checked(second.write(page("index"), b"Index"))?
+    later = checked(second.commit())?
+    assert later.transaction != receipt.transaction, "two commits share a transaction identity"
+    assert later.prior == receipt.successor
+    match checked(checked(receipt.snapshot())?.read(page("index")))?:
+        RecordState.Absent => pass
+        _ =>
+            assert false, "a receipt's snapshot saw a later commit"
+    return Ok(None)
+
+
+pub def test_a_disk_commit_claims_only_unqualified_durability() -> Result[None, str]:
+    """A disk commit is written in publication order, yet claims no survival of a crash or power loss."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    store = checked(open(scratch.path().joinpath("site.db")))?
+    mut transaction = checked(checked(store.view("published"))?.begin())?
+    checked(transaction.write(page("guide"), b"Guide"))?
+    receipt = checked(transaction.commit())?
+    assert receipt.durability == Durability.Unqualified, receipt.durability.value()
+    return Ok(None)
+
+
+pub def test_an_unchanged_commit_keeps_the_view_revision() -> Result[None, str]:
+    """A commit with nothing to change, or only values already present, leaves the view's revision as it was."""
+    store = checked(memory())?
+    published = checked(store.view("published"))?
+    mut seed = checked(published.begin())?
+    checked(seed.write(page("guide"), b"Guide"))?
+    base = checked(seed.commit())?.successor
+    mut nothing = checked(published.begin())?
+    empty = checked(nothing.commit())?
+    assert not empty.changed() and empty.successor == base, "an empty commit moved the view"
+    mut repeated = checked(published.begin())?
+    checked(repeated.write(page("guide"), b"Guide"))?
+    same = checked(repeated.commit())?
+    assert not same.changed() and same.successor == base, "rewriting a present value moved the view"
+    return Ok(None)
+
+
+def page(id: str) -> RecordKey:
+    """The key of one page record."""
+    return RecordKey(family="pages", id=id)
+
+
+def checked[T](result: Result[T, DbError]) -> Result[T, str]:
+    """A `std.db` result with its failure as the test's message."""
+    return result.map_err((error) => error.message())

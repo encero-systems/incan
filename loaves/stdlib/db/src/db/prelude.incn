@@ -7,6 +7,7 @@ with `close()`. Every operation returns `Result[..., DbError]`; match on `DbErro
 
 pub from crate.db.errors import DbError, DbErrorKind, DbOperation
 pub from crate.db.handle import Placement
+pub from crate.db.receipts import CommitReceipt, Durability
 pub from crate.db.records import RecordKey, RecordState, RecordVersion, Tombstone
 pub from crate.db.snapshots import Snapshot
 pub from crate.db.store import Store, memory, open

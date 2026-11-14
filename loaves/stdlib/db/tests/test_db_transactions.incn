@@ -12,7 +12,7 @@ pub def test_a_transaction_reads_its_own_writes_and_publishes_them_together() ->
     published = checked(store.view("published"))?
     mut seed = checked(published.begin())?
     checked(seed.write(page("draft"), b"Draft"))?
-    checked(seed.commit())?
+    _ = checked(seed.commit())?
     mut transaction = checked(published.begin())?
     checked(transaction.write(page("guide"), b"First"))?
     checked(transaction.write(page("guide"), b"Guide"))?
@@ -23,7 +23,7 @@ pub def test_a_transaction_reads_its_own_writes_and_publishes_them_together() ->
     outside = checked(published.snapshot())?
     expect_absent(checked(outside.read(page("guide")))?)?
     expect_present(checked(outside.read(page("draft")))?, b"Draft", true)?
-    checked(transaction.commit())?
+    _ = checked(transaction.commit())?
     assert transaction.state() == TransactionState.Committed
     after = checked(published.snapshot())?
     expect_present(checked(after.read(page("guide")))?, b"Guide", true)?
@@ -62,7 +62,7 @@ pub def test_a_committed_transaction_ends_and_a_refused_key_leaves_it_open() -> 
             assert error.kind == DbErrorKind.InvalidName, error.message()
     assert transaction.state() == TransactionState.Open, "a refused write ended the transaction"
     checked(transaction.write(page("guide"), b"Guide"))?
-    checked(transaction.commit())?
+    _ = checked(transaction.commit())?
     expect_closed(transaction.write(page("index"), b"Index"), DbOperation.Write)?
     expect_closed(transaction.commit(), DbOperation.Commit)?
     expect_closed(transaction.abort(), DbOperation.Abort)?
@@ -76,7 +76,7 @@ pub def test_a_moved_view_conflicts_and_publishes_nothing() -> Result[None, str]
     mut first = checked(published.begin())?
     mut second = checked(published.begin())?
     checked(second.write(page("index"), b"Index"))?
-    checked(second.commit())?
+    _ = checked(second.commit())?
     checked(first.write(page("guide"), b"Guide"))?
     match first.commit():
         Ok(_) =>

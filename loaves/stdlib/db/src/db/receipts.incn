@@ -1,0 +1,65 @@
+"""Commit receipts: what one commit published, and the durability its success actually achieved."""
+
+from pub::incan_platform.store import Snapshot as Selection
+from crate.db.errors import DbError
+from crate.db.handle import Placement, StoreHandle
+from crate.db.snapshots import Snapshot
+
+
+pub enum Durability(str):
+    """What a successful commit promises about surviving a failure; nothing stronger is ever claimed."""
+
+    # The commit lives in this process's memory, and no process exit preserves it.
+    Memory = "memory"
+    # The commit was written and synchronized to disk in the substrate's publication order. No filesystem is qualified
+    # for crashes and power loss yet, so surviving either is not claimed.
+    Unqualified = "unqualified"
+
+
+pub class CommitReceipt:
+    """
+    What one commit published: its transaction identity, the view's revision before and after it, and the durability
+    its success achieved.
+
+    It holds a lease on the selection it published, so `snapshot()` reads exactly that selection.
+    """
+
+    pub transaction: str
+    pub view: str
+    pub prior: str
+    pub successor: str
+    pub durability: Durability
+    handle: StoreHandle
+    published: Selection
+
+    @staticmethod
+    pub def of(handle: StoreHandle, transaction: str, prior: str, published: Selection) -> CommitReceipt:
+        """The receipt of transaction `transaction`, which began at revision `prior` and published `published`."""
+        return CommitReceipt(
+            transaction=transaction,
+            view=published.view,
+            prior=prior,
+            successor=published.index,
+            durability=achieved(handle.placement),
+            handle=handle,
+            published=published,
+        )
+
+    pub def changed(self) -> bool:
+        """
+        Whether the view's revision after the commit differs from the revision the transaction began from.
+
+        A transaction whose changes were all already present publishes nothing and leaves the revision unchanged.
+        """
+        return self.successor != self.prior
+
+    pub def snapshot(self) -> Result[Snapshot, DbError]:
+        """A snapshot of exactly the selection the commit published; later publications never reach it."""
+        return Ok(Snapshot.of(self.handle.clone(), self.published))
+
+
+def achieved(placement: Placement) -> Durability:
+    """The durability a successful commit to `placement` achieves today."""
+    match placement:
+        Placement.Memory => return Durability.Memory
+        Placement.Disk => return Durability.Unqualified
