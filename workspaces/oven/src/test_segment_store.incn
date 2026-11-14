@@ -35,6 +35,7 @@ from pub::incan_platform.store import (
     owned,
     put,
     fork,
+    fork_selection,
     read_counts,
     lease,
     view_snapshot,
@@ -776,8 +777,8 @@ def repeated(size: int) -> Result[bytes, str]:
 
 pub def test_a_forked_view_shares_its_source_and_neither_sees_the_other_s_later_writes() -> Result[None, str]:
     """
-    A fork starts at its source's root; writes to either side stay on that side, an existing view name is refused, and
-    compaction keeps what each view holds.
+    A fork starts at its source's root, or at exactly an older snapshot's root when it forks that selection; writes to
+    either side stay on that side, an existing view name is refused, and compaction keeps what each view holds.
     """
     scratch = scratch_directory()?
     root = scratch.path().joinpath("store")
@@ -820,11 +821,22 @@ pub def test_a_forked_view_shares_its_source_and_neither_sees_the_other_s_later_
             assert false, "an existing view was replaced"
         Err(error) =>
             assert error.kind == "conflict", error.message()
+    # A fork of an older snapshot starts at that snapshot's selection, not at its source view's latest root.
+    pinned = fork_selection(home, "pinned").map_err((error) => error.message())?
+    assert pinned.index == home.index and pinned.index != in_home.index
+    assert text(lookup(pinned, "shared")) == "base"
+    assert text(lookup(pinned, "only-home")) == "<absent>"
+    match fork_selection(home, "pinned"):
+        Ok(_) =>
+            assert false, "an existing view was replaced by a selection fork"
+        Err(error) =>
+            assert error.kind == "conflict", error.message()
     compacted = compact(root).map_err((error) => error.message())?
     assert len(segments(compacted).map_err((error) => error.message())?) == 1
     assert text(lookup(snapshot(root, "test").map_err((error) => error.message())?, "only-test")) == "t"
     assert text(lookup(snapshot(root, "test").map_err((error) => error.message())?, "only-home")) == "<absent>"
     assert text(lookup(snapshot(root).map_err((error) => error.message())?, "only-home")) == "h"
+    assert text(lookup(snapshot(root, "pinned").map_err((error) => error.message())?, "only-home")) == "<absent>"
     return Ok(None)
 
 

@@ -173,6 +173,8 @@ pub model Transaction:
     pub payloads: list[PreparedPayload] = []
     # The view revision a compared publication read; it publishes only while the view still has that revision.
     pub compared: Option[str] = None
+    # The root a fork names. None names the source view's latest root at publication.
+    pub fork_root: Option[str] = None
 
 
 pub model ReadCounts:
@@ -685,6 +687,22 @@ pub def fork(view: Snapshot, name: str) -> Result[Snapshot, StoreError]:
     return snapshot(published.root, name)
 
 
+pub def fork_selection(view: Snapshot, name: str) -> Result[Snapshot, StoreError]:
+    """
+    Create view `name` at exactly the root `view` selected, however its source view moved since, and return it.
+
+    `view`'s lease keeps that root's pages while the fork publishes, and the new view reaches them from then on. Like
+    `fork`, it copies no page and refuses a name that already exists or that a view key cannot hold.
+    """
+    check_view_key(name)?
+    check_retained(view)?
+    mut transaction = begin(view)
+    transaction.fork = name
+    transaction.fork_root = Some(view.index)
+    published = commit(transaction)?
+    return snapshot(published.root, name)
+
+
 pub def commit(transaction: Transaction) -> Result[Snapshot, StoreError]:
     """Publish one view through the same atomic group boundary used by multi-view requests."""
     return commit_group([transaction])
@@ -818,16 +836,22 @@ def stage_view(
 
 
 def publish_fork(root: Path, latest: Snapshot, transaction: Transaction, staged: Path) -> Result[Snapshot, StoreError]:
-    """Name a new view at the source view's root; the caller holds the publication lock."""
+    """
+    Name a new view at the source view's latest root, or at the selected root the fork carries; the caller holds the
+    publication lock.
+    """
     check_view_key(transaction.fork)?
     for existing in latest.views:
         if existing.view == transaction.fork:
             remove_tree(staged)
             return Err(failure("conflict", transaction.fork, "a view of this name already exists"))
+    mut source = latest.index
+    if let Some(selected) = transaction.fork_root:
+        source = selected
     published = switch(
         root,
         latest,
-        with_view(latest.views, transaction.fork, latest.index),
+        with_view(latest.views, transaction.fork, source),
         transaction.id,
     )?
     remove_tree(staged)
