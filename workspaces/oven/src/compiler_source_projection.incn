@@ -34,6 +34,7 @@ pub model SourceProjection:
 
     pub header: SourceProjectionRecord
     pub declarations: SourceProjectionRecord
+    pub census: SourceProjectionRecord
     pub owners: list[SourceProjectionRecord]
 
 
@@ -160,6 +161,12 @@ class SourceProjector:
                     start=0,
                     end=len(self.source),
                 ),
+                census=SourceProjectionRecord(
+                    key=source_key("owner-census", self.origin, self.path, "module"),
+                    text="\n".join([owner.key.facet for owner in owners]) + "\n",
+                    start=0,
+                    end=len(self.source),
+                ),
                 owners=owners,
             ),
         )
@@ -266,6 +273,11 @@ pub def import_declaration_indexes(
     return Ok(indexes)
 
 
+pub def owner_census_key(origin: str, path: str) -> RecordKey:
+    """Name the signature-independent current-owner membership witness for one source module."""
+    return source_key("owner-census", origin, path, "module")
+
+
 pub def signature_record(owner: &SourceProjectionRecord) -> SourceProjectionRecord:
     """Project one declaration's header without its implementation, preserving its kind-qualified source owner."""
     mut key = owner.key
@@ -292,6 +304,9 @@ pub def publish_source_projection(
     declaration_key = encode_record_key(projection.declarations.key)?
     transaction = put(transaction, declaration_key, projection.declarations.text.encode("utf-8"))
     published.append(declaration_key)
+    census_key = encode_record_key(projection.census.key)?
+    transaction = put(transaction, census_key, projection.census.text.encode("utf-8"))
+    published.append(census_key)
     for owner in projection.owners:
         for record in [owner, signature_record(owner)]:
             key = encode_record_key(record.key)?

@@ -286,7 +286,7 @@ pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[
 
     selected = store_snapshot(memory_root()).map_err((error) => error.message())?
     published = publish_source_projection(selected, before)?
-    assert len(published.keys) == 10
+    assert len(published.keys) == 11
     for key in published.keys:
         assert get(published.snapshot, key).map_err((error) => error.message())? is not None
 
@@ -432,19 +432,25 @@ pub def test_retained_owner_selection_propagates_an_ambiguous_owner() -> Result[
 
 pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidation() -> Result[None, str]:
     """Owner, header and declaration witnesses identify body, import and signature dirtiness without checking."""
-    source = "from std import env\n\ndef first() -> int:\n    return 1\n\ndef second() -> int:\n    return first()\n"
+    source = "from std import env\n\ndef first() -> int:\n    return 1\n\ndef second() -> int:\n    return first()\n\ndef unrelated() -> int:\n    return 3\n"
     projection = project_source("package", "src/main.incn", source)?
     first_source = projected_owner(projection, "first")?
     second_source = projected_owner(projection, "second")?
+    unrelated_source = projected_owner(projection, "unrelated")?
     selected = store_snapshot(memory_root()).map_err((error) => error.message())?
     projected = publish_source_projection(selected, projection)?
     first_declaration = family_key("declaration", "first")
     second_declaration = family_key("declaration", "second")
+    unrelated_declaration = family_key("declaration", "unrelated")
     declarations = commit(
         put(
-            put(begin(projected.snapshot), encode_record_key(first_declaration)?, b"first declaration"),
-            encode_record_key(second_declaration)?,
-            b"second declaration",
+            put(
+                put(begin(projected.snapshot), encode_record_key(first_declaration)?, b"first declaration"),
+                encode_record_key(second_declaration)?,
+                b"second declaration",
+            ),
+            encode_record_key(unrelated_declaration)?,
+            b"unrelated declaration",
         ),
     ).map_err((error) => error.message())?
     first_pair = publish_owner_pair(
@@ -452,17 +458,25 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
         "first",
         first_source.key,
         projected_header(source)?.key,
-        [first_declaration, projection.declarations.key],
+        [first_declaration, projection.census.key],
     )?
-    complete = publish_owner_pair(
+    second_pair = publish_owner_pair(
         first_pair,
         "second",
         second_source.key,
         projected_header(source)?.key,
-        [second_declaration, first_declaration, projection.declarations.key],
+        [second_declaration, first_declaration, projection.census.key],
+    )?
+    complete = publish_owner_pair(
+        second_pair,
+        "unrelated",
+        unrelated_source.key,
+        projected_header(source)?.key,
+        [unrelated_declaration, projection.census.key],
     )?
     assert select_body_values(complete, family_key("local", "first"), family_key("final", "first"), "profile")? is not None
     assert select_body_values(complete, family_key("local", "second"), family_key("final", "second"), "profile")? is not None
+    assert select_body_values(complete, family_key("local", "unrelated"), family_key("final", "unrelated"), "profile")? is not None
 
     body_edit = project_source("package", "src/main.incn", source.replace("return 1", "return 3"))?
     changed_body = projected_owner(body_edit, "first")?
@@ -474,6 +488,7 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
 
     signature_projection = project_source("package", "src/main.incn", source.replace("first() -> int", "first() -> str"))?
     assert signature_projection.declarations.text != projection.declarations.text
+    assert signature_projection.census.text == projection.census.text
     changed_signature = projected_owner(signature_projection, "first")?
     signature_source = publish_source_projection(complete, signature_projection)?
     signature = commit(
@@ -491,10 +506,12 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
         source.replace("def first() -> int:\n    return 1\n\n", ""),
     )?
     assert removed_projection.declarations.text != projection.declarations.text
+    assert removed_projection.census.text != projection.census.text
     removed = publish_source_projection(complete, removed_projection)?
-    assert invalid_body_owners(removed.snapshot, [removed_projection.declarations.key], "profile")? == [
+    assert invalid_body_owners(removed.snapshot, [removed_projection.census.key], "profile")? == [
         "first",
         "second",
+        "unrelated",
     ]
 
     import_source = source.replace("from std import env", "from std import fs")
@@ -503,6 +520,7 @@ pub def test_projected_body_witnesses_drive_early_cutoff_and_signature_invalidat
     assert invalid_body_owners(imported.snapshot, [projected_header(import_source)?.key], "profile")? == [
         "first",
         "second",
+        "unrelated",
     ]
     return Ok(None)
 
@@ -881,10 +899,9 @@ pub def test_successful_compile_outputs_publish_reusable_body_pairs() -> Result[
         "src/main.incn",
         source_text.replace("def other() -> None:\n    pass", "def other() -> int:\n    return 1"),
     )?
+    assert module_signature.census.text == project_source("app", "src/main.incn", source_text)?.census.text
     module_signature_edit = publish_source_projection(published.snapshot, module_signature)?
-    assert invalid_body_owners(module_signature_edit.snapshot, [module_signature.declarations.key], CHECKER_PROFILE)? == [
-        identity,
-    ]
+    assert invalid_body_owners(module_signature_edit.snapshot, [module_signature.declarations.key], CHECKER_PROFILE)? == []
 
     project_slot = RecordKey(
         family="declaration-slot",

@@ -1,0 +1,53 @@
+"""Canonical record keys for compiled body publication and selection."""
+
+from pub::internal_models.records import RecordKey
+
+const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
+
+
+pub def project_declaration_slot(origin: str, module: str, name: str) -> RecordKey:
+    """Name one project declaration slot whose value is the producer's checked stable identity."""
+    return RecordKey(
+        family="declaration-slot",
+        identity_profile=IDENTITY_PROFILE,
+        origin=origin,
+        identity=module,
+        facet=name,
+        context="checked-signature",
+    )
+
+
+pub def body_key(family: str, origin: str, identity: str, facet: str, context: str) -> RecordKey:
+    """Name one canonical checker value under its stable owner and semantic root."""
+    return RecordKey(
+        family=family,
+        identity_profile=IDENTITY_PROFILE,
+        origin=origin,
+        identity=identity,
+        facet=facet,
+        context=context,
+    )
+
+
+pub def namespace_key(origin: str, module: str) -> RecordKey:
+    """Name one composite editable namespace under its logical source projection."""
+    return RecordKey(
+        family="namespace",
+        identity_profile=IDENTITY_PROFILE,
+        origin=origin,
+        identity=module,
+        facet="checked",
+        context="interface-body-ir-plan",
+    )
+
+
+pub def eligibility_key(origin: str, identity: str, name: str) -> RecordKey:
+    """Name the explicit record-fast-path decision for one successfully checked owner."""
+    return RecordKey(
+        family="eligibility",
+        identity_profile=IDENTITY_PROFILE,
+        origin=origin,
+        identity=identity,
+        facet=name,
+        context="checker-record",
+    )
