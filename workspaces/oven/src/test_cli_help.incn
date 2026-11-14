@@ -41,7 +41,7 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
         [
             ("run", "incan run [--direct] [PATH | -c CODE] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
             ("check", "incan check [PATH] [--format text|json] [UNIT OPTIONS]"),
-            ("explain", "incan explain CODE"),
+            ("explain", "incan explain CODE [--format text|json]"),
             ("test", "incan test [PATH] [RUNNER OPTIONS] [UNIT OPTIONS]"),
             ("build", "incan build [PATH [OUTPUT_DIR]] [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
             ("fmt", "incan fmt [--check] [--diff] [PATH...]"),
@@ -49,6 +49,7 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
             ("mcp", "incan mcp PATH [--profile NAME]"),
             ("toolchain pack", "incan toolchain pack OUT"),
             ("toolchain install", "incan toolchain install ARCHIVE"),
+            ("tools doctor", "incan tools doctor [--format text|json]"),
             ("--version", "incan --version"),
         ],
     )
@@ -66,6 +67,12 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> Result[
             ("owner stop", "oven owner stop"),
             ("bakery status", "oven bakery gc [--keep-days N] | status [--format text|json] | verify | repair-payload SHA256 FILE"),
             ("inspect dependencies", "oven inspect dependencies PATH [UNIT OPTIONS]"),
+            ("inspect features", "oven inspect features [PATH] [--format text|json] [--features A,B] [--no-default-features] [--all-features]"),
+            ("new", "oven new [NAME] [--dir PATH] [--description TEXT] [--author AUTHOR] [--license LICENSE] [--force] [--yes]"),
+            ("init", "oven init [PATH] [--name NAME] [--version VERSION] [--description TEXT] [--author AUTHOR] [--license LICENSE] [--force] [--detect] [--yes]"),
+            ("version patch", "oven version [BUMP | --set VERSION] [--dry-run] [--keep-prerelease] [--project PATH | --member NAME_OR_PATH | --workspace]"),
+            ("workspace inspect", "oven workspace inspect [--format text|json] [--workspace] [--member NAME_OR_PATH]... [--exclude NAME_OR_PATH]..."),
+            ("env run", "oven env list [--format text|json] [--project PATH] | show [ENV] [--format text|json] [--project PATH] | run ENV SCRIPT [--dry-run] [--project PATH] [-- ARGS...]"),
             ("--version", "oven --version"),
         ],
     )
