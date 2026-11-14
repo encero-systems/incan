@@ -14,6 +14,7 @@ cannot be read. A pending case that now holds fails: its `pending:` line is stal
 """
 
 from rust::std::env import args, current_exe
+from rust::std::env::consts import OS
 from rust::std::process import exit
 from rust::std::time import Instant
 from std.fs import Path
@@ -43,10 +44,15 @@ pub model Tally:
     pub passed: int
     pub failed: int
     pub pending: int
+    # Cases another host runs (`# hosts:`); reported, never counted as passed.
+    pub skipped: int = 0
 
     pub def line(self, label: str) -> str:
         """The summary line for `label`."""
-        return f"{label}: {self.passed} passed, {self.failed} failed, {self.pending} pending"
+        mut line = f"{label}: {self.passed} passed, {self.failed} failed, {self.pending} pending"
+        if self.skipped > 0:
+            line = line + f", {self.skipped} skipped"
+        return line
 
 
 pub enum Verdict:
@@ -55,6 +61,8 @@ pub enum Verdict:
     Pass
     Fail(list[str])
     Pend(str)
+    # The case runs only on other hosts, named in the reason.
+    Skip(str)
 
 
 pub model CaseResult:
@@ -376,11 +384,12 @@ def forward_graph(
                     println(tally.line(f"area graph/{area}"))
                 area = current
                 tally = Tally(passed=0, failed=0, pending=0)
-            passed, failed, pending = total.passed, total.failed, total.pending
+            passed, failed, pending, skipped = total.passed, total.failed, total.pending, total.skipped
             refused += forward_family("graph", results[index], total, units, true)
             tally.passed += total.passed - passed
             tally.failed += total.failed - failed
             tally.pending += total.pending - pending
+            tally.skipped += total.skipped - skipped
     if area != "":
         println(tally.line(f"area graph/{area}"))
     return refused
@@ -416,6 +425,8 @@ def forward_family(
                 elif line.startswith("FAIL "):
                     total.failed += 1
                     failed += 1
+                elif line.startswith("SKIP "):
+                    total.skipped += 1
                 elif line.startswith("PEND "):
                     total.pending += 1
                 elif line.startswith("REFUSED "):
@@ -455,14 +466,16 @@ def family_outcomes(
     only when the whole family was selected. Every other case runs under its own command.
     """
     mut outcomes: dict[str, Result[Outcome, str]] = {}
+    # A case restricted to other hosts is never run here; comparing it reports it skipped.
+    runnable = [fixture for fixture in selected if runs_on_this_host(fixture)]
     if not settings.isolated:
         mut hint: Option[Path] = None
         if settings.use_hints and len(selected) == len(fixtures):
             hint = hint_path(settings.root, family)
-        batch = run_batches(settings.incan, scratch, selected, settings.jobs, hint)
+        batch = run_batches(settings.incan, scratch, runnable, settings.jobs, hint)
         outcomes = batch.outcomes
         units.count(batch.notes)
-    run_separate(settings.incan, scratch, selected, outcomes, settings.jobs)
+    run_separate(settings.incan, scratch, runnable, outcomes, settings.jobs)
     return outcomes
 
 
@@ -507,6 +520,10 @@ def report_verdict(fixture: Fixture, verdict: Verdict, mut tally: Tally, mut tot
             println(f"PEND {fixture.case_name()} ({reason})")
             tally.pending += 1
             total.pending += 1
+        Verdict.Skip(reason) =>
+            println(f"SKIP {fixture.case_name()} ({reason})")
+            tally.skipped += 1
+            total.skipped += 1
         Verdict.Fail(failures) =>
             println(f"FAIL {fixture.case_name()}")
             for failure in failures:
@@ -516,10 +533,16 @@ def report_verdict(fixture: Fixture, verdict: Verdict, mut tally: Tally, mut tot
 
 
 def run_case(incan: str, scratch: Path, fixture: Fixture, batched: Option[Result[Outcome, str]]) -> CaseResult:
-    """Synchronize, execute and compare one case, retaining its project for the next invocation."""
+    """
+    Synchronize, execute and compare one case, retaining its project for the next invocation. A case restricted to
+    other hosts (`# hosts:`) is not run and is reported skipped.
+    """
     match read_program(fixture):
         Err(reason) => return CaseResult(verdict=Verdict.Fail([reason]), notes=[])
         Ok(program) =>
+            if len(program.header.hosts) > 0 and str(OS) not in program.header.hosts:
+                hosts = ", ".join(program.header.hosts)
+                return CaseResult(verdict=Verdict.Skip(f"runs on {hosts}; this host is {str(OS)}"), notes=[])
             match prepare_case(fixture, scratch, batched):
                 Err(reason) => return CaseResult(verdict=Verdict.Fail([reason]), notes=[])
                 Ok(project) =>
@@ -640,3 +663,10 @@ def tail(text: str) -> str:
 def indented(text: str) -> str:
     """A failure as a report shows it under its case."""
     return "\n".join([f"  {line}" for line in text.split("\n")])
+
+
+def runs_on_this_host(fixture: Fixture) -> bool:
+    """Whether the case runs on this host: it names none or this one in `# hosts:`. An unreadable case runs, to fail."""
+    match read_program(fixture):
+        Err(_) => return true
+        Ok(program) => return len(program.header.hosts) == 0 or str(OS) in program.header.hosts

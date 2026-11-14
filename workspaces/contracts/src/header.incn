@@ -29,6 +29,7 @@ const DIRECTIVES: FrozenList[str] = [
     "expect-active-features",
     "expect-formatted",
     "pending",
+    "hosts",
 ]
 # The directives whose lines follow them as an indented block.
 const BLOCKS: FrozenList[str] = [
@@ -70,6 +71,13 @@ const SET_BLOCKS: FrozenList[str] = [
 ]
 
 
+pub enum Host(str):
+    """The operating systems a case can be restricted to, as Rust names the host's (`std::env::consts::OS`)."""
+
+    Linux = "linux"
+    Macos = "macos"
+
+
 pub model Header:
     """What a fixture declares about itself."""
 
@@ -87,6 +95,8 @@ pub model Header:
     pub diagnostics: list[str]
     # Whether the program must check cleanly (`# expect-accepted:`).
     pub accepted: bool
+    # The hosts the case runs on (`# hosts:`); empty for every host. Another host reports the case skipped.
+    pub hosts: list[str] = []
     # Why the fixture does not hold yet (`# pending:`).
     pub pending: Option[str]
 
@@ -228,7 +238,7 @@ def directive_into(header: Header, number: int, key: str, value: str) -> Result[
 
 
 def scalar_directive(header: Header, number: int, key: str, value: str) -> Result[Header, str]:
-    """Admit `expect-exit`, `expect-diagnostic`, `expect-accepted` and `pending`."""
+    """Admit `expect-exit`, `expect-diagnostic`, `expect-accepted`, `hosts` and `pending`."""
     mut next = header
     if key == "expect-exit":
         if next.declares(key):
@@ -244,6 +254,8 @@ def scalar_directive(header: Header, number: int, key: str, value: str) -> Resul
             return Err(f"line {number}: `expect-diagnostic: {value}` is declared twice")
         next.diagnostics.append(value)
         return Ok(next)
+    if key == "hosts":
+        return hosts_directive(next, number, value)
     if key == "expect-accepted":
         if value != "":
             return Err(f"line {number}: `expect-accepted:` takes no value")
@@ -363,3 +375,18 @@ def late_reason(number: int, key: str, ended: int, blank: bool) -> str:
     if blank:
         ended_by = f"a blank line ends the header (line {ended})"
     return f"line {number}: `{key}:` after the header ended; {ended_by}, so keep every directive in the unbroken run of `#` lines at the top of the file"
+
+
+def hosts_directive(header: Header, number: int, value: str) -> Result[Header, str]:
+    """Admit `hosts: NAME, ...`: the operating systems the case runs on, each once."""
+    mut next = header
+    if len(next.hosts) > 0:
+        return Err(f"line {number}: `hosts:` is declared twice")
+    for item in value.split(","):
+        name = item.strip()
+        if name not in [host.value() for host in [Host.Linux, Host.Macos]]:
+            return Err(f"line {number}: `hosts:` names `{name}`; a host is `linux` or `macos`, separated by commas")
+        if name in next.hosts:
+            return Err(f"line {number}: `hosts:` names `{name}` twice")
+        next.hosts.append(name)
+    return Ok(next)
