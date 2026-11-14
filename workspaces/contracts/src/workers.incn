@@ -74,25 +74,31 @@ pub model Pool:
         """Whether a request is still queued or running."""
         return self.next < len(pool_ready) or len(self.active) > 0
 
-    pub def add(mut self, added: list[Invocation]) -> None:
+    pub def add(mut self, added: list[Invocation], first: bool = false) -> None:
         """
-        Give each added request the next result slot, queue the independent ones longest first and hold each follow-up
-        under its prerequisite, which joins the pool no later than the follow-up.
+        Give each added request the next result slot, queue the independent ones longest first, ahead of the requests
+        still queued when `first` asks, and hold each follow-up under its prerequisite, which joins the pool no later
+        than the follow-up.
         """
         base = len(self.requests)
         for request in added:
             waiting: Result[Outcome, str] = Err("invocation not started")
             pool_outcomes[len(self.requests)] = waiting
             self.requests.append(request)
+        mut ready: list[int] = []
         for offset in invocation_order(added):
             index = base + offset
             match added[offset].after:
-                None => pool_ready.append(index)
+                None => ready.append(index)
                 Some(parent) =>
                     if parent < 0 or parent >= len(self.requests) or parent == index:
                         record_failure(index, "invalid invocation prerequisite")
                         continue
                     retain_followup(parent, index)
+        if first:
+            pool_ready = pool_ready[0:self.next] + ready + pool_ready[self.next:]
+        else:
+            pool_ready.extend(ready)
 
     pub def step(mut self) -> list[int]:
         """Launch queued requests up to the limit and reap finished children; the requests that settled meanwhile."""
