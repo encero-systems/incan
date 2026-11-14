@@ -2,8 +2,8 @@
 Rebuild a lane's driver and Incan lowering with its installed toolchain, then install the driver in place of the one
 it replaces.
 
-Run `incan run scripts/relink_driver.incn -- [--lowering] [--release]` with `DEV8_LANE` set; `scripts/README.md`
-describes the settings.
+Run `incan run scripts/relink_driver.incn -- [--lowering] [--release] [--standard]` with `DEV8_LANE` set;
+`scripts/README.md` describes the settings.
 """
 
 from rust::std::env import args
@@ -16,6 +16,18 @@ from std.fs import Path
 from std.hash import file_digest
 from std.json import JsonValue
 from check_support import write_stderr
+from native_build import (
+    NativeContext,
+    StandardGeneration,
+    build_runtime,
+    build_source_interfaces,
+    build_standard_packages,
+    build_support_tool,
+    readmit_build_home,
+    require_unique_runtime_root,
+    standard_profiles,
+)
+from oven_tests import host_memory, shared_memory
 from release_support import TOOLCHAIN_DIRECTORY
 
 const DRIVER_LOAF: str = "loaves/toolchain/incan-rustc-driver"
@@ -35,6 +47,12 @@ pub model Relink:
     # Re-admit each home whose installation this relink rewrites. Release production re-admits through its own
     # helper, so only a standalone relink asks its builder.
     pub readmit: bool = false
+    # Rebuild the runtime and standard Loaves with the relinked compiler, as a release does after its relink. A release
+    # rebuilds them itself, so only a standalone relink asks.
+    pub standard: bool = false
+    # The home that builds the support helper before the driver changes; a relinked home's own shipped standard Loaves
+    # may come from another compiler, so a lane names the pristine bundle home it copied.
+    pub helper_home: str = ""
 
 
 def main() -> None:
@@ -52,15 +70,18 @@ def main() -> None:
 
 
 def options() -> Result[Relink, str]:
-    """Read `--lowering` and `--release` and the lane's environment."""
+    """Read `--lowering`, `--release` and `--standard` and the lane's environment."""
     mut profile = "debug"
     mut refresh = false
+    mut standard = false
     arguments = [argument for argument in args()]
     for argument in arguments[1:]:
         if argument == "--lowering":
             refresh = true
         elif argument == "--release":
             profile = "release"
+        elif argument == "--standard":
+            standard = true
         else:
             return Err(f"unknown option: {argument}")
     lane_text = get_or("DEV8_LANE", "")
@@ -68,17 +89,20 @@ def options() -> Result[Relink, str]:
         return Err("set DEV8_LANE to the bootstrap lane directory")
     lane = Path(lane_text)
     repo = lane.joinpath("incan")
+    home = get_or("SELFBUILD_HOME", lane.joinpath("dev8-home").0)
     return Ok(
         Relink(
             repo=repo,
             bootstrap=lane.joinpath("bootstrap"),
-            toolchain_home=Path(get_or("SELFBUILD_HOME", lane.joinpath("dev8-home").0)),
+            toolchain_home=Path(home),
             builder=get_or("SELFBUILD_OVEN", lane.joinpath("oven-bin/incan").0),
             stdlib=get_or("SELFBUILD_STDLIB", repo.joinpath("loaves/stdlib").0),
             profile=profile,
             refresh=refresh,
             log=Path(get_or("INCAN_RELINK_LOG", lane.joinpath("bootstrap/driver-build.log").0)),
             readmit=true,
+            standard=standard,
+            helper_home=get_or("SELFBUILD_HELPER_HOME", home),
         ),
     )
 
@@ -95,6 +119,10 @@ pub def run(relink: Relink) -> Result[None, str]:
         if stamp.is_file():
             stamp.unlink().map_err((error) => error.message())?
     sysroot = absolute(manifest_text(read_manifest(toolchain)?, "sysroot")?, toolchain.0)
+    mut helper: Option[Path] = None
+    if relink.standard:
+        # As a release builds it with its seed: the relinked compiler would read the standard Loaves it replaces.
+        helper = Some(build_support_tool(standard_context(relink)?, Path(relink.helper_home))?)
     compiler_home = relink.toolchain_home.joinpath("compiler-build")
     if prepare_compiler_home(relink.toolchain_home, compiler_home)? and relink.readmit:
         # The compiler home selects the installation's current driver; its admitted page still names the earlier one.
@@ -115,11 +143,45 @@ pub def run(relink: Relink) -> Result[None, str]:
         readmit(relink.builder, relink.toolchain_home, removed)?
         if prepare_compiler_home(relink.toolchain_home, compiler_home)?:
             readmit(relink.builder, compiler_home, removed)?
+    if let Some(built_helper) = helper:
+        rebuild_standard(standard_context(relink)?, built_helper)?
     ended = started.elapsed().as_secs_f64()
     report_relink_timing(
         [("setup", prepared), ("compilation", compiled - prepared), ("install", ended - compiled), ("total", ended)],
     )
     return Ok(None)
+
+
+pub def standard_context(relink: Relink) -> Result[NativeContext, str]:
+    """
+    The native context of a standard relink: the relinked home and its builder, the lane's helper and evidence beside
+    the relink log, and a release's default jobs. A lane machine is shared, so each step may take up to an hour.
+    """
+    evidence = relink.log.parent().joinpath("relink-standard")
+    evidence.mkdir(true, true).map_err((error) => error.message())?
+    return Ok(
+        NativeContext(
+            repo=relink.repo,
+            lane=relink.bootstrap.parent(),
+            home=relink.toolchain_home,
+            builder=relink.builder,
+            stdlib=relink.stdlib,
+            evidence=evidence,
+            timings=evidence.joinpath("timings.tsv"),
+            jobs=4,
+            memory=shared_memory(host_memory()),
+            timeout_seconds=3600,
+        ),
+    )
+
+
+def rebuild_standard(context: NativeContext, helper: Path) -> Result[None, str]:
+    """Readmit the relinked compiler, then rebuild the interfaces, runtime and standard Loaves through it, as a release."""
+    readmit_build_home(context, helper, "relink-driver-readmit")?
+    interfaces = build_source_interfaces(context, helper, "relink-")?
+    _ = build_runtime(context, helper, Some(interfaces), true)?
+    require_unique_runtime_root(context)?
+    return build_standard_packages(context, helper, "relink-", standard_profiles(StandardGeneration.Candidate))
 
 
 pub def prepare_compiler_home(installed_home: Path, compiler_home: Path) -> Result[bool, str]:
