@@ -17,6 +17,7 @@ use super::{LoafArtifact, LoafEntry, LoafIdentity, LoafIndexError, LoafNamespace
 use crate::library_manifest::compiler_records::RecordFamily;
 use crate::library_manifest::declaration_records::{DeclarationFacet, declaration_facts};
 use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
+use crate::library_manifest::type_scope::ModuleTypeScope;
 use incan_semantics_core::body_ir::RuntimeCallableBinding;
 
 /// Maximum encoded inventory proof size; larger optional records fall back to ordinary manifest admission.
@@ -342,6 +343,22 @@ impl IndexedLoaf {
             [namespace] => Ok(Some(namespace.clone())),
             _ => Err(self.inventory_mismatch("a public namespace record differs from its admitted inventory")),
         }
+    }
+
+    /// The type scope of the module `module` of this Loaf, from its own record. `None` when the installed set holds no
+    /// one such record, including a set converted before modules had type scope records and every Loaf outside records
+    /// mode; such a caller reads the scope from the manifest's checked API.
+    pub fn type_scope(&self, module: &[String]) -> Result<Option<ModuleTypeScope>, LoafIndexError> {
+        if !super::compiler_record_set::configured() {
+            return Ok(None);
+        }
+        let Some(values) = self.named_records(RecordFamily::TypeScope.as_str(), &module.join("::"))? else {
+            return Ok(None);
+        };
+        let [scope] = values.as_slice() else {
+            return Ok(None);
+        };
+        Ok(serde_json::from_value(scope.clone()).ok())
     }
 
     /// The `family` records named `name`, read from the installed set the first time they are asked for and kept for

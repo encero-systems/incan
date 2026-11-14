@@ -163,6 +163,25 @@ pub enum ApiDeclaration {
     Partial(ApiPartial),
 }
 
+impl ApiDeclaration {
+    /// The declaration's source spelling.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Function(item) => &item.name,
+            Self::Model(item) => &item.name,
+            Self::Class(item) => &item.name,
+            Self::Trait(item) => &item.name,
+            Self::Enum(item) => &item.name,
+            Self::Newtype(item) => &item.name,
+            Self::TypeAlias(item) => &item.name,
+            Self::Const(item) => &item.name,
+            Self::Static(item) => &item.name,
+            Self::Alias(item) => &item.name,
+            Self::Partial(item) => &item.name,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApiFunction {
     /// Explicit checked ownership and result-source metadata, retained through API projections.
