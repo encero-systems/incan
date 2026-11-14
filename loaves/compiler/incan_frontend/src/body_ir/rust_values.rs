@@ -7,6 +7,8 @@
 //! its laid-out Body IR types (`incan_semantics_core::body_ir::held_rust_items`). Native types with an admitted Incan
 //! meaning (collections, strings, options) already have that checked storage; copying it never reclassifies the type.
 
+use incan_lang::lang::derives::{self, DeriveId};
+
 use super::{IncanType, TypeCheckInfo, bir};
 
 /// Retain selected native layouts using their checked field identities, visibility and type binders. The adapter
@@ -29,7 +31,7 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::NominalDeclaration
                 .collect();
             declaration.field_public = layout.field_public.clone();
             if layout.is_copy {
-                declaration.derives.push("Copy".into());
+                declaration.derives.push(derives::as_str(DeriveId::Copy).into());
             }
             Some(declaration)
         })
@@ -61,7 +63,7 @@ pub(super) fn enum_declarations(facts: &TypeCheckInfo) -> Vec<bir::EnumDeclarati
                 .collect();
             let mut declaration = bir::native_enum_declaration(path, layout.type_parameters.clone(), variants)?;
             if layout.is_copy {
-                declaration.derives.push("Copy".into());
+                declaration.derives.push(derives::as_str(DeriveId::Copy).into());
             }
             Some(declaration)
         })

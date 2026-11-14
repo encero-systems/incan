@@ -157,7 +157,11 @@ pub(super) fn verify_library_layout(
     }
     let arguments = callees::arguments(tcx, def, &model.library_type_arguments)?;
     callees::verify_bounds(tcx, def, arguments)?;
-    if model.derives.iter().any(|derive| derive == "Copy") {
+    if model
+        .derives
+        .iter()
+        .any(|derive| derive == derives::as_str(DeriveId::Copy))
+    {
         let native = tcx.type_of(def).instantiate(tcx, arguments).skip_normalization();
         if !tcx.type_is_copy_modulo_regions(rustc_middle::ty::TypingEnv::fully_monomorphized(), native) {
             return Err(invalid("native Copy capability differs from metadata"));

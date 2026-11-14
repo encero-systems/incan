@@ -135,7 +135,7 @@ pub(super) fn validate_models(plan: &Plan, borrowed_aliases: &BorrowedAliasInven
         let derives_valid = if declaration.library_item.is_empty() {
             valid_nominal_derives(&declaration.derives, tuple)
         } else {
-            declaration.derives.is_empty() || declaration.derives == ["Copy"]
+            declaration.derives.is_empty() || declaration.derives == [derives::as_str(DeriveId::Copy)]
         };
         if !identifier(&declaration.name)
             || !names.insert(declaration.name.clone())

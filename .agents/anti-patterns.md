@@ -24,7 +24,7 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 | RS8 | `Rc<RefCell<_>>` | 0 | 0 | 0 |
 | RS9 | `macro_rules!` outside `incan_derive` | 22 | 22 | 22 |
 | RS10 | `collect::<Vec<_>>()` only to iterate again | 0 | 0 | 0 |
-| RS11 | Builtin trait names as string literals in compiler layers | 3 | 2 | 3 |
+| RS11 | Builtin trait and derive names as string literals in compiler layers | 13 | 4 | 9 |
 | RS12 | `Err(_) =>` arms that drop the error (Rust) | 47 | — | 47 |
 | RS13 | `map_err(\|e\| e.to_string())` that drops the operation | 106 | — | 106 |
 | IN1 | Inline `.map_err((error) => error.message())` plumbing | 2589 | 2589 | 2589 |
@@ -110,11 +110,11 @@ IN15 counts candidates. A message that names its subject in the surrounding erro
 - Source: `AGENTS.md`, "Rust Anti-Patterns to Avoid".
 - Search: `rg -n -P 'collect::<Vec<_>>\(\)\.(iter|into_iter)\(' -g '*.rs' -g '!**/fixtures/**'`
 
-### RS11 Builtin trait names as literals in compiler layers
+### RS11 Builtin trait and derive names as literals in compiler layers
 
 - Source: `.agents/learnings.md`, "RFC 041 (first-class Rust interop) implementation notes".
-- Search: `rg -n '"(Clone|Copy|Debug|Default|Eq|PartialEq|Ord|PartialOrd|Hash|Display)"' -g '*.rs' loaves/compiler`
-- Real: `loaves/compiler/incan_frontend/src/body_ir/rust_values.rs:32` and `:64` push `"Copy"`. The third hit is a rustdoc example.
+- Search: `rg -n '"(Clone|Copy|Debug|Default|Eq|PartialEq|Ord|PartialOrd|Hash|Display)"' -g '*.rs' loaves/compiler loaves/toolchain`
+- Real: the four `"Copy"` derive names, pushed in `loaves/compiler/incan_frontend/src/body_ir/rust_values.rs` and compared in `loaves/toolchain/incan-rustc-driver/src/adapter/library_verification.rs` and `loaves/toolchain/incan-rustc-driver/src/validation/nominal_layouts.rs`. Not real: the eight named constants of `ast_build.rs` and `library_exports.rs`, which spell rustc's own standard-library symbols in one place each, and a rustdoc example.
 
 ### RS12 `Err(_)` arms that drop the error
 
