@@ -15,6 +15,7 @@ from std.toml import TomlValue
 from cli_help import render
 from files import read
 from intake import read_project, source_root_of
+from workspace_shared import shared_tables
 from rust::std::env import current_exe
 from rust::std::os::unix::process import CommandExt
 from rust::std::process import Command
@@ -245,18 +246,25 @@ def inspection_document(
             ),
         )
     scope = [JsonValue.object({"name": JsonValue.string(member.name), "path": JsonValue.string(member.relative)}) for member in members]
-    document = JsonValue.object(
-        {"schema_version": JsonValue.int(1), "workspace": JsonValue.object(
+    mut fields: Dict[str, JsonValue] = {
+        "schema_version": JsonValue.int(1),
+        "workspace": JsonValue.object(
             {"root": JsonValue.string(workspace.root.0), "manifest_path": JsonValue.string(workspace.manifest.0)},
-        ), "members": JsonValue.array(declared), "default_members": JsonValue.array(
-            [JsonValue.string(item) for item in workspace.default_members],
-        ), "selected_scope": JsonValue.object(
+        ),
+        "members": JsonValue.array(declared),
+        "default_members": JsonValue.array([JsonValue.string(item) for item in workspace.default_members]),
+        "selected_scope": JsonValue.object(
             {"origin": JsonValue.string(origin.value()), "members": JsonValue.array(scope)},
-        ), "lock": JsonValue.object(
+        ),
+        "lock": JsonValue.object(
             {"canonical_path": JsonValue.string(lock.0), "exists": JsonValue.bool(lock.is_file())},
-        )},
-    )
-    return document.to_pretty_json().map_err((error) => error.message())
+        ),
+    }
+    # The root's shared tables, in 0.5.1's shape (`workspace_shared`).
+    shared = shared_tables(workspace.root, workspace.manifest)?
+    for key in sorted([key for key in shared.keys()]):
+        fields[key] = shared[key]
+    return JsonValue.object(fields).to_pretty_json().map_err((error) => error.message())
 
 
 pub def inspect_help() -> str:
