@@ -294,6 +294,7 @@ nav:
           - Package features: tooling/how-to/sdk_components_and_package_features.md
           - Inspect checked C bindings: tooling/how-to/inspect_checked_c_bindings.md
           - Testing: tooling/how-to/testing.md
+          - Move a project from 0.5 to 0.6: tooling/how-to/move_from_0_5.md
       - Explanation:
           - Oven and Loaves: tooling/explanation/oven_ecosystem.md
           - Projects today: tooling/explanation/projects_today.md
