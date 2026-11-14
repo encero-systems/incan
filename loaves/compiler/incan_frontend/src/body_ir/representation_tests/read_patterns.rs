@@ -26,7 +26,10 @@ def take(node: Node, dictionary: Dictionary) -> str:
     return ""
 "#;
     let (_, _, mut module) = checked_seed(source)?;
-    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    super::shared_reads::retain_modules(
+        std::slice::from_mut(&mut module),
+        crate::body_ir::ContextModules::default(),
+    );
     for name in ["inspect", "take"] {
         let body = module
             .bodies
@@ -123,7 +126,10 @@ def overlap(mut cursor: Cursor) -> int:
 
 "#;
     let (_, _, mut module) = checked_seed(source)?;
-    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    super::shared_reads::retain_modules(
+        std::slice::from_mut(&mut module),
+        crate::body_ir::ContextModules::default(),
+    );
     for name in [
         "parser",
         "read_field",
@@ -214,7 +220,10 @@ def owned_some(packet: Packet) -> Option[list[str]]:
     return Some(packet.metadata)
 "#;
     let (_, _, mut module) = checked_seed(source)?;
-    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    super::shared_reads::retain_modules(
+        std::slice::from_mut(&mut module),
+        crate::body_ir::ContextModules::default(),
+    );
     for (name, expected) in [
         ("ok_field", incan_semantics_core::IncanInputAccess::InferredShared),
         ("err_field", incan_semantics_core::IncanInputAccess::InferredShared),
@@ -263,7 +272,7 @@ pub(super) fn assert_declared_record_namespace() -> Result<(), Box<dyn std::erro
         }
         let providers = ProviderOperationCatalog::new();
         let context = BodyIrContext {
-            modules: &[],
+            modules: crate::body_ir::ContextModules::default(),
             provider_operations: &providers,
             registry_package: None,
             library_package: Some("example/catalog"),
@@ -438,7 +447,10 @@ def lookup(table: dict[str, int], item: Item, text: str, data: bytes, items: lis
         None => return 0
 "#;
     let (_, _, mut module) = checked_seed(source)?;
-    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    super::shared_reads::retain_modules(
+        std::slice::from_mut(&mut module),
+        crate::body_ir::ContextModules::default(),
+    );
     let inferred = incan_semantics_core::IncanInputAccess::Inferred;
     let shared = incan_semantics_core::IncanInputAccess::InferredShared;
     let expected = vec![
@@ -511,7 +523,10 @@ def read(item: Native) -> int:
     return item.value
 "#;
     let (_, _, mut module) = checked_seed(source)?;
-    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    super::shared_reads::retain_modules(
+        std::slice::from_mut(&mut module),
+        crate::body_ir::ContextModules::default(),
+    );
     let inferred = incan_semantics_core::IncanInputAccess::Inferred;
     let shared = incan_semantics_core::IncanInputAccess::InferredShared;
     let expected = vec![
@@ -570,7 +585,10 @@ model Reader:
         return held
 "#;
     let (_, _, mut module) = checked_seed(source)?;
-    super::shared_reads::retain_modules(std::slice::from_mut(&mut module), &[]);
+    super::shared_reads::retain_modules(
+        std::slice::from_mut(&mut module),
+        crate::body_ir::ContextModules::default(),
+    );
     let inferred = incan_semantics_core::IncanInputAccess::Inferred;
     let shared = incan_semantics_core::IncanInputAccess::InferredShared;
     let expected = vec![

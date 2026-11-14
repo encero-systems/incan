@@ -231,7 +231,7 @@ pub(super) fn retain_source_body_contracts(
 /// overwrite precedence when the same identity is already present in the local inventory.
 pub(super) fn collect_visible_enum_declarations(
     local: &[bir::EnumDeclaration],
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
 ) -> HashMap<CanonicalSymbolId, bir::EnumDeclaration> {
     local
         .iter()
@@ -243,7 +243,7 @@ pub(super) fn collect_visible_enum_declarations(
 /// Add dependency layouts under their existing compact canonical lookup keys. Local spelling entries stay
 /// available alongside those qualified keys; this does not recreate identity from an unqualified name.
 pub(super) fn extend_published_nominal_declarations(
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
     nominals: &mut LocalNominalDeclarations,
     fieldless_enums: &mut LocalFieldlessEnumDeclarations,
     value_enums: &mut LocalValueEnumDeclarations,
@@ -264,7 +264,7 @@ pub(super) fn extend_published_nominal_declarations(
 /// Index dependency constants and the local immutable values whose retained layouts are available before
 /// deferred defaults are attached. Other local constant forms keep their existing lowering path.
 pub(super) fn collect_published_constants(
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
     local_constants: &[bir::ConstantDeclaration],
 ) -> HashMap<CanonicalSymbolId, bir::Constant> {
     context
@@ -370,7 +370,7 @@ pub(super) fn retain_module_representations(
     module: &mut bir::BodyIrModule,
     program: &ast::Program,
     type_info: &TypeCheckInfo,
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
     selected: &HashSet<CanonicalSymbolId>,
 ) {
     source_comparison::retain_equality_borrows(module, selected);

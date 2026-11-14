@@ -4,6 +4,7 @@
 //! refinement. Different return carriers remain open and are refused; no boxing or vtable conversion is introduced.
 
 use super::{CanonicalSymbolId, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir};
+use crate::body_ir::ContextModules;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// A retained callable's original source result and its current concrete representation witness.
@@ -37,7 +38,7 @@ pub(super) fn retain_returns(
     module: &mut bir::BodyIrModule,
     program: &ast::Program,
     facts: &TypeCheckInfo,
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
     selected: &HashSet<CanonicalSymbolId>,
 ) {
     let mut signatures = HashMap::new();
@@ -717,7 +718,7 @@ mod carrier_identity_tests {
             &path,
             checker.type_info(),
             &crate::body_ir::BodyIrContext {
-                modules: &[],
+                modules: crate::body_ir::ContextModules::default(),
                 provider_operations: &providers,
                 registry_package: None,
                 library_package: None,

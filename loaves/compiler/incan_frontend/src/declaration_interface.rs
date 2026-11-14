@@ -557,7 +557,7 @@ mod tests {
                     &["lib".to_owned()],
                     checker.type_info(),
                     &crate::body_ir::BodyIrContext {
-                        modules: &[],
+                        modules: crate::body_ir::ContextModules::default(),
                         provider_operations: &providers,
                         registry_package: None,
                         library_package: Some("interface_test"),
@@ -1057,7 +1057,7 @@ mod tests {
             &["lib".to_owned()],
             checker.type_info(),
             &crate::body_ir::BodyIrContext {
-                modules: &[],
+                modules: crate::body_ir::ContextModules::default(),
                 provider_operations: &providers,
                 registry_package: None,
                 library_package: Some("interface_test"),

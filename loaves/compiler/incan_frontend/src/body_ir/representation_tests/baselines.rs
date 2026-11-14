@@ -12,7 +12,7 @@ pub(super) fn assert_settled_function_seeds() -> Result<(), Box<dyn std::error::
         .map_err(|errors| format!("{errors:?}"))?;
     let providers = ProviderOperationCatalog::new();
     let context = BodyIrContext {
-        modules: &[],
+        modules: crate::body_ir::ContextModules::default(),
         provider_operations: &providers,
         registry_package: None,
         library_package: None,
@@ -173,7 +173,7 @@ pub(super) fn assert_free_function_input_baseline() -> Result<(), Box<dyn std::e
     let mut info = checker.into_type_info();
     let providers = ProviderOperationCatalog::new();
     let context = BodyIrContext {
-        modules: &[],
+        modules: crate::body_ir::ContextModules::default(),
         provider_operations: &providers,
         registry_package: None,
         library_package: None,
