@@ -10,8 +10,10 @@ from pub::incan_platform.store import (
     commit,
     get,
     keys_with_prefix,
+    stage_delete,
     stage_put,
 )
+from pub::incan_platform.store.codec import KIND_TOMBSTONE
 from pub::internal_models import (
     ProducerRank,
     ProducerStage,
@@ -236,6 +238,51 @@ pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -
             reader = required_text(edge, "reader")?
             readers[reader] = decode_record_key(reader)?
     return Ok([readers[key] for key in sorted([item for item in readers.keys()])])
+
+
+pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> Result[None, str]:
+    """
+    Retire the outputs that a transaction's new evaluations replace, so each slot indexes one output.
+
+    An output's slot is its profile, family, identity profile, origin, identity and facet; its context is the
+    evaluated content, which an edit changes. Every other output of a slot the transaction writes leaves the output
+    index together with its evaluation's edges: a family selection and a reader lookup then meet one output per slot
+    instead of one per earlier edit. The superseded values, evaluations and receipts stay, content named.
+    """
+    mut written: set[str] = set()
+    for write in transaction.writes:
+        if write.kind != KIND_TOMBSTONE and write.key.startswith("incan.engine.output\t"):
+            written.add(write.key)
+    mut slots: set[str] = set()
+    for key in written:
+        fields = key.split("\t")
+        if len(fields) == 8:
+            slots.add("\t".join(fields[:7]) + "\t")
+    for slot in sorted([item for item in slots]):
+        for old in keys_with_prefix(selected, slot).map_err((error) => error.message())?:
+            if old in written:
+                continue
+            stage_delete(transaction, old)
+            retire_edges(selected, transaction, required_value(selected, old)?.decode().map_err(
+                (_) => "compiler output index entry is not UTF-8",
+            )?)?
+    return Ok(None)
+
+
+def retire_edges(selected: Snapshot, mut transaction: Transaction, evaluation_key: str) -> Result[None, str]:
+    """Remove a superseded evaluation's outgoing edges and the incoming entries they were indexed under."""
+    for outgoing in keys_with_prefix(selected, "incan.engine.edge-out\t" + evaluation_key + "\t").map_err(
+        (error) => error.message(),
+    )?:
+        encoded = required_value(selected, outgoing)?
+        edge = parse(encoded.decode().map_err((_) => "compiler graph edge is not UTF-8")?).map_err(
+            (error) => error.message(),
+        )?
+        stage_delete(transaction, outgoing)
+        target = required_text(edge, "target")?
+        kind = required_text(edge, "kind")?
+        stage_delete(transaction, f"incan.engine.edge-in\t{target}\t{kind}\t{digest(encoded)}")
+    return Ok(None)
 
 
 pub def evaluation_record_key(profile: str, output: str) -> str:
