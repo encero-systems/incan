@@ -40,6 +40,7 @@ from pub::internal_models.records import (
 from compiler_graph_records import prepare_evaluation, reusable_evaluation
 from compiler_prepared_records import PreparedBodyRecordSource
 from compiler_body_fallbacks import fallback_lowering_event, fallback_reasons, retained_namespace_event
+from compiler_body_keys import body_key, eligibility_key, namespace_key, project_declaration_slot
 from compiler_plan_values import LOWERING_PROFILE
 from compiler_body_values import SelectedBodyRecord
 from compiler_source_projection import (
@@ -48,6 +49,7 @@ from compiler_source_projection import (
     compiled_owner_source,
     declaration_index_key,
     import_declaration_indexes,
+    owner_census_key,
     owner_source_key,
     project_source,
     signature_record,
@@ -64,7 +66,6 @@ from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 from unit import UnitDescription, dependency_source_roots
 
-const IDENTITY_PROFILE: str = "incan.stable-declaration/1"
 const MAX_COMPILED_BODY_FRAMES: int = 4096
 
 
@@ -266,6 +267,11 @@ pub def prepare_captured_source_inputs(
                     if get(selected, declaration_key).map_err((error) => error.message())? != Some(declaration_value):
                         changed.append(projection.declarations.key)
                     stage_put(prepared, declaration_key, declaration_value)
+                    census_key = encode_record_key(projection.census.key)?
+                    census_value = projection.census.text.encode("utf-8")
+                    if get(selected, census_key).map_err((error) => error.message())? != Some(census_value):
+                        changed.append(projection.census.key)
+                    stage_put(prepared, census_key, census_value)
                     for owner in projection.owners:
                         for record in [owner, signature_record(owner)]:
                             owner_key = encode_record_key(record.key)?
@@ -397,6 +403,10 @@ pub def prepare_compiled_bodies(
             declaration_value = projection.declarations.text.encode("utf-8")
             stage_put(prepared, declaration_key, declaration_value)
             source.add(declaration_key, declaration_value)
+            census_key = encode_record_key(projection.census.key)?
+            census_value = projection.census.text.encode("utf-8")
+            stage_put(prepared, census_key, census_value)
+            source.add(census_key, census_value)
             for owner in projection.owners:
                 owner_key = encode_record_key(owner.key)?
                 owner_value = owner.text.encode("utf-8")
@@ -409,6 +419,10 @@ pub def prepare_compiled_bodies(
             declaration_value = dependency_projection.declarations.text.encode("utf-8")
             stage_put(prepared, declaration_key, declaration_value)
             source.add(declaration_key, declaration_value)
+            census_key = encode_record_key(dependency_projection.census.key)?
+            census_value = dependency_projection.census.text.encode("utf-8")
+            stage_put(prepared, census_key, census_value)
+            source.add(census_key, census_value)
     for value in outputs.values:
         if value.module not in modules:
             projection = projections[value.module]
@@ -420,6 +434,10 @@ pub def prepare_compiled_bodies(
             declaration_value = projection.declarations.text.encode("utf-8")
             stage_put(prepared, declaration_key, declaration_value)
             source.add(declaration_key, declaration_value)
+            census_key = encode_record_key(projection.census.key)?
+            census_value = projection.census.text.encode("utf-8")
+            stage_put(prepared, census_key, census_value)
+            source.add(census_key, census_value)
             for owner in projection.owners:
                 for record in [owner, signature_record(owner)]:
                     owner_key = encode_record_key(record.key)?
@@ -438,6 +456,10 @@ pub def prepare_compiled_bodies(
             declaration_value = projection.declarations.text.encode("utf-8")
             stage_put(prepared, declaration_key, declaration_value)
             source.add(declaration_key, declaration_value)
+            census_key = encode_record_key(projection.census.key)?
+            census_value = projection.census.text.encode("utf-8")
+            stage_put(prepared, census_key, census_value)
+            source.add(census_key, census_value)
             for owner in projection.owners:
                 for record in [owner, signature_record(owner)]:
                     owner_key = encode_record_key(record.key)?
@@ -486,6 +508,10 @@ pub def prepare_compiled_bodies(
                     declaration_value = dependency_projection.declarations.text.encode("utf-8")
                     stage_put(prepared, declaration_key, declaration_value)
                     source.add(declaration_key, declaration_value)
+                    census_key = encode_record_key(dependency_projection.census.key)?
+                    census_value = dependency_projection.census.text.encode("utf-8")
+                    stage_put(prepared, census_key, census_value)
+                    source.add(census_key, census_value)
                     signature = cached_project_signature_record(
                         projections,
                         unit,
@@ -522,8 +548,6 @@ pub def prepare_compiled_bodies(
                 )
             None => pass
 
-    declarations = module_declarations(outputs.values, origin)?
-
     # 3. A cold whole check stages the same graph values later edited activations replace independently.
     mut published = 0
     for namespace in outputs.namespaces:
@@ -532,11 +556,11 @@ pub def prepare_compiled_bodies(
         mut reads = [
             prepared_product_request(projection.header.key),
             prepared_product_request(projection.declarations.key),
+            prepared_product_request(projection.census.key),
         ]
-        for owner in projection.owners:
-            reads.append(prepared_product_request(owner.key))
         for dependency in namespace.dependencies:
             reads.append(prepared_product_request(declaration_index_key(origin, dependency)))
+            reads.append(prepared_product_request(owner_census_key(origin, dependency)))
         value = encode_graph_namespace_value(
             GraphNamespaceValue(
                 module=namespace.module,
@@ -556,14 +580,14 @@ pub def prepare_compiled_bodies(
     for value in outputs.values:
         projection = projections[value.module]
         owner = compiled_owner_source(projection, value.module, value.name, value.identity)?
+        declaration_key = body_key("declaration", origin, value.identity, value.name, root(value.declaration)?)
         local_key = body_key("local", origin, value.identity, "checked", root(value.local)?)
         mut local_reads = [
             prepared_product_request(owner.key),
             prepared_product_request(projection.header.key),
-            prepared_product_request(projection.declarations.key),
+            prepared_product_request(projection.census.key),
+            prepared_product_request(declaration_key),
         ]
-        for declaration in declarations[value.module]:
-            local_reads.append(prepared_product_request(declaration))
         for dependency in value.dependency_reads:
             match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => local_reads.append(prepared_product_request(key))
@@ -587,11 +611,10 @@ pub def prepare_compiled_bodies(
         mut final_reads = [
             prepared_product_request(owner.key),
             prepared_product_request(projection.header.key),
-            prepared_product_request(projection.declarations.key),
+            prepared_product_request(projection.census.key),
+            prepared_product_request(declaration_key),
             prepared_product_request(local_key),
         ]
-        for declaration in declarations[value.module]:
-            final_reads.append(prepared_product_request(declaration))
         for dependency in value.dependency_reads:
             match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => final_reads.append(prepared_product_request(key))
@@ -623,16 +646,7 @@ pub def prepare_compiled_bodies(
         source.add(encode_record_key(body_ir_key)?, value.body_ir)
         published += 1
     if let Some(report) = plan_output:
-        witnesses = lowering_witnesses(
-            projections,
-            outputs.values,
-            retained,
-            source,
-            selected,
-            unit,
-            origin,
-            declarations,
-        )?
+        witnesses = lowering_witnesses(projections, outputs.values, retained, source, selected, unit, origin)?
         prepared = prepare_lowering_records(
             prepared,
             source,
@@ -749,14 +763,15 @@ def lowering_witnesses(
     selected: Option[Snapshot],
     unit: UnitDescription,
     origin: str,
-    declarations: Dict[str, list[RecordKey]],
 ) -> Result[list[LoweringBody], str]:
     """Carry only graph-selected inputs with unchanged current owner/header bytes; never invent fresh checker facts."""
     mut witnesses: list[LoweringBody] = []
     editable_packages = [dependency[0] for dependency in dependency_source_roots(unit)]
     for value in fresh:
-        mut signatures = [projections[value.module].declarations.key]
-        signatures.extend(declarations[value.module])
+        mut signatures = [
+            projections[value.module].census.key,
+            body_key("declaration", origin, value.identity, value.name, root(value.declaration)?),
+        ]
         for dependency in value.dependency_reads:
             match dependency_read_key(projections, unit, origin, dependency, editable_packages)?:
                 Some(key) => signatures.append(key)
@@ -819,7 +834,13 @@ def lowering_witnesses(
             match witness:
                 ReadWitness.Found(found, _) =>
                     input = found.request.key
-                    if input.family in ["declaration", "declaration-slot", "declaration-signature", "declaration-index"]:
+                    if input.family in [
+                        "declaration",
+                        "declaration-slot",
+                        "declaration-signature",
+                        "declaration-index",
+                        "owner-census",
+                    ]:
                         encoded = encode_record_key(input)?
                         value = match get(prior, encoded).map_err((error) => error.message())?:
                             None => return Err("retained lowering signature input is absent")
@@ -1148,18 +1169,6 @@ def dependency_owner_record(
     return Err(f"compiled body output dependency module is absent: {package}:{module}")
 
 
-def module_declarations(values: list[CompiledBodyValue], origin: str) -> Result[Dict[str, list[RecordKey]], str]:
-    """Index each cold-checked module's complete immutable declaration environment once."""
-    mut declarations: Dict[str, list[RecordKey]] = {}
-    for value in values:
-        if value.module not in declarations:
-            declarations[value.module] = []
-        declarations[value.module].append(
-            body_key("declaration", origin, value.identity, value.name, root(value.declaration)?),
-        )
-    return Ok(declarations)
-
-
 def lowering_symbol(identity: str, body_ir: bytes) -> Result[str, str]:
     """Decode one fresh Body IR owner once and index its canonical lowering identity."""
     decoded = decode_owner(body_ir).map_err((error) => f"cannot decode graph-eligible Body IR owner: {error}")?
@@ -1248,58 +1257,10 @@ def dependency_invalidation_key(
     origin: str,
     dependency: CompiledBodyDependencyRead,
 ) -> Result[Option[RecordKey], str]:
-    """Select the captured project declaration surface that makes signature and removal edits visible before checking."""
+    """Select the captured project owner census that makes removal edits visible without sibling signature fan-out."""
     if dependency.package is not None:
         return Ok(None)
-    return Ok(Some(declaration_index_key(origin, project_dependency_module(unit, dependency.module)?)))
-
-
-def project_declaration_slot(origin: str, module: str, name: str) -> RecordKey:
-    """Name one project declaration slot whose value is the producer's checked stable identity."""
-    return RecordKey(
-        family="declaration-slot",
-        identity_profile=IDENTITY_PROFILE,
-        origin=origin,
-        identity=module,
-        facet=name,
-        context="checked-signature",
-    )
-
-
-def body_key(family: str, origin: str, identity: str, facet: str, context: str) -> RecordKey:
-    """Name one canonical checker value under its stable owner and semantic root."""
-    return RecordKey(
-        family=family,
-        identity_profile=IDENTITY_PROFILE,
-        origin=origin,
-        identity=identity,
-        facet=facet,
-        context=context,
-    )
-
-
-def namespace_key(origin: str, module: str) -> RecordKey:
-    """Name one composite editable namespace under its logical source projection."""
-    return RecordKey(
-        family="namespace",
-        identity_profile=IDENTITY_PROFILE,
-        origin=origin,
-        identity=module,
-        facet="checked",
-        context="interface-body-ir-plan",
-    )
-
-
-def eligibility_key(origin: str, identity: str, name: str) -> RecordKey:
-    """Name the explicit record-fast-path decision for one successfully checked owner."""
-    return RecordKey(
-        family="eligibility",
-        identity_profile=IDENTITY_PROFILE,
-        origin=origin,
-        identity=identity,
-        facet=name,
-        context="checker-record",
-    )
+    return Ok(Some(owner_census_key(origin, project_dependency_module(unit, dependency.module)?)))
 
 
 pub def source_origin(unit: UnitDescription) -> str:
