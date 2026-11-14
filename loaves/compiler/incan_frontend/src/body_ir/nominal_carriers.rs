@@ -3,6 +3,7 @@
 //! Source names remain diagnostics. Carrier keys encode a checked nominal identity and are accompanied by that
 //! identity in each frame's existing type map. Legacy checker tables and generated source are never changed.
 
+use crate::body_ir::ContextModules;
 use constructor_arguments::ConstructorCarriers;
 use std::collections::{BTreeMap, HashSet};
 
@@ -57,7 +58,7 @@ pub(super) fn retain_declared_type(ty: &mut IncanType, identities: &Identities) 
 pub(super) fn retain(
     module: &mut bir::BodyIrModule,
     facts: &TypeCheckInfo,
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
     selected: &HashSet<CanonicalSymbolId>,
 ) {
     retain_return_owners(module, context, selected);
@@ -737,7 +738,7 @@ type ReturnCarriers = BTreeMap<CanonicalSymbolId, ReturnCarrier>;
 /// declaration-owned identities; final carrier qualification still runs after return witnesses have settled.
 pub(super) fn retain_return_owners(
     module: &mut bir::BodyIrModule,
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
     selected: &HashSet<CanonicalSymbolId>,
 ) {
     let returns = return_carriers(module, context);
@@ -790,7 +791,7 @@ fn retain_body_return_owners(body: &mut bir::Body, returns: &ReturnCarriers) {
 /// A callable's complete canonical map can contain thousands of unrelated bindings. Keeping its `Arc` here makes the
 /// later per-body `Arc::make_mut` copy that whole map. The return type needs only its own nominal leaves, so the index
 /// owns that bounded projection and leaves the frame's canonical map uniquely owned.
-fn return_carriers(module: &bir::BodyIrModule, context: &[bir::BodyIrModule]) -> ReturnCarriers {
+fn return_carriers(module: &bir::BodyIrModule, context: ContextModules<'_>) -> ReturnCarriers {
     context
         .iter()
         .flat_map(|module| module.callable_declaration_frames())
@@ -859,7 +860,7 @@ pub(super) fn return_index_keeps_identity_maps_borrowed(module: &bir::BodyIrModu
         .iter()
         .map(|body| std::sync::Arc::strong_count(&body.named_type_identities))
         .collect::<Vec<_>>();
-    let returns = return_carriers(module, &[]);
+    let returns = return_carriers(module, crate::body_ir::ContextModules::default());
     let borrowed = module
         .bodies
         .iter()

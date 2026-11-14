@@ -3,6 +3,7 @@
 //! operation that requires independent storage. A parameter its body consumes on any path keeps its by-value input, so
 //! a caller's last use still moves it.
 
+use crate::body_ir::ContextModules;
 use std::collections::{HashMap, HashSet};
 
 use super::{CanonicalSymbolId, IncanPrimitiveType, IncanType, SemanticSourceTargetKind, bir};
@@ -51,7 +52,7 @@ struct FieldTypes {
 
 impl FieldTypes {
     /// Collect the exact field contracts available to the bodies participating in this analysis.
-    fn collect(modules: &[bir::BodyIrModule], context: &[bir::BodyIrModule]) -> Self {
+    fn collect(modules: &[bir::BodyIrModule], context: ContextModules<'_>) -> Self {
         let mut by_identity: HashMap<CanonicalSymbolId, Vec<FieldType>> = HashMap::new();
         for declaration in context
             .iter()
@@ -144,14 +145,14 @@ struct ReadContext<'a> {
 /// Retain native cursors, pass ordinary immutable parameters through shared storage and rewrite every caller from the
 /// resulting signatures. A function-item closure remains the declared by-value callable adapter: only its internal
 /// call lends the wrapper's owned argument to the inferred-shared target.
-pub(super) fn retain_modules(modules: &mut [bir::BodyIrModule], context: &[bir::BodyIrModule]) {
+pub(super) fn retain_modules(modules: &mut [bir::BodyIrModule], context: ContextModules<'_>) {
     retain_modules_with_selected(modules, context, &HashSet::new());
 }
 
 /// Retain shared-read representation for fresh owners while selected final bodies remain immutable context.
 pub(super) fn retain_modules_with_selected(
     modules: &mut [bir::BodyIrModule],
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
     selected: &HashSet<CanonicalSymbolId>,
 ) {
     let no_candidates = HashSet::new();
@@ -408,7 +409,7 @@ fn retain_function_item_adapter(
 /// Combine linked, previously settled module and current-body signatures without deriving a callable from its name.
 fn collect_signatures(
     modules: &[bir::BodyIrModule],
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
     candidates: &HashSet<Candidate>,
 ) -> Signatures {
     context

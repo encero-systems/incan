@@ -4,6 +4,7 @@
 //! nothing for it, even when it keeps its value. This rule decides only callables nothing outside the module can name;
 //! a published callable keeps the base's read-only rule (`published_reads`).
 
+use crate::body_ir::ContextModules;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{
@@ -15,7 +16,7 @@ use super::{
 /// loses shared input turns its callers' forwarding moves into consumptions, so those callers are proved again.
 pub(super) fn refuse_consumed_parameters(
     modules: &[bir::BodyIrModule],
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
     field_types: &FieldTypes,
     candidates: &mut HashSet<Candidate>,
 ) {

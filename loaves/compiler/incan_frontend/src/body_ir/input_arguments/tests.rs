@@ -33,7 +33,7 @@ fn staged(source: &str, remove_call_proof: bool) -> Result<bir::BodyIrModule, Bo
     }
     let providers = super::super::ProviderOperationCatalog::new();
     let context = super::super::BodyIrContext {
-        modules: &[],
+        modules: crate::body_ir::ContextModules::default(),
         provider_operations: &providers,
         registry_package: None,
         library_package: None,

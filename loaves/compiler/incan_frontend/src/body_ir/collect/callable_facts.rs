@@ -58,7 +58,7 @@ pub(super) fn field_default_sources(fields: &[ast::Spanned<ast::FieldDecl>]) -> 
 /// Retain public, nongeneric newtype results from governed or compiled method declarations. Missing layouts
 /// and conflicting copies remain explicit denials; no type is selected from a method or field spelling.
 pub(in crate::body_ir) fn collect_published_newtype_returns(
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
 ) -> HashMap<CanonicalSymbolId, Option<PublishedNewtypeReturn>> {
     let mut returns = HashMap::new();
     let mut newtype_methods = HashSet::new();
@@ -99,7 +99,7 @@ pub(in crate::body_ir) fn collect_published_newtype_returns(
 /// Index exact newtype owners across the retained modules: a method may return another module's declaration.
 /// Validate each layout in its own module and keep missing, malformed or conflicting ownership as a denial.
 fn published_newtype_layouts(
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
 ) -> HashMap<CanonicalSymbolId, Option<&bir::NominalDeclaration>> {
     let mut layouts = HashMap::new();
     for module in context {
@@ -148,7 +148,7 @@ pub(super) fn declared_newtype_return_owner(body: &bir::Body) -> Option<&Canonic
 /// Generic callable results keep the consumer's checked instantiation facts; unresolved producer results never
 /// replace a consumer's type. The canonical key identifies the selected declaration, not a written import spelling.
 pub(in crate::body_ir) fn collect_published_callable_returns(
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
     facts: &TypeCheckInfo,
 ) -> HashMap<CanonicalSymbolId, IncanType> {
     let hooks = facts
@@ -179,7 +179,7 @@ pub(in crate::body_ir) fn collect_published_callable_returns(
 /// Retain each published callable's parameter defaults, in parameter order, from its declaration record among the
 /// linked Loaves' declarations, so a call that omits an argument passes the declared default.
 pub(in crate::body_ir) fn collect_published_callable_defaults(
-    context: &[bir::BodyIrModule],
+    context: ContextModules<'_>,
 ) -> HashMap<CanonicalSymbolId, Vec<bir::CallableParamDefault>> {
     context
         .iter()

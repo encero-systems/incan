@@ -40,7 +40,7 @@ pub(super) fn assert_generic_newtype_provider_methods() -> Result<(), Box<dyn st
                 .insert(owner.declaration_name.clone(), owner);
             let providers = ProviderOperationCatalog::new();
             let context = BodyIrContext {
-                modules: &[],
+                modules: crate::body_ir::ContextModules::default(),
                 provider_operations: &providers,
                 registry_package: None,
                 library_package: Some(package),
@@ -103,14 +103,14 @@ pub(super) fn assert_independently_retained_newtype_return() -> Result<(), Box<d
         vec![methods.clone(), layouts.clone()],
         vec![layouts.clone(), methods.clone()],
     ] {
-        let returns = super::collect::collect_published_newtype_returns(&context);
+        let returns = super::collect::collect_published_newtype_returns((&context).into());
         let returned = returns
             .get(&method)
             .and_then(Option::as_ref)
             .ok_or("separately retained newtype owner was refused")?;
         assert_eq!(returned.declaration, owner);
     }
-    let missing = super::collect::collect_published_newtype_returns(&[methods.clone()]);
+    let missing = super::collect::collect_published_newtype_returns((&[methods.clone()]).into());
     assert!(missing.get(&method).is_some_and(Option::is_none));
     let mut conflict = layouts.clone();
     conflict.nominal_declarations[0].field_types = vec![super::IncanType::Primitive(super::IncanPrimitiveType::Int)];
@@ -118,7 +118,7 @@ pub(super) fn assert_independently_retained_newtype_return() -> Result<(), Box<d
         vec![methods.clone(), layouts.clone(), conflict.clone()],
         vec![conflict, layouts, methods],
     ] {
-        let returns = super::collect::collect_published_newtype_returns(&context);
+        let returns = super::collect::collect_published_newtype_returns((&context).into());
         assert!(returns.get(&method).is_some_and(Option::is_none));
     }
     Ok(())
@@ -130,8 +130,20 @@ pub(super) fn assert_nominal_carrier_maps_stay_shared() -> Result<(), Box<dyn st
     let (program, facts, mut module) = checked_seed(source)?;
     let opaque_carriers = super::opaque_returns::collect(&module, &facts);
     let selected = std::collections::HashSet::new();
-    super::trait_values::retain_inputs(&mut module, &program, &facts, &[], &selected);
-    super::trait_returns::retain_returns(&mut module, &program, &facts, &[], &selected);
+    super::trait_values::retain_inputs(
+        &mut module,
+        &program,
+        &facts,
+        crate::body_ir::ContextModules::default(),
+        &selected,
+    );
+    super::trait_returns::retain_returns(
+        &mut module,
+        &program,
+        &facts,
+        crate::body_ir::ContextModules::default(),
+        &selected,
+    );
     super::opaque_returns::retain(&mut module, &opaque_carriers, &selected);
     assert!(
         super::nominal_carriers::return_index_keeps_identity_maps_borrowed(&module),
@@ -148,7 +160,12 @@ pub(super) fn assert_nominal_carrier_maps_stay_shared() -> Result<(), Box<dyn st
         })
         .collect::<Result<std::collections::BTreeMap<_, _>, &'static str>>()?;
 
-    super::nominal_carriers::retain(&mut module, &facts, &[], &selected);
+    super::nominal_carriers::retain(
+        &mut module,
+        &facts,
+        crate::body_ir::ContextModules::default(),
+        &selected,
+    );
 
     for body in &module.bodies {
         let canonical = body.canonical.as_ref().ok_or("missing retained callable identity")?;
@@ -271,7 +288,7 @@ pub model MetadataFacts:
             let facts = checker.into_type_info();
             let providers = ProviderOperationCatalog::new();
             let context = BodyIrContext {
-                modules: &[],
+                modules: crate::body_ir::ContextModules::default(),
                 provider_operations: &providers,
                 registry_package: None,
                 library_package: package,
