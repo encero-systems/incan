@@ -9,7 +9,9 @@ from std.primitives.crumb.column_data_read import column_at, read_column
 from std.primitives.crumb.column_data_write import write_column
 from std.primitives.crumb.column_key_read import ColumnKeys, key_at, read_keys
 from std.primitives.crumb.column_presence import cell_type
+from std.primitives.crumb.column_reader import read_columns
 from std.primitives.crumb.column_types import ColumnChoice
+from std.primitives.crumb.column_writer import write_columns
 from std.primitives.crumb.column_value_dictionary import ColumnDictionary, build_keys, dictionary_type, encode_keys
 from std.primitives.crumb.description_dictionary import Dictionary, admit_dictionary
 from std.primitives.crumb.descriptions import Description, DescriptionMode
@@ -276,8 +278,10 @@ def print_twin(document: JsonValue) -> Result[bytes, str]:
 
 
 def column_twin_encode(document: JsonValue) -> Result[Option[bytes], str]:
-    """Write a column dictionary's or block's authored input; the remaining column operations have no twin yet."""
+    """Dispatch one column case's encode stage to its dictionary, block, complete-column or envelope twin."""
     operation = text(document, "operation")?
+    if operation == CaseOperation.BinaryDecode.value():
+        return envelope_twin_encode(document)
     if operation == CaseOperation.ColumnData.value():
         return data_twin_encode(document)
     if operation == CaseOperation.ColumnBlock.value():
@@ -298,6 +302,8 @@ def column_twin_encode(document: JsonValue) -> Result[Option[bytes], str]:
 
 def column_twin_decode(document: JsonValue) -> Result[bytes, str]:
     """Read the literal dictionary, or each proper prefix when asked, into keys or one typed refusal category."""
+    if text(document, "operation")? == CaseOperation.BinaryDecode.value():
+        return envelope_twin_decode(document)
     if text(document, "operation")? == CaseOperation.ColumnData.value():
         return data_twin_decode(document)
     if text(document, "operation")? == CaseOperation.ColumnBlock.value():
@@ -594,3 +600,73 @@ def row_budget(document: JsonValue) -> Result[Budget, str]:
         if let Some(value) = limits.get("depth"):
             depth = value.expect_int().map_err((e) => e.message())?
     return Budget.create(bytes=16777216, elements=elements, depth=depth).map_err((e) => e.message())
+
+
+def envelope_twin_encode(document: JsonValue) -> Result[Option[bytes], str]:
+    """Decode the complete column envelope, then write it back with its original choices; a refusal writes nothing."""
+    data = hex_bytes(text(document, "input_hex")?)?
+    supplied = envelope_supplied(document)?
+    mut budget = case_budget(document)?
+    registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+    match read_columns(backing(data)?, supplied, registry, row_require_sealed(document)?, budget):
+        Err(_) => return Ok(Some(b""))
+        Ok(rows) =>
+            mut setup = Budget.create(bytes=134217728, elements=8388608, depth=128).map_err((e) => e.message())?
+            descriptions = rows.descriptions(setup).map_err((e) => e.message())?
+            mut records: list[RowRecord] = []
+            for index in range(rows.len()):
+                records.append(rows.read_record(index, setup).map_err((e) => e.message())?)
+            choices = rows.choices(setup).map_err((e) => e.message())?
+            writer = KindRegistry.create([], setup).map_err((e) => e.message())?
+            encoded = write_columns(descriptions, records, writer, rows.is_sealed(), choices, setup).map_err(
+                (e) => e.message(),
+            )?
+            return Ok(Some(encoded))
+
+
+def envelope_twin_decode(document: JsonValue) -> Result[bytes, str]:
+    """Read the literal column envelope, or each proper prefix when asked, into records or one refusal category."""
+    data = hex_bytes(text(document, "input_hex")?)?
+    supplied = envelope_supplied(document)?
+    mut lengths: list[int] = [len(data)]
+    if document.get("transform").is_some():
+        lengths = [length for length in range(len(data))]
+    mut setup = Budget.create(bytes=134217728, elements=8388608, depth=128).map_err((e) => e.message())?
+    mut output = EncodingBuffer.create()
+    for length in lengths:
+        mut budget = case_budget(document)?
+        registry = KindRegistry.create([], budget).map_err((e) => e.message())?
+        match read_columns(backing(data[:length])?, supplied, registry, row_require_sealed(document)?, budget):
+            Err(error) =>
+                output.octet(1, setup).map_err((e) => e.message())?
+                output
+                    .append(frame(encode_utf8(category(error)?), setup).map_err((e) => e.message())?, setup)
+                    .map_err((e) => e.message())?
+            Ok(rows) =>
+                output.octet(0, setup).map_err((e) => e.message())?
+                mut sealed = 0
+                if rows.is_sealed():
+                    sealed = 1
+                output.octet(sealed, setup).map_err((e) => e.message())?
+                output.count(rows.len(), setup).map_err((e) => e.message())?
+                for index in range(rows.len()):
+                    record = rows.read_record(index, setup).map_err((e) => e.message())?
+                    result = value_hash(record.value, Projection.Object, setup, true).map_err((e) => e.message())?
+                    preimage = match result.preimage:
+                        Some(captured) => captured
+                        None => return Err("envelope twin did not capture its record preimage")
+
+                    output
+                        .append(frame(record.key, setup).map_err((e) => e.message())?, setup)
+                        .map_err((e) => e.message())?
+                    output
+                        .append(frame(preimage, setup).map_err((e) => e.message())?, setup)
+                        .map_err((e) => e.message())?
+    return output.finish(setup).map_err((e) => e.message())
+
+
+def envelope_supplied(document: JsonValue) -> Result[list[Description], str]:
+    """The case's supplied complete descriptions, when it names any."""
+    if document.get("supplied_descriptions").is_none():
+        return Ok([])
+    return row_supplied(document)
