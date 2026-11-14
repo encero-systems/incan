@@ -79,6 +79,7 @@ from program_entries import (
 )
 from static_storage import lower_computed_statics
 from frame_instances import lower_instances, merge_externals
+from instance_products import InstanceProducts, instance_transport
 
 
 pub type BodyIrModule = rusttype RustBodyIrModule with Send, Sync:
@@ -109,6 +110,8 @@ pub model UnitContinuation:
     pub instances: list[Instance]
     pub emitted_frames: EmittedFrames
     pub statics: list[StaticCell]
+    # The keyed-product transport its closed instances read and retain in a records request.
+    pub instance_products: Option[InstanceProducts] = None
 
 
 pub enum UnitPlanning:
@@ -306,6 +309,7 @@ def lowered_plan(
     mut program = initial_program
     mut emitted_frames = no_emitted_frames()
     # 2. Lower ordinary frames and static initializers exactly once.
+    instance_products = instance_transport(scalar_products, scalar_bodies, record_report, overflow_checks)
     mut retained_nominals = nominal_instances
     lower_ordinary_bodies(
         context,
@@ -369,6 +373,7 @@ def lowered_plan(
                     instances=instances,
                     emitted_frames=emitted_frames,
                     statics=statics,
+                    instance_products=instance_products,
                 ),
                 requirements,
             ),
@@ -401,6 +406,7 @@ def lowered_plan(
         retained_nominals,
         published,
         trace,
+        instance_products,
     )
 
 
@@ -442,6 +448,7 @@ pub def resume_unit_plan(
     mut instances = continuation.instances
     mut emitted_frames = continuation.emitted_frames
     mut statics = continuation.statics
+    instance_products = continuation.instance_products
     # #3022: release the copied model shell before Arc.make_mut so retained contexts remain uniquely owned.
     drop(continuation)
     previous_nominal_count = len(context.as_ref().nominal_declarations)
@@ -541,6 +548,7 @@ pub def resume_unit_plan(
                     instances=instances,
                     emitted_frames=emitted_frames,
                     statics=statics,
+                    instance_products=instance_products,
                 ),
                 requirements,
             ),
@@ -571,6 +579,7 @@ pub def resume_unit_plan(
         retained_nominals,
         published,
         trace,
+        instance_products,
     )
 
 
@@ -613,6 +622,7 @@ def finish_unit_plan(
     mut retained_nominals: list[NominalInstance],
     mut published: list[NativeUnionDeclaration],
     trace: bool,
+    products: Option[InstanceProducts] = None,
 ) -> Result[UnitPlanning, str]:
     """Drain instances from preserved ordinary frames, finalize their layouts and publish one complete plan."""
     mut retained_program = program
@@ -640,6 +650,7 @@ def finish_unit_plan(
         intrinsics,
         retained_nominals,
         instance_cells,
+        products,
     )?
     for cell in instance_cells:
         statics.append(cell)
@@ -667,6 +678,7 @@ def finish_unit_plan(
                 instances=retry_instances,
                 emitted_frames=retry_emitted_frames,
                 statics=retry_statics,
+                instance_products=products,
             )
             return Ok(UnitPlanning.NeedsRuntime(retry, requests))
         RuntimeRetention.Complete => pass
