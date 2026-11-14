@@ -76,7 +76,7 @@ This command is available only as `oven lock`. `incan lock` is an unknown comman
 
 ## `oven add`
 
-Adds one registry dependency to the `[dependencies]` table of the root project at or above `--project PATH`, which defaults to the current directory, then locks the project as `oven lock` does. `NAME` is a full Loaf name, `SCOPE/NAME`. A name with a capital letter is refused, not folded. A name without a scope is refused with every published full name that ends in it, since several Loaves can share a short name.
+Adds one registry dependency to the `[dependencies]` table of the root project at or above `--project PATH`, which defaults to the current directory, then locks the project as `oven lock` does. `NAME` is a full Loaf name, `SCOPE/NAME`. A name with a capital letter is refused, not folded. Several Loaves can share a short name, so a name without a scope is never guessed. When standard input and standard error are both terminals and the toolchain's registry publishes full names that end in it, `oven add` prints each of them, numbered, on standard error, asks `Which one? Its number or full name: `, and reads one line: a listed number or full name is the `NAME` it adds, and any other answer, an empty one included, adds nothing and exits `1` with the full names. Otherwise a name without a scope is refused with every published full name that ends in it.
 
 The requirement is `--version REQUIREMENT`, or else the newest version the toolchain's registry publishes, spelled in full. The key is `--key KEY`, or else the name's last part with `-` as `_`. A key the table already has is refused. When that key names the same Loaf, the refusal names `oven update`; when it names another Loaf, it names `--key`.
 
