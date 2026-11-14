@@ -1,0 +1,1110 @@
+//! Native Crumb row envelopes: the header, the inline/reference description dictionary, typed rows and the seal.
+//!
+//! This mirrors `row_reader.read_rows` (with `description_read`, `descriptions`, `description_dictionary`,
+//! `metadata_read`, `selectors` and `cell_read`) and `row_writer.write_rows`. Decoding reads the literal envelope, or
+//! every proper prefix when the case asks for them; encoding writes the decoded descriptions and records back.
+
+use serde_json::Value as Json;
+use sha2::{Digest, Sha256};
+
+use super::blocks::{fixed_integer, float_cell};
+use super::columns::{self, Budget, Cursor, Refused};
+use super::hash::{self, Node, Projection, Value};
+
+/// One complete D metadata tree.
+#[derive(Clone)]
+pub(super) enum Meta {
+    Null,
+    Boolean(bool),
+    Integer(i128),
+    Text(String),
+    Binary(Vec<u8>),
+    Symbol(String),
+    List(Vec<Meta>),
+    Map(Vec<(String, Meta)>),
+}
+
+/// One admitted field in identity order, with its declaration position and original metadata.
+#[derive(Clone)]
+pub(super) struct StoredField {
+    pub(super) position: usize,
+    pub(super) metadata: Meta,
+    pub(super) identity: Vec<u8>,
+    pub(super) storage: Node,
+    pub(super) canonical: bool,
+    pub(super) absent: char,
+}
+
+/// One admitted enum variant and its identity-ordered payload fields.
+#[derive(Clone)]
+pub(super) struct StoredVariant {
+    pub(super) position: usize,
+    pub(super) identity: Vec<u8>,
+    pub(super) metadata: Meta,
+    pub(super) fields: Vec<StoredField>,
+}
+
+/// One admitted description: its complete metadata, written mode, kind, K, D digest and members.
+#[derive(Clone)]
+pub(super) struct Stored {
+    pub(super) metadata: Meta,
+    pub(super) inline: bool,
+    pub(super) record: bool,
+    pub(super) key: Vec<u8>,
+    pub(super) digest: Vec<u8>,
+    pub(super) fields: Vec<StoredField>,
+    pub(super) variants: Vec<StoredVariant>,
+}
+
+/// One decoded record: its description slot and logical value.
+pub(super) struct Record {
+    pub(super) slot: usize,
+    pub(super) value: Value,
+}
+
+/// A decoded envelope: the K-ordered dictionary, records and seal status.
+pub(super) struct Rows {
+    pub(super) dictionary: Vec<Stored>,
+    pub(super) records: Vec<Record>,
+    pub(super) sealed: bool,
+}
+
+/// Decode a row case: one status and records, or a refusal category, per decoder execution.
+pub(super) fn decode(document: &Json) -> Option<Vec<u8>> {
+    let (data, supplied) = row_inputs(document)?;
+    let lengths: Vec<usize> = if document.get("transform").is_some() {
+        (0..data.len()).collect()
+    } else {
+        vec![data.len()]
+    };
+    let mut output = Vec::new();
+    for length in lengths {
+        let mut budget = row_budget(document)?;
+        match read_rows(&data[..length], &supplied, require_sealed(document), &mut budget) {
+            Ok(rows) => {
+                output.push(0);
+                output.push(u8::from(rows.sealed));
+                hash::unsigned(&mut output, rows.records.len() as u128);
+                for record in &rows.records {
+                    hash::frame(&mut output, &rows.dictionary[record.slot].key);
+                    hash::frame(&mut output, &hash::value_preimage(&record.value, Projection::Object)?);
+                }
+            }
+            Err(category) => {
+                output.push(1);
+                hash::frame(&mut output, category.as_bytes());
+            }
+        }
+    }
+    Some(output)
+}
+
+/// Encode a row case: decode the complete input, then write its descriptions and records back.
+pub(super) fn encode(document: &Json) -> Option<Vec<u8>> {
+    let (data, supplied) = row_inputs(document)?;
+    let mut budget = row_budget(document)?;
+    match read_rows(&data, &supplied, require_sealed(document), &mut budget) {
+        Ok(rows) => super::row_write::write_rows(&rows),
+        Err(_) => Some(Vec::new()),
+    }
+}
+
+/// The literal input and the supplied reference descriptions.
+fn row_inputs(document: &Json) -> Option<(Vec<u8>, Vec<Meta>)> {
+    let data = columns::hex(document.get("input_hex")?.as_str()?)?;
+    let mut supplied = Vec::new();
+    if let Some(items) = document.get("supplied_descriptions") {
+        for item in items.as_array()? {
+            supplied.push(notation(item)?);
+        }
+    }
+    Some((data, supplied))
+}
+
+/// Whether the case requires a sealed envelope.
+fn require_sealed(document: &Json) -> bool {
+    document.get("require_sealed").and_then(Json::as_bool).unwrap_or(false)
+}
+
+/// The row decoder's one allowance, tightened by the case's limits.
+fn row_budget(document: &Json) -> Option<Budget> {
+    let (mut elements, mut depth) = (1_048_576, 128);
+    if let Some(limits) = document.get("limits") {
+        if let Some(value) = limits.get("elements") {
+            elements = value.as_u64()?;
+        }
+        if let Some(value) = limits.get("depth") {
+            depth = value.as_u64()?;
+        }
+    }
+    Some(Budget::new(16_777_216, elements, depth))
+}
+
+/// Translate tagged metadata notation into a D tree.
+pub(super) fn notation(value: &Json) -> Option<Meta> {
+    Some(match value.get("kind")?.as_str()? {
+        "null" => Meta::Null,
+        "boolean" => Meta::Boolean(value.get("value")?.as_bool()?),
+        "int" => Meta::Integer(value.get("value")?.as_str()?.parse().ok()?),
+        "string" => Meta::Text(value.get("value")?.as_str()?.to_string()),
+        "binary" => Meta::Binary(columns::hex(value.get("hex")?.as_str()?)?),
+        "symbol" => Meta::Symbol(value.get("name")?.as_str()?.to_string()),
+        "list" => Meta::List(
+            value
+                .get("items")?
+                .as_array()?
+                .iter()
+                .map(notation)
+                .collect::<Option<_>>()?,
+        ),
+        "map" => {
+            let mut entries = Vec::new();
+            for pair in value.get("entries")?.as_array()? {
+                let pair = pair.as_array()?;
+                if pair.len() != 2 || pair[0].get("kind")?.as_str()? != "string" {
+                    return None;
+                }
+                entries.push((pair[0].get("value")?.as_str()?.to_string(), notation(&pair[1])?));
+            }
+            Meta::Map(entries)
+        }
+        _ => return None,
+    })
+}
+
+/// Check the header and frame, then admit the dictionary, every row and any seal.
+fn read_rows(data: &[u8], supplied: &[Meta], require_sealed: bool, budget: &mut Budget) -> Result<Rows, Refused> {
+    let mut cursor = Cursor::new(data);
+    if cursor.take(4, budget)? != b"CRMB" {
+        return Err("bad_magic");
+    }
+    budget.bytes(4)?;
+    let (codec, profile) = (cursor.length(budget)?, cursor.length(budget)?);
+    if codec != 1 || profile != 1 {
+        return Err("unsupported_profile");
+    }
+    let flags = cursor.byte(budget)?;
+    if flags & 254 != 0 {
+        return Err("reserved_flags");
+    }
+    let payload = cursor.frame(budget)?;
+    cursor.finished()?;
+    let sealed = flags == 1;
+    if require_sealed && !sealed {
+        return Err("seal_required");
+    }
+    let mut body = Cursor::new(payload);
+    let dictionary = read_dictionary(&mut body, supplied, budget)?;
+    let records = read_records(&mut body, &dictionary, sealed, budget)?;
+    body.finished()?;
+    Ok(Rows {
+        dictionary,
+        records,
+        sealed,
+    })
+}
+
+/// Read every row, feeding object contributions to the seal, then verify its count and digest.
+fn read_records(
+    cursor: &mut Cursor,
+    dictionary: &[Stored],
+    sealed: bool,
+    budget: &mut Budget,
+) -> Result<Vec<Record>, Refused> {
+    let count = cursor.length(budget)?;
+    budget.elements(count as u64)?;
+    if count > cursor.remaining() {
+        return Err("truncated");
+    }
+    let mut seal = b"crumb1\x00\x04".to_vec();
+    hash::unsigned(&mut seal, count as u128);
+    let mut records = Vec::with_capacity(count);
+    for _ in 0..count {
+        let slot = cursor.length(budget)?;
+        if slot >= dictionary.len() {
+            return Err("description_index");
+        }
+        let raw = cursor.frame(budget)?;
+        let value = read_root(&dictionary[slot], raw, dictionary, budget)?;
+        if sealed {
+            let mut contribution = Vec::new();
+            hash::emit_object(&value, &mut contribution).ok_or("invalid_cell")?;
+            hash::frame(&mut seal, &contribution);
+        }
+        budget.bytes(64)?;
+        records.push(Record { slot, value });
+    }
+    if sealed {
+        if cursor.length(budget)? != count {
+            return Err("seal_count");
+        }
+        let expected = cursor.take(32, budget)?;
+        if Sha256::digest(&seal).as_slice() != expected {
+            return Err("seal_mismatch");
+        }
+    }
+    Ok(records)
+}
+
+/// Read the dictionary in strict K order, admitting inline and supplied reference descriptions.
+fn read_dictionary(cursor: &mut Cursor, supplied: &[Meta], budget: &mut Budget) -> Result<Vec<Stored>, Refused> {
+    let count = bounded_count(cursor, budget)?;
+    let mut entries: Vec<Stored> = Vec::with_capacity(count);
+    for index in 0..count {
+        let (source, inline) = match cursor.byte(budget)? {
+            0 => (inline_description(cursor.frame(budget)?, budget)?, true),
+            1 => {
+                let key = cursor.frame(budget)?.to_vec();
+                parse_key(&key, true, budget).map_err(|kind| invalid_as(kind, "invalid_selector"))?;
+                let digest = cursor.take(32, budget)?.to_vec();
+                (referenced(&key, &digest, supplied, budget)?, false)
+            }
+            _ => return Err("unsupported_profile"),
+        };
+        validate_selectors(&source, budget)?;
+        let checked = admit(source, inline, budget).map_err(|kind| invalid_as(kind, "invalid_description"))?;
+        if entries.iter().any(|entry| entry.key == checked.key) {
+            return Err("duplicate_selector");
+        }
+        if index > 0 && hash::hex_string(&checked.key) < hash::hex_string(&entries[index - 1].key) {
+            return Err("description_order");
+        }
+        entries.push(checked);
+    }
+    for entry in &entries {
+        let selector =
+            parse_key(&entry.key, entry.record, budget).map_err(|kind| invalid_as(kind, "invalid_selector"))?;
+        check_references(&selector, &entries, budget).map_err(|kind| invalid_as(kind, "invalid_selector"))?;
+        for field in entry
+            .fields
+            .iter()
+            .chain(entry.variants.iter().flat_map(|variant| &variant.fields))
+        {
+            check_references(&field.storage, &entries, budget).map_err(|kind| invalid_as(kind, "invalid_selector"))?;
+        }
+    }
+    Ok(entries)
+}
+
+/// Keep resource limits, and replace any other primitive failure with the boundary's category.
+fn invalid_as(kind: Refused, fallback: Refused) -> Refused {
+    if matches!(kind, "truncated" | "noncanonical_integer" | "integer_overflow") {
+        return kind;
+    }
+    if kind == "limit_exceeded" { kind } else { fallback }
+}
+
+/// Every named field dependency must exist in the dictionary with the same record or enum kind.
+fn check_references(node: &Node, entries: &[Stored], budget: &mut Budget) -> Result<(), Refused> {
+    budget.elements(1)?;
+    budget.enter()?;
+    let result = match node {
+        Node::Nominal(kind, _, arguments) => {
+            let key = hash::closed_selector(node).ok_or("invalid_selector")?;
+            let entry = entries
+                .iter()
+                .find(|entry| entry.key == key)
+                .ok_or("invalid_selector")?;
+            if entry.record != (kind == "record") {
+                return Err("invalid_selector");
+            }
+            arguments
+                .iter()
+                .try_for_each(|argument| check_references(argument, entries, budget))
+        }
+        Node::Container(_, arguments) => arguments
+            .iter()
+            .try_for_each(|argument| check_references(argument, entries, budget)),
+        _ => Ok(()),
+    };
+    budget.leave();
+    result
+}
+
+/// Resolve the exact supplied K and complete D digest.
+fn referenced(key: &[u8], digest: &[u8], supplied: &[Meta], budget: &mut Budget) -> Result<Meta, Refused> {
+    let mut found_key = false;
+    for candidate in supplied {
+        budget.elements(1)?;
+        let Some(Meta::Binary(raw_key)) = get(candidate, "nominal") else {
+            return Err("invalid_description");
+        };
+        if raw_key != key {
+            continue;
+        }
+        found_key = true;
+        validate_selectors(candidate, budget)?;
+        let parsed = admit(candidate.clone(), false, budget).map_err(|kind| invalid_as(kind, "invalid_description"))?;
+        if parsed.digest == digest {
+            return Ok(candidate.clone());
+        }
+    }
+    Err(if found_key {
+        "description_mismatch"
+    } else {
+        "missing_description"
+    })
+}
+
+/// Recover an inline description: its framed header plus the identity-ordered member tables.
+fn inline_description(view: &[u8], budget: &mut Budget) -> Result<Meta, Refused> {
+    let mut cursor = Cursor::new(view);
+    let header = read_metadata(cursor.frame(budget)?, budget)?;
+    let record = match get(&header, "kind") {
+        Some(Meta::Text(kind)) if kind == "Record" => true,
+        Some(Meta::Text(kind)) if kind == "Enum" => false,
+        _ => return Err("invalid_description"),
+    };
+    let members = read_members(&mut cursor, !record, budget)?;
+    cursor.finished()?;
+    with_members(header, if record { "fields" } else { "variants" }, members)
+}
+
+/// Read a member table: declaration positions form a permutation and identities ascend strictly.
+fn read_members(cursor: &mut Cursor, variants: bool, budget: &mut Budget) -> Result<Vec<Meta>, Refused> {
+    let count = bounded_count(cursor, budget)?;
+    let mut members: Vec<Option<Meta>> = vec![None; count];
+    let mut previous: Option<Vec<u8>> = None;
+    for _ in 0..count {
+        let position = cursor.length(budget)?;
+        if position >= count || members[position].is_some() {
+            return Err("member_position");
+        }
+        let view = cursor.frame(budget)?;
+        let member = if variants {
+            read_variant(view, budget)?
+        } else {
+            read_metadata(view, budget)?
+        };
+        let Some(Meta::Binary(identity)) = get(&member, "id") else {
+            return Err("invalid_description");
+        };
+        if identity.len() != 6 {
+            return Err("invalid_description");
+        }
+        budget.bytes(12)?;
+        if members
+            .iter()
+            .flatten()
+            .any(|seen| matches!(get(seen, "id"), Some(Meta::Binary(other)) if other == identity))
+        {
+            return Err("duplicate_member");
+        }
+        if previous.as_ref().is_some_and(|previous| identity < previous) {
+            return Err("member_order");
+        }
+        previous = Some(identity.clone());
+        members[position] = Some(member);
+    }
+    Ok(members.into_iter().flatten().collect())
+}
+
+/// An enum variant: a framed header plus its anonymous payload field table.
+fn read_variant(view: &[u8], budget: &mut Budget) -> Result<Meta, Refused> {
+    let mut cursor = Cursor::new(view);
+    let header = read_metadata(cursor.frame(budget)?, budget)?;
+    let fields = read_members(&mut cursor, false, budget)?;
+    cursor.finished()?;
+    with_members(header, "fields", fields)
+}
+
+/// Append the recovered member list to a header that must not already contain it.
+fn with_members(header: Meta, name: &str, members: Vec<Meta>) -> Result<Meta, Refused> {
+    let Meta::Map(mut entries) = header else {
+        return Err("invalid_description");
+    };
+    if entries.iter().any(|(key, _)| key == name) {
+        return Err("invalid_description");
+    }
+    entries.push((name.to_string(), Meta::List(members)));
+    Ok(Meta::Map(entries))
+}
+
+/// Check K and every field N before admission, keeping malformed selectors distinguishable.
+fn validate_selectors(source: &Meta, budget: &mut Budget) -> Result<(), Refused> {
+    let record = match get(source, "kind") {
+        Some(Meta::Text(kind)) if kind == "Record" => true,
+        Some(Meta::Text(kind)) if kind == "Enum" => false,
+        _ => return Err("invalid_description"),
+    };
+    let Some(Meta::Binary(key)) = get(source, "nominal") else {
+        return Err("invalid_description");
+    };
+    parse_key(key, record, budget).map_err(|kind| invalid_as(kind, "invalid_selector"))?;
+    let tables: Vec<&Meta> = if record {
+        vec![source]
+    } else {
+        let Some(Meta::List(variants)) = get(source, "variants") else {
+            return Err("invalid_description");
+        };
+        variants.iter().collect()
+    };
+    for table in tables {
+        let Some(Meta::List(fields)) = get(table, "fields") else {
+            return Err("invalid_description");
+        };
+        for field in fields {
+            let Some(Meta::Text(name)) = get(field, "type") else {
+                return Err("invalid_description");
+            };
+            parse_type(name, budget).map_err(|kind| invalid_as(kind, "invalid_selector"))?;
+        }
+    }
+    Ok(())
+}
+
+/// One named property of a metadata map.
+fn get<'a>(value: &'a Meta, name: &str) -> Option<&'a Meta> {
+    let Meta::Map(entries) = value else { return None };
+    entries.iter().find(|(key, _)| key == name).map(|(_, value)| value)
+}
+
+/// Admit one complete description: its D digest, kind, K, path, properties and member tables.
+fn admit(metadata: Meta, inline: bool, budget: &mut Budget) -> Result<Stored, Refused> {
+    let mut encoded = b"crumb1\x00\x05".to_vec();
+    encode_metadata(&metadata, &mut encoded, budget)?;
+    let digest = Sha256::digest(&encoded).to_vec();
+    let record = match get(&metadata, "kind") {
+        Some(Meta::Text(kind)) if kind == "Record" => true,
+        Some(Meta::Text(kind)) if kind == "Enum" => false,
+        _ => return Err("invalid_description"),
+    };
+    let Some(Meta::Binary(key)) = get(&metadata, "nominal") else {
+        return Err("invalid_description");
+    };
+    let key = key.clone();
+    parse_key(&key, record, budget)?;
+    if !matches!(get(&metadata, "path"), Some(Meta::Text(_)))
+        || !matches!(get(&metadata, "properties"), Some(Meta::Map(_)))
+    {
+        return Err("invalid_description");
+    }
+    let (mut fields, mut variants) = (Vec::new(), Vec::new());
+    if record {
+        let Some(Meta::List(items)) = get(&metadata, "fields") else {
+            return Err("invalid_description");
+        };
+        fields = admit_fields(items, budget)?;
+    } else {
+        let Some(Meta::List(items)) = get(&metadata, "variants") else {
+            return Err("invalid_description");
+        };
+        variants = admit_variants(items, budget)?;
+    }
+    Ok(Stored {
+        metadata,
+        inline,
+        record,
+        key,
+        digest,
+        fields,
+        variants,
+    })
+}
+
+/// Admit a field table and order it by identity, keeping declaration positions.
+fn admit_fields(values: &[Meta], budget: &mut Budget) -> Result<Vec<StoredField>, Refused> {
+    let mut fields: Vec<StoredField> = Vec::with_capacity(values.len());
+    for (position, value) in values.iter().enumerate() {
+        budget.elements(1)?;
+        budget.bytes(28)?;
+        let identity = member_identity(value)?;
+        if fields.iter().any(|field| field.identity == identity) {
+            return Err("invalid_description");
+        }
+        let (Some(Meta::Text(name)), Some(Meta::Boolean(canonical)), Some(Meta::Text(absent))) =
+            (get(value, "type"), get(value, "canonical"), get(value, "absent"))
+        else {
+            return Err("invalid_description");
+        };
+        let storage = parse_type(name, budget)?;
+        let absent = match absent.as_str() {
+            "required" => 'r',
+            "none" => 'n',
+            "empty" => 'e',
+            _ => return Err("invalid_description"),
+        };
+        let allowed = match (absent, &storage) {
+            ('r', _) => true,
+            ('n', Node::Container(kind, _)) => kind == "option",
+            ('e', Node::Container(kind, _)) => matches!(kind.as_str(), "list" | "set" | "map"),
+            _ => false,
+        };
+        if !allowed {
+            return Err("invalid_description");
+        }
+        fields.push(StoredField {
+            position,
+            metadata: value.clone(),
+            identity,
+            storage,
+            canonical: *canonical,
+            absent,
+        });
+    }
+    fields.sort_by(|left, right| left.identity.cmp(&right.identity));
+    Ok(fields)
+}
+
+/// Admit variants and their payload tables, ordered by identity.
+fn admit_variants(values: &[Meta], budget: &mut Budget) -> Result<Vec<StoredVariant>, Refused> {
+    let mut variants: Vec<StoredVariant> = Vec::with_capacity(values.len());
+    for (position, value) in values.iter().enumerate() {
+        budget.elements(1)?;
+        budget.bytes(28)?;
+        let identity = member_identity(value)?;
+        if variants.iter().any(|variant| variant.identity == identity) {
+            return Err("invalid_description");
+        }
+        let Some(Meta::List(items)) = get(value, "fields") else {
+            return Err("invalid_description");
+        };
+        let fields = admit_fields(items, budget)?;
+        variants.push(StoredVariant {
+            position,
+            identity,
+            metadata: value.clone(),
+            fields,
+        });
+    }
+    variants.sort_by(|left, right| left.identity.cmp(&right.identity));
+    Ok(variants)
+}
+
+/// A member's six-octet identity, with its name and properties map checked.
+fn member_identity(value: &Meta) -> Result<Vec<u8>, Refused> {
+    match (get(value, "id"), get(value, "name"), get(value, "properties")) {
+        (Some(Meta::Binary(identity)), Some(Meta::Text(_)), Some(Meta::Map(_))) if identity.len() == 6 => {
+            Ok(identity.clone())
+        }
+        _ => Err("invalid_description"),
+    }
+}
+
+/// Read a complete K: identity, argument count and framed canonical argument spellings.
+fn parse_key(key: &[u8], record: bool, budget: &mut Budget) -> Result<Node, Refused> {
+    if key.len() < 7 {
+        return Err("invalid_cell");
+    }
+    budget.bytes(key.len() as u64)?;
+    let mut cursor = Cursor::new(&key[6..]);
+    let count = cursor.length(budget).map_err(|kind| invalid_as(kind, "invalid_cell"))?;
+    if count > cursor.remaining() {
+        return Err("invalid_cell");
+    }
+    let mut arguments = Vec::with_capacity(count);
+    for _ in 0..count {
+        budget.elements(1)?;
+        let raw = cursor.frame(budget).map_err(|kind| invalid_as(kind, "invalid_cell"))?;
+        let spelling = std::str::from_utf8(raw).map_err(|_| "invalid_cell")?;
+        arguments.push(parse_type(spelling, budget)?);
+    }
+    if cursor.remaining() != 0 {
+        return Err("invalid_cell");
+    }
+    let kind = if record { "record" } else { "enum" };
+    let node = Node::Nominal(kind.to_string(), key[..6].to_vec(), arguments);
+    if hash::closed_selector(&node).ok_or("invalid_cell")? != key {
+        return Err("invalid_cell");
+    }
+    Ok(node)
+}
+
+/// Parse one complete canonical selector spelling N.
+fn parse_type(text: &str, budget: &mut Budget) -> Result<Node, Refused> {
+    budget.bytes(4 * text.len() as u64)?;
+    let mut position = 0;
+    let node = type_node(text.as_bytes(), &mut position, budget)?;
+    if position != text.len() || hash::selector_spelling(&node).as_deref() != Some(text) {
+        return Err("invalid_cell");
+    }
+    Ok(node)
+}
+
+/// Parse one selector node, consuming shared depth.
+fn type_node(text: &[u8], position: &mut usize, budget: &mut Budget) -> Result<Node, Refused> {
+    budget.elements(1)?;
+    budget.enter()?;
+    let result = type_node_inner(text, position, budget);
+    budget.leave();
+    result
+}
+
+/// Parse constructors, decimals and nominal identities; final spelling admits scalar names.
+fn type_node_inner(text: &[u8], position: &mut usize, budget: &mut Budget) -> Result<Node, Refused> {
+    let start = *position;
+    while *position < text.len() && !matches!(text[*position], b'<' | b'>' | b',') {
+        *position += 1;
+    }
+    if *position == start {
+        return Err("invalid_cell");
+    }
+    let name = std::str::from_utf8(&text[start..*position])
+        .map_err(|_| "invalid_cell")?
+        .to_string();
+    if name == "decimal" {
+        let mut parts = Vec::new();
+        for delimiter in [b'<', b',', b'>'] {
+            if text.get(*position) != Some(&delimiter) {
+                return Err("invalid_cell");
+            }
+            *position += 1;
+            if delimiter != b'>' {
+                let begin = *position;
+                while *position < text.len() && text[*position].is_ascii_digit() {
+                    *position += 1;
+                }
+                let digits = std::str::from_utf8(&text[begin..*position]).map_err(|_| "invalid_cell")?;
+                parts.push(digits.parse::<i64>().map_err(|_| "invalid_cell")?);
+            }
+        }
+        return Ok(Node::Decimal(parts[0], parts[1]));
+    }
+    let mut arguments = Vec::new();
+    if text.get(*position) == Some(&b'<') {
+        *position += 1;
+        if text.get(*position) == Some(&b'>') {
+            *position += 1;
+        } else {
+            loop {
+                arguments.push(type_node(text, position, budget)?);
+                match text.get(*position) {
+                    Some(b'>') => {
+                        *position += 1;
+                        break;
+                    }
+                    Some(b',') => *position += 1,
+                    _ => return Err("invalid_cell"),
+                }
+            }
+        }
+    }
+    if let Some((kind, identity)) = name.split_once('@')
+        && matches!(kind, "record" | "enum")
+    {
+        let identity = columns::hex(identity)
+            .filter(|bytes| bytes.len() == 6)
+            .ok_or("invalid_cell")?;
+        return Ok(Node::Nominal(kind.to_string(), identity, arguments));
+    }
+    match name.as_str() {
+        "ref" if arguments.len() == 1 => Ok(Node::Reference(Box::new(arguments.remove(0)))),
+        "list" | "set" | "option" | "map" | "tuple" | "union" => Ok(Node::Container(name, arguments)),
+        _ if arguments.is_empty() && hash::SCALARS.contains(&name.as_str()) => Ok(Node::Scalar(name)),
+        _ => Err("invalid_cell"),
+    }
+}
+
+/// Read one complete D frame with no trailing bytes.
+fn read_metadata(view: &[u8], budget: &mut Budget) -> Result<Meta, Refused> {
+    let mut cursor = Cursor::new(view);
+    let value = read_node(&mut cursor, budget)?;
+    cursor.finished()?;
+    Ok(value)
+}
+
+/// Read one tagged D node under the shared depth allowance.
+fn read_node(cursor: &mut Cursor, budget: &mut Budget) -> Result<Meta, Refused> {
+    budget.elements(1)?;
+    budget.enter()?;
+    let result = read_node_inner(cursor, budget);
+    budget.leave();
+    result
+}
+
+/// Decode one D tag and payload; map keys must already be unique and ascending.
+fn read_node_inner(cursor: &mut Cursor, budget: &mut Budget) -> Result<Meta, Refused> {
+    Ok(match cursor.byte(budget)? {
+        0 => Meta::Null,
+        1 => match cursor.byte(budget)? {
+            flag @ (0 | 1) => Meta::Boolean(flag == 1),
+            _ => return Err("invalid_description"),
+        },
+        2 => Meta::Integer(columns::unzigzag(&cursor.groups(budget)?).ok_or("integer_overflow")?),
+        3 => Meta::Text(read_text(cursor, budget)?),
+        4 => Meta::Binary(cursor.frame(budget)?.to_vec()),
+        5 => {
+            let count = bounded_count(cursor, budget)?;
+            Meta::List(
+                (0..count)
+                    .map(|_| read_node(cursor, budget))
+                    .collect::<Result<_, _>>()?,
+            )
+        }
+        6 => {
+            let count = bounded_count(cursor, budget)?;
+            let mut entries: Vec<(String, Meta)> = Vec::with_capacity(count);
+            for _ in 0..count {
+                let key = read_text(cursor, budget)?;
+                budget.bytes(8 * key.len() as u64)?;
+                if entries
+                    .last()
+                    .is_some_and(|(previous, _)| key.as_bytes() <= previous.as_bytes())
+                {
+                    return Err("invalid_description");
+                }
+                let value = read_node(cursor, budget)?;
+                entries.push((key, value));
+            }
+            Meta::Map(entries)
+        }
+        7 => Meta::Symbol(read_text(cursor, budget)?),
+        _ => return Err("invalid_description"),
+    })
+}
+
+/// Read a framed exact UTF-8 string.
+fn read_text(cursor: &mut Cursor, budget: &mut Budget) -> Result<String, Refused> {
+    let raw = cursor.frame(budget)?;
+    budget.bytes(raw.len() as u64)?;
+    String::from_utf8(raw.to_vec()).map_err(|_| "invalid_utf8")
+}
+
+/// A child count that the remaining bytes could hold.
+fn bounded_count(cursor: &mut Cursor, budget: &mut Budget) -> Result<usize, Refused> {
+    let count = cursor.length(budget)?;
+    budget.elements(count as u64)?;
+    if count > cursor.remaining() {
+        return Err("truncated");
+    }
+    Ok(count)
+}
+
+/// Encode D: tags, sorted unique property-name map keys and exact framing.
+pub(super) fn encode_metadata(value: &Meta, output: &mut Vec<u8>, budget: &mut Budget) -> Result<(), Refused> {
+    budget.elements(1)?;
+    budget.enter()?;
+    let result = encode_metadata_inner(value, output, budget);
+    budget.leave();
+    result
+}
+
+/// Encode one D node.
+fn encode_metadata_inner(value: &Meta, output: &mut Vec<u8>, budget: &mut Budget) -> Result<(), Refused> {
+    match value {
+        Meta::Null => output.push(0),
+        Meta::Boolean(flag) => output.extend_from_slice(&[1, u8::from(*flag)]),
+        Meta::Integer(number) => {
+            output.push(2);
+            hash::zigzag(output, number.unsigned_abs(), *number < 0);
+        }
+        Meta::Text(text) => {
+            output.push(3);
+            hash::frame(output, text.as_bytes());
+        }
+        Meta::Binary(data) => {
+            output.push(4);
+            hash::frame(output, data);
+        }
+        Meta::Symbol(name) => {
+            output.push(7);
+            hash::frame(output, name.as_bytes());
+        }
+        Meta::List(items) => {
+            output.push(5);
+            hash::unsigned(output, items.len() as u128);
+            for item in items {
+                encode_metadata(item, output, budget)?;
+            }
+        }
+        Meta::Map(entries) => {
+            let mut keyed: Vec<&(String, Meta)> = entries.iter().collect();
+            keyed.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
+            if keyed.windows(2).any(|pair| pair[0].0 == pair[1].0) || !keyed.iter().all(|(key, _)| property_name(key)) {
+                return Err("invalid_description");
+            }
+            output.push(6);
+            hash::unsigned(output, keyed.len() as u128);
+            for (key, item) in keyed {
+                hash::frame(output, key.as_bytes());
+                encode_metadata(item, output, budget)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// One identifier-shaped property name.
+fn property_name(value: &str) -> bool {
+    crate::unicode_names::is_xid_name(value) && crate::unicode_names::first_nfc_difference(value) < 0
+}
+
+/// Decode one root record or enum row.
+fn read_root(stored: &Stored, raw: &[u8], dictionary: &[Stored], budget: &mut Budget) -> Result<Value, Refused> {
+    let mut cursor = Cursor::new(raw);
+    if stored.record {
+        return Ok(Value::Record(read_fields(
+            &stored.fields,
+            &mut cursor,
+            dictionary,
+            budget,
+        )?));
+    }
+    let variant = cursor.length(budget)?;
+    let variant = stored.variants.get(variant).ok_or("variant_index")?;
+    let fields = read_fields(&variant.fields, &mut cursor, dictionary, budget)?;
+    Ok(Value::Enum(variant.identity.clone(), fields))
+}
+
+/// Read the presence bitmap and cell index, then every field cell in identity order.
+fn read_fields(
+    fields: &[StoredField],
+    cursor: &mut Cursor,
+    dictionary: &[Stored],
+    budget: &mut Budget,
+) -> Result<Vec<hash::Field>, Refused> {
+    let eligible = fields.iter().filter(|field| field.absent != 'r').count();
+    budget.elements(fields.len() as u64)?;
+    let bitmap = cursor.take(eligible.div_ceil(8), budget)?.to_vec();
+    if eligible % 8 != 0 && bitmap[bitmap.len() - 1] >> (eligible % 8) != 0 {
+        return Err("bitmap_padding");
+    }
+    let present_bits = (0..eligible)
+        .filter(|bit| (bitmap[bit / 8] >> (bit % 8)) & 1 == 1)
+        .count();
+    let present = fields.len() - eligible + present_bits;
+    let (table, width, data) = columns::read_index(cursor, present, budget)?;
+    let (mut result, mut eligible_index, mut position) = (Vec::with_capacity(fields.len()), 0, 0);
+    for field in fields {
+        budget.elements(1)?;
+        budget.bytes(6)?;
+        let mut present = true;
+        if field.absent != 'r' {
+            present = (bitmap[eligible_index / 8] >> (eligible_index % 8)) & 1 == 1;
+            eligible_index += 1;
+        }
+        let value = if present {
+            let left = columns::offset_at(table, position, width, budget)?;
+            let right = columns::offset_at(table, position + 1, width, budget)?;
+            position += 1;
+            field_cell(
+                field,
+                data.get(left..right).ok_or("invalid_offsets")?,
+                dictionary,
+                budget,
+            )?
+        } else {
+            match (field.absent, &field.storage) {
+                ('n', _) => Value::Absent,
+                ('e', Node::Container(kind, _)) if kind == "list" => Value::List(Vec::new()),
+                ('e', Node::Container(kind, _)) if kind == "set" => Value::Set(Vec::new()),
+                ('e', Node::Container(kind, _)) if kind == "map" => Value::Map(Vec::new()),
+                _ => return Err("invalid_description"),
+            }
+        };
+        result.push(hash::Field {
+            identity: field.identity.clone(),
+            canonical: field.canonical,
+            absent: field.absent,
+            value,
+        });
+    }
+    Ok(result)
+}
+
+/// One present field cell: the presence bit replaces one outer option tag; present empties are redundant.
+fn field_cell(field: &StoredField, view: &[u8], dictionary: &[Stored], budget: &mut Budget) -> Result<Value, Refused> {
+    if field.absent == 'n' {
+        let Node::Container(kind, arguments) = &field.storage else {
+            return Err("invalid_description");
+        };
+        if kind != "option" {
+            return Err("invalid_description");
+        }
+        return Ok(Value::Some(Box::new(cell(&arguments[0], view, dictionary, budget)?)));
+    }
+    let value = cell(&field.storage, view, dictionary, budget)?;
+    if field.absent == 'e' {
+        match &value {
+            Value::List(items) | Value::Set(items) if items.is_empty() => return Err("redundant_presence"),
+            Value::Map(entries) if entries.is_empty() => return Err("redundant_presence"),
+            Value::List(_) | Value::Set(_) | Value::Map(_) => {}
+            _ => return Err("invalid_description"),
+        }
+    }
+    Ok(value)
+}
+
+/// Decode one typed cell under the shared depth allowance.
+fn cell(node: &Node, view: &[u8], dictionary: &[Stored], budget: &mut Budget) -> Result<Value, Refused> {
+    budget.elements(1)?;
+    budget.enter()?;
+    let result = cell_inner(node, view, dictionary, budget);
+    budget.leave();
+    result
+}
+
+/// Interpret one cell only through its admitted written selector.
+fn cell_inner(node: &Node, view: &[u8], dictionary: &[Stored], budget: &mut Budget) -> Result<Value, Refused> {
+    match node {
+        Node::Scalar(kind) => scalar(kind, view, budget),
+        Node::Decimal(precision, scale) => {
+            let mut cursor = Cursor::new(view);
+            let groups = cursor.groups(budget)?;
+            let coefficient = columns::unzigzag(&groups).ok_or("integer_overflow")?;
+            if columns::digits(coefficient) > *precision || cursor.remaining() != 0 {
+                return Err("invalid_cell");
+            }
+            Ok(Value::Decimal(coefficient, *scale))
+        }
+        Node::Reference(_) => scalar("reference", view, budget),
+        Node::Nominal(..) => {
+            let key = hash::closed_selector(node).ok_or("invalid_selector")?;
+            let entry = dictionary
+                .iter()
+                .find(|entry| entry.key == key)
+                .ok_or("invalid_selector")?;
+            read_root(entry, view, dictionary, budget)
+        }
+        Node::Container(kind, arguments) => container(kind, arguments, view, dictionary, budget),
+        _ => Err("invalid_selector"),
+    }
+}
+
+/// Decode one scalar cell of its admitted width and type.
+fn scalar(kind: &str, view: &[u8], budget: &mut Budget) -> Result<Value, Refused> {
+    if let Some(columns::KeyType::Integer(signed, width)) = columns::key_type(kind) {
+        if view.len() != width {
+            return Err("invalid_cell");
+        }
+        budget.bytes(width as u64)?;
+        return Ok(fixed_integer(view, signed));
+    }
+    match kind {
+        "fp32" => return float_cell(view, 4),
+        "fp64" => return float_cell(view, 8),
+        _ => {}
+    }
+    let mut cursor = Cursor::new(view);
+    let value = match kind {
+        "boolean" => {
+            if view.len() != 1 || cursor.byte(budget)? > 1 {
+                return Err("invalid_cell");
+            }
+            Value::Boolean(view[0] == 1)
+        }
+        "string" => Value::Text(read_text(&mut cursor, budget)?),
+        "binary" => Value::Binary(cursor.frame(budget)?.to_vec()),
+        "secret_string" | "secret_bytes" => {
+            if view.len() != 1 || cursor.byte(budget)? != 0 {
+                return Err("invalid_cell");
+            }
+            Value::Withheld
+        }
+        "reference" => {
+            let target = cursor.frame(budget)?.to_vec();
+            Value::Reference(target, cursor.frame(budget)?.to_vec())
+        }
+        _ => return Err("invalid_cell"),
+    };
+    if cursor.remaining() != 0 {
+        return Err("invalid_cell");
+    }
+    Ok(value)
+}
+
+/// Decode option, union, list, tuple, set and map cells with their tag, count and order checks.
+fn container(
+    kind: &str,
+    arguments: &[Node],
+    view: &[u8],
+    dictionary: &[Stored],
+    budget: &mut Budget,
+) -> Result<Value, Refused> {
+    let mut cursor = Cursor::new(view);
+    if kind == "option" {
+        let value = match cursor.byte(budget)? {
+            0 => Value::Absent,
+            1 => Value::Some(Box::new(cell(
+                &arguments[0],
+                cursor.frame(budget)?,
+                dictionary,
+                budget,
+            )?)),
+            _ => return Err("invalid_cell"),
+        };
+        if cursor.remaining() != 0 {
+            return Err("invalid_cell");
+        }
+        return Ok(value);
+    }
+    if kind == "union" {
+        let requested = cursor.length(budget)?;
+        for candidate in arguments {
+            let candidate_key = hash::selector_key(candidate).ok_or("invalid_cell")?;
+            let mut rank = 0;
+            for other in arguments {
+                if hash::selector_key(other).ok_or("invalid_cell")? < candidate_key {
+                    rank += 1;
+                }
+            }
+            if rank == requested {
+                let rest = cursor.take(cursor.remaining(), budget)?;
+                let value = cell(candidate, rest, dictionary, budget)?;
+                return Ok(Value::Union(candidate.clone(), Box::new(value)));
+            }
+        }
+        return Err("union_index");
+    }
+    let count = cursor.length(budget)?;
+    budget.elements(count as u64)?;
+    if kind == "tuple" && count != arguments.len() {
+        return Err("arity_mismatch");
+    }
+    let slots = if kind == "map" {
+        count.checked_mul(2).ok_or("limit_exceeded")?
+    } else {
+        count
+    };
+    let (table, width, data) = columns::read_index(&mut cursor, slots, budget)?;
+    let mut values = Vec::with_capacity(slots);
+    for position in 0..slots {
+        let left = columns::offset_at(table, position, width, budget)?;
+        let right = columns::offset_at(table, position + 1, width, budget)?;
+        let element = match kind {
+            "tuple" => &arguments[position],
+            "map" => &arguments[position % 2],
+            _ => &arguments[0],
+        };
+        values.push(cell(
+            element,
+            data.get(left..right).ok_or("invalid_offsets")?,
+            dictionary,
+            budget,
+        )?);
+    }
+    match kind {
+        "list" => Ok(Value::List(values)),
+        "tuple" => Ok(Value::Tuple(values)),
+        "set" => {
+            ordered(values.iter())?;
+            Ok(Value::Set(values))
+        }
+        "map" => {
+            let mut entries = Vec::with_capacity(count);
+            let mut items = values.into_iter();
+            while let (Some(key), Some(value)) = (items.next(), items.next()) {
+                entries.push((key, value));
+            }
+            ordered(entries.iter().map(|(key, _)| key))?;
+            Ok(Value::Map(entries))
+        }
+        _ => Err("invalid_selector"),
+    }
+}
+
+/// Refuse duplicate or descending stored keys before any canonical projection could erase them.
+fn ordered<'a>(mut keys: impl Iterator<Item = &'a Value>) -> Result<(), Refused> {
+    let Some(mut previous) = keys.next() else {
+        return Ok(());
+    };
+    for key in keys {
+        match hash::compare(previous, key, Projection::Object).ok_or("invalid_cell")? {
+            std::cmp::Ordering::Equal => return Err("duplicate_key"),
+            std::cmp::Ordering::Greater => return Err("collection_order"),
+            std::cmp::Ordering::Less => {}
+        }
+        previous = key;
+    }
+    Ok(())
+}
