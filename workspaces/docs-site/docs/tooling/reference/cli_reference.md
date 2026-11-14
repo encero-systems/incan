@@ -9,6 +9,7 @@ oven --help | -h | help
 oven --version
 oven lock [--versions lowest|lowest-direct|newest] [PATH]
 oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]
+oven dependency add NAME [--version REQUIREMENT] [--key KEY] [--project PATH] | list [--project PATH] | remove NAME [--project PATH]
 oven update [NAME] [--project PATH]
 oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE
 oven run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
@@ -81,7 +82,17 @@ The requirement is `--version REQUIREMENT`, or else the newest version the toolc
 
 One line, `KEY = { loaf = "NAME", version = "REQUIREMENT" }`, is written after the table's last entry. A manifest without the table gains it at its end. Nothing else in `loaf.toml` changes. Success prints `added NAME, version = "REQUIREMENT"`, then the lock's report, and exits `0`. When the lock is refused, `loaf.toml` is restored to its exact text, and the command exits `1` with the lock's reason.
 
-It runs only on a toolchain the project's `requires-incan` admits. This command is available only as `oven add`.
+`oven add` is the shorthand of `oven dependency add`: the two spellings take the same operands and options and perform the same operation. It runs only on a toolchain the project's `requires-incan` admits. Neither spelling is available on `incan`.
+
+## `oven dependency`
+
+`oven dependency add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]` is [`oven add`](#oven-add).
+
+`oven dependency list [--project PATH]` prints one line per entry of the `[dependencies]` table of the root project at or above `PATH`, which defaults to the current directory, in key order. A registry entry prints `KEY: NAME REQUIREMENT`. A local entry prints `KEY: path DIR`, or `KEY: NAME, path DIR` when it names a Loaf. A project without entries prints `no dependencies`. It reads only `loaf.toml` and exits `0`.
+
+`oven dependency remove NAME [--project PATH]` removes every `[dependencies]` entry whose `loaf` is `NAME`, then locks the project as `oven lock` does. `NAME` is a full Loaf name. A name with a capital letter is refused, and a name without a scope is refused with the project's dependencies that end in it. A name no entry has is refused. An inline entry loses its one line, and a `[dependencies.KEY]` table loses its header and its lines up to the next table. Nothing else in `loaf.toml` changes. Success prints one `removed KEY: NAME REQUIREMENT` line per entry, then the lock's report, and exits `0`. When the lock is refused, `loaf.toml` is restored to its exact text, and the command exits `1` with the lock's reason.
+
+`oven dependency` without a subcommand, or with one other than `add`, `list` and `remove`, exits `2`. Each subcommand runs only on a toolchain the project's `requires-incan` admits.
 
 ## `oven update`
 
