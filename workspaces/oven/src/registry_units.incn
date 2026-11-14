@@ -267,7 +267,10 @@ def candidate_groups(
             if profile != "" and len(matching) > 0:
                 return Ok([matching, compatible])
             return Ok([compatible])
-        if len([unit for unit in units if qualifies(unit, demand.selection)?]) > 0:
+        # RFC 125: versions coexist, so a requirement no recorded version admits takes a version of its own, as in a
+        # fresh lock. Another producer of a recorded version is refused: the lock's producer of it is exact.
+        versions = [unit.version for unit in locked]
+        if len([unit for unit in units if unit.version in versions and qualifies(unit, demand.selection)?]) > 0:
             return Err(f"recorded registry closure does not satisfy {demand.key()}")
     mut candidates: list[RegistryUnit] = []
     for domain in [demand.domain, "host", "target"]:
