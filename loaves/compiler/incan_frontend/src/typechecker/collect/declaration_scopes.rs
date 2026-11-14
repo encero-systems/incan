@@ -266,10 +266,32 @@ impl TypeChecker {
                     );
                     self.public_library_type_identities.insert(key.clone(), identity);
                 }
-                if self.transitive_pub_types.contains_key(&key)
-                    || self.transitive_pub_traits.contains_key(&key)
-                    || self.type_aliases.contains_key(&key)
-                {
+                if self.transitive_pub_types.contains_key(&key) {
+                    // A retained dependency interface may already carry the provider-qualified nested layout. Index
+                    // that same layout by its exact carrier before taking the fast path; the root-export replay cannot
+                    // recover declarations that exist only in checked API metadata.
+                    let declaration = self
+                        .public_library_type_identities
+                        .get(&key)
+                        .and_then(|identity| identity.canonical.as_ref())
+                        .cloned();
+                    let missing_layout = declaration
+                        .as_ref()
+                        .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
+                        .filter(|carrier| !self.transitive_pub_types.contains_key(carrier))
+                        .and_then(|carrier| {
+                            self.transitive_pub_types
+                                .get(&key)
+                                .and_then(|infos| infos.first())
+                                .cloned()
+                                .map(|info| (carrier, info))
+                        });
+                    if let Some((carrier, info)) = missing_layout {
+                        self.transitive_pub_types.insert(carrier, vec![info]);
+                    }
+                    continue;
+                }
+                if self.transitive_pub_traits.contains_key(&key) || self.type_aliases.contains_key(&key) {
                     continue;
                 }
                 let scope = scope.get_or_insert_with(|| {

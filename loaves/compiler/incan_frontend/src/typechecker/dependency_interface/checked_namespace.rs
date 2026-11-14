@@ -375,74 +375,124 @@ fn namespace_exports(declaration: &crate::api_metadata::ApiDeclaration) -> Vec<E
 mod tests {
     use super::*;
 
-    /// Admit the exact package and module identity that owns `IoError`, with the smallest layout needed by this
-    /// dependency-interface contract.
-    fn admitted_io_error_fixture() -> Result<
-        (
-            Arc<crate::loaf_index::LoafIndex>,
-            tempfile::TempDir,
-            crate::library_manifest::NominalTypeOriginExport,
-        ),
-        Box<dyn std::error::Error>,
-    > {
+    /// Build one schema-valid nominal manifest from its checked source module and materialized public namespace.
+    fn checked_nominal_manifest(
+        package: &str,
+        module_path: Vec<String>,
+        source: &str,
+        root_export: bool,
+    ) -> Result<(crate::library_manifest::LibraryManifest, CanonicalSymbolId), Box<dyn std::error::Error>> {
         use crate::api_metadata::{
             CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+            materialize_checked_api_public_namespaces,
         };
         use crate::library_exports::collect_checked_public_exports;
         use crate::library_manifest::LibraryManifest;
 
-        let source = "pub model IoError:\n    pub kind: str\n";
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-        let module_path = vec!["primitives".to_string(), "io".to_string()];
         let mut checker = TypeChecker::new();
-        checker.set_current_package_identity(Some("incan_stdlib_primitives".into()));
+        checker.set_current_package_identity(Some(package.into()));
         checker.set_current_module_path(Some(module_path.clone()));
         checker
             .check_program(&program)
             .map_err(|errors| format!("{errors:?}"))?;
-        let symbol = checker.symbols.lookup("IoError").ok_or("missing IoError symbol")?;
+        let module_api = collect_checked_api_metadata(&program, &checker, module_path.clone());
+        let declaration_name =
+            namespace_declaration_name(module_api.declarations.first().ok_or("missing checked declaration")?)
+                .ok_or("missing checked declaration name")?;
+        let symbol = checker
+            .symbols
+            .lookup(declaration_name)
+            .ok_or("missing nominal symbol")?;
         let canonical = checker
             .symbols
             .identity_of(symbol)
-            .ok_or("missing IoError identity")?
+            .ok_or("missing nominal identity")?
             .clone();
         let checked_exports = collect_checked_public_exports(&program, &checker);
-        let module_api = collect_checked_api_metadata(&program, &checker, module_path);
-        let api = CheckedApiMetadataPackage {
+        let mut api = CheckedApiMetadataPackage {
             schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
             package: None,
-            modules: vec![module_api.clone()],
+            modules: vec![module_api],
             public_namespaces: Vec::new(),
         };
-        let mut manifest = LibraryManifest::from_checked_exports("incan_stdlib_primitives", "0.6.0", &checked_exports);
+        materialize_checked_api_public_namespaces(&mut api)?;
+        let mut manifest = if root_export {
+            LibraryManifest::from_checked_exports(package, "0.6.0", &checked_exports)
+        } else {
+            LibraryManifest::new(package, "0.6.0")
+        };
         manifest.contract_metadata.identity_graph.extend_checked_api_exports(
-            "incan_stdlib_primitives",
+            package,
             &api,
-            &[(vec!["primitives".to_string(), "io".to_string()], checked_exports)],
+            &[(module_path, checked_exports)],
         )?;
         manifest.contract_metadata.api = Some(api);
+        Ok((manifest, canonical))
+    }
+
+    /// Admit the exact packages and module identities that own the root-exported `IoError` and nested `PathStat`.
+    fn admitted_foreign_nominal_fixture() -> Result<
+        (
+            Arc<crate::loaf_index::LoafIndex>,
+            tempfile::TempDir,
+            crate::library_manifest::NominalTypeOriginExport,
+            crate::library_manifest::NominalTypeOriginExport,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        let (primitives_manifest, io_error) = checked_nominal_manifest(
+            "incan_stdlib_primitives",
+            vec!["primitives".to_string(), "io".to_string()],
+            "pub model IoError:\n    pub kind: str\n",
+            true,
+        )?;
+        let (system_manifest, path_stat) = checked_nominal_manifest(
+            "incan_stdlib_system",
+            vec!["fs".to_string(), "metadata".to_string()],
+            "pub model PathStat:\n    pub size: int\n",
+            false,
+        )?;
         let directory = tempfile::tempdir()?;
         std::fs::write(
             directory.path().join("incan_stdlib_primitives.incnlib"),
-            manifest.to_json_string()?,
+            primitives_manifest.to_json_string()?,
         )?;
-        let entry = crate::loaf_index::LoafIndex::standard("incan_stdlib_primitives", directory.path())?;
-        let origin = crate::library_manifest::NominalTypeOriginExport {
-            provider: entry.artifact.identity.clone(),
+        std::fs::write(
+            directory.path().join("incan_stdlib_system.incnlib"),
+            system_manifest.to_json_string()?,
+        )?;
+        let primitives = crate::loaf_index::LoafIndex::standard("incan_stdlib_primitives", directory.path())?;
+        let system = crate::loaf_index::LoafIndex::standard("incan_stdlib_system", directory.path())?;
+        let io_error_origin = crate::library_manifest::NominalTypeOriginExport {
+            provider: primitives.artifact.identity.clone(),
             canonical: crate::library_manifest::CanonicalIdentityExport::from_canonical(
                 "incan_stdlib_primitives",
-                &canonical,
+                &io_error,
             )
             .ok_or("IoError identity cannot be exported")?,
         };
-        Ok((Arc::new(crate::loaf_index::LoafIndex::new([entry])?), directory, origin))
+        let path_stat_origin = crate::library_manifest::NominalTypeOriginExport {
+            provider: system.artifact.identity.clone(),
+            canonical: crate::library_manifest::CanonicalIdentityExport::from_canonical(
+                "incan_stdlib_system",
+                &path_stat,
+            )
+            .ok_or("PathStat identity cannot be exported")?,
+        };
+        Ok((
+            Arc::new(crate::loaf_index::LoafIndex::new([primitives, system])?),
+            directory,
+            io_error_origin,
+            path_stat_origin,
+        ))
     }
 
     /// A retained editable interface must install the same nominal ownership tables used by ordinary dependencies.
     #[test]
     fn installable_retains_nominal_scopes_carriers_and_layouts() -> Result<(), Box<dyn std::error::Error>> {
-        let (loaves, _loaf_directory, foreign_origin) = admitted_io_error_fixture()?;
+        let (loaves, _loaf_directory, foreign_origin, path_stat_origin) = admitted_foreign_nominal_fixture()?;
         let source = "pub model Order:\n    pub quantity: int\n    pub unit_price: float\n\npub model Failure:\n    pub message: str\n\npub def total(order: Order) -> float:\n    return float(order.quantity) * order.unit_price\n\npub def identity(order: Order) -> Order:\n    return order\n\npub def load() -> Result[Order, Failure]:\n    return Ok(Order(quantity=1, unit_price=1.0))\n\npub def foreign_load() -> int:\n    return 1\n";
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
@@ -467,8 +517,8 @@ mod tests {
                     name: "Result".to_string(),
                     args: vec![
                         crate::library_manifest::TypeRef::Named {
-                            name: "int".to_string(),
-                            origin: None,
+                            name: "PathStat".to_string(),
+                            origin: Some(path_stat_origin.clone()),
                         },
                         crate::library_manifest::TypeRef::Named {
                             name: "IoError".to_string(),
@@ -479,7 +529,8 @@ mod tests {
                 };
             }
         }
-        let installed = retained.installable()?;
+        retained = CheckedNamespaceInterface::from_bytes(&retained.to_bytes()?)?;
+        let mut installed = retained.installable()?;
         let order = retained.identities.get("Order").ok_or("missing Order identity")?;
         let scope = installed
             .declaration_nominal_scopes
@@ -491,6 +542,17 @@ mod tests {
         assert_eq!(installed.retained_nominal_carriers.get(order), Some(&carrier));
         let foreign_carrier = incan_semantics_core::body_ir::nominal_carrier_key(&foreign_identity)
             .ok_or("missing foreign nominal carrier")?;
+        let path_stat_identity = path_stat_origin
+            .canonical
+            .hydrate()
+            .ok_or("PathStat identity cannot be hydrated")?;
+        let path_stat_carrier = incan_semantics_core::body_ir::nominal_carrier_key(&path_stat_identity)
+            .ok_or("missing PathStat nominal carrier")?;
+        let system_key = loaves
+            .declaring_loaf(&path_stat_identity)
+            .ok_or("missing PathStat declaring Loaf")?
+            .key
+            .clone();
         assert_eq!(
             installed.retained_nominal_carriers.get(&foreign_identity),
             Some(&foreign_carrier)
@@ -512,11 +574,33 @@ mod tests {
             .get(identity_function)
             .ok_or("missing identity callable templates")?;
         assert_eq!(callable.return_type, ResolvedType::Named("Order".into()));
-        let consumer_source = "from domain import load, total\n\npub def retained_total() -> Result[float, str]:\n    loaded = load().map_err((error) => error.message)?\n    return Ok(total(loaded))\n";
+        let consumer_source = "from domain import foreign_load, load, total\n\npub def retained_total() -> Result[float, str]:\n    loaded = load().map_err((error) => error.message)?\n    return Ok(total(loaded))\n\npub def retained_path_stat_size() -> Result[int, str]:\n    stat = foreign_load().map_err((error) => error.kind)?\n    return Ok(stat.size)\n";
         let consumer_tokens = crate::lexer::lex(consumer_source).map_err(|errors| format!("{errors:?}"))?;
         let consumer = crate::parser::parse(&consumer_tokens).map_err(|errors| format!("{errors:?}"))?;
         let dependencies = [("domain", &program)];
+        let system_manifest = loaves
+            .manifest("incan_stdlib_system")
+            .ok_or("missing system manifest")?;
+        let path_stat_declaration = system_manifest
+            .contract_metadata
+            .api
+            .as_ref()
+            .into_iter()
+            .flat_map(|api| &api.modules)
+            .flat_map(|module| &module.declarations)
+            .find(|declaration| namespace_declaration_name(declaration) == Some("PathStat"))
+            .ok_or("missing checked PathStat declaration")?;
         let mut consumer_checker = TypeChecker::new();
+        let SymbolKind::Type(path_stat_info) = consumer_checker
+            .symbol_kind_from_api_declaration(system_manifest.contract_metadata.api.as_ref(), path_stat_declaration)
+            .ok_or("missing checked PathStat layout")?
+        else {
+            return Err("PathStat is not a checked nominal layout".into());
+        };
+        Arc::make_mut(&mut Arc::make_mut(&mut installed).transitive_public_types).insert(
+            canonical_public_library_type_name(&system_key, "fs::metadata::PathStat"),
+            vec![path_stat_info],
+        );
         consumer_checker.set_loaves(loaves);
         consumer_checker.set_current_module_path(Some(vec!["consumer".to_string()]));
         consumer_checker.register_dependency_module_path_segments("domain", module_path);
@@ -526,12 +610,20 @@ mod tests {
             consumer_checker.transitive_pub_types.contains_key(&foreign_carrier),
             "installing the retained interface must replay the admitted IoError layout"
         );
+        assert!(
+            consumer_checker.transitive_pub_types.contains_key(&path_stat_carrier),
+            "installing the retained interface must replay the nested PathStat layout"
+        );
         consumer_checker
             .check_program_with_dependency_semantics(&consumer)
             .map_err(|errors| format!("{errors:?}"))?;
         assert!(
             consumer_checker.transitive_pub_types.contains_key(&foreign_carrier),
             "the admitted IoError layout must survive the consumer body-check boundary"
+        );
+        assert!(
+            consumer_checker.transitive_pub_types.contains_key(&path_stat_carrier),
+            "the nested PathStat layout must survive the consumer Body IR checker boundary"
         );
         Ok(())
     }
