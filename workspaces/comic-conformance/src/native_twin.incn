@@ -3,20 +3,28 @@
 from std.json import JsonValue
 from std.primitives.crumb import Budget
 from std.primitives.crumb.admission import RecordShape, check_written, plan_adaptation
+from std.primitives.crumb.column_key_read import key_at, read_keys
+from std.primitives.crumb.column_value_dictionary import build_keys, encode_keys
+from std.primitives.crumb.description_dictionary import admit_dictionary
 from std.primitives.crumb.encoding_buffer import EncodingBuffer
 from std.primitives.crumb.framing import Reader, frame
 from std.primitives.crumb.hashes import HashResult, description_hash, model_hash, seal_hash, value_hash
 from std.primitives.crumb.identity import member_identity, declaration_identity, declaration_preimage
 from std.primitives.crumb.identity import closed_selector, check_arity
+from std.primitives.crumb.registrations import KindRegistry
+from std.primitives.crumb.selectors import parse_type
 from std.primitives.crumb.spelling import selector_spelling
 from std.primitives.crumb.text_printer import print_comic
 from std.primitives.crumb.types import NominalKind, TypeNode
-from std.primitives.crumb.values import Projection
+from std.primitives.crumb.values import Projection, Value
 from std.primitives.hash import sha256
 from std.primitives.text import encode_utf8
 from adaptation_cases import absent_value, convert
 from case_data import CaseOperation, HashKind, array, field, fields as fixture_fields, hex_bytes, node, nodes, text
+from column_case_data import key_values
+from column_read_data import case_budget, category
 from corpus import CorpusCase
+from encoding_test_support import backing
 from fixture_adapter import logical, logical_items, metadata, record
 from text_cases import case_context, corpus_document
 
@@ -35,13 +43,15 @@ pub def twin_encode(item: CorpusCase) -> Result[Option[bytes], str]:
         CaseOperation.HashPreimage => return Ok(Some(hash_twin(item.document)?))
         CaseOperation.Adaptation => return Ok(Some(adaptation_twin(item.document)?))
         CaseOperation.TextPrint => return Ok(Some(print_twin(item.document)?))
+        CaseOperation.ColumnCodec => return column_twin_encode(item.document)
         _ => return Ok(None)
 
 
-pub def twin_decode(operation: CaseOperation, encoded: bytes) -> Result[bytes, str]:
+pub def twin_decode(item: CorpusCase, encoded: bytes) -> Result[bytes, str]:
     """Decode one twin result back to its comparison bytes; semantic results without a wire form are copied."""
-    match operation:
+    match item.operation:
         CaseOperation.HashPreimage => return hash_decode(encoded)
+        CaseOperation.ColumnCodec => return column_twin_decode(item.document)
         _ => return Ok(encoded)
 
 
@@ -236,3 +246,57 @@ def print_twin(document: JsonValue) -> Result[bytes, str]:
     context = case_context(document, budget)?
     typed = corpus_document(field(document, "document")?, context, budget)?
     return print_comic(typed, context, budget).map_err((error) => error.message())
+
+
+def column_twin_encode(document: JsonValue) -> Result[Option[bytes], str]:
+    """Write a column dictionary's independently authored keys; other column operations have no Incan twin yet."""
+    if text(document, "operation")? != CaseOperation.ColumnDictionary.value():
+        return Ok(None)
+    mut setup = column_setup()?
+    registry = KindRegistry.create([], setup).map_err((e) => e.message())?
+    dictionary = admit_dictionary([], registry, setup).map_err((e) => e.message())?
+    name = text(document, "type")?
+    node = parse_type(name, setup).map_err((e) => e.message())?
+    keys = key_values(field(document, "expected")?, name, "keys_hex", "values")?
+    if len(keys) == 0:
+        return Ok(Some(b""))
+    built = build_keys(node, keys, dictionary, setup).map_err((e) => e.message())?
+    return Ok(Some(encode_keys(node, built, dictionary, setup).map_err((e) => e.message())?))
+
+
+def column_twin_decode(document: JsonValue) -> Result[bytes, str]:
+    """Read the literal dictionary, or each proper prefix when asked, into keys or one typed refusal category."""
+    mut setup = column_setup()?
+    registry = KindRegistry.create([], setup).map_err((e) => e.message())?
+    dictionary = admit_dictionary([], registry, setup).map_err((e) => e.message())?
+    node = parse_type(text(document, "type")?, setup).map_err((e) => e.message())?
+    data = hex_bytes(text(document, "input_hex")?)?
+    mut lengths: list[int] = [len(data)]
+    if document.get("transform").is_some():
+        lengths = [length for length in range(len(data))]
+    mut output = EncodingBuffer.create()
+    for length in lengths:
+        mut budget = case_budget(document)?
+        match read_keys(node, backing(data[:length])?, 0, dictionary, budget):
+            Err(error) =>
+                output.octet(1, setup).map_err((e) => e.message())?
+                output
+                    .append(frame(encode_utf8(category(error)?), setup).map_err((e) => e.message())?, setup)
+                    .map_err((e) => e.message())?
+            Ok(keys) =>
+                mut values: list[Value] = []
+                for code in range(keys.count):
+                    values.append(key_at(keys, code, dictionary, setup).map_err((e) => e.message())?)
+                result = value_hash(Value.List(values), Projection.Object, setup, true).map_err((e) => e.message())?
+                preimage = match result.preimage:
+                    Some(captured) => captured
+                    None => return Err("column twin did not capture its keys preimage")
+
+                output.octet(0, setup).map_err((e) => e.message())?
+                output.append(frame(preimage, setup).map_err((e) => e.message())?, setup).map_err((e) => e.message())?
+    return output.finish(setup).map_err((e) => e.message())
+
+
+def column_setup() -> Result[Budget, str]:
+    """The harness's separate setup allowance for type parsing, expectations and re-encoding."""
+    return Budget.create(bytes=134217728, elements=8388608, depth=128).map_err((error) => error.message())
