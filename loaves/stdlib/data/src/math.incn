@@ -142,7 +142,7 @@ def _is_float_like_after_integer(value: str, start: int) -> bool:
     mut index = start
     mut saw_float_marker = false
 
-    if index < len(value) and value[index] == str("."):
+    if index < len(value) and value[index] == ".":
         saw_float_marker = true
         index = index + 1
         digits_start = index
@@ -151,10 +151,10 @@ def _is_float_like_after_integer(value: str, start: int) -> bool:
         if index == digits_start:
             return false
 
-    if index < len(value) and (value[index] == str("e") or value[index] == str("E")):
+    if index < len(value) and (value[index] == "e" or value[index] == "E"):
         saw_float_marker = true
         index = index + 1
-        if index < len(value) and (value[index] == str("+") or value[index] == str("-")):
+        if index < len(value) and (value[index] == "+" or value[index] == "-"):
             index = index + 1
         digits_start = index
         while index < len(value) and _is_json_digit(value[index]):
@@ -171,18 +171,18 @@ def _consume_json_integer_prefix(value: str) -> Option[int]:
         return None
 
     mut index = 0
-    if value[index] == str("-"):
+    if value[index] == "-":
         index = index + 1
         if index == len(value):
             return None
 
-    if value[index] == str("0"):
+    if value[index] == "0":
         index = index + 1
         if index < len(value) and _is_json_digit(value[index]):
             return None
         return Some(index)
 
-    if value[index] >= str("1") and value[index] <= str("9"):
+    if value[index] >= "1" and value[index] <= "9":
         index = index + 1
         while index < len(value) and _is_json_digit(value[index]):
             index = index + 1
@@ -193,7 +193,7 @@ def _consume_json_integer_prefix(value: str) -> Option[int]:
 
 def _is_json_digit(ch: str) -> bool:
     """Return whether `ch` is one ASCII digit accepted by JSON number syntax."""
-    return ch >= str("0") and ch <= str("9")
+    return ch >= "0" and ch <= "9"
 
 
 # ============================================================================

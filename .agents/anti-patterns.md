@@ -33,7 +33,7 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 | IN4 | Imports after the first declaration | 1 | 1 | 0 |
 | IN5 | Incan lines over 120 characters | 1252 | 1252 | 1252 |
 | IN6 | `Err(e) => return Err(e)` where `?` reads directly | 32 | 32 | 32 |
-| IN7 | `str("literal")` wrappers | 8 | 8 | 8 |
+| IN7 | `str("literal")` wrappers | 8 | 8 | 0 |
 | IN8 | `== true` / `== false` comparisons | 0 | 0 | 0 |
 | IN9 | Ceremony helpers `empty_*` / `clone_*` | 26 | — | 26 |
 | IN10 | `Err(_) =>` arms that drop the error (Incan) | 407 | — | 407 |

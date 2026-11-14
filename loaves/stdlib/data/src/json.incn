@@ -639,7 +639,7 @@ def _json_pointer_segments(path: str) -> list[str]:
     for ch in path[1:]:
         if ch == "/":
             segments.append(segment)
-            segment = str("")
+            segment = ""
         else:
             segment += ch
     segments.append(segment)
