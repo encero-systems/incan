@@ -51,17 +51,19 @@ pub(super) fn build_module_seed_observed(
     // Immutable values bind to retained layout skeletons before deferred defaults are attached.
     let constant_declarations = collect::collect_constants(program, type_info, &nominal_declarations);
     let published_constants = collect_published_constants(context, &constant_declarations);
-    let mut local_nominal_declarations = nominal_declarations
+    // Bodies see the local layouts as they were before deferred defaults; the defaults are attached in place below.
+    let local_nominal_skeletons = nominal_declarations.clone();
+    let mut local_nominal_declarations = local_nominal_skeletons
         .iter()
-        .map(|declaration| (declaration.name.clone(), declaration.clone()))
+        .map(|declaration| (declaration.name.clone(), declaration))
         .collect::<LocalNominalDeclarations>();
     let mut local_fieldless_enum_declarations = fieldless_enum_declarations
         .iter()
-        .map(|declaration| (declaration.name.clone(), declaration.clone()))
+        .map(|declaration| (declaration.name.clone(), declaration))
         .collect::<LocalFieldlessEnumDeclarations>();
     let mut local_value_enum_declarations = value_enum_declarations
         .iter()
-        .map(|declaration| (declaration.name.clone(), declaration.clone()))
+        .map(|declaration| (declaration.name.clone(), declaration))
         .collect::<LocalValueEnumDeclarations>();
     extend_published_nominal_declarations(
         context,
@@ -228,45 +230,48 @@ pub(super) fn retain_source_body_contracts(
 }
 
 /// Index local and dependency enum declarations by the checked canonical identity, preserving dependency
-/// overwrite precedence when the same identity is already present in the local inventory.
-pub(super) fn collect_visible_enum_declarations(
-    local: &[bir::EnumDeclaration],
-    context: ContextModules<'_>,
-) -> HashMap<CanonicalSymbolId, bir::EnumDeclaration> {
+/// overwrite precedence when the same identity is already present in the local inventory. Each entry is read where
+/// its module keeps the declaration.
+pub(super) fn collect_visible_enum_declarations<'a>(
+    local: &'a [bir::EnumDeclaration],
+    context: ContextModules<'a>,
+) -> HashMap<CanonicalSymbolId, &'a bir::EnumDeclaration> {
     local
         .iter()
         .chain(context.iter().flat_map(|module| module.enum_declarations.iter()))
-        .map(|declaration| (declaration.canonical.clone(), declaration.clone()))
+        .map(|declaration| (declaration.canonical.clone(), declaration))
         .collect()
 }
 
-/// Add dependency layouts under their existing compact canonical lookup keys. Local spelling entries stay
-/// available alongside those qualified keys; this does not recreate identity from an unqualified name.
-pub(super) fn extend_published_nominal_declarations(
-    context: ContextModules<'_>,
-    nominals: &mut LocalNominalDeclarations,
-    fieldless_enums: &mut LocalFieldlessEnumDeclarations,
-    value_enums: &mut LocalValueEnumDeclarations,
+/// Add dependency layouts under their existing compact canonical lookup keys, each read where its module keeps it.
+/// Local spelling entries stay available alongside those qualified keys; this does not recreate identity from an
+/// unqualified name.
+pub(super) fn extend_published_nominal_declarations<'a>(
+    context: ContextModules<'a>,
+    nominals: &mut LocalNominalDeclarations<'a>,
+    fieldless_enums: &mut LocalFieldlessEnumDeclarations<'a>,
+    value_enums: &mut LocalValueEnumDeclarations<'a>,
 ) {
     for module in context {
         for declaration in &module.nominal_declarations {
-            nominals.insert(declaration.canonical.render_compact(), declaration.clone());
+            nominals.insert(declaration.canonical.render_compact(), declaration);
         }
         for declaration in &module.fieldless_enum_declarations {
-            fieldless_enums.insert(declaration.canonical.render_compact(), declaration.clone());
+            fieldless_enums.insert(declaration.canonical.render_compact(), declaration);
         }
         for declaration in &module.value_enum_declarations {
-            value_enums.insert(declaration.canonical.render_compact(), declaration.clone());
+            value_enums.insert(declaration.canonical.render_compact(), declaration);
         }
     }
 }
 
 /// Index dependency constants and the local immutable values whose retained layouts are available before
-/// deferred defaults are attached. Other local constant forms keep their existing lowering path.
-pub(super) fn collect_published_constants(
-    context: ContextModules<'_>,
-    local_constants: &[bir::ConstantDeclaration],
-) -> HashMap<CanonicalSymbolId, bir::Constant> {
+/// deferred defaults are attached, each value read where its module keeps it. Other local constant forms keep their
+/// existing lowering path.
+pub(super) fn collect_published_constants<'a>(
+    context: ContextModules<'a>,
+    local_constants: &'a [bir::ConstantDeclaration],
+) -> HashMap<CanonicalSymbolId, &'a bir::Constant> {
     context
         .iter()
         .flat_map(|module| module.constant_declarations.iter())
@@ -279,7 +284,7 @@ pub(super) fn collect_published_constants(
                     | bir::Constant::NumericNewtype(_)
             )
         }))
-        .map(|declaration| (declaration.canonical.clone(), declaration.value.clone()))
+        .map(|declaration| (declaration.canonical.clone(), &declaration.value))
         .collect()
 }
 

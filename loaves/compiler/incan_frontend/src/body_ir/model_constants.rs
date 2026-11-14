@@ -26,7 +26,7 @@ enum ModelConstantValue {
 pub(super) fn collect(
     program: &ast::Program,
     facts: &TypeCheckInfo,
-    models: &LocalNominalDeclarations,
+    models: &LocalNominalDeclarations<'_>,
 ) -> HashMap<CanonicalSymbolId, ModelConstant> {
     let sources = program
         .declarations
@@ -53,7 +53,7 @@ fn decode_named(
     name: &str,
     sources: &HashMap<&str, (&CanonicalSymbolId, &ast::ConstDecl)>,
     facts: &TypeCheckInfo,
-    models: &LocalNominalDeclarations,
+    models: &LocalNominalDeclarations<'_>,
     active: &mut Vec<String>,
 ) -> Option<ModelConstant> {
     if active.iter().any(|entry| entry == name) || !facts.consts.const_kinds.contains_key(name) {
@@ -73,7 +73,7 @@ fn decode(
     ty: &IncanType,
     sources: &HashMap<&str, (&CanonicalSymbolId, &ast::ConstDecl)>,
     facts: &TypeCheckInfo,
-    models: &LocalNominalDeclarations,
+    models: &LocalNominalDeclarations<'_>,
     active: &mut Vec<String>,
 ) -> Option<ModelConstant> {
     // An owned string construction is not a Rust const value; do not turn a legacy build failure into execution.

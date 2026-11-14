@@ -238,7 +238,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
         }
         let declaration = self.local_nominal_declarations.get(&canonical.render_compact())?;
-        (declaration == &returned.declaration).then_some(&declaration.canonical)
+        (*declaration == &returned.declaration).then_some(&declaration.canonical)
     }
 
     /// Compiler-provided metadata results have a checked native owner without requiring a lexical import. Select a
@@ -296,7 +296,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return None;
         }
         let float = IncanType::Primitive(IncanPrimitiveType::Float);
-        if let Some(value) = self.published_constants.get(&global.identity) {
+        if let Some(&value) = self.published_constants.get(&global.identity) {
             return Some(match value {
                 bir::Constant::Int(number) if *ty == float => bir::Constant::Float(number.to_string()),
                 value => value.clone(),

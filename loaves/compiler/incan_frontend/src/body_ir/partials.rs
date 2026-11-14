@@ -99,7 +99,7 @@ fn constructor_target(
         .filter(|defaults| defaults.len() == declaration.fields.len())
         .ok_or_else(|| "source Partial without retained constructor field defaults".to_string())?;
     Ok(PartialConstructorTarget {
-        declaration: Box::new(declaration.clone()),
+        declaration: Box::new((*declaration).clone()),
         defaults: defaults.clone(),
     })
 }

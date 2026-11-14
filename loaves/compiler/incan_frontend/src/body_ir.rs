@@ -244,21 +244,23 @@ type LocalFunctionDeclarations = HashMap<String, Vec<ast::Span>>;
 /// Source-local checked models and classes with canonical layouts.
 ///
 /// Unsupported inheritance and member binding forms never enter this constructor registry; checked field aliases select
-/// canonical storage. Computed properties contribute getter bodies rather than layout fields.
-type LocalNominalDeclarations = HashMap<String, bir::NominalDeclaration>;
+/// canonical storage. Computed properties contribute getter bodies rather than layout fields. Each entry is read where
+/// its module keeps the declaration, so a context model is never copied once per module that is lowered against it.
+type LocalNominalDeclarations<'a> = HashMap<String, &'a bir::NominalDeclaration>;
 
 /// Source-local fieldless normal enums whose canonical unit variants are retained for direct comparison.
 ///
 /// This map exists only while lowering. The executor receives `BodyIrModule::fieldless_enum_declarations` and
 /// revalidates exact enum/member identities there, so a source spelling never selects an imported or aliased enum.
-type LocalFieldlessEnumDeclarations = HashMap<String, bir::FieldlessEnumDeclaration>;
+/// Each entry is read where its module keeps the declaration.
+type LocalFieldlessEnumDeclarations<'a> = HashMap<String, &'a bir::FieldlessEnumDeclaration>;
 
 /// Source-local RFC 032 value enums whose canonical scalar members are retained for direct execution.
 ///
 /// This map is lowering-only. The executor receives `BodyIrModule::value_enum_declarations` and verifies retained
 /// enum/member identities there, so imports, aliases, ordinary enums, and non-retained same-spelling forms never
-/// become direct runtime targets.
-type LocalValueEnumDeclarations = HashMap<String, bir::ValueEnumDeclaration>;
+/// become direct runtime targets. Each entry is read where its module keeps the declaration.
+type LocalValueEnumDeclarations<'a> = HashMap<String, &'a bir::ValueEnumDeclaration>;
 
 /// Borrowed module facts shared by every body lowerer.
 ///
@@ -271,7 +273,7 @@ struct BodyIrLoweringFacts<'type_info, 'source> {
     /// Validated source-local model constant values, without static initialization semantics.
     model_constants: &'source HashMap<CanonicalSymbolId, model_constants::ModelConstant>,
     /// Checked local and published payload layouts indexed by their exact declaring identity.
-    local_enum_declarations: &'source HashMap<CanonicalSymbolId, bir::EnumDeclaration>,
+    local_enum_declarations: &'source HashMap<CanonicalSymbolId, &'source bir::EnumDeclaration>,
     /// Closed return carriers retained by a callable's providing module, keyed by its proven identity.
     published_callable_returns: &'source HashMap<CanonicalSymbolId, IncanType>,
     /// Parameter defaults of the linked Loaves' callables, in parameter order, keyed by declaration identity.
@@ -281,7 +283,7 @@ struct BodyIrLoweringFacts<'type_info, 'source> {
     /// Exact checked provider storage types; a conflicting declaration records `None` and cannot authorize a global
     /// place.
     published_storage_types: &'source HashMap<CanonicalSymbolId, Option<IncanType>>,
-    published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
+    published_constants: &'source HashMap<CanonicalSymbolId, &'source bir::Constant>,
     type_info: &'type_info TypeCheckInfo,
     /// Checked provider type names that cannot be distinguished from an ambient builtin by a bare signature leaf.
     runtime_type_conflicts: &'source std::collections::BTreeSet<String>,
@@ -294,9 +296,9 @@ struct BodyIrLoweringFacts<'type_info, 'source> {
     local_receiver_methods: &'source [LocalReceiverMethod],
     /// Checked literal presets whose calls retain their complete arguments before source facts leave the frontend.
     local_trait_partials: &'source [trait_partials::LocalTraitPartial],
-    local_nominal_declarations: &'source LocalNominalDeclarations,
-    local_fieldless_enum_declarations: &'source LocalFieldlessEnumDeclarations,
-    local_value_enum_declarations: &'source LocalValueEnumDeclarations,
+    local_nominal_declarations: &'source LocalNominalDeclarations<'source>,
+    local_fieldless_enum_declarations: &'source LocalFieldlessEnumDeclarations<'source>,
+    local_value_enum_declarations: &'source LocalValueEnumDeclarations<'source>,
     module_identity: &'source str,
     /// Invocation-owned package name for checked explicit subjects; absence remains a named refusal.
     registry_package: Option<&'source str>,
@@ -385,7 +387,7 @@ struct BodyBuilder<'type_info, 'source> {
     /// Checked model constant trees materialized afresh at each read.
     model_constants: &'source HashMap<CanonicalSymbolId, model_constants::ModelConstant>,
     /// The same retained layouts used to close constructor destinations and pattern payload facts.
-    local_enum_declarations: &'source HashMap<CanonicalSymbolId, bir::EnumDeclaration>,
+    local_enum_declarations: &'source HashMap<CanonicalSymbolId, &'source bir::EnumDeclaration>,
     /// Provider-owned closed return carriers; a private import alias is never a consumer-side layout key.
     published_callable_returns: &'source HashMap<CanonicalSymbolId, IncanType>,
     /// Parameter defaults of the linked Loaves' callables, in parameter order, keyed by declaration identity.
@@ -395,7 +397,7 @@ struct BodyBuilder<'type_info, 'source> {
     /// Owning declaration types for imported storage, selected only by the checked global identity.
     published_storage_types: &'source HashMap<CanonicalSymbolId, Option<IncanType>>,
     /// Immutable values decoded from the selected package representation, indexed by canonical declaration.
-    published_constants: &'source HashMap<CanonicalSymbolId, bir::Constant>,
+    published_constants: &'source HashMap<CanonicalSymbolId, &'source bir::Constant>,
     type_info: &'type_info TypeCheckInfo,
     /// A source ownership proof is retained only for this exact callable. Nested evaluators start without it;
     /// invalid or incomplete evidence refuses the body before ordinary lowering can choose repair copies.
@@ -446,11 +448,11 @@ struct BodyBuilder<'type_info, 'source> {
     /// Source-local checked trait targets and effect-free preset values, consumed only while producing call facts.
     local_trait_partials: &'source [trait_partials::LocalTraitPartial],
     /// Checked local and selected package models, used to retain exact constructor identity and layout.
-    local_nominal_declarations: &'source LocalNominalDeclarations,
+    local_nominal_declarations: &'source LocalNominalDeclarations<'source>,
     /// Checked local and selected package fieldless enums, used to retain exact unit-member target identities.
-    local_fieldless_enum_declarations: &'source LocalFieldlessEnumDeclarations,
+    local_fieldless_enum_declarations: &'source LocalFieldlessEnumDeclarations<'source>,
     /// Checked local and selected package value enums, used to retain exact member target identity.
-    local_value_enum_declarations: &'source LocalValueEnumDeclarations,
+    local_value_enum_declarations: &'source LocalValueEnumDeclarations<'source>,
     /// Owning module identity used to construct a source-span declaration identity without consulting a backend.
     module_identity: &'source str,
     /// Invocation-owned package name, consumed only by checked registry subject materialization.
