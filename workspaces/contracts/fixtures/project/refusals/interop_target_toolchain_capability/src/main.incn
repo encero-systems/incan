@@ -3,7 +3,7 @@
 #   oven check --interop-target x86_64-unknown-linux-gnu src/main.incn
 # expect-exit: 1
 # expect-stderr-contains:
-#   interop target `x86_64-unknown-linux-gnu` requires toolchain capability `clang` (`>=999`); the selected C toolchain is
+#   interop target `x86_64-unknown-linux-gnu` requires toolchain capability `clang` (`>=999`); the selected C toolchain
 
 from std.interop import c
 
