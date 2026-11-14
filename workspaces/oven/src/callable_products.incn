@@ -39,8 +39,9 @@ pub def retain_callable_products(unit: UnitDescription, toolchain: Toolchain) ->
     # 2. Profile flags never enter checked-source equivalence, but every semantic input does.
     mut ledger = load_ledger(unit_ledger(unit.project_root, "checked-source"), SETTLE_SECONDS)
     identities = ArtifactIdentities()
-    description = semantic_description(unit, identities)?
-    interfaces = interface_inputs(unit, ledger, identities)?
+    locations = resolved_loaves(unit)?
+    description = semantic_description(unit, identities, locations)?
+    interfaces = interface_inputs(unit, ledger, identities, locations)?
     caches = toolchain_cache_identities(toolchain)?
     native_search = native_search_inputs(unit, toolchain, identities)?
     identities.verify()?
@@ -82,7 +83,11 @@ def reusable_vocabulary(unit: UnitDescription) -> Result[bool, str]:
     return Ok(true)
 
 
-def semantic_description(unit: UnitDescription, identities: ArtifactIdentities) -> Result[str, str]:
+def semantic_description(
+    unit: UnitDescription,
+    identities: ArtifactIdentities,
+    locations: LoafLocations,
+) -> Result[str, str]:
     """Normalize only native profile policy and authenticated Loaf locations, preserving all other unit fields."""
     mut fields = unit.to_json().expect_object().map_err((error) => error.message())?
     fields["profile"] = JsonValue.string("")
@@ -95,18 +100,18 @@ def semantic_description(unit: UnitDescription, identities: ArtifactIdentities) 
         loaves.append(JsonValue.object(item))
     fields["loaves"] = JsonValue.array(loaves)
     fields["externs"] = JsonValue.array(
-        [JsonValue.string(binding_identity(item, unit, identities)?) for item in unit.externs],
+        [JsonValue.string(binding_identity(item, unit, identities, locations)?) for item in unit.externs],
     )
-    fields["search"] = JsonValue.array([JsonValue.string(path) for path in semantic_search(unit)?])
+    fields["search"] = JsonValue.array([JsonValue.string(path) for path in semantic_search(unit, locations)?])
     return json_text(JsonValue.object(fields))
 
 
-def semantic_search(unit: UnitDescription) -> Result[list[str], str]:
+def semantic_search(unit: UnitDescription, locations: LoafLocations) -> Result[list[str], str]:
     """Retain native search order while collapsing aliases of the same authenticated semantic directory."""
     mut seen: set[str] = set()
     mut paths: list[str] = []
     for path in unit.search:
-        selected = search_identity(Path(path), unit)?
+        selected = search_identity(Path(path), locations)?
         if selected not in seen:
             seen.add(selected)
             paths.append(selected)
@@ -117,6 +122,7 @@ def interface_inputs(
     unit: UnitDescription,
     mut ledger: Ledger,
     identities: ArtifactIdentities,
+    locations: LoafLocations,
 ) -> Result[list[str], str]:
     """Witness semantic interfaces and native closure; separately requested tooling graphs are not checker inputs."""
     mut inputs: list[str] = []
@@ -133,11 +139,16 @@ def interface_inputs(
                         inputs.append(ledger.digest(path)?)
                     else:
                         inputs.append("absent")
-        inputs = inputs + closure_inputs(loaf, unit, identities)?
+        inputs = inputs + closure_inputs(loaf, unit, identities, locations)?
     return Ok(inputs)
 
 
-def closure_inputs(loaf: UnitLoaf, unit: UnitDescription, identities: ArtifactIdentities) -> Result[list[str], str]:
+def closure_inputs(
+    loaf: UnitLoaf,
+    unit: UnitDescription,
+    identities: ArtifactIdentities,
+    locations: LoafLocations,
+) -> Result[list[str], str]:
     """Preserve native graph edges, macro bindings and search order while quotienting only witnessed Loaf profiles."""
     directory = Path(loaf.dir)
     closure = read_json(directory.joinpath(f"{loaf.name}.native.json"))?
@@ -150,33 +161,56 @@ def closure_inputs(loaf: UnitLoaf, unit: UnitDescription, identities: ArtifactId
                 return Err("native closure binding must name exactly one alias and artifact")
             name = string_value(pair[0])?
             path = located(directory, string_value(pair[1])?)?
-            inputs.append(binding_identity(NativeCrate(name=name, path=path.0), unit, identities)?)
+            inputs.append(binding_identity(NativeCrate(name=name, path=path.0), unit, identities, locations)?)
     inputs.append("search")
     for item in required_items(closure, "search")?:
-        inputs.append(search_identity(located(directory, string_value(item)?)?, unit)?)
+        inputs.append(search_identity(located(directory, string_value(item)?)?, locations)?)
     return Ok(inputs)
 
 
-def binding_identity(native: NativeCrate, unit: UnitDescription, identities: ArtifactIdentities) -> Result[str, str]:
+model LoafLocations:
+    """Each Loaf's resolved directory and admitted rlib by resolved path, naming the first Loaf that resolves there."""
+
+    directories: Dict[str, str] = {}
+    rlibs: Dict[str, str] = {}
+
+
+def resolved_loaves(unit: UnitDescription) -> Result[LoafLocations, str]:
+    """
+    Resolve every Loaf's directory and admitted rlib once per selection. Each native binding and search path is then
+    compared against these instead of resolving every Loaf again: a closure names several bindings per Loaf.
+    """
+    mut locations = LoafLocations()
+    for loaf in unit.loaves:
+        directory = Path(loaf.dir).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0
+        if directory not in locations.directories:
+            locations.directories[directory] = loaf.name
+        expected = Path(loaf.dir).joinpath(f"lib{loaf.name.replace("-", "_")}.rlib")
+        if frozen_observation(expected).is_some() or expected.is_file():
+            rlib = expected.resolve().map_err((error) => f"cannot resolve {error.message()}")?.0
+            if rlib not in locations.rlibs:
+                locations.rlibs[rlib] = loaf.name
+    return Ok(locations)
+
+
+def binding_identity(
+    native: NativeCrate,
+    unit: UnitDescription,
+    identities: ArtifactIdentities,
+    locations: LoafLocations,
+) -> Result[str, str]:
     """Use semantic Loaf identity only for its exact admitted rlib; Rust imports retain exact native identity."""
     path = Path(native.path).resolve().map_err((error) => f"cannot resolve {error.message()}")?
-    if native.name not in unit.rust_crates:
-        for loaf in unit.loaves:
-            expected = Path(loaf.dir).joinpath(f"lib{loaf.name.replace("-", "_")}.rlib")
-            if (
-                (frozen_observation(expected).is_some() or expected.is_file())
-                and expected.resolve().map_err((error) => f"cannot resolve {error.message()}")?.0 == path.0
-            ):
-                return Ok(f"loaf:{native.name}:{loaf.name}")
+    if native.name not in unit.rust_crates and path.0 in locations.rlibs:
+        return Ok(f"loaf:{native.name}:{locations.rlibs[path.0]}")
     return fingerprint([native.name, path.0, identities.identity(path)?])
 
 
-def search_identity(path: Path, unit: UnitDescription) -> Result[str, str]:
+def search_identity(path: Path, locations: LoafLocations) -> Result[str, str]:
     """Normalize authenticated Loaf directories; native_search_inputs witnesses other directories' native files."""
     selected = path.resolve().map_err((error) => f"cannot resolve {error.message()}")?
-    for loaf in unit.loaves:
-        if Path(loaf.dir).resolve().map_err((error) => f"cannot resolve {error.message()}")?.0 == selected.0:
-            return Ok(f"loaf:{loaf.name}")
+    if selected.0 in locations.directories:
+        return Ok(f"loaf:{locations.directories[selected.0]}")
     return Ok(selected.0)
 
 
