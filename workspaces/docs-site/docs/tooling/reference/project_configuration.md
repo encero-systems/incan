@@ -166,22 +166,25 @@ A target's requirements describe what the package needs; they never name an inst
 
 An Android `platform` belongs to `aarch64-linux-android` only, requires `api-level` 21 or later and the `android` SDK capability. An iOS `platform` belongs to `aarch64-apple-ios`, which requires the `iphoneos` SDK capability, or `aarch64-apple-ios-sim`, which requires `iphonesimulator`; its `deployment-target` is numeric `major.minor`.
 
-Each `[[interop.c.targets.artifacts]]` entry declares a package-owned archive or a system capability:
+Each `[[interop.c.targets.artifacts]]` entry declares a package-owned archive, a package-owned runtime library or a system capability:
 
 | Field | Form | Meaning |
 | --- | --- | --- |
 | `name` | Required identifier, unique within the target. | The artifact's package-local name. |
-| `kind` | Required: `static` or `system`. | A `static` archive is linked into the units that link a binding naming it; a `system` artifact is a library or framework the selected toolchain or SDK supplies. |
-| `path` | `static` only: required path to `lib<link>.a`, inside the package. | The archive; `<link>` is the link name a binding's `c.system_library("<link>")` uses. |
+| `kind` | Required: `static`, `bundled` or `system`. | A `static` archive is linked into the units that link a binding naming it; a `bundled` dynamic library or framework is staged for a platform packager by [`oven interop stage`](cli_reference.md#oven-interop-stage); a `system` artifact is a library or framework the selected toolchain or SDK supplies. |
+| `path` | `static` and `bundled`: required path inside the package; a static archive is named `lib<link>.a`. | The file; `<link>` is the link name a binding's `c.system_library("<link>")` uses. |
+| `runtime-name` | `bundled` only: required, one file name. | The name the runtime loader finds the library by; the staged file's name. |
+| `placement` | `bundled` only: required, non-empty. | The logical packager placement, such as `jniLibs/arm64-v8a` or `frameworks`. |
+| `minimum-platform` | `bundled` only: required, non-empty. | The oldest platform version the library supports. |
 | `capability` | `system` only: required, non-empty. | The toolchain or SDK capability, such as `apple.framework.Foundation` or `android.library.log`. |
 | `dependencies` | Array of other artifact names of the same target. | Artifacts this one needs; archives link after the archives that need them. |
-| `origin` | `static` only: table of `source` (an HTTPS URL), `revision` and `license`, all non-empty. | Upstream provenance of the package's copy; never downloaded. |
+| `origin` | `static` and `bundled`: table of `source` (an HTTPS URL), `revision` and `license`, all non-empty. | Upstream provenance of the package's copy; never downloaded. |
 
-Each `[[interop.c.targets.bindings]]` entry relates one checked binding, by its `module` (a non-empty array of names) and `name`, to the artifacts (`artifacts`, a non-empty array of distinct declared names) that provide its symbols; the relation is never inferred from a header, library name or file name. A build for the host target links every declared static artifact of the package's units as a static library, an archive before the archives it depends on, and an archive's bytes are part of the identity of each unit that links it. A `system` artifact is recorded in the [interop plan](cli_reference.md#oven-inspect-interop-plan), not linked.
+Each `[[interop.c.targets.bindings]]` entry relates one checked binding, by its `module` (a non-empty array of names) and `name`, to the artifacts (`artifacts`, a non-empty array of distinct declared names) that provide its symbols; the relation is never inferred from a header, library name or file name. A build for the host target links every declared static artifact of the package's units as a static library, an archive before the archives it depends on, and an archive's bytes are part of the identity of each unit that links it. A `bundled` or `system` artifact is recorded in the [interop plan](cli_reference.md#oven-inspect-interop-plan), not linked.
 
 `check`, `build`, `test` and `run` verify checked C bindings against the host. With `--interop-target TRIPLE` they verify them against the package's declared entry for `TRIPLE` instead: its ABI, its `definitions`, and its `toolchain` and `sdk` requirements, which the selected C toolchain and SDK must meet. The unit is still built for the host. See [Checked C bindings](../../language/how-to/checked_c_bindings.md#verify-against-a-declared-target).
 
-- Refused: an unknown key; a missing `target`, `name`, `kind`, `path` or `capability`; a target declared twice; a capability requirement whose `version` is not a version requirement; an empty definition; a `platform` on another target, with an Android API level below 21, a malformed iOS deployment target, or without its SDK capability; a `kind` other than `static` and `system`; a static path outside the package or not named `lib<link>.a`; a static artifact with a `capability`, or a system artifact with a `path` or `origin`; an artifact declared twice; a dependency or relation that names an undeclared artifact; an `origin` without an HTTPS `source`, `revision` or `license`; and, at build time, a declared archive that is not a file.
+- Refused: an unknown key; a missing `target`, `name`, `kind`, `path` or `capability`; a target declared twice; a capability requirement whose `version` is not a version requirement; an empty definition; a `platform` on another target, with an Android API level below 21, a malformed iOS deployment target, or without its SDK capability; a `kind` other than `static`, `bundled` and `system`; a path outside the package; a static path not named `lib<link>.a`; a bundled artifact without `path`, `runtime-name`, `placement` or `minimum-platform`, or whose `runtime-name` is not one file name; a static or bundled artifact with a `capability`; a system artifact with a `path` or `origin`; bundled fields on a static or system artifact; an artifact declared twice; a dependency or relation that names an undeclared artifact; an `origin` without an HTTPS `source`, `revision` or `license`; and, at build time, a declared archive that is not a file.
 
 ## `[c]`
 

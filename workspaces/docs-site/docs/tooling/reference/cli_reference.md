@@ -303,12 +303,32 @@ project NAME
   platform android api-level N | platform ios DEPLOYMENT-TARGET
   definition DEFINITION
   system artifact NAME: CAPABILITY
+  bundled artifact NAME: PATH as RUNTIME-NAME, placement PLACEMENT, minimum platform MINIMUM
   static archive NAME: PATH (links as LINK), before DEPENDENCY, ...
   binding MODULE.NAME: ARTIFACT, ...
   header HEADER
 ```
 
 `--format json` prints `incan.interop-plan/1` with the same facts (the target's under `requirements`), each archive's `identity` (`sha256:` of its bytes, or `missing`) and `origin`, and for each configuration the profiles it was compiled for with their unit identities.
+
+## `oven interop stage`
+
+`oven interop stage --target TRIPLE --adapter android|ios --output PATH [PATH]` copies the bundled artifacts that the project at or above `PATH` (default `.`) declares for `TRIPLE` under [`[interop.c]`](project_configuration.md#interopc) into a new directory `--output`, in the fixed layout a platform packager consumes:
+
+| Adapter | Target | Staged file |
+| --- | --- | --- |
+| `android` | `aarch64-linux-android` with Android platform facts | `jniLibs/arm64-v8a/<runtime-name>` |
+| `ios` | `aarch64-apple-ios` or `aarch64-apple-ios-sim` with iOS platform facts | `Frameworks/<runtime-name>` |
+
+Each copy is verified against its source's SHA-256 digest. Beside the files, `incan-interop-adapter.json` records `schema-version` (`1`), `adapter`, `target`, each bundle's `name`, `runtime-name`, `declared-placement`, `minimum-platform`, `digest` and `staged-path` (output-relative), and the target's `system-capabilities`. The directory is assembled beside `--output` and moved into place whole. The report is:
+
+```text
+staged TRIPLE for the ADAPTER adapter in PATH
+  STAGED-PATH sha256:DIGEST
+  incan-interop-adapter.json
+```
+
+It never starts Gradle, Xcode or a signing tool, and produces no installable application. Refused: a target the project does not declare; an adapter whose target or platform facts do not match; an existing `--output`, which is never replaced; a bundled artifact that is not a regular file; and two bundled artifacts with one staged path.
 
 ## `incan mcp`
 
