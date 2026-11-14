@@ -492,6 +492,8 @@ After a comment above `main`:
 - `position-map(main)` changes, `native-interface(app)` reads it and evaluates, and the native unit is baked again for its line tables.
 - Rendered diagnostics, if any, show `main`'s new lines.
 
+![Producer map: the hello program's records by producer stage, after a body edit and after a comment edit](build_engine_producer_map.svg)
+
 #### Settled design points
 
 Each quotes the sentence that raised it, then gives the decision DD-0015 records.
