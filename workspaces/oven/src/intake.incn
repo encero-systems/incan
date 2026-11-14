@@ -157,9 +157,14 @@ pub def library_source(root: Path, reader: ManifestReader = ManifestReader()) ->
 
 
 pub def entry_source(path: Path, reader: ManifestReader) -> Result[Option[Path], str]:
-    """Select an explicit source or a directory's conventional Incan entry; other directories name Rust projects."""
+    """
+    Select an explicit source or a directory's conventional Incan entry; other directories name Rust projects. A path
+    that names nothing is refused here, before a Rust project route would read it as a project.
+    """
     if path.is_file():
         return Ok(Some(path))
+    if not path.is_dir():
+        return Err(f"{path.0}: no such source file or Loaf directory")
     if not path.joinpath("loaf.toml").is_file():
         return Ok(None)
     project = read_project(path, reader).map_err((error) => error.message())?

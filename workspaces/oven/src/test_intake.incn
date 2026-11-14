@@ -1,6 +1,6 @@
 """Local intake contracts; these do not establish a selected Rust compilation plan."""
 
-from intake import intake, read_project, ManifestReader
+from intake import entry_source, intake, read_project, ManifestReader
 from manifest_intent import parse_intent, parse_document
 from manifest_errors import IntakeError, IntakeErrorKind
 from std.fs import Path
@@ -193,6 +193,17 @@ pub def test_missing_root_refuses() -> None:
         Ok(_) => fail("missing local project was accepted")
         Err(error) =>
             assert error.kind == IntakeErrorKind.Missing
+
+
+pub def test_a_missing_entry_is_refused_by_its_path() -> Result[None, str]:
+    """A command's PATH that names nothing is refused as such, before a Rust project route reads it as a project."""
+    scratch = scratch_directory()?
+    missing = scratch.path().joinpath("missing.incn")
+    match entry_source(missing, ManifestReader()):
+        Ok(_) => fail(f"{missing.0}: a missing entry was selected")
+        Err(reason) =>
+            assert reason == f"{missing.0}: no such source file or Loaf directory", reason
+    return Ok(None)
 
 
 pub def test_literal_alias_diagnostic_retains_segments_and_location() -> None:
