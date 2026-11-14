@@ -237,7 +237,13 @@ pub def obtain(
     # A bakery hit plans nothing; the report beside the key is the earlier build's.
     mut plan_counts = PlanRecordCounts()
     if produced.evaluations > 0:
+        reading_plan_sidecars = begin_work()
         plan_counts = plan_record_counts(ready, compiled_key)?
+        record_work(
+            Operation.EngineSidecarAuthentication,
+            plan_record_report_path(ready, compiled_key).0,
+            reading_plan_sidecars,
+        )
     if produced.code != 0:
         return Ok(
             ProgramOutcome(
@@ -253,18 +259,26 @@ pub def obtain(
             ),
         )
     # 4. Source edits cannot certify a native unit for a different captured epoch.
+    verifying_inputs = begin_work()
     installed = toolchain_directory()?.0
     for input in epoch.inputs:
         if frozen_path(input.path, installed, toolchain.sysroot):
             continue
         if not captured_file_current(Path(input.path), input.metadata):
             return Err("captured inputs changed before native selection; submit a new request")
+    record_work(Operation.EngineInputVerification, epoch.roots[0], verifying_inputs)
     mut request_transaction = merge_request_transaction(produced.transaction, projected.transaction)
     mut body_evaluations = 0
     mut body_ir_evaluations = 0
     mut checker_counts = CheckerRecordCounts()
     if produced.native_bakes == 1:
+        reading_checker_sidecar = begin_work()
         checker_counts = checker_record_counts(ready, compiled_key)?
+        record_work(
+            Operation.EngineSidecarAuthentication,
+            graph_body_output_path(ready, compiled_key).0 + ".checker-report.json",
+            reading_checker_sidecar,
+        )
         bodies = prepare_compiled_bodies(
             request_transaction,
             ready,
@@ -278,6 +292,9 @@ pub def obtain(
         body_ir_evaluations = bodies.body_ir_evaluations
     fact = produced_fact(produced.fact)?
     unit = NativeUnit(identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0)
+    indexing = begin_work()
+    indexed = index_program(store, selector, unit, Some(request_transaction))?
+    record_work(Operation.EngineProgramIndex, key.digest, indexing)
     return Ok(
         ProgramOutcome(
             code=0,
@@ -297,7 +314,7 @@ pub def obtain(
             artifact_refusals=checker_counts.artifact_refusals,
             console=console,
             epoch_reads=epoch_reads,
-            transaction=index_program(store, selector, unit, Some(request_transaction))?,
+            transaction=indexed,
             claim=produced.claim,
         ),
     )
