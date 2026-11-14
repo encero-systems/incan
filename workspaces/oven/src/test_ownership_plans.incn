@@ -1,0 +1,93 @@
+"""The copies a native plan holds for values the source never asked to copy, counted from the driver's plan report."""
+
+from rust::std::process import Command
+from rust::std::str import from_utf8
+from std.environ import get_or
+from std.fs import Path
+from files import read, write
+from scratch import scratch_directory
+from engine_client import service_generation, service_identity
+from engine_endpoint import connect_with
+from engine_messages import Message, Stop
+from engine_wire import zero_id
+
+const COPY_MODEL: str = """@derive(Copy, Clone)
+pub model Point:
+    pub x: int
+    pub y: int
+
+
+def point_sum(point: Point) -> int:
+    return point.x + point.y
+
+
+def read_three_times(point: Point) -> int:
+    first = point_sum(point)
+    second = point_sum(point)
+    return first + second + point_sum(point)
+
+
+def main() -> None:
+    println(read_three_times(Point(x=3, y=4)))
+"""
+
+
+pub def test_a_model_that_derives_copy_is_read_without_a_clone() -> Result[None, str]:
+    """Every read of a `@derive(Copy)` model copies it, so its plan calls no clone function (#1603)."""
+    report = plan_report("copies", COPY_MODEL, "21")?
+    assert clones(report, "read_three_times")? == 0, report
+    return Ok(None)
+
+
+def plan_report(name: str, source_text: str, expected: str) -> Result[str, str]:
+    """Run one program through the records engine in a store of its own and return the driver's plan report."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    source = root.joinpath(f"{name}.incn")
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    write(source, source_text)?
+    outcome = Command
+        .new(binary)
+        .arg("run")
+        .arg(source.0)
+        .args(["--profile", "release"])
+        .env("INCAN_NATIVE_PLAN_REPORT", root.joinpath("native.plan").0)
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    stop_engine(binary, store)?
+    if not outcome.status.success() or output != expected + "\n":
+        return Err(f"{name}: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return read(root.joinpath("native.plan"))
+
+
+def clones(report: str, function: str) -> Result[int, str]:
+    """The model and enum clone calls the plan of `function` holds, summed over every frame of that name."""
+    mut total = 0
+    mut found = false
+    for line in report.split("\n"):
+        fields = line.split("\t")
+        if len(fields) < 2 or fields[0] != "plan-function" or fields[len(fields) - 1] != function:
+            continue
+        found = true
+        for position in range(len(fields) - 1):
+            if fields[position] == "model-clones" or fields[position] == "enum-clones":
+                total += int(fields[position + 1])
+    if not found:
+        return Err(f"the plan report names no function {function}: {report}")
+    return Ok(total)
+
+
+def stop_engine(binary: str, store: Path) -> Result[None, str]:
+    """Stop the disposable records engine of one test's store."""
+    mut identity = service_identity(store)?
+    identity.service_generation = service_generation(binary)?
+    mut channel = connect_with(store, identity, binary).map_err((refusal) => refusal.detail)?
+    channel.send(zero_id(), Message.Stop(Stop(reason="ownership plan read"))).map_err((refusal) => refusal.detail)?
+    _ = channel.receive().map_err((refusal) => refusal.detail)?
+    _ = channel.transport.close()
+    return Ok(None)

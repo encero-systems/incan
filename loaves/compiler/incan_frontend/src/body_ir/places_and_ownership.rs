@@ -229,6 +229,32 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         })
     }
 
+    /// Whether reading a value of `ty` copies it: a scalar, or a model, enum or newtype declared in this module whose
+    /// checked derives include `Copy`. The checker accepts that derive only when every field copies, and the plan
+    /// validator admits a copy operand of exactly such a nominal, so the read needs no clone. A generic instance, a
+    /// class and a type declared elsewhere keep the scalar rule, because their derives are not retained here.
+    pub(super) fn reads_as_copy(&self, ty: &IncanType) -> bool {
+        if ty.abi_v0_facts().ownership.is_trivially_copy() {
+            return true;
+        }
+        let IncanType::Named(name) = ty else {
+            return false;
+        };
+        let declarations = &self.type_info.declarations;
+        [
+            &declarations.body_ir_model_derives,
+            &declarations.enum_derives,
+            &declarations.body_ir_newtype_derives,
+        ]
+        .into_iter()
+        .filter_map(|selected| selected.get(name))
+        .any(|selected| {
+            selected
+                .iter()
+                .any(|derive| derives::from_str(derive) == Some(DeriveId::Copy))
+        })
+    }
+
     /// Select the Duckborrower fact and last-use marker for reading `place`.
     ///
     /// Explicit shared-reference values copy their pointer, including projected references; exclusive references
@@ -264,7 +290,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         place: &bir::Place,
         ty: &IncanType,
     ) -> (bir::OwnershipFact, bool) {
-        let is_copy = matches!(ty, IncanType::Ref(_)) || ty.abi_v0_facts().ownership.is_trivially_copy();
+        let is_copy = matches!(ty, IncanType::Ref(_)) || self.reads_as_copy(ty);
         if !place.projection.is_empty() {
             let fact = if is_copy {
                 bir::OwnershipFact::Copy
