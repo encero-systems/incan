@@ -18,9 +18,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use crate::test_batch::{BATCH, BatchPlace, SessionFixture, shareable};
 use crate::test_conftest::{Conftest, appended};
 use crate::test_entries::{EntryWriter, PREFIX, Stage};
-use crate::test_groups::{GROUP, Member, reached, shared_fixtures, shared_yields, write_group};
+use crate::test_groups::{
+    GROUP, Member, reached, return_type as return_type_text, shared_fixtures, shared_yields, write_group,
+};
 use incan_driver::session::CompilationSession;
 use incan_driver::testing::types::{DiscoveryResult, FixtureInfo, ParametrizeCase, TestInfo, TestMarker};
 use incan_frontend::ast::{CallArg, Declaration, DecoratorArg, Expr, FunctionDecl, ListEntry, Spanned};
@@ -47,10 +50,12 @@ pub(crate) struct NativeCase {
     pub(crate) markers: Vec<TestMarker>,
 }
 
-/// Every case of a test unit, and the test file's source with its generated entries when any case needs one.
+/// Every case of a test unit, the test file's source with its generated entries when any case needs one, and the
+/// plain session fixtures its conftests declare that its file group reaches (`crate::test_batch`).
 pub(crate) struct NativeCases {
     pub(crate) cases: Vec<NativeCase>,
     pub(crate) source: Option<String>,
+    pub(crate) sessions: Vec<SessionFixture>,
 }
 
 /// One parameter set of a parametrized test: its case id, each argument's source text by parameter name, its display
@@ -69,12 +74,14 @@ struct Row {
 /// 2. Otherwise check the test file with its conftests appended; an inline `module tests:` is hoisted to its file's top
 ///    level first, so its fixtures, helpers and tests are declarations the entries can call.
 /// 3. Expand each test into its parameter rows and write one entry per row.
-/// 4. Return the checked text: `yield` fixtures blanked, then the entries, their helpers and their imports.
+/// 4. Return the checked text: `yield` fixtures blanked, then the entries, their helpers and their imports; in a batch
+///    (`place`), also the imports of the accessors its conftests host and, in the entry module, the batch entry.
 pub(crate) fn plan(
     source_path: &Path,
     session: &CompilationSession,
     discovery: &DiscoveryResult,
     conftests: &[Conftest],
+    place: Option<BatchPlace>,
 ) -> Result<NativeCases, String> {
     // 1. Plain tests in a test file register themselves.
     let shared_autouse = conftests
@@ -92,6 +99,7 @@ pub(crate) fn plan(
             .map(|(index, test)| plain_case(index, test))
             .collect(),
         source: None,
+        sessions: Vec::new(),
     };
     if !needs_entries && !inline {
         return Ok(plain());
@@ -146,9 +154,24 @@ pub(crate) fn plan(
         roots.extend(autouse_fixtures(&fixtures, test));
     }
     writer.shared = shared_fixtures(&writer, &reached(&writer, &roots));
+    let sessions = session_fixtures(&writer, conftests)?;
+    if place.is_some() {
+        writer.hosted = sessions.iter().map(|fixture| fixture.name.clone()).collect();
+    }
+    writer.batch = place;
     let (cases, mut generated, members) = write_cases(&writer, discovery, &fixtures, &aliases, &semantics)?;
     if !writer.shared.is_empty() {
         generated.push_str(&write_group(&writer, &members, &roots)?);
+    }
+    if let Some(place) = &writer.batch {
+        generated.push_str(&crate::test_batch::accessor_imports(
+            source_path,
+            &sessions,
+            &place.frame,
+        ));
+        if place.position == 0 {
+            generated.push_str(&crate::test_batch::batch_entry(&place.files, &place.frame));
+        }
     }
 
     // 4. The checked text.
@@ -160,7 +183,29 @@ pub(crate) fn plan(
     Ok(NativeCases {
         cases,
         source: Some(checked),
+        sessions,
     })
+}
+
+/// The plain session fixtures a file group reaches that its conftests declare, which modules below the same conftest
+/// can share (`crate::test_batch`), in name order.
+fn session_fixtures(writer: &EntryWriter<'_>, conftests: &[Conftest]) -> Result<Vec<SessionFixture>, String> {
+    let mut names: Vec<&String> = writer.shared.iter().collect();
+    names.sort();
+    let mut found = Vec::new();
+    for name in names {
+        let Some(fixture) = writer.fixtures.get(name.as_str()) else {
+            continue;
+        };
+        if let Some(conftest) = shareable(fixture, conftests) {
+            found.push(SessionFixture {
+                conftest: conftest.path.clone(),
+                name: name.clone(),
+                ty: return_type_text(writer, name)?,
+            });
+        }
+    }
+    Ok(found)
 }
 
 /// Parse a test file's text with the session's vocabulary.
@@ -227,13 +272,16 @@ fn write_cases(
         if test.parameter_names.is_empty() && autouse.is_empty() {
             let mut case = plain_case(index, test);
             if grouped {
+                let marker = case_marker(writer, &case.entry);
                 members.push(Member {
                     entry: case.entry.clone(),
+                    marker: marker.clone(),
                     returns: returns.clone(),
                     asynchronous: test.is_async,
                     yields: yields.clone(),
                 });
-                case.case = Some(std::mem::replace(&mut case.entry, GROUP.to_string()));
+                case.entry = registered_group(writer);
+                case.case = Some(marker);
             }
             cases.push(case);
             continue;
@@ -249,13 +297,15 @@ fn write_cases(
                 format!("{}[{}]", test.function_name, row.ids.join("-"))
             };
             let (registered, case) = if grouped {
+                let marker = case_marker(writer, &entry);
                 members.push(Member {
                     entry: entry.clone(),
+                    marker: marker.clone(),
                     returns: returns.clone(),
                     asynchronous,
                     yields: yields.clone(),
                 });
-                (GROUP.to_string(), Some(entry))
+                (registered_group(writer), Some(marker))
             } else {
                 (entry, None)
             };
@@ -335,6 +385,24 @@ fn return_type(writer: &EntryWriter<'_>, function: &FunctionDecl) -> String {
         NONE_TYPE_NAME.to_string()
     } else {
         written.to_string()
+    }
+}
+
+/// The marker a grouped case's group prints and the runner selects it by: its entry, or in a batch its entry led by
+/// its module's position, since one process runs every module's cases.
+fn case_marker(writer: &EntryWriter<'_>, entry: &str) -> String {
+    match &writer.batch {
+        Some(place) => place.marker(entry),
+        None => entry.to_string(),
+    }
+}
+
+/// The native entry a grouped case registers: its file group's, or in a batch the batch entry.
+fn registered_group(writer: &EntryWriter<'_>) -> String {
+    if writer.batch.is_some() {
+        BATCH.to_string()
+    } else {
+        GROUP.to_string()
     }
 }
 

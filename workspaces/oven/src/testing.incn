@@ -131,6 +131,10 @@ pub model TestCase:
     pub parameters: list[str] = []
     # In a file group, the function that runs this case inside the group entry its `native` names; empty otherwise.
     pub member: str = ""
+    # The plain session conftest fixtures the case's module shares with other modules, which batch them under one job,
+    # and in a batch unit the module the case belongs to.
+    pub sessions: list[str] = []
+    pub module: str = ""
 
     pub def markers(self) -> list[str]:
         """The marker names reports and `-m` expressions see."""
@@ -162,7 +166,14 @@ pub def collected_cases(binary: Path, file: str, label: str, path: str = "") -> 
             skip=reason(test, "skip"),
             xfail=reason(test, "xfail"),
             parameters=names(test, "parameters"),
+            sessions=names(test, "sessions"),
         )
+        match test.get("file"):
+            Some(value) =>
+                match value.as_str():
+                    Some(text) => test_case.module = text
+                    None => pass
+            None => pass
         match test.get("case"):
             Some(value) =>
                 match value.as_str():

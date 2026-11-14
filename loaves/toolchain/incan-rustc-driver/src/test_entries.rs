@@ -7,6 +7,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
+use crate::test_batch::BatchPlace;
 use incan_driver::testing::types::{FixtureInfo, TestInfo};
 use incan_frontend::ast::{Declaration, Expr, FunctionDecl, Spanned, Statement};
 use incan_lang::lang::conventions::NONE_TYPE_NAME;
@@ -93,6 +94,10 @@ pub(crate) struct EntryWriter<'a> {
     /// Module- and session-scoped fixtures a file group sets up once (`crate::test_groups`); a case reads their
     /// values.
     pub(crate) shared: HashSet<String>,
+    /// In a batch unit, the module's place, and the shared plain session fixtures whose accessors its conftests host
+    /// (`crate::test_batch`).
+    pub(crate) batch: Option<BatchPlace>,
+    pub(crate) hosted: HashSet<String>,
     uses: RefCell<Uses>,
     locals: Cell<usize>,
 }
@@ -109,6 +114,8 @@ impl<'a> EntryWriter<'a> {
             fixtures,
             functions,
             shared: HashSet::new(),
+            batch: None,
+            hosted: HashSet::new(),
             uses: RefCell::new(Uses::default()),
             locals: Cell::new(0),
         }

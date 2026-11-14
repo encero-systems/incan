@@ -56,6 +56,10 @@ pub struct UnitDescription {
     /// Additional program entry sources, in selector order. Each must be a collected source module with a main.
     #[serde(default)]
     pub program_entries: Vec<PathBuf>,
+    /// Further test modules a test unit compiles beside its entry module, in run order: the modules that share a plain
+    /// session-scoped `conftest.incn` fixture with it, whose tests run in one process so the fixture is set up once.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub test_batch: Vec<PathBuf>,
     /// The package's root directory, which package-relative paths are spelled against.
     pub project_root: PathBuf,
     /// The package's source root, which module paths are spelled against.

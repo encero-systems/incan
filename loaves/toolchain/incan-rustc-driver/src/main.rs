@@ -74,6 +74,7 @@ mod signature_lifetimes;
 mod spans;
 mod statics;
 mod terminators;
+mod test_batch;
 mod test_cases;
 mod test_conftest;
 mod test_entries;

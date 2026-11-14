@@ -384,8 +384,11 @@ pub def stored_executable(unit: UnitDescription, directory: str) -> Path:
 pub def test_source_name(unit: UnitDescription) -> str:
     """
     The test source a test unit compiles, by the file name its test ids carry. Each test source of a project has its
-    own executable and its own latest result, so testing two sources at once never replaces the other's.
+    own executable and its own latest result, so testing two sources at once never replaces the other's. A batch unit,
+    which compiles further test modules beside its entry, is named apart from the entry's own unit.
     """
+    if len(unit.test_batch) > 0:
+        return f"{Path(unit.source).stem()}-batch"
     return Path(unit.source).stem()
 
 
