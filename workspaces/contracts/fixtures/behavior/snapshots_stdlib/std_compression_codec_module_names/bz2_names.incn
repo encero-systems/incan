@@ -1,0 +1,21 @@
+from std.compression.bz2 import Codec, CompressionError, File, decompress
+
+
+pub def refusal_line(data: bytes) -> str:
+    """Name the refusal `std.compression.bz2` gives malformed input, through the names it publishes."""
+    match decompress(data):
+        Ok(_) => return "bz2 accepted"
+        Err(error) => return describe(error)
+
+
+def describe(error: CompressionError) -> str:
+    """Report whether the refusal explains itself and whether its codec is this module's."""
+    return f"bz2 {len(error.detail) > 0} {error.codec == Some(Codec.Bz2)}"
+
+
+pub def no_file() -> bool:
+    """Hold the file type the module's stream helpers write, empty."""
+    slot: Option[File] = None
+    match slot:
+        Some(_) => return false
+        None => return true
