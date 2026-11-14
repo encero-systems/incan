@@ -7,12 +7,31 @@ use crate::typechecker::type_info::CBindingFunctionCall;
 pub(super) fn validate(positions: &Positions, local: &BodyLocal) -> Result<(), NodeBindingError> {
     let reconstructed = calls(positions, local)?;
     if reconstructed != local.c_abi.function_calls {
-        return Err(NodeBindingError::InvalidField(format!(
-            "ordinary function-call provenance: expected {:?}; reconstructed {:?}",
-            local.c_abi.function_calls, reconstructed
+        return Err(NodeBindingError::InvalidField(call_difference(
+            &local.c_abi.function_calls,
+            &reconstructed,
         )));
     }
     Ok(())
+}
+
+/// Name the first divergent call instead of embedding every call in a potentially module-sized refusal.
+fn call_difference(expected: &[CBindingFunctionCall], reconstructed: &[CBindingFunctionCall]) -> String {
+    let first = match expected
+        .iter()
+        .zip(reconstructed)
+        .position(|(left, right)| left != right)
+    {
+        Some(index) => index,
+        None => expected.len().min(reconstructed.len()),
+    };
+    format!(
+        "ordinary function-call provenance differs: expected {} calls, reconstructed {}; first mismatch at {first}: expected {:?}; reconstructed {:?}",
+        expected.len(),
+        reconstructed.len(),
+        expected.get(first),
+        reconstructed.get(first)
+    )
 }
 
 /// Restore the tooling view without resolving a source name or retaining a second call-target authority.
