@@ -155,7 +155,7 @@ const CALL_ARTIFACT_SCHEMA: &[ArtifactFieldSchema] = &[
     },
 ];
 
-const GENERATOR_SHA256: &str = "d6df7efcdb297e525f490de30a34f266371d39281ca00aedd091fb8bbb7f9471";
+const GENERATOR_SHA256: &str = "f928690f157a4cf39a07b8168b8973331e7863c0bb0d52060ea43ff77253574e";
 
 pub(super) fn project(
     positions: &Positions,
@@ -586,11 +586,98 @@ mod generated_tests {
     }
 
     #[test]
-    fn generated_call_artifact_schema_round_trips() {
+    fn generated_call_artifact_schema_round_trips() -> Result<(), Box<dyn std::error::Error>> {
         for field in CALL_ARTIFACT_SCHEMA {
             let encoded = format!("{}|{}", field.name, field.codec);
-            let (name, codec) = encoded.split_once('|').expect("generated schema row has a separator");
+            let (name, codec) = encoded.split_once('|').ok_or("generated schema row has no separator")?;
             assert_eq!((name, codec), (field.name, field.codec));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn generated_call_artifact_values_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        let dispatch = crate::typechecker::type_info::ResolvedMethodDispatch::Trait {
+            trait_name: "Readable".into(),
+            module_path: Some(vec!["protocol".into()]),
+            type_args: vec![crate::symbols::ResolvedType::Int],
+            implementation_type_params: vec![crate::symbols::ImplementationTypeParamInfo {
+                name: "T".into(),
+                bounds: vec![crate::symbols::ImplementationTraitBoundInfo {
+                    trait_path: "Readable".into(),
+                    type_args: vec![crate::symbols::ResolvedType::Str],
+                    associated_types: vec![("Item".into(), crate::symbols::ResolvedType::Bool)],
+                    origin: crate::symbols::ImplementationTraitBoundOriginInfo::SourceCallable,
+                }],
+            }],
+            receiver_is_mutable: false,
+        };
+        let mut encoded = Vec::new();
+        super::super::artifact_admission::project_method_dispatch(&dispatch, &mut encoded)?;
+        let mut values = encoded.iter();
+        assert_eq!(
+            super::super::artifact_admission::read_method_dispatch(&mut values)?,
+            dispatch
+        );
+        assert_eq!(values.next(), None);
+
+        let reflection_source = "model Item:
+    pub value: int
+def count_fields(value: Item) -> int:
+    return len(value.__fields__())
+";
+        let (program, checker, owner) = super::super::fixture(reflection_source, "count_fields")?;
+        let positions = super::super::Positions::new(&checker, &program, owner, false)?;
+        let nominal_index = checker.symbols.lookup("Item").ok_or("missing Item symbol")?;
+        let nominal = checker
+            .symbols
+            .identity_of(nominal_index)
+            .cloned()
+            .ok_or("missing Item identity")?;
+        let member = nominal.generated_member("__fields__", incan_semantics_core::SemanticSourceTargetKind::Method);
+        let mut generated = std::collections::HashMap::new();
+        generated.insert(member.clone(), nominal.clone());
+        let mut fields = Vec::new();
+        super::super::artifact_admission::project_compiler_generated_member_identities(
+            &positions,
+            &generated,
+            &mut fields,
+        )?;
+        let row = fields.first().ok_or("missing generated-member row")?;
+        let span = positions.span(row.get(1).ok_or("missing generated-member path")?)?;
+        let mut values = row[3..].iter();
+        let mut restored_generated = std::collections::HashMap::new();
+        super::super::artifact_admission::restore_compiler_generated_member_identities(
+            &positions,
+            &mut restored_generated,
+            span,
+            &mut values,
+        )?;
+        assert_eq!(restored_generated, generated);
+        assert_eq!(values.next(), None);
+
+        let display = crate::typechecker::type_info::ErrorMessageDisplay {
+            identity: None,
+            dispatch: Some(dispatch),
+            receiver_is_trait_self: true,
+            self_displaying_adopters: ["Failure".into()].into_iter().collect(),
+        };
+        let mut displays = std::collections::HashMap::new();
+        displays.insert("Failure".into(), display.clone());
+        let mut fields = Vec::new();
+        super::super::artifact_admission::project_error_message_display_types(&positions, &displays, &mut fields)?;
+        let row = fields.first().ok_or("missing error-display row")?;
+        let span = positions.span(row.get(1).ok_or("missing error-display path")?)?;
+        let mut values = row[3..].iter();
+        let mut restored = std::collections::HashMap::new();
+        super::super::artifact_admission::restore_error_message_display_types(
+            &positions,
+            &mut restored,
+            span,
+            &mut values,
+        )?;
+        assert_eq!(restored.get("Failure"), Some(&display));
+        assert_eq!(values.next(), None);
+        Ok(())
     }
 }
