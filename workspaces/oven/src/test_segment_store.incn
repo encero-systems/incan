@@ -395,6 +395,49 @@ pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edi
     return Ok(None)
 
 
+pub def test_a_commit_reads_each_index_page_it_changes_once_however_many_keys_it_writes() -> Result[None, str]:
+    """
+    A commit merges its keys into the index in one pass: writing 64 keys under one leaf reads about the pages that
+    writing one key reads, not one root-to-leaf path per key, and every key, old and new, stays listed and found.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+    mut expected: list[str] = []
+    for item in range(1000):
+        key = f"k-{1000 + item}"
+        transaction = put(transaction, key, b"earlier")
+        expected.append(key)
+    commit(transaction).map_err((error) => error.message())?
+    before_one = read_counts()
+    _ = write_one(root, "k-1250-x", "one").map_err((error) => error.message())?
+    one = read_counts().pages - before_one.pages
+    expected.append("k-1250-x")
+    transaction = begin(snapshot(root).map_err((error) => error.message())?)
+    for item in range(64):
+        key = f"k-1500-{10 + item}"
+        transaction = put(transaction, key, b"concentrated")
+        expected.append(key)
+    before_many = read_counts()
+    commit(transaction).map_err((error) => error.message())?
+    many = read_counts().pages - before_many.pages
+    assert many <= one + 4, f"a commit of one key read {one} index pages and a commit of 64 keys read {many}"
+    transaction = begin(snapshot(root).map_err((error) => error.message())?)
+    for item in range(143):
+        key = f"k-{1000 + item * 7}-spread"
+        transaction = put(transaction, key, b"spread")
+        expected.append(key)
+    transaction = put(transaction, "k-1007", b"replaced")
+    commit(transaction).map_err((error) => error.message())?
+    latest = snapshot(root).map_err((error) => error.message())?
+    assert keys(latest).map_err((error) => error.message())? == sorted(expected)
+    assert text(lookup(latest, "k-1007")) == "replaced"
+    assert text(lookup(latest, "k-1500-73")) == "concentrated"
+    assert text(lookup(latest, "k-1994-spread")) == "spread"
+    assert text(lookup(latest, "k-1999")) == "earlier"
+    return Ok(None)
+
+
 pub def test_a_lookup_reads_one_index_path_however_many_segments_hold_other_keys() -> Result[None, str]:
     """
     A key is found through its view's index: the pages read for one lookup do not grow with the number of segments or

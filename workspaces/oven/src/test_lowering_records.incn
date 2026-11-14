@@ -2,6 +2,7 @@
 
 from rust::std::process import Child, Command, Stdio
 from rust::std::str import from_utf8
+from rust::std::time import Instant
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue, parse
@@ -156,6 +157,29 @@ pub def test_body_edits_keep_one_indexed_output_per_slot() -> Result[None, str]:
     for slot in sorted([name for name in slots.keys()]):
         assert slots[slot] == 1, f"{slots[slot]} indexed outputs for {slot.replace("\t", " | ")}"
     return stop_example_engine(binary, store)
+
+
+pub def test_twenty_body_edits_in_a_row_hold_a_flat_median() -> Result[None, str]:
+    """
+    Twenty body edits in a row cost what the first ones cost: the median of edits 16-20 stays within a quarter, and
+    50 ms, of the median of edits 2-6. A cost that grows with every edit, a leak, fails it.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("main.incn")
+    store = root.joinpath("store")
+    mut elapsed: list[int] = []
+    for edit in range(20):
+        write(source, f"def main() -> None:\n    println(\"edit {edit}\")\n")?
+        started = Instant.now()
+        _ = lowering_example_run(binary, source, store, f"edit {edit}")?
+        elapsed.append(int(started.elapsed().as_millis()))
+    stop_example_engine(binary, store)?
+    early = sorted(elapsed[1:6])[2]
+    late = sorted(elapsed[15:20])[2]
+    assert late * 4 <= early * 5 + 200, f"edits 2-6 median {early} ms, edits 16-20 median {late} ms: {elapsed}"
+    return Ok(None)
 
 
 pub def test_two_standalone_sources_share_one_store_without_body_collision() -> Result[None, str]:

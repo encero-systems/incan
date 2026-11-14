@@ -196,6 +196,41 @@ pub def entries_with_prefix(root: Path, top: str, prefix: str) -> Result[list[En
     return Ok(result)
 
 
+pub def entries_for_keys(root: Path, top: str, keys: list[str]) -> Result[list[Entry], IndexError]:
+    """
+    The leaf entries the index rooted at `top` holds for `keys`, sorted by key; each page on the keys' paths is read
+    once, however many of the keys lie below it.
+    """
+    if top == "" or len(keys) == 0:
+        return Ok([])
+    return entries_below(root, read_page(root, top)?, sorted(keys))
+
+
+def entries_below(root: Path, page: Page, keys: list[str]) -> Result[list[Entry], IndexError]:
+    """The leaf entries below `page` whose keys are among the sorted `keys`."""
+    mut result: list[Entry] = []
+    if page.level == 0:
+        mut wanted: set[str] = set()
+        for key in keys:
+            wanted.add(key)
+        for entry in page.entries:
+            if entry.key in wanted:
+                result.append(entry)
+        return Ok(result)
+    mut taken = 0
+    for position in range(len(page.entries)):
+        mut group: list[str] = []
+        while taken < len(keys) and (
+            position + 1 == len(page.entries) or keys[taken] < page.entries[position + 1].key
+        ):
+            if keys[taken] >= page.entries[position].key:
+                group.append(keys[taken])
+            taken += 1
+        if len(group) > 0:
+            result.extend(entries_below(root, read_page(root, page.entries[position].child)?, group)?)
+    return Ok(result)
+
+
 pub def read_page(root: Path, name: str) -> Result[Page, IndexError]:
     """One page, checked against its content name and decoded into owned entries."""
     return decoded_page(page_path(root, name), name)
@@ -317,24 +352,26 @@ pub def insert(root: Path, top: str, staged: Path, additions: list[Entry]) -> Re
     """
     The root of the index that holds `top`'s entries with `additions` replacing or adding entries by key.
 
-    Only the pages on changed paths are written, into `staged` for the caller to install; every other page is shared.
+    The additions are merged in one pass: each changed page is read and written once, into `staged` for the caller to
+    install, and every other page is shared.
     """
     ordered = sorted_entries(additions)
     if top == "":
         return build(staged, ordered)
-    # Rebuilding is linear and canonical for a large delta. Repeated copy-on-write insertion is retained for small
-    # deltas so ordinary edits still share every unchanged page with the selected generation.
-    if len(ordered) > FANOUT:
-        return build(staged, sorted_entries(entries(root, top)? + ordered))
-    mut current = top
-    for addition in ordered:
-        current = insert_one(root, current, staged, addition)?
-    return Ok(current)
+    if len(ordered) == 0:
+        return Ok(top)
+    page = read_page(root, top)?
+    mut parts = merged_into(root, page, ordered, staged)?
+    mut level = page.level + 1
+    while len(parts) > 1:
+        parts = written_chunks(staged, level, parts)?
+        level += 1
+    return Ok(parts[0].child)
 
 
 pub def staged_pages(staged: Path, roots: list[str]) -> Result[list[Path], IndexError]:
     """
-    New pages reachable from the final roots, excluding intermediate insertion roots and reused installed subtrees.
+    New pages reachable from the final roots, excluding reused installed subtrees.
 
     A staged page can reference staged or installed children. An installed child is immutable and cannot reach a
     newly staged page, so this walk stops at it instead of reading the unchanged tree.
@@ -359,68 +396,60 @@ pub def staged_pages(staged: Path, roots: list[str]) -> Result[list[Path], Index
     return Ok(result)
 
 
-def insert_one(root: Path, top: str, staged: Path, addition: Entry) -> Result[str, IndexError]:
-    """Insert one leaf entry and grow a new root when the old one splits."""
-    if top == "":
-        return write_page(staged, Page(level=0, entries=[addition]))
-    parts = insert_into(root, top, staged, addition)?
-    if len(parts) == 1:
-        return Ok(parts[0].child)
-    level = staged_level(root, staged, parts[0].child)? + 1
-    return write_page(staged, Page(level=level, entries=parts))
-
-
-def insert_into(root: Path, name: str, staged: Path, addition: Entry) -> Result[list[Entry], IndexError]:
-    """The pages that replace page `name` after inserting `addition` below it, as inner entries."""
-    page = read_any(root, staged, name)?
-    mut updated: list[Entry] = []
+def merged_into(root: Path, page: Page, additions: list[Entry], staged: Path) -> Result[list[Entry], IndexError]:
+    """The pages that replace `page` once sorted `additions` are merged below it, as inner entries."""
     if page.level == 0:
-        updated = with_leaf(page.entries, addition)
-    else:
-        target = covering_index(page, addition.key)
-        for position in range(len(page.entries)):
-            if position == target:
-                updated.extend(insert_into(root, page.entries[position].child, staged, addition)?)
-            else:
-                updated.append(page.entries[position])
-    return split(staged, page.level, updated)
+        return written_chunks(staged, 0, merged_leaves(page.entries, additions))
+    mut updated: list[Entry] = []
+    mut taken = 0
+    for position in range(len(page.entries)):
+        mut group: list[Entry] = []
+        while taken < len(additions) and (
+            position + 1 == len(page.entries) or additions[taken].key < page.entries[position + 1].key
+        ):
+            group.append(additions[taken])
+            taken += 1
+        if len(group) == 0:
+            updated.append(page.entries[position])
+        else:
+            child = read_page(root, page.entries[position].child)?
+            updated.extend(merged_into(root, child, group, staged)?)
+    return written_chunks(staged, page.level, updated)
 
 
-def with_leaf(entries: list[Entry], addition: Entry) -> list[Entry]:
-    """Leaf entries with `addition` replacing the entry of its key, or added in key order."""
+def merged_leaves(entries: list[Entry], additions: list[Entry]) -> list[Entry]:
+    """Sorted leaf entries with sorted `additions` merged in by key, an addition replacing the entry of its key."""
     mut result: list[Entry] = []
-    mut placed = false
+    mut taken = 0
     for entry in entries:
-        if not placed and addition.key <= entry.key:
-            result.append(addition)
-            placed = true
-            if addition.key == entry.key:
-                continue
-        result.append(entry)
-    if not placed:
-        result.append(addition)
+        while taken < len(additions) and additions[taken].key < entry.key:
+            result.append(additions[taken])
+            taken += 1
+        if taken < len(additions) and additions[taken].key == entry.key:
+            result.append(additions[taken])
+            taken += 1
+        else:
+            result.append(entry)
+    result.extend(additions[taken:])
     return result
 
 
-def covering_index(page: Page, key: str) -> int:
-    """The position of the inner entry whose child covers `key`; a key below every entry goes to the first child."""
-    mut chosen = 0
-    for position in range(len(page.entries)):
-        if page.entries[position].key <= key:
-            chosen = position
-    return chosen
-
-
-def split(staged: Path, level: int, entries: list[Entry]) -> Result[list[Entry], IndexError]:
-    """Write `entries` as one page, or as two halves when they exceed the fan-out; return their inner entries."""
+def written_chunks(staged: Path, level: int, entries: list[Entry]) -> Result[list[Entry], IndexError]:
+    """
+    Write `entries` as one page, or as the fewest pages within the fan-out, sizes even and the larger ones last; return
+    their inner entries.
+    """
+    count = (len(entries) + FANOUT - 1) // FANOUT
     mut parts: list[Entry] = []
-    mut chunks: list[list[Entry]] = [entries]
-    if len(entries) > FANOUT:
-        half = len(entries) // 2
-        chunks = [entries[:half], entries[half:]]
-    for chunk in chunks:
+    mut start = 0
+    for chunk_index in range(count):
+        mut size = len(entries) // count
+        if chunk_index >= count - len(entries) % count:
+            size += 1
+        chunk = entries[start:start + size]
         name = write_page(staged, Page(level=level, entries=chunk))?
         parts.append(Entry(key=chunk[0].key, location=None, child=name))
+        start += size
     return Ok(parts)
 
 
@@ -454,18 +483,6 @@ def sorted_entries(additions: list[Entry]) -> list[Entry]:
     for entry in additions:
         by_key[entry.key] = entry
     return [by_key[key] for key in sorted([key for key in by_key.keys()])]
-
-
-def read_any(root: Path, staged: Path, name: str) -> Result[Page, IndexError]:
-    """A page installed in the store, or written earlier in this transaction's staging."""
-    if staged.joinpath(f"{name}.page").is_file():
-        return decoded_page(staged.joinpath(f"{name}.page"), name)
-    return read_page(root, name)
-
-
-def staged_level(root: Path, staged: Path, name: str) -> Result[int, IndexError]:
-    """The level of a page installed or staged."""
-    return Ok(read_any(root, staged, name)?.level)
 
 
 def write_page(staged: Path, page: Page) -> Result[str, IndexError]:

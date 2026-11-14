@@ -47,6 +47,7 @@ from crate.trace.schema import Operation
 from crate.ipc import session_id
 from crate.store.files import file_digest
 from crate.store.index import Entry, Location, build, entries as index_entries, find as index_find, insert
+from crate.store.index import entries_for_keys as index_entries_for_keys
 from crate.store.index import entries_with_prefix as index_entries_with_prefix
 from crate.store.index import search as index_search
 from crate.store.index import copied_index_bytes, page_path, page_reads, view_digest, staged_pages
@@ -773,18 +774,48 @@ def with_view(views: list[ViewRoot], view: str, index: str) -> list[ViewRoot]:
 
 
 def pending_writes(latest: Snapshot, writes: list[Write]) -> Result[list[Write], StoreError]:
-    """The writes not already committed in `latest`, after checking each one's precondition."""
+    """
+    The writes not already committed in `latest`, after checking each one's precondition.
+
+    The index is searched once for every written key; a damaged page falls back to one lookup per key, so each write
+    meets its own key's damage as its precondition says.
+    """
+    mut located: Dict[str, Location] = {}
+    match index_entries_for_keys(latest.root, latest.index, [write.key for write in writes]):
+        Err(_) => return pending_each(latest, writes)
+        Ok(found) =>
+            for entry in found:
+                match entry.location:
+                    Some(location) => located[entry.key] = location
+                    None => pass
     mut remaining: list[Write] = []
     for write in writes:
-        match lookup(latest, write.key):
-            Err(error) =>
-                if write.expect not in [EXPECT_ABSENT_OR_DAMAGED, EXPECT_REPAIR] or error.kind != "integrity":
-                    return Err(error)
-                remaining.append(write)
-            Ok(found) =>
-                if needed(write, found)?:
-                    remaining.append(write)
+        mut found: Result[Lookup, StoreError] = Ok(Lookup.Absent)
+        if write.key in located:
+            counted["records"] = counted.get("records", 0) + 1
+            found = read_frame(latest.root, write.key, located[write.key])
+        if kept(write, found)?:
+            remaining.append(write)
     return Ok(remaining)
+
+
+def pending_each(latest: Snapshot, writes: list[Write]) -> Result[list[Write], StoreError]:
+    """The writes not already committed in `latest`, each key looked up on its own."""
+    mut remaining: list[Write] = []
+    for write in writes:
+        if kept(write, lookup(latest, write.key))?:
+            remaining.append(write)
+    return Ok(remaining)
+
+
+def kept(write: Write, found: Result[Lookup, StoreError]) -> Result[bool, StoreError]:
+    """Whether `write` stays pending given its key's lookup, refusing it when its precondition no longer holds."""
+    match found:
+        Err(error) =>
+            if write.expect not in [EXPECT_ABSENT_OR_DAMAGED, EXPECT_REPAIR] or error.kind != "integrity":
+                return Err(error)
+            return Ok(true)
+        Ok(outcome) => return needed(write, outcome)
 
 
 def needed(write: Write, found: Lookup) -> Result[bool, StoreError]:
