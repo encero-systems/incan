@@ -30,6 +30,7 @@ const BAKERY_USAGE: str = "oven bakery gc [--keep-days N] | status [--format tex
 const DEPENDENCIES_USAGE: str = "oven inspect dependencies PATH [UNIT OPTIONS]"
 const LOCK_USAGE: str = "oven lock [--versions lowest|lowest-direct|newest] [PATH]"
 const ADD_USAGE: str = "oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]"
+const DEPENDENCY_USAGE: str = "oven dependency add NAME [--version REQUIREMENT] [--key KEY] [--project PATH] | list [--project PATH] | remove NAME [--project PATH]"
 const UPDATE_USAGE: str = "oven update [NAME] [--project PATH]"
 const TRUST_USAGE: str = "oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE"
 const INTEROP_USAGE: str = "oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [--format text|json] [PATH]"
@@ -64,6 +65,7 @@ pub def usage(surface: str) -> str:
                 INTEROP_USAGE,
                 LOCK_USAGE,
                 ADD_USAGE,
+                DEPENDENCY_USAGE,
                 UPDATE_USAGE,
                 TRUST_USAGE,
                 NEW_USAGE,
@@ -131,6 +133,8 @@ pub def command_help(surface: str, command: str, arguments: list[str]) -> Option
                 "oven add crates-io/serde",
             ),
         )
+    elif command == "dependency":
+        return dependency_help(arguments)
     elif command == "update" and requested(arguments, ["--project"]):
         return Some(
             render(
@@ -224,6 +228,29 @@ def inspection_help(surface: str, arguments: list[str]) -> Option[str]:
                 "INCAN_ENGINE=records oven inspect run 0123456789abcdef0123456789abcdef --proofs",
             ),
         )
+    return None
+
+
+def dependency_help(arguments: list[str]) -> Option[str]:
+    """`oven dependency`'s help, for the group or one of `add`, `list` and `remove`."""
+    subcommands: list[Tuple[str, list[str]]] = [
+        ("add", ["--version", "--key", "--project"]),
+        ("list", ["--project"]),
+        ("remove", ["--project"]),
+    ]
+    for subcommand, valued in subcommands:
+        if nested_help(arguments, subcommand, valued):
+            return Some(
+                render(
+                    DEPENDENCY_USAGE,
+                    [
+                        "  --version REQUIREMENT  On `add`, record this instead of the newest published version.",
+                        "  --key KEY              On `add`, the [dependencies] key, instead of the name's last part.",
+                        "  --project PATH         The project at or above PATH (default the current directory).",
+                    ],
+                    "oven dependency remove crates-io/serde",
+                ),
+            )
     return None
 
 
