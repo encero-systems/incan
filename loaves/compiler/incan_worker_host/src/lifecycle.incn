@@ -15,6 +15,12 @@ start although the worker holds nothing more; counting those blocks retired ever
 A light activation (formatting, a source listing, an import collection) checks and links nothing. The footprint after
 it is the heap the compile before it left, so it neither adds to a run of excess activations nor ends one; the ceiling
 still applies to it.
+
+The ceiling is also judged before rustc runs. A compile whose footprint after checking and lowering is above it hands
+native compilation to its caller: the entry writes the rustc handoff, the worker answers with it and retires, and the
+caller runs rustc in a fresh process once this heap is gone. The allocator keeps the freed checking and lowering heap
+dirty, so a worker that waited beside rustc, or ran rustc on top of it, would count both. Within the ceiling rustc runs
+in the warm worker, as the edit loop's small units do.
 """
 
 from rust::std::time import Instant
@@ -39,6 +45,8 @@ pub enum ActivationOutcome:
     Panicked
     # The process could not be restored after the activation.
     UnsafeCleanup(str)
+    # The compile's footprint was above the ceiling, so the entry wrote its rustc handoff to this path instead.
+    HandedOff(str)
 
 
 pub enum Retirement:
@@ -106,7 +114,8 @@ pub class Lifecycle:
         The reply to an ended activation and whether the worker retires after it.
 
         1. An unrestored process retires at once; it serves no queued request.
-        2. Otherwise the outcome becomes the reply: a panic is a compiler fault, and the worker stays.
+        2. Otherwise the outcome becomes the reply: a panic is a compiler fault, and the worker stays; a rustc
+           handoff retires it.
         3. The footprint and the live heap decide the rest; an unknown footprint retires nothing, and a `light`
            activation is held only to the ceiling.
         """
@@ -121,10 +130,17 @@ pub class Lifecycle:
             ActivationOutcome.Unavailable(reason) => reply = Reply.Refused(reason)
             # 2. The entry contained the panic, so only this request failed.
             ActivationOutcome.Panicked => reply = Reply.CompilerFault(Fault.Panicked)
+            # The caller runs rustc fresh; only exiting returns the heap that was over the ceiling.
+            ActivationOutcome.HandedOff(path) =>
+                return Settled(reply=Reply.HandedOff(path), retirement=Some(Retirement.Footprint))
         # 3. The ceiling retires at once; excess over the baseline must persist across consecutive compiles.
         if self.over_footprint(footprint, light, live):
             return Settled(reply=reply, retirement=Some(Retirement.Footprint))
         return Settled(reply=reply, retirement=None)
+
+    pub def hands_rustc_off(self, footprint: int) -> bool:
+        """Whether a compile with this footprint after lowering hands rustc to its caller: a known one over the ceiling."""
+        return footprint > self.bounds.ceiling
 
     def over_footprint(mut self, footprint: int, light: bool, live: int) -> bool:
         """
