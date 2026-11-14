@@ -48,6 +48,7 @@ from installation_page import begin_command as begin_installation_command
 from owner_service import serve_owner
 from graph_inspection import inspect_codegraph, options as graph_options
 from interop_plan import inspect_interop_plan, plan_options
+from interop_stage import stage_interop, stage_options
 from binding_inspection import binding_options, inspect_bindings
 from graph_incan import inspect_prepared, publish_prepared_graph
 from graph_mcp import serve_graph, options as mcp_options
@@ -239,6 +240,13 @@ def dispatch(command: str, rest: list[str]) -> None:
         return
     if command == "--internal-owner":
         finish("owner", serve_owner(rest))
+        return
+    if command == "interop":
+        if len(rest) == 0 or rest[0] != "stage":
+            syntax_error("interop", "stages with `stage --target TRIPLE --adapter android|ios --output PATH [PATH]`")
+        match stage_options(rest[1:]):
+            Err(reason) => syntax_error("interop", reason)
+            Ok(options) => finish("interop", stage_interop(options))
         return
     if command == "owner":
         owner(rest)
