@@ -9,7 +9,7 @@ from rust::incan_std_primitives::crumb import (
 )
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.text_types import TextError, TextFailure, TextPosition
-from crate.primitives.crumb.text_names import require_path
+from crate.primitives.crumb.text_names import require_name, require_path
 from crate.primitives.crumb.types import ContainerKind, NominalKind, ScalarKind, TypeConstructorKind, TypeNode
 from crate.primitives.text import decode_utf8, encode_utf8
 
@@ -142,6 +142,23 @@ pub class TextTokens:
                 return Err(TextError(kind=TextFailure.UnexpectedEnd, position=token.position))
             return Err(TextError(kind=TextFailure.InvalidToken, position=token.position))
         return self.take()
+
+    pub def word(mut self, kind: TextFailure) -> Result[TextToken, TextError]:
+        """Consume one nonempty word token or return the caller-selected refusal category."""
+        token = self.peek()?
+        if token.kind != TextTokenKind.Word or self.text(token)? == "":
+            return Err(TextError(kind=kind, position=token.position))
+        return self.take()
+
+    pub def name_word(mut self, kind: TextFailure) -> Result[str, TextError]:
+        """Consume and admit one core UAX #31 name without normalizing its spelling."""
+        token = self.word(kind)?
+        return require_name(self.text(token)?, token.position, kind)
+
+    pub def path_word(mut self, kind: TextFailure) -> Result[str, TextError]:
+        """Consume and admit one dotted path under the shared segment rule."""
+        token = self.word(kind)?
+        return require_path(self.text(token)?, token.position, kind)
 
     pub def text(self, token: TextToken) -> Result[str, TextError]:
         """Materialize one token's text only when grammar or semantic admission requests it."""

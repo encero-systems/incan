@@ -4,8 +4,7 @@ from rust::std::primitive import i128 as RustI128
 from rust::std::str import FromStr
 from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.text_syntax import last_segment
-from crate.primitives.crumb.text_names import require_name, require_path
-from crate.primitives.crumb.text_tokens import TextToken, TextTokenKind, TextTokens, tokenize
+from crate.primitives.crumb.text_tokens import TextTokenKind, TextTokens, tokenize
 from crate.primitives.crumb.text_types import (
     TextContext,
     TextDescription,
@@ -33,221 +32,223 @@ pub def read_comic(data: bytes, context: TextContext, mut budget: Budget) -> Res
 
 pub def read_comic_text(source: str, context: TextContext, mut budget: Budget) -> Result[TextDocument, TextError]:
     """Read one owned text snapshot under the same bounded token and value budget."""
-    mut tokens = tokenize(source, budget)?
-    mut descriptions: list[TextDescription] = []
-    mut values: list[TextRootValue] = []
-    while tokens.peek()?.kind != TextTokenKind.End:
-        lookahead = tokens.peek_at(1)?
-        if tokens.text(lookahead)? == "=":
-            declaration_position = tokens.peek()?.position
-            description = parse_description(tokens, context, budget)?
-            refuse_duplicate_declaration(descriptions, description, declaration_position)?
-            descriptions.append(description)
-        elif tokens.text(lookahead)? == "<<":
-            admitted = resolve_descriptions(descriptions, context)?
-            for value in parse_root_values(tokens, admitted, budget)?:
-                values.append(value)
-        else:
-            return Err(TextError(kind=TextFailure.InvalidEntry, position=tokens.peek()?.position))
-    resolved = resolve_descriptions(descriptions, context)?
-    return Ok(TextDocument(descriptions=resolved, values=values))
+    mut reader = TextReader.create(tokenize(source, budget)?, context, budget)
+    return reader.document()
 
 
-def parse_description(
-    mut tokens: TextTokens,
-    context: TextContext,
-    mut budget: Budget,
-) -> Result[TextDescription, TextError]:
-    """Read one core or locally registered declaration without resolving profile code."""
-    match budget.enter():
-        Err(_) => return Err(limit_error(tokens.peek()?.position))
-        Ok(_) => pass
-    path = require_path_word(tokens, TextFailure.InvalidEntry)?
-    tokens.require("=")?
-    kind_token = tokens.peek()?
-    kind = require_path_word(tokens, TextFailure.UnknownKind)?
-    shape = registered_shape(kind, context, kind_token.position, budget)?
-    tokens.require("{")?
-    mut properties: list[MetadataEntry] = []
-    mut fields: list[FieldShape] = []
-    mut variants: list[VariantShape] = []
-    while not tokens.accepts("}")?:
-        if tokens.peek()?.kind == TextTokenKind.End:
-            return Err(TextError(kind=TextFailure.UnexpectedEnd, position=tokens.peek()?.position))
-        next = tokens.peek_at(1)?
-        if tokens.text(next)? == "=":
-            position = tokens.peek()?.position
-            property = parse_property(tokens, budget)?
-            refuse_duplicate_property(properties, property, position)?
-            properties.append(property)
-        elif shape == NominalKind.Enum:
-            variants.append(parse_variant(tokens, budget)?)
-        else:
-            fields.append(parse_field(tokens, budget)?)
-        tokens.accepts(",")?
-    match budget.leave():
-        Err(_) => return Err(limit_error(tokens.peek()?.position))
-        Ok(_) => pass
-    return Ok(
-        TextDescription(
-            path=path,
-            kind=kind,
-            shape=shape,
-            identity=None,
-            properties=Metadata.Map(properties),
-            fields=fields,
-            variants=variants,
-        ),
-    )
+class TextReader:
+    """One document's token cursor, caller context and allowance; every declaration rule reads through them."""
 
+    tokens: TextTokens
+    context: TextContext
+    budget: Budget
 
-def registered_shape(
-    kind: str,
-    context: TextContext,
-    position: TextPosition,
-    mut budget: Budget,
-) -> Result[NominalKind, TextError]:
-    """Map core kinds directly and every profile kind only through caller-supplied registration."""
-    match context.kinds.shape(kind, budget):
-        Ok(shape) => return Ok(shape)
-        Err(_) => return Err(TextError(kind=TextFailure.UnknownKind, position=position))
+    @staticmethod
+    pub def create(tokens: TextTokens, context: TextContext, budget: Budget) -> Self:
+        """Own the cursor and share the caller's allowance for one document."""
+        return TextReader(tokens=tokens, context=context, budget=budget)
 
+    pub def document(mut self) -> Result[TextDocument, TextError]:
+        """Read declarations and root values in authored order, then resolve the complete declaration set."""
+        mut descriptions: list[TextDescription] = []
+        mut values: list[TextRootValue] = []
+        while self.tokens.peek()?.kind != TextTokenKind.End:
+            lookahead = self.tokens.peek_at(1)?
+            if self.tokens.text(lookahead)? == "=":
+                declaration_position = self.tokens.peek()?.position
+                description = self.parse_description()?
+                refuse_duplicate_declaration(descriptions, description, declaration_position)?
+                descriptions.append(description)
+            elif self.tokens.text(lookahead)? == "<<":
+                admitted = resolve_descriptions(descriptions, self.context)?
+                for value in parse_root_values(self.tokens, admitted, self.budget)?:
+                    values.append(value)
+            else:
+                return Err(TextError(kind=TextFailure.InvalidEntry, position=self.tokens.peek()?.position))
+        resolved = resolve_descriptions(descriptions, self.context)?
+        return Ok(TextDocument(descriptions=resolved, values=values))
 
-def parse_field(mut tokens: TextTokens, mut budget: Budget) -> Result[FieldShape, TextError]:
-    """Read a field, retaining metadata while projecting canonical and absent policies."""
-    name_token = tokens.peek()?
-    name = require_name_word(tokens, TextFailure.InvalidFields)?
-    if name.startswith("___"):
-        return Err(TextError(kind=TextFailure.ReservedField, position=name_token.position))
-    mut properties: list[MetadataEntry] = []
-    if tokens.accepts("[")?:
-        while not tokens.accepts("]")?:
-            position = tokens.peek()?.position
-            property = parse_property(tokens, budget)?
-            refuse_duplicate_property(properties, property, position)?
-            properties.append(property)
-            tokens.accepts(",")?
-    tokens.require(":")?
-    storage = tokens.parse_type(budget)?
-    mut absent = AbsentPolicy.Required
-    if tokens.accepts("=")?:
-        if tokens.accepts("None")?:
-            absent = AbsentPolicy.NoneValue
-        elif tokens.accepts("[")?:
-            tokens.require("]")?
-            absent = AbsentPolicy.Empty
-        elif tokens.accepts("{")?:
-            tokens.require("}")?
-            absent = AbsentPolicy.Empty
-        else:
-            return Err(TextError(kind=TextFailure.InvalidAbsentValue, position=tokens.peek()?.position))
-    mut canonical = true
-    for property in properties:
-        if property.key == "canonical":
-            match property.value:
-                Metadata.Boolean(value) => canonical = value
-                _ => return Err(TextError(kind=TextFailure.InvalidMetadata, position=name_token.position))
-    renamed_from = rename_history(properties, name_token.position)?
-    mut identity_name = name
-    if len(renamed_from) > 0:
-        identity_name = renamed_from[0]
-    identity = member_identity(identity_name, budget).map_err(
-        (_) => TextError(kind=TextFailure.Limit, position=name_token.position),
-    )?
-    return Ok(
-        FieldShape(
-            identity=identity,
-            storage_type=storage,
-            absent=absent,
-            canonical=canonical,
-            name=name,
-            renamed_from=renamed_from,
-        ),
-    )
-
-
-def parse_variant(mut tokens: TextTokens, mut budget: Budget) -> Result[VariantShape, TextError]:
-    """Read one enum variant, its identity history and its optional named payload description."""
-    name_token = tokens.peek()?
-    name = require_name_word(tokens, TextFailure.UnknownVariant)?
-    mut properties: list[MetadataEntry] = []
-    if tokens.accepts("[")?:
-        while not tokens.accepts("]")?:
-            position = tokens.peek()?.position
-            property = parse_property(tokens, budget)?
-            refuse_duplicate_property(properties, property, position)?
-            properties.append(property)
-            tokens.accepts(",")?
-    mut fields: list[FieldShape] = []
-    if tokens.accepts("(")?:
-        while not tokens.accepts(")")?:
-            fields.append(parse_field(tokens, budget)?)
-            if tokens.accepts(")")?:
-                break
-            tokens.require(",")?
-    renamed_from = rename_history(properties, name_token.position)?
-    mut identity_name = name
-    if len(renamed_from) > 0:
-        identity_name = renamed_from[0]
-    identity = member_identity(identity_name, budget).map_err((_) => limit_error(name_token.position))?
-    return Ok(VariantShape(identity=identity, fields=fields, name=name, renamed_from=renamed_from))
-
-
-def parse_property(mut tokens: TextTokens, mut budget: Budget) -> Result[MetadataEntry, TextError]:
-    """Read inert description metadata in its authored order."""
-    position = tokens.peek()?.position
-    name = require_name_word(tokens, TextFailure.InvalidProperty)?
-    if "." in name:
-        return Err(TextError(kind=TextFailure.InvalidProperty, position=position))
-    tokens.require("=")?
-    return Ok(MetadataEntry(key=name, value=parse_property_value(tokens, budget)?))
-
-
-def parse_property_value(mut tokens: TextTokens, mut budget: Budget) -> Result[Metadata, TextError]:
-    """Read symbols, scalars, lists and nested property groups without evaluation."""
-    match budget.enter():
-        Err(_) => return Err(limit_error(tokens.peek()?.position))
-        Ok(_) => pass
-    token = tokens.peek()?
-    spelling = tokens.text(token)?
-    mut result = Metadata.Symbol("")
-    if token.kind == TextTokenKind.String:
-        result = Metadata.Text(tokens.text(tokens.take()?)?)
-    elif token.kind == TextTokenKind.Binary:
-        result = Metadata.Binary(tokens.data(tokens.take()?)?)
-    elif spelling == "true" or spelling == "false":
-        result = Metadata.Boolean(tokens.text(tokens.take()?)? == "true")
-    elif spelling == "None":
-        tokens.take()?
-        result = Metadata.Null
-    elif token.kind == TextTokenKind.Number:
-        number = tokens.take()?
-        match RustI128.from_str(tokens.text(number)?):
-            Ok(value) => result = Metadata.Integer(value)
-            Err(_) => return Err(TextError(kind=TextFailure.InvalidProperty, position=number.position))
-    elif tokens.accepts("[")?:
-        mut items: list[Metadata] = []
-        while not tokens.accepts("]")?:
-            items.append(parse_property_value(tokens, budget)?)
-            if tokens.accepts("]")?:
-                break
-            tokens.require(",")?
-        result = Metadata.List(items)
-    elif tokens.accepts("{")?:
+    def parse_description(mut self) -> Result[TextDescription, TextError]:
+        """Read one core or locally registered declaration without resolving profile code."""
+        match self.budget.enter():
+            Err(_) => return Err(limit_error(self.tokens.peek()?.position))
+            Ok(_) => pass
+        path = self.tokens.path_word(TextFailure.InvalidEntry)?
+        self.tokens.require("=")?
+        kind_token = self.tokens.peek()?
+        kind = self.tokens.path_word(TextFailure.UnknownKind)?
+        shape = self.registered_shape(kind, kind_token.position)?
+        self.tokens.require("{")?
         mut properties: list[MetadataEntry] = []
-        while not tokens.accepts("}")?:
-            position = tokens.peek()?.position
-            property = parse_property(tokens, budget)?
-            refuse_duplicate_property(properties, property, position)?
-            properties.append(property)
-            tokens.accepts(",")?
-        result = Metadata.Map(properties)
-    elif token.kind == TextTokenKind.Word:
-        result = Metadata.Symbol(require_name_word(tokens, TextFailure.InvalidProperty)?)
-    else:
-        return Err(TextError(kind=TextFailure.InvalidProperty, position=token.position))
-    budget.leave().map_err((_) => limit_error(token.position))?
-    return Ok(result)
+        mut fields: list[FieldShape] = []
+        mut variants: list[VariantShape] = []
+        while not self.tokens.accepts("}")?:
+            if self.tokens.peek()?.kind == TextTokenKind.End:
+                return Err(TextError(kind=TextFailure.UnexpectedEnd, position=self.tokens.peek()?.position))
+            next = self.tokens.peek_at(1)?
+            if self.tokens.text(next)? == "=":
+                position = self.tokens.peek()?.position
+                property = self.parse_property()?
+                refuse_duplicate_property(properties, property, position)?
+                properties.append(property)
+            elif shape == NominalKind.Enum:
+                variants.append(self.parse_variant()?)
+            else:
+                fields.append(self.parse_field()?)
+            self.tokens.accepts(",")?
+        match self.budget.leave():
+            Err(_) => return Err(limit_error(self.tokens.peek()?.position))
+            Ok(_) => pass
+        return Ok(
+            TextDescription(
+                path=path,
+                kind=kind,
+                shape=shape,
+                identity=None,
+                properties=Metadata.Map(properties),
+                fields=fields,
+                variants=variants,
+            ),
+        )
+
+    def registered_shape(mut self, kind: str, position: TextPosition) -> Result[NominalKind, TextError]:
+        """Map core kinds directly and every profile kind only through caller-supplied registration."""
+        match self.context.kinds.shape(kind, self.budget):
+            Ok(shape) => return Ok(shape)
+            Err(_) => return Err(TextError(kind=TextFailure.UnknownKind, position=position))
+
+    def parse_field(mut self) -> Result[FieldShape, TextError]:
+        """Read a field, retaining metadata while projecting canonical and absent policies."""
+        name_token = self.tokens.peek()?
+        name = self.tokens.name_word(TextFailure.InvalidFields)?
+        if name.startswith("___"):
+            return Err(TextError(kind=TextFailure.ReservedField, position=name_token.position))
+        mut properties: list[MetadataEntry] = []
+        if self.tokens.accepts("[")?:
+            while not self.tokens.accepts("]")?:
+                position = self.tokens.peek()?.position
+                property = self.parse_property()?
+                refuse_duplicate_property(properties, property, position)?
+                properties.append(property)
+                self.tokens.accepts(",")?
+        self.tokens.require(":")?
+        storage = self.tokens.parse_type(self.budget)?
+        mut absent = AbsentPolicy.Required
+        if self.tokens.accepts("=")?:
+            if self.tokens.accepts("None")?:
+                absent = AbsentPolicy.NoneValue
+            elif self.tokens.accepts("[")?:
+                self.tokens.require("]")?
+                absent = AbsentPolicy.Empty
+            elif self.tokens.accepts("{")?:
+                self.tokens.require("}")?
+                absent = AbsentPolicy.Empty
+            else:
+                return Err(TextError(kind=TextFailure.InvalidAbsentValue, position=self.tokens.peek()?.position))
+        mut canonical = true
+        for property in properties:
+            if property.key == "canonical":
+                match property.value:
+                    Metadata.Boolean(value) => canonical = value
+                    _ => return Err(TextError(kind=TextFailure.InvalidMetadata, position=name_token.position))
+        renamed_from = rename_history(properties, name_token.position)?
+        mut identity_name = name
+        if len(renamed_from) > 0:
+            identity_name = renamed_from[0]
+        identity = member_identity(identity_name, self.budget).map_err(
+            (_) => TextError(kind=TextFailure.Limit, position=name_token.position),
+        )?
+        return Ok(
+            FieldShape(
+                identity=identity,
+                storage_type=storage,
+                absent=absent,
+                canonical=canonical,
+                name=name,
+                renamed_from=renamed_from,
+            ),
+        )
+
+    def parse_variant(mut self) -> Result[VariantShape, TextError]:
+        """Read one enum variant, its identity history and its optional named payload description."""
+        name_token = self.tokens.peek()?
+        name = self.tokens.name_word(TextFailure.UnknownVariant)?
+        mut properties: list[MetadataEntry] = []
+        if self.tokens.accepts("[")?:
+            while not self.tokens.accepts("]")?:
+                position = self.tokens.peek()?.position
+                property = self.parse_property()?
+                refuse_duplicate_property(properties, property, position)?
+                properties.append(property)
+                self.tokens.accepts(",")?
+        mut fields: list[FieldShape] = []
+        if self.tokens.accepts("(")?:
+            while not self.tokens.accepts(")")?:
+                fields.append(self.parse_field()?)
+                if self.tokens.accepts(")")?:
+                    break
+                self.tokens.require(",")?
+        renamed_from = rename_history(properties, name_token.position)?
+        mut identity_name = name
+        if len(renamed_from) > 0:
+            identity_name = renamed_from[0]
+        identity = member_identity(identity_name, self.budget).map_err((_) => limit_error(name_token.position))?
+        return Ok(VariantShape(identity=identity, fields=fields, name=name, renamed_from=renamed_from))
+
+    def parse_property(mut self) -> Result[MetadataEntry, TextError]:
+        """Read inert description metadata in its authored order."""
+        position = self.tokens.peek()?.position
+        name = self.tokens.name_word(TextFailure.InvalidProperty)?
+        if "." in name:
+            return Err(TextError(kind=TextFailure.InvalidProperty, position=position))
+        self.tokens.require("=")?
+        return Ok(MetadataEntry(key=name, value=self.parse_property_value()?))
+
+    def parse_property_value(mut self) -> Result[Metadata, TextError]:
+        """Read symbols, scalars, lists and nested property groups without evaluation."""
+        match self.budget.enter():
+            Err(_) => return Err(limit_error(self.tokens.peek()?.position))
+            Ok(_) => pass
+        token = self.tokens.peek()?
+        spelling = self.tokens.text(token)?
+        mut result = Metadata.Symbol("")
+        if token.kind == TextTokenKind.String:
+            result = Metadata.Text(self.tokens.text(self.tokens.take()?)?)
+        elif token.kind == TextTokenKind.Binary:
+            result = Metadata.Binary(self.tokens.data(self.tokens.take()?)?)
+        elif spelling == "true" or spelling == "false":
+            result = Metadata.Boolean(self.tokens.text(self.tokens.take()?)? == "true")
+        elif spelling == "None":
+            self.tokens.take()?
+            result = Metadata.Null
+        elif token.kind == TextTokenKind.Number:
+            number = self.tokens.take()?
+            match RustI128.from_str(self.tokens.text(number)?):
+                Ok(value) => result = Metadata.Integer(value)
+                Err(_) => return Err(TextError(kind=TextFailure.InvalidProperty, position=number.position))
+        elif self.tokens.accepts("[")?:
+            mut items: list[Metadata] = []
+            while not self.tokens.accepts("]")?:
+                items.append(self.parse_property_value()?)
+                if self.tokens.accepts("]")?:
+                    break
+                self.tokens.require(",")?
+            result = Metadata.List(items)
+        elif self.tokens.accepts("{")?:
+            mut properties: list[MetadataEntry] = []
+            while not self.tokens.accepts("}")?:
+                position = self.tokens.peek()?.position
+                property = self.parse_property()?
+                refuse_duplicate_property(properties, property, position)?
+                properties.append(property)
+                self.tokens.accepts(",")?
+            result = Metadata.Map(properties)
+        elif token.kind == TextTokenKind.Word:
+            result = Metadata.Symbol(self.tokens.name_word(TextFailure.InvalidProperty)?)
+        else:
+            return Err(TextError(kind=TextFailure.InvalidProperty, position=token.position))
+        self.budget.leave().map_err((_) => limit_error(token.position))?
+        return Ok(result)
 
 
 def refuse_duplicate_property(
@@ -409,24 +410,10 @@ def resolve_node(
         _ => return Ok(node)
 
 
-def word_token(mut tokens: TextTokens, kind: TextFailure) -> Result[TextToken, TextError]:
-    """Consume one nonempty word token or return the caller-selected refusal category."""
-    token = tokens.peek()?
-    if token.kind != TextTokenKind.Word or tokens.text(token)? == "":
-        return Err(TextError(kind=kind, position=token.position))
-    return tokens.take()
 
 
-def require_name_word(mut tokens: TextTokens, kind: TextFailure) -> Result[str, TextError]:
-    """Consume and admit one core UAX #31 name without normalizing its spelling."""
-    token = word_token(tokens, kind)?
-    return require_name(tokens.text(token)?, token.position, kind)
 
 
-def require_path_word(mut tokens: TextTokens, kind: TextFailure) -> Result[str, TextError]:
-    """Consume and admit one dotted path under the shared segment rule."""
-    token = word_token(tokens, kind)?
-    return require_path(tokens.text(token)?, token.position, kind)
 
 
 def refuse_duplicate_declaration(
