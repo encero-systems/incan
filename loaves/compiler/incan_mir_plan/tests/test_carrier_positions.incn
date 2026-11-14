@@ -2,6 +2,13 @@
 
 from _plan import EnumDeclaration, EnumVariant, Function, Plan, Carrier
 from _types import PlanType, source_span
+from pub::internal_models.compiler_records import (
+    CanonicalSymbolId,
+    DeclarationKind,
+    HirSourceSpan,
+    SymbolNamespace,
+    SymbolOrigin,
+)
 from _body import Local, BasicBlock, Terminator, TerminatorKind
 from carrier_positions import fold_carrier_positions
 from nominal_identities import (
@@ -78,4 +85,48 @@ pub def test_publication_folds_each_carrier_after_the_source_enums() -> Result[N
     assert folded.enums[1].variants[1].fields == [PlanType.Enum(0, "Tone")]
     # Folding a published plan again changes nothing.
     assert fold_carrier_positions(folded, 1)? == folded
+    return Ok(None)
+
+
+pub def test_publication_keeps_a_trait_type_a_frame_names() -> Result[None, str]:
+    """A frame holding a source trait's type token still folds: a trait type names no carrier position."""
+    span = source_span(file="carrier_positions.incn", line=1, column=1)
+    readable = PlanType.Trait(
+        CanonicalSymbolId(
+            namespace=SymbolNamespace.OrdinaryLexical,
+            origin=SymbolOrigin.Module(["contracts"]),
+            declaration_name="Readable",
+            kind=DeclarationKind.Trait,
+            scope_discriminant=None,
+            declaration_span=HirSourceSpan(file="src/contracts.incn", start=4, end=12),
+        ),
+    )
+    token = PlanType.TypeToken([readable])
+    carrier = carrier_index(0)
+    function = Function(
+        name="main",
+        parameters=[],
+        return_type=PlanType.Unit,
+        locals=[
+            Local(ty=PlanType.Unit, span=span),
+            Local(ty=token, span=span),
+            Local(ty=PlanType.Enum(carrier, "__IncanCarrier0"), span=span),
+        ],
+        blocks=[
+            BasicBlock(statements=[], terminator=Terminator(kind=TerminatorKind.Return, span=span), cleanup=false, span=span),
+        ],
+        span=span,
+    )
+    option = EnumDeclaration(
+        name="__IncanCarrier0",
+        public=false,
+        variants=[EnumVariant(name="None", fields=[]), EnumVariant(name="Some", fields=[PlanType.Int])],
+        derives=["Clone"],
+        span=span,
+        carrier=Carrier.Option,
+    )
+    plan = Plan(enums=[option], models=[], functions=[function], externals=[], span=span)
+    folded = fold_carrier_positions(plan, 0)?
+    assert folded.functions[0].locals[1].ty == token, "the fold changed a trait's type token"
+    assert folded.functions[0].locals[2].ty == PlanType.Enum(0, "__IncanCarrier0")
     return Ok(None)

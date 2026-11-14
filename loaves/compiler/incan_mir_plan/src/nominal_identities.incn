@@ -214,7 +214,11 @@ def remap_composite_type(ty: PlanType, mut remap: NominalRemap) -> Result[PlanTy
             return Ok(PlanType.NativeArrayMutRef(remap_types(types, remap)?, length))
         PlanType.RawPointer(mutable, types) => return Ok(PlanType.RawPointer(mutable, remap_types(types, remap)?))
         PlanType.Boxed(types) => return Ok(PlanType.Boxed(remap_types(types, remap)?))
-        PlanType.Trait(_identity) => return Err("plan products refuse a canonical source-trait type")
+        PlanType.Trait(identity) =>
+            # The publication fold crosses every type of the unit's own plan, and a trait names no position in it.
+            if remap.fold >= 0:
+                return Ok(PlanType.Trait(identity))
+            return Err("plan products refuse a canonical source-trait type")
         # Every remaining alternative names no nested type and no nominal position.
         _ => return Ok(ty)
 
