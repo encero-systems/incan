@@ -26,14 +26,19 @@ use crate::library_manifest::{
 use super::lazy_entry::Summary;
 use super::{LoafIdentity, LoafIndexError};
 use crate::api_metadata::ApiDocumentation;
-use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
+use crate::library_manifest::executable_surface::ExecutableSurface;
 use incan_semantics_core::body_ir::RuntimeCallableBinding;
+
+mod runtime_bindings;
+pub(super) use runtime_bindings::read_runtime_bindings;
 
 /// The record family holding a Loaf's checked API documentation, which compiles never open (RFC 179).
 const DOCUMENTATION: &str = "documentation";
-/// The record families of a Loaf's executable surface besides its metadata; a manifest projection never selects them.
+/// The record families of a Loaf's executable surface besides its metadata, and its runtime callable bindings; a
+/// manifest projection never selects them.
 const EXECUTABLE_DESCRIPTOR: &str = "executable-descriptor";
 const PUBLIC_IDENTITIES: &str = "public-identities";
+const RUNTIME_BINDINGS: &str = "runtime-bindings";
 const ROOT_ENV: &str = "INCAN_COMPILER_RECORD_ROOT";
 const DIGEST_ENV: &str = "INCAN_COMPILER_RECORD_DIGEST";
 const SET_FORMAT: &str = "incan.sealed-set/2";
@@ -69,6 +74,8 @@ struct RecordSet {
     summaries: Mutex<BTreeMap<String, Summary>>,
     /// Executable surfaces this process already read and authenticated, by package prefix.
     surfaces: Mutex<BTreeMap<String, (Arc<ExecutableSurface>, String)>>,
+    /// Runtime callable bindings this process already read, by record key prefix.
+    bindings: Mutex<BTreeMap<String, (Arc<Vec<RuntimeCallableBinding>>, String)>>,
 }
 
 /// One authenticated, decoded record group and the manifest digest its metadata names.
@@ -99,7 +106,7 @@ enum Projection {
 impl Projection {
     /// Whether records of `family` belong to this projection.
     fn admits(self, family: &str) -> bool {
-        let surface = matches!(family, EXECUTABLE_DESCRIPTOR | PUBLIC_IDENTITIES);
+        let surface = matches!(family, EXECUTABLE_DESCRIPTOR | PUBLIC_IDENTITIES | RUNTIME_BINDINGS);
         match self {
             Self::Complete => family != DOCUMENTATION && !surface,
             Self::Execution => matches!(
@@ -132,6 +139,7 @@ impl RecordSet {
             admitted: Mutex::new(BTreeMap::new()),
             summaries: Mutex::new(BTreeMap::new()),
             surfaces: Mutex::new(BTreeMap::new()),
+            bindings: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -375,16 +383,6 @@ fn read_surface_in(
         .unwrap_or_else(PoisonError::into_inner)
         .insert(prefix, found.clone());
     Ok(Some(found))
-}
-
-/// Read one Loaf group's runtime callable bindings from `set`, with the manifest digest of the group they belong to.
-fn read_runtime_bindings_in(
-    set: &RecordSet,
-    dir: &Path,
-    name: &str,
-) -> Result<Option<(Arc<Vec<RuntimeCallableBinding>>, String)>, LoafIndexError> {
-    Ok(read_group(set, dir, name, Projection::Execution)?
-        .map(|(manifest, digest)| (Arc::new(runtime_bindings(&manifest)), digest)))
 }
 
 /// Read one semantic projection from the process's installed set without opening unselected values.
@@ -930,9 +928,10 @@ mod tests {
 
     use sha2::{Digest, Sha256};
 
+    use super::runtime_bindings::read_runtime_bindings_in;
     use super::{
-        Metadata, Projection, RecordEntry, RecordReads, RecordSet, open_value, read_group, read_runtime_bindings_in,
-        read_summary, read_surface_in,
+        Metadata, Projection, RecordEntry, RecordReads, RecordSet, open_value, read_group, read_summary,
+        read_surface_in,
     };
     use crate::api_metadata::{
         CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,

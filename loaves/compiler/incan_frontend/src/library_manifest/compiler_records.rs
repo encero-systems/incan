@@ -3,7 +3,8 @@
 //! The toolchain's driver exports these records once at installation: one record per exported declaration and
 //! per made-private type, vocabulary and soft-keyword activation, the Loaf's contract metadata, its documentation, its
 //! Rust ABI, its executable descriptor and public executable identities (all executable resolution reads besides the
-//! metadata), and the Loaf's metadata record, which carries the digests.
+//! metadata), its runtime callable bindings (all native lowering reads of it), and the Loaf's metadata record, which
+//! carries the digests.
 //!
 //! - The **record-content digest** covers every record, documentation included: each record's key, model description
 //!   hash and object hash (the SHA-256 of its bytes), in key order.
@@ -21,7 +22,7 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use super::executable_surface::own_public_identities;
+use super::executable_surface::{own_public_identities, runtime_bindings};
 use super::{LibraryManifest, LibraryManifestError};
 
 /// The record identity and value schema every installed compiler record follows.
@@ -60,6 +61,8 @@ pub enum RecordFamily {
     ExecutableDescriptor,
     /// The public executable identities a Loaf declares itself.
     PublicIdentities,
+    /// The runtime callables native lowering binds by their public path.
+    RuntimeBindings,
     RustAbi,
 }
 
@@ -86,6 +89,7 @@ impl RecordFamily {
             Self::Documentation => "documentation",
             Self::ExecutableDescriptor => "executable-descriptor",
             Self::PublicIdentities => "public-identities",
+            Self::RuntimeBindings => "runtime-bindings",
             Self::RustAbi => "rust-abi",
         }
     }
@@ -152,6 +156,13 @@ impl LibraryManifest {
         }
         let identities = own_public_identities(self);
         records.push(record(RecordFamily::PublicIdentities, 0, &self.name, &identities)?);
+        // Native lowering reads this one by name, never the contract metadata it is derived from.
+        records.push(record(
+            RecordFamily::RuntimeBindings,
+            0,
+            &self.name,
+            &runtime_bindings(self),
+        )?);
         if let Some(rust_abi) = &self.rust_abi {
             records.push(record(RecordFamily::RustAbi, 0, &self.name, rust_abi)?);
         }

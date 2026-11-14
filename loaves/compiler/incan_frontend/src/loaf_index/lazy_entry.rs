@@ -14,7 +14,8 @@ use sha2::{Digest, Sha256};
 use super::decoded_manifest::compiler_generation;
 use super::manifest_input::{self, Generation, generation};
 use super::{LoafArtifact, LoafEntry, LoafIdentity, LoafIndexError, LoafNamespace};
-use crate::library_manifest::executable_surface::ExecutableSurface;
+use crate::library_manifest::executable_surface::{ExecutableSurface, runtime_bindings};
+use incan_semantics_core::body_ir::RuntimeCallableBinding;
 
 /// Maximum encoded inventory proof size; larger optional records fall back to ordinary manifest admission.
 const MAX_INVENTORY_RECORD_BYTES: u64 = 4 * 1024 * 1024;
@@ -76,6 +77,7 @@ pub(super) struct IndexedLoaf {
     entry: Arc<OnceLock<Result<LoafEntry, LoafIndexError>>>,
     execution: Arc<OnceLock<Result<Arc<crate::library_manifest::LibraryManifest>, LoafIndexError>>>,
     surface: Arc<OnceLock<Result<Arc<ExecutableSurface>, LoafIndexError>>>,
+    bindings: Arc<OnceLock<Result<Arc<Vec<RuntimeCallableBinding>>, LoafIndexError>>>,
 }
 
 impl IndexedLoaf {
@@ -89,6 +91,7 @@ impl IndexedLoaf {
             entry: Arc::default(),
             execution: Arc::default(),
             surface: Arc::default(),
+            bindings: Arc::default(),
         };
         let _ = indexed.entry.set(Ok(entry));
         indexed
@@ -113,6 +116,7 @@ impl IndexedLoaf {
             entry: Arc::default(),
             execution: Arc::default(),
             surface: Arc::default(),
+            bindings: Arc::default(),
         }
     }
 
@@ -136,6 +140,7 @@ impl IndexedLoaf {
                 entry: Arc::default(),
                 execution: Arc::default(),
                 surface: Arc::default(),
+                bindings: Arc::default(),
             });
         }
         if !super::compiler_record_set::configured()
@@ -150,6 +155,7 @@ impl IndexedLoaf {
                 entry: Arc::default(),
                 execution: Arc::default(),
                 surface: Arc::default(),
+                bindings: Arc::default(),
             });
         }
         let before = observation(&path);
@@ -240,6 +246,32 @@ impl IndexedLoaf {
                 }
                 let manifest = self.execution_manifest()?;
                 Ok(Arc::new(ExecutableSurface::of(&manifest)))
+            })
+            .as_ref()
+            .map(Arc::clone)
+            .map_err(Clone::clone)
+    }
+
+    /// The runtime callables native lowering binds in this Loaf: its runtime-bindings record, read by name, when the
+    /// installed set publishes one, otherwise derived from the executable projection.
+    pub fn runtime_bindings(&self) -> Result<Arc<Vec<RuntimeCallableBinding>>, LoafIndexError> {
+        self.bindings
+            .get_or_init(|| {
+                if super::compiler_record_set::configured()
+                    && let Some((bindings, digest)) =
+                        super::compiler_record_set::read_runtime_bindings(&self.dir, &self.summary.identity.name)?
+                {
+                    if digest != self.summary.identity.digest {
+                        return Err(LoafIndexError::Unreadable {
+                            path: self
+                                .dir
+                                .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
+                            reason: "runtime bindings records differ from their admitted inventory".to_owned(),
+                        });
+                    }
+                    return Ok(bindings);
+                }
+                Ok(Arc::new(runtime_bindings(&*self.execution_manifest()?)))
             })
             .as_ref()
             .map(Arc::clone)

@@ -479,6 +479,17 @@ impl LoafIndex {
         Ok(Some(indexed.execution_manifest()?))
     }
 
+    /// Read the runtime callables native lowering binds in one Loaf, without its contract metadata.
+    pub fn runtime_bindings(
+        &self,
+        key: &str,
+    ) -> Result<Option<Arc<Vec<incan_semantics_core::body_ir::RuntimeCallableBinding>>>, LoafIndexError> {
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        Ok(Some(indexed.runtime_bindings()?))
+    }
+
     /// Refuse any failed demand, or a Rust ABI cache read that failed, before an analysis or executable closure can be
     /// accepted. Untouched entries stay lazy.
     pub fn validate_demands(&self) -> Result<(), LoafIndexError> {
