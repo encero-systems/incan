@@ -1,10 +1,10 @@
-# behavior: Without a member selection, a rooted workspace without `default-members` selects its root project at the root, as 0.5.1's `implicit_root_member` scope did (#3141).
+# behavior: Without a member selection, a rooted workspace without `default-members` selects its root project at the root, listed by its absolute root, as 0.5.1's `implicit_root_member` scope did (#3141).
 # cli-commands:
 #   oven workspace inspect
 #   oven workspace inspect --exclude alpha
 # expect-stdout-contains:
 #   Selected scope (implicit_root_member)
-#     - rooted_root_selects_its_root_project (.)
+#     - rooted_root_selects_its_root_project (<project>)
 # expect-stderr:
 # expect-exit: 0
 
