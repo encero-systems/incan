@@ -25,6 +25,7 @@ from unit_publication import (
     admitted_identity as admitted_payload_identity,
     published_facts,
     published_identity,
+    publication,
     record_payload,
 )
 from frozen_inputs import observation as frozen_observation
@@ -305,12 +306,19 @@ def compiler_target(toolchain: Toolchain) -> Result[str, str]:
 
 
 pub def native_identities(externs: list[NativeCrate]) -> Result[list[str], str]:
-    """Canonical native aliases and the identities their producers recorded, without reading artifact bytes."""
+    """
+    Canonical native aliases and the content their producers published, without reading artifact bytes.
+
+    A linked dependency is identified by the digest of the bytes its publication recorded, not by its producer
+    identity, so a rebuild that produced the same native code, such as a documentation edit, rekeys none of its
+    consumers. A toolchain native keeps the identity it was admitted under.
+    """
     mut inputs: list[str] = []
     for native in externs:
         mut identity = native.identity
         if identity == "":
-            identity = published_identity(Path(native.path))?
+            _, content = publication(Path(native.path))?
+            identity = f"content {content}"
         inputs.append(f"{native.name} {identity}")
     return Ok(sorted(inputs))
 
@@ -521,18 +529,16 @@ def loaf_identities(unit: UnitDescription) -> Result[list[str], str]:
     """
     Canonical Loaf bindings and the identities their consumer is keyed on; absent producer evidence refuses.
 
-    A unit that only compiles against a Loaf is keyed on the semantic facts the Loaf's publication recorded, so a
-    documentation edit in the Loaf leaves it alone (RFC 179). A program or test links the Loaf's code and is keyed on
-    its producer identity, as is every unit whose Loaf recorded no facts.
+    A unit is keyed on the semantic facts the Loaf's publication recorded, so a documentation edit in the Loaf leaves
+    it alone (RFC 179); what a program or test links is identified by its content in `native_identities`. A Loaf
+    whose publication recorded no facts keys its consumers on its producer identity.
     """
-    links = unit.kind in ["program", "test"]
     mut inputs: list[str] = []
     for loaf in unit.loaves:
         path = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib")
         mut identity = published_identity(path)?
-        if not links:
-            if let Some(facts) = published_facts(path)?:
-                identity = f"facts {facts}"
+        if let Some(facts) = published_facts(path)?:
+            identity = f"facts {facts}"
         inputs.append(f"{loaf.key}={loaf.name} {identity}")
     return Ok(sorted(inputs))
 
