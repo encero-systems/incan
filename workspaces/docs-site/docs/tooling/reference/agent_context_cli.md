@@ -14,7 +14,7 @@ incan mcp PATH [--profile NAME]
 
 | Argument | Type and default | Contract |
 | --- | --- | --- |
-| `PATH` | Required path string | An existing path. A `.incn` file selects that source. A directory without `src/lib.rs` selects its `src/lib.incn`, else its `src/main.incn`. Any other directory selects its Rust facet, and any other file the Rust facet of the nearest directory with a `loaf.toml`. The MCP server fixes this selection for its lifetime. |
+| `PATH` | Required path string | An existing path. A `.incn` file selects that source. A directory without a `loaf.toml` inside a Loaf, such as its `src`, selects that Loaf. A directory without `src/lib.rs` selects its `src/lib.incn`, else its `src/main.incn`. Any other directory selects its Rust facet, and any other file the Rust facet of the nearest directory with a `loaf.toml`. The MCP server fixes this selection for its lifetime. |
 | `--profile NAME` | String, `debug` | Selects the artifact profile. Standard packages and native support must have artifacts for that profile. |
 | `--format` | `jsonl` by default | Raw export: JSON array or one JSON object per line. A `defs` query with `json` returns a header and the selected declarations, up to `--limit`; other queries retain text output. Task output: compact text, JSON array or JSONL header/nodes/edges. `compact` requires `--task`. |
 | `--query KIND TERM` | Two strings | `KIND` is `defs`, `refs`, `callers`, `callees` or `imports`. For `defs`, `refs`, `callers` and `callees`, `TERM` is an exact short name, qualified name or exported record ID; for `imports`, it selects the modules whose name or ID contains it. Output is text except for `defs` with `--format json`. Queries resolve dependency identities through their published graphs. |
