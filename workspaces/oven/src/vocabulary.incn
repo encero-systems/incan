@@ -1,6 +1,5 @@
 """Build Incan vocabulary entries and retain producer registrations by native unit identity."""
 
-from rust::std::process import Command
 from std.fs import Path
 from std.encoding.hex import hexlify
 from std.hash import sha256
@@ -10,7 +9,6 @@ from json_fields import required_text
 from observation import file_digest, observe
 from graph_queries import nested
 from publication import publish
-from rust_target import decoded
 from toolchain import Toolchain
 from unit import UnitDescription
 from unit_compiler import compile_prepared_unit
@@ -19,6 +17,7 @@ from bakery import bakery, claim, find, seal, staging, view
 from bakery_roots import register_root
 from unit_publication import record_payload, record_verified_payload
 from vocabulary_policy import admit_vocabulary
+from worker_containment import run_contained
 from compile_time_trust import cover_loaf, missing_stop
 
 
@@ -231,14 +230,11 @@ def registration_main(entry: str) -> str:
 
 
 def run_registration(output: Path) -> Result[JsonValue, str]:
-    """Capture one producer registration without ambient environment access and require a valid JSON payload."""
-    mut command = Command.new(output.0)
-    _ = command.env_clear()
-    captured = command.output().map_err((error) => f"cannot run vocabulary registration: {error}")?
-    if not captured.status.success():
+    """Capture one producer registration, contained under its empty grant, and require a valid JSON payload."""
+    captured = run_contained(output, [])?
+    if not captured.success:
         return Err(f"vocabulary registration failed: {captured.status}")
-    text = decoded(captured.stdout)
-    return parse(text).map_err((error) => f"invalid vocabulary registration: {error.message()}")
+    return parse(captured.stdout).map_err((error) => f"invalid vocabulary registration: {error.message()}")
 
 
 def write_changed(path: Path, content: str) -> Result[None, str]:
