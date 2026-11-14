@@ -84,6 +84,8 @@ pub from function_records import (
     decode_scalar,
     product_identities,
     product_nominals,
+    decode_frames,
+    product_frame_names,
 )
 pub from nominal_identities import (
     NominalKind,

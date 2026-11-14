@@ -15,6 +15,7 @@ from pub::incan_mir_plan import (
     UnitNominals,
     product_identities,
     product_nominals,
+    decode_frames,
     resolve_nominals,
 )
 from scalar_products import encode_product, decode_product
@@ -107,7 +108,7 @@ pub def retained_scalar(
     unit: &UnitNominals,
     span: Option[SourceSpan] = None,
     positions: list[tuple[int, int]] = [],
-) -> Option[tuple[Function, list[ExternalFunction], list[NominalReference]]]:
+) -> Option[tuple[Function, list[ExternalFunction], list[NominalReference], list[Function]]]:
     """
     Read a complete native function whose full producer inputs and named declarations still match.
 
@@ -136,7 +137,9 @@ pub def retained_scalar(
                             match decode_product(payload, resolved):
                                 Ok(product) =>
                                     function, runtime = product
-                                    return Some((function, runtime, resolved))
+                                    match decode_frames(payload, resolved):
+                                        Ok(frames) => return Some((function, runtime, resolved, frames))
+                                        Err(_) => return None
                                 Err(_) => return None
 
 
@@ -147,6 +150,7 @@ pub def retain_scalar(
     runtime: &list[ExternalFunction],
     nominals: list[ProductNominal] = [],
     positions: list[tuple[int, int]] = [],
+    frames: list[Function] = [],
 ) -> Result[None, str]:
     """
     Publish a loss-checked native function without changing compilation's verdict.
@@ -155,7 +159,7 @@ pub def retain_scalar(
     2. Write a complete temporary record and atomically replace its destination.
     """
     # 1. Records mode must preserve an unsupported native shape as an explicit producer refusal.
-    text = encoded_record(inputs, function, runtime, nominals, positions)?
+    text = encoded_record(inputs, function, runtime, nominals, positions, frames)?
     # 2. The request-local transport is required input to Bakery publication, so failed writes refuse the producer.
     return publish_record(directory, inputs, text)
 
@@ -167,6 +171,7 @@ pub def finalize_scalar(
     reused: bool,
     references: list[NominalReference],
     positions: list[tuple[int, int]],
+    frames: list[Function] = [],
 ) -> Result[tuple[str, list[NominalReference]], str]:
     """
     Retain the whole-program plan's final function under a keyed product's unchanged inputs and lowering demand.
@@ -187,7 +192,7 @@ pub def finalize_scalar(
     identities = product_identities(current)?
     _captured, demand = decode_product(current, references)?
     # 2. The same inputs now name the exact native function compiled for this declaration.
-    whole = product_nominals(function, demand)?
+    whole = product_nominals(function, demand, frames)?
     mut nominals: list[ProductNominal] = []
     for reference in whole:
         mut named: Option[ProductNominal] = None
@@ -197,7 +202,7 @@ pub def finalize_scalar(
         match named:
             Some(nominal) => nominals.append(nominal)
             None => return Err(f"plan-function {function.name} names a declaration its keyed product does not")
-    final = encoded_record(record.inputs, function, demand, nominals, positions)?
+    final = encoded_record(record.inputs, function, demand, nominals, positions, frames)?
     if final == text:
         return Ok((text, whole))
     # 3. A reused product was already final when retained, so any difference is a lowering defect, never a refresh.
@@ -291,6 +296,7 @@ def encoded_record(
     runtime: &list[ExternalFunction],
     nominals: list[ProductNominal],
     positions: list[tuple[int, int]] = [],
+    frames: list[Function] = [],
 ) -> Result[str, str]:
     """
     Authenticate the entire native payload after the codec proves an exact structural round trip.
@@ -298,12 +304,14 @@ def encoded_record(
     A keyed record's spans are owner-relative, and each span that locates a Body IR node names that node's ordinal, so
     the record holds no line a moved comment or docstring can change.
     """
-    mut payload = encode_product(function, runtime, nominals)?
+    mut payload = encode_product(function, runtime, nominals, frames)?
     if inputs[0] == RECORD_FUNCTION:
         relative = relocate_product(payload, "<owner>", 1)?
         restored = relocate_product(relative, str(function.span.file), function.span.line)?
-        restored_function, restored_runtime = decode_product(restored, product_nominals(function, runtime)?)?
-        if encode_product(restored_function, restored_runtime, nominals)? != payload:
+        references = product_nominals(function, runtime, frames)?
+        restored_function, restored_runtime = decode_product(restored, references)?
+        restored_frames = decode_frames(restored, references)?
+        if encode_product(restored_function, restored_runtime, nominals, restored_frames)? != payload:
             return Err("plan-function position round trip changed native facts")
         payload = index_positions(relative, positions)?
         if place_positions(payload, positions)? != relative:
