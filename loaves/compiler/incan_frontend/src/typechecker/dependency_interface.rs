@@ -702,15 +702,34 @@ impl TypeChecker {
                 .or_default()
                 .extend(values.iter().cloned());
         }
-        for library in interface.compiled_libraries.iter() {
-            self.install_compiled_library_semantics(library);
-        }
         self.public_library_type_identities.extend(
             interface
                 .public_library_type_identities
                 .iter()
                 .map(|(name, identity)| (name.clone(), identity.clone())),
         );
+        for identity in interface.public_library_type_identities.values() {
+            self.install_compiled_library_identity_semantics(identity);
+        }
+        for library in interface.compiled_libraries.iter() {
+            self.install_compiled_library_semantics(library);
+        }
+    }
+
+    /// Rebuild one retained foreign nominal's declaring Loaf semantics only when the indexed artifact is the exact
+    /// selected provider carried by checked API metadata.
+    fn install_compiled_library_identity_semantics(&mut self, identity: &PublicLibraryTypeIdentity) {
+        let (Some(canonical), Some(selected_provider)) = (&identity.canonical, &identity.selected_provider) else {
+            return;
+        };
+        let loaves = Arc::clone(&self.loaves);
+        let Some(entry) = loaves.declaring_loaf(canonical) else {
+            return;
+        };
+        if &entry.artifact.identity != selected_provider {
+            return;
+        }
+        self.cache_transitive_pub_export_semantics(&entry.key, &entry.artifact.manifest);
     }
 
     /// Rebuild one compiled Loaf's checker-local semantic cache from its already-indexed immutable manifest.

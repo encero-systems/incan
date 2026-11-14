@@ -115,7 +115,8 @@ impl CheckedNamespaceInterface {
     pub fn installable(&self) -> Result<Arc<ModuleDependencyInterface>, String> {
         self.validate()?;
         let mut converter = TypeChecker::new();
-        let (mut remapping, foreign_nominal_scope) = checked_namespace_foreign_nominal_remapping(&self.api);
+        let (mut remapping, foreign_nominal_scope, foreign_nominal_identities) =
+            checked_namespace_foreign_nominal_projection(&self.api);
         let identities = self
             .identities
             .iter()
@@ -220,7 +221,7 @@ impl CheckedNamespaceInterface {
             transitive_public_types: Arc::new(transitive_public_types),
             transitive_public_traits: Arc::new(transitive_public_traits),
             compiled_libraries: Arc::from([]),
-            public_library_type_identities: Arc::default(),
+            public_library_type_identities: Arc::new(foreign_nominal_identities),
             symbol_rows: Arc::from(symbol_rows),
             snapshot: ModuleDependencyInterfaceSnapshot {
                 version: MODULE_DEPENDENCY_INTERFACE_SNAPSHOT_VERSION,
@@ -265,17 +266,19 @@ impl CheckedNamespaceInterface {
 }
 
 /// Convert artifact-qualified API leaves to canonical carriers and retain the exact identities those carriers name.
-fn checked_namespace_foreign_nominal_remapping(
+fn checked_namespace_foreign_nominal_projection(
     api: &crate::api_metadata::CheckedApiMetadata,
 ) -> (
     HashMap<String, String>,
     std::collections::BTreeMap<String, CanonicalSymbolId>,
+    HashMap<String, PublicLibraryTypeIdentity>,
 ) {
     use crate::library_manifest::{TypeRef, VisitTypeRefs};
 
     let mut projection = api.clone();
     let mut remapping = HashMap::new();
     let mut identities = std::collections::BTreeMap::new();
+    let mut admitted = HashMap::new();
     projection.visit_type_refs(&mut |ty| {
         let origin = match ty {
             TypeRef::Named { origin, .. } | TypeRef::Applied { origin, .. } => origin.as_ref(),
@@ -290,9 +293,26 @@ fn checked_namespace_foreign_nominal_remapping(
         };
         let binding = origin.binding_key();
         remapping.insert(binding.clone(), carrier);
+        let source_path = match &identity.origin {
+            SymbolOrigin::Package { module_path, .. } | SymbolOrigin::Module(module_path) => module_path
+                .iter()
+                .cloned()
+                .chain(std::iter::once(identity.declaration_name.clone()))
+                .collect(),
+            _ => vec![identity.declaration_name.clone()],
+        };
+        admitted.insert(
+            binding.clone(),
+            PublicLibraryTypeIdentity {
+                dependency_key: origin.provider.name.clone(),
+                source_path,
+                canonical: Some(identity.clone()),
+                selected_provider: Some(origin.provider.clone()),
+            },
+        );
         identities.insert(binding, identity);
     });
-    (remapping, identities)
+    (remapping, identities, admitted)
 }
 
 /// Return the declaration spelling shared by the frozen API row, symbol table and stable identity map.
@@ -355,9 +375,74 @@ fn namespace_exports(declaration: &crate::api_metadata::ApiDeclaration) -> Vec<E
 mod tests {
     use super::*;
 
+    /// Admit the exact package and module identity that owns `IoError`, with the smallest layout needed by this
+    /// dependency-interface contract.
+    fn admitted_io_error_fixture() -> Result<
+        (
+            Arc<crate::loaf_index::LoafIndex>,
+            tempfile::TempDir,
+            crate::library_manifest::NominalTypeOriginExport,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        use crate::api_metadata::{
+            CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+        };
+        use crate::library_exports::collect_checked_public_exports;
+        use crate::library_manifest::LibraryManifest;
+
+        let source = "pub model IoError:\n    pub kind: str\n";
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let module_path = vec!["primitives".to_string(), "io".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_package_identity(Some("incan_stdlib_primitives".into()));
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let symbol = checker.symbols.lookup("IoError").ok_or("missing IoError symbol")?;
+        let canonical = checker
+            .symbols
+            .identity_of(symbol)
+            .ok_or("missing IoError identity")?
+            .clone();
+        let checked_exports = collect_checked_public_exports(&program, &checker);
+        let module_api = collect_checked_api_metadata(&program, &checker, module_path);
+        let api = CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![module_api.clone()],
+            public_namespaces: Vec::new(),
+        };
+        let mut manifest = LibraryManifest::from_checked_exports("incan_stdlib_primitives", "0.6.0", &checked_exports);
+        manifest.contract_metadata.identity_graph.extend_checked_api_exports(
+            "incan_stdlib_primitives",
+            &api,
+            &[(vec!["primitives".to_string(), "io".to_string()], checked_exports)],
+        )?;
+        manifest.contract_metadata.api = Some(api);
+        let directory = tempfile::tempdir()?;
+        std::fs::write(
+            directory.path().join("incan_stdlib_primitives.incnlib"),
+            manifest.to_json_string()?,
+        )?;
+        let entry = crate::loaf_index::LoafIndex::standard("incan_stdlib_primitives", directory.path())?;
+        let origin = crate::library_manifest::NominalTypeOriginExport {
+            provider: entry.artifact.identity.clone(),
+            canonical: crate::library_manifest::CanonicalIdentityExport::from_canonical(
+                "incan_stdlib_primitives",
+                &canonical,
+            )
+            .ok_or("IoError identity cannot be exported")?,
+        };
+        Ok((Arc::new(crate::loaf_index::LoafIndex::new([entry])?), directory, origin))
+    }
+
     /// A retained editable interface must install the same nominal ownership tables used by ordinary dependencies.
     #[test]
-    fn installable_retains_nominal_scopes_carriers_and_layouts() -> Result<(), String> {
+    fn installable_retains_nominal_scopes_carriers_and_layouts() -> Result<(), Box<dyn std::error::Error>> {
+        let (loaves, _loaf_directory, foreign_origin) = admitted_io_error_fixture()?;
         let source = "pub model Order:\n    pub quantity: int\n    pub unit_price: float\n\npub model Failure:\n    pub message: str\n\npub def total(order: Order) -> float:\n    return float(order.quantity) * order.unit_price\n\npub def identity(order: Order) -> Order:\n    return order\n\npub def load() -> Result[Order, Failure]:\n    return Ok(Order(quantity=1, unit_price=1.0))\n\npub def foreign_load() -> int:\n    return 1\n";
         let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
         let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
@@ -369,26 +454,10 @@ mod tests {
             .map_err(|errors| format!("{errors:?}"))?;
         let mut retained = CheckedNamespaceInterface::from_checked("domain", &module_path, &program, &checker)?
             .ok_or("model namespace was not retained")?;
-        let mut foreign_identity = retained
-            .identities
-            .get("Order")
-            .ok_or("missing Order identity")?
-            .clone();
-        foreign_identity.origin = incan_semantics_core::SymbolOrigin::Package {
-            library: "foreign".to_string(),
-            module_path: vec!["types".to_string()],
-        };
-        foreign_identity.declaration_name = "ForeignOrder".to_string();
-        let foreign_origin = crate::library_manifest::NominalTypeOriginExport {
-            provider: crate::loaf_index::LoafIdentity {
-                name: "foreign".to_string(),
-                version: "1.0.0".to_string(),
-                digest: "foreign-digest".to_string(),
-                feature_projection: std::collections::BTreeSet::new(),
-            },
-            canonical: crate::library_manifest::CanonicalIdentityExport::from_canonical("foreign", &foreign_identity)
-                .ok_or("foreign identity cannot be exported")?,
-        };
+        let foreign_identity = foreign_origin
+            .canonical
+            .hydrate()
+            .ok_or("IoError identity cannot be hydrated")?;
         for declaration in &mut retained.api.declarations {
             let crate::api_metadata::ApiDeclaration::Function(function) = declaration else {
                 continue;
@@ -398,12 +467,12 @@ mod tests {
                     name: "Result".to_string(),
                     args: vec![
                         crate::library_manifest::TypeRef::Named {
-                            name: "ForeignOrder".to_string(),
-                            origin: Some(foreign_origin.clone()),
+                            name: "int".to_string(),
+                            origin: None,
                         },
                         crate::library_manifest::TypeRef::Named {
-                            name: "str".to_string(),
-                            origin: None,
+                            name: "IoError".to_string(),
+                            origin: Some(foreign_origin.clone()),
                         },
                     ],
                     origin: None,
@@ -448,13 +517,22 @@ mod tests {
         let consumer = crate::parser::parse(&consumer_tokens).map_err(|errors| format!("{errors:?}"))?;
         let dependencies = [("domain", &program)];
         let mut consumer_checker = TypeChecker::new();
+        consumer_checker.set_loaves(loaves);
         consumer_checker.set_current_module_path(Some(vec!["consumer".to_string()]));
         consumer_checker.register_dependency_module_path_segments("domain", module_path);
         consumer_checker.record_nominal_declaring_modules(&consumer, &dependencies);
         consumer_checker.install_dependency_interfaces_directly(&[installed]);
+        assert!(
+            consumer_checker.transitive_pub_types.contains_key(&foreign_carrier),
+            "installing the retained interface must replay the admitted IoError layout"
+        );
         consumer_checker
             .check_program_with_dependency_semantics(&consumer)
             .map_err(|errors| format!("{errors:?}"))?;
+        assert!(
+            consumer_checker.transitive_pub_types.contains_key(&foreign_carrier),
+            "the admitted IoError layout must survive the consumer body-check boundary"
+        );
         Ok(())
     }
 }
