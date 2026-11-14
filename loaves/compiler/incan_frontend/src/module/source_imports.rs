@@ -114,7 +114,8 @@ pub fn resolve_source_module_import(
 /// Resolve one import declaration while retaining the importing source-file identity when it is known.
 ///
 /// A located local module that is the importing file is classified as [`SourceModuleImportResolution::SelfImport`].
-/// This keeps accidental self imports from entering the source graph and becoming a recursive module.
+/// This keeps accidental self imports from entering the source graph and becoming a recursive module. A source path
+/// that names no file in any directory it resolves from is [`SourceModuleImportResolution::Missing`].
 pub fn resolve_source_module_import_from_source_file(
     base_dir: &Path,
     source_root: Option<&Path>,
@@ -145,16 +146,71 @@ pub fn resolve_source_module_import_from_source_file(
         return classify_local_source_import(module_ref, current_source_file, &path.segments, can_use_root_import);
     }
 
+    let mut bases = vec![primary_base.clone()];
     if !path.is_absolute
         && path.parent_levels == 0
         && let Some(root) = identity_root
         && root != primary_base
-        && let Some(module_ref) = resolve_first_source_candidate(&root, Some(&root), &candidates)
     {
-        return classify_local_source_import(module_ref, current_source_file, &path.segments, can_use_root_import);
+        if let Some(module_ref) = resolve_first_source_candidate(&root, Some(&root), &candidates) {
+            return classify_local_source_import(module_ref, current_source_file, &path.segments, can_use_root_import);
+        }
+        bases.push(root);
     }
 
-    SourceModuleImportResolution::External
+    if is_zen_import(import) {
+        return SourceModuleImportResolution::External;
+    }
+    SourceModuleImportResolution::Missing(missing_source_module(path, &bases))
+}
+
+/// Whether `import` is `import this`, which names the compiler's own Zen module rather than a source file when the
+/// program has no `this` module of its own.
+pub(super) fn is_zen_import(import: &ImportDecl) -> bool {
+    matches!(
+        &import.kind,
+        ImportKind::Module(path)
+            if path.parent_levels == 0 && !path.is_absolute && path.segments.as_slice() == [stdlib::STDLIB_THIS]
+    )
+}
+
+/// Describe a source import that resolved in none of `bases`, the directories it resolves from in resolution order.
+pub(super) fn missing_source_module(path: &ImportPath, bases: &[PathBuf]) -> MissingSourceModule {
+    let mut spelling = if path.is_absolute {
+        "crate.".to_string()
+    } else if path.parent_levels > 0 {
+        ".".repeat(path.parent_levels + 1)
+    } else {
+        String::new()
+    };
+    spelling.push_str(&path.segments.join("."));
+    let standard_path = std::iter::once(stdlib::STDLIB_ROOT.to_string())
+        .chain(path.segments.iter().cloned())
+        .collect::<Vec<_>>();
+    let standard_module =
+        (!path.is_absolute && path.parent_levels == 0 && stdlib::is_known_stdlib_module(&standard_path))
+            .then(|| standard_path.join("."));
+    let mut module_files: Vec<PathBuf> = Vec::new();
+    for base in bases {
+        let base = base.canonicalize().unwrap_or_else(|_| base.clone());
+        let module = path
+            .segments
+            .iter()
+            .fold(base, |directory, segment| directory.join(segment));
+        let file = if module.is_dir() {
+            module.join("mod.incn")
+        } else {
+            module.with_extension("incn")
+        };
+        if !module_files.contains(&file) {
+            module_files.push(file);
+        }
+    }
+    MissingSourceModule {
+        spelling,
+        standard_module,
+        module_files,
+    }
 }
 
 /// Classify a located source module while enforcing the no-self-import invariant.
@@ -212,6 +268,7 @@ pub fn resolve_import_path(base_dir: &Path, import: &ImportDecl) -> Option<PathB
         SourceModuleImportResolution::Local(module_ref) => Some(module_ref.file_path),
         SourceModuleImportResolution::SelfImport { .. }
         | SourceModuleImportResolution::Stdlib { .. }
+        | SourceModuleImportResolution::Missing(_)
         | SourceModuleImportResolution::External => None,
     }
 }
