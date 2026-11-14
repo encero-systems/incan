@@ -3,14 +3,19 @@
 from rust::incan_loaf_names import artifact_stem
 from rust::std::string import String as RustString
 from std.fs import Path
+from std.json import parse
 from files import make_directory, read
 from home import home
 from driver_command import driver_command
 from toolchain import Toolchain
 from observation import Ledger, SETTLE_SECONDS, load_ledger, note_directory, skipped_directory, trace
+from graph_queries import relationship_keys, text
 from publication import publish
 from unit_freshness import fingerprint
 from frozen_inputs import observation as frozen_observation
+
+
+const HEX_DIGITS: FrozenList[str] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]
 
 
 pub model GraphUnit:
@@ -199,3 +204,55 @@ pub def cache_file(digest: str) -> Result[Path, str]:
     directory = home()?.joinpath("cache").joinpath("codegraph-projections")
     make_directory(directory)?
     return Ok(directory.joinpath(f"{digest}.incngraph"))
+
+
+pub def published(unit: GraphUnit) -> bool:
+    """Whether the unit is a package's graph under its virtual root: the same records whichever project asks."""
+    return unit.root.0.startswith("@") and unit.path.is_file()
+
+
+def key_mark(key: str) -> Result[str, str]:
+    """The fixed-width mark a relationship key is filed and looked up under."""
+    return Ok(fingerprint([key])?[:16])
+
+
+def bucket_file(location: Path, mark: str) -> Path:
+    """The index part that holds every key whose mark starts with this hex digit."""
+    return Path(f"{location.0}.keys-{mark[:1]}")
+
+
+pub def write_relationships(location: Path, document: str) -> Result[None, str]:
+    """
+    Prepare a decoded relationship group for lookups by key, once per published graph.
+
+    1. Keep each relationship's line and note its byte range under every key a query can select it by.
+    2. Publish the lines and the sixteen key parts before the entry that makes them visible.
+    """
+    # 1. One row per key of each relationship: the key's mark, then where the relationship's line is.
+    mut lines: list[str] = []
+    mut parts: Dict[str, list[str]] = {}
+    mut offset = 0
+    for line in document.split("\n"):
+        if line == "":
+            continue
+        record = parse(line).map_err((error) => error.message())?
+        if text(record, "record") == "header":
+            continue
+        length = len(line.encode("utf-8"))
+        for key in relationship_keys(record):
+            mark = key_mark(key)?
+            if mark[:1] not in parts:
+                parts[mark[:1]] = []
+            parts[mark[:1]].append(f"{mark}\t{offset}\t{length}")
+        lines.append(line)
+        offset += length + 1
+    # 2. A reader that finds the entry finds everything it names.
+    publish(Path(f"{location.0}.records"), "\n".join(lines) + "\n")?
+    for digit in HEX_DIGITS:
+        publish(bucket_file(location, digit), "\n".join(parts.get(digit).unwrap_or([])) + "\n")?
+    return publish(location, f"{len(lines)}\n")
+
+
+pub def relationship_candidates(location: Path, keys: list[str]) -> Result[list[str], str]:
+    """The prepared relationships a query reads for `keys`: so far, every one of them."""
+    return Ok([line for line in read(Path(f"{location.0}.records"))?.split("\n") if line != ""])
