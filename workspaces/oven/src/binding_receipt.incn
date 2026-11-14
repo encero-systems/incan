@@ -1,0 +1,254 @@
+"""
+`incan inspect bindings --format receipt [--target TRIPLE] [PATH]`: 0.5.1's redaction-safe binding-use receipt, read
+from the codegraph's checked records. It names each checked binding by its descriptor identity, each direct native call
+and each public facade over a private raw bridge, with no source locations or local paths. With `--target`, it joins the
+project's locked `[[interop.c.targets]]` contract for that triple and keeps a binding-to-artifact relation only for a
+binding the compiler produced.
+"""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.json import JsonValue, parse
+from c_interop import CInteropTarget, parse_c_targets
+from intake import ManifestReader, read_manifest_snapshot
+from interop_lock import interop_fact, locked_interop
+from json_fields import required_items, required_text, string_value
+from lock_format import lock_path, read_lock
+
+const RECEIPT_SCHEMA: int = 2
+
+
+model ReceiptTarget:
+    """The joined target: its triple, its locked contract's identity and its binding relations."""
+
+    pub target: str
+    pub identity: str
+    pub relations: Dict[str, list[str]] = {}
+
+
+pub def binding_receipt(export: str, root: str, triple: str) -> Result[JsonValue, str]:
+    """
+    The receipt for one codegraph export.
+
+    1. Index the export's modules, declarations, bindings, calls and facades.
+    2. Join the locked target, when one is selected, and refuse a relation the compiler did not produce.
+    3. Assemble the bindings, calls and facades in a stable order.
+    """
+    # 1. The checked records, by the identities other records name them with.
+    mut modules: Dict[str, str] = {}
+    mut visibility: Dict[str, str] = {}
+    mut bindings: list[JsonValue] = []
+    mut calls: list[JsonValue] = []
+    mut facades: list[JsonValue] = []
+    for line in export.split("\n"):
+        if line == "":
+            continue
+        record = parse(line).map_err((error) => f"codegraph record: {error.message()}")?
+        kind = string_value(record.require("record").map_err((error) => error.message())?)?
+        if kind == "module":
+            modules[required_text(record, "id")?] = ".".join(texts(record, "module_path")?)
+        elif kind == "declaration":
+            visibility[declaration_key(record)?] = text_or(record, "visibility", "private")
+        elif kind == "c_binding":
+            bindings.append(record)
+        elif kind == "c_binding_call":
+            calls.append(record)
+        elif kind == "c_binding_facade":
+            facades.append(record)
+    # 2. A selected target's relations name only bindings this compilation produced.
+    mut joined: Option[ReceiptTarget] = None
+    if triple != "":
+        joined = Some(receipt_target(root, triple)?)
+    mut produced: list[str] = []
+    for record in bindings:
+        module = modules.get(required_text(record, "module_id")?).unwrap_or("").replace(".", "::")
+        produced.append(f"{module}::{required_text(record, "name")?}")
+    if let Some(target) = joined:
+        for key in sorted([key for key in target.relations.keys()]):
+            if key not in produced:
+                return Err(
+                    f"locked interop target `{target.target}` declares binding-artifact correspondence for `{key}` but compilation did not produce that checked binding",
+                )
+    # 3. Each part in a stable order.
+    mut fields: Dict[str, JsonValue] = {"schema_version": JsonValue.int(RECEIPT_SCHEMA)}
+    mut compatibility: Dict[str, JsonValue] = {"binding_contract": JsonValue.string("exact_descriptor_identity")}
+    if let Some(target) = joined:
+        compatibility["target_contract"] = JsonValue.string("exact_locked_target_identity")
+        fields["target"] = JsonValue.object(
+            {"target": JsonValue.string(target.target), "locked_target_identity": JsonValue.string(target.identity)},
+        )
+    fields["compatibility"] = JsonValue.object(compatibility)
+    fields["bindings"] = JsonValue.array(receipt_bindings(bindings, modules, joined)?)
+    fields["calls"] = JsonValue.array(receipt_calls(calls)?)
+    fields["facades"] = JsonValue.array(receipt_facades(facades, calls, visibility)?)
+    return Ok(JsonValue.object(fields))
+
+
+def receipt_target(root: str, triple: str) -> Result[ReceiptTarget, str]:
+    """The project's contract for `triple`, as current `oven.lock` records it, with its declared binding relations."""
+    lock_file = lock_path(Path(root))
+    if not lock_file.is_file():
+        return Err(f"`--target {triple}` joins the locked C interop contract, but {lock_file.0} is missing; run `oven lock`")
+    lock = read_lock(lock_file)?
+    snapshot = read_manifest_snapshot(Path(root), ManifestReader()).map_err((error) => error.message())?
+    manifest = Path(root).joinpath("loaf.toml").0
+    table = snapshot.parsed.as_table().map_err((error) => f"{manifest}: {error.message()}")?
+    targets = parse_c_targets(table, manifest).map_err((error) => error.message())?
+    for declared in targets:
+        if declared.target != triple:
+            continue
+        current = locked_interop(root, [declared])?[0]
+        mut recorded = false
+        for entry in lock.interop:
+            if entry.target == triple and entry == current:
+                recorded = true
+        if not recorded:
+            return Err(f"oven.lock does not record the current C interop contract of `{triple}`; run `oven lock`")
+        return Ok(
+            ReceiptTarget(
+                target=triple,
+                identity="sha256:" + hexlify(sha256.digest(interop_fact([current]).encode("utf-8"))),
+                relations=relations(declared),
+            ),
+        )
+    return Err(f"`--target {triple}` is not a target {manifest} declares under [[interop.c.targets]]")
+
+
+def relations(target: CInteropTarget) -> Dict[str, list[str]]:
+    """Each declared binding relation, by `module::name`."""
+    mut found: Dict[str, list[str]] = {}
+    for binding in target.bindings:
+        found[f"{"::".join(binding.module)}::{binding.name}"] = binding.artifacts
+    return found
+
+
+def receipt_bindings(
+    records: list[JsonValue],
+    modules: Dict[str, str],
+    joined: Option[ReceiptTarget],
+) -> Result[list[JsonValue], str]:
+    """Each checked binding by module and name, with its identity and, for a joined target, its artifacts."""
+    mut keyed: Dict[str, JsonValue] = {}
+    for record in records:
+        module = modules.get(required_text(record, "module_id")?).unwrap_or("")
+        name = required_text(record, "name")?
+        mut fields: Dict[str, JsonValue] = {"module": JsonValue.array(
+            [JsonValue.string(part) for part in module.split(".") if part != ""],
+        ), "name": JsonValue.string(name), "identity": JsonValue.string(required_text(record, "binding_identity")?)}
+        if let Some(target) = joined:
+            key = f"{module.replace(".", "::")}::{name}"
+            if key in target.relations:
+                fields["target_artifacts"] = JsonValue.array(
+                    [JsonValue.string(artifact) for artifact in target.relations[key]],
+                )
+        keyed[f"{module}\t{name}"] = JsonValue.object(fields)
+    return Ok([keyed[key] for key in sorted([key for key in keyed.keys()])])
+
+
+def receipt_calls(records: list[JsonValue]) -> Result[list[JsonValue], str]:
+    """Each direct native call: the binding's identity, the symbol and the calling function."""
+    mut keyed: Dict[str, JsonValue] = {}
+    for record in records:
+        identity = required_text(record, "binding_identity")?
+        symbol = required_text(record, "symbol")?
+        mut fields: Dict[str, JsonValue] = {"binding_identity": JsonValue.string(identity), "symbol": JsonValue.string(
+            symbol,
+        )}
+        mut owner = ""
+        if let Some(declaration) = record.get("owner_declaration_id"):
+            owner = owner_name(string_value(declaration)?)
+            fields["owner"] = JsonValue.object(
+                {"name": JsonValue.string(owner), "visibility": JsonValue.string(
+                    text_or(record, "owner_visibility", "private"),
+                )},
+            )
+        keyed[f"{identity}\t{symbol}\t{owner}"] = JsonValue.object(fields)
+    return Ok([keyed[key] for key in sorted([key for key in keyed.keys()])])
+
+
+def receipt_facades(
+    records: list[JsonValue],
+    calls: list[JsonValue],
+    visibility: Dict[str, str],
+) -> Result[list[JsonValue], str]:
+    """Each public facade over a private raw bridge, with the raw calls the bridge owns."""
+    mut keyed: Dict[str, JsonValue] = {}
+    for record in records:
+        facade = required_text(record, "facade_declaration_id")?
+        bridge = required_text(record, "bridge_declaration_id")?
+        module = required_text(record, "module_id")?
+        raw_ids = texts(record, "raw_call_ids")?
+        owned = [":".join(raw.split(":")[-4:]) for raw in raw_ids]
+        mut owned_calls: Dict[str, JsonValue] = {}
+        for call in calls:
+            if raw_call_key(call)? in owned:
+                identity = required_text(call, "binding_identity")?
+                symbol = required_text(call, "symbol")?
+                owned_calls[f"{identity}\t{symbol}"] = JsonValue.object(
+                    {"binding_identity": JsonValue.string(identity), "symbol": JsonValue.string(symbol)},
+                )
+        if len(owned_calls) == 0:
+            continue
+        ordered = [owned_calls[key] for key in sorted([key for key in owned_calls.keys()])]
+        mut entry: Dict[str, JsonValue] = {"facade": owner_json(module, facade, visibility)}
+        entry["bridge"] = owner_json(module, bridge, visibility)
+        entry["calls"] = JsonValue.array(ordered)
+        keyed[f"{owner_name(facade)}\t{owner_name(bridge)}\t{len(ordered)}"] = JsonValue.object(entry)
+    return Ok([keyed[key] for key in sorted([key for key in keyed.keys()])])
+
+
+def owner_json(module: str, declaration: str, visibility: Dict[str, str]) -> JsonValue:
+    """A calling function of `module` by name and visibility."""
+    return JsonValue.object(
+        {"name": JsonValue.string(owner_name(declaration)), "visibility": JsonValue.string(
+            visibility.get(owner_key(module, declaration)).unwrap_or("private"),
+        )},
+    )
+
+
+def owner_name(declaration: str) -> str:
+    """A `decl:FILE:START:NAME` owner's name."""
+    return declaration.split(":")[-1]
+
+
+def owner_key(module: str, declaration: str) -> str:
+    """
+    A `decl:FILE:START:NAME` owner of `module` as `MODULE:START:NAME`, the key `declaration_key` gives its
+    declaration. The file is left out: a reused compilation's owner names the checkout it was first compiled in.
+    """
+    parts = declaration.split(":")
+    return f"{module}:{parts[-2]}:{parts[-1]}"
+
+
+def declaration_key(record: JsonValue) -> Result[str, str]:
+    """A declaration record as `MODULE:START:NAME`, the form `owner_key` gives a raw-call owner."""
+    span = record.require("span").map_err((error) => error.message())?
+    start = span.require("start").map_err((error) => error.message())?.expect_int().map_err((error) => error.message())?
+    return Ok(f"{required_text(record, "module_id")?}:{start}:{required_text(record, "name")?}")
+
+
+def texts(record: JsonValue, key: str) -> Result[list[str], str]:
+    """A string-array field."""
+    mut found: list[str] = []
+    for item in required_items(record, key)?:
+        found.append(string_value(item)?)
+    return Ok(found)
+
+
+def text_or(record: JsonValue, key: str, fallback: str) -> str:
+    """A string field, or `fallback` when the record has none."""
+    match record.get(key):
+        Some(value) =>
+            match value.expect_str():
+                Ok(text) => return text
+                Err(_) => return fallback
+        None => return fallback
+
+
+def raw_call_key(call: JsonValue) -> Result[str, str]:
+    """A raw call as a facade's `raw_call_ids` end in it: `BINDING:SYMBOL:START:END`."""
+    span = call.require("span").map_err((error) => error.message())?
+    start = span.require("start").map_err((error) => error.message())?.expect_int().map_err((error) => error.message())?
+    end = span.require("end").map_err((error) => error.message())?.expect_int().map_err((error) => error.message())?
+    return Ok(f"{required_text(call, "binding")?}:{required_text(call, "symbol")?}:{start}:{end}")
