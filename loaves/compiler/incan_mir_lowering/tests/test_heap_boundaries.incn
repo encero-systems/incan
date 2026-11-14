@@ -1,0 +1,35 @@
+"""A lowering stage boundary returns the heap a stage freed when the footprint is far above the live heap."""
+
+from heap_boundaries import RETAINED_HEAP_RELEASE, stage_boundary
+from pub::incan_platform.probes import current_footprint, current_live_allocated
+
+# Blocks of 256 integers (2 KiB) a stage allocates and frees: 768 Ki of them is 1.5 GiB, over the release threshold.
+const FREED_BLOCKS: int = 786432
+const BLOCK_VALUES: int = 256
+
+
+def retained_heap() -> Result[tuple[int, int], str]:
+    """The footprint and the bytes of it that are not live allocations."""
+    footprint = current_footprint()?
+    live = current_live_allocated()?
+    return Ok((footprint, footprint - live))
+
+
+def free_one_stage() -> int:
+    """Allocate a stage's temporaries in small blocks and free them on return, as a lowering stage does."""
+    mut blocks: list[list[int]] = []
+    for index in range(FREED_BLOCKS):
+        blocks.append(list.repeat(index, BLOCK_VALUES))
+    return len(blocks)
+
+
+pub def test_a_stage_boundary_returns_freed_heap_toward_the_live_heap() -> Result[None, str]:
+    """Freed heap over the threshold stays charged to the footprint until the stage boundary returns it."""
+    assert free_one_stage() == FREED_BLOCKS
+    footprint, retained = retained_heap()?
+    assert retained >= RETAINED_HEAP_RELEASE, f"the freed stage left only {retained} of {footprint} bytes retained"
+    stage_boundary(false, "freed stage")
+    returned_footprint, still_retained = retained_heap()?
+    kept = f"the boundary kept {still_retained} of {returned_footprint} bytes retained, from {retained} of {footprint}"
+    assert still_retained < RETAINED_HEAP_RELEASE, kept
+    return Ok(None)

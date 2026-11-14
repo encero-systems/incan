@@ -25,7 +25,7 @@ from pub::incan_mir_plan import (
 from trait_links import validate_project_implementation, has_open_trait_arguments
 from rust::std::env import var_os as native_environment
 from trace_channel import emit, traced
-from pub::incan_platform.probes import current_footprint, current_live_allocated
+from heap_boundaries import footprint_traced, stage_boundary
 from rust::incan_semantics_core import IncanType as RustType, CompilerNodeId
 from rust::incan_semantics_core::body_ir import NativeUnionDeclaration, BodyIrModule as RustBodyIrModule
 from classes import body_module_identity, is_program_entry
@@ -1127,10 +1127,10 @@ pub def plan_contexts(
     retained_templates: &ConstructorIndex,
 ) -> Result[PlanContexts, str]:
     """Validate against retained authority and prepare only the current slice's compact specialized contexts."""
-    footprint_trace = traced("INCAN_TRACE_LOWERING_FOOTPRINT")
+    footprint_trace = footprint_traced()
     trace_lowering(trace, "validate modules")
     validate_plan_inputs(modules, sources, files, entry, validation_context)?
-    trace_lowering_footprint(footprint_trace, "validated modules")
+    stage_boundary(footprint_trace, "validated modules")
     trace_lowering(trace, "project context")
     mut context, owners = project_context(modules, entry)?
     source_context, constructors, nominal_instances, template_references = specialize_plan_context(
@@ -1151,10 +1151,10 @@ def plan_contexts_parallel(
     retained_templates: &ConstructorIndex,
 ) -> Result[PlanContexts, str]:
     """Validate a resumed runtime slice and project its body-weighted module ranges concurrently."""
-    footprint_trace = traced("INCAN_TRACE_LOWERING_FOOTPRINT")
+    footprint_trace = footprint_traced()
     trace_lowering(trace, "validate resumed modules")
     validate_plan_inputs(modules.as_ref(), sources, files, entry, validation_context)?
-    trace_lowering_footprint(footprint_trace, "validated resumed modules")
+    stage_boundary(footprint_trace, "validated resumed modules")
     trace_lowering(trace, "parallel resumed project context")
     mut context, owners = project_context_parallel(modules, entry)?
     source_context, constructors, nominal_instances, template_references = specialize_plan_context(
@@ -1172,7 +1172,7 @@ def specialize_plan_context(
     trace: bool,
 ) -> Result[tuple[BodyIrModule, ConstructorIndex, list[NominalInstance], list[str]], str]:
     """Specialize one serially or concurrently projected module context under the same deterministic layout rules."""
-    trace_lowering_footprint(footprint_trace, "joined project")
+    stage_boundary(footprint_trace, "joined project")
     # Later generic-instance and publication work reads only source nominal and enum declarations. Retain that
     # declaration authority without keeping a second copy of executable bodies or the other joined module tables.
     mut source_context = BodyIrModule.declarations_only(str(context.module_id.path()))
@@ -1183,7 +1183,7 @@ def specialize_plan_context(
         retained_templates,
     )
     template_references = referenced_templates(context)
-    trace_lowering_footprint(footprint_trace, "retained source templates")
+    stage_boundary(footprint_trace, "retained source templates")
     # A closed enum payload can name a nominal instance no frame uses, and a closed nominal field or method frame can
     # name an enum instance no source frame uses, so enum layouts are discovered before nominal specialization and
     # installed again from the same joined context afterwards.
@@ -1191,10 +1191,10 @@ def specialize_plan_context(
     enum_layouts = specialized_enum_layouts(context)?
     trace_lowering(trace, "specialize nominals")
     nominal_instances = specialize_nominals_with_instances(constructors, context, enum_layouts)?
-    trace_lowering_footprint(footprint_trace, "specialized nominals")
+    stage_boundary(footprint_trace, "specialized nominals")
     trace_lowering(trace, "specialize enums")
     specialize_enums(context)?
-    trace_lowering_footprint(footprint_trace, "specialized enums")
+    stage_boundary(footprint_trace, "specialized enums")
     return Ok((source_context, constructors, nominal_instances, template_references))
 
 
@@ -1215,30 +1215,6 @@ def trace_lowering(enabled: bool, stage: str) -> None:
     """Report one requested lowering stage without repeating diagnostic selection at each step."""
     if enabled:
         emit("lowering", "INCAN_TRACE_LOWERING", f"lowering: {stage}")
-
-
-def trace_lowering_footprint(enabled: bool, boundary: str) -> None:
-    """Report physical footprint and live allocator bytes at a requested boundary, without affecting ordinary runs."""
-    if not enabled:
-        return
-    match current_footprint():
-        Ok(footprint) =>
-            match current_live_allocated():
-                Ok(live) => emit(
-                    "lowering_footprint",
-                    "INCAN_TRACE_LOWERING_FOOTPRINT",
-                    f"lowering footprint: {boundary}: {footprint} bytes; live allocated: {live} bytes",
-                )
-                Err(reason) => emit(
-                    "lowering_footprint",
-                    "INCAN_TRACE_LOWERING_FOOTPRINT",
-                    f"lowering footprint: {boundary}: {footprint} bytes; live allocated: unavailable: {reason}",
-                )
-        Err(reason) => emit(
-            "lowering_footprint",
-            "INCAN_TRACE_LOWERING_FOOTPRINT",
-            f"lowering footprint: {boundary}: unavailable: {reason}",
-        )
 
 
 def validate_plan_inputs(

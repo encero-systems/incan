@@ -1,0 +1,32 @@
+"""Lowering's stage boundaries, where the footprint and live heap are traced on request."""
+
+from pub::incan_platform.probes import current_footprint, current_live_allocated
+from trace_channel import emit, traced
+
+# A footprint at least this far above the live heap is freed heap a boundary returns: 1 GiB.
+pub const RETAINED_HEAP_RELEASE: int = 1073741824
+
+# The former variable that prints each boundary's readings.
+const FOOTPRINT_TRACE: str = "INCAN_TRACE_LOWERING_FOOTPRINT"
+
+
+pub def footprint_traced() -> bool:
+    """Whether stage boundaries trace their footprint readings."""
+    return traced(FOOTPRINT_TRACE)
+
+
+pub def stage_boundary(trace: bool, boundary: str) -> None:
+    """Report physical footprint and live allocator bytes at a requested boundary, without affecting ordinary runs."""
+    if not trace:
+        return
+    match current_footprint():
+        Ok(footprint) =>
+            match current_live_allocated():
+                Ok(live) => trace_footprint(f"{boundary}: {footprint} bytes; live allocated: {live} bytes")
+                Err(reason) => trace_footprint(f"{boundary}: {footprint} bytes; live allocated: unavailable: {reason}")
+        Err(reason) => trace_footprint(f"{boundary}: unavailable: {reason}")
+
+
+def trace_footprint(text: str) -> None:
+    """Emit one boundary's readings into the lowering footprint trace."""
+    emit("lowering_footprint", FOOTPRINT_TRACE, f"lowering footprint: {text}")
