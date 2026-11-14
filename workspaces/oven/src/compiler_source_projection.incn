@@ -177,6 +177,11 @@ pub def owner_source_key(origin: str, path: str, name: str) -> RecordKey:
     return source_key("owner-source", origin, path, name)
 
 
+pub def signature_key(origin: str, path: str, facet: str) -> RecordKey:
+    """Name one declaration's header without its implementation, as `signature_record` keys it."""
+    return source_key("declaration-signature", origin, path, facet)
+
+
 pub def compiled_owner_source(
     projection: &SourceProjection,
     module: str,
