@@ -1,0 +1,132 @@
+"""A snapshot tells a present value, a tombstone and absence apart, and reports damage as damage."""
+
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from pub::incan_platform.store import begin, commit, delete, put, snapshot as substrate_snapshot
+from pub::incan_platform.store.disk import root as disk_root
+from db.errors import DbError, DbErrorKind, DbOperation
+from db.records import RecordKey, RecordState
+from db.store import open
+
+
+pub def test_a_snapshot_reads_values_tombstones_and_absence_apart() -> Result[None, str]:
+    """A present record holds its value and revision, a deleted one its tombstone's revision, and a missing one none."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    path = scratch.path().joinpath("site.db")
+    store = checked(open(path))?
+    published = checked(store.view("published"))?
+    kept = RecordKey(family="pages", id="guide")
+    removed = RecordKey(family="pages", id="draft")
+    write(path, "published", kept, b"Guide")?
+    write(path, "published", removed, b"Draft")?
+    erase(path, "published", removed)?
+    selected = checked(published.snapshot())?
+    match checked(selected.read(kept))?:
+        RecordState.Present(version) =>
+            assert version.value == b"Guide"
+            assert version.revision.is_some(), "a committed value has no revision"
+        _ =>
+            assert false, "a present record was not read as present"
+    match checked(selected.read(removed))?:
+        RecordState.Deleted(tombstone) =>
+            assert tombstone.revision.is_some(), "a committed tombstone has no revision"
+        _ =>
+            assert false, "a deleted record was not read as deleted"
+    match checked(selected.read(RecordKey(family="pages", id="missing")))?:
+        RecordState.Absent => pass
+        _ =>
+            assert false, "a missing record was not read as absent"
+    match checked(selected.read(RecordKey(family="assets", id="guide")))?:
+        RecordState.Absent => pass
+        _ =>
+            assert false, "an identity in another family read as the same record"
+    return Ok(None)
+
+
+pub def test_a_snapshot_reads_after_its_store_closes_until_released() -> Result[None, str]:
+    """A snapshot reads through its own lease after `close()`; once released, its reads are refused as closed."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    path = scratch.path().joinpath("site.db")
+    store = checked(open(path))?
+    published = checked(store.view("published"))?
+    key = RecordKey(family="pages", id="guide")
+    write(path, "published", key, b"Guide")?
+    mut selected = checked(published.snapshot())?
+    checked(store.close())?
+    match checked(selected.read(key))?:
+        RecordState.Present(version) =>
+            assert version.value == b"Guide"
+        _ =>
+            assert false, "closing the store changed what a snapshot reads"
+    selected.release()
+    match selected.read(key):
+        Ok(_) =>
+            assert false, "a released snapshot was read"
+        Err(error) =>
+            assert error.kind == DbErrorKind.Closed and error.operation == DbOperation.Read, error.message()
+    return Ok(None)
+
+
+pub def test_an_unrecordable_record_key_is_refused() -> Result[None, str]:
+    """A family name or record identity that is empty or holds whitespace is refused before anything is read."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    store = checked(open(scratch.path().joinpath("site.db")))?
+    selected = checked(checked(store.view("published"))?.snapshot())?
+    keys = [
+        RecordKey(family="", id="guide"),
+        RecordKey(family="two words", id="guide"),
+        RecordKey(family="pages", id=""),
+        RecordKey(family="pages", id="tab\there"),
+    ]
+    for key in keys:
+        match selected.read(key):
+            Ok(_) =>
+                assert false, f"read the unrecordable key {key.family}/{key.id}"
+            Err(error) =>
+                assert error.kind == DbErrorKind.InvalidName, error.message()
+    return Ok(None)
+
+
+pub def test_a_damaged_record_is_corruption_never_absence() -> Result[None, str]:
+    """A record whose stored frame is damaged is a corruption error, never absent and never an older value."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    path = scratch.path().joinpath("site.db")
+    store = checked(open(path))?
+    published = checked(store.view("published"))?
+    key = RecordKey(family="pages", id="guide")
+    write(path, "published", key, b"Guide")?
+    for segment in path.joinpath("segments").iterdir().map_err((error) => error.message())?:
+        damage_last_byte(segment)?
+    match checked(published.snapshot())?.read(key):
+        Ok(_) =>
+            assert false, "a damaged record was read as a state"
+        Err(error) =>
+            assert error.kind == DbErrorKind.Corruption, error.message()
+    return Ok(None)
+
+
+def write(path: Path, view: str, key: RecordKey, value: bytes) -> Result[None, str]:
+    """Publish one encoded value straight through the substrate, as a typed family's commit would."""
+    selected = substrate_snapshot(disk_root(path.0), view).map_err((error) => error.message())?
+    _ = commit(put(begin(selected), key.store_key(), value)).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def erase(path: Path, view: str, key: RecordKey) -> Result[None, str]:
+    """Publish one tombstone straight through the substrate."""
+    selected = substrate_snapshot(disk_root(path.0), view).map_err((error) => error.message())?
+    _ = commit(delete(begin(selected), key.store_key())).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def damage_last_byte(path: Path) -> Result[None, str]:
+    """Cut the last byte off a stored file, past its permissions, as a stray tool would."""
+    data = path.read_bytes().map_err((error) => error.message())?
+    path.chmod(false).map_err((error) => error.message())?
+    path.write_bytes(data[:len(data) - 1]).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def checked[T](result: Result[T, DbError]) -> Result[T, str]:
+    """A `std.db` result with its failure as the test's message."""
+    return result.map_err((error) => error.message())

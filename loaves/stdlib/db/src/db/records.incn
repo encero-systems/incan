@@ -1,0 +1,50 @@
+"""Record addresses, and what a selection holds under one: a present value, a tombstone, or nothing."""
+
+from crate.db.errors import DbError, DbOperation
+from crate.db.names import check_name
+
+# The substrate keys of `std.db` records start with this token, apart from any other key the store holds.
+const RECORD_KEYS: str = "record"
+
+
+pub model RecordKey:
+    """
+    The address of one logical record: its family's storage name and its identity within that family.
+
+    Equal contents never make two keys one record. A typed family supplies both parts and encodes the values stored
+    under them.
+    """
+
+    pub family: str
+    pub id: str
+
+    pub def store_key(self) -> str:
+        """The substrate key holding this record; each part is one token, so no two records share a key."""
+        return f"{RECORD_KEYS}\t{self.family}\t{self.id}"
+
+
+pub model RecordVersion[T]:
+    """One present value and the immutable revision holding it; a staged write has no revision until it commits."""
+
+    pub value: T
+    pub revision: Option[str]
+
+
+pub model Tombstone:
+    """One deletion and the immutable revision recording it; a staged deletion has no revision until it commits."""
+
+    pub revision: Option[str]
+
+
+pub enum RecordState[T]:
+    """What a selection holds under one record key. A failure to read is a `DbError`, never one of these."""
+
+    Present(RecordVersion[T])
+    Deleted(Tombstone)
+    Absent
+
+
+pub def check_record_key(operation: DbOperation, key: RecordKey) -> Result[None, DbError]:
+    """Refuse a key whose family name or record identity the store cannot record as one token."""
+    check_name(operation, "family name", key.family)?
+    return check_name(operation, "record identity", key.id)

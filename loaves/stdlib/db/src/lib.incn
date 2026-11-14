@@ -2,6 +2,8 @@
 
 import db.errors
 import db.handle
+import db.names
+import db.records
 import db.snapshots
 import db.views
 import db.store

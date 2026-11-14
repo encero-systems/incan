@@ -1,0 +1,23 @@
+"""The one rule for the names a store records: view names, family names and record identities."""
+
+from crate.db.errors import DbError, DbErrorKind, DbOperation
+
+
+pub def check_name(operation: DbOperation, role: str, name: str) -> Result[None, DbError]:
+    """
+    Refuse a name, playing `role`, that the store cannot record as one token.
+
+    A name is nonempty and holds no whitespace or control character: the store separates the views of a generation,
+    and the parts of a record's key, with those characters.
+    """
+    if name == "":
+        return Err(invalid_name(operation, name, f"a {role} is empty"))
+    for character in name:
+        if character <= " " or character == "\x7f":
+            return Err(invalid_name(operation, name, f"a {role} holds whitespace or a control character"))
+    return Ok(None)
+
+
+def invalid_name(operation: DbOperation, name: str, detail: str) -> DbError:
+    """The refusal of one name."""
+    return DbError.refused(DbErrorKind.InvalidName, operation, name, detail)

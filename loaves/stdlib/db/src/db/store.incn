@@ -9,7 +9,8 @@ from pub::incan_platform.store.path import StorePath
 from crate.db.errors import DbError, DbErrorKind, DbOperation, store_failure
 from crate.db.handle import Placement, StoreHandle
 from crate.db.snapshots import Snapshot, selection_of
-from crate.db.views import View, check_view_name
+from crate.db.names import check_name
+from crate.db.views import View
 
 
 pub class Store:
@@ -47,7 +48,7 @@ pub class Store:
         view; neither replaces the other.
         """
         self.handle.require_open(DbOperation.View)?
-        check_view_name(DbOperation.View, name)?
+        check_name(DbOperation.View, "view name", name)?
         if name not in self.views()?:
             create_view(self.handle, name)?
         return Ok(View.of(self.handle.clone(), name))
@@ -68,7 +69,7 @@ pub class Store:
         """
         # 1. The snapshot must be held, and taken from this store.
         self.handle.require_open(DbOperation.Fork)?
-        check_view_name(DbOperation.Fork, name)?
+        check_name(DbOperation.Fork, "view name", name)?
         snapshot.require_held(DbOperation.Fork)?
         if snapshot.store() != self.handle.identity:
             detail = "the snapshot is of another store"
