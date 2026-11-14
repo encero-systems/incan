@@ -32,7 +32,18 @@ const TARGET_KEYS: FrozenList[str] = [
     "artifacts",
     "bindings",
 ]
-const ARTIFACT_KEYS: FrozenList[str] = ["name", "kind", "path", "dependencies", "origin", "capability"]
+const ARTIFACT_KEYS: FrozenList[str] = [
+    "name",
+    "kind",
+    "path",
+    "dependencies",
+    "origin",
+    "capability",
+    "runtime-name",
+    "placement",
+    "minimum-platform",
+]
+const BUNDLED_KEYS: FrozenList[str] = ["runtime-name", "placement", "minimum-platform"]
 const BINDING_KEYS: FrozenList[str] = ["module", "name", "artifacts"]
 const ORIGIN_KEYS: FrozenList[str] = ["source", "revision", "license"]
 
@@ -44,6 +55,8 @@ pub enum CArtifactKind(str):
     Static = "static"
     # A library or framework the selected toolchain or SDK supplies, named by its capability.
     System = "system"
+    # A package-owned dynamic library or framework a platform packager stages beside the application.
+    Bundled = "bundled"
 
 
 @derive(Eq)
@@ -70,6 +83,10 @@ pub model CInteropArtifact:
     pub origin: Option[CArtifactOrigin] = None
     # A system artifact's toolchain or SDK capability.
     pub capability: str = ""
+    # A bundled artifact's runtime loader name, logical placement and oldest supported platform.
+    pub runtime_name: str = ""
+    pub placement: str = ""
+    pub minimum_platform: str = ""
 
 
 @derive(Eq)
@@ -198,7 +215,7 @@ def requirements(
 
 
 def artifact_entry(value: TomlValue, manifest: str, field: list[str]) -> Result[CInteropArtifact, IntakeError]:
-    """One `[[interop.c.targets.artifacts]]`: a `static` archive or a `system` capability."""
+    """One `[[interop.c.targets.artifacts]]`: a `static` archive, a `bundled` runtime library or a `system` capability."""
     entry = as_table(value, manifest, field)?
     known_keys(entry, list(ARTIFACT_KEYS), manifest, field)?
     for key in ["name", "kind"]:
@@ -210,16 +227,20 @@ def artifact_entry(value: TomlValue, manifest: str, field: list[str]) -> Result[
     kind = as_text(entry["kind"], manifest, field + ["kind"])?
     mut artifact = CInteropArtifact(name=name, kind=CArtifactKind.Static)
     if kind == CArtifactKind.Static.value():
+        without_bundled_fields(entry, kind, name, manifest, field)?
         artifact = static_artifact(entry, name, manifest, field)?
     elif kind == CArtifactKind.System.value():
+        without_bundled_fields(entry, kind, name, manifest, field)?
         artifact = system_artifact(entry, name, manifest, field)?
+    elif kind == CArtifactKind.Bundled.value():
+        artifact = bundled_artifact(entry, name, manifest, field)?
     else:
         return Err(
             refused(
                 manifest,
                 field + ["kind"],
                 IntakeErrorKind.Unsupported,
-                f"artifact kind `{kind}` is not supported; an artifact is `static` or `system`",
+                f"artifact kind `{kind}` is not supported; an artifact is `static`, `bundled` or `system`",
             ),
         )
     if "dependencies" in entry:
@@ -293,6 +314,79 @@ def system_artifact(
     if capability == "":
         return Err(refused(manifest, field + ["capability"], IntakeErrorKind.Invalid, "empty capability"))
     return Ok(CInteropArtifact(name=name, kind=CArtifactKind.System, capability=capability))
+
+
+def bundled_artifact(
+    entry: Dict[str, TomlValue],
+    name: str,
+    manifest: str,
+    field: list[str],
+) -> Result[CInteropArtifact, IntakeError]:
+    """
+    A package-owned dynamic library or framework a platform packager stages: its path, the name the runtime loader
+    finds it by, its logical placement and the oldest platform it supports, with an optional origin.
+    """
+    if "capability" in entry:
+        return Err(
+            refused(
+                manifest,
+                field + ["capability"],
+                IntakeErrorKind.Invalid,
+                f"bundled artifact `{name}` cannot declare a system capability",
+            ),
+        )
+    mut values: Dict[str, str] = {}
+    for key in ["path"] + list(BUNDLED_KEYS):
+        if key not in entry:
+            return Err(refused(manifest, field + [key], IntakeErrorKind.Missing, f"a bundled artifact requires {key}"))
+        text = as_text(entry[key], manifest, field + [key])?.strip()
+        if text == "":
+            return Err(refused(manifest, field + [key], IntakeErrorKind.Invalid, "empty value"))
+        values[key] = text
+    if let Some(reason) = loaf_path_refusal(values["path"]):
+        return Err(refused(manifest, field + ["path"], IntakeErrorKind.Invalid, reason))
+    runtime_name = values["runtime-name"]
+    if "/" in runtime_name or "\\" in runtime_name or runtime_name in [".", ".."]:
+        return Err(
+            refused(
+                manifest,
+                field + ["runtime-name"],
+                IntakeErrorKind.Invalid,
+                f"`{runtime_name}` is not one file name; a runtime name is what the loader finds the library by",
+            ),
+        )
+    mut artifact = CInteropArtifact(
+        name=name,
+        kind=CArtifactKind.Bundled,
+        path=values["path"],
+        runtime_name=runtime_name,
+        placement=values["placement"],
+        minimum_platform=values["minimum-platform"],
+    )
+    if "origin" in entry:
+        artifact.origin = Some(origin_entry(entry["origin"], manifest, field + ["origin"])?)
+    return Ok(artifact)
+
+
+def without_bundled_fields(
+    entry: Dict[str, TomlValue],
+    kind: str,
+    name: str,
+    manifest: str,
+    field: list[str],
+) -> Result[None, IntakeError]:
+    """Only a bundled artifact declares how a packager stages it."""
+    for key in list(BUNDLED_KEYS):
+        if key in entry:
+            return Err(
+                refused(
+                    manifest,
+                    field + [key],
+                    IntakeErrorKind.Invalid,
+                    f"{kind} artifact `{name}` cannot declare bundled deployment fields",
+                ),
+            )
+    return Ok(None)
 
 
 def origin_entry(value: TomlValue, manifest: str, field: list[str]) -> Result[CArtifactOrigin, IntakeError]:
