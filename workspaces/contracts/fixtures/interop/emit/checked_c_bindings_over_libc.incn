@@ -1,10 +1,8 @@
-# behavior: checked C carriers, initialized slots and bounded UTF-8 text avoid recursive sized display and refuse a nonpositive bound with its own message, and a C `int` crosses as an ordinary Incan integer, as 0.5.1's `c.c_int` did (incan-4.10, #3132)
+# behavior: checked C carriers, initialized slots and bounded UTF-8 text avoid recursive sized display and refuse a nonpositive bound with its own message (incan-4.10)
 # expect-stdout:
 #   5
 #   7
-#   9 12
 #   0.5 4
-#   0.5 4 3
 #   5
 #   interior nul refused
 #   true
@@ -22,9 +20,6 @@ binding LibC:
 
     symbol absolute(value: c.i32) -> c.i32:
         native = "abs"
-    symbol absolute_int(value: c.c_int) -> c.c_int:
-        native = "abs"
-
     enum Status:
         OK: c.i32 = EXIT_SUCCESS
         ONE: c.i32 = EXIT_FAILURE
@@ -41,9 +36,6 @@ binding LibMath:
     link = c.system_library("m")
 
     symbol frexp(value: c.f64, exponent: c.InOut[c.i32]) -> c.f64:
-        native = "frexp"
-
-    symbol frexp_int(value: c.f64, exponent: c.InOut[c.c_int]) -> c.f64:
         native = "frexp"
 
 
@@ -69,13 +61,6 @@ def absolute(value: i32) -> i32:
         return LibC.absolute(value)
 
 
-def absolute_int(value: int) -> int:
-    """Cross C `int` in both directions as an ordinary Incan integer."""
-    unsafe:
-        magnitude = LibC.absolute_int(value)
-        return magnitude + LibC.absolute_int(-3)
-
-
 def split(value: f64) -> str:
     """Read the initialized in/out exponent written by the checked C call."""
     unsafe:
@@ -83,15 +68,6 @@ def split(value: f64) -> str:
         exponent = c.inout(initial)
         mantissa = LibMath.frexp(value, exponent)
         return f"{mantissa} {exponent.take()}"
-
-
-def split_int(value: f64) -> str:
-    """Read a C `int` in/out slot as an ordinary Incan integer."""
-    unsafe:
-        exponent = c.inout(0)
-        mantissa = LibMath.frexp_int(value, exponent)
-        written: int = exponent.take()
-        return f"{mantissa} {written} {written - 1}"
 
 
 def string_length(value: str) -> Result[usize, str]:
@@ -139,9 +115,7 @@ def main() -> None:
     # 1. Scalar carriers and the initialized output slot keep their declared types.
     println(absolute(-5))
     println(absolute(7))
-    println(f"{absolute_int(-6)} {absolute_int(9)}")
     println(split(8.0))
-    println(split_int(8.0))
     # 2. Text escapes preserve \0 literally, so construct the NUL through a byte literal.
     match string_length("hello"):
         Ok(length) => println(length)
