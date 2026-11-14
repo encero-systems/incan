@@ -43,8 +43,9 @@ const DOCUMENTATION: &str = "documentation";
 const EXECUTABLE_DESCRIPTOR: &str = "executable-descriptor";
 const PUBLIC_IDENTITIES: &str = "public-identities";
 const RUNTIME_BINDINGS: &str = "runtime-bindings";
-/// The record families of a declaration's own facts; a manifest projection never selects them either.
-const DECLARATION_FAMILIES: [&str; 3] = ["declaration-signature", "layout", "default"];
+/// The record families a consumer reads by name: a declaration's own facts and a public namespace. A manifest
+/// projection never selects them either.
+const NAMED_FAMILIES: [&str; 4] = ["declaration-signature", "layout", "default", "public-namespace"];
 const ROOT_ENV: &str = "INCAN_COMPILER_RECORD_ROOT";
 const DIGEST_ENV: &str = "INCAN_COMPILER_RECORD_DIGEST";
 const SET_FORMAT: &str = "incan.sealed-set/2";
@@ -117,7 +118,7 @@ impl Projection {
     /// Whether records of `family` belong to this projection.
     fn admits(self, family: &str) -> bool {
         let surface = matches!(family, EXECUTABLE_DESCRIPTOR | PUBLIC_IDENTITIES | RUNTIME_BINDINGS)
-            || DECLARATION_FAMILIES.contains(&family);
+            || NAMED_FAMILIES.contains(&family);
         match self {
             Self::Complete => family != DOCUMENTATION && !surface,
             Self::Execution => matches!(
