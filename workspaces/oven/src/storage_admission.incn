@@ -229,7 +229,7 @@ def admit(
     Admit `need` bytes for the attempt `record` describes, or stop it with a decision-required outcome.
 
     1. Take the store's admission lock: no other admission observes free space until this one is recorded.
-    2. Reclaim ended attempts whose window has passed, then read every other reservation.
+    2. Reclaim ended attempts whose window has passed; the reservations that remain are every other one.
     3. Admit when observed free space, minus live reservations, minus the reserve, covers `need`, and record it.
     4. Otherwise record the decision and stop; nothing is removed to make room.
     """
@@ -238,10 +238,11 @@ def admit(
     directory = reservations_root(store)
     make_directory(directory)?
     gate = directory.joinpath("admission").lock_exclusive().map_err((error) => f"{directory.0}: {error.message()}")?
-    # 2. Maintenance runs at this lifecycle boundary only; warm selections never reach it.
+    # 2. Maintenance runs at this lifecycle boundary only; warm selections never reach it. Its one reading of the
+    #    records serves the decision too: nothing else admits while the lock is held.
     now = now_seconds()
-    maintain_held(store, policy, now)?
-    others = [reservation for reservation in read_reservations(store)? if reservation.name != record.name]
+    maintained = maintain_held(store, policy, now)?
+    others = [reservation for reservation in maintained.remaining if reservation.name != record.name]
     pressure = Pressure(
         store=store,
         work=record.work,
@@ -367,19 +368,28 @@ pub def reservation_document(record: Reservation) -> JsonValue:
 # ---- Ended attempts ----
 
 
+model Maintained:
+    """What one maintenance pass left: how many ended attempts it reclaimed, and every reservation that remains."""
+
+    reclaimed: int = 0
+    # Each remaining record as maintenance observed and, for a newly confirmed end, published it.
+    remaining: list[Reservation] = []
+
+
 pub def maintain(store: Path, policy: StoragePolicy, now: int) -> Result[int, str]:
     """Reclaim ended attempts whose window has passed by `now`, under the admission lock; see `maintain_held`."""
     directory = reservations_root(store)
     if not directory.is_dir():
         return Ok(0)
     gate = directory.joinpath("admission").lock_exclusive().map_err((error) => f"{directory.0}: {error.message()}")?
-    return maintain_held(store, policy, now)
+    return Ok(maintain_held(store, policy, now)?.reclaimed)
 
 
-def maintain_held(store: Path, policy: StoragePolicy, now: int) -> Result[int, str]:
+def maintain_held(store: Path, policy: StoragePolicy, now: int) -> Result[Maintained, str]:
     """
     Reclaim the private state of attempts that ended at least the policy's failed-attempt window ago; the caller
-    holds the admission lock. Returns how many staging directories were reclaimed.
+    holds the admission lock. Every record is read once: the reservations that remain are returned for the admission
+    decision under the same lock, with how many staging directories were reclaimed.
 
     1. An attempt whose owner holds its claim is left alone, however old it is.
     2. An ended attempt whose staging directory is gone leaves nothing to keep, so its record goes.
@@ -387,10 +397,11 @@ def maintain_held(store: Path, policy: StoragePolicy, now: int) -> Result[int, s
        that restarts the window at the earlier reading, so a backwards change never manufactures age.
     4. Once the window has passed since that confirmation, the staging directory and its record are removed.
     """
-    mut reclaimed = 0
+    mut maintained = Maintained()
     for record in read_reservations(store)?:
         # 1. A live owner's attempt is never private state of an ended operation.
         if record.live:
+            maintained.remaining.append(record)
             continue
         # 2. Nothing remains to inspect.
         staged = store.joinpath("staging").joinpath(record.name)
@@ -407,8 +418,10 @@ def maintain_held(store: Path, policy: StoragePolicy, now: int) -> Result[int, s
         if now - ended.ended >= policy.failed_attempt_ttl:
             staged.remove_tree().map_err((error) => f"{staged.0}: {error.message()}")?
             release(store, record.name)
-            reclaimed += 1
-    return Ok(reclaimed)
+            maintained.reclaimed += 1
+        else:
+            maintained.remaining.append(ended)
+    return Ok(maintained)
 
 
 # ---- Decisions ----
