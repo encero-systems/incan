@@ -91,6 +91,36 @@ pub def test_a_hover_answers_an_imported_signature_from_the_editor_views_records
     return Ok(None)
 
 
+pub def test_a_keystroke_checks_only_the_function_it_edits() -> Result[None, str]:
+    """After a build, an overlay that edits one function's body checks that body and restores every other one."""
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    package = scratch.path().joinpath("package")
+    package.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    manifest = "[project]\nname = \"keystroke\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+    write(package.joinpath("loaf.toml"), manifest)?
+    source = package.joinpath("src").joinpath("main.incn")
+    write(source, "from helper import thrice, twice\n\n\ndef main() -> None:\n    total = twice(2) + thrice(2)\n    println(str(total))\n")?
+    helper = package.joinpath("src").joinpath("helper.incn")
+    original = "pub def twice(value: int) -> int:\n    return value * 2\n\n\npub def thrice(value: int) -> int:\n    return value * 3\n"
+    write(helper, original)?
+    buffer = scratch.path().joinpath("buffer.incn")
+    write(buffer, original.replace("value * 2", "value + value"))?
+    store = scratch.path().joinpath("store")
+    ran = records_run(binary, source, store)
+    answered = overlay(binary, helper, buffer, store)
+    if store.exists():
+        stop_engine(binary, store)?
+    _ = ran?
+    answer = answered?
+    text = answer.to_json().map_err((error) => error.message())?
+    assert answer.require("ok").map_err((error) => error.message())?.expect_bool().map_err((error) => error.message())?, text
+    work = answer.require("work").map_err((error) => f"{error.message()}: {text}")?
+    assert count(work, "body_evaluations")? == 1, text
+    assert count(work, "body_reuses")? == 2, text
+    return Ok(None)
+
+
 def overlay(binary: str, source: Path, buffer: Path, store: Path) -> Result[JsonValue, str]:
     """Ask the installed Oven for one overlay answer, with its engine work, against a private store."""
     return overlay_with(binary, source, buffer, store, ["--engine-report"])
