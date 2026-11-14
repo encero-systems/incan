@@ -211,7 +211,7 @@ Arguments bind to normal parameters in this order:
 4. A required parameter that remains unbound is error `INCAN-T0001`.
 5. A named argument that names no parameter is error `INCAN-T0001`, unless the callee declares `**kwargs`.
 6. A positional argument beyond the positional parameters is error `INCAN-T0001`, unless the callee declares `*args`.
-7. A defaulted parameter that remains unbound takes its declared default. A name in a default resolves in the module that declares the callable, whichever module the call is written in: a name that module declares resolves to that declaration, private or public, and a name it imports resolves to the declaration the import names. The same holds for the presets of a method partial.
+7. A defaulted parameter that remains unbound takes its declared default. A default whose type is incompatible with its parameter's type is a type mismatch reported at the default. A default cannot read `self`, its fields or another parameter of the callable: those names are unknown in a default. A name in a default resolves in the module that declares the callable, whichever module the call is written in: a name that module declares resolves to that declaration, private or public, and a name it imports resolves to the declaration the import names. The same holds for the presets of a method partial.
 8. In a package other than the callable's, a call may leave a defaulted parameter unbound only when the default is one of the following, and is not a preset of a method partial:
     - a literal, or a negated number literal;
     - a list or dict whose elements are such defaults;
@@ -219,7 +219,7 @@ Arguments bind to normal parameters in this order:
     - a call of a function the package declares, named directly, through a public symbol alias of it or through its module, whose arguments are such defaults;
     - a construction of a newtype the package declares, or of a model or class the package exports, whose arguments are such defaults.
 
-    Otherwise the parameter is required in that package, and a call there that leaves it unbound is error `INCAN-T0001`.
+    Otherwise the parameter is required in that package, and a call there that leaves it unbound is error `INCAN-T0001`. A call through a public alias of a callable may leave unbound the same defaulted parameters as a call that names the callable.
 
 ```incan
 def connect(host: str, port: int) -> str:
@@ -560,3 +560,14 @@ Each of these is error `INCAN-T0001`:
 ## Rust Interop
 
 A function imported from a Rust crate has no rest parameters.
+
+A closure passed to a Rust parameter whose bounds require `Send` or `Sync`, such as the closure `spawn` from `rust::std::thread` takes, captures its values by move, and each captured value must have that property:
+
+- `int`, `float`, `bool`, `str`, `bytes` and the sized numeric types have both.
+- A `list`, `dict`, `set`, `Option`, `Result`, frozen collection or tuple has it when each of its type arguments or elements has it.
+- A model or class has it when every field has it, an enum when every variant payload has it, and a newtype when its underlying type has it.
+- A `rusttype` has it when its declaration adopts it, as in `with Send, Sync`.
+- A Rust `Arc[T]` has `Send` and `Sync` when `T` has both, and a Rust `Mutex[T]` has both when `T` has `Send`. Another Rust type has it when its Rust implementation does.
+- A borrowed capture never has it.
+
+A capture without the property is refused with ``Captured value 'NAME' of type 'TYPE' lacks retained `MARKER` evidence for this Rust callback``.

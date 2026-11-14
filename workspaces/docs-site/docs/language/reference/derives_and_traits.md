@@ -248,6 +248,10 @@ def main() -> None:
     e = len[int]([1])             # refused: brackets on a builtin call (INCAN-T0001)
 ```
 
+### Bounds that name a prelude trait
+
+A trait the standard prelude exports, such as `Add`, bounds a type parameter without an import: `def total[T with Add[T, T]](a: T, b: T) -> T` checks as written. A local or imported declaration of the same name takes precedence over the prelude's trait.
+
 ### Bounds that name a type
 
 - A `with` bound may name a type instead of a trait: a builtin type in either spelling (`int` or `Int`), or a model, class, enum, newtype or type alias, declared or imported. Only that type satisfies the bound; an alias of a type satisfies a bound on its target. Any other type argument is refused (`INCAN-T0001`).
