@@ -30,6 +30,9 @@ pub const INTEROP_BAKE_MOVED: str = "interop bake` is `oven build` now: an ordin
 # 0.5.1's `inspect oven --receipt` read an Oven Alpha receipt, which 0.6 does not write; either spelling names what
 # reports a run's evidence now.
 pub const INSPECT_OVEN_MOVED: str = "inspect oven` read 0.5's Oven Alpha receipts, which 0.6 does not write: run `oven inspect run ID --proofs` with INCAN_ENGINE=records for a run's evidence"
+# 0.5.1's `incan oven bake` materialized a project's sealed Loaves and executable plans without running them, which an
+# ordinary build does; RFC 118's `oven bake` packages a `*.loaf` asset instead, and is not built.
+const BAKE_MOVED: str = "`incan oven bake` is `oven build` now: a build materializes or reuses the project's Loaves and its executable without running it"
 
 
 pub def invoked() -> str:
@@ -98,6 +101,8 @@ def incan_oven(arguments: list[str]) -> str:
         words.append(argument)
     if len(words) >= 2 and words[0] == "interop" and words[1] == "bake":
         return f"{INCAN}: `incan oven {INTEROP_BAKE_MOVED}"
+    if len(words) > 0 and words[0] == "bake":
+        return f"{INCAN}: {BAKE_MOVED}"
     spelled = " ".join(words)
     if spelled == "":
         return f"{INCAN}: `incan oven` is the `oven` command now: run `oven`"
