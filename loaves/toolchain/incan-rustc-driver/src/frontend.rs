@@ -689,6 +689,9 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     if census_complete(&mut program, kind, overflow_checks)? {
         return Ok(());
     }
+    // Checking is done, and the Rust items it decoded are not lowering inputs. Lowering keeps the index for runtime
+    // resolution, so release the items rather than carry them through lowering and rustc.
+    program.dependencies.loaves.release_resolved_rust_items();
     let mut published_unions = Vec::new();
     let plan = lower_compilation_plan(
         &mut program,

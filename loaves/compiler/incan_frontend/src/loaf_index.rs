@@ -691,6 +691,15 @@ impl LoafIndex {
         Some(resolved)
     }
 
+    /// Release every Rust item decoded so far, for this index and the clones that share its store, when checking is
+    /// done. A standard type's metadata carries every implementation it has, so the items a checker decoded can
+    /// outweigh the checked program; a later lookup decodes its item again through the same lookup order.
+    pub fn release_resolved_rust_items(&self) {
+        if let Ok(mut items) = self.resolved_rust_items.lock() {
+            *items = HashMap::new();
+        }
+    }
+
     /// Alias-only Rust metadata for `canonical_path`, following the full-item lookup order without expanding a cache
     /// record's methods, trait implementations, fields or variants.
     ///
