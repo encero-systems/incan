@@ -19,15 +19,29 @@ pub model BindingOptions:
     pub path: str = "."
     pub format: str = "text"
     pub target: str = ""
+    # 0.5.1's feature options, passed to the codegraph export the bindings are read from.
+    pub features: list[str] = []
 
 
 pub def binding_options(arguments: list[str]) -> Result[BindingOptions, str]:
-    """Read `--format text|json|receipt`, `--target TRIPLE` (a receipt's) and one optional path."""
+    """
+    Read `--format text|json|receipt`, `--target TRIPLE` (a receipt's), the feature options and one optional path.
+    """
     mut options = BindingOptions()
     mut index = 0
     mut path_given = false
     while index < len(arguments):
         argument = arguments[index]
+        if argument in ["--no-default-features", "--all-features"]:
+            options.features.append(argument)
+            index += 1
+            continue
+        if argument == "--features":
+            if index + 1 >= len(arguments):
+                return Err("--features requires a value")
+            options.features.extend([argument, arguments[index + 1]])
+            index += 2
+            continue
         if argument in ["--format", "--target"]:
             if index + 1 >= len(arguments):
                 return Err(f"{argument} requires a value")
@@ -51,7 +65,7 @@ pub def binding_options(arguments: list[str]) -> Result[BindingOptions, str]:
 
 pub def inspect_bindings(options: BindingOptions) -> Result[i32, str]:
     """Print every checked C binding the source or project declares, ordered by file and name."""
-    export = graph_response(["codegraph", options.path, "--format", "jsonl"])?
+    export = graph_response(["codegraph", options.path, "--format", "jsonl"] + options.features)?
     base = Path(options.path).resolve().map_err((error) => f"{options.path}: {error.message()}")?
     mut root = base.0
     if Path(root).is_file():
