@@ -1,32 +1,30 @@
 """
-Graph pages: a warm graph request answered from the bakery's records.
+Graph pages: a warm graph request answered from its page in the bakery.
 
-A cold request prepares its graph as before, and its answer is published in the bakery as one page record under the
-request's identity, with the metadata of every file and directory its preparation observed and the snapshot it
-answered from. A warm request with the same identity reads that record, checks those metadata with status queries
+A cold request prepares its graph as before, and its answer is published as one page file under `pages/` in the
+bakery, named by the request's identity, with the metadata of every file and directory its preparation observed and
+the snapshot it answered from. A page is a cache, published by rename without a durable sync: losing one costs one
+cold request. A warm request with the same identity reads that page, checks those metadata with status queries
 only, and answers from it: it prepares nothing, reads no source and hashes nothing. A changed, missing or unsettled
 input, another installation or another Oven makes the request cold again, and its answer replaces the page.
 
 The request identity covers the Oven program, the installation, the resolved path and every graph option; an answer
-within a page is selected by the request's ranking preferences, so `incan mcp` pages share the records the CLI writes.
+within a page is selected by the request's ranking preferences, so `incan mcp` shares the pages the CLI writes.
 """
 
-from rust::std::str import from_utf8
 from std.fs import Path
 from std.json import JsonValue, parse
 from bakery import bakery
 from core_process import executable
-from files import json_text
+from files import json_text, make_directory, read
 from home import home
-from installation_page import admitted_identity
 from json_fields import required_items, required_text, string_value
-from observation import SETTLE_SECONDS, file_metadata, trace
-from pub::incan_platform.store import Lookup, begin, commit, lookup, owned, put
-from store_path_conversion import snapshot
-from toolchain import toolchain_directory
+from observation import WatchedInputs, file_metadata, trace
+from publication import publish
+from toolchain import Toolchain
 from unit_freshness import fingerprint
 
-const PAGE_SCHEMA: str = "incan.graph.page/1"
+const PAGE_SCHEMA: str = "incan.graph.page/3"
 # How many preference selections one page keeps answers for; the oldest is dropped first.
 const ANSWERS: int = 8
 
@@ -37,28 +35,34 @@ pub model GraphPage:
     pub key: str
     pub inputs: str
     pub snapshot: str
-    # Each answer by its ranking preferences, and those preferences from the oldest answer to the newest.
+    # Each answer's file by its ranking preferences, and those preferences from the oldest answer to the newest.
     pub answers: Dict[str, str] = {}
     pub order: list[str] = []
 
-    pub def answer(self, preferences: Dict[str, int]) -> Option[str]:
-        """The page's answer for these ranking preferences, if it has one."""
-        return self.answers.get(preference_key(preferences))
+    pub def answer(self, preferences: Dict[str, int]) -> Result[Option[str], str]:
+        """The page's answer for these ranking preferences, read from its file; `None` when it has none."""
+        match self.answers.get(preference_key(preferences)):
+            None => return Ok(None)
+            Some(name) =>
+                path = page_file(self.key)?.parent().joinpath(name)
+                if not path.is_file():
+                    return Ok(None)
+                return Ok(Some(read(path)?))
 
 
-pub def request_key(parts: list[str]) -> Result[str, str]:
+pub def request_key(parts: list[str], toolchain: Toolchain) -> Result[str, str]:
     """
-    The identity of a graph request: the Oven program and installation answering it, and the request's own parts.
-
-    Status queries only: the program and the installation are named by their metadata and their admitted page.
+    The identity of a graph request: the Oven program and the installed compiler answering it, and the request's own
+    parts. Status queries only: the program and the compiler are named by their paths and metadata, and the
+    installation by the sysroot the loaded toolchain selected.
     """
-    program = Path(executable()?)
-    mut stamp = ""
-    if let Some(info) = file_metadata(program)?:
-        stamp = info.stamp()
-    directory = toolchain_directory()?
-    installation = admitted_identity(directory)?.unwrap_or("")
-    return fingerprint([PAGE_SCHEMA, program.0, stamp, directory.0, installation] + parts)
+    mut identity: list[str] = [str(PAGE_SCHEMA)]
+    for path in [executable()?, toolchain.driver]:
+        mut stamp = ""
+        if let Some(info) = file_metadata(Path(path))?:
+            stamp = info.stamp()
+        identity.extend([path, stamp])
+    return fingerprint(identity + [toolchain.sysroot] + parts)
 
 
 pub def warm_page(key: str) -> Result[Option[GraphPage], str]:
@@ -77,7 +81,7 @@ pub def warm_page(key: str) -> Result[Option[GraphPage], str]:
 
 pub def publish_page(
     key: str,
-    observed: Dict[str, str],
+    observed: WatchedInputs,
     snapshot_id: str,
     preferences: Dict[str, int],
     answer: str,
@@ -85,29 +89,25 @@ pub def publish_page(
     """
     Publish `answer` in the page of `key`, beside the answers it already has for the same inputs.
 
-    1. Recheck every observed input: one that changed during the request, or an authored file that changed too
-       recently for its metadata to vouch for its bytes, publishes nothing. Files under the home are Oven's own
-       content-named publications, written once and replaced only by rename, so their metadata vouch at once.
+    1. Record each input as the request first observed it, with no status query of its own: an input that changed
+       later no longer matches, so the next request is cold. An authored file changed too recently for its metadata
+       to vouch for its bytes publishes nothing; files under the home are Oven's own content-named publications,
+       written once and replaced only by rename, so their metadata vouch at once.
     2. Keep the page's other answers when it was answered from the same inputs, dropping the oldest beyond `ANSWERS`.
-    3. Replace the page in one transaction.
+    3. Replace the page by rename.
     """
-    # 1. The metadata recorded are those of the inputs after the request, and only settled authored files are trusted.
+    # 1. The first observations are recorded; an unsettled authored file keeps the answer out of the page.
     owned = home()?.0 + "/"
+    for path in observed.fresh:
+        if not path.startswith(owned):
+            return Ok(false)
     mut inputs: list[JsonValue] = []
-    for path in sorted([name for name in observed.keys()]):
-        mut now = ""
-        match file_metadata(Path(path))?:
-            Some(found) =>
-                now = found.stamp()
-                fresh = not found.settled(SETTLE_SECONDS) and not path.startswith(owned)
-                if found.is_file() and (now != observed[path] or fresh):
-                    return Ok(false)
-            None =>
-                if observed[path] != "":
-                    return Ok(false)
-        inputs.append(JsonValue.array([JsonValue.string(path), JsonValue.string(now)]))
+    for path in sorted([name for name in observed.stamps.keys()]):
+        inputs.append(JsonValue.array([JsonValue.string(path), JsonValue.string(observed.stamps[path])]))
     identity = fingerprint([key, json_text(JsonValue.array(inputs))?])?
-    # 2. Answers for other preferences survive while the inputs are the same.
+    # 2. Answers for other preferences survive while the inputs are the same; the others' files go.
+    directory = page_file(key)?.parent()
+    make_directory(directory)?
     mut answers: Dict[str, str] = {}
     mut order: list[str] = []
     if let Some(document) = record(key)?:
@@ -115,15 +115,21 @@ pub def publish_page(
         if prior.inputs == identity:
             answers = prior.answers
             order = prior.order
+        else:
+            discard_answers(directory, [prior.answers[item] for item in prior.order])
     selected = preference_key(preferences)
     order = [item for item in order if item != selected] + [selected]
-    answers[selected] = answer
+    answers[selected] = f"{key}.{fingerprint([identity, selected])?[:32]}.answer"
     if len(order) > ANSWERS:
+        discard_answers(directory, [answers[item] for item in order[:len(order) - ANSWERS]])
         order = order[len(order) - ANSWERS:]
-    # 3. One record per request identity: a changed input replaces the page, it never adds one.
+    # 3. One page per request identity: a changed input replaces the page, it never adds one. The answer is its own
+    # file, published before the page that names it, so neither is ever JSON-encoded text.
+    publish(directory.joinpath(answers[selected]), answer)?
     mut entries: list[JsonValue] = []
     for item in order:
-        entries.append(JsonValue.object({"preferences": JsonValue.string(item), "answer": JsonValue.string(answers[item])}))
+        file = JsonValue.string(answers[item])
+        entries.append(JsonValue.object({"preferences": JsonValue.string(item), "file": file}))
     document = JsonValue.object(
         {
             "schema": JsonValue.string(PAGE_SCHEMA),
@@ -133,35 +139,29 @@ pub def publish_page(
             "answers": JsonValue.array(entries),
         },
     )
-    store = bakery()?
-    view = snapshot(store).map_err((error) => error.message())?
-    _ = commit(put(begin(view), page_name(key), json_text(document)?.encode("utf-8"))).map_err((error) => error.message())?
+    # A page is a cache: a lost one costs one cold request, so it is published by rename without a durable sync.
+    publish(page_file(key)?, json_text(document)?)?
     return Ok(true)
 
 
 def record(key: str) -> Result[Option[JsonValue], str]:
-    """The page record of `key` in the bakery, decoded; a page of another schema is no page."""
-    store = bakery()?
-    if not store.is_dir():
+    """The page of `key` in the bakery, decoded; a missing page, or a page of another schema, is no page."""
+    path = page_file(key)?
+    if not path.is_file():
         return Ok(None)
-    view = snapshot(store).map_err((error) => error.message())?
-    match lookup(view, page_name(key)).map_err((error) => error.message())?:
-        Lookup.Found(value) =>
-            text = str(from_utf8(owned(value)).map_err((error) => str(error))?)
-            document = parse(text).map_err((error) => error.message())?
-            if required_text(document, "schema")? != PAGE_SCHEMA:
-                return Ok(None)
-            return Ok(Some(document))
-        Lookup.Absent => return Ok(None)
-        Lookup.Deleted => return Ok(None)
+    document = parse(read(path)?).map_err((error) => error.message())?
+    if required_text(document, "schema")? != PAGE_SCHEMA:
+        return Ok(None)
+    return Ok(Some(document))
 
 
 def page_of(key: str, document: JsonValue) -> Result[GraphPage, str]:
     """A page record's identity, snapshot and answers."""
-    mut page = GraphPage(key=key, inputs=required_text(document, "identity")?, snapshot=required_text(document, "snapshot")?)
+    identity = required_text(document, "identity")?
+    mut page = GraphPage(key=key, inputs=identity, snapshot=required_text(document, "snapshot")?)
     for entry in required_items(document, "answers")?:
         selected = required_text(entry, "preferences")?
-        page.answers[selected] = required_text(entry, "answer")?
+        page.answers[selected] = required_text(entry, "file")?
         page.order.append(selected)
     return Ok(page)
 
@@ -178,6 +178,12 @@ def preference_key(preferences: Dict[str, int]) -> str:
     return ",".join([f"{name}={preferences[name]}" for name in sorted([name for name in preferences.keys()])])
 
 
-def page_name(key: str) -> str:
-    """The bakery record of one request's page."""
-    return f"incan.graph.page\t{key}"
+def page_file(key: str) -> Result[Path, str]:
+    """Where the page of one request identity lives in the bakery."""
+    return Ok(bakery()?.joinpath("pages").joinpath(f"{key}.json"))
+
+
+def discard_answers(directory: Path, names: list[str]) -> None:
+    """Remove answer files a page no longer names; one already gone, or not removable, costs nothing."""
+    for name in names:
+        _ = directory.joinpath(name).unlink()
