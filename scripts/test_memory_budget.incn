@@ -61,6 +61,21 @@ def test_budget_and_records_keep_exact_bytes_and_human_units_distinct() -> Resul
     return Ok(None)
 
 
+def test_oven_is_held_to_the_lowering_budget() -> Result[None, str]:
+    """Oven, the toolchain's lowering compile, is gated at 6 GiB while the other gated builds keep the selected budget."""
+    budget = 2048 * MIB
+    lowering = 6144 * MIB
+    within = measured("oven", 1, lowering, 300_000)
+    over = measured("oven", 2, lowering + 1, 300_000)
+    assert require_budget([within], budget) == Ok(None)
+    assert budget_refusal([over], budget) == f"process-tree footprint budget exceeded: oven run 2: {lowering + 1} > {lowering} bytes"
+    assert f"oven\t2\t{lowering + 1}\tincan-rustc-driver\t{lowering + 1}\t{lowering}\n" in measurements_tsv([over], budget)
+    report = measurements_report([within, over], budget)
+    assert "oven\t1\t6144\tincan-rustc-driver\t6144\t300\tunder" in report
+    assert "oven\t2\t6144\tincan-rustc-driver\t6144\t300\tover" in report
+    return Ok(None)
+
+
 def measured(command: str, run: int, peak: int, wall_ms: int) -> Measurement:
     """Create one deterministic report row."""
     return Measurement(
