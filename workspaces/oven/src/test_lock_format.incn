@@ -18,7 +18,7 @@ from lock_format import (
     read_lock,
     write_lock,
 )
-from project_lock import ensure_project_lock, local_interop
+from project_lock import ensure_project_lock, local_interop, selected_mode
 from scratch import scratch_directory
 from trace_adapter import count_work, finish_counting
 
@@ -307,4 +307,18 @@ pub def test_a_loaf_name_with_a_capital_letter_is_refused_not_folded() -> Result
         Ok(_) => return Err("a Loaf name with a capital letter was accepted")
         Err(message) =>
             assert "`acme/Published` has a capital letter" in message, message
+    return Ok(None)
+
+
+pub def test_a_recorded_version_mode_survives_a_toolchain_change() -> Result[None, str]:
+    """
+    RFC 125: a later `oven lock` without `--versions` keeps the mode the lock records, so another toolchain cannot
+    quietly switch it back to `lowest`.
+    """
+    mut lock = example_lock()?
+    lock.mode = "newest"
+    lock.graph = graph_identity(lock)?
+    assert selected_mode(Some(lock), "") == "newest"
+    assert selected_mode(Some(lock), "lowest-direct") == "lowest-direct"
+    assert selected_mode(None, "") == "lowest"
     return Ok(None)
