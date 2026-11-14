@@ -41,7 +41,7 @@ from cli_help import render, unknown_option
 from jec import begin, record
 from installation_check import verify_installed_runtime
 from surfaces import expose_entry_points
-from compiler_record_admission import convert, ship_records
+from compiler_record_admission import convert, installed_records, shipped_pin
 
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
@@ -136,10 +136,12 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     search = stage_search([path for path in toolchain.search if ships_search(path, shipped)], stage, "")?
     stage_loaves(directory.joinpath("loaves"), stage)?
     stage_standard_sources(stage)?
-    # The standard Loaves' compiler records ship as the driver exports them, so installing the archive converts nothing.
-    ship_records(toolchain.driver, directory, stage)?
+    # The standard Loaves' compiler records ship sealed and admitted, in the store's own format, so installing the
+    # archive converts and copies nothing.
+    records = convert(toolchain.driver, directory, stage)?
     # 4. The description names only paths inside the toolchain, so the archive installs wherever it is unpacked.
     mut description = portable_description(driver, abi, externs, search)
+    description = replaced(description, "compiler_records", records.to_json())?
     for key, relative in c_tools:
         description = replaced(description, key, JsonValue.string(relative))?
     if toolchain.registry_lock != "":
@@ -780,7 +782,8 @@ def install_staged(archive: Path, stage: Path, target: Path) -> Result[None, str
     run_command(toolchain.driver, ["--identity", toolchain.sysroot]).map_err(
         (error) => f"cannot verify compiler {toolchain.driver} against Rust sysroot {toolchain.sysroot}: {error}",
     )?
-    pin = convert(toolchain.driver, stage, stage)?
+    # A sealed set the archive ships is verified in place; only an archive without one has its records converted.
+    pin = installed_records(toolchain.driver, stage, shipped_pin(document)?)?
     document = read_json(stage.joinpath("toolchain.json"))?
     document = replaced(document, "compiler_records", pin.to_json())?
     write_json(stage.joinpath("toolchain.json"), document)?

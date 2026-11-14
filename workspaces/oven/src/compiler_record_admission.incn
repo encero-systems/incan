@@ -92,7 +92,19 @@ pub def installed_records(
     installation: Path,
     shipped: Option[CompilerRecordPin],
 ) -> Result[CompilerRecordPin, str]:
-    """The installation's compiler-record set, converted from its installed Loaves."""
+    """
+    The installation's compiler-record set: the sealed set an archive ships, verified in place, or one converted here.
+
+    An archive `incan toolchain pack` wrote ships the set in the store's own format, its transport and its admitted
+    store, with the pin that names it. Admission checks every object against its content name and the store against
+    the set receipt, and writes neither; only an archive without a sealed set has its records converted.
+    """
+    if let Some(pin) = shipped:
+        transport = installation.joinpath(pin.root)
+        if transport.joinpath("manifest.json").is_file():
+            store = installation.joinpath("compiler-record-store")
+            _ = admit(store, transport, pin.digest, compiler_record_profile()).map_err((error) => error.message())?
+            return Ok(pin)
     return convert(driver, installation, installation)
 
 
@@ -104,11 +116,6 @@ pub def shipped_pin(document: JsonValue) -> Result[Option[CompilerRecordPin], st
             return Ok(
                 Some(CompilerRecordPin(root=required_text(value, "root")?, digest=required_text(value, "digest")?)),
             )
-
-
-pub def ship_records(driver: str, installed: Path, stage: Path) -> Result[None, str]:
-    """Export the installed Loaves' compiler records into a packing stage, so installing its archive converts nothing."""
-    return export_records(driver, installed, stage.joinpath(SHIPPED_RECORDS))
 
 
 def export_records(driver: str, installed: Path, output: Path) -> Result[None, str]:
