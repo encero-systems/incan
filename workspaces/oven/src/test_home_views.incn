@@ -3,8 +3,9 @@
 from std.fs import Path
 from std.json import JsonValue
 from home_paths import BAKERY_OVERRIDE, BakeryLocation
-from engine_client import project_view_name
+from engine_client import admitted_installation, project_view_name, record_installation
 from home_views import bind_home_view
+from pub::incan_platform.store import HOME_VIEW
 from scratch import scratch_directory
 
 
@@ -62,4 +63,25 @@ pub def test_project_views_are_named_from_the_home_view() -> Result[None, str]:
     assert project_view_name("home-b", "/work/app/src/main.incn", "debug", None)? != first
     assert project_view_name("home-a", "/work/app/src/main.incn", "release", None)? != first
     assert project_view_name("home-a", "/work/app/src/main.incn", "debug", Some("list"))? != first
+    return Ok(None)
+
+
+pub def test_installation_admission_lives_in_the_home_view() -> Result[None, str]:
+    """
+    The records engine admits a home's installation in that home's own view: the first home's admission is visible
+    there, but neither in another home's view of the same bakery nor in the shared `home` view.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    store.mkdir(true, true).map_err((error) => error.message())?
+    key = "incan.engine.installation\tfixture"
+    record_installation(store, "home-first", key, "page-1", "compiler-1")?
+    match admitted_installation(store, "home-first", key, "page-1")?:
+        Some(compiler) =>
+            assert compiler == "compiler-1", compiler
+        None => return Err("the home's own admission is not visible in its view")
+    for other in ["home-second", HOME_VIEW]:
+        match admitted_installation(store, other, key, "page-1")?:
+            Some(_) => return Err(f"one home's installation admission is visible in view {other}")
+            None => pass
     return Ok(None)
