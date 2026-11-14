@@ -2,6 +2,7 @@
 
 from std.fs import Path
 from engine_overlay import editor_view_name, mirror_overlay, overlay_entry, report_diagnostics
+from overlay_request import parse_serve, parse_served
 from scratch import scratch_directory
 
 
@@ -75,6 +76,21 @@ pub def test_a_package_document_is_answered_through_the_package_entry() -> Resul
     loose = scratch.path().joinpath("loose.incn")
     write(loose, "def main() -> None:\n    pass\n")?
     assert overlay_entry(loose)?.0 == loose.0
+    return Ok(None)
+
+
+pub def test_a_served_request_is_one_line_naming_document_buffer_and_version() -> Result[None, str]:
+    """A persistent overlay server takes at most a profile, then reads one JSON line per request."""
+    line = "{\"source\": \"/program/main.incn\", \"buffer\": \"/tmp/buffer\", \"version\": 7}"
+    request = parse_served(line, "release")?
+    assert request.source == "/program/main.incn" and request.buffer == "/tmp/buffer"
+    assert request.version == 7 and request.profile == "release"
+    negative = "{\"source\": \"/program/main.incn\", \"buffer\": \"/tmp/buffer\", \"version\": -1}"
+    assert parse_served(negative, "debug").is_err(), "a negative document version was accepted"
+    assert parse_served("{\"source\": \"/program/main.incn\"}", "debug").is_err(), "a request without a buffer was read"
+    assert parse_serve(["--overlay-serve"])? == "debug"
+    assert parse_serve(["--overlay-serve", "--profile", "release"])? == "release"
+    assert parse_serve(["--overlay-serve", "main.incn"]).is_err(), "a served session accepted a source"
     return Ok(None)
 
 
