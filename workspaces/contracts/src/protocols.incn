@@ -1,0 +1,100 @@
+"""
+A family's protocol cases: cases whose comparison runs commands of their own, one after another, in their project.
+
+A command-list case (`cli-commands:`), a check-edit case (`check-edits:`) and a graph case compare by running their
+own sequence of commands; every other case compares the outcome of one command. Each protocol case runs in a runner
+process of its own (`--family-worker`, one job, that one case), and its report is forwarded where the case belongs.
+"""
+
+from std.fs import Path
+from families import read_program
+from files import make_directory
+from fixture import Fixture
+from run import Outcome
+from workers import Invocation, invoke_many
+
+const COMPLETE: str = "CONTRACT FAMILY COMPLETE"
+
+
+pub model ProtocolRunner:
+    """The runner executable a protocol case runs in, and the arguments every one of them shares."""
+
+    # The runner executable.
+    pub program: str
+    # INCAN and FIXTURES_ROOT.
+    pub incan: str
+    pub root: str
+    # The flags the parent run was given that each case's runner keeps: `--isolated`, `--no-group-hints`, `--timeout`.
+    pub flags: list[str] = []
+
+
+pub def protocol_case(fixture: Fixture) -> bool:
+    """Whether comparing the case runs a sequence of its own commands rather than one command."""
+    if fixture.family == "graph":
+        return true
+    if fixture.family != "project" and fixture.family != "check":
+        return false
+    match read_program(fixture):
+        Err(_) => return false
+        Ok(program) =>
+            if fixture.family == "project":
+                return program.header.declares("cli-commands")
+            return program.header.declares("check-edits")
+
+
+pub def protocols_at_once(jobs: int, cases: int) -> int:
+    """How many protocol cases run at once: one at a time."""
+    return 1
+
+
+pub def run_protocols(
+    runner: ProtocolRunner,
+    scratch: Path,
+    cases: list[str],
+    jobs: int,
+) -> Result[dict[str, Result[Outcome, str]], str]:
+    """
+    Run each protocol case in a runner of its own, each with its own scratch so no two share a partition or refusal
+    file, and return each runner's outcome by case.
+    """
+    mut requests: list[Invocation] = []
+    for name in cases:
+        retained = scratch.joinpath(f"protocol-{name.replace("/", "-")}")
+        make_directory(retained)?
+        mut arguments = [runner.incan, runner.root, "--family-worker", "--scratch", retained.0, "--jobs", "1"]
+        arguments.extend(runner.flags)
+        arguments.append(name)
+        requests.append(Invocation(program=runner.program, arguments=arguments, project=retained, selector=None))
+    results = invoke_many(requests, protocols_at_once(jobs, len(cases)))
+    mut outcomes: dict[str, Result[Outcome, str]] = {}
+    for index in range(len(cases)):
+        outcomes[cases[index]] = results[index]
+    return Ok(outcomes)
+
+
+pub def forwarded_lines(result: Result[Outcome, str]) -> Result[list[str], str]:
+    """
+    The lines a protocol case's runner reported for its case: its verdict, reasons, notes and timings, without the
+    area and total summaries its parent prints. A runner that did not complete, or exited unlike its verdict, is refused.
+    """
+    match result:
+        Err(reason) => return Err(reason)
+        Ok(outcome) =>
+            mut lines: list[str] = []
+            mut completed = 0
+            mut failed = false
+            for line in outcome.stdout.split("\n"):
+                if line == COMPLETE:
+                    completed += 1
+                elif line == "" or line.startswith("area ") or line.startswith("total:") or line.startswith("oven:"):
+                    continue
+                else:
+                    if line.startswith("FAIL ") or line.startswith("REFUSED "):
+                        failed = true
+                    lines.append(line)
+            mut expected = Some(0)
+            if failed:
+                expected = Some(1)
+            if completed != 1 or outcome.code != expected or outcome.stderr != "":
+                return Err(f"the case's runner did not complete its report (exit {outcome.exit_text()}): {outcome.stderr}")
+            return Ok(lines)
