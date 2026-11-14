@@ -178,20 +178,17 @@ pub def validate_field(field: CanonicalField) -> Result[None, CodecFault]:
         ]:
             return Err(CodecFault.Unsupported(field.selector))
         end = 1
-    # Generated call artifact rows follow their field's codec: a type, a flag or an identity at a source node.
+    # Generated call artifact rows follow their field's codec: a type, a flag, an identity or an operator call at a
+    # source node.
     elif field.family == "artifact-call":
         if field.node == "":
             return Err(CodecFault.Malformed)
         match call_artifact_codec(field.selector):
             Some(CallArtifactCodec.SpanType) => end = type_end(values, 0, 0)?
-            Some(CallArtifactCodec.SpanSet) =>
-                if values != ["true"]:
+            Some(codec) =>
+                if not codec.admits_plain_values(values):
                     return Err(CodecFault.Malformed)
-                end = 1
-            Some(CallArtifactCodec.SpanIdentity) =>
-                if len(values) != 1 or values[0] == "":
-                    return Err(CodecFault.Malformed)
-                end = 1
+                end = len(values)
             None => return Err(CodecFault.Unsupported(field.selector))
     # A target's source: at least two values, all kept.
     elif field.family == "target":
