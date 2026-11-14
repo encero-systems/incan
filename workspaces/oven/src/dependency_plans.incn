@@ -1,0 +1,215 @@
+"""
+Plan the `loaf.toml` changes of the dependency commands from the manifest's text and the published registry
+units, without writing a file (RFC 125). One line of `[dependencies]` is added or changed, and a planned text must read
+back as planned.
+"""
+
+from std.toml import TomlValue
+from loaf_identity import crate_name, refuse_capitals, validate_loaf_identity
+from registry_units import RegistryUnit
+from semver_req import (
+    Version,
+    VersionReq,
+    compare_versions,
+    parse_requirement,
+    parse_version,
+    requirement_matches,
+    version_text,
+)
+
+const DEPENDENCIES: str = "[dependencies]"
+
+
+pub model ManifestChange:
+    """A planned `loaf.toml` text and the lines the command reports; an unchanged text needs no write."""
+
+    pub text: str
+    pub report: list[str]
+
+
+pub model RegistryDependency:
+    """One registry entry of a manifest's `[dependencies]`: its key, its Loaf and its version requirement."""
+
+    pub key: str
+    pub loaf: str
+    pub requirement: str
+
+
+pub def plan_add(
+    name: str,
+    version: str,
+    key: str,
+    text: str,
+    manifest: str,
+    units: list[RegistryUnit],
+) -> Result[ManifestChange, str]:
+    """
+    Add one registry dependency to the manifest's `[dependencies]` (RFC 125).
+
+    1. The name is a full Loaf name without capitals; a short one is refused with the published full names it ends.
+    2. The requirement is the one named, else the newest published version, spelled in full.
+    3. The key is the name's last part with `-` as `_`, or the one named; a taken key is refused.
+    4. One line is written after the table's last entry, or the table is appended, and it must read back.
+    """
+    # 1. Oven never guesses a full name.
+    loaf = full_name(name, [unit.loaf for unit in units if unit.refusal == ""], "published Loaf")?
+    # 2. A new dependency starts at the newest published version.
+    mut requirement = version
+    if requirement == "":
+        match newest_published(units, loaf, "")?:
+            None => return Err(f"{loaf} is not published in the toolchain's registry")
+            Some(newest) => requirement = version_text(newest)
+    else:
+        _ = parse_requirement(requirement).map_err((reason) => f"`--version {requirement}`: {reason}")?
+    # 3. A key names one package; a collision is settled by choosing another key.
+    mut chosen = key
+    if chosen == "":
+        chosen = crate_name(loaf)
+    declared = declared_keys(text, manifest)?
+    if chosen in declared:
+        if declared[chosen] == loaf:
+            return Err(f"`{chosen}` already names {loaf} in {manifest}; raise it with `oven update {loaf}`")
+        return Err(f"the key `{chosen}` is taken in {manifest}; choose another with `--key KEY`")
+    # 4. Only the new line is written.
+    line = chosen + " = { loaf = \"" + loaf + "\", version = \"" + requirement + "\" }"
+    changed = inserted(text, line)
+    read_back(changed, manifest, chosen, loaf, requirement)?
+    return Ok(ManifestChange(text=changed, report=[f"added {loaf}, version = \"{requirement}\""]))
+
+
+pub def full_name(name: str, candidates: list[str], noun: str) -> Result[str, str]:
+    """
+    A full, lowercase Loaf name (RFC 125). A capital is refused rather than folded, and a short name is refused with
+    every candidate whose last part it is, since several Loaves may share one.
+    """
+    refuse_capitals(name)?
+    if "/" not in name:
+        mut matches: list[str] = []
+        for candidate in candidates:
+            if candidate.split("/")[-1] == name and candidate not in matches:
+                matches.append(candidate)
+        if len(matches) == 0:
+            return Err(f"`{name}` is not a full Loaf name, and no {noun} is named `SCOPE/{name}`")
+        listed = ", ".join(sorted(matches))
+        return Err(f"`{name}` is not a full Loaf name, and Oven never guesses one; name one of: {listed}")
+    validate_loaf_identity(name).map_err((reason) => f"`{name}`: {reason}")?
+    return Ok(name)
+
+
+pub def newest_published(units: list[RegistryUnit], loaf: str, requirement: str) -> Result[Option[Version], str]:
+    """The newest published, unrefused version of `loaf` that `requirement` admits; any version when it is empty."""
+    mut wanted: list[VersionReq] = []
+    if requirement != "":
+        wanted.append(parse_requirement(requirement)?)
+    mut newest: list[Version] = []
+    for unit in units:
+        if unit.loaf != loaf or unit.refusal != "":
+            continue
+        version = parse_version(unit.version)?
+        if len(wanted) > 0 and not requirement_matches(wanted[0], version):
+            continue
+        if len(newest) == 0:
+            newest.append(version)
+        elif compare_versions(version, newest[0]) > 0:
+            newest[0] = version
+    if len(newest) == 0:
+        return Ok(None)
+    return Ok(Some(newest[0]))
+
+
+pub def registry_dependencies(text: str, manifest: str) -> Result[list[RegistryDependency], str]:
+    """The `[dependencies]` entries that name a Loaf with a version requirement and no path, by key."""
+    mut found: list[RegistryDependency] = []
+    entries = dependency_tables(text, manifest)?
+    for key in sorted([name for name in entries.keys()]):
+        entry = entries[key]
+        if "loaf" not in entry or "version" not in entry or "path" in entry:
+            continue
+        loaf = entry["loaf"].as_str().map_err((_) => f"{manifest}: `dependencies.{key}.loaf` must be a string")?
+        requirement = entry["version"]
+            .as_str()
+            .map_err((_) => f"{manifest}: `dependencies.{key}.version` must be a string")?
+        found.append(RegistryDependency(key=key, loaf=loaf, requirement=requirement))
+    return Ok(found)
+
+
+def declared_keys(text: str, manifest: str) -> Result[Dict[str, str], str]:
+    """Every `[dependencies]` key with the Loaf it names, or an empty name when it names none."""
+    mut declared: Dict[str, str] = {}
+    document = parsed(text, manifest)?
+    if "dependencies" not in document:
+        return Ok(declared)
+    table = document["dependencies"].as_table().map_err((_) => f"{manifest}: `dependencies` must be a table")?
+    for key in table.keys():
+        declared[key] = ""
+    entries = dependency_tables(text, manifest)?
+    for key in entries.keys():
+        if "loaf" in entries[key]:
+            declared[key] = entries[key]["loaf"].as_str().unwrap_or("")
+    return Ok(declared)
+
+
+def dependency_tables(text: str, manifest: str) -> Result[Dict[str, Dict[str, TomlValue]], str]:
+    """The `[dependencies]` entries that are tables, by key."""
+    mut tables: Dict[str, Dict[str, TomlValue]] = {}
+    document = parsed(text, manifest)?
+    if "dependencies" not in document:
+        return Ok(tables)
+    table = document["dependencies"].as_table().map_err((_) => f"{manifest}: `dependencies` must be a table")?
+    for key in table.keys():
+        match table[key].as_table():
+            Ok(entry) => tables[key] = entry
+            Err(_) => pass
+    return Ok(tables)
+
+
+def parsed(text: str, manifest: str) -> Result[Dict[str, TomlValue], str]:
+    """The manifest's top-level table."""
+    document = TomlValue.parse(text).map_err((error) => f"{manifest}: {error.message()}")?
+    return document.as_table().map_err((error) => f"{manifest}: {error.message()}")
+
+
+def read_back(text: str, manifest: str, key: str, loaf: str, requirement: str) -> Result[None, str]:
+    """Refuse a planned manifest unless it parses and `key` names `loaf` at `requirement`."""
+    for dependency in registry_dependencies(text, manifest)?:
+        if dependency.key == key and dependency.loaf == loaf and dependency.requirement == requirement:
+            return Ok(None)
+    return Err(f"{manifest}: the edit would not read back `{key}` as {loaf} at `{requirement}`; edit it by hand")
+
+
+def inserted(text: str, line: str) -> str:
+    """`text` with `line` after the last entry of its `[dependencies]` table, or with that table appended."""
+    lines = text.split("\n")
+    mut header = -1
+    for index in range(len(lines)):
+        if section_of(lines[index]) == DEPENDENCIES:
+            header = index
+            break
+    if header < 0:
+        mut appended = text
+        if appended != "" and not appended.endswith("\n"):
+            appended += "\n"
+        if appended != "":
+            appended += "\n"
+        return appended + DEPENDENCIES + "\n" + line + "\n"
+    mut last = header
+    mut index = header + 1
+    while index < len(lines) and not lines[index].strip().startswith("["):
+        if lines[index].strip() != "":
+            last = index
+        index += 1
+    mut changed = lines[:last + 1]
+    changed.append(line)
+    return "\n".join(changed + lines[last + 1:])
+
+
+def section_of(line: str) -> str:
+    """The table header `line` opens, without a trailing comment, or an empty string."""
+    stripped = line.strip()
+    if not stripped.startswith("[") or "]" not in stripped:
+        return ""
+    header = stripped.split("]")[0] + "]"
+    rest = stripped[len(header):].strip()
+    if rest != "" and not rest.startswith("#"):
+        return ""
+    return header

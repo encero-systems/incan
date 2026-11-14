@@ -214,7 +214,7 @@ def remember_settled(root: Path, question: str, reader: ManifestReader, lock: st
     retain_content(path, question, lock, value)
 
 
-def root_project(path: Path) -> Result[Option[Path], str]:
+pub def root_project(path: Path) -> Result[Option[Path], str]:
     """Resolve only the command's root project; dependency roots are never consulted for their own locks."""
     if path.is_dir() and path.joinpath("loaf.toml").is_file():
         return Ok(Some(path.resolve().map_err((error) => f"cannot resolve {error.message()}")?))

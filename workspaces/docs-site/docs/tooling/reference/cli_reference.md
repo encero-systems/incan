@@ -8,6 +8,7 @@ An Incan installation provides two commands, `oven` and `incan`, as one program.
 oven --help | -h | help
 oven --version
 oven lock [--versions lowest|lowest-direct|newest] [PATH]
+oven add NAME [--version REQUIREMENT] [--key KEY] [--project PATH]
 oven trust list | add publisher|loaf|project VALUE | remove publisher|loaf|project VALUE
 oven run [PATH] [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 oven check [PATH] [--format text|json] [UNIT OPTIONS]
@@ -70,6 +71,16 @@ Resolves the root project at `PATH` and atomically writes its generated [`oven.l
 `--versions` accepts `lowest`, `lowest-direct` or `newest`. `lowest` selects the lowest published version that satisfies a requirement and `newest` the highest. `lowest-direct` selects the lowest for a requirement the root project declares and the highest for one only a path dependency declares. Without the option, an existing lock keeps its recorded mode, under any toolchain; without a lock, the mode is `lowest`. The current compiled-unit resolver applies the mode before its exact-producer and profile tie-breaks.
 
 This command is available only as `oven lock`. `incan lock` is an unknown command.
+
+## `oven add`
+
+Adds one registry dependency to the `[dependencies]` table of the root project at or above `--project PATH`, which defaults to the current directory, then locks the project as `oven lock` does. `NAME` is a full Loaf name, `SCOPE/NAME`. A name with a capital letter is refused, not folded. A name without a scope is refused with every published full name that ends in it, since several Loaves can share a short name.
+
+The requirement is `--version REQUIREMENT`, or else the newest version the toolchain's registry publishes, spelled in full. The key is `--key KEY`, or else the name's last part with `-` as `_`. A key the table already has is refused. When that key names the same Loaf, the refusal names `oven update`; when it names another Loaf, it names `--key`.
+
+One line, `KEY = { loaf = "NAME", version = "REQUIREMENT" }`, is written after the table's last entry. A manifest without the table gains it at its end. Nothing else in `loaf.toml` changes. Success prints `added NAME, version = "REQUIREMENT"`, then the lock's report, and exits `0`. When the lock is refused, `loaf.toml` is restored to its exact text, and the command exits `1` with the lock's reason.
+
+It runs only on a toolchain the project's `requires-incan` admits. This command is available only as `oven add`.
 
 ## `oven trust`
 
