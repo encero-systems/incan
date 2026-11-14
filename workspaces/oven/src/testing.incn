@@ -670,21 +670,25 @@ pub model GroupCase:
     pub duration_ms: int = 0
 
 
-pub def group_case(printed: str, entry: str) -> GroupCase:
+pub def group_case(printed: str, entry: str, native: str) -> GroupCase:
     """
-    One case's lines between the group's `incan-case-start` and `incan-case-end` markers, and its end marker's verdict,
-    duration and message.
+    One case of a file group's output: what the group printed since the previous case ended, such as a shared fixture
+    set up for this case, then the case's own lines between its `incan-case-start` and `incan-case-end` markers, and
+    its end marker's verdict, duration and message. The native harness's own lines are left out.
     """
     start = f"incan-case-start {entry}"
     end = f"incan-case-end {entry} "
     mut found = GroupCase()
     mut inside = false
+    mut pending: list[str] = []
     mut lines: list[str] = []
     for line in printed.split("\n"):
-        if line == start:
+        text = harness_free(line, native)
+        if text == start:
             inside = true
-        elif inside and line.startswith(end):
-            parts = line[len(end):].split(" ")
+            lines = pending
+        elif inside and text.startswith(end):
+            parts = text[len(end):].split(" ")
             found.finished = true
             found.passed = parts[0] == "passed"
             if len(parts) > 1:
@@ -695,16 +699,20 @@ pub def group_case(printed: str, entry: str) -> GroupCase:
                 found.message = " ".join(parts[2:])
             inside = false
         elif inside:
-            lines.append(line)
-    if len(lines) > 0:
-        found.output = "\n".join(lines) + "\n"
+            lines.append(text)
+        elif text.startswith("incan-case-start ") or text.startswith("incan-case-end "):
+            pending = []
+        elif kept_edge(text):
+            pending.append(text)
+    found.output = joined(lines)
     return found
 
 
 def group_finished(
     test_case: TestCase,
     item: Running,
-    edges: tuple[str, str],
+    printed: str,
+    tail: str,
     elapsed: int,
     runner: RunnerOptions,
 ) -> Result[Finished, str]:
@@ -715,11 +723,10 @@ def group_finished(
     2. An expected failure inverts the observed outcome, unless `--run-xfail` runs it plainly.
     3. Any other case holds when its end marker says it passed; a failure shows the message it was raised with.
     """
-    printed = decoded(item.output.read_bytes().map_err((error) => error.message())?)
-    found = group_case(printed, test_case.member)
+    found = group_case(printed, test_case.member, test_case.native)
     mut finished = Finished(
         outcome=outcome_of(test_case, Status.Passed, "", group_duration(found, elapsed)),
-        output=RustString.from(edges[0] + found.output + edges[1]).into_bytes(),
+        output=RustString.from(found.output + tail).into_bytes(),
     )
     # 1. The group ended before this case finished.
     if not found.finished:
@@ -752,26 +759,19 @@ def group_size(item: Running) -> int:
     return 1
 
 
-pub def group_edges(printed: str, native: str) -> tuple[str, str]:
+pub def group_tail(printed: str, native: str) -> str:
     """
-    What a file group printed before its first case and after its last, shared fixtures' setup and teardown, without
-    the harness's own lines; the first case's output and the last case's carry them.
+    What a file group printed after its last case ended, such as a shared fixture's teardown; the last case's output
+    ends with it. The native harness's own lines are left out.
     """
-    mut before: list[str] = []
     mut after: list[str] = []
-    mut started = false
     for line in printed.split("\n"):
         text = harness_free(line, native)
-        if text.startswith("incan-case-start "):
-            started = true
+        if text.startswith("incan-case-start ") or text.startswith("incan-case-end "):
             after = []
-        elif text.startswith("incan-case-end "):
-            after = []
-        elif not started and kept_edge(text):
-            before.append(text)
-        elif started and kept_edge(text):
+        elif kept_edge(text):
             after.append(text)
-    return (joined(before), joined(after))
+    return joined(after)
 
 
 def harness_free(line: str, native: str) -> str:
@@ -807,21 +807,17 @@ def settle_group(
     runner: RunnerOptions,
     mut settled: list[Option[Finished]],
 ) -> Result[None, str]:
-    """
-    Settle every case of an ended file group; the first case's output starts with the group's setup, the last's ends
-    with its teardown.
-    """
+    """Settle every case of an ended file group; the last case's output ends with what the group printed after it."""
     printed = decoded(item.output.read_bytes().map_err((error) => error.message())?)
-    before, after = group_edges(printed, selected[item.position].native)
+    native = selected[item.position].native
+    tail = group_tail(printed, native)
     last = len(item.members) - 1
     for index in range(len(item.members)):
         member = item.members[index]
-        mut edges = ("", "")
-        if index == 0:
-            edges = (before, "")
+        mut after = ""
         if index == last:
-            edges = (edges[0], after)
-        settled[member] = Some(group_finished(selected[member], item, edges, elapsed, runner)?)
+            after = tail
+        settled[member] = Some(group_finished(selected[member], item, printed, after, elapsed, runner)?)
     return Ok(None)
 
 

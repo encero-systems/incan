@@ -20,7 +20,7 @@ use std::path::Path;
 
 use crate::test_conftest::{Conftest, appended};
 use crate::test_entries::{EntryWriter, PREFIX, Stage};
-use crate::test_groups::{GROUP, Member, reached, shared_fixtures, write_group};
+use crate::test_groups::{GROUP, Member, reached, shared_fixtures, shared_yields, write_group};
 use incan_driver::session::CompilationSession;
 use incan_driver::testing::types::{DiscoveryResult, FixtureInfo, ParametrizeCase, TestInfo, TestMarker};
 use incan_frontend::ast::{CallArg, Declaration, DecoratorArg, Expr, FunctionDecl, ListEntry, Spanned};
@@ -224,12 +224,18 @@ fn write_cases(
                 test.function_name
             ));
         }
+        let yields = if grouped {
+            shared_yields(writer, &roots)?
+        } else {
+            Vec::new()
+        };
         if test.parameter_names.is_empty() && autouse.is_empty() {
             let mut case = plain_case(index, test);
             if grouped {
                 members.push(Member {
                     entry: case.entry.clone(),
                     returns: returns.clone(),
+                    yields: yields.clone(),
                 });
                 case.case = Some(std::mem::replace(&mut case.entry, GROUP.to_string()));
             }
@@ -250,6 +256,7 @@ fn write_cases(
                 members.push(Member {
                     entry: entry.clone(),
                     returns: returns.clone(),
+                    yields: yields.clone(),
                 });
                 (GROUP.to_string(), Some(entry))
             } else {
