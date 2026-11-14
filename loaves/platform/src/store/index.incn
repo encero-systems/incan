@@ -133,6 +133,11 @@ pub def page_reads() -> int:
     return pages_read.get("pages", 0)
 
 
+pub def pages_checked() -> int:
+    """How many index pages this process has mapped and hashed to check them against their content digest."""
+    return pages_read.get("checked", 0)
+
+
 pub def copied_index_bytes() -> int:
     """How many bytes this process copied out of mapped index pages: compared keys and decoded entries."""
     return pages_read.get("copied", 0)
@@ -361,6 +366,7 @@ def mapped_page(root: Path, reference: str) -> Result[Layout, IndexError]:
         None => return Err(malformed(path, "the page lies outside its file"))
         Some(view) =>
             pages_read["pages"] = pages_read.get("pages", 0) + 1
+            pages_read["checked"] = pages_read.get("checked", 0) + 1
             if hexlify(view_digest(view)) != location.digest:
                 return Err(IndexError(object=path.value, detail="index page does not match its digest"))
             return layout(view, location.pack).map_err((detail) => malformed(path, detail))

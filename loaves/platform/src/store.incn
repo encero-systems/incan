@@ -51,7 +51,7 @@ from crate.store.index import Entry, Location, build, entries as index_entries, 
 from crate.store.index import entries_for_keys as index_entries_for_keys
 from crate.store.index import entries_with_prefix as index_entries_with_prefix
 from crate.store.index import read_page as index_page, search as index_search
-from crate.store.index import copied_index_bytes, page_directory, page_path, page_reads, view_digest
+from crate.store.index import copied_index_bytes, page_directory, page_path, page_reads, pages_checked, view_digest
 from crate.store.index import PageWriter, install_pack, installed_reference
 from crate.store.files import (
     StoreError,
@@ -179,9 +179,10 @@ pub model ReadCounts:
     """
     What this process read so far.
 
-    `records` frames found, `bytes` frame bytes checked in place and `pages` index pages read; `copied` bytes copied
-    out of mapped pages and frames by lookups (keys compared and locations decoded, never a value); `decoded` bytes of
-    found values copied into owned bytes by `owned`; `listed` keys returned by whole and prefix listings.
+    `records` frames found, `bytes` frame bytes checked in place, `pages` index pages read and `checked` the index pages
+    mapped and hashed to check them against their digest; `copied` bytes copied out of mapped pages and frames by
+    lookups (keys compared and locations decoded, never a value); `decoded` bytes of found values copied into owned
+    bytes by `owned`; `listed` keys returned by whole and prefix listings.
     """
 
     pub records: int
@@ -190,6 +191,7 @@ pub model ReadCounts:
     pub copied: int
     pub decoded: int
     pub listed: int = 0
+    pub checked: int = 0
 
 
 # Reads this process made, for measuring what a compile reads; nothing is cached by them.
@@ -236,6 +238,7 @@ pub def read_counts() -> ReadCounts:
         copied=counted.get("copied", 0) + copied_index_bytes(),
         decoded=counted.get("decoded", 0),
         listed=counted.get("listed", 0),
+        checked=pages_checked(),
     )
 
 
