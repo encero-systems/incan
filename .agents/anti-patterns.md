@@ -15,8 +15,8 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 | ID | Rule | Before | Real | Now |
 | --- | --- | ---: | ---: | ---: |
 | RS1 | `.unwrap()` / `.expect("…")` in Rust | 6 | 5 | 1 |
-| RS2 | `.expect()` spelled `unwrap_or_else(\|…\| panic!(…))` | 11 | 11 | 11 |
-| RS3 | `panic!` control flow (tests and production) | 284 | 284 | 284 |
+| RS2 | `.expect()` spelled `unwrap_or_else(\|…\| panic!(…))` | 11 | 11 | 9 |
+| RS3 | `panic!` control flow (tests and production) | 284 | 284 | 281 |
 | RS4 | Wildcard `use …::*;` | 644 | 644 | 644 |
 | RS5 | `&String`, `&Vec<T>`, `&Box<T>` parameters | 6 | 6 | 6 |
 | RS6 | Numeric `as` casts | 290 | 290 | 290 |
@@ -64,6 +64,7 @@ IN15 counts candidates, and IN16 counts a superset to review one by one: a messa
 - Source: `AGENTS.md`, "CRITICAL — NO `.unwrap()` / `.expect()`"; `readable-maintainable-rust.md`, "Panics on recoverable paths".
 - Search: `rg -n -P 'unwrap_or_else\(\|[^|]*\|\s*panic!' -g '*.rs' -g '!**/fixtures/**'`
 - Hits: `incan_lang` (3), `incan_syntax/src/lexer/mod.rs` (2), `incan_frontend/src/typechecker/diagnostic_values.rs` (2), `loaves/stdlib/web/rust/src/lib.rs` (4).
+- Left: the nine production sites. Each states a total function whose failure is a programming error (the `incan_lang` registry lookups and the checked-diagnostic capture of `diagnostic_values.rs`) or is a public entry point (`App.run` in `std.web`, whose TODO asks for a `Result`). Clearing them changes their signatures and every caller, so they wait for a toolchain that can build and test those callers.
 
 ### RS3 `panic!` control flow
 

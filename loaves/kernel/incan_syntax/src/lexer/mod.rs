@@ -614,12 +614,14 @@ mod tests {
         }
     }
 
+    /// Every registered keyword spelling lexes to exactly one token: an identifier for a soft keyword, the keyword
+    /// otherwise.
     #[test]
-    fn test_keyword_registry_parity() {
+    fn test_keyword_registry_parity() -> Result<(), Box<dyn std::error::Error>> {
         use incan_lang::lang::keywords;
 
         for k in keywords::KEYWORDS {
-            let tokens = lex(k.canonical).unwrap_or_else(|errs| panic!("lex({:?}) failed: {:?}", k.canonical, errs));
+            let tokens = lex(k.canonical).map_err(|errs| format!("lex({:?}) failed: {:?}", k.canonical, errs))?;
             assert!(
                 tokens.len() >= 2,
                 "expected token + EOF for keyword {:?}, got {:?}",
@@ -647,15 +649,17 @@ mod tests {
                 assert!(tokens[0].kind.is_keyword(k.id));
             }
         }
+        Ok(())
     }
 
+    /// Every registered operator spelling lexes to exactly one token of the kind its registry entry promises.
     #[test]
-    fn test_operator_registry_parity() {
+    fn test_operator_registry_parity() -> Result<(), Box<dyn std::error::Error>> {
         use incan_lang::lang::operators;
 
         for o in operators::OPERATORS {
             for &sp in o.spellings {
-                let tokens = lex(sp).unwrap_or_else(|errs| panic!("lex({:?}) failed: {:?}", sp, errs));
+                let tokens = lex(sp).map_err(|errs| format!("lex({:?}) failed: {:?}", sp, errs))?;
                 assert!(
                     tokens.len() >= 2,
                     "expected token + EOF for operator spelling {:?}, got {:?}",
@@ -681,7 +685,7 @@ mod tests {
                         operators::OperatorId::Not => KeywordId::Not,
                         operators::OperatorId::In => KeywordId::In,
                         operators::OperatorId::Is => KeywordId::Is,
-                        _ => panic!("unexpected keyword-spelling operator {:?}", o.id),
+                        _ => return Err(format!("unexpected keyword-spelling operator {:?}", o.id).into()),
                     };
                     assert!(tokens[0].kind.is_keyword(expected_kw));
                 } else if o.id == operators::OperatorId::MatMul {
@@ -696,6 +700,7 @@ mod tests {
                 }
             }
         }
+        Ok(())
     }
 
     #[test]
