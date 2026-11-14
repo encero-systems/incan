@@ -6,7 +6,7 @@ from pub::incan_mir_plan import Function, NominalReference, Plan, PlanType, prod
 from rust::incan_semantics_core::semantic_digest import semantic_digest
 from record_plan_codec import encode_record_plan_products, encode_entry_binding
 from record_positions import place_positions, relocate_product
-from scalar_store import event_positions, event_references, finalize_scalar
+from scalar_store import event_positions, event_references, finalize_scalar, report_scalar_refusal
 
 
 pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[None, str]:
@@ -18,7 +18,12 @@ pub def publish_plan_records(plan: &Plan, products: str, report: str) -> Result[
     mut carried: list[str] = []
     keyed = keyed_plan_products(plan, products, report_path, events, references, carried)?
     if len(events) != len(plan.functions):
-        # Helper frames travel inside their caller's product, so a unit with any publishes no whole-unit interface.
+        # Helper frames travel inside their caller's product, so a unit with any publishes no whole-unit interface,
+        # and says so: Bakery accepts an omitted interface only beside an explicit lowering refusal.
+        for frame in carried:
+            report_scalar_refusal(
+                Some(report), frame, frame, "native-interface refuses a helper frame carried inside its caller's product",
+            )?
         if len(carried) != 0 or has_scalar_refusal(report_path)?:
             return Ok(None)
         return Err("native-interface refuses generated functions without graph body witnesses")

@@ -97,6 +97,30 @@ pub def test_keyed_plan_naming_a_model_publishes_its_interface() -> Result[None,
     return Ok(None)
 
 
+pub def test_keyed_plan_carrying_a_frame_refuses_the_interface() -> Result[None, str]:
+    """A unit whose keyed product carries a helper frame publishes no interface, and reports why."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    products, report = record_directories(scratch.path())?
+    span = source_span(file="keyed_plan.incn", line=4, column=1)
+    caller = unit_function("main", span, 1)
+    frame = unit_function("__incan_closure_main_0", span, 2)
+    plan = Plan(enums=[], models=[], functions=[caller, frame], externals=[], programs=[], span=span)
+    inputs = record_scalar_inputs("checked-meaning", caller.name, caller.span, false, "reads", 0)
+    empty_runtime: list[ExternalFunction] = []
+    no_nominals: list[ProductNominal] = []
+    no_positions: list[tuple[int, int]] = []
+    retain_scalar(products.0, inputs, caller, empty_runtime, no_nominals, no_positions, [frame])?
+    report_scalar(Some(report.0), products.0, inputs, caller.name, caller.name, false, 0)?
+    publish_plan_records(plan, products.0, report.0)?
+    assert not report.joinpath("native-interface.json").is_file(), "a unit with a carried frame published an interface"
+    mut refused = false
+    for path in report.iterdir().map_err((error) => error.message())?:
+        if path.name().endswith(".refusal") and "helper frame carried" in read(path)?:
+            refused = true
+    assert refused, "an omitted interface carried no lowering refusal"
+    return Ok(None)
+
+
 def record_directories(root: Path) -> Result[tuple[Path, Path], str]:
     """Create one request's product store and report directory with its producer generation."""
     products = root.joinpath("products")
