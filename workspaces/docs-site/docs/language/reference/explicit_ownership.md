@@ -58,6 +58,13 @@ An explicit source call can return a generic `Result` or `Option` without a resu
 
 The current native route discharges this obligation for primitive values and nested `Result`/`Option` carriers of primitive values. Nominal, native and borrowed payloads that need further dependency facts are refused before native execution. This does not remove a declared result-source relationship or weaken ordinary duckborrowing.
 
+An `Owned[E]` argument may move into a generic `Err` payload of the result, also through another generic helper that forwards it. A `Borrowed[E]` argument cannot become an owned payload: `return Err(error)` with `error: Borrowed[E]` is refused with `INCAN-T0126`.
+
+```incan
+def fail[E](error: Owned[E]) -> Result[None, E]:
+    return Err(error)
+```
+
 ## Locals
 
 A local declared `Borrowed[T]` or `BorrowedMut[T]` is an alias of a checked local or stored-field place. Reads and writes use that original place; the alias does not allocate an independent value or acquire a separate drop obligation. Assigning through a writable alias writes through to its target; it does not retarget the alias. Reading a Copy referent produces a value. Reading a non-Copy referent retains the borrow and cannot transfer or return its ownership.

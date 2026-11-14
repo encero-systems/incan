@@ -121,7 +121,13 @@ Fixture scopes:
 
 - `@fixture` / `@fixture(scope="function")`: created for each test that uses it.
 - `@fixture(scope="module")`: set up once per test file, at its first use, and torn down after the file's last test.
-- `@fixture(scope="session")`: set up once per test process, at its first use, and torn down after the process's last test. `incan test` runs the tests of a file that uses a module- or session-scoped fixture in one process for that file, so test files do not share a session fixture.
+- `@fixture(scope="session")`: set up once per test process, at its first use, and torn down after the process's last test. `incan test` runs the tests of a file that uses a module- or session-scoped fixture in one process for that file. Under one job (`--jobs 1`, the default), the test files that use the same plain session fixture of a `conftest.incn` run in one process and share one instance of that fixture. Test files share no other session fixture.
+
+`@fixture(autouse=true)` applies the fixture to every test in its scope without the test naming it.
+
+A test file also receives the fixtures of every `conftest.incn` from its own directory up to the nearest `tests` directory above it. A fixture the test file declares takes precedence over a conftest's, and a nearer conftest's over a farther one's. A conftest fixture may depend on the fixtures of the conftests above it.
+
+Each case of a `@parametrize` test is named `TEST[ID]`. `ID` is the case's `param_case(id=...)`, otherwise its entry in the decorator's `ids=[...]`, otherwise its argument values joined with `-`, as in `test_add[1-2-3]`.
 
 Fixtures may use one top-level `yield` statement. Statements before `yield` are setup, the yielded value is injected, and statements after `yield` run as teardown at the fixture scope boundary. Teardown can reference setup locals and fixture parameters, runs after failing tests when the worker remains alive, and fails the run if teardown itself fails. Timeout-enforced worker termination can bypass teardown.
 
