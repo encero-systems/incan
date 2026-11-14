@@ -100,6 +100,13 @@ def request_text(generation: str, command: str, retire_after: bool = false) -> s
     return f"{{\"schema\":\"{SCHEMA}\",\"generation\":\"{generation}\",\"arguments\":{arguments},{sinks}{policy}}}"
 
 
+def check_text(generation: str) -> str:
+    """A request document checking a unit against its sysroot, as Oven sends it."""
+    arguments = "[\"--check\",\"/p/unit.json\",\"/p/sysroot\"]"
+    sinks = "\"cwd\":\"/p\",\"stdout\":\"/p/r.out\",\"stderr\":\"/p/r.err\""
+    return f"{{\"schema\":\"{SCHEMA}\",\"generation\":\"{generation}\",\"arguments\":{arguments},{sinks}}}"
+
+
 def caller(socket: str, payload: str) -> Result[Connection, str]:
     """A caller that sent one framed payload and waits at most five seconds for its reply."""
     mut connected = dial(socket)?
@@ -201,6 +208,13 @@ def is_format(request: CompileRequest) -> bool:
         WorkerCommand.Check => return false
         WorkerCommand.SourceFiles => return false
         WorkerCommand.RustImports => return false
+
+
+def is_check(request: CompileRequest) -> bool:
+    """Whether the request checks a unit."""
+    match request.command:
+        WorkerCommand.Check => return true
+        _ => return false
 
 
 def is_discovery(request: CompileRequest) -> bool:
@@ -582,18 +596,24 @@ pub def test_a_worker_still_retires_when_idle_after_an_activation_longer_than_it
 
 pub def test_a_footprint_over_its_margin_for_two_activations_retires_the_worker() -> Result[None, str]:
     """
-    A footprint more than the margin above the baseline after two activations in a row retires the worker: its second
-    reply is marked retired, its socket is withdrawn, and the request already queued is still answered, also retired.
+    A footprint more than the margin above the baseline after two compiling activations in a row retires the worker,
+    whatever light activation came between them: its second reply is marked retired, its socket is withdrawn, and the
+    request already queued is still answered, also retired.
     """
     socket = socket_path("footprint")
     mut host = host_for(settings(socket, 10000, 100, None))?
-    mut first = caller(socket, request_text(GENERATION, "--fmt"))?
-    assert is_format(served(host)?)
+    mut first = caller(socket, check_text(GENERATION))?
+    assert is_check(served(host)?)
     complete(host, ActivationOutcome.Exited(0), 1101)
     assert not retired(reply(first)?)
-    mut second = caller(socket, request_text(GENERATION, "--fmt"))?
-    mut queued = caller(socket, request_text(GENERATION, "--fmt"))?
+    # A formatting run after the check finds the heap the check left; it neither adds to the run nor ends it.
+    mut light = caller(socket, request_text(GENERATION, "--fmt"))?
     assert is_format(served(host)?)
+    complete(host, ActivationOutcome.Exited(0), 1200)
+    assert not retired(reply(light)?)
+    mut second = caller(socket, check_text(GENERATION))?
+    mut queued = caller(socket, request_text(GENERATION, "--fmt"))?
+    assert is_check(served(host)?)
     complete(host, ActivationOutcome.Exited(0), 1200)
     second_reply = reply(second)?
     assert exit_of(second_reply) == 0 and retired(second_reply)
@@ -617,6 +637,28 @@ pub def test_a_footprint_back_within_its_margin_keeps_the_worker() -> Result[Non
         Some(reason) =>
             assert reason == Retirement.Footprint
         None => return Err("two consecutive activations over the margin did not retire the worker")
+    return Ok(None)
+
+
+pub def test_a_light_activation_neither_adds_to_nor_ends_a_run_of_excess() -> Result[None, str]:
+    """
+    Formatting, a source listing or an import collection is held only to the ceiling: over the margin, within it or
+    unmeasured, it leaves the compiles' run of excess as it was, and over the ceiling it retires the worker at once.
+    """
+    mut policy = lifecycle(1000, Bounds(idle_millis=10000, margin=100, ceiling=5000))
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1101).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1101, true).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), 1050, true).retirement)
+    assert stays(policy.settle(ActivationOutcome.Exited(0), -1, true).retirement)
+    match policy.settle(ActivationOutcome.Exited(0), 1101).retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("two compiles over the margin with light activations between kept the worker")
+    mut ceiling = lifecycle(1000, Bounds(idle_millis=10000, margin=100, ceiling=5000))
+    match ceiling.settle(ActivationOutcome.Exited(0), 5001, true).retirement:
+        Some(reason) =>
+            assert reason == Retirement.Footprint
+        None => return Err("a light activation over the ceiling kept the worker")
     return Ok(None)
 
 
