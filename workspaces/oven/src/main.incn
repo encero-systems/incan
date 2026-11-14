@@ -30,6 +30,7 @@ from rust_activation import ActivationPurpose
 from rust_manifest import rust_facet
 from rust_testing import build_rust_tests
 from project_lock import ensure_project_lock, lock_project, locked_report, parse_lock_command
+from dependency_commands import DependencyVerb, dependency_command, parse_dependency_command
 from toolchain import load_toolchain, readmit_relinked_installation, rust_compiler
 from formatting import format_paths, parse_arguments as format_options
 from testing import (
@@ -165,7 +166,7 @@ def dispatch(command: str, rest: list[str]) -> None:
         require_no_arguments(command, rest)
         println(version_text(invoked()))
         return
-    if command in ["run", "check", "lint", "test", "build", "describe-unit", "fmt", "inspect", "lock", "trust"]:
+    if command in ["run", "check", "lint", "test", "build", "describe-unit", "fmt", "inspect", "lock", "add", "trust"]:
         begin_installation_command()
     # A build binds the home's own view of its bakery the first time the home builds (BE-01).
     if command in ["run", "test", "build", "lint"]:
@@ -224,8 +225,8 @@ def dispatch(command: str, rest: list[str]) -> None:
     if command == "explain":
         explain(rest)
         return
-    if command == "lock":
-        lock(rest)
+    if command in ["lock", "add"]:
+        lock(command, rest)
         return
     if command == "run":
         own, _passed = program_arguments(rest)
@@ -422,16 +423,32 @@ def workspace_command(arguments: list[str]) -> None:
         Ok(text) => println(text)
 
 
-def lock(arguments: list[str]) -> None:
-    """Resolve and report the root project's generated lock, and each lower bound it could not test."""
-    match parse_lock_command(arguments):
-        Err(reason) => syntax_error("lock", reason)
-        Ok(command) =>
-            match lock_project(command):
-                Err(reason) => fail(f"oven lock: {reason}", 1)
-                Ok(result) =>
-                    for line in locked_report(result):
-                        println(line)
+def lock(command: str, arguments: list[str]) -> None:
+    """
+    `oven lock`, or a dependency command that changes `loaf.toml` and then locks: print each report line, the lock's
+    lower bounds it could not test among them. A dependency command first meets the project's `requires-incan`
+    (RFC 073), naming the project its `--project` option selects.
+    """
+    mut outcome: Result[list[str], str] = Err("")
+    if command == "lock":
+        match parse_lock_command(arguments):
+            Err(reason) => syntax_error(command, reason)
+            Ok(request) =>
+                match lock_project(request):
+                    Err(reason) => outcome = Err(reason)
+                    Ok(result) => outcome = Ok(locked_report(result))
+    else:
+        match parse_dependency_command(DependencyVerb.Add, arguments):
+            Err(reason) => syntax_error(command, reason)
+            Ok(request) =>
+                match command_admission(command, [request.project]):
+                    Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
+                    Ok(_) => outcome = dependency_command(request)
+    match outcome:
+        Err(reason) => fail(f"oven {command}: {reason}", 1)
+        Ok(lines) =>
+            for line in lines:
+                println(line)
 
 
 def syntax_error(command: str, reason: str) -> None:
