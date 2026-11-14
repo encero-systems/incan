@@ -128,3 +128,24 @@ fn a_longer_docstring_keeps_the_semantic_facts_digest() -> Result<(), String> {
     assert_ne!(before.record_content, after.record_content);
     Ok(())
 }
+
+#[test]
+fn a_decorator_anchor_is_a_source_position() {
+    // Decorator metadata names its source location `anchor`, a span without the `span` name; Oven's own
+    // `incan_platform` carries five of them, and a longer docstring above one moved it.
+    let mut value = serde_json::json!({
+        "name": "traced",
+        "decorators": [{"path": ["probe"], "anchor": {"start": 10, "end": 16, "expansion": null}}],
+        "anchor": {"id": "probe::traced", "span": {"start": 0, "end": 40, "expansion": null}},
+    });
+    super::without_positions(&mut value);
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "name": "traced",
+            "decorators": [{"path": ["probe"]}],
+            "anchor": {"id": "probe::traced"},
+        }),
+        "every source position is left out, whatever field holds it"
+    );
+}
