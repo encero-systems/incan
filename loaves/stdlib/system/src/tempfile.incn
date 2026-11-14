@@ -105,7 +105,7 @@ pub class NamedTemporaryFile:
                                 persisted_path=Rc.new(RefCell.new(None)),
                             ),
                         )
-                    Err(detail) => return Err(_io_error(error_path, detail.to_string()))
+                    Err(detail) => return Err(_io_error(error_path, "create temporary file", detail.to_string()))
             None =>
                 match builder.tempfile():
                     Ok(file) =>
@@ -115,7 +115,7 @@ pub class NamedTemporaryFile:
                                 persisted_path=Rc.new(RefCell.new(None)),
                             ),
                         )
-                    Err(detail) => return Err(_io_error(error_path, detail.to_string()))
+                    Err(detail) => return Err(_io_error(error_path, "create temporary file", detail.to_string()))
 
     pub def path(self) -> Path:
         """
@@ -159,11 +159,11 @@ pub class NamedTemporaryFile:
                         persisted = Path(kept.1.to_string_lossy().into_owned())
                         self.persisted_path.replace(Some(persisted.clone()))
                         return Ok(persisted)
-                    Err(err) => return Err(_io_error(path, err.error.to_string()))
+                    Err(err) => return Err(_io_error(path, "persist", err.error.to_string()))
             None =>
                 match self.persisted_path.borrow().as_ref():
                     Some(path) => return Ok(path.clone())
-                    None => return Err(_io_error(Path("."), "temporary file is no longer live"))
+                    None => return Err(_io_error(Path("."), "persist", "temporary file is no longer live"))
 
 
 pub class TemporaryDirectory:
@@ -240,7 +240,7 @@ pub class TemporaryDirectory:
                                 persisted_path=Rc.new(RefCell.new(None)),
                             ),
                         )
-                    Err(detail) => return Err(_io_error(error_path, detail.to_string()))
+                    Err(detail) => return Err(_io_error(error_path, "create temporary directory", detail.to_string()))
             None =>
                 match builder.tempdir():
                     Ok(directory) =>
@@ -250,7 +250,7 @@ pub class TemporaryDirectory:
                                 persisted_path=Rc.new(RefCell.new(None)),
                             ),
                         )
-                    Err(detail) => return Err(_io_error(error_path, detail.to_string()))
+                    Err(detail) => return Err(_io_error(error_path, "create temporary directory", detail.to_string()))
 
     pub def path(self) -> Path:
         """
@@ -293,7 +293,7 @@ pub class TemporaryDirectory:
             None =>
                 match self.persisted_path.borrow().as_ref():
                     Some(path) => return Ok(path.clone())
-                    None => return Err(_io_error(Path("."), "temporary directory is no longer live"))
+                    None => return Err(_io_error(Path("."), "persist", "temporary directory is no longer live"))
 
 
 pub class _SpooledTemporaryFile:
@@ -351,7 +351,7 @@ pub class _SpooledTemporaryFile:
         """
         match self.temp_file:
             Some(temp) => return Ok(temp.path())
-            None => return Err(_io_error(Path("."), "spooled temporary file has not rolled to disk"))
+            None => return Err(_io_error(Path("."), "path", "spooled temporary file has not rolled to disk"))
 
     pub def rollover(mut self) -> Result[Path, IoError]:
         """
@@ -402,7 +402,7 @@ pub class _SpooledTemporaryFile:
             None =>
                 match self.memory.read(size):
                     Ok(data) => return Ok(data)
-                    Err(err) => return Err(_io_error(Path("."), err.detail))
+                    Err(err) => return Err(_io_error(Path("."), "read", err.detail))
 
     pub def read_bytes(self, size: int = -1) -> Result[bytes, IoError]:
         """
@@ -455,7 +455,7 @@ pub class _SpooledTemporaryFile:
                         if len(self.memory.getvalue()) > self.max_size:
                             self.rollover()?
                         return Ok(written)
-                    Err(err) => return Err(_io_error(Path("."), err.detail))
+                    Err(err) => return Err(_io_error(Path("."), "write", err.detail))
 
     pub def seek(self, offset: int, whence: int = 0) -> Result[int, IoError]:
         """
@@ -476,7 +476,7 @@ pub class _SpooledTemporaryFile:
             None =>
                 match self.memory.seek(offset, whence):
                     Ok(position) => return Ok(position)
-                    Err(err) => return Err(_io_error(Path("."), err.detail))
+                    Err(err) => return Err(_io_error(Path("."), "seek", err.detail))
 
     pub def tell(self) -> Result[int, IoError]:
         """
@@ -546,7 +546,7 @@ pub class _SpooledTemporaryFile:
         self.flush()?
         match self.temp_file:
             Some(temp) => return temp.persist()
-            None => return Err(_io_error(Path("."), "spooled temporary file is no longer live"))
+            None => return Err(_io_error(Path("."), "persist", "spooled temporary file is no longer live"))
 
 
 pub def SpooledTemporaryFile(max_size: int = 0) -> _SpooledTemporaryFile:
@@ -578,5 +578,5 @@ def _parent_path(dir: Option[Path]) -> Path:
         None => return Path(".")
 
 
-def _io_error(path: Path, detail: str) -> IoError:
-    return _fs_io_error(path, detail)
+def _io_error(path: Path, operation: str, detail: str) -> IoError:
+    return _fs_io_error(path, operation, detail)

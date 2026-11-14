@@ -176,7 +176,7 @@ pub type Path = newtype str:
         """
         match RustPath.new(self.0).try_exists():
             Ok(value) => return Ok(value)
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "check existence", err))
 
     pub def mkdir(self, parents: bool, exist_ok: bool) -> Result[None, IoError]:
         """
@@ -203,13 +203,13 @@ pub type Path = newtype str:
                 Err(err) =>
                     if exist_ok and self.is_dir():
                         return Ok(None)
-                    return Err(_io_error(self, err))
+                    return Err(_io_error(self, "create directory", err))
         match create_dir(RustPath.new(self.0)):
             Ok(_) => return Ok(None)
             Err(err) =>
                 if exist_ok and self.is_dir():
                     return Ok(None)
-                return Err(_io_error(self, err))
+                return Err(_io_error(self, "create directory", err))
 
     pub def read_bytes(self) -> Result[bytes, IoError]:
         """
@@ -218,7 +218,7 @@ pub type Path = newtype str:
         Returns:
             The file contents as `bytes`, or `Err(IoError)` if the read fails.
         """
-        file = self.open("rb")?
+        file = self.open("rb").map_err((error) => _as_operation(error, "read"))?
         return file.read_bytes(-1)
 
     pub def write_bytes(self, data: bytes) -> Result[None, IoError]:
@@ -231,7 +231,7 @@ pub type Path = newtype str:
         Returns:
             `Ok(None)` after writing all bytes, or `Err(IoError)` if the host rejects the write.
         """
-        file = self.open("wb")?
+        file = self.open("wb").map_err((error) => _as_operation(error, "write"))?
         _ = file.write_bytes(data)?
         return Ok(None)
 
@@ -333,9 +333,9 @@ pub type Path = newtype str:
                 for entry_result in entries:
                     match entry_result:
                         Ok(entry) => out.append(entry.path().to_string_lossy().into_owned())
-                        Err(err) => return Err(_io_error(self, err))
+                        Err(err) => return Err(_io_error(self, "list directory", err))
                 return Ok([Path(item) for item in out])
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "list directory", err))
 
     pub def glob(self, pattern: str) -> Result[list[Path], IoError]:
         """
@@ -389,7 +389,7 @@ pub type Path = newtype str:
         """
         match metadata(RustPath.new(self.0)):
             Ok(_) => return Ok(PathStat(path=self, follow_symlinks=true))
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "metadata", err))
 
     pub def lstat(self) -> Result[PathStat, IoError]:
         """
@@ -400,7 +400,7 @@ pub type Path = newtype str:
         """
         match symlink_metadata(RustPath.new(self.0)):
             Ok(_) => return Ok(PathStat(path=self, follow_symlinks=false))
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "metadata", err))
 
     pub def copy(self, target: Union[Path, str], follow_symlinks: bool, preserve_metadata: bool) -> Result[Path, IoError]:
         """
@@ -442,8 +442,8 @@ pub type Path = newtype str:
             Ok(target_path) =>
                 match symlink(target_path, RustPath.new(dest.0)):
                     Ok(_) => return Ok(dest)
-                    Err(err) => return Err(_io_error(self, err))
-            Err(err) => return Err(_io_error(self, err))
+                    Err(err) => return Err(_io_error(self, "copy", err))
+            Err(err) => return Err(_io_error(self, "copy", err))
 
     def _copy_tree_to(self, dest: Path, follow_symlinks: bool, preserve_metadata: bool) -> Result[Path, IoError]:
         """
@@ -480,7 +480,7 @@ pub type Path = newtype str:
                 if preserve_metadata:
                     self._copy_metadata_to(dest)?
                 return Ok(dest)
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "copy", err))
 
     pub def copy_into(
         self,
@@ -531,7 +531,7 @@ pub type Path = newtype str:
                     else:
                         self.unlink()?
                     return Ok(dest)
-                return Err(_io_error(self, message))
+                return Err(_io_error(self, "move", message))
 
     pub def move_into(self, target_dir: Union[Path, str]) -> Result[Path, IoError]:
         """
@@ -555,7 +555,7 @@ pub type Path = newtype str:
         """
         match remove_file(RustPath.new(self.0)):
             Ok(_) => return Ok(None)
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "remove", err))
 
     pub def rmdir(self) -> Result[None, IoError]:
         """
@@ -566,7 +566,7 @@ pub type Path = newtype str:
         """
         match remove_dir(RustPath.new(self.0)):
             Ok(_) => return Ok(None)
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "remove directory", err))
 
     pub def remove_tree(self) -> Result[None, IoError]:
         """
@@ -578,10 +578,10 @@ pub type Path = newtype str:
             `Ok(None)` after recursive removal, or `Err(IoError)` if the path is a symlink or removal fails.
         """
         if self.is_symlink():
-            return Err(_fs_error(self, "invalid_input", "remove_tree refuses to follow symbolic links"))
+            return Err(_fs_error(self, "remove tree", "invalid_input", "remove_tree refuses to follow symbolic links"))
         match remove_dir_all(RustPath.new(self.0)):
             Ok(_) => return Ok(None)
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "remove tree", err))
 
     pub def rename(self, target: Union[Path, str]) -> Result[Path, IoError]:
         """
@@ -610,13 +610,13 @@ pub type Path = newtype str:
             The destination path after replacement.
         """
         if self.is_dir():
-            return Err(_fs_error(self, "invalid_input", "replace only publishes non-directory entries"))
+            return Err(_fs_error(self, "replace", "invalid_input", "replace only publishes non-directory entries"))
         dest = _as_path(target)
         if dest.exists() and dest.is_dir() and not dest.is_symlink():
-            return Err(_fs_error(dest, "invalid_input", "replace cannot overwrite a directory"))
+            return Err(_fs_error(dest, "replace", "invalid_input", "replace cannot overwrite a directory"))
         match rust_rename(RustPath.new(self.0), RustPath.new(dest.0)):
             Ok(_) => return Ok(dest)
-            Err(err) => return Err(_io_error(dest, err))
+            Err(err) => return Err(_io_error(dest, "replace", err))
 
     pub def sync_directory(self) -> Result[None, IoError]:
         """
@@ -626,19 +626,19 @@ pub type Path = newtype str:
         replacement alone guarantees atomic visibility, not crash durability.
         """
         if not self.is_dir():
-            return Err(_fs_error(self, "invalid_input", "sync_directory requires a directory path"))
+            return Err(_fs_error(self, "sync directory", "invalid_input", "sync_directory requires a directory path"))
         match RustFile.open(RustPath.new(self.0)):
             Ok(directory) =>
                 match directory.sync_all():
                     Ok(_) => return Ok(None)
-                    Err(err) => return Err(_io_error(self, err))
-            Err(err) => return Err(_io_error(self, err))
+                    Err(err) => return Err(_io_error(self, "sync directory", err))
+            Err(err) => return Err(_io_error(self, "sync directory", err))
 
     pub def lock_shared(self) -> Result[FileLock, IoError]:
         """Acquire a blocking shared advisory lock for this path's stable sibling lock entry."""
         match lock_shared(self.0):
             Ok(lock) => return Ok(lock)
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "lock", err))
 
     pub def map_read(self) -> Result[MappedFile, IoError]:
         """
@@ -649,25 +649,25 @@ pub type Path = newtype str:
         """
         match map_file_read(self.0):
             Ok(mapped) => return Ok(mapped)
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "map", err))
 
     pub def lock_exclusive(self) -> Result[FileLock, IoError]:
         """Acquire a blocking exclusive advisory lock for this path's stable sibling lock entry."""
         match lock_exclusive(self.0):
             Ok(lock) => return Ok(lock)
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "lock", err))
 
     pub def try_lock_shared(self) -> Result[Option[FileLock], IoError]:
         """Try to acquire a shared advisory lock without blocking."""
         match try_lock_shared(self.0):
             Ok(lock) => return Ok(lock)
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "lock", err))
 
     pub def try_lock_exclusive(self) -> Result[Option[FileLock], IoError]:
         """Try to acquire an exclusive advisory lock without blocking."""
         match try_lock_exclusive(self.0):
             Ok(lock) => return Ok(lock)
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "lock", err))
 
     pub def resolve(self) -> Result[Path, IoError]:
         """
@@ -678,7 +678,7 @@ pub type Path = newtype str:
         """
         match RustPath.new(self.0).canonicalize():
             Ok(path) => return Ok(Path(path.to_string_lossy().into_owned()))
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "resolve", err))
 
     pub def absolute(self) -> Result[Path, IoError]:
         """
@@ -691,7 +691,7 @@ pub type Path = newtype str:
             return Ok(Path(self.0))
         match current_dir():
             Ok(cwd) => return Ok(Path(cwd.join(self.0).to_string_lossy().into_owned()))
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "resolve", err))
 
     pub def disk_usage(self) -> Result[DiskUsage, IoError]:
         """
@@ -702,7 +702,7 @@ pub type Path = newtype str:
         """
         match filesystem_capacity(PrimitivePath(value=self.0)):
             Ok(capacity) => return Ok(DiskUsage(total=capacity.total, used=capacity.used, free=capacity.free))
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "disk usage", err))
 
     pub def touch(self, exist_ok: bool) -> Result[None, IoError]:
         """
@@ -717,7 +717,7 @@ pub type Path = newtype str:
         if self.exists():
             # Match pathlib-style `touch`: existing paths are either rejected or timestamped in place.
             if not exist_ok:
-                return Err(_fs_error(self, "already_exists", "path already exists"))
+                return Err(_fs_error(self, "create", "already_exists", "path already exists"))
             now = SystemTime.now()
             self._set_times(now, now)?
             return Ok(None)
@@ -727,7 +727,7 @@ pub type Path = newtype str:
         opts.write(true).create(true)
         match opts.open(RustPath.new(self.0)):
             Ok(_) => return Ok(None)
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "touch", err))
 
     pub def samefile(self, other: Union[Path, str]) -> Result[bool, IoError]:
         """
@@ -784,7 +784,7 @@ pub type Path = newtype str:
         dest = _as_path(target)
         match symlink(RustPath.new(dest.0), RustPath.new(self.0)):
             Ok(_) => return Ok(None)
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "create symbolic link", err))
 
     pub def hardlink_to(self, target: Union[Path, str]) -> Result[None, IoError]:
         """
@@ -799,7 +799,7 @@ pub type Path = newtype str:
         dest = _as_path(target)
         match hard_link(RustPath.new(dest.0), RustPath.new(self.0)):
             Ok(_) => return Ok(None)
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "create hard link", err))
 
     pub def chmod(self, readonly: bool) -> Result[None, IoError]:
         """
@@ -857,7 +857,7 @@ pub type Path = newtype str:
         """
         match RustFile.open(RustPath.new(self.0)):
             Ok(file) => return Ok(file)
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "open", err))
 
     def _set_file_times(self, file: RustFile, times: FileTimes) -> Result[None, IoError]:
         """
@@ -872,7 +872,7 @@ pub type Path = newtype str:
         """
         match file.set_times(times):
             Ok(_) => return Ok(None)
-            Err(err) => return Err(_io_error(self, err))
+            Err(err) => return Err(_io_error(self, "set times", err))
 
     pub def cwd() -> Result[Path, IoError]:
         """
@@ -883,7 +883,7 @@ pub type Path = newtype str:
         """
         match current_dir():
             Ok(path) => return Ok(Path(path.to_string_lossy().into_owned()))
-            Err(err) => return Err(_io_error(Path("."), err))
+            Err(err) => return Err(_io_error(Path("."), "current directory", err))
 
     pub def home() -> Result[Path, IoError]:
         """
@@ -895,7 +895,7 @@ pub type Path = newtype str:
         home_key = "HOME"
         match env_var(home_key):
             Ok(path) => return Ok(Path(path))
-            Err(err) => return Err(_io_error(Path("~"), err))
+            Err(err) => return Err(_io_error(Path("~"), "home directory", err))
 
 
 pub def _as_path(value: Union[Path, str]) -> Path:
@@ -981,7 +981,7 @@ def _metadata_for(path: Path) -> Result[RustMetadata, IoError]:
     """
     match metadata(RustPath.new(path.0)):
         Ok(meta) => return Ok(meta)
-        Err(err) => return Err(_io_error(path, err))
+        Err(err) => return Err(_io_error(path, "metadata", err))
 
 
 def _set_permissions_for(path: Path, permissions: RustPermissions) -> Result[None, IoError]:
@@ -997,7 +997,7 @@ def _set_permissions_for(path: Path, permissions: RustPermissions) -> Result[Non
     """
     match set_permissions(RustPath.new(path.0), permissions):
         Ok(_) => return Ok(None)
-        Err(err) => return Err(_io_error(path, err))
+        Err(err) => return Err(_io_error(path, "set permissions", err))
 
 
 def _metadata_modified_time(path: Path, meta: RustMetadata) -> Result[SystemTime, IoError]:
@@ -1013,7 +1013,7 @@ def _metadata_modified_time(path: Path, meta: RustMetadata) -> Result[SystemTime
     """
     match meta.modified():
         Ok(value) => return Ok(value)
-        Err(err) => return Err(_io_error(path, err))
+        Err(err) => return Err(_io_error(path, "metadata", err))
 
 
 def _metadata_accessed_time(path: Path, meta: RustMetadata) -> Result[SystemTime, IoError]:
@@ -1029,10 +1029,10 @@ def _metadata_accessed_time(path: Path, meta: RustMetadata) -> Result[SystemTime
     """
     match meta.accessed():
         Ok(value) => return Ok(value)
-        Err(err) => return Err(_io_error(path, err))
+        Err(err) => return Err(_io_error(path, "metadata", err))
 
 
-pub def _io_error(path: Path, message: str) -> IoError:
+pub def _io_error(path: Path, operation: str, message: str) -> IoError:
     """
     Convert host filesystem error text into a normalized `IoError`.
 
@@ -1041,28 +1041,34 @@ pub def _io_error(path: Path, message: str) -> IoError:
 
     Args:
         path: Path associated with the failed operation.
+        operation: The operation that failed, such as `read`, `create directory` or `remove`.
         message: Host error text.
 
     Returns:
         `IoError` with a stable `kind` where common host messages can be recognized.
     """
     if message.contains("No such file") or message.contains("not found"):
-        return _fs_error(path, "not_found", message)
+        return _fs_error(path, operation, "not_found", message)
     elif message.contains("unsupported") or message.contains("Unsupported"):
-        return _fs_error(path, "unsupported", message)
+        return _fs_error(path, operation, "unsupported", message)
     elif message.contains("cross-device") or message.contains("Cross-device"):
-        return _fs_error(path, "cross_device", message)
+        return _fs_error(path, operation, "cross_device", message)
     elif message.contains("Permission"):
-        return _fs_error(path, "permission_denied", message)
+        return _fs_error(path, operation, "permission_denied", message)
     elif message.contains("exists"):
-        return _fs_error(path, "already_exists", message)
-    return _fs_error(path, "other", message)
+        return _fs_error(path, operation, "already_exists", message)
+    return _fs_error(path, operation, "other", message)
 
 
-pub def _fs_error(path: Path, kind: str, detail: str) -> IoError:
+pub def _fs_error(path: Path, operation: str, kind: str, detail: str) -> IoError:
     """
-    Create a filesystem-flavored `std.io.IoError`.
+    Create a filesystem-flavored `std.io.IoError` that names the operation that failed and its path.
 
     The concrete error type lives in `std.io` so file handles can satisfy `BinaryReader` without adapter code.
     """
-    return IoError(kind=kind, detail=detail, operation="fs", position=-1, path=Some(path.0))
+    return IoError(kind=kind, detail=detail, operation=operation, position=-1, path=Some(path.0))
+
+
+def _as_operation(error: IoError, operation: str) -> IoError:
+    """The same failure, named by the operation the caller attempted rather than the step that refused it."""
+    return IoError(kind=error.kind, detail=error.detail, operation=operation, position=error.position, path=error.path)
