@@ -41,6 +41,9 @@ pub model CheckerRecordCounts:
     pub all_declarations: int = 0
     pub summary: str = "0/0 reusable declarations"
     pub artifact_refusals: Dict[str, int] = {}
+    # Owners whose checked bodies the compiler restored from the selected records instead of checking them. A
+    # selected record the compiler refused is not here: that body was checked afresh.
+    pub restored: list[str] = []
 
 
 pub def compile_prepared_unit(
@@ -141,6 +144,11 @@ pub def checker_record_counts(unit: UnitDescription, key: Key) -> Result[Checker
     mut refusals: Dict[str, int] = {}
     for name in fields.keys():
         refusals[name] = fields[name].expect_int().map_err((error) => error.message())?
+    # A compiler that names no restored owner restored none.
+    mut restored: list[str] = []
+    if let Some(owners) = value.get("restored"):
+        for owner in owners.expect_array().map_err((error) => error.message())?:
+            restored.append(owner.expect_str().map_err((error) => error.message())?)
     counts = CheckerRecordCounts(
         reusable_declarations=value
             .require("reusable_declarations")
@@ -156,6 +164,7 @@ pub def checker_record_counts(unit: UnitDescription, key: Key) -> Result[Checker
             (error) => error.message(),
         )?,
         artifact_refusals=refusals,
+        restored=restored,
     )
     discard_file(report)
     return Ok(counts)

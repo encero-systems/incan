@@ -29,6 +29,26 @@ pub def test_a_selected_body_the_compiler_checked_again_counts_as_checked() -> R
     empty = store_snapshot(memory_root()).map_err((error) => error.message())?
     prepared = prepare_compiled_bodies(begin(empty), unit, output, None, Some(empty), selected)?
     assert prepared.checking_evaluations == 2, f"{prepared.checking_evaluations} checking evaluations, expected 2"
+    assert prepared.body_reuses == 0, f"{prepared.body_reuses} reuses, expected none"
+    return Ok(None)
+
+
+pub def test_a_body_the_compiler_restored_counts_as_reused() -> Result[None, str]:
+    """Both owners' records were selected and the compiler restored one: one body was checked, one reused."""
+    scratch = scratch_directory()?
+    unit = program(scratch.path())?
+    values = [body_value("main")?, body_value("other")?]
+    output = scratch.path().joinpath("compiled-body-output")
+    publish_binary(output, output_bytes(CompiledBodyOutputs(namespaces=[], values=values, fallbacks=[]))?)?
+    selected = [
+        SelectedBodyRecord(identity=value.identity, local=value.local, final=value.final, body_ir=value.body_ir)
+        for value in values
+    ]
+    empty = store_snapshot(memory_root()).map_err((error) => error.message())?
+    restored = [values[1].identity]
+    prepared = prepare_compiled_bodies(begin(empty), unit, output, None, Some(empty), selected, restored)?
+    assert prepared.checking_evaluations == 1, f"{prepared.checking_evaluations} checking evaluations, expected 1"
+    assert prepared.body_reuses == 1, f"{prepared.body_reuses} reuses, expected 1"
     return Ok(None)
 
 

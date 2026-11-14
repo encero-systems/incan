@@ -210,6 +210,8 @@ pub model PreparedCompiledBodies:
     pub fallbacks: int
     pub checking_evaluations: int
     pub body_ir_evaluations: int
+    # Bodies the compiler restored from selected records instead of checking them.
+    pub body_reuses: int = 0
 
 
 pub model PublishedSourceInputs:
@@ -335,9 +337,13 @@ pub def prepare_compiled_bodies(
     plan_output: Option[Path] = None,
     selected: Option[Snapshot] = None,
     retained: list[SelectedBodyRecord] = [],
+    restored: list[str] = [],
 ) -> Result[PreparedCompiledBodies, str]:
     """
     Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
+
+    `retained` are the records the engine selected for the compiler; `restored` names the owners the compiler reports
+    it restored from them. Only those were reused: a selected record the compiler refused was checked afresh.
 
     1. Authenticate the bounded sidecar through the shared checker codec.
     2. Stage each source projection and declaration value before any body receipt reads them.
@@ -349,10 +355,13 @@ pub def prepare_compiled_bodies(
         return Err("successful graph-enabled compile did not publish body outputs")
     outputs = read_compiled_body_outputs(output)?
     discard_file(output)
-    retained_identities = set([record.identity for record in retained])
+    restored_identities = set([owner for owner in restored])
     mut owner_evaluations = len(outputs.fallbacks)
+    mut owner_reuses = 0
     for value in outputs.values:
-        if value.identity not in retained_identities:
+        if value.identity in restored_identities:
+            owner_reuses += 1
+        else:
             owner_evaluations += 1
     origin = source_origin(unit)
     if projection_refusal_mode()? == ProjectionRefusalMode.List:
@@ -637,6 +646,7 @@ pub def prepare_compiled_bodies(
             fallbacks=len(outputs.fallbacks),
             checking_evaluations=owner_evaluations,
             body_ir_evaluations=owner_evaluations,
+            body_reuses=owner_reuses,
         ),
     )
 
