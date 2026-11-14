@@ -2,9 +2,30 @@
 
 from std.fs import Path
 from files import make_directory, write as write_file
-from registry_shipping import ships, ships_search, shipped_entries
+from registry_shipping import enclosing_checkout, ships, ships_search, shipped_entries
 from registry_units import RegistryUnit
 from scratch import scratch_directory
+
+
+pub def test_standard_packages_outside_a_checkout_have_none() -> Result[None, str]:
+    """
+    An installed toolchain's standard packages lie in no checkout: the search stops at the filesystem root, whatever
+    the working directory is, and a checkout above the packages is still found.
+    """
+    scratch = scratch_directory()?
+    installed = scratch.path().joinpath("home/toolchains/stdlib/async")
+    make_directory(installed)?
+    match enclosing_checkout(installed)?:
+        Some(found) => return Err(f"an installed toolchain was packed as the checkout {found.0}")
+        None => pass
+    checkout = scratch.path().joinpath("checkout")
+    make_directory(checkout.joinpath(".git"))?
+    make_directory(checkout.joinpath("loaves/stdlib/async"))?
+    match enclosing_checkout(checkout.joinpath("loaves/stdlib/async"))?:
+        Some(found) =>
+            assert found.0 == checkout.0, f"found {found.0}, not the enclosing checkout"
+        None => return Err("the checkout above the standard packages was not found")
+    return Ok(None)
 
 
 pub def test_only_units_a_declared_crate_reaches_are_shipped() -> Result[None, str]:
