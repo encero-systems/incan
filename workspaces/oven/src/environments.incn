@@ -16,7 +16,7 @@ from rust::std::process import Command
 from cli_help import render
 from files import read
 from home_paths import TOOLCHAIN, home
-from semver_req import parse_requirement, parse_version, requirement_matches
+from semver_req import Version, VersionReq, parse_requirement, parse_version, requirement_matches
 from unit import project_root_of
 from intake import read_project
 
@@ -281,15 +281,31 @@ pub def project_requirements(document: TomlValue) -> Result[list[Layer], str]:
 
 
 pub def satisfied(requirements: list[Layer]) -> Result[bool, str]:
-    """Whether the active toolchain satisfies every requirement."""
+    """Whether the active toolchain satisfies every requirement (see `toolchain_satisfies`)."""
     active = parse_version(TOOLCHAIN)?
     for layer in requirements:
         requirement = parse_requirement(layer.requirement).map_err(
             (reason) => f"{layer.source} `{layer.requirement}`: {reason}",
         )?
-        if not requirement_matches(requirement, active):
+        if not toolchain_satisfies(requirement, active):
             return Ok(false)
     return Ok(true)
+
+
+pub def toolchain_satisfies(requirement: VersionReq, active: Version) -> bool:
+    """
+    Whether a toolchain satisfies a `requires-incan` requirement. A prerelease toolchain satisfies it by its release
+    version, so `0.6.0-dev.8` meets `>=0.5` as `0.6.0` does and misses `<0.6.0` as `0.6.0` does; a requirement that
+    names a prerelease of the toolchain's own release, such as `>=0.6.0-dev.5`, holds it to its full version.
+    """
+    if len(active.prerelease) == 0:
+        return requirement_matches(requirement, active)
+    for comparator in requirement.comparators:
+        if len(comparator.prerelease) > 0 and comparator.parts == [active.major, active.minor, active.patch]:
+            return requirement_matches(requirement, active)
+    mut release = active
+    release.prerelease = []
+    return requirement_matches(requirement, release)
 
 
 pub def require_toolchain(requirements: list[Layer]) -> Result[None, str]:
