@@ -33,6 +33,7 @@ from group_hints import hint_path
 from timing import report as report_time
 from files import make_directory
 from workers import Invocation, invoke_many
+from protocols import ProtocolRunner, forwarded_lines, protocol_case, run_protocols
 
 # A timeout of this many digits or fewer fits an integer; a job count of this many digits stays under 10,000.
 const TIMEOUT_DIGITS: int = 18
@@ -259,9 +260,11 @@ def run_all(settings: Settings, scratch: Path) -> bool:
                 refused += 1
             Ok(fixtures) =>
                 # 2. The selected cases run, sharing compilation unless the run is isolated, and are reported by area.
+                #    Protocol cases run side by side in runners of their own first.
                 selected = [fixture for fixture in fixtures if selected_case(fixture.case_name(), settings.selectors)]
-                outcomes = family_outcomes(settings, scratch, family, fixtures, selected, units)
-                report_family(settings.incan, scratch, family, selected, outcomes, total, units)
+                protocols = protocol_outcomes(settings, scratch, selected)
+                outcomes = family_outcomes(settings, scratch, family, fixtures, selected, units, protocols)
+                report_family(settings.incan, scratch, family, selected, outcomes, total, units, protocols)
         mut detail = f" compiled={units.compiled - compiled} reused={units.reused - reused}"
         detail += f" replayed={units.replayed - replayed}"
         report_time(f"family {family}", clock, detail)
@@ -333,36 +336,70 @@ def family_work_order(settings: Settings, families: list[str]) -> list[str]:
             return work_order(families, cases)
 
 
-def family_requests(settings: Settings, scratch: Path, families: list[str], jobs: int) -> Result[list[Invocation], str]:
-    """Prepare independent capture directories while preserving the shared scratch and canonical fixture scope."""
+def worker_runner(settings: Settings) -> Result[ProtocolRunner, str]:
+    """This runner as a family or protocol worker starts it: absolute paths and the flags every worker keeps."""
     executable = current_exe().map_err((error) => str(error))?
-    program = f"{executable.display()}"
     root = settings.root.resolve().map_err((error) => error.message())?
-    retained = scratch.absolute().map_err((error) => error.message())?
     mut incan = settings.incan
     if "/" in incan:
         incan = Path(incan).absolute().map_err((error) => error.message())?.0
+    mut flags: list[str] = []
+    if settings.isolated:
+        flags.append("--isolated")
+    if not settings.use_hints:
+        flags.append("--no-group-hints")
+    if let Some(seconds) = settings.timeout:
+        flags.extend(["--timeout", str(seconds)])
+    # A worker records its own work where the runner does; its case commands run untraced.
+    own = [f"INCAN_ENGINE_TRACE={get_or("INCAN_ENGINE_TRACE", "")}"]
+    return Ok(
+        ProtocolRunner(program=f"{executable.display()}", incan=incan, root=root.0, flags=flags, environment=own),
+    )
+
+
+def protocol_outcomes(settings: Settings, scratch: Path, selected: list[Fixture]) -> dict[str, Result[Outcome, str]]:
+    """
+    Run the selected protocol cases side by side, each in a runner of its own, when the jobs allow two at once. With
+    one job or one protocol case, or when no runner can be started, they are compared in place as before.
+    """
+    cases = [fixture.case_name() for fixture in selected if runs_on_this_host(fixture) and protocol_case(fixture)]
+    if settings.jobs < 2 or len(cases) < 2:
+        return {}
+    match worker_runner(settings):
+        Err(_) => return {}
+        Ok(runner) =>
+            match scratch.absolute():
+                Err(_) => return {}
+                Ok(retained) =>
+                    match run_protocols(runner, retained, cases, settings.jobs):
+                        Err(_) => return {}
+                        Ok(outcomes) => return outcomes
+
+
+def family_requests(settings: Settings, scratch: Path, families: list[str], jobs: int) -> Result[list[Invocation], str]:
+    """Prepare independent capture directories while preserving the shared scratch and canonical fixture scope."""
+    runner = worker_runner(settings)?
+    retained = scratch.absolute().map_err((error) => error.message())?
     mut requests: list[Invocation] = []
     for family in families:
         project = retained.joinpath(f"family-worker-{family.replace("/", "-")}")
         make_directory(project)?
-        mut arguments = [incan, root.0, "--family-worker", "--scratch", retained.0, "--jobs", str(jobs)]
-        if settings.isolated:
-            arguments.append("--isolated")
-        if not settings.use_hints:
-            arguments.append("--no-group-hints")
-        if let Some(seconds) = settings.timeout:
-            arguments.extend(["--timeout", str(seconds)])
+        mut arguments = [runner.incan, runner.root, "--family-worker", "--scratch", retained.0, "--jobs", str(jobs)]
+        arguments.extend(runner.flags)
         mut selected = [item for item in settings.selectors if item == family or item.startswith(f"{family}/")]
         if "/" in family:
             selected = [family]
         if len(selected) == 0:
             selected = [family]
         arguments.extend(selected)
-        # A family worker records its own work where the runner does; its case commands run untraced.
-        own = [f"INCAN_ENGINE_TRACE={get_or("INCAN_ENGINE_TRACE", "")}"]
         requests.append(
-            Invocation(program=program, arguments=arguments, project=project, selector=None, environment=own),
+            Invocation(
+                program=runner.program,
+                arguments=arguments,
+                project=project,
+                selector=None,
+                environment=runner.environment,
+            ),
         )
     return Ok(requests)
 
@@ -463,16 +500,20 @@ def family_outcomes(
     fixtures: list[Fixture],
     selected: list[Fixture],
     mut units: Units,
+    protocols: dict[str, Result[Outcome, str]],
 ) -> dict[str, Result[Outcome, str]]:
     """
     Run a family's selected cases through Oven, ahead of comparing them.
 
     Unless the run is isolated, compatible programs are compiled together and run fresh; a partition hint is used
-    only when the whole family was selected. Every other case runs under its own command.
+    only when the whole family was selected. Every other case runs under its own command. A protocol case that already
+    ran in a runner of its own runs nothing here.
     """
     mut outcomes: dict[str, Result[Outcome, str]] = {}
     # A case restricted to other hosts is never run here; comparing it reports it skipped.
-    runnable = [fixture for fixture in selected if runs_on_this_host(fixture)]
+    runnable = [
+        fixture for fixture in selected if runs_on_this_host(fixture) and fixture.case_name() not in protocols
+    ]
     if not settings.isolated:
         mut hint: Option[Path] = None
         if settings.use_hints and len(selected) == len(fixtures):
@@ -492,8 +533,12 @@ def report_family(
     outcomes: dict[str, Result[Outcome, str]],
     mut total: Tally,
     mut units: Units,
+    protocols: dict[str, Result[Outcome, str]],
 ) -> None:
-    """Compare and report a family's cases in order, with a summary line after each area."""
+    """
+    Compare and report a family's cases in order, with a summary line after each area. A protocol case that ran in a
+    runner of its own is reported as that runner reported it.
+    """
     mut area = ""
     mut tally = Tally(passed=0, failed=0, pending=0)
     for fixture in selected:
@@ -502,6 +547,9 @@ def report_family(
                 println(tally.line(f"area {family}/{area}"))
             area = fixture.area
             tally = Tally(passed=0, failed=0, pending=0)
+        if fixture.case_name() in protocols:
+            report_forwarded(fixture, protocols[fixture.case_name()], tally, total, units)
+            continue
         mut batched: Option[Result[Outcome, str]] = None
         if fixture.case_name() in outcomes:
             batched = Some(outcomes[fixture.case_name()])
@@ -512,6 +560,42 @@ def report_family(
         units.count(result.notes)
     if area != "":
         println(tally.line(f"area {family}/{area}"))
+
+
+def report_forwarded(
+    fixture: Fixture,
+    result: Result[Outcome, str],
+    mut tally: Tally,
+    mut total: Tally,
+    mut units: Units,
+) -> None:
+    """Print a protocol case's lines as its own runner reported them, and count its verdict in its area and total."""
+    match forwarded_lines(result):
+        Err(reason) => report_verdict(fixture, Verdict.Fail([reason]), tally, total)
+        Ok(lines) =>
+            mut verdicts = 0
+            for line in lines:
+                println(line)
+                if line.startswith("PASS "):
+                    tally.passed += 1
+                    total.passed += 1
+                elif line.startswith("FAIL "):
+                    tally.failed += 1
+                    total.failed += 1
+                elif line.startswith("PEND "):
+                    tally.pending += 1
+                    total.pending += 1
+                elif line.startswith("SKIP "):
+                    tally.skipped += 1
+                    total.skipped += 1
+                elif line.startswith("  oven: unit "):
+                    units.observe(line)
+                    continue
+                else:
+                    continue
+                verdicts += 1
+            if verdicts == 0:
+                report_verdict(fixture, Verdict.Fail(["its runner reported no verdict"]), tally, total)
 
 
 def report_verdict(fixture: Fixture, verdict: Verdict, mut tally: Tally, mut total: Tally) -> None:
