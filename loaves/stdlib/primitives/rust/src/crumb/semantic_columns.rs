@@ -2,7 +2,7 @@
 //!
 //! This mirrors `column_key_read.read_keys` and `column_value_dictionary.build_keys`/`encode_keys`. Decoding reads
 //! the literal input (or every proper prefix when the case asks for them) into keys or one typed refusal category;
-//! encoding writes the case's independently authored keys. Other column operations remain unsupported here.
+//! encoding writes the case's independently authored keys. Column blocks live in `semantic_blocks.rs`.
 
 use std::cmp::Ordering;
 
@@ -11,24 +11,24 @@ use serde_json::Value as Json;
 use super::hash::{self, Projection, Value};
 
 /// One typed refusal category, spelled as the corpus and the Incan reader spell it.
-type Refused = &'static str;
+pub(super) type Refused = &'static str;
 
 const DEFAULT_BYTES: u64 = 67_108_864;
 const DEFAULT_ELEMENTS: u64 = 4_194_304;
 
 /// The decoder's byte and element allowance; exhausting either is `limit_exceeded`.
-struct Budget {
+pub(super) struct Budget {
     bytes: u64,
     elements: u64,
 }
 
 impl Budget {
-    fn bytes(&mut self, count: u64) -> Result<(), Refused> {
+    pub(super) fn bytes(&mut self, count: u64) -> Result<(), Refused> {
         self.bytes = self.bytes.checked_sub(count).ok_or("limit_exceeded")?;
         Ok(())
     }
 
-    fn elements(&mut self, count: u64) -> Result<(), Refused> {
+    pub(super) fn elements(&mut self, count: u64) -> Result<(), Refused> {
         self.elements = self.elements.checked_sub(count).ok_or("limit_exceeded")?;
         Ok(())
     }
@@ -36,7 +36,7 @@ impl Budget {
 
 /// The declared key type of one dictionary.
 #[derive(Clone, Copy)]
-enum KeyType {
+pub(super) enum KeyType {
     Integer(bool, usize),
     Decimal(i64, i64),
     Text,
@@ -44,28 +44,28 @@ enum KeyType {
 }
 
 /// A checked cursor over one frame of the input.
-struct Cursor<'a> {
+pub(super) struct Cursor<'a> {
     data: &'a [u8],
     position: usize,
 }
 
 impl<'a> Cursor<'a> {
-    fn new(data: &'a [u8]) -> Self {
+    pub(super) fn new(data: &'a [u8]) -> Self {
         Self { data, position: 0 }
     }
 
-    fn remaining(&self) -> usize {
+    pub(super) fn remaining(&self) -> usize {
         self.data.len() - self.position
     }
 
-    fn byte(&mut self, budget: &mut Budget) -> Result<u8, Refused> {
+    pub(super) fn byte(&mut self, budget: &mut Budget) -> Result<u8, Refused> {
         let value = *self.data.get(self.position).ok_or("truncated")?;
         budget.bytes(1)?;
         self.position += 1;
         Ok(value)
     }
 
-    fn take(&mut self, size: usize, budget: &mut Budget) -> Result<&'a [u8], Refused> {
+    pub(super) fn take(&mut self, size: usize, budget: &mut Budget) -> Result<&'a [u8], Refused> {
         if size > self.remaining() {
             return Err("truncated");
         }
@@ -76,7 +76,7 @@ impl<'a> Cursor<'a> {
     }
 
     /// Read a shortest unsigned 64-bit length.
-    fn length(&mut self, budget: &mut Budget) -> Result<usize, Refused> {
+    pub(super) fn length(&mut self, budget: &mut Budget) -> Result<usize, Refused> {
         let mut value = 0u64;
         for index in 0..10 {
             budget.elements(1)?;
@@ -99,13 +99,13 @@ impl<'a> Cursor<'a> {
         Err("integer_overflow")
     }
 
-    fn frame(&mut self, budget: &mut Budget) -> Result<&'a [u8], Refused> {
+    pub(super) fn frame(&mut self, budget: &mut Budget) -> Result<&'a [u8], Refused> {
         let size = self.length(budget)?;
         self.take(size, budget)
     }
 
     /// Read arbitrary-width shortest base-128 groups.
-    fn groups(&mut self, budget: &mut Budget) -> Result<Vec<u8>, Refused> {
+    pub(super) fn groups(&mut self, budget: &mut Budget) -> Result<Vec<u8>, Refused> {
         let mut result = Vec::new();
         loop {
             budget.elements(1)?;
@@ -122,7 +122,7 @@ impl<'a> Cursor<'a> {
         }
     }
 
-    fn finished(&self) -> Result<(), Refused> {
+    pub(super) fn finished(&self) -> Result<(), Refused> {
         if self.remaining() != 0 {
             return Err("trailing_bytes");
         }
@@ -132,8 +132,10 @@ impl<'a> Cursor<'a> {
 
 /// Decode a column dictionary case: one status and keys preimage or refusal per decoder execution.
 pub(super) fn decode(document: &Json) -> Option<Vec<u8>> {
-    if document.get("operation")?.as_str()? != "column_dictionary" {
-        return None;
+    match document.get("operation")?.as_str()? {
+        "column_dictionary" => {}
+        "column_block" => return super::blocks::decode(document),
+        _ => return None,
     }
     let data = hex(document.get("input_hex")?.as_str()?)?;
     let node = key_type(document.get("type")?.as_str()?);
@@ -164,8 +166,10 @@ pub(super) fn decode(document: &Json) -> Option<Vec<u8>> {
 
 /// Encode a column dictionary case's independently authored keys; a case without keys writes nothing.
 pub(super) fn encode(document: &Json) -> Option<Vec<u8>> {
-    if document.get("operation")?.as_str()? != "column_dictionary" {
-        return None;
+    match document.get("operation")?.as_str()? {
+        "column_dictionary" => {}
+        "column_block" => return super::blocks::encode(document),
+        _ => return None,
     }
     let expected = document.get("expected")?;
     let name = document.get("type")?.as_str()?;
@@ -189,7 +193,7 @@ pub(super) fn encode(document: &Json) -> Option<Vec<u8>> {
 }
 
 /// Corpus ceilings tighten the decoder's one real allowance.
-fn case_budget(document: &Json) -> Option<Budget> {
+pub(super) fn case_budget(document: &Json) -> Option<Budget> {
     let mut budget = Budget {
         bytes: DEFAULT_BYTES,
         elements: DEFAULT_ELEMENTS,
@@ -208,7 +212,7 @@ fn case_budget(document: &Json) -> Option<Budget> {
 }
 
 /// Parse the dictionary key types; floats and other types are not dictionary types.
-fn key_type(name: &str) -> Option<KeyType> {
+pub(super) fn key_type(name: &str) -> Option<KeyType> {
     if let Some(inner) = name.strip_prefix("decimal<").and_then(|rest| rest.strip_suffix('>')) {
         let (precision, scale) = inner.split_once(',')?;
         return Some(KeyType::Decimal(
@@ -264,7 +268,7 @@ fn read_keys(node: Option<KeyType>, data: &[u8], budget: &mut Budget) -> Result<
 }
 
 /// Check the restart table's width, bounds, order, completeness and minimality.
-fn read_index<'a>(
+pub(super) fn read_index<'a>(
     cursor: &mut Cursor<'a>,
     count: usize,
     budget: &mut Budget,
@@ -298,7 +302,7 @@ fn read_index<'a>(
 }
 
 /// Read one little-endian offset.
-fn offset_at(table: &[u8], index: usize, width: usize, budget: &mut Budget) -> Result<usize, Refused> {
+pub(super) fn offset_at(table: &[u8], index: usize, width: usize, budget: &mut Budget) -> Result<usize, Refused> {
     let start = index.checked_mul(width).ok_or("invalid_offsets")?;
     let bytes = table.get(start..start + width).ok_or("invalid_offsets")?;
     budget.bytes(width as u64)?;
@@ -311,7 +315,7 @@ fn offset_at(table: &[u8], index: usize, width: usize, budget: &mut Budget) -> R
 }
 
 /// The smallest permitted offset width for a final offset.
-fn offset_width(length: usize) -> usize {
+pub(super) fn offset_width(length: usize) -> usize {
     match length {
         0..=0xff => 1,
         0x100..=0xffff => 2,
@@ -409,7 +413,7 @@ fn numeric_cell(node: KeyType, raw: &[u8], budget: &mut Budget) -> Result<Value,
 }
 
 /// Recover a signed coefficient from little-endian base-128 Z groups.
-fn unzigzag(groups: &[u8]) -> Option<i128> {
+pub(super) fn unzigzag(groups: &[u8]) -> Option<i128> {
     let mut value = 0u128;
     for (index, group) in groups.iter().enumerate() {
         let shifted = u128::from(*group).checked_shl(7 * index as u32)?;
@@ -427,7 +431,7 @@ fn unzigzag(groups: &[u8]) -> Option<i128> {
 }
 
 /// Count decimal magnitude digits; zero has one digit.
-fn digits(coefficient: i128) -> i64 {
+pub(super) fn digits(coefficient: i128) -> i64 {
     let mut remaining = coefficient.unsigned_abs();
     let mut count = 0;
     while remaining != 0 {
@@ -479,7 +483,7 @@ fn add_difference(node: KeyType, before: &Value, difference: Option<u128>) -> Op
 }
 
 /// Whether a signed magnitude fits one fixed integer width and signedness.
-fn in_range(signed: bool, width: usize, negative: bool, magnitude: u128) -> bool {
+pub(super) fn in_range(signed: bool, width: usize, negative: bool, magnitude: u128) -> bool {
     let bits = width * 8;
     match (signed, negative) {
         (false, true) => magnitude == 0,
@@ -489,8 +493,8 @@ fn in_range(signed: bool, width: usize, negative: bool, magnitude: u128) -> bool
     }
 }
 
-/// Deduplicate, sort and write keys with restarts every sixteen keys and a minimal offset directory.
-fn encode_keys(node: KeyType, values: Vec<Value>) -> Option<Vec<u8>> {
+/// Deduplicate keys by their canonical cells and sort them by stored comparison.
+pub(super) fn sorted_keys(node: KeyType, values: Vec<Value>) -> Option<Vec<(Vec<u8>, Value)>> {
     let mut distinct: Vec<(Vec<u8>, Value)> = Vec::with_capacity(values.len());
     for value in values {
         let cell = key_cell(node, &value)?;
@@ -508,9 +512,12 @@ fn encode_keys(node: KeyType, values: Vec<Value>) -> Option<Vec<u8>> {
             Ordering::Equal
         })
     });
-    if failed {
-        return None;
-    }
+    (!failed).then_some(distinct)
+}
+
+/// Write sorted keys with restarts every sixteen keys and a minimal offset directory.
+fn encode_keys(node: KeyType, values: Vec<Value>) -> Option<Vec<u8>> {
+    let distinct = sorted_keys(node, values)?;
     let mut chunks: Vec<Vec<u8>> = Vec::new();
     for (index, (cell, value)) in distinct.iter().enumerate() {
         if index % 16 == 0 {
@@ -545,7 +552,7 @@ fn encode_keys(node: KeyType, values: Vec<Value>) -> Option<Vec<u8>> {
 }
 
 /// Lay out a width byte, little-endian offsets and the concatenated cells.
-fn indexed(cells: &[Vec<u8>]) -> Vec<u8> {
+pub(super) fn indexed(cells: &[Vec<u8>]) -> Vec<u8> {
     let total: usize = cells.iter().map(Vec::len).sum();
     let width = offset_width(total);
     let mut output = vec![width as u8];
@@ -562,7 +569,7 @@ fn indexed(cells: &[Vec<u8>]) -> Vec<u8> {
 }
 
 /// The canonical cell bytes that identify one key: fixed integers, Z decimals or framed raw keys.
-fn key_cell(node: KeyType, value: &Value) -> Option<Vec<u8>> {
+pub(super) fn key_cell(node: KeyType, value: &Value) -> Option<Vec<u8>> {
     match (node, value) {
         (KeyType::Integer(signed, width), Value::Integer(negative, magnitude)) => {
             if !in_range(signed, width, *negative, *magnitude) {
@@ -593,7 +600,7 @@ fn key_cell(node: KeyType, value: &Value) -> Option<Vec<u8>> {
 }
 
 /// Raw UTF-8 or binary octets used by prefix compression.
-fn raw_key(value: &Value) -> Option<Vec<u8>> {
+pub(super) fn raw_key(value: &Value) -> Option<Vec<u8>> {
     match value {
         Value::Text(text) => Some(text.as_bytes().to_vec()),
         Value::Binary(data) => Some(data.clone()),
@@ -626,7 +633,7 @@ fn difference_bytes(before: &Value, value: &Value) -> Option<Vec<u8>> {
 }
 
 /// Decode strict hexadecimal octets.
-fn hex(value: &str) -> Option<Vec<u8>> {
+pub(super) fn hex(value: &str) -> Option<Vec<u8>> {
     if !value.len().is_multiple_of(2) {
         return None;
     }
