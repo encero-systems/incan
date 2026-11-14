@@ -22,37 +22,43 @@ pub def ordinary_product_inputs(
     products: Option[str],
     admitted: &BTreeMap[CompilerNodeId, str],
     records: bool,
+    unchecked: Option[str] = None,
 ) -> Option[tuple[list[str], list[tuple[int, int]]]]:
     """
     Retain exact checked input only for frames whose complete read witnesses the source producer proved.
 
     A records key is the checked meaning; the body's node positions return beside it as the product's position map.
+    A body no consumer checks, such as a toolchain runtime generic, keys by `unchecked` in place of a witness.
     """
     if products is None:
         return None
+    mut witness = ""
     match admitted.get(body.direct_call_id):
-        None => return None
-        Some(witness) =>
-            match native_json(body):
-                Err(_) => return None
-                Ok(input) =>
-                    span = location(body.span, source, file)
-                    name = evaluator_name(context, body)
-                    if records:
-                        meaning = match native_digest(body):
-                            Ok(value) => value
-                            Err(_) => return None
-                        positions = match body_position_map(input, source, file, span):
-                            Ok(value) => value
-                            Err(_) => return None
-                        generation = match Path(products.unwrap_or("")).joinpath("producer-profile").read_text("utf-8", "strict"):
-                            Ok(value) => value
-                            Err(_) => return None
-                        mut inputs = record_scalar_inputs(meaning, name, span, overflow_checks, str(witness), len(positions))
-                        inputs.append(generation)
-                        return Some((inputs, positions))
-                    unpositioned: list[tuple[int, int]] = []
-                    return Some((scalar_inputs(input, name, span, overflow_checks, str(witness)), unpositioned))
+        Some(value) => witness = str(value)
+        None =>
+            match unchecked:
+                None => return None
+                Some(value) => witness = value
+    match native_json(body):
+        Err(_) => return None
+        Ok(input) =>
+            span = location(body.span, source, file)
+            name = evaluator_name(context, body)
+            if records:
+                meaning = match native_digest(body):
+                    Ok(value) => value
+                    Err(_) => return None
+                positions = match body_position_map(input, source, file, span):
+                    Ok(value) => value
+                    Err(_) => return None
+                generation = match Path(products.unwrap_or("")).joinpath("producer-profile").read_text("utf-8", "strict"):
+                    Ok(value) => value
+                    Err(_) => return None
+                mut inputs = record_scalar_inputs(meaning, name, span, overflow_checks, witness, len(positions))
+                inputs.append(generation)
+                return Some((inputs, positions))
+            unpositioned: list[tuple[int, int]] = []
+            return Some((scalar_inputs(input, name, span, overflow_checks, witness), unpositioned))
 
 
 pub def graph_owner(body: &RustBody) -> bool:

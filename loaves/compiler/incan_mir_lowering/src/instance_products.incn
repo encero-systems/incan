@@ -9,11 +9,12 @@ witness and that request identity.
 
 from rust::serde import Serialize, Deserialize
 from rust::serde_json import to_string as native_json, from_str, Error as JsonError
-from rust::incan_semantics_core import CompilerNodeId, IncanType as RustType, encode_incan_symbol_identity
+from rust::incan_semantics_core import CompilerNodeId, IncanType as RustType, SymbolOrigin, encode_incan_symbol_identity
 from rust::incan_semantics_core::stable_identity import StableDeclarationId
 from rust::incan_semantics_core::body_ir import Body as RustBody
 from rust::std::collections import BTreeMap
 from pub::incan_mir_plan import ExternalFunction, Function, UnitNominals
+from pub::internal_models.compiler_records import RUNTIME_INSTANCE_IDENTITY
 from lowering import BodyIrModule
 from table_views import borrowed_at
 from type_parameters import Instance, request_instance
@@ -24,6 +25,10 @@ from plan_product_inputs import graph_owner, ordinary_product_inputs
 
 # Separates a closed instance's request identity from its generic body's checked witness in the product key.
 const INSTANCE_FUNCTION: str = "incan.instance-function/1"
+# The toolchain Loaf whose generics lowering instantiates for list and copy operations.
+const RUNTIME_LIBRARY: str = "incan_native_runtime"
+# Stands in for a checker witness in a runtime generic's instance key; its checked meaning is keyed beside it.
+const RUNTIME_BODY: str = "runtime-body:incan_native_runtime"
 
 
 @derive(Serialize, Deserialize)
@@ -219,12 +224,23 @@ def instance_key(
     source: str,
     file: str,
 ) -> Result[Option[tuple[list[str], list[tuple[int, int]], str]], str]:
-    """Key one closed instance by its generic body's witness and request identity, with the generic's positions."""
+    """
+    Key one closed instance by its generic body's witness and request identity, with the generic's positions.
+
+    A generic of the toolchain's runtime Loaf has no checker witness: no consumer checks its published body. It keys by
+    its own checked meaning under the installed producer instead, and its event names the generic as a runtime instance.
+    """
     if not graph_owner(request.body):
         return Ok(None)
-    identity = match request.body.canonical:
+    mut identity = ""
+    mut unchecked: Option[str] = None
+    match request.body.canonical:
         None => return Ok(None)
-        Some(canonical) => encode_incan_symbol_identity(canonical)
+        Some(canonical) =>
+            identity = encode_incan_symbol_identity(canonical)
+            if runtime_generic(canonical.origin):
+                identity = RUNTIME_INSTANCE_IDENTITY + identity
+                unchecked = Some(RUNTIME_BODY)
     selected = ordinary_product_inputs(
         context,
         request.body,
@@ -234,6 +250,7 @@ def instance_key(
         Some(products.directory),
         products.admitted,
         products.report is not None,
+        unchecked,
     )
     match selected:
         None => return Ok(None)
@@ -249,6 +266,13 @@ def instance_key(
                     inputs.append(native_json(named.owned_callable_slots).map_err((error) => str(error))?)
                     inputs.append(str(named.original_callable))
                     return Ok(Some((inputs, positions, identity)))
+
+
+def runtime_generic(origin: SymbolOrigin) -> bool:
+    """Whether a generic is published by the toolchain's runtime Loaf, whose bodies are fixed for an installation."""
+    match origin:
+        SymbolOrigin.Package(library=library, module_path=_path) => return library == RUNTIME_LIBRARY
+        _ => return false
 
 
 def template_position(context: &BodyIrModule, declaration: str) -> Option[int]:
