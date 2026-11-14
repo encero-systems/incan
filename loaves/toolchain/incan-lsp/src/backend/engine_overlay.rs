@@ -17,6 +17,8 @@ use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Posit
 pub(super) const ENGINE_SELECTION: &str = "INCAN_LSP_ENGINE";
 /// The document an overlay request answers with.
 const OVERLAY_SCHEMA: &str = "incan.overlay-diagnostics/1";
+/// How long typing must pause before the in-process analysis behind hover and navigation runs on the overlay route.
+pub(super) const ANALYSIS_PAUSE_MS: u64 = 300;
 /// Requests of one program share its editor view's overlay root, so this server sends them one at a time; the lock
 /// also owns the persistent Oven, when one is running.
 static REQUESTS: Mutex<Option<OverlayServer>> = Mutex::new(None);
