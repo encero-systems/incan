@@ -1,5 +1,6 @@
 """Source contracts for import-activated foreign-binding vocabularies."""
 
+
 pub class BindingDeclaration:
     """Marker base class for source declarations that describe a foreign binding."""
 
@@ -10,3 +11,13 @@ pub class c:
     """C interop namespace activated by `from std.interop import c`."""
 
     _namespace_marker: str
+
+
+# The vocabulary's namespace and declaration keywords, spelled as the vocabulary registration declares them.
+pub const NAMESPACE: str = "std.interop"
+pub const BINDING_KEYWORD: str = "binding"
+pub const SYMBOL_KEYWORD: str = "symbol"
+pub const RESOURCE_KEYWORD: str = "resource"
+pub const ENUM_KEYWORD: str = "enum"
+pub const STRUCT_KEYWORD: str = "struct"
+pub const OUTCOME_KEYWORD: str = "outcome"

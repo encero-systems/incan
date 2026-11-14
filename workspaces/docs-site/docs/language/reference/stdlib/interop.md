@@ -1,6 +1,6 @@
 # `std.interop`: checked C bindings
 
-`std.interop` exports the `c` namespace and the `BindingDeclaration` class. The `c` namespace provides the `binding` declaration, the C types that a binding's declarations use, and the operations that pass values to and from a binding symbol.
+`std.interop` exports the `c` namespace, the `BindingDeclaration` class and the vocabulary's keyword constants. The `c` namespace provides the `binding` declaration, the C types that a binding's declarations use, and the operations that pass values to and from a binding symbol.
 
 ## Import
 
@@ -303,6 +303,20 @@ Before a module with a binding is checked, built or run, each binding is verifie
 - The selected toolchain's capability and version are read from its `--version`: `apple-clang`, `clang`, or `android-ndk` with the NDK's own release. An Xcode SDK's version is the one it reports; an NDK's `android` version is the newest API level it carries.
 - A `native` name, enum constant or struct field name is a C identifier; a struct or resource `native` may also be `struct tag`.
 - Refused (`INCAN-T0001`): a binding that fails verification; a name that is not a C identifier; a binding that Clang cannot verify; a declared target outside this table; a `toolchain` or `sdk` requirement the selection does not meet; and a host binding on a platform other than Linux x86-64 and macOS arm64.
+
+## Keyword constants
+
+| Constant | Value |
+| --- | --- |
+| `NAMESPACE` | `"std.interop"` |
+| `BINDING_KEYWORD` | `"binding"` |
+| `SYMBOL_KEYWORD` | `"symbol"` |
+| `RESOURCE_KEYWORD` | `"resource"` |
+| `ENUM_KEYWORD` | `"enum"` |
+| `STRUCT_KEYWORD` | `"struct"` |
+| `OUTCOME_KEYWORD` | `"outcome"` |
+
+Each is a `str` constant spelling the namespace or declaration keyword the vocabulary registers.
 
 ## See also
 
