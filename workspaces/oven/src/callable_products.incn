@@ -1,5 +1,8 @@
 """Select private callable products by complete source-independent semantic input equivalence."""
 
+from rust::std::cell import RefCell
+from rust::std::ops import DerefMut
+from rust::std::rc import Rc
 from std.fs import Path
 from std.json import JsonValue
 from files import json_text, read_json
@@ -43,10 +46,11 @@ pub def retain_callable_products(unit: UnitDescription, toolchain: Toolchain) ->
     mut ledger = load_ledger(unit_ledger(unit.project_root, "checked-source"), SETTLE_SECONDS)
     identities = ArtifactIdentities()
     locations = resolved_loaves(unit)?
-    description = semantic_description(unit, identities, locations)?
-    interfaces = interface_inputs(unit, ledger, identities, locations)?
+    anchors = native_anchors()?
+    description = semantic_description(unit, identities, locations, anchors)?
+    interfaces = interface_inputs(unit, ledger, identities, locations, anchors)?
     caches = toolchain_cache_identities(toolchain)?
-    native_search = native_search_inputs(unit, toolchain, identities)?
+    native_search = native_search_inputs(unit, toolchain, identities, locations)?
     identities.verify()?
     parts = [
         CHECKED_DOMAIN,
@@ -90,9 +94,9 @@ def semantic_description(
     unit: UnitDescription,
     identities: ArtifactIdentities,
     locations: LoafLocations,
+    anchors: NativeAnchors,
 ) -> Result[str, str]:
     """Normalize native profile policy, authenticated Loaf locations and anchored native paths, keeping other fields."""
-    anchors = native_anchors()?
     mut fields = unit.to_json().expect_object().map_err((error) => error.message())?
     fields["profile"] = JsonValue.string("")
     fields["checked_context"] = JsonValue.null()
@@ -127,6 +131,7 @@ def interface_inputs(
     mut ledger: Ledger,
     identities: ArtifactIdentities,
     locations: LoafLocations,
+    anchors: NativeAnchors,
 ) -> Result[list[str], str]:
     """Witness semantic interfaces and native closure; separately requested tooling graphs are not checker inputs."""
     mut inputs: list[str] = []
@@ -143,7 +148,7 @@ def interface_inputs(
                         inputs.append(ledger.digest(path)?)
                     else:
                         inputs.append("absent")
-        inputs = inputs + closure_inputs(loaf, unit, identities, locations)?
+        inputs = inputs + closure_inputs(loaf, unit, identities, locations, anchors)?
     return Ok(inputs)
 
 
@@ -152,9 +157,9 @@ def closure_inputs(
     unit: UnitDescription,
     identities: ArtifactIdentities,
     locations: LoafLocations,
+    anchors: NativeAnchors,
 ) -> Result[list[str], str]:
     """Preserve native graph edges, macro bindings and search order while quotienting only witnessed Loaf profiles."""
-    anchors = native_anchors()?
     directory = Path(loaf.dir)
     closure = read_json(directory.joinpath(f"{loaf.name}.native.json"))?
     mut inputs: list[str] = []
@@ -165,19 +170,46 @@ def closure_inputs(
             if len(pair) != 2:
                 return Err("native closure binding must name exactly one alias and artifact")
             name = string_value(pair[0])?
-            path = located(directory, string_value(pair[1])?, anchors)?
+            path = located(directory, string_value(pair[1])?, anchors, locations)?
             inputs.append(binding_identity(NativeCrate(name=name, path=path.0), unit, identities, locations, anchors)?)
     inputs.append("search")
     for item in required_items(closure, "search")?:
-        inputs.append(search_identity(located(directory, string_value(item)?, anchors)?, locations, anchors)?)
+        selected = located(directory, string_value(item)?, anchors, locations)?
+        inputs.append(search_identity(selected, locations, anchors)?)
     return Ok(inputs)
 
 
+model ResolvedPaths:
+    """The physical spelling of each path one selection resolved, by the spelling it was asked for."""
+
+    paths: Dict[str, str] = {}
+
+
 model LoafLocations:
-    """Each Loaf's resolved directory and admitted rlib by resolved path, naming the first Loaf that resolves there."""
+    """
+    Each Loaf's resolved directory and admitted rlib by resolved path, naming the first Loaf that resolves there, and
+    each path the selection resolved: every standard Loaf's closure names the same native archives and directories.
+    """
 
     directories: Dict[str, str] = {}
     rlibs: Dict[str, str] = {}
+    # Shared by every copy of these locations, so each path is resolved once per selection.
+    resolved: Rc[RefCell[ResolvedPaths]] = Rc.new(RefCell.new(ResolvedPaths()))
+
+    def physical(self, path: Path) -> Result[Path, str]:
+        """The physical spelling of `path`, resolved on its first use in this selection."""
+        mut held = self.resolved.as_ref().borrow_mut()
+        return resolved_once(path, held.deref_mut())
+
+
+def resolved_once(path: Path, mut state: &mut ResolvedPaths) -> Result[Path, str]:
+    """Resolve `path` unless this selection already did; a physical spelling also names itself."""
+    if path.0 in state.paths:
+        return Ok(Path(state.paths[path.0]))
+    selected = physical_path(path)?
+    state.paths[path.0] = selected.0
+    state.paths[selected.0] = selected.0
+    return Ok(selected)
 
 
 def resolved_loaves(unit: UnitDescription) -> Result[LoafLocations, str]:
@@ -187,12 +219,12 @@ def resolved_loaves(unit: UnitDescription) -> Result[LoafLocations, str]:
     """
     mut locations = LoafLocations()
     for loaf in unit.loaves:
-        directory = physical_path(Path(loaf.dir))?.0
+        directory = locations.physical(Path(loaf.dir))?.0
         if directory not in locations.directories:
             locations.directories[directory] = loaf.name
         expected = Path(loaf.dir).joinpath(f"lib{loaf.name.replace("-", "_")}.rlib")
         if frozen_observation(expected).is_some() or expected.is_file():
-            rlib = physical_path(expected)?.0
+            rlib = locations.physical(expected)?.0
             if rlib not in locations.rlibs:
                 locations.rlibs[rlib] = loaf.name
     return Ok(locations)
@@ -206,7 +238,7 @@ def binding_identity(
     anchors: NativeAnchors,
 ) -> Result[str, str]:
     """Use semantic Loaf identity only for its exact admitted rlib; Rust imports retain anchored native identity."""
-    path = physical_path(Path(native.path))?
+    path = locations.physical(Path(native.path))?
     if native.name not in unit.rust_crates and path.0 in locations.rlibs:
         return Ok(f"loaf:{native.name}:{locations.rlibs[path.0]}")
     return fingerprint([native.name, anchored_reference(path.0, anchors), identities.identity(path)?])
@@ -214,31 +246,30 @@ def binding_identity(
 
 def search_identity(path: Path, locations: LoafLocations, anchors: NativeAnchors) -> Result[str, str]:
     """Normalize authenticated Loaf directories; native_search_inputs witnesses other directories' native files."""
-    selected = physical_path(path)?
+    selected = locations.physical(path)?
     if selected.0 in locations.directories:
         return Ok(f"loaf:{locations.directories[selected.0]}")
     return Ok(anchored_reference(selected.0, anchors))
 
 
-def located(directory: Path, path: str, anchors: NativeAnchors) -> Result[Path, str]:
+def located(directory: Path, path: str, anchors: NativeAnchors, locations: LoafLocations) -> Result[Path, str]:
     """Resolve a published native-closure reference against the current home, then to its physical path."""
     selected = Path(closure_reference(directory, path, anchors)?)
-    return physical_path(selected)
+    return locations.physical(selected)
 
 
 def native_search_inputs(
     unit: UnitDescription,
     toolchain: Toolchain,
     identities: ArtifactIdentities,
+    locations: LoafLocations,
 ) -> Result[list[str], str]:
     """Witness project-selected native search artifacts outside the already-admitted frozen toolchain generation."""
     mut ledger = load_ledger(unit_ledger(unit.project_root, "checked-native"), SETTLE_SECONDS, "")
-    providers = [physical_path(Path(loaf.dir))?.0 for loaf in unit.loaves]
+    providers = [locations.physical(Path(loaf.dir))?.0 for loaf in unit.loaves]
     installed = installed_toolchain_root(toolchain)?
     mut inputs: list[str] = []
-    directories = unique(
-        [physical_path(Path(path))?.0 for path in unit.search],
-    )
+    directories = unique([locations.physical(Path(path))?.0 for path in unit.search])
     for path in directories:
         directory = Path(path)
         if directory.0 not in providers and not within(directory, installed):

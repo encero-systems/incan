@@ -28,11 +28,9 @@ pub def test_a_checked_source_selection_resolves_each_native_path_once() -> Resu
         write(directory.joinpath(f"lib{name}.rlib"), f"{name} archive")?
         binding = JsonValue.array([JsonValue.string("shared"), JsonValue.string(f"absolute:{shared.0}")])
         closure = JsonValue.object(
-            {
-                "externs": JsonValue.array([binding]),
-                "macro_externs": JsonValue.array([]),
-                "search": JsonValue.array([JsonValue.string(f"absolute:{native.0}")]),
-            },
+            {"externs": JsonValue.array([binding]), "macro_externs": JsonValue.array([]), "search": JsonValue.array(
+                [JsonValue.string(f"absolute:{native.0}")],
+            )},
         )
         write(directory.joinpath(f"{name}.native.json"), json_text(closure)?)?
         loaves.append(UnitLoaf(key=name, name=name, dir=directory.0, standard=true))
