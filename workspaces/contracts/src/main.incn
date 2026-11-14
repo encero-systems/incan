@@ -367,13 +367,17 @@ def protocol_outcomes(settings: Settings, scratch: Path, selected: list[Fixture]
     cases = [fixture.case_name() for fixture in selected if runs_on_this_host(fixture) and protocol_case(fixture)]
     if settings.jobs < 2 or len(cases) < 2:
         return {}
+    # Durations only order the cases, so the family's table serves any selection of them.
+    mut hint: Option[Path] = None
+    if settings.use_hints:
+        hint = hint_path(settings.root, selected[0].family)
     match worker_runner(settings):
         Err(_) => return {}
         Ok(runner) =>
             match scratch.absolute():
                 Err(_) => return {}
                 Ok(retained) =>
-                    match run_protocols(runner, retained, cases, settings.jobs):
+                    match run_protocols(runner, retained, cases, settings.jobs, hint):
                         Err(_) => return {}
                         Ok(outcomes) => return outcomes
 

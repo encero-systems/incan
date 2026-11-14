@@ -13,6 +13,7 @@ from families import read_program
 from files import make_directory
 from fixture import Fixture
 from run import Outcome
+from timing_hints import load_costs, retain_costs
 from workers import Invocation, invoke_many
 
 const COMPLETE: str = "CONTRACT FAMILY COMPLETE"
@@ -61,11 +62,17 @@ pub def run_protocols(
     """
     Run each protocol case in a runner of its own, each with its own scratch so no two share a partition or refusal
     file, and return each runner's outcome by case.
+
+    The longest case starts first. A fresh scratch has no elapsed times of its own, so the family's duration table
+    under `hint` orders the cases, and this run's elapsed times are added to it.
     """
     mut requests: list[Invocation] = []
+    mut costs = load_costs(hint)
+    mut projects: list[Path] = []
     for name in cases:
         retained = scratch.joinpath(f"protocol-{name.replace("/", "-")}")
         make_directory(retained)?
+        projects.append(retained)
         mut arguments = [runner.incan, runner.root, "--family-worker", "--scratch", retained.0, "--jobs", "1"]
         arguments.extend(runner.flags)
         arguments.append(name)
@@ -76,9 +83,11 @@ pub def run_protocols(
                 project=retained,
                 selector=None,
                 environment=runner.environment,
+                duration_hint=costs.duration(retained),
             ),
         )
     results = invoke_many(requests, protocols_at_once(jobs, len(cases)))
+    retain_costs(hint, projects, costs)
     mut outcomes: dict[str, Result[Outcome, str]] = {}
     for index in range(len(cases)):
         outcomes[cases[index]] = results[index]
