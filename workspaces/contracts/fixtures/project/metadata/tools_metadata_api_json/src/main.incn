@@ -1,0 +1,37 @@
+# behavior: `incan tools metadata api PATH` prints the checked public API of a source as 0.5.1's versioned document of modules and their typed declarations, now at schema version 2 (#3142).
+# cli-commands:
+#   tools metadata api src/main.incn
+# expect-stdout-contains:
+#   {
+#     "modules": [
+#               "id": "main::LIMIT",
+#             "kind": "const",
+#             "kind": "model",
+#             "docstring": "Add two numbers.",
+#             "is_async": false,
+#             "kind": "function",
+#             "name": "add",
+#         "module_path": [
+#     "schema_version": 2
+# expect-stderr:
+# expect-exit: 0
+
+"""A small module for metadata."""
+
+pub const LIMIT: int = 3
+
+
+pub model Point:
+    """A point."""
+
+    pub x: int
+    pub y: int = 0
+
+
+pub def add(a: int, b: int = 2) -> int:
+    """Add two numbers."""
+    return a + b
+
+
+def main() -> None:
+    println(add(1))
