@@ -36,9 +36,6 @@ impl LockGuard {
 
     /// Return the number of anchors sharing this retained resource.
     pub fn reference_count(&self) -> i64 {
-        match i64::try_from(Arc::strong_count(&self.resource)) {
-            Ok(count) => count,
-            Err(_) => i64::MAX,
-        }
+        i64::try_from(Arc::strong_count(&self.resource)).unwrap_or(i64::MAX)
     }
 }

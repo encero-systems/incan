@@ -10,7 +10,7 @@ pub fn is_xid_name(value: &str) -> bool {
     if first != '_' && !unicode_ident::is_xid_start(first) {
         return false;
     }
-    characters.all(|character| unicode_ident::is_xid_continue(character))
+    characters.all(unicode_ident::is_xid_continue)
 }
 
 /// Return the first scalar index that differs from NFC, or `-1` when the input is already NFC.

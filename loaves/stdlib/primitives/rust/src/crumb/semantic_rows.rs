@@ -648,7 +648,7 @@ fn type_node_inner(text: &[u8], position: &mut usize, budget: &mut Budget) -> Re
         .to_string();
     if name == "decimal" {
         let mut parts = Vec::new();
-        for delimiter in [b'<', b',', b'>'] {
+        for delimiter in *b"<,>" {
             if text.get(*position) != Some(&delimiter) {
                 return Err("invalid_cell");
             }
