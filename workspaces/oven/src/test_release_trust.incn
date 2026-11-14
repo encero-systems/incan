@@ -3,7 +3,15 @@
 from std.encoding.base64 import b64decode
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
-from release_signature_fixtures import IDENTITY, ISSUER, archive, bundle, other_trusted_root, trusted_root
+from release_signature_fixtures import (
+    IDENTITY,
+    ISSUER,
+    WORKFLOW,
+    archive,
+    bundle,
+    other_trusted_root,
+    trusted_root,
+)
 from release_trust import BUNDLE_SUFFIX, CARRIED_TRUST, admit_release, adopt, carried
 
 
@@ -19,7 +27,7 @@ def text(encoded: str) -> Result[str, str]:
 
 def trust_text(root: str) -> Result[str, str]:
     """A `release-signer.json` for the release workflow's identity and one trusted root."""
-    signer = "{\"identity\":\"" + IDENTITY + "\",\"issuer\":\"" + ISSUER + "\"}"
+    signer = "{\"workflow\":\"" + WORKFLOW + "\",\"issuer\":\"" + ISSUER + "\"}"
     return Ok("{\"signer\":" + signer + ",\"trusted_root\":" + text(root)? + "}")
 
 
@@ -47,7 +55,7 @@ pub def test_a_home_that_carries_a_signer_refuses_an_unsigned_archive() -> Resul
         Err(reason) =>
             assert reason == (
                 f"{asset.0} is not signed: there is no signature bundle {asset.0}{BUNDLE_SUFFIX}, and this home " +
-                f"installs only releases signed by {IDENTITY}"
+                f"installs only releases signed by {WORKFLOW} at a tag"
             ), reason
     return Ok(None)
 
