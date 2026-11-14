@@ -14,7 +14,7 @@ from crate.primitives.crumb.text_types import (
     TextPosition,
     TextRootValue,
 )
-from crate.primitives.crumb.text_values import parse_root_values
+from crate.primitives.crumb.text_values import ValueReading
 from crate.primitives.crumb.identity import member_identity
 from crate.primitives.crumb.types import AbsentPolicy, ContainerKind, FieldShape, NominalKind, TypeNode, VariantShape
 from crate.primitives.crumb.values import Metadata, MetadataEntry
@@ -36,36 +36,41 @@ pub def read_comic_text(source: str, context: TextContext, mut budget: Budget) -
     return reader.document()
 
 
-class TextReader:
-    """One document's token cursor, caller context and allowance; every declaration rule reads through them."""
+class TextReader with ValueReading:
+    """
+    One document's token cursor, caller context and allowance; every grammar rule reads through them.
+
+    `descriptions` holds the declarations admitted so far, which the value rules of `ValueReading` read through.
+    """
 
     tokens: TextTokens
     context: TextContext
     budget: Budget
+    descriptions: list[TextDescription]
 
     @staticmethod
     pub def create(tokens: TextTokens, context: TextContext, budget: Budget) -> Self:
         """Own the cursor and share the caller's allowance for one document."""
-        return TextReader(tokens=tokens, context=context, budget=budget)
+        return TextReader(tokens=tokens, context=context, budget=budget, descriptions=[])
 
     pub def document(mut self) -> Result[TextDocument, TextError]:
         """Read declarations and root values in authored order, then resolve the complete declaration set."""
-        mut descriptions: list[TextDescription] = []
+        mut declared: list[TextDescription] = []
         mut values: list[TextRootValue] = []
         while self.tokens.peek()?.kind != TextTokenKind.End:
             lookahead = self.tokens.peek_at(1)?
             if self.tokens.text(lookahead)? == "=":
                 declaration_position = self.tokens.peek()?.position
                 description = self.parse_description()?
-                refuse_duplicate_declaration(descriptions, description, declaration_position)?
-                descriptions.append(description)
+                refuse_duplicate_declaration(declared, description, declaration_position)?
+                declared.append(description)
             elif self.tokens.text(lookahead)? == "<<":
-                admitted = resolve_descriptions(descriptions, self.context)?
-                for value in parse_root_values(self.tokens, admitted, self.budget)?:
+                self.descriptions = resolve_descriptions(declared, self.context)?
+                for value in self.parse_root_values()?:
                     values.append(value)
             else:
                 return Err(TextError(kind=TextFailure.InvalidEntry, position=self.tokens.peek()?.position))
-        resolved = resolve_descriptions(descriptions, self.context)?
+        resolved = resolve_descriptions(declared, self.context)?
         return Ok(TextDocument(descriptions=resolved, values=values))
 
     def parse_description(mut self) -> Result[TextDescription, TextError]:
