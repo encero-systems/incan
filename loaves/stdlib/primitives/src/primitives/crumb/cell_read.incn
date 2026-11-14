@@ -4,7 +4,7 @@ from crate.primitives.crumb.budget import Budget
 from crate.primitives.crumb.identity import closed_selector
 from crate.primitives.crumb.ordering import compare, compare_selectors
 from crate.primitives.crumb.encoding_cursor import EncodingCursor
-from crate.primitives.crumb.descriptions import StoredDescription, StoredField
+from crate.primitives.crumb.descriptions import StoredDescription, StoredField, StoredVariant
 from crate.primitives.crumb.description_dictionary import Dictionary, slot
 from crate.primitives.crumb.encoding_errors import BinaryError, BinaryFailure, failure, primitive, in_field, in_variant
 from crate.primitives.crumb.encoding_index import CellIndex, RecordIndex, read_record_index, read_index, selected, bit
@@ -38,15 +38,20 @@ pub def read_root(
     variant = cursor.length(budget)?
     if variant >= len(written.variants):
         return Err(failure(BinaryFailure.VariantIndex, origin))
-    index = read_record_index(written.variants[variant].fields, cursor, budget).map_err(
-        (e) => in_variant(e, written.variants[variant].identity),
-    )?
-    fields = read_fields(written.variants[variant].fields, index, dictionary, budget).map_err(
-        (e) => in_variant(e, written.variants[variant].identity),
-    )?
-    return Ok(
-        DecodedRoot(value=Value.Enum(written.variants[variant].identity, fields), index=index, variant=Some(variant)),
-    )
+    return read_variant(written.variants[variant], variant, cursor, dictionary, budget)
+
+
+def read_variant(
+    stored: &StoredVariant,
+    variant: int,
+    mut cursor: EncodingCursor,
+    dictionary: &Dictionary,
+    mut budget: Budget,
+) -> Result[DecodedRoot, BinaryError]:
+    """Decode one enum variant's fields through the borrowed stored variant, so its field list is never copied."""
+    index = read_record_index(stored.fields, cursor, budget).map_err((e) => in_variant(e, stored.identity))?
+    fields = read_fields(stored.fields, index, dictionary, budget).map_err((e) => in_variant(e, stored.identity))?
+    return Ok(DecodedRoot(value=Value.Enum(stored.identity, fields), index=index, variant=Some(variant)))
 
 
 def read_fields(
