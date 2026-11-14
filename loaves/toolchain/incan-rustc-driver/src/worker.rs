@@ -5,10 +5,9 @@
 //! state restored, so the host answers a typed compiler fault and decides what happens next.
 //!
 //! Bootstrap boundary (DD-0013, "Language and platform boundary", adaptation 3): besides the entry itself, the Rust
-//! kept here is what dev.8 Incan cannot express. Redirecting the process console for one activation (`console`) and
-//! returning freed heap needs FFI that Incan refuses as unsafe. Footprint readings live in the platform resource
-//! probe; heap pressure relief remains here until the platform's allocator-control boundary exists. The caller watch
-//! is a thread that observes the caller's socket while the compiler runs:
+//! kept here is what dev.8 Incan cannot express. Redirecting the process console for one activation (`console`) needs
+//! FFI that Incan refuses as unsafe, as does returning freed heap (`crate::heap`). Footprint readings live in the
+//! platform resource probe. The caller watch is a thread that observes the caller's socket while the compiler runs:
 //! dev.8 Incan cannot hand a socket to a thread, because a closure for `std::thread::spawn` cannot own a value without
 //! a native `Clone`, and shared carriers (`Arc`, channels, the platform's `Connection`) lack retained `Send` evidence.
 //! What a departed caller means is the host's decision (`incan_worker_host::abandon`).
@@ -39,7 +38,7 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
                     timing.mark("worker_observer_detached");
                 } else {
                     timing.mark("worker_observer_joined");
-                    release_free_memory();
+                    crate::heap::release_free_memory();
                     timing.mark("worker_heap_released");
                 }
                 incan_worker_host::complete(&mut host, outcome, footprint());
@@ -47,7 +46,7 @@ pub(crate) fn serve(arguments: &[String]) -> Result<(), Box<dyn std::error::Erro
             }
             WorkerActivation::Record(request) => {
                 let reply = crate::compiler_record_service::activate(request, &home);
-                release_free_memory();
+                crate::heap::release_free_memory();
                 incan_worker_host::complete_record(&mut host, reply, footprint());
             }
         }
@@ -102,30 +101,6 @@ fn footprint() -> i64 {
         .and_then(|bytes| i64::try_from(bytes).ok())
         .unwrap_or(-1)
 }
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" {
-    /// libmalloc: return free pages of `zone` (every zone when null) to the system, up to `goal` bytes (all when zero).
-    fn malloc_zone_pressure_relief(zone: *mut libc::c_void, goal: libc::size_t) -> libc::size_t;
-}
-
-/// Return the heap a request freed to the system, so the footprint the host judges is what the worker retains.
-#[cfg(target_os = "macos")]
-fn release_free_memory() {
-    // SAFETY: a null zone and a zero goal ask libmalloc to release every free page; no memory is touched.
-    unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
-}
-
-/// Return the heap a request freed to the system, so the footprint the host judges is what the worker retains.
-#[cfg(all(target_os = "linux", target_env = "gnu"))]
-fn release_free_memory() {
-    // SAFETY: malloc_trim only returns free heap pages to the system.
-    unsafe { libc::malloc_trim(0) };
-}
-
-/// No heap release on other systems.
-#[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
-fn release_free_memory() {}
 
 /// Observes an activation's caller while the compiler runs and hands a caller that left to the host's `abandon`,
 /// which withdraws the worker's socket and ends the process. Ending the watch closes its wake pipe, which ends the
