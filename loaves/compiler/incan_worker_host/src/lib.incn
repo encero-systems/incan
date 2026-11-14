@@ -67,4 +67,5 @@ pub from host import (
     complete,
     complete_record,
     caller_watch,
+    hands_rustc_off,
 )

@@ -226,6 +226,10 @@ pub class WorkerHost:
             None => pass
         self.activation_clock = None
 
+    pub def hands_rustc_off(self, footprint: int) -> bool:
+        """Whether the open compile, at this footprint after lowering, hands rustc to its caller instead of running it."""
+        return self.policy.hands_rustc_off(footprint)
+
     pub def caller_watch(self) -> Option[CallerWatch]:
         """What the compiler entry watches while the open activation compiles, if one is open."""
         match self.active:
@@ -452,6 +456,14 @@ pub def complete_record(mut host: WorkerHost, reply: RecordMessage, footprint: i
 pub def caller_watch(mut host: WorkerHost) -> Option[CallerWatch]:
     """What the compiler entry watches while the open activation compiles; `None` when no activation is open."""
     return host.caller_watch()
+
+
+pub def hands_rustc_off(host: WorkerHost, footprint: int) -> bool:
+    """
+    Whether the open compile, at this physical footprint after checking and lowering, writes its rustc handoff and
+    answers with it instead of running rustc: a footprint over the ceiling, which only exiting returns.
+    """
+    return host.hands_rustc_off(footprint)
 
 
 def worker_observer() -> Option[Emitter]:
