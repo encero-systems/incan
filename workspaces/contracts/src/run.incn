@@ -30,6 +30,34 @@ pub def invoke_to_file(incan: str, arguments: list[str], project: Path, output: 
     return invoke_many([request], 1)[0]
 
 
+# How many independent commands of one case run at once in its project.
+static case_jobs: int = 1
+
+
+pub def set_case_jobs(jobs: int) -> None:
+    """Let a case run up to `jobs` independent commands of its own at once; one keeps them sequential."""
+    case_jobs = max([1, jobs])
+
+
+pub def invoke_side_by_side(incan: str, commands: list[list[str]], project: Path) -> list[Result[Outcome, str]]:
+    """
+    Run commands that do not depend on each other in one project, each capturing its streams under its own name, and
+    return their outcomes in command order. They run one at a time.
+    """
+    mut requests: list[Invocation] = []
+    for index in range(len(commands)):
+        requests.append(
+            Invocation(
+                program=incan,
+                arguments=commands[index],
+                project=project,
+                selector=None,
+                capture=f"side-{index}",
+            ),
+        )
+    return invoke_many(requests, 1)
+
+
 pub def surface(arguments: list[str]) -> tuple[Option[str], list[str]]:
     """
     The program name and arguments one command line selects (RFC 118). A leading `oven` starts the given `incan` under
