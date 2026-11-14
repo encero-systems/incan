@@ -1,0 +1,47 @@
+"""A unit verified against a declared interop target is keyed by that target and by the Clang its check selects."""
+
+from c_interop_target import CAbiTargetSelection
+from unit import UnitDescription
+from unit_freshness import description_digest
+
+
+def verifying(target: Option[CAbiTargetSelection]) -> UnitDescription:
+    """A program unit with checked C bindings, verified against `target` or the host."""
+    return UnitDescription(
+        source="/checkout/project/src/main.incn",
+        project_root="/checkout/project",
+        source_root="/checkout/project/src",
+        package="app",
+        version="0.1.0",
+        profile="debug",
+        declared_features=[],
+        active_features=[],
+        loaves=[],
+        rust_crates=[],
+        contract_models=[],
+        c_headers=["interop/include/probe.h"],
+        c_abi_target=target,
+    )
+
+
+pub def test_a_declared_target_and_its_selected_clang_rekey_the_unit() -> Result[None, str]:
+    """
+    A check verified against one target is never replayed for another, nor for another explicitly selected Clang.
+
+    1. Verifying against a declared target changes the description digest.
+    2. Another target, or other definitions, change it again.
+    3. Another explicitly selected verifier Clang changes it, so a refusal stored without one is not replayed.
+    """
+    # 1. The selected target is an input of the unit.
+    host = description_digest(verifying(None))?
+    android = description_digest(verifying(Some(CAbiTargetSelection(target="aarch64-linux-android"))))?
+    assert android != host
+    # 2. Each target and its definitions are their own inputs.
+    linux = description_digest(verifying(Some(CAbiTargetSelection(target="x86_64-unknown-linux-gnu"))))?
+    assert linux != android
+    wide = CAbiTargetSelection(target="aarch64-linux-android", definitions=["PROBE_WIDE=1"])
+    assert description_digest(verifying(Some(wide)))? != android
+    # 3. The explicitly selected Clang is evidence the check depends on.
+    ndk = CAbiTargetSelection(target="aarch64-linux-android", verifier="/ndk/toolchains/llvm/prebuilt/host/bin/clang")
+    assert description_digest(verifying(Some(ndk)))? != android
+    return Ok(None)
