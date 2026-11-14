@@ -100,6 +100,39 @@ def test_a_relinked_manifest_names_its_driver_from_the_toolchain() -> Result[Non
     return Ok(None)
 
 
+def test_a_relink_drops_the_bundle_compiler_record_pin() -> Result[None, str]:
+    """
+    The bundle's compiler records describe the Loaves its own compiler built, so the relinked compiler keeps no pin to
+    them, as a release candidate home keeps none.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    toolchain = temporary.path().joinpath("home").joinpath(TOOLCHAIN_DIRECTORY)
+    toolchain.joinpath("rust-abi").mkdir(true, true).map_err((error) => error.message())?
+    toolchain
+        .joinpath("toolchain.json")
+        .write_text(
+            "{\"driver\":\"bin/incan-rustc-driver-a\",\"rust_abi\":[],\"sysroot\":\"sysroot\",\"externs\":[],"
+            + "\"compiler_records\":{\"root\":\"compiler-records\",\"digest\":\"cf96ccd9\"}}",
+            "utf-8",
+            "strict",
+            None,
+        )
+        .map_err((error) => error.message())?
+    built = temporary.path().joinpath("incan-rustc-driver")
+    built.write_bytes(b"driver").map_err((error) => error.message())?
+    digest = hexlify(file_digest(built, "sha256").map_err((error) => error.message())?)
+    # The standard ABI cache already exists, so the stub driver is never run.
+    toolchain
+        .joinpath(f"rust-abi/std-incan-rustc-driver-{digest[:12]}.rustabi")
+        .write_bytes(b"abi")
+        .map_err((error) => error.message())?
+    _ = install_driver(toolchain, built, "sysroot")?
+    text = toolchain.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?
+    manifest = JsonValue.parse(text).map_err((error) => error.message())?
+    assert manifest.get("compiler_records") == None, text
+    return Ok(None)
+
+
 def executable(path: Path, text: str) -> Result[None, str]:
     """Write a stub program the test runs in place of an Oven."""
     path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?

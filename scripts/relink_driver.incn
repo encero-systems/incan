@@ -245,9 +245,15 @@ pub def install_driver(toolchain: Path, built: Path, sysroot: str) -> Result[tup
     fields["rust_abi"] = JsonValue.array([JsonValue.string(f"rust-abi/{abi.name()}")])
     fields["codegraph_on_request"] = JsonValue.bool(true)
     fields["closure_anchors"] = JsonValue.bool(true)
+    # The bundle's compiler records describe the Loaves its own compiler built; the relinked compiler keeps no pin to
+    # them, as a release candidate home keeps none.
+    mut retained: Dict[str, JsonValue] = {}
+    for key in fields.keys():
+        if key != "compiler_records":
+            retained[key] = fields[key]
     replace_text(
         toolchain.joinpath("toolchain.json"),
-        JsonValue.object(fields).to_pretty_json().map_err((error) => error.message())?,
+        JsonValue.object(retained).to_pretty_json().map_err((error) => error.message())?,
     )?
     mut removed: list[str] = []
     for previous in replaced:
