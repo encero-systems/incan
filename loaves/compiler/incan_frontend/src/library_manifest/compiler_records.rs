@@ -74,6 +74,8 @@ pub enum RecordFamily {
     /// One public namespace of the checked API: its members, child modules and the identities of its public paths, and
     /// what its parent namespace publishes under its name.
     PublicNamespace,
+    /// One name an exported enum publishes at the package root beside its own: a variant or a variant alias.
+    EnumVariant,
     RustAbi,
 }
 
@@ -105,6 +107,7 @@ impl RecordFamily {
             Self::Layout => "layout",
             Self::Default => "default",
             Self::PublicNamespace => "public-namespace",
+            Self::EnumVariant => "enum-variant",
             Self::RustAbi => "rust-abi",
         }
     }
@@ -219,6 +222,7 @@ impl LibraryManifest {
         })?;
         named(&mut records, RecordFamily::Trait, &exports.traits, |item| &item.name)?;
         named(&mut records, RecordFamily::Enum, &exports.enums, |item| &item.name)?;
+        enum_variant_records(&mut records, &exports.enums)?;
         named(&mut records, RecordFamily::TypeAlias, &exports.type_aliases, |item| {
             &item.name
         })?;
@@ -294,6 +298,28 @@ fn named<T: Serialize>(
 ) -> Result<(), LibraryManifestError> {
     for (index, value) in values.iter().enumerate() {
         records.push(record(family, index, name(value), value)?);
+    }
+    Ok(())
+}
+
+/// One record per name an exported enum publishes at the package root beside its own: each variant and each variant
+/// alias, named by it, so the records' names alone tell a consumer whether the root exports a name.
+fn enum_variant_records(
+    records: &mut Vec<CompilerRecord>,
+    enums: &[super::EnumExport],
+) -> Result<(), LibraryManifestError> {
+    let mut index = 0;
+    for exported in enums {
+        let variants = exported.variants.iter().map(|variant| (&variant.name, &variant.name));
+        let aliases = exported
+            .variant_aliases
+            .iter()
+            .map(|alias| (&alias.name, &alias.target));
+        for (name, variant) in variants.chain(aliases) {
+            let value = json!({ "enum": exported.name.as_str(), "variant": variant });
+            records.push(record(RecordFamily::EnumVariant, index, name, &value)?);
+            index += 1;
+        }
     }
     Ok(())
 }
