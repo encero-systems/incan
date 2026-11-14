@@ -437,6 +437,7 @@ pub(super) fn local_fields(positions: &Positions, local: &BodyLocal) -> Result<F
     project_calls(positions, local, &mut fields)?;
     call_artifacts_generated::project(positions, &local.calls, &mut fields)?;
     rust_artifacts_generated::project(positions, &local.rust, &mut fields)?;
+    protocol_artifacts_generated::project(positions, &local.protocols, &mut fields)?;
     for (canonical, ty) in &local.rust.value_native_types {
         let mut row = vec![
             "native-value".into(),

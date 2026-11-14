@@ -141,7 +141,7 @@ fn collect_protocol_artifacts(value: &ProtocolArtifacts, refusals: &mut Vec<&'st
         // The mutation record transports this graph's source projection; restore rebuilds it at settlement.
         mutation_flows: _,
         explicit_input_copy: _,
-        body_ir_truthiness_receivers,
+        body_ir_truthiness_receivers: _,
         body_ir_iterations,
         iterations,
         item_taking_iterations,
@@ -149,7 +149,7 @@ fn collect_protocol_artifacts(value: &ProtocolArtifacts, refusals: &mut Vec<&'st
         in_place_match_scrutinees,
         loan_free_scrutinees: _,
     } = value;
-    collect_nonempty!(refusals, "ProtocolArtifacts"; body_ir_truthiness_receivers, body_ir_iterations, iterations, item_taking_iterations, comprehension_source_consumption, in_place_match_scrutinees);
+    collect_nonempty!(refusals, "ProtocolArtifacts"; body_ir_iterations, iterations, item_taking_iterations, comprehension_source_consumption, in_place_match_scrutinees);
 }
 
 /// Refuse every unrepresented nonempty RustInteropArtifacts field; additions must choose a canonical capability.

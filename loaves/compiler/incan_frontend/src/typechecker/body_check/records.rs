@@ -9,6 +9,7 @@ mod inputs;
 mod mutation;
 mod native_types;
 mod ownership;
+mod protocol_artifacts_generated;
 mod rust_artifact_admission;
 mod rust_artifacts_generated;
 mod types;
@@ -976,6 +977,9 @@ fn restore_local(
         return Ok(());
     }
     if rust_artifacts_generated::restore(positions, &mut local.rust, row)? {
+        return Ok(());
+    }
+    if protocol_artifacts_generated::restore(positions, &mut local.protocols, row)? {
         return Ok(());
     }
     if matches!(
