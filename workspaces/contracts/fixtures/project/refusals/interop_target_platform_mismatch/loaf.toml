@@ -1,0 +1,13 @@
+[project]
+name = "interop_target_platform_mismatch"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[interop.c]
+
+[[interop.c.targets]]
+target = "aarch64-apple-ios"
+sdk = { capability = "iphoneos" }
+platform = { kind = "android", api-level = 34 }
