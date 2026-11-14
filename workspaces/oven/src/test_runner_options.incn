@@ -135,13 +135,14 @@ pub def test_reports_take_the_shapes_of_0_5_1() -> Result[None, str]:
         "  1500ms test_a.incn::test_three",
     ]
     assert summary_line([passed, skipped, failed], 1600) == "1 passed, 1 failed, 1 skipped in 1.600s"
-    printed = "running 1 test\ntest incan_case_group ... module setup\nincan-case-start incan_case_0\nfirst\nincan-case-end incan_case_0 passed 12\nlate setup\nincan-case-start incan_case_1\nincan-case-end incan_case_1 failed 340 boom here\nmodule teardown\nok\n\ntest result: ok. 1 passed\n"
+    printed = "\nrunning 1 test\nmodule setup\nincan-case-start incan_case_0\nfirst\nincan-case-end incan_case_0 passed 12\nlate setup\nincan-case-start incan_case_1\nincan-case-end incan_case_1 failed 340 boom here\nmodule teardown\ntest incan_case_group ... ok\n\ntest result: ok. 1 passed\n\n"
     first = group_case(printed, "incan_case_0", "incan_case_group")
-    assert first.finished and first.passed and first.output == "module setup\nfirst\n" and first.duration_ms == 12
+    assert first.finished and first.passed and first.duration_ms == 12
+    assert first.output == "\nrunning 1 test\nmodule setup\nfirst\n"
     second = group_case(printed, "incan_case_1", "incan_case_group")
     assert second.finished and not second.passed and second.message == "boom here" and second.duration_ms == 340
     assert second.output == "late setup\n"
-    assert group_tail(printed, "incan_case_group") == "module teardown\n"
+    assert group_tail(printed, "incan_case_group") == "module teardown\ntest incan_case_group ... ok\n\ntest result: ok. 1 passed\n\n"
     return Ok(None)
 
 

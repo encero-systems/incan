@@ -684,8 +684,8 @@ pub model GroupCase:
 pub def group_case(printed: str, entry: str, native: str) -> GroupCase:
     """
     One case of a file group's output: what the group printed since the previous case ended, such as a shared fixture
-    set up for this case, then the case's own lines between its `incan-case-start` and `incan-case-end` markers, and
-    its end marker's verdict, duration and message. The native harness's own lines are left out.
+    set up for this case and, before the first case, the native harness's own lines, then the case's own lines between
+    its `incan-case-start` and `incan-case-end` markers, and its end marker's verdict, duration and message.
     """
     start = f"incan-case-start {entry}"
     end = f"incan-case-end {entry} "
@@ -693,7 +693,7 @@ pub def group_case(printed: str, entry: str, native: str) -> GroupCase:
     mut inside = false
     mut pending: list[str] = []
     mut lines: list[str] = []
-    for line in printed.split("\n"):
+    for line in printed_lines(printed):
         text = harness_free(line, native)
         if text == start:
             inside = true
@@ -713,8 +713,8 @@ pub def group_case(printed: str, entry: str, native: str) -> GroupCase:
             lines.append(text)
         elif text.startswith("incan-case-start ") or text.startswith("incan-case-end "):
             pending = []
-        elif kept_edge(text):
-            pending.append(text)
+        else:
+            pending.append(line)
     found.output = joined(lines)
     return found
 
@@ -772,17 +772,25 @@ def group_size(item: Running) -> int:
 
 pub def group_tail(printed: str, native: str) -> str:
     """
-    What a file group printed after its last case ended, such as a shared fixture's teardown; the last case's output
-    ends with it. The native harness's own lines are left out.
+    What a file group printed after its last case ended, such as a shared fixture's teardown and the native harness's
+    own closing lines; the last case's output ends with it.
     """
     mut after: list[str] = []
-    for line in printed.split("\n"):
+    for line in printed_lines(printed):
         text = harness_free(line, native)
         if text.startswith("incan-case-start ") or text.startswith("incan-case-end "):
             after = []
-        elif kept_edge(text):
-            after.append(text)
+        else:
+            after.append(line)
     return joined(after)
+
+
+def printed_lines(printed: str) -> list[str]:
+    """A process's printed text as lines, without the empty one after its final line feed."""
+    mut lines = printed.split("\n")
+    if len(lines) > 0 and lines[len(lines) - 1] == "":
+        lines = lines[0:len(lines) - 1]
+    return lines
 
 
 def harness_free(line: str, native: str) -> str:
@@ -791,17 +799,6 @@ def harness_free(line: str, native: str) -> str:
     if line.startswith(prefix):
         return line[len(prefix):]
     return line
-
-
-def kept_edge(text: str) -> bool:
-    """Whether a line outside every case is the group's own output rather than the native harness's."""
-    return not (
-        text == ""
-        or text == "running 1 test"
-        or text == "ok"
-        or text == "FAILED"
-        or text.startswith("test result:")
-    )
 
 
 def joined(lines: list[str]) -> str:
