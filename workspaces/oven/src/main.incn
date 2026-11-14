@@ -73,7 +73,7 @@ from checked_metadata import checked_metadata, parse_metadata, parse_registry
 from build_report import parse_report, reported_build
 from pub::incan_platform.trace import WorkObserver
 from pub::incan_platform.store.files import observe_work
-from trace_adapter import finish as finish_trace
+from trace_adapter import finish as finish_trace, notice_former_compiler_variables
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 
@@ -132,6 +132,9 @@ def command_line() -> None:
     if command == "__rust-unit":
         scheduled_unit_command(rest)
         return
+    # A former compiler tracing variable this command set names its replacement once.
+    if not command.startswith("--internal"):
+        notice_former_compiler_variables()
     # 2. A command of the other surface runs nowhere; help never prepares a unit or starts a server.
     match misplaced(surface, command, rest):
         Some(reason) => fail(reason, 2)
