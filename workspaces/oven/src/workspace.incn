@@ -4,12 +4,14 @@ workspace inspect` and `--workspace` and `--member` on project commands.
 
 A `loaf.toml` with a `[workspace]` table is a workspace root: with `[project]` it is a rooted workspace, whose root
 project is a member, and without it a virtual one. Membership is explicit: `members` lists member directories relative
-to the root, each with its own `loaf.toml`. `--workspace` selects every member, `--member` (or `-p`) a member by its
-project name or root-relative path, and `--exclude` removes members from that set.
+to the root, each with its own `loaf.toml`, or glob patterns that name every such directory they match. `--workspace`
+selects every member, `--member` (or `-p`) a member by its project name or root-relative path, and `--exclude`
+removes members from that set.
 """
 
 from std import toml
 from std.fs import Path
+from std.fs.glob import matches
 from std.json import JsonValue
 from std.toml import TomlValue
 from cli_help import render
@@ -128,13 +130,20 @@ def read_workspace(root: Path, manifest: Path, document: TomlValue) -> Result[Wo
     if let Some(name) = document.get_optional[str]("project.name").map_err((error) => error.message())?:
         members.append(Member(name=name, relative=".", root=root, is_root_member=true))
     excluded = [normalized(item) for item in strings(document, "workspace.exclude", manifest)]
+    mut directories: list[str] = []
     for item in listed:
-        relative = normalized(item)
-        if relative in excluded:
+        if has_glob(item):
+            for relative in matched_members(root, normalized(item))?:
+                if relative not in directories:
+                    directories.append(relative)
+        elif normalized(item) not in directories:
+            directories.append(normalized(item))
+    for relative in directories:
+        if is_excluded(relative, excluded):
             continue
         member_manifest = root.joinpath(relative).joinpath("loaf.toml")
         if not member_manifest.is_file():
-            return Err(f"{manifest.0}: workspace member `{item}` has no loaf.toml")
+            return Err(f"{manifest.0}: workspace member `{relative}` has no loaf.toml")
         member_document = toml
             .parse(read(member_manifest)?)
             .map_err((error) => f"{member_manifest.0}: {error.message()}")?
@@ -155,6 +164,63 @@ def strings(document: TomlValue, key: str, manifest: Path) -> list[str]:
         Ok(Some(values)) => return values
         Ok(None) => return []
         Err(_) => return []
+
+
+def has_glob(pattern: str) -> bool:
+    """Whether a member or exclusion declaration is a glob pattern rather than one directory."""
+    return "*" in pattern or "?" in pattern or "[" in pattern
+
+
+def matched_members(root: Path, pattern: str) -> Result[list[str], str]:
+    """
+    The root-relative directories a member glob names, in sorted order: those that match it segment by segment and
+    hold a `loaf.toml`. A wildcard never crosses a `/`, and a pattern that matches nothing names no member.
+    """
+    mut found: list[str] = [""]
+    for segment in pattern.split("/"):
+        mut next: list[str] = []
+        for prefix in found:
+            mut directory = root
+            if prefix != "":
+                directory = root.joinpath(prefix)
+            if not has_glob(segment):
+                next.append(joined(prefix, segment))
+                continue
+            if not directory.is_dir():
+                continue
+            children = directory.glob(segment).map_err((error) => f"{directory.0}: {error.message()}")?
+            for child in sorted([child.name() for child in children if child.is_dir()]):
+                if not child.startswith("."):
+                    next.append(joined(prefix, child))
+        found = next
+    return Ok([relative for relative in found if root.joinpath(relative).joinpath("loaf.toml").is_file()])
+
+
+def joined(prefix: str, name: str) -> str:
+    """A root-relative path extended by one segment."""
+    if prefix == "":
+        return name
+    return f"{prefix}/{name}"
+
+
+def is_excluded(relative: str, excluded: list[str]) -> bool:
+    """Whether a member directory is one `exclude` names, literally or by a glob matched segment by segment."""
+    for pattern in excluded:
+        if pattern == relative:
+            return true
+        if has_glob(pattern) and segments_match(relative.split("/"), pattern.split("/")):
+            return true
+    return false
+
+
+def segments_match(parts: list[str], patterns: list[str]) -> bool:
+    """Whether each path segment matches the pattern segment at its position."""
+    if len(parts) != len(patterns):
+        return false
+    for index in range(len(parts)):
+        if not matches(parts[index], patterns[index]):
+            return false
+    return true
 
 
 def normalized(path: str) -> str:
