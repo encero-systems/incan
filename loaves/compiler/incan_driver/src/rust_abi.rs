@@ -121,13 +121,13 @@ pub fn cached_rust_facts(unit: &UnitDescription) -> CliResult<RustFactsSetup> {
 pub fn cached_path_facts(
     unit: &UnitDescription,
     paths: &BTreeSet<String>,
-    extract: impl FnOnce() -> Result<RustFacts, String>,
+    extract: impl Fn(&BTreeSet<String>) -> Result<RustFacts, String>,
 ) -> CliResult<RustFacts> {
     let started = std::time::Instant::now();
 
     // ---- Optional cache availability ----
     let Some(directory) = &unit.rust_facts else {
-        return extract().map_err(CliError::failure);
+        return extract(paths).map_err(CliError::failure);
     };
     let (index, staging) = (&directory.join("index"), &directory.join("staging"));
     let identity = match path_identity(unit, paths) {
@@ -140,7 +140,7 @@ pub fn cached_path_facts(
                     error.message
                 );
             }
-            return extract().map_err(CliError::failure);
+            return extract(paths).map_err(CliError::failure);
         }
     };
     // ---- Indexed bakery payload or genuine extraction ----
@@ -155,7 +155,7 @@ pub fn cached_path_facts(
     let facts = if let Some(facts) = cached {
         facts
     } else {
-        let facts = extract().map_err(CliError::failure)?;
+        let facts = extract(paths).map_err(CliError::failure)?;
         if let Err(error) = stage_extraction(staging, &identity, &facts)
             && incan_frontend::trace_flags::trace_rust_facts()
         {
@@ -487,13 +487,14 @@ fn failure(error: impl std::fmt::Display) -> CliError {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::fs;
     use std::io::Write;
     use std::path::Path;
 
     use sha2::{Digest, Sha256};
 
-    use super::publish_cache;
+    use super::{RustFacts, UnitDescription, cached_path_facts, publish_cache};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -573,6 +574,72 @@ mod tests {
         publish_cache(&store, extracted(&units, b"facts")?, &cache)?;
         assert_eq!(fs::read(&cache)?, b"facts");
         assert_eq!(names(&units)?, ["request.rustabi"]);
+        Ok(())
+    }
+
+    /// An installed toolchain whose descriptor owns one shipped cache, as `installed_toolchain` requires.
+    fn installed(root: &Path) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+        let toolchain = root.join("toolchain");
+        fs::create_dir_all(toolchain.join("rust-abi"))?;
+        fs::create_dir_all(toolchain.join("sysroot"))?;
+        fs::write(toolchain.join("driver"), b"driver")?;
+        fs::write(toolchain.join("rust-abi/shipped.rustabi"), b"shipped")?;
+        let descriptor = serde_json::json!({
+            "schema": "incan.toolchain/1",
+            "driver": "driver",
+            "sysroot": "sysroot",
+            "rust_abi": ["rust-abi/shipped.rustabi"],
+        });
+        fs::write(toolchain.join("toolchain.json"), serde_json::to_vec(&descriptor)?)?;
+        Ok(toolchain.join("rust-abi/shipped.rustabi"))
+    }
+
+    /// A prepared unit of `name` with its own native artifact, as every test case has its own dependency.
+    fn unit(root: &Path, name: &str, shipped: &Path) -> Result<UnitDescription, Box<dyn std::error::Error>> {
+        let project = root.join(name);
+        fs::create_dir_all(&project)?;
+        let artifact = project.join(format!("lib{name}.rlib"));
+        fs::write(&artifact, name.as_bytes())?;
+        let mut unit: UnitDescription = serde_json::from_value(serde_json::json!({
+            "schema": "incan.unit/1",
+            "source": project.join("main.incn"),
+            "project_root": project,
+            "source_root": project,
+            "package": name,
+            "version": "0.1.0",
+            "profile": "debug",
+            "declared_features": [],
+            "active_features": [],
+            "loaves": [],
+            "rust_crates": [],
+            "contract_models": [],
+            "c_headers": [],
+            "externs": [{"name": name, "path": artifact}],
+            "search": [],
+            "rust_abi": [shipped],
+        }))?;
+        unit.rust_facts = Some(project.join("facts"));
+        Ok(unit)
+    }
+
+    #[test]
+    fn a_standard_path_reached_by_two_units_is_extracted_once() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let shipped = installed(root.path())?;
+        let paths = BTreeSet::from(["std::net::Ipv4Addr".to_owned()]);
+        let extractions = std::cell::Cell::new(0);
+        let extract = |requested: &BTreeSet<String>| -> Result<RustFacts, String> {
+            extractions.set(extractions.get() + 1);
+            assert_eq!(requested, &paths);
+            Ok(RustFacts::new())
+        };
+        cached_path_facts(&unit(root.path(), "first", &shipped)?, &paths, extract)?;
+        cached_path_facts(&unit(root.path(), "second", &shipped)?, &paths, extract)?;
+        assert_eq!(
+            extractions.get(),
+            1,
+            "a second unit extracted the same standard path again"
+        );
         Ok(())
     }
 }
