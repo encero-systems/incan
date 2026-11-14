@@ -29,7 +29,7 @@ The program builds the source support closure, checked bootstrap interfaces, com
 
 The candidate census must have the same case keys as the seed census over the same committed fixture tree, preserve every seed PASS, and preserve the committed baseline. A fresh installation at another source, home, and Rust-sysroot path must reproduce every direct candidate outcome. Linux additionally pulls the pinned Clang artifact with oras and unpacks it through Incan libraries; macOS evidence does not establish that branch.
 
-The toolchain version directory remains `0.6.0-dev.8` because it is the installed release identity, not an orchestration name.
+The toolchain version directory remains `0.6.0-dev.9` because it is the installed release identity, not an orchestration name.
 
 ## Publication
 

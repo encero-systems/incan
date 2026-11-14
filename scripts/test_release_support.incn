@@ -37,6 +37,7 @@ from release_support import (
     reserved_admitted,
     require_candidate_census,
     same_bytes,
+    seed_toolchain_directory,
     shared_relocated_sysroot,
     store_reference_log,
     tree_bytes,
@@ -620,4 +621,36 @@ def test_relocation_audit_reads_anchored_native_references() -> Result[None, str
     anchored = "{\"externs\": " + externs + ", \"macro_externs\": " + macros + ", \"search\": [\"sibling:.\"]}\n"
     closure.write_text(anchored, "utf-8", "strict", None).map_err((error) => error.message())?
     audit_relocation(home, [])?
+    return Ok(None)
+
+
+def test_a_seed_of_an_earlier_version_is_read_by_its_own_toolchain_directory() -> Result[None, str]:
+    """
+    A release reads its seed by the version the seed installed, which may precede the line it builds.
+
+    1. A seed home with one installed version selects that version's directory, not the candidate's.
+    2. A home with no installed toolchain, or two, is refused by name.
+    """
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    seed = temporary.path().joinpath("seed")
+    # 1. The seed installed the line's previous version.
+    seed.joinpath("toolchains/0.6.0-dev.8").mkdir(true, true).map_err((error) => error.message())?
+    seed.joinpath("toolchains/0.6.0-dev.8/toolchain.json").write_text("{}", "utf-8", "strict", None).map_err(
+        (error) => error.message(),
+    )?
+    assert seed_toolchain_directory(seed)? == "toolchains/0.6.0-dev.8"
+    assert seed_toolchain_directory(seed)? != TOOLCHAIN_DIRECTORY
+    # 2. Nothing installed, or more than one generation, names no seed.
+    empty = temporary.path().joinpath("empty")
+    empty.joinpath("toolchains").mkdir(true, true).map_err((error) => error.message())?
+    match seed_toolchain_directory(empty):
+        Ok(found) => return Err(f"an empty seed home selected {found}")
+        Err(reason) => assert "no installed toolchain" in reason, reason
+    seed.joinpath("toolchains/0.6.0-dev.7").mkdir(true, true).map_err((error) => error.message())?
+    seed.joinpath("toolchains/0.6.0-dev.7/toolchain.json").write_text("{}", "utf-8", "strict", None).map_err(
+        (error) => error.message(),
+    )?
+    match seed_toolchain_directory(seed):
+        Ok(found) => return Err(f"a seed home with two toolchains selected {found}")
+        Err(reason) => assert "0.6.0-dev.7, 0.6.0-dev.8" in reason, reason
     return Ok(None)

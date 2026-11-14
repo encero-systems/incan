@@ -53,6 +53,7 @@ from release_support import (
     reclaim_paths,
     record_tree_sample,
     reuse_reference_log,
+    seed_toolchain_directory,
     require_candidate_census,
     release_receipt,
     release_rust_cache_root,
@@ -418,8 +419,13 @@ def materialize_source(run: ReleaseRun) -> Result[None, str]:
 
 def prepare_candidate_home(run: ReleaseRun) -> Result[None, str]:
     """Select immutable seed artifacts by absolute identity inside a fresh writable candidate home."""
-    seed = run.seed_home.joinpath(TOOLCHAIN_DIRECTORY)
+    seed_directory = seed_toolchain_directory(run.seed_home)?
+    seed = run.seed_home.joinpath(seed_directory)
     run.paths.toolchain.mkdir(true, true).map_err((error) => error.message())?
+    # A seed of the previous version reads the candidate home through its own version's directory name.
+    if seed_directory != TOOLCHAIN_DIRECTORY:
+        alias = run.paths.home.joinpath(seed_directory)
+        alias.symlink_to(Path(run.paths.toolchain.name())).map_err((error) => error.message())?
     mut manifest = JsonValue
         .parse(seed.joinpath("toolchain.json").read_text("utf-8", "strict").map_err((error) => error.message())?)
         .map_err((error) => error.message())?
