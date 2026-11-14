@@ -41,6 +41,8 @@ model ScalarRecord:
     schema: int
     inputs: list[str]
     function: str
+    # The generic instance requests the function's lowering made, each a position-free request identity.
+    requests: list[str]
     digest: str
 
 
@@ -108,13 +110,15 @@ pub def retained_scalar(
     unit: &UnitNominals,
     span: Option[SourceSpan] = None,
     positions: list[tuple[int, int]] = [],
-) -> Option[tuple[Function, list[ExternalFunction], list[NominalReference], list[Function]]]:
+) -> Option[tuple[Function, list[ExternalFunction], list[NominalReference], list[Function], list[str]]]:
     """
     Read a complete native function whose full producer inputs and named declarations still match.
 
     1. Read the content-addressed private record.
     2. Validate its input witness and payload digest, and resolve each declaration it names in the current unit.
     3. Restore the complete native function at the current declaration and node positions, or return a cache miss.
+
+    The function returns with the generic instance requests its lowering made, still encoded.
     """
     # 1. Missing, corrupt and concurrently replaced entries all remain ordinary misses.
     match scalar_path(directory, inputs):
@@ -138,7 +142,11 @@ pub def retained_scalar(
                                 Ok(product) =>
                                     function, runtime = product
                                     match decode_frames(payload, resolved):
-                                        Ok(frames) => return Some((function, runtime, resolved, frames))
+                                        Ok(frames) =>
+                                            match decode_record(text):
+                                                Ok(record) =>
+                                                    return Some((function, runtime, resolved, frames, record.requests))
+                                                Err(_) => return None
                                         Err(_) => return None
                                 Err(_) => return None
 
@@ -151,6 +159,7 @@ pub def retain_scalar(
     nominals: list[ProductNominal] = [],
     positions: list[tuple[int, int]] = [],
     frames: list[Function] = [],
+    requests: list[str] = [],
 ) -> Result[None, str]:
     """
     Publish a loss-checked native function without changing compilation's verdict.
@@ -159,7 +168,7 @@ pub def retain_scalar(
     2. Write a complete temporary record and atomically replace its destination.
     """
     # 1. Records mode must preserve an unsupported native shape as an explicit producer refusal.
-    text = encoded_record(inputs, function, runtime, nominals, positions, frames)?
+    text = encoded_record(inputs, function, runtime, nominals, positions, frames, requests)?
     # 2. The request-local transport is required input to Bakery publication, so failed writes refuse the producer.
     return publish_record(directory, inputs, text)
 
@@ -202,7 +211,7 @@ pub def finalize_scalar(
         match named:
             Some(nominal) => nominals.append(nominal)
             None => return Err(f"plan-function {function.name} names a declaration its keyed product does not")
-    final = encoded_record(record.inputs, function, demand, nominals, positions, frames)?
+    final = encoded_record(record.inputs, function, demand, nominals, positions, frames, record.requests)?
     if final == text:
         return Ok((text, whole))
     # 3. A reused product was already final when retained, so any difference is a lowering defect, never a refresh.
@@ -297,6 +306,7 @@ def encoded_record(
     nominals: list[ProductNominal],
     positions: list[tuple[int, int]] = [],
     frames: list[Function] = [],
+    requests: list[str] = [],
 ) -> Result[str, str]:
     """
     Authenticate the entire native payload after the codec proves an exact structural round trip.
@@ -316,8 +326,8 @@ def encoded_record(
         payload = index_positions(relative, positions)?
         if place_positions(payload, positions)? != relative:
             return Err("plan-function position map changed native facts")
-    digest = fingerprint([payload])?
-    record = ScalarRecord(schema=3, inputs=inputs, function=payload, digest=digest)
+    digest = fingerprint([payload] + requests)?
+    record = ScalarRecord(schema=4, inputs=inputs, function=payload, requests=requests, digest=digest)
     return to_string(record).map_err((error) => str(error))
 
 
@@ -331,9 +341,9 @@ def record_payload(
     match decode_record(text):
         Err(_) => return None
         Ok(record) =>
-            if record.schema != 3 or record.inputs != inputs:
+            if record.schema != 4 or record.inputs != inputs:
                 return None
-            match fingerprint([record.function]):
+            match fingerprint([record.function] + record.requests):
                 Err(_) => return None
                 Ok(digest) =>
                     if record.digest != digest:
@@ -407,3 +417,13 @@ def event_nodes(positions: list[tuple[int, int]]) -> list[EventPosition]:
         line, column = position
         nodes.append(EventPosition(line=line, column=column))
     return nodes
+
+
+pub def reported(directory: Option[str], inputs: list[str]) -> bool:
+    """Whether this request already reported a product under these inputs, as a retried instance pass does."""
+    match directory:
+        None => return false
+        Some(root) =>
+            match fingerprint(inputs):
+                Err(_) => return false
+                Ok(digest) => return Path(root).joinpath(digest.replace("sha256:", "") + ".event").is_file()

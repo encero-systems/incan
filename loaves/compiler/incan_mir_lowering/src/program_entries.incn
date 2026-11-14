@@ -18,7 +18,6 @@ from rust::incan_semantics_core import (
     encode_incan_symbol_identity,
     CanonicalSymbolId as RustCanonicalSymbolId,
     SymbolOrigin,
-    SymbolNamespace,
     canonical_module_identity,
     CompilerNodeId,
 )
@@ -29,18 +28,12 @@ from rust::std::collections import BTreeMap
 from rust::std::panic import resume_unwind
 from rust::std::sync import Arc
 from rust::std::thread import JoinHandle, spawn
-from rust::serde_json import to_string as native_json
-from rust::incan_semantics_core::semantic_digest import semantic_digest as native_digest
 from scalar_store import (
-    scalar_inputs,
-    record_scalar_inputs,
     retained_scalar,
     report_scalar,
     report_scalar_refusal,
 )
-from record_positions import body_position_map
 from nominal_records import product_nominal_table, retain_named_scalar, sync_carriers
-from std.fs import Path
 from table_views import borrowed_at
 from decorator_caches import DecoratorFrame
 from traits import is_lazy_method_body
@@ -61,6 +54,8 @@ from frame_instances import (
 )
 from function_frames import lower_function
 from checked_values import location
+from plan_product_inputs import graph_owner, ordinary_product_inputs
+from instance_products import encode_requests, restore_requests
 from parallel_ranges import balanced_module_ranges
 
 
@@ -503,20 +498,22 @@ def lower_ordinary_frame(
             sync_carriers(nominals, program, intrinsics)
             current = Some(location(body.span, source, file))
             if let Some(product) = retained_scalar(directory, witness, nominals, current, positions):
-                function, runtime, references, frames = product
-                report_scalar(
-                    record_report,
-                    directory,
-                    witness,
-                    record_identity,
-                    function.name,
-                    true,
-                    len(runtime),
-                    references,
-                    positions,
-                )?
-                # A reused product returns the helper frames its lowering once synthesized, as lowering would.
-                return Ok((function, runtime, [], frames))
+                function, runtime, references, frames, encoded = product
+                # A reused product returns the helper frames and generic instance requests its lowering once made, as
+                # lowering would; a request whose generic is gone makes the product a miss.
+                if let Some(requests) = restore_requests(encoded, context):
+                    report_scalar(
+                        record_report,
+                        directory,
+                        witness,
+                        record_identity,
+                        function.name,
+                        true,
+                        len(runtime),
+                        references,
+                        positions,
+                    )?
+                    return Ok((function, runtime, requests, frames))
     function, runtime, pending, synthesized = lower_function(
         context,
         program,
@@ -528,88 +525,39 @@ def lower_ordinary_frame(
         [],
         DecoratorFrame.Normal,
     )?
-    # A product carries synthesized helper frames, and names any carrier this lowering admitted by declaration, so a
-    # reuse needs that carrier present already. Only generic instance requests stay outside a product.
-    if len(pending) == 0:
-        if let Some(directory) = products:
-            if let Some(witness) = inputs:
-                sync_carriers(nominals, program, intrinsics)
-                match retain_named_scalar(directory, witness, function, runtime, nominals, positions, synthesized):
-                    Ok(references) =>
-                        report_scalar(
-                            record_report,
-                            directory,
-                            witness,
-                            record_identity,
-                            function.name,
-                            false,
-                            len(runtime),
-                            references,
-                            positions,
-                        )?
-                    Err(reason) =>
-                        # The ordinary compiler already has its complete lowered function. Record the optional
-                        # product's refusal without changing that ordinary verdict.
-                        if record_report is not None:
-                            report_scalar_refusal(record_report, record_identity, function.name, reason)?
-    elif record_report is not None and inputs is not None:
-        refusal = lowering_refusal(len(pending), 0, 0)
-        report_scalar_refusal(record_report, record_identity, function.name, refusal)?
+    # A product carries synthesized helper frames and the generic instance requests this lowering made, and names any
+    # carrier it admitted by declaration, so a reuse needs that carrier present already. Each closed instance is its
+    # own product. A request only a source position names stays outside a product.
+    match encode_requests(pending):
+        Ok(requests) =>
+            if let Some(directory) = products:
+                if let Some(witness) = inputs:
+                    sync_carriers(nominals, program, intrinsics)
+                    retained = retain_named_scalar(
+                        directory, witness, function, runtime, nominals, positions, synthesized, requests,
+                    )
+                    match retained:
+                        Ok(references) =>
+                            report_scalar(
+                                record_report,
+                                directory,
+                                witness,
+                                record_identity,
+                                function.name,
+                                false,
+                                len(runtime),
+                                references,
+                                positions,
+                            )?
+                        Err(reason) =>
+                            # The ordinary compiler already has its complete lowered function. Record the optional
+                            # product's refusal without changing that ordinary verdict.
+                            if record_report is not None:
+                                report_scalar_refusal(record_report, record_identity, function.name, reason)?
+        Err(reason) =>
+            if record_report is not None and inputs is not None:
+                report_scalar_refusal(record_report, record_identity, function.name, reason)?
     return Ok((function, runtime, pending, synthesized))
-
-
-pub def lowering_refusal(pending: int, synthesized: int, carriers: int) -> str:
-    """Name every lowering side effect a keyed product cannot carry."""
-    mut causes: list[str] = []
-    if pending != 0:
-        causes.append("requested generic instances")
-    if synthesized != 0:
-        causes.append("synthesized helper frames")
-    if carriers != 0:
-        causes.append("admitted new intrinsic carriers")
-    return "lowering " + ", ".join(causes)
-
-
-def ordinary_product_inputs(
-    context: &BodyIrModule,
-    body: &RustBody,
-    source: str,
-    file: str,
-    overflow_checks: bool,
-    products: Option[str],
-    admitted: &BTreeMap[CompilerNodeId, str],
-    records: bool,
-) -> Option[tuple[list[str], list[tuple[int, int]]]]:
-    """
-    Retain exact checked input only for frames whose complete read witnesses the source producer proved.
-
-    A records key is the checked meaning; the body's node positions return beside it as the product's position map.
-    """
-    if products is None:
-        return None
-    match admitted.get(body.direct_call_id):
-        None => return None
-        Some(witness) =>
-            match native_json(body):
-                Err(_) => return None
-                Ok(input) =>
-                    span = location(body.span, source, file)
-                    name = evaluator_name(context, body)
-                    if records:
-                        meaning = match native_digest(body):
-                            Ok(value) => value
-                            Err(_) => return None
-                        positions = match body_position_map(input, source, file, span):
-                            Ok(value) => value
-                            Err(_) => return None
-                        generation = match Path(products.unwrap_or("")).joinpath("producer-profile").read_text("utf-8", "strict"):
-                            Ok(value) => value
-                            Err(_) => return None
-                        mut inputs = record_scalar_inputs(meaning, name, span, overflow_checks, str(witness), len(positions))
-                        inputs.append(generation)
-                        return Some((inputs, positions))
-                    unpositioned: list[tuple[int, int]] = []
-                    return Some((scalar_inputs(input, name, span, overflow_checks, str(witness)), unpositioned))
 
 
 pub def validate_program_entry_selection(
@@ -909,10 +857,3 @@ pub def comparison_bridge_instances(
         if is_lazy_method_body(context, body) and function_name(context, body) in bridge_bodies:
             request_instance(instances, body, empty_arguments, [], false)
     return instances
-
-
-def graph_owner(body: &RustBody) -> bool:
-    """Whether the compiled graph records this body as an owner: a module-level declaration, never a member."""
-    match body.canonical:
-        None => return false
-        Some(identity) => return identity.namespace == SymbolNamespace.OrdinaryLexical

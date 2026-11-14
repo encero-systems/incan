@@ -263,7 +263,7 @@ def refused_run(binary: str, source: Path, store: Path) -> Result[str, str]:
 
 
 pub def test_unrelated_edit_rechecks_no_generic_body() -> Result[None, str]:
-    """Editing the function beside a generic re-checks only that function, and the warm build matches a cold one."""
+    """Editing the function beside a generic re-checks and re-plans only that function, and warm matches cold."""
     scratch = scratch_directory()?
     root = scratch.path()
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
@@ -285,6 +285,9 @@ pub def test_unrelated_edit_rechecks_no_generic_body() -> Result[None, str]:
     diagnostic = edited.to_json().map_err((error) => error.message())?
     assert proof_count(edited, "body_evaluations")? == 1, diagnostic
     assert proof_count(edited, "body_ir_evaluations")? == 1, diagnostic
+    assert proof_count(edited, "plan_function_evaluations")? == 1, diagnostic
+    # `main` and both `pick` instances; the runtime Loaf's list instances keep no product, so no interface publishes.
+    assert proof_count(edited, "plan_function_reuses")? == 3, diagnostic
     assert plan == cold_plan, "warm and cold plans differ after the unrelated edit"
     assert executable == cold_executable, "warm and cold executables differ after the unrelated edit"
     return Ok(None)
