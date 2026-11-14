@@ -308,3 +308,24 @@ fn a_program_checks_an_imported_static_from_its_declaration_records() -> Result<
     );
     Ok(())
 }
+
+/// A program that imports a function of an installed Loaf's module by name is checked from the function's own records:
+/// it reads `money::price`'s signature by name and never the Loaf's contract metadata.
+#[test]
+fn a_program_imports_a_function_by_name_from_its_declaration_records() -> Result<(), Box<dyn std::error::Error>> {
+    let read =
+        prices_import_reads("from pub::prices.money import price\n\ndef main() -> int:\n    return price(1999)\n")?;
+    let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
+    let named = format!("/{}", content_name(b"money::price"));
+    assert!(
+        read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
+        "checking reads `price`'s signature by name; it read {read:?}"
+    );
+    let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
+    let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
+    assert!(
+        whole.is_empty(),
+        "checking read the Loaf's contract metadata: {whole:?}"
+    );
+    Ok(())
+}
