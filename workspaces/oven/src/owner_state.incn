@@ -40,7 +40,7 @@ from unit_freshness import (
     selected_unit_compiler,
 )
 from unit_rust import prepare_native
-from unit_sources import source_graph
+from unit_sources import SourceGraph, source_graph
 from installation_page import admitted_identity, begin_command, end_command
 from storage_admission import take_decision
 
@@ -88,7 +88,7 @@ pub model Held:
     pub def key(mut self, compiler: str, toolchain: Toolchain) -> Result[Key, str]:
         """Reconcile the unit's inputs against what earlier requests observed."""
         selected = selected_unit_compiler(self.unit, toolchain, compiler)?
-        graph = source_graph(self.unit, toolchain, f"{selected} {self.described}", self.ledger)?
+        graph: Option[SourceGraph] = source_graph(self.unit, toolchain, f"{selected} {self.described}", self.ledger)?
         mut key = reconciled_key(self.unit, selected, self.described, self.ledger, graph)?
         key.compiler = compiler
         return Ok(key)
