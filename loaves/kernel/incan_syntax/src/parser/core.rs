@@ -233,7 +233,6 @@ impl<'a> Parser<'a> {
     /// to report multiple issues in one pass.
     pub fn parse(mut self) -> Result<Program, Vec<CompileError>> {
         let mut declarations = Vec::new();
-        let mut seen_non_doc_decl = false;
         let mut seen_test_module = false;
 
         // Every loaded provider's `Always` vocabulary is active from the module's first line.
@@ -268,9 +267,6 @@ impl<'a> Parser<'a> {
                     Ok(conditioned) => {
                         for decl in conditioned {
                             self.note_test_module_declaration(&decl, &mut seen_test_module);
-                            if !matches!(decl.node, Declaration::Docstring(_)) {
-                                seen_non_doc_decl = true;
-                            }
                             declarations.push(decl);
                         }
                     }
@@ -289,9 +285,6 @@ impl<'a> Parser<'a> {
                 Ok(decl) => {
                     self.note_test_module_declaration(&decl, &mut seen_test_module);
                     self.activate_soft_keywords_for_declaration(&decl.node);
-                    if !matches!(decl.node, Declaration::Docstring(_)) {
-                        seen_non_doc_decl = true;
-                    }
                     declarations.push(decl)
                 }
                 Err(e) => {
