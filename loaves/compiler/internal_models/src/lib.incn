@@ -135,6 +135,7 @@ pub from checker_records import (
     CompiledBodyFallback,
     CompiledNamespaceValue,
     CompiledBodyOutputs,
+    CodecFault,
     from_native_fields,
     from_native_final_fields,
     from_native_local_fields,

@@ -115,6 +115,20 @@ pub enum CheckedOwnerRecordOutput {
     Fallback(CheckedOwnerRecordFallback),
 }
 
+/// Name the checked artifact field one record row carries, as the checker reuse report groups refused fields.
+///
+/// A generated artifact row leads with its family's row tag and names its native field third. Any other row carries
+/// no artifact field.
+pub fn record_row_artifact_field(row: &[String]) -> Option<String> {
+    let family = match row.first()?.as_str() {
+        "artifact-call" => "CallArtifacts",
+        "artifact-protocol" => "ProtocolArtifacts",
+        "artifact-rust" => "RustInteropArtifacts",
+        _ => return None,
+    };
+    Some(format!("{family}.{}", row.get(2)?))
+}
+
 impl GraphBodyRecords {
     /// Build one identity-keyed inventory, refusing duplicate identities rather than selecting by input order.
     pub fn new(records: Vec<GraphBodyRecord>) -> Result<Self, RecordAdapterFault> {
