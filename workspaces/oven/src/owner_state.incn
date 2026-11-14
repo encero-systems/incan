@@ -212,7 +212,7 @@ pub model Owner:
             None => return Err("toolchain installation has no admitted page")
 
         compiler = compiler_fingerprint(loaded)?
-        loaded.worker_generation = generation_for(compiler)?
+        loaded.worker_generation = generation_for(loaded, compiler)?
         if admitted_identity(directory)? != Some(admission):
             return Err("toolchain installation changed while selecting the compiler worker")
         self.compiler = compiler
