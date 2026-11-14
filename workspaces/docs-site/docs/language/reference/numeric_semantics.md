@@ -182,7 +182,7 @@ All signed and unsigned integer types, including `int`, provide the following he
 | Wrapping | `wrapping_add(other: T)`, `wrapping_sub(other: T)`, `wrapping_mul(other: T)`, `wrapping_pow(exponent: u32)` | `T`, wrapped at the bounds of `T` |
 | Saturating | `saturating_add(other: T)`, `saturating_sub(other: T)`, `saturating_mul(other: T)`, `saturating_pow(exponent: u32)` | `T`, clamped at the bounds of `T` |
 
-Ordinary sized-integer arithmetic traps on overflow in debug builds and wraps in release builds. The helper methods select checked, wrapping or saturating behavior explicitly in every build profile.
+Ordinary sized-integer arithmetic traps on overflow in debug builds and wraps in release builds. The helper methods select checked, wrapping or saturating behavior explicitly in every build profile. The builtins `abs` and `sum` on `int` raise `ValueError` with ``integer overflow in builtin `abs` `` or ``integer overflow in builtin `sum` `` when the result is not representable, in every build profile.
 
 ```incan
 def main() -> None:

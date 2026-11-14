@@ -102,6 +102,7 @@ Each of these is refused (`INCAN-T0001`):
 - It is called on the type, `TypeName.method(...)`. A call through an instance is refused (`INCAN-T0001`).
 - A static method and a field may share a name: `TimeDelta.days(7)` calls the method and `delta.days` reads the field.
 - A generic static method may return `Self`; `Box[int].make(1)` fixes the owner's type arguments.
+- `Self` is a call head wherever it is a type: in a type's own methods, `Self.make(...)` calls that type's static method, and in a trait's default method it calls the adopter's member, as in `Self.__reconstruct__(source)`.
 - A Rust-backed static method has an ordinary Incan body that calls a directly imported Rust function.
 
 ```incan
@@ -179,6 +180,7 @@ def wrap[T](value: T) -> int:                           # refused: Stream(item=v
 ### Operations on a type parameter
 
 - A function or method body applies these to values of its own type parameter `T` without a declared bound: `==`, `!=`, `<`, `<=`, `>`, `>=`, `+`, `-` and `*`; `{value:?}`; `.clone()`; reading a `T` out of a `list[T]` by index or slice, or out of a `dict[K, T]` by key; using a `T` as a `set` element or `dict` key; and passing a `T` to a generic function or method that does one of these.
+- A comprehension, `sorted()` call or spread that keeps its source collection and copies elements of a type parameter needs a `Clone` bound on that parameter; without one it is refused with a message naming the parameter.
 - A call's type argument provides each operation the body applies to its type parameter. A type argument that does not implement `Eq` and `Hash`, for a type parameter used as a set element or dict key, is refused (`INCAN-T0114`, see [Set elements and dict keys](derives/comparison.md#set-elements-and-dict-keys)).
 - Inside the function, method, model, class, enum or newtype that declares it, a type parameter `T` is one type the declaration does not choose. Where a `T` is expected, as a returned, bound, assigned, appended, yielded or passed value, alone or inside a `list[T]`, `dict[K, T]`, `Option[T]` or `Result[T, E]`, a value of a concrete type (`0`, `"s"`) or of another type parameter is refused (`INCAN-T0001`). A value of `T` and a `&T` are accepted. A call binds its callee's own type parameters from its arguments, so `ident(0)` for `def ident[U](x: U) -> U` is accepted in such a body.
 - In the same declaration, a value of `T` is not a value of a concrete type. Where an `int`, a `str`, a model, a collection of another element type, a function type or a union with no `T` member is expected, a value of `T` is refused (`INCAN-T0001`): `return x` for an `int` result of `def f[T](x: T)`. Where a trait is expected, a value of `T` is accepted when a bound of `T` names that trait or a subtrait of it, and refused otherwise (`INCAN-T0001`). A `CallableN` bound does not make it a value of a function type.

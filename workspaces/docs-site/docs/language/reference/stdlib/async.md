@@ -1,6 +1,6 @@
 # `std.async`
 
-`std.async` provides task spawning, timeouts, races, channels, and synchronization primitives in the modules `std.async.time`, `std.async.task`, `std.async.race`, `std.async.channel` and `std.async.sync`. The root module `std.async` re-exports the common surface; `std.async.prelude` names the same module.
+`std.async` provides task spawning, timeouts, races, channels, and synchronization primitives in the modules `std.async.time`, `std.async.task`, `std.async.race`, `std.async.channel` and `std.async.sync`. Their declarations are those of `std.primitives.async` and its submodules, re-exported with the same identities, so a value from either spelling is the same type. The root module `std.async` re-exports the common surface; `std.async.prelude` names the same module.
 
 A function of this module that takes a task requires the task's result to have the type its signature declares and to satisfy the `Send` and `Static` bounds shown there.
 
