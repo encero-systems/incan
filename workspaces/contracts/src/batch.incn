@@ -18,6 +18,8 @@ const ENGINE_REFUSES_OPTIONS: str = "unit records do not implement"
 const ENTRY_OPTION: str = "program-entry"
 # Why every case keeps its own command once the engine refuses shared entries: no partition can make it share.
 pub const SHARED_ENTRIES_REFUSED: str = "the selected engine refuses shared program entries"
+# Why a successful shared compilation that printed anything is not taken whole: its output belongs to some case.
+const OUTPUT_ATTRIBUTION: str = "compiler output requires isolated attribution"
 
 
 pub def group_compilation_request(incan: str, arguments: list[str], project: Path, duration_hint: int) -> Invocation:
@@ -319,8 +321,9 @@ def compile_groups(
     1. Retain singleton names and prepare each shared compilation.
     2. Queue original commands alongside shared compilation waves, including newly isolated cases.
     3. Run builds and their verified entries under one child budget, recording original results once.
-    4. Retain successful builds and refine refused groups for the next wave. An engine that refuses shared entries
-       ends sharing: no group is bisected or attempted again, and each case keeps its own command once.
+    4. Retain successful builds, a build whose output names cases for the cases it does not name, and refine refused
+       groups for the next wave. An engine that refuses shared entries ends sharing: no group is bisected or attempted
+       again, and each case keeps its own command once.
     """
     mut pending = groups
     mut isolated = separate
@@ -376,17 +379,21 @@ def compile_groups(
         results = invoke_many(requests, jobs)
         for index in range(len(names)):
             outcomes[names[index]] = results[len(attempts) + index]
-        # 4. Only clean compilations are shared; refusal diagnostics guide another attempt.
+        # 4. Successful compilations are shared, except with the cases their output names; refusal diagnostics guide
+        # another attempt.
         for index in range(len(attempts)):
             group = attempts[index]
             for note in unit_notes(trace_file(group.project)):
                 notes.append(note)
             refusal, evidence = compilation_refusal(results[index])
+            first, selected = executions[index]
             if refusal == "":
                 built.append(group)
-                first, selected = executions[index]
-                for offset in range(len(selected)):
-                    outcomes[selected[offset]] = results[first + offset]
+                record_entries(group, selected, first, results, outcomes)
+            elif refusal == OUTPUT_ATTRIBUTION:
+                if let Some(kept) = kept_build(group, evidence, retry):
+                    built.append(kept)
+                    record_entries(kept, selected, first, results, outcomes)
             elif refusal == SHARED_ENTRIES_REFUSED:
                 sharing = false
                 retry += dissolved([group.entries])
@@ -422,7 +429,7 @@ pub def compilation_refusal(result: Result[Outcome, str]) -> tuple[str, str]:
             if outcome.code != Some(0):
                 return ("combined compilation refused", evidence)
             if outcome.stdout != "" or outcome.stderr != "":
-                return ("compiler output requires isolated attribution", evidence)
+                return (str(OUTPUT_ATTRIBUTION), evidence)
             return ("", "")
 
 
@@ -434,8 +441,46 @@ def refuses_entries(stderr: str) -> bool:
     return false
 
 
-def refine_group(group: GroupProject, mut retry: list[list[Entry]], refusal: str, evidence: str) -> None:
-    """Use diagnostic paths only as partition advice; recompile the remainder and run named cases in isolation."""
+def record_entries(
+    group: GroupProject,
+    selected: list[str],
+    first: int,
+    results: list[Result[Outcome, str]],
+    mut outcomes: dict[str, Result[Outcome, str]],
+) -> None:
+    """Record the fresh executions of `group`'s cases, which `selected` names from request `first` of `results` on."""
+    names = set([candidate.fixture.case_name() for candidate in group.entries])
+    for offset in range(len(selected)):
+        if selected[offset] in names:
+            outcomes[selected[offset]] = results[first + offset]
+
+
+def kept_build(group: GroupProject, evidence: str, mut retry: list[list[Entry]]) -> Option[GroupProject]:
+    """
+    Keep a successful shared build whose output names some of its cases, and show that output. The program it built
+    is valid for every case: the cases the output does not name run from it, and each named case runs its own command,
+    whose output is then its own. Output that names no case cannot be attributed, so the group is split instead.
+    """
+    named, kept = owners(group, evidence)
+    if len(named) == 0:
+        split_group(group.entries, retry, OUTPUT_ATTRIBUTION)
+        return None
+    first = group.entries[0].fixture.case_name()
+    last = group.entries[-1].fixture.case_name()
+    mut shown = f"BATCH-KEEP {first} .. {last} ({len(group.entries)} cases): {len(kept)} run from the build; "
+    shown += f"its output names {len(named)}, which run their own command:"
+    println(shown)
+    for line in evidence.strip().split("\n"):
+        println(f"  {line}")
+    for candidate in named:
+        retry.append([candidate])
+    if len(kept) == 0:
+        return None
+    return Some(GroupProject(entries=kept, project=group.project))
+
+
+def owners(group: GroupProject, evidence: str) -> tuple[list[Entry], list[Entry]]:
+    """The cases of `group` whose source paths `evidence` names, and the others."""
     mut named: list[Entry] = []
     mut remaining: list[Entry] = []
     for index in range(len(group.entries)):
@@ -444,6 +489,12 @@ def refine_group(group: GroupProject, mut retry: list[list[Entry]], refusal: str
             named.append(group.entries[index])
         else:
             remaining.append(group.entries[index])
+    return (named, remaining)
+
+
+def refine_group(group: GroupProject, mut retry: list[list[Entry]], refusal: str, evidence: str) -> None:
+    """Use diagnostic paths only as partition advice; recompile the remainder and run named cases in isolation."""
+    named, remaining = owners(group, evidence)
     if len(named) == 0 or len(remaining) == 0:
         split_group(group.entries, retry, refusal)
         return
