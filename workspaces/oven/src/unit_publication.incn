@@ -232,6 +232,31 @@ pub def record_path(path: Path) -> Path:
     return Path(f"{path.0}.oven-unit")
 
 
+pub def retire_admissions(directory: Path) -> Result[int, str]:
+    """
+    Withdraw this home's admission records of every payload under `directory`, and count them.
+
+    An installation is staged at the same path every time, so a record of an earlier stage's payload describes another
+    installation's file. Left behind, it refuses the next build's payload at that path as a changed one, and it
+    vouches for a payload that arrives without its producer record.
+    """
+    records = home()?.joinpath("cache/unit-admissions")
+    if not records.is_dir():
+        return Ok(0)
+    prefix = directory.0 + "/"
+    mut retired = 0
+    for record in records.iterdir().map_err((error) => f"cannot {error.message()}")?:
+        if not record.name().endswith(".json"):
+            continue
+        match read_json(record):
+            Err(_) => pass
+            Ok(document) =>
+                if required_text(document, "provenance")?.startswith(prefix):
+                    record.unlink().map_err((error) => f"cannot {error.message()}")?
+                    retired += 1
+    return Ok(retired)
+
+
 def imported_record(path: Path) -> Result[Path, str]:
     """Locate per-home admission evidence by provenance; this cache address is never a unit identity input."""
     located = hexlify(sha256.digest(path.0.encode("utf-8")))

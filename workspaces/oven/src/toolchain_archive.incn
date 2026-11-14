@@ -37,7 +37,7 @@ from rust_target import decoded
 from registry_units import RegistryUnit
 from registry_shipping import packed_checkout, ships, ships_search, shipped_entries
 from observation import file_digest
-from unit_publication import publication, published_identity, record_path, record_payload
+from unit_publication import publication, published_identity, record_path, record_payload, retire_admissions
 from cli_help import render, unknown_option
 from jec import begin, record
 from installation_check import verify_installed_runtime
@@ -755,16 +755,26 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
 
 
 pub def open_stage(target: Path) -> Result[Path, str]:
-    """Create the staging directory an archive is unpacked and verified in, beside the installation at `target`."""
+    """
+    Create the staging directory an archive is unpacked and verified in, beside the installation at `target`.
+
+    The stage is new, so an admission record of a path inside it is an earlier installation's, not this one's. Such
+    a record is withdrawn before anything is admitted there.
+    """
     stage = target.parent().joinpath(f".install-{TOOLCHAIN}")
     create_dir(f"{stage.0}").map_err((error) => f"cannot create installation staging directory {stage.0}: {error}")?
+    _ = retire_admissions(stage)?
     return Ok(stage)
 
 
 pub def close_stage(stage: Path) -> Result[None, str]:
-    """Remove a staging directory, whether its installation was published from it or refused."""
+    """
+    Remove a staging directory, whether its installation was published from it or refused, with the admission
+    records of its paths.
+    """
     if stage.is_dir():
         remove_dir_all(stage.0).map_err((error) => f"cannot remove installation staging directory {stage.0}: {error}")?
+    _ = retire_admissions(stage)?
     return Ok(None)
 
 
