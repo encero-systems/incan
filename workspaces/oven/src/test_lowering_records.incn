@@ -83,6 +83,35 @@ pub def test_two_standalone_sources_share_one_store_without_body_collision() -> 
     return stop_example_engine(binary, store)
 
 
+pub def test_engine_report_counts_checker_reuse_and_artifact_refusals() -> Result[None, str]:
+    """A multi-module cold build reports complete checker admission and groups every refused artifact field."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("report-project")
+    source = project.joinpath("src")
+    source.mkdir(true, true).map_err((error) => error.message())?
+    write(
+        project.joinpath("loaf.toml"),
+        "[project]\nname = \"checker_report\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
+    )?
+    write(
+        source.joinpath("values.incn"),
+        "pub def stable() -> int:\n    return 40\n\n\npub def sum_values(values: list[int]) -> int:\n    mut total = 0\n    for value in values:\n        total += value\n    return total\n",
+    )?
+    write(
+        source.joinpath("main.incn"),
+        "from values import stable, sum_values\n\n\ndef main() -> None:\n    println(sum_values([stable(), 2]))\n",
+    )?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    report = report_fixture_build(binary, project, store)?
+    diagnostic = report.to_json().map_err((error) => error.message())?
+    assert proof_count(report, "reusable_declarations")? == 2, diagnostic
+    assert proof_count(report, "all_declarations")? == 3, diagnostic
+    assert proof_refusal_count(report, "ProtocolArtifacts.body_ir_iterations")? == 1, diagnostic
+    return stop_example_engine(binary, store)
+
+
 pub def test_generic_body_edit_matches_cold_build() -> Result[None, str]:
     """A generic body edit in a warm store reproduces the cold plan, executable and output for both instances."""
     scratch = scratch_directory()?
@@ -398,9 +427,39 @@ def command_proof(output: bytes) -> Result[JsonValue, str]:
     return parse(lines[0]).map_err((error) => error.message())
 
 
+def report_fixture_build(binary: str, project: Path, store: Path) -> Result[JsonValue, str]:
+    """Build one fixture through the records engine and decode its requested report."""
+    outcome = Command
+        .new(binary)
+        .arg("build")
+        .arg(project.0)
+        .args(["--profile", "release", "--engine-report"])
+        .env("INCAN_ENGINE", "records")
+        .env("INCAN_BAKERY", store.0)
+        .output()
+        .map_err((error) => str(error))?
+    output = from_utf8(outcome.stdout).map_err((error) => str(error))?
+    errors = from_utf8(outcome.stderr).map_err((error) => str(error))?
+    if not outcome.status.success() or errors != "":
+        return Err(f"checker report fixture: status={outcome.status.code()} stdout={output} stderr={errors}")
+    return command_proof(outcome.stdout)
+
+
 def proof_count(report: JsonValue, name: str) -> Result[int, str]:
     """Read one required producer counter without accepting an absent or nonnumeric field."""
     return report.require(name).map_err((error) => error.message())?.expect_int().map_err((error) => error.message())
+
+
+def proof_refusal_count(report: JsonValue, name: str) -> Result[int, str]:
+    """Read one grouped artifact refusal count, requiring the report's structured refusal object."""
+    refusals = report
+        .require("artifact_refusals")
+        .map_err((error) => error.message())?
+        .expect_object()
+        .map_err((error) => error.message())?
+    match refusals.get(name):
+        Some(value) => return value.expect_int().map_err((error) => error.message())
+        None => return Ok(0)
 
 
 def native_fingerprints(root: Path) -> Result[list[str], str]:
