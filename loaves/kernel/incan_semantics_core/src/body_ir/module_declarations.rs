@@ -81,10 +81,10 @@ pub struct StaticDeclaration {
     pub initialization_order: u32,
 }
 
-/// Put storage in the order its module initializes it. Every producer and consumer of a module's statics orders them
-/// here, so initialization follows one rule.
+/// Put storage in the order its declaring module recorded. Every reader of a module's statics orders them here, so
+/// initialization follows the one recorded order and never a declaration site.
 pub fn order_static_initialization(statics: &mut [StaticDeclaration]) {
-    statics.sort_by_key(|storage| storage.canonical.declaration_span.start);
+    statics.sort_by_key(|storage| storage.initialization_order);
 }
 
 /// One checked decorator replacement and the source callable it receives during initialization.

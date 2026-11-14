@@ -189,7 +189,7 @@ pub(super) fn collect(
         canonical,
         ty: body.return_type.clone(),
         initial: bir::StaticInitializer::Computed(Box::new(body)),
-        initialization_order: 0,
+        initialization_order: u32::try_from(statics.len()).unwrap_or(u32::MAX),
     });
 }
 

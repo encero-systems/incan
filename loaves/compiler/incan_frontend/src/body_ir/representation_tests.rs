@@ -25,7 +25,7 @@ use carriers::{
 use comparison::assert_same_module;
 use equality::assert_equality_contract;
 use read_patterns::assert_declared_record_namespace;
-use seed::checked_seed;
+use seed::{assert_storage_records_its_initialization_order, checked_seed};
 use shared_loans::{
     assert_complete_shared_read_shapes, assert_lent_and_moved_read, assert_projected_shared_loans, assert_shared_loans,
 };
@@ -142,4 +142,10 @@ fn local_representation_operations_match_module_passes() -> Result<(), Box<dyn s
         .ok_or("baseline omitted an invocation-only field")?;
     assert!(difference.to_string().contains("native_attributes"));
     Ok(())
+}
+
+/// Storage initialization order is a recorded fact of the module, not a reading of declaration sites.
+#[test]
+fn storage_records_its_initialization_order() -> Result<(), Box<dyn std::error::Error>> {
+    assert_storage_records_its_initialization_order()
 }

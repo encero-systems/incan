@@ -90,12 +90,15 @@ use crate::body_ir::{
 /// their typed operation, so older owners with by-value parameter frames cannot be reused under this ABI.
 /// Version 57 names each member's owner in its canonical identity, so ownership is decided by that owner rather than by
 /// declaration-site enclosure. The added positional identity field requires fresh producers.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 57;
+/// Version 58 records each storage declaration's place in its module's initialization, so a consumer orders a
+/// dependency's storage by that record rather than by declaration site. The added positional field requires fresh
+/// producers.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 58;
 
 /// Only the binding-aware combined layout is admitted. Missing input authority cannot be reconstructed from a
 /// native ABI, and a prior layout cannot silently omit initializer transfers, explicit local obligations, returned
 /// views, conditional profiles or the component carrying a view.
-const OLDEST_SUPPORTED_VERSION: u32 = 57;
+const OLDEST_SUPPORTED_VERSION: u32 = 58;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]

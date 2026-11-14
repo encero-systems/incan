@@ -113,7 +113,7 @@ pub(super) fn build_module_seed_observed(
         }
     }
     retain_source_body_contracts(program, type_info, &mut bodies);
-    bir::order_static_initialization(&mut static_declarations);
+    record_static_initialization_order(type_info, &mut static_declarations);
     registry_effects::collect(program, &lowering_facts, &mut static_declarations);
     let published_callables = published_callables::collect(program, &bodies);
     bir::BodyIrModule {
@@ -207,6 +207,28 @@ pub(super) fn collect_source_storage(
     let mut declarations = collect::collect_statics(program, facts);
     declarations.extend(collect::collect_computed_constants(program, facts, constants));
     declarations
+}
+
+/// Record each storage declaration's place in the module's initialization: the source order of the declarations
+/// that introduce storage, read from the sites the checker recorded beside their identities. Those are the records
+/// the collectors took each identity from: the declaration inventory for statics and constants, and the callable
+/// bindings for decorator replacements. This module is the only one that knows that order; every later reader takes
+/// the recorded number. Storage with no recorded site keeps its collected place after the rest.
+fn record_static_initialization_order(type_info: &TypeCheckInfo, statics: &mut [bir::StaticDeclaration]) {
+    let declarations = &type_info.declarations;
+    let callables = declarations
+        .function_bindings_by_span
+        .iter()
+        .filter_map(|(span, binding)| Some((span, binding.identity.as_ref()?)));
+    let mut sites = HashMap::<&CanonicalSymbolId, usize>::new();
+    for (span, identity) in declarations.declaration_identities.iter().chain(callables) {
+        let site = sites.entry(identity).or_insert(span.start);
+        *site = (*site).min(span.start);
+    }
+    statics.sort_by_key(|storage| sites.get(&storage.canonical).map_or((1, 0), |site| (0, *site)));
+    for (order, storage) in statics.iter_mut().enumerate() {
+        storage.initialization_order = u32::try_from(order).unwrap_or(u32::MAX);
+    }
 }
 
 /// Preserve explicit input-contract refusals before retaining each body's executable representation facts.
