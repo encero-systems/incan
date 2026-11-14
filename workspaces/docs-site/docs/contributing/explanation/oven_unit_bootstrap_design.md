@@ -27,7 +27,7 @@ Oven's decisions and the actions they lead to run in one program, so they share 
 
 ### A resident owner
 
-`incan run`, `build` and `test` may ask a resident Oven process for a unit's executable. That owner is the same Oven program in a service mode, serial per project and toolchain generation, reached over a private Unix socket with the `incan.owner/1` frames. It retains Oven's own objects (the toolchain, the prepared unit and its ledger), reconciles every input on each request exactly as a command does, and never runs a user's program: the command receives the executable's path and becomes it. A unit the owner does not serve is prepared in the command.
+`incan run`, `build` and `test` may ask a resident Oven process for a unit's executable. That owner is the same Oven program in a service mode, serial per project and toolchain generation, reached over a private Unix socket with the `incan.owner/2` frames. It retains Oven's own objects (the toolchain, the prepared unit and its ledger), reconciles every input on each request exactly as a command does, and never runs a user's program: the command receives the executable's path and becomes it. A unit the owner does not serve is prepared in the command.
 
 ### Bootstrap
 

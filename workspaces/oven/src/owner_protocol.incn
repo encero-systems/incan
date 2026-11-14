@@ -1,5 +1,5 @@
 """
-The wire protocol between a command and its project owner (`incan.owner/1`).
+The wire protocol between a command and its project owner (`incan.owner/2`).
 
 One JSON document per frame, in each direction: eight ASCII decimal digits giving the payload's length in bytes, then
 the payload, at most `MAX_FRAME` bytes. A request is answered by exactly one reply; progress, diagnostics and the
@@ -13,7 +13,7 @@ from pub::incan_platform.ipc import Connection
 from json_fields import boolean, field, strings, text_field
 
 
-pub const PROTOCOL: str = "incan.owner/1"
+pub const PROTOCOL: str = "incan.owner/2"
 
 
 pub model Request:
@@ -54,8 +54,10 @@ pub model Reply:
     pub generation: str = ""
     pub pid: int = 0
     pub exit: int = 0
-    # The executable a `done` run, build or test request completed.
+    # The executable a `done` run, build or test request completed, and the bakery identity of its unit, which a run
+    # leases (empty when nothing was baked).
     pub binary: str = ""
+    pub identity: str = ""
     # What the compiler printed for the request, kept apart.
     pub stdout: str = ""
     pub stderr: str = ""
@@ -73,6 +75,7 @@ pub model Reply:
                 "pid": JsonValue.int(self.pid),
                 "exit": JsonValue.int(self.exit),
                 "binary": JsonValue.string(self.binary),
+                "identity": JsonValue.string(self.identity),
                 "stdout": JsonValue.string(self.stdout),
                 "stderr": JsonValue.string(self.stderr),
                 "trace": JsonValue.array([JsonValue.string(line) for line in self.trace]),
@@ -150,6 +153,7 @@ pub def reply_of(document: JsonValue) -> Result[Reply, str]:
             pid=number(document, "pid")?,
             exit=number(document, "exit")?,
             binary=text_of(document, "binary")?,
+            identity=text_of(document, "identity")?,
             stdout=text_of(document, "stdout")?,
             stderr=text_of(document, "stderr")?,
             trace=strings_of(document, "trace")?,

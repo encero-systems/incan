@@ -626,7 +626,7 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
             Some(reply) =>
                 if reply.exit != 0:
                     return Ok(status_code(reply.exit))
-                return run_program(Path(reply.binary), passed, options.argv0)
+                return run_program(Path(reply.binary), passed, options.argv0, false, reply.identity)
             None => pass
     # 2. Otherwise this process describes and compiles the unit, keeping the stored executable while its inputs hold.
     preparing = begin_work()
@@ -651,7 +651,7 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     mut argv0 = binary.0
     if let Some(selected) = options.argv0:
         argv0 = selected
-    return run_program(made.launch, passed, Some(argv0))
+    return run_program(made.launch, passed, Some(argv0), false, made.identity)
 
 
 def via_owner(command: str, options: Options, entry: Path) -> Option[Reply]:
