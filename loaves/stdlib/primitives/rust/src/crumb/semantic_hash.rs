@@ -607,7 +607,7 @@ fn stable_order(count: usize, compare: impl Fn(usize, usize) -> Option<Ordering>
 }
 
 /// Compare complete values: absence first, then present values by type-specific stored order.
-fn compare(left: &Value, right: &Value, projection: Projection) -> Option<Ordering> {
+pub(super) fn compare(left: &Value, right: &Value, projection: Projection) -> Option<Ordering> {
     match (absence_depth(left), absence_depth(right)) {
         (Some(a), Some(b)) => return Some(a.cmp(&b)),
         (Some(_), None) => return Some(Ordering::Less),
