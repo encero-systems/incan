@@ -522,8 +522,8 @@ def read_guarded_dictionary_entry(
     )
     name = f"{builder.name}__incan_static_entry_{slot}_{len(builder.synthesized)}"
     builder.synthesized.append(static_entry_reader(name, reference, types, CalleeKind.Instantiated(path, types), span))
-    output = temporary(builder, types[1], span)
-    terminate_call(builder, CalleeKind.StaticMethod(slot, name), [admitted], output, span)
+    output = builder.temporary(types[1], span)
+    builder.terminate_call(CalleeKind.StaticMethod(slot, name), [admitted], output, span)
     # The cloned value is a new owner, as the value a snapshot's lookup clones is.
     if (
         types[1] == PlanType.String
@@ -531,7 +531,7 @@ def read_guarded_dictionary_entry(
         or is_nominal_type(types[1])
         or is_owned_list(types[1])
     ):
-        builder.owned.append(output.local)
+        builder.own(output.local)
     return Ok(Some(output))
 
 
