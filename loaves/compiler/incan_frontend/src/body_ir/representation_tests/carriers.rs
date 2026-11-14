@@ -162,6 +162,26 @@ pub(super) fn assert_nominal_carrier_maps_stay_shared() -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// Prove a module's bodies start from one identity map built once for the module rather than a copy each: the
+/// module-wide checked bindings can outweigh the bodies themselves.
+pub(super) fn assert_module_bodies_share_one_identity_map() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "model Value:\n    number: int\ndef forward(value: Value) -> Value:\n    return value\ndef total(value: Value) -> int:\n    return value.number\n";
+    let (_, _, module) = checked_seed(source)?;
+    let map = |name: &str| {
+        module
+            .bodies
+            .iter()
+            .find(|body| body.name == name)
+            .map(|body| &body.named_type_identities)
+            .ok_or("missing body")
+    };
+    assert!(
+        std::sync::Arc::ptr_eq(map("forward")?, map("total")?),
+        "each body built its own copy of the module identity map"
+    );
+    Ok(())
+}
+
 /// Prove a nested generic static call carries the enclosing symbolic bound arguments into Body IR.
 pub(super) fn assert_nested_generic_static_call_arguments() -> Result<(), Box<dyn std::error::Error>> {
     let source = "trait Source[E]:\n    def integer(mut self) -> Result[int, E]\ntrait Reconstruct:\n    @staticmethod\n    def reconstruct[E, S with Source[E]](mut source: S) -> Result[Self, E]\nmodel Inner with Reconstruct:\n    value: int\n    @staticmethod\n    def reconstruct[E, S with Source[E]](mut source: S) -> Result[Inner, E]:\n        return Ok(Inner(value=source.integer()?))\nmodel Outer with Reconstruct:\n    inner: Inner\n    @staticmethod\n    def reconstruct[E, S with Source[E]](mut source: S) -> Result[Outer, E]:\n        return Ok(Outer(inner=Inner.reconstruct(source)?))\n";
