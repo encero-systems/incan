@@ -1,0 +1,21 @@
+# behavior: `incan inspect registry IDENTITY` prints one checked typed registry and its entries from the package's library, without running it, in 0.5.1's versioned document (#3142).
+# cli-commands:
+#   inspect registry lib::functions
+# expect-stdout-contains:
+#   {
+#     "entries": [
+#         "registry_identity": "lib::functions",
+#         "subject_identity": "lib.normalize",
+#         "subject_kind": "function"
+#               "value": "normalize"
+#     "provenance": "checked",
+#       "identity": "lib::functions",
+#       "key_type": "FunctionId",
+#       "descriptor_type": "FunctionSpec",
+#     "schema_version": 1
+# expect-stderr:
+# expect-exit: 0
+
+def main() -> None:
+    """The program beside the library whose registries the case inspects."""
+    pass
