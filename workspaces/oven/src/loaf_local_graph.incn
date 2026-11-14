@@ -349,14 +349,31 @@ pub def local_facets(
 ) -> Result[list[LocalFacet], str]:
     """Select explicit roots in one shared feature graph, retaining the caller's reconciled manifest reader."""
     clock = begin()
+    selected = compiled_domain(root, reader)?
     mut session = local_facet_session(configuration, substitutes, reader)
-    facets = session.facets(root, additional_roots)?
+    facets = session.facets(selected, additional_roots)?
     mut domain = "target"
-    if root.domain == DependencyDomain.Host:
+    if selected.domain == DependencyDomain.Host:
         domain = "host"
-    key = (f"{root.project}|{domain}|{configuration.triple}|{",".join(sorted(root.features))}|" + f"{root.defaults}|{root.all_features}")
+    key = (f"{selected.project}|{domain}|{configuration.triple}|{",".join(sorted(selected.features))}|" + f"{selected.defaults}|{selected.all_features}")
     record(Operation.GraphResolution, key, clock)
     return Ok(facets)
+
+
+def compiled_domain(root: LocalDemand, reader: ManifestReader) -> Result[LocalDemand, str]:
+    """
+    A procedural macro runs in the compiler, so a root one is built for the host, as a dependency one is (step 4 of
+    `child`). Its facet is then the one the release selects for the installed support generation. A test root keeps
+    its demand: its harness is a target executable, and `rust_testing` adds the macro's host production root itself.
+    """
+    if root.domain == DependencyDomain.Host or root.purpose != ActivationPurpose.Normal:
+        return Ok(root)
+    project = read_project(Path(root.project), reader).map_err((error) => error.message())?
+    if project.intent.rust_type != "proc-macro":
+        return Ok(root)
+    mut selected = root
+    selected.domain = DependencyDomain.Host
+    return Ok(selected)
 
 
 pub def local_facet_session(

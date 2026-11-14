@@ -23,6 +23,25 @@ def configuration() -> TargetConfiguration:
     )
 
 
+pub def test_local_graph_builds_a_root_macro_and_its_links_for_the_host() -> Result[None, str]:
+    """
+    A procedural macro runs in the compiler, so as the root it is a host unit, as it is as a dependency; its test
+    harness root stays a target executable.
+    """
+    path = Path("tests/fixtures/local-test-graph/macro").resolve().map_err((error) => error.message())?
+    demand = LocalDemand(project=path.0, domain=DependencyDomain.Target, features=[], defaults=true)
+    facets = local_facets(demand, configuration())?
+    assert len(facets) == 2
+    for facet in facets:
+        assert facet.domain == DependencyDomain.Host, facet.key()
+    mut harness = demand
+    harness.purpose = ActivationPurpose.Test
+    for facet in local_facets(harness, configuration())?:
+        if facet.project == path.0:
+            assert facet.domain == DependencyDomain.Target, facet.key()
+    return Ok(None)
+
+
 pub def test_local_graph_selects_features_and_host_transitives() -> Result[None, str]:
     """Root defaults reach the leaf without its defaults, while the macro and its helper remain host units."""
     facets = local_facets(root(true)?, configuration())?
