@@ -1,10 +1,12 @@
-# behavior: decorated constrained-generic and value-token overloads keep precise selection through direct and alias calls, and decorators observe the canonical source callable name rather than an alias or emitted implementation name (#1033)
+# behavior: decorated type-keyed and value-token overloads keep precise selection through direct and alias calls, an alias of a decorated type-keyed set selects by the type argument in either builtin spelling, and decorators observe the canonical source callable name rather than an alias or emitted implementation name (#1033)
 # expect-stdout:
 #   int q
 #   float p
 #   token int r
 #   token float s
 #   token int t
+#   int u
+#   float v
 
 model Col:
     name: str
@@ -50,9 +52,15 @@ def token_cast(expr: Col, target: Type[float]) -> FloatCol:
 safe_token_cast = alias token_cast
 
 
+safe_cast = alias cast
+
+
 def main() -> None:
     println(cast[Int](Col(name="q")).src)
     println(cast[Float](Col(name="p")).src)
     println(token_cast(Col(name="r"), int).src)
     println(token_cast(Col(name="s"), float).src)
     println(safe_token_cast(Col(name="t"), int).src)
+    whole: IntCol = safe_cast[int](Col(name="u"))
+    println(whole.src)
+    println(safe_cast[Float](Col(name="v")).src)

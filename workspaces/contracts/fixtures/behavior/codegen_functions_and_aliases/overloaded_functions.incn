@@ -1,4 +1,4 @@
-# behavior: overloads select by ordinary values, explicit constrained type arguments and value-position type tokens; selected return types stay precise through aliases, and primitive, model, enum, trait, transparent-alias, constrained-scalar and newtype tokens can be passed, returned and collected under explicit Type[T] context (#1033)
+# behavior: overloads select by ordinary values, explicit constrained type arguments, with the bound in either builtin spelling, and value-position type tokens; selected return types stay precise through aliases, and primitive, model, enum, trait, transparent-alias, constrained-scalar and newtype tokens can be passed, returned and collected under explicit Type[T] context (#1033)
 # expect-stdout:
 #   2
 #   a!
@@ -6,6 +6,8 @@
 #   float p
 #   int r
 #   float column
+#   lower int s
+#   lower float t
 #   int token
 #   float token
 #   schema
@@ -67,6 +69,14 @@ def cast[T with Float](expr: Col) -> FloatCol:
 
 
 safe_cast = alias cast
+
+
+def lower_cast[T with int](expr: Col) -> IntCol:
+    return IntCol(src="lower int " + expr.name)
+
+
+def lower_cast[T with float](expr: Col) -> FloatCol:
+    return FloatCol(src="lower float " + expr.name)
 
 
 def kind[T with IntCol]() -> str:
@@ -134,6 +144,9 @@ def main() -> None:
     println(cast[Float](Col(name="p")).src)
     println(safe_cast[int](Col(name="r")).src)
     println(kind[FloatCol]())
+    lower: IntCol = lower_cast[int](Col(name="s"))
+    println(lower.src)
+    println(lower_cast[Float](Col(name="t")).src)
     println(token_cast(Col(name="token"), int).src)
     println(safe_token_cast(Col(name="token"), float).src)
     schemas: list[Type[Schema]] = [Schema, return_schema_token()]
