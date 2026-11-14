@@ -1,7 +1,9 @@
 """Read local Loaf intent without selecting Rust versions or authorizing compilation."""
 
 from std.toml import TomlValue
+from std.encoding.hex import hexlify
 from std.fs import Path
+from std.hash import sha256
 from std.graph import Dag, NodeId
 from manifest_errors import IntakeError, IntakeErrorKind
 from pub::incan_platform.trace import Operation
@@ -50,9 +52,10 @@ pub model LocalIntake:
 
 
 model ManifestReading:
-    """A parsed snapshot bound to the unchanged filesystem generation it was read from."""
+    """A parsed snapshot bound to the unchanged filesystem generation it was read from, and the digest of its bytes."""
 
     stamp: str
+    digest: str
     snapshot: ManifestSnapshot
 
 
@@ -99,22 +102,23 @@ def snapshot_in(root: Path, mut store: &mut ManifestStore) -> Result[ManifestSna
     snapshot = decoded_manifest(raw, manifest.0)?
     current = observe(manifest).map_err((error) => refusal(manifest.0, [], IntakeErrorKind.Missing, error))?
     if current.stamp == observed.stamp:
-        store.manifests[manifest.0] = ManifestReading(stamp=observed.stamp, snapshot=snapshot)
+        digest = hexlify(sha256.digest(raw))
+        store.manifests[manifest.0] = ManifestReading(stamp=observed.stamp, digest=digest, snapshot=snapshot)
     return Ok(snapshot)
 
 
-pub def read_stamps(reader: ManifestReader) -> Dict[str, str]:
-    """Every manifest this reader parsed, by path, with the filesystem identity the file had when it was read."""
+pub def read_digests(reader: ManifestReader) -> Dict[str, str]:
+    """Every manifest this reader parsed, by path, with the SHA-256 of the bytes it parsed."""
     mut held = reader.state.as_ref().borrow_mut()
-    return stamps_in(held.deref_mut())
+    return digests_in(held.deref_mut())
 
 
-def stamps_in(mut store: &mut ManifestStore) -> Dict[str, str]:
-    """The identities a preparation's manifest memo recorded, by manifest path."""
-    mut stamps: Dict[str, str] = {}
+def digests_in(mut store: &mut ManifestStore) -> Dict[str, str]:
+    """The content digests a preparation's manifest memo recorded, by manifest path."""
+    mut digests: Dict[str, str] = {}
     for path in store.manifests.keys():
-        stamps[path] = store.manifests[path].stamp
-    return stamps
+        digests[path] = store.manifests[path].digest
+    return digests
 
 
 pub def read_project(root: Path, reader: ManifestReader = ManifestReader()) -> Result[LocalProject, IntakeError]:
