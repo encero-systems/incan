@@ -289,3 +289,22 @@ pub def test_a_settled_lock_is_not_resolved_again_until_its_inputs_change() -> R
     edited = finish_counting()
     assert edited.parses > 0, "an edited manifest was not resolved again"
     return Ok(None)
+
+
+pub def test_a_loaf_name_with_a_capital_letter_is_refused_not_folded() -> Result[None, str]:
+    """
+    RFC 125: a Loaf name has no capital letter, and Oven refuses one rather than fold its case. A lock whose graph
+    identity matches its entries is still refused when an entry or an edge names a Loaf with a capital.
+    """
+    scratch = scratch_directory()?
+    path = scratch.path().joinpath("oven.lock")
+    mut lock = example_lock()?
+    lock.loaves[4].name = "acme/Published"
+    lock.loaves[0].dependencies[3].loaf = "acme/Published"
+    lock.graph = graph_identity(lock)?
+    write(path, lock_text(lock)?)?
+    match read_lock(path):
+        Ok(_) => return Err("a Loaf name with a capital letter was accepted")
+        Err(message) =>
+            assert "`acme/Published` has a capital letter" in message, message
+    return Ok(None)

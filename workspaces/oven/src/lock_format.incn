@@ -6,6 +6,7 @@ from std.hash import sha256
 from std.toml import TomlValue, parse
 from files import read
 from interop_lock import LockInterop, LockInteropArtifact, interop_fact
+from loaf_identity import refuse_capitals
 from publication import publish
 from registry_units import RegistryUnit
 
@@ -219,9 +220,11 @@ def read_loaf(value: TomlValue, source: str) -> Result[LockLoaf, str]:
     origin = required_text(table, "origin", source)?
     if origin not in ["root", "path", "registry", "toolchain"]:
         return Err(f"{source}: Loaf origin must be root, path, registry or toolchain, got `{origin}`")
+    name = required_text(table, "name", source)?
+    refuse_capitals(name).map_err((reason) => f"{source}: {reason}")?
     return Ok(
         LockLoaf(
-            name=required_text(table, "name", source)?,
+            name=name,
             version=required_text(table, "version", source)?,
             origin=origin,
             path=optional_text(table, "path", source)?,
@@ -243,10 +246,12 @@ def read_dependency(value: TomlValue, source: str) -> Result[LockDependency, str
     """Decode one edge and refuse fields outside format 1."""
     table = value.as_table().map_err((error) => f"{source}: {error.message()}")?
     require_keys(table, ["key", "loaf", "version", "domain", "target", "entry"], source, "dependency")?
+    loaf = required_text(table, "loaf", source)?
+    refuse_capitals(loaf).map_err((reason) => f"{source}: {reason}")?
     return Ok(
         LockDependency(
             key=required_text(table, "key", source)?,
-            loaf=required_text(table, "loaf", source)?,
+            loaf=loaf,
             version=required_text(table, "version", source)?,
             domain=optional_text(table, "domain", source, "target")?,
             target=optional_text(table, "target", source)?,

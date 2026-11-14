@@ -11,6 +11,16 @@ pub def is_adopted_scope(scope: str) -> bool:
     return scope in ADOPTED_SCOPES
 
 
+pub def refuse_capitals(identity: str) -> Result[None, str]:
+    """RFC 125: no Loaf name has a capital letter, and a client refuses one rather than fold its case."""
+    for character in identity:
+        if character in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            return Err(
+                f"`{identity}` has a capital letter: a Loaf name has none, and Oven refuses it rather than fold it",
+            )
+    return Ok(None)
+
+
 pub def validate_loaf_identity(identity: str) -> Result[None, str]:
     """
     Require RFC 125's package-name grammar without folding authored text.
