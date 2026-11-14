@@ -440,6 +440,10 @@ def lower_structural_match(
 ) -> Result[None, str]:
     """Dispatch primitive and structural patterns, retaining checked list bindings as references to matched storage."""
     source_type = place_type(builder.locals, source)
+    # An inferred-shared text input lends its text; the patterns test that text through the reference.
+    if source_type == PlanType.StringRef and source.projection == Projection.Whole:
+        lent = Place(local=source.local, projection=Projection.Deref(PlanType.String), span=source.span)
+        return lower_structural_match(module, builder, target, lent, arms, span)
     in_place_list = validate_in_place_list_match(source_type, arms)?
     if (
         not numeric_carrier(source_type)

@@ -82,11 +82,14 @@ pub def stored_parameter_type(body: RustBody, parameter: &RustCallableParam, ty:
 
     Call materialization, frame locals and constructor signatures use this same storage decision so an escaping
     generator never captures a borrow of a caller's list snapshot. Explicit inputs select their checked access first;
-    deferred producers still refuse that contract until retained dependencies are represented.
+    deferred producers still refuse that contract until retained dependencies are represented. The frontend infers
+    shared access only for a checked type with a shared executable form, the same predicate refused here.
     """
     if parameter.input_access != IncanInputAccess.Inferred:
         if body.is_generator():
             return Err("unsupported Body IR explicit input access in a deferred producer")
+        if parameter.input_access == IncanInputAccess.InferredShared and not parameter.ty.has_shared_executable_form():
+            return Err(f"invalid Body IR inferred shared input of type {parameter.ty:?} without a shared form")
         return packed_input(ty, parameter.kind, parameter.mutable, parameter.native_owned, parameter.input_access)
     if body.is_generator() and not parameter.mutable:
         return Ok(ty)

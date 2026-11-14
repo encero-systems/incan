@@ -32,7 +32,7 @@ from element_places import is_element_place
 from element_borrows import mutable_element_place, shared_element_place
 from models import field_steps
 from tuples import is_tuple_type, tuple_fields
-from text_plan import clone_text, owned_literal
+from text_plan import clone_text, clone_text_reference, owned_literal
 from options import replace_owned_destination
 from numerics import numeric_carrier
 from frozen_plan import frozen_observation_type
@@ -242,6 +242,13 @@ pub def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpa
                     text_place = clone_text(builder, place, span)?
                     return Ok(read_place(text_place, true, span))
                 return Err("unsupported Body IR string list element ownership")
+            # Text an inferred-shared parameter lends is a view of the caller's text, so its owned value is a copy,
+            # the value a by-value parameter would carry.
+            if ty == PlanType.StringRef:
+                if read.fact not in [OwnershipFact.Move, OwnershipFact.Clone, OwnershipFact.Borrow]:
+                    return Err("unsupported Body IR shared text value ownership")
+                text_place = clone_text_reference(builder, read_place(place, false, span), span)?
+                return Ok(read_place(text_place, true, span))
             return scalar_operand(builder, value, span)
 
 

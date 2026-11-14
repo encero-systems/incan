@@ -311,6 +311,22 @@ impl IncanType {
         self.union_members().is_some()
     }
 
+    /// Whether MIR lowering gives an inferred shared input of this checked type a shared executable form: a named
+    /// model, class, enum or native nominal borrows as a nominal reference, text as a string reference, and bytes or
+    /// a list as a list reference.
+    ///
+    /// The frontend infers shared access only for these types and lowering refuses an inferred shared input of any
+    /// other, so both read this one definition. Every other type keeps its by-value input: advancing a generator
+    /// consumes its state, dictionaries and sets already reach the callee through the collection reference ABI, and
+    /// the remaining carriers have no shared parameter form.
+    pub fn has_shared_executable_form(&self) -> bool {
+        match self {
+            Self::Named(_) => true,
+            Self::Primitive(primitive) => matches!(primitive, IncanPrimitiveType::Str | IncanPrimitiveType::Bytes),
+            _ => self.collection_arguments(CollectionTypeId::List).is_some(),
+        }
+    }
+
     /// Whether a static literal may be stored in this primitive carrier, alone or as a collection element. Body IR's
     /// static initializers and their validation both read this rule.
     pub fn static_literal_carrier(&self) -> bool {

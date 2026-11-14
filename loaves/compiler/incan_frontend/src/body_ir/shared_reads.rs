@@ -1,14 +1,16 @@
-//! Infer shared access for plain parameters from their complete checked bodies, then publish that decision in the
-//! callable signature before the executable ABI is consumed. Owned snapshots, mutable uses and escaping values keep
-//! their original storage contracts.
+//! Pass ordinary immutable parameters through shared storage, then publish that decision in the callable signature
+//! before the executable ABI is consumed. Owned snapshots, mutable uses and escaping values materialize at the
+//! operation that requires independent storage. A parameter its body consumes on any path keeps its by-value input, so
+//! a caller's last use still moves it.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use super::{CanonicalSymbolId, IncanPrimitiveType, IncanType, SemanticSourceTargetKind, bir};
 use incan_lang::lang::{builtins::BuiltinFnId, types::collections::CollectionTypeId};
 use incan_semantics_core::SymbolOrigin;
 
 mod closure_reads;
+mod consumed_reads;
 mod derived_reads;
 mod match_reads;
 mod string_parameter_reads;
@@ -138,7 +140,7 @@ struct ReadContext<'a> {
     derived: bool,
 }
 
-/// Retain native cursors, infer plain shared parameters to a greatest fixed point and rewrite every caller from the
+/// Retain native cursors, pass ordinary immutable parameters through shared storage and rewrite every caller from the
 /// resulting signatures. A function-item closure remains the declared by-value callable adapter: only its internal
 /// call lends the wrapper's owned argument to the inferred-shared target.
 pub(super) fn retain_modules(modules: &mut [bir::BodyIrModule], context: &[bir::BodyIrModule]) {
@@ -164,37 +166,15 @@ pub(super) fn retain_modules_with_selected(
     }
 
     let mut candidates = candidate_parameters(modules, selected);
-    let signatures = collect_signatures(modules, context, &candidates);
-    let mut dependents: HashMap<Candidate, HashSet<Candidate>> = HashMap::new();
-    let mut refused = VecDeque::new();
-    for &candidate in &candidates {
-        if !candidate_is_read_only(modules, candidate, &signatures, &field_types, &candidates) {
-            refused.push_back(candidate);
-            continue;
-        }
-        for dependency in candidate_dependencies(modules, candidate, &signatures, &field_types, &candidates) {
-            dependents.entry(dependency).or_default().insert(candidate);
-        }
-    }
-    while let Some(refused_candidate) = refused.pop_front() {
-        if !candidates.remove(&refused_candidate) {
-            continue;
-        }
-        if let Some(affected) = dependents.get(&refused_candidate) {
-            for &candidate in affected {
-                if candidates.contains(&candidate) {
-                    refused.push_back(candidate);
-                }
-            }
-        }
-    }
+    consumed_reads::refuse_consumed_parameters(modules, context, &field_types, &mut candidates);
 
+    let signatures = collect_signatures(modules, context, &candidates);
     for (module_index, body_index, parameter_index) in &candidates {
         if let Some(body) = modules
             .get_mut(*module_index)
             .and_then(|module| module.bodies.get_mut(*body_index))
         {
-            retain_shared_parameter(body, *parameter_index);
+            retain_shared_parameter(body, *parameter_index, &signatures, &field_types, &candidates);
         }
     }
     let final_signatures = collect_signatures(modules, context, &no_candidates);
@@ -208,69 +188,20 @@ pub(super) fn retain_modules_with_selected(
     }
 }
 
-/// Resolve one candidate's checked body and test it against the current shared-call hypothesis.
-fn candidate_is_read_only(
-    modules: &[bir::BodyIrModule],
-    candidate: Candidate,
-    signatures: &Signatures,
-    field_types: &FieldTypes,
-    candidates: &HashSet<Candidate>,
-) -> bool {
-    let (module_index, body_index, parameter_index) = candidate;
-    let Some(body) = modules
-        .get(module_index)
-        .and_then(|module| module.bodies.get(body_index))
-    else {
-        return false;
-    };
-    let Some(parameter) = body.params.get(parameter_index) else {
-        return false;
-    };
-    parameter_is_read_only(body, parameter, signatures, field_types, candidates)
-}
-
-/// Record the candidate callees whose optimistic shared contracts admit this parameter. A candidate losing that
-/// contract necessarily refuses every caller that depends on it, so the reverse graph propagates refusal without
-/// rescanning a checked body.
-fn candidate_dependencies(
-    modules: &[bir::BodyIrModule],
-    candidate: Candidate,
-    signatures: &Signatures,
-    field_types: &FieldTypes,
-    candidates: &HashSet<Candidate>,
-) -> HashSet<Candidate> {
-    let (module_index, body_index, parameter_index) = candidate;
-    let Some(body) = modules
-        .get(module_index)
-        .and_then(|module| module.bodies.get(body_index))
-    else {
-        return HashSet::new();
-    };
-    let Some(parameter) = body.params.get(parameter_index) else {
-        return HashSet::new();
-    };
-    closure_reads::dependencies(
-        &body.block.stmts,
-        &ReadContext {
-            locals: &body.locals,
-            signatures,
-            field_types,
-            candidates,
-            local: parameter.local,
-            cursor: false,
-            derived: false,
-        },
-    )
-}
-
 /// Publish one inferred decision in both the executable slot and any already admitted checked-input profile. The
 /// profile remains the authority for explicit inputs and returned views, so its complete slot inventory must not
 /// drift merely because this later whole-body analysis refined an ordinary input.
-fn retain_shared_parameter(body: &mut bir::Body, parameter_index: usize) {
+fn retain_shared_parameter(
+    body: &mut bir::Body,
+    parameter_index: usize,
+    signatures: &Signatures,
+    field_types: &FieldTypes,
+    candidates: &HashSet<Candidate>,
+) {
     let Some(local) = body.params.get(parameter_index).map(|parameter| parameter.local) else {
         return;
     };
-    retain_shared_temporaries(body, local);
+    retain_shared_temporaries(body, local, signatures, field_types, candidates);
     let Some(parameter) = body.params.get_mut(parameter_index) else {
         return;
     };
@@ -285,11 +216,12 @@ fn retain_shared_parameter(body: &mut bir::Body, parameter_index: usize) {
     }
 }
 
-/// Seed every ordinary non-Copy input whose source contract leaves access inferred. The decreasing fixed point removes
-/// any seed whose body moves, stores, returns, mutates or passes the value to a non-shared input. Open trait slots and
-/// their checked implementations keep the trait's authored ABI because an implementation body cannot refine that
-/// independently shared contract. A method targeted by a partial also keeps its authored ABI because the retained
-/// partial frame has already copied that parameter surface.
+/// Select every ordinary non-Copy input whose source contract leaves access inferred. Its frame receives shared
+/// storage because the binding is immutable; a move, store, return or owned call inside that frame materializes the
+/// independent value at that operation, unless the body consumes the input on any path (`consumed_reads`). Open trait
+/// slots and their checked implementations keep the trait's authored ABI because an implementation body cannot refine
+/// that contract independently. A method targeted by a partial also keeps its authored ABI because the retained partial
+/// frame has already copied that parameter surface.
 fn candidate_parameters(modules: &[bir::BodyIrModule], selected: &HashSet<CanonicalSymbolId>) -> HashSet<Candidate> {
     let mut candidates = HashSet::new();
     for (module_index, module) in modules.iter().enumerate() {
@@ -341,10 +273,12 @@ fn has_open_trait_receiver(body: &bir::Body) -> bool {
     })
 }
 
-/// Keep receivers, rest packs, defaults, explicit reference carriers, callable storage, explicit modes, mutable
-/// inputs and Copy values on their established passing rules. Function-item adapters may borrow inside their
-/// forwarding body, but callable-valued parameters keep the by-value closure carrier that lowering supports.
-/// Defaults need a retained invocation owner before they can publish a borrowed parameter contract.
+/// Keep receivers, rest packs, defaults, explicit modes, mutable inputs and Copy values on their established passing
+/// rules, and select only a checked type that lowering gives a shared executable form
+/// (`IncanType::has_shared_executable_form`). Every other type keeps its by-value input, including a generator the
+/// callee advances, an explicit reference carrier, callable storage and an open type parameter. Function-item adapters
+/// may borrow inside their forwarding body, but callable-valued parameters keep the by-value closure carrier that
+/// lowering supports. Defaults need a retained invocation owner before they can publish a borrowed parameter contract.
 fn parameter_is_candidate(body: &bir::Body, parameter: &bir::CallableParam) -> bool {
     parameter.input_access == incan_semantics_core::IncanInputAccess::Inferred
         && parameter.kind == incan_semantics_core::IncanCallableParamKind::Normal
@@ -356,33 +290,11 @@ fn parameter_is_candidate(body: &bir::Body, parameter: &bir::CallableParam) -> b
         && !parameter.mutable
         && !parameter.native_owned
         && !parameter.ty.abi_v0_facts().ownership.is_trivially_copy()
-        && !matches!(parameter.ty, IncanType::Ref(_) | IncanType::RefMut(_))
-        && !matches!(parameter.ty, IncanType::Function { .. })
-        && !matches!(parameter.ty, IncanType::TypeVar(_) | IncanType::SelfType)
+        && parameter.ty.has_shared_executable_form()
         && !body
             .locals
             .get(parameter.local.index())
             .is_some_and(|local| matches!(local.origin, bir::LocalOrigin::Receiver { .. }))
-}
-
-/// Prove one candidate against the current call-graph hypothesis without changing any signature.
-fn parameter_is_read_only(
-    body: &bir::Body,
-    parameter: &bir::CallableParam,
-    signatures: &Signatures,
-    field_types: &FieldTypes,
-    candidates: &HashSet<Candidate>,
-) -> bool {
-    let context = ReadContext {
-        locals: &body.locals,
-        signatures,
-        field_types,
-        candidates,
-        local: parameter.local,
-        cursor: false,
-        derived: false,
-    };
-    readonly(&body.block.stmts, &context)
 }
 
 /// Finalize only this body's call-loan operands from selected final signatures, including its lexical closures and
