@@ -740,19 +740,31 @@ pub def install_toolchain(archive: Path) -> Result[None, str]:
     target = toolchain_directory()?
     make_directory(target.parent())?
     # 1. The archive is unpacked beside the installation, never over it, so a refused archive costs nothing.
-    stage = target.parent().joinpath(f".install-{TOOLCHAIN}")
-    create_dir(f"{stage.0}").map_err((error) => f"cannot create installation staging directory {stage.0}: {error}")?
+    stage = open_stage(target)?
     plain = target.parent().joinpath(f".install-{TOOLCHAIN}.tar")
     # 2. The stage is verified and published, and removed whatever the outcome.
     result = install_staged(archive, plain, stage, target)
-    if stage.is_dir():
-        remove_dir_all(stage.0).map_err((error) => f"cannot remove installation staging directory {stage.0}: {error}")?
+    close_stage(stage)?
     if plain.is_file():
         remove(plain)?
     result?
     # 3. One installed program answers to both command surfaces.
     directory = expose_entry_points()?
     println(f"entry points: oven and incan in {directory.0}")
+    return Ok(None)
+
+
+pub def open_stage(target: Path) -> Result[Path, str]:
+    """Create the staging directory an archive is unpacked and verified in, beside the installation at `target`."""
+    stage = target.parent().joinpath(f".install-{TOOLCHAIN}")
+    create_dir(f"{stage.0}").map_err((error) => f"cannot create installation staging directory {stage.0}: {error}")?
+    return Ok(stage)
+
+
+pub def close_stage(stage: Path) -> Result[None, str]:
+    """Remove a staging directory, whether its installation was published from it or refused."""
+    if stage.is_dir():
+        remove_dir_all(stage.0).map_err((error) => f"cannot remove installation staging directory {stage.0}: {error}")?
     return Ok(None)
 
 
