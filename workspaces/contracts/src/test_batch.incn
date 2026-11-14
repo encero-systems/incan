@@ -18,11 +18,9 @@ def test_an_engine_without_shared_entries_is_not_a_semantic_refusal() -> None:
     An engine that cannot select program entries refuses every shared compilation alike, so its refusal says nothing
     about which cases are incompatible and must not be bisected; a compiler's refusal of the cases still is.
     """
-    engine = Outcome(
-        stdout="",
-        stderr="incan build: unit records do not implement feature, substitution or program-entry options\n",
-        code=Some(1),
-    )
+    # Oven's refusal since `--interop-target` joined the options the records engine does not implement.
+    options = "feature, substitution, program-entry or interop-target options"
+    engine = Outcome(stdout="", stderr=f"incan build: unit records do not implement {options}\n", code=Some(1))
     refusal, evidence = compilation_refusal(Ok(engine))
     assert refusal == SHARED_ENTRIES_REFUSED
     assert "program-entry" in evidence
