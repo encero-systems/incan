@@ -9,8 +9,8 @@ input pair becomes one byte. The stream and path helpers reuse those same one-sh
 separate file-specific algorithm.
 """
 
+pub from std.encoding._shared import EncodingError
 from std.encoding._shared import (
-    EncodingError,
     _ascii_bytes,
     _ascii_text,
     _invalid_character,
@@ -22,7 +22,8 @@ from std.encoding._shared import (
     _write_sink_bytes,
     _write_stream_bytes,
 )
-from std.fs import Path
+pub from std.fs import Path
+pub from std.io import BytesIO
 from std.io import _BytesIO
 from std.primitives import decode_utf8 as _decode_utf8, encode_utf8 as _encode_utf8, hexlify as _primitive_hexlify
 # Source/sink helpers
