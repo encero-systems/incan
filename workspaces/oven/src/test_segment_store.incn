@@ -438,6 +438,29 @@ pub def test_a_commit_reads_each_index_page_it_changes_once_however_many_keys_it
     return Ok(None)
 
 
+pub def test_a_lookup_maps_no_index_page_an_earlier_lookup_mapped() -> Result[None, str]:
+    """
+    Index pages are content-named and never rewritten, so a process checks each page against its name once: looking up
+    the same key again, or its neighbor under the same leaf, reads no index page, and both still answer their values.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    before = read_counts()
+    mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+    for item in range(1000):
+        transaction = put(transaction, f"k-{1000 + item}", f"value {item}".encode("utf-8"))
+    commit(transaction).map_err((error) => error.message())?
+    latest = snapshot(root).map_err((error) => error.message())?
+    assert text(lookup(latest, "k-1500")) == "value 500"
+    first = read_counts()
+    assert text(lookup(latest, "k-1500")) == "value 500"
+    assert text(lookup(latest, "k-1501")) == "value 501"
+    second = read_counts()
+    assert first.pages > before.pages, "the commit and the first lookup read no index page"
+    assert second.pages == first.pages, f"lookups on a path already read read {second.pages - first.pages} pages again"
+    return Ok(None)
+
+
 pub def test_a_lookup_reads_one_index_path_however_many_segments_hold_other_keys() -> Result[None, str]:
     """
     A key is found through its view's index: the pages read for one lookup do not grow with the number of segments or
