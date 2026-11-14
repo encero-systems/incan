@@ -45,6 +45,8 @@ pub model RegistryDemand:
 
     pub selection: RegistrySelection
     pub domain: str
+    # Whether the root project itself declares the requirement; a path dependency's own requirement is indirect.
+    pub direct: bool = true
 
     pub def key(self) -> str:
         """Retain distinct requirements while deduplicating equivalent requests deterministically."""
@@ -94,7 +96,11 @@ pub model RegistryUnits:
             entries[identity(unit)] = unit
         mut requests: Dict[str, RegistryDemand] = {}
         for demand in demands:
-            requests[demand.key()] = demand
+            mut kept = demand
+            # A requirement the root project declares stays its own when a dependency repeats it.
+            if demand.key() in requests and requests[demand.key()].direct:
+                kept.direct = true
+            requests[demand.key()] = kept
         roots = [requests[key] for key in sorted([key for key in requests.keys()])]
         # 2. A root can be chosen only when every recorded dependency agrees with the selected graph.
         mut pinned: Dict[str, str] = {}
@@ -278,12 +284,21 @@ def candidate_groups(
         return Err(
             f"{selected.loaf} is not published in the compiled registry closure for requirement {selected.requirement} with features {selected.features}\n{UNPUBLISHED_HINT}",
         )
-    candidates = mode_candidates(candidates, mode)?
+    candidates = mode_candidates(candidates, demand_mode(mode, demand.direct))?
     preferred = [unit for unit in candidates if (demand.domain, identity(unit)) in installation]
     mut groups: list[list[RegistryUnit]] = []
     if len(preferred) > 0:
         groups = profile_groups(preferred, profile)
     return Ok(groups + profile_groups(candidates, profile))
+
+
+def demand_mode(mode: str, direct: bool) -> str:
+    """RFC 125: `lowest-direct` is `lowest` for the project's own requirements and `newest` for every other one."""
+    if mode != "lowest-direct":
+        return mode
+    if direct:
+        return "lowest"
+    return "newest"
 
 
 def mode_candidates(candidates: list[RegistryUnit], mode: str) -> Result[list[RegistryUnit], str]:
@@ -293,7 +308,7 @@ def mode_candidates(candidates: list[RegistryUnit], mode: str) -> Result[list[Re
     mut selected = str(candidates[0].version)
     for candidate in candidates[1:]:
         order = compare_version_order(parse_version(candidate.version)?, parse_version(selected)?)
-        if (mode in ["lowest", "lowest-direct"] and order < 0) or (mode == "newest" and order > 0):
+        if (mode == "lowest" and order < 0) or (mode == "newest" and order > 0):
             selected = candidate.version
     return Ok([candidate for candidate in candidates if candidate.version == selected])
 

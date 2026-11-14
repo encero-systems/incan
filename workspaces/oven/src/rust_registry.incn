@@ -250,12 +250,26 @@ pub def selected_registry(
     return Ok(selected)
 
 
-pub def resolve_registry(registry: RegistryUnits, facets: list[LocalFacet], profile: str) -> Result[RegistryUnits, str]:
-    """Resolve exact registry producers without importing their payloads, as `oven lock` requires."""
+pub def resolve_registry(
+    registry: RegistryUnits,
+    facets: list[LocalFacet],
+    profile: str,
+    root: str = "",
+) -> Result[RegistryUnits, str]:
+    """
+    Resolve exact registry producers without importing their payloads, as `oven lock` requires. With `root`, only the
+    root facet's requirements are the project's own; without it, every requirement is.
+    """
     mut demands: list[RegistryDemand] = []
     for facet in facets:
         for record in facet.registry:
-            demands.append(RegistryDemand(selection=registry_selection(record)?, domain=facet.domain.value()))
+            demands.append(
+                RegistryDemand(
+                    selection=registry_selection(record)?,
+                    domain=facet.domain.value(),
+                    direct=root == "" or facet.project == root,
+                ),
+            )
     return registry.select(demands, profile)
 
 

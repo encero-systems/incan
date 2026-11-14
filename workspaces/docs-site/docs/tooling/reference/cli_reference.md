@@ -67,7 +67,7 @@ Unknown features, invalid feature edges and unknown options fail the command. Fe
 
 Resolves the root project at `PATH` and atomically writes its generated [`oven.lock`](lock_file.md). `PATH` defaults to the current directory. Success prints `locked NAME VERSION (MODE)` and exits `0`. A generated write adds no other stdout or stderr.
 
-`--versions` accepts `lowest`, `lowest-direct` or `newest`. Without the option, an existing lock keeps its recorded mode, under any toolchain; without a lock, the mode is `lowest`. The current compiled-unit resolver applies the mode before its exact-producer and profile tie-breaks.
+`--versions` accepts `lowest`, `lowest-direct` or `newest`. `lowest` selects the lowest published version that satisfies a requirement and `newest` the highest. `lowest-direct` selects the lowest for a requirement the root project declares and the highest for one only a path dependency declares. Without the option, an existing lock keeps its recorded mode, under any toolchain; without a lock, the mode is `lowest`. The current compiled-unit resolver applies the mode before its exact-producer and profile tie-breaks.
 
 This command is available only as `oven lock`. `incan lock` is an unknown command.
 
