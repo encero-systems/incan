@@ -323,6 +323,8 @@ def validate(record: CheckedRecord) -> Result[None, CodecFault]:
             "reference",
             "write",
             "builtin",
+            "constructor",
+            "requirement",
             "parameter",
             "signature",
             "diagnostic",

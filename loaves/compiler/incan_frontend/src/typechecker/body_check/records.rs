@@ -4,6 +4,7 @@ mod artifact_admission;
 mod call_artifacts_generated;
 mod diagnostics;
 mod function_calls;
+mod imported_members;
 mod input_flow;
 mod inputs;
 mod local_restore;
@@ -355,6 +356,8 @@ impl Positions {
                 identities.insert(stable.render_compact(), canonical.clone());
             }
         }
+        // A constructor of an imported model or class names the checked field each of its arguments initializes.
+        identities.extend(imported_members::field_identities(checker));
         let mut type_identities: BTreeMap<String, CanonicalSymbolId> = checker
             .symbols
             .all_symbols()

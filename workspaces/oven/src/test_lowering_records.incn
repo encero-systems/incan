@@ -251,12 +251,12 @@ pub def test_engine_report_counts_checker_reuse_and_artifact_refusals() -> Resul
     store = root.joinpath("store")
     report = report_fixture_build(binary, project, store)?
     diagnostic = report.to_json().map_err((error) => error.message())?
-    # `selected` tests a `Flag` for truth through `Flag.__bool__`, a resolved operator call its record keeps.
-    assert proof_count(report, "reusable_declarations")? == 2, diagnostic
+    # `selected` tests a `Flag` for truth through `Flag.__bool__`, a resolved operator call its record keeps. `main`
+    # constructs the imported `Flag`, and its record keeps the field binding and the imported field it initializes.
+    assert proof_count(report, "reusable_declarations")? == 3, diagnostic
     assert proof_count(report, "all_declarations")? == 4, diagnostic
     assert proof_refusal_count(report, "CallArtifacts.resolved_operator_calls")? == 0, diagnostic
-    # `weighed` reads a computed property, which no record keeps yet. `main` constructs the imported `Flag`, a
-    # reference no record admits yet, which is not an artifact field.
+    # `weighed` reads a computed property, which no record keeps yet.
     assert proof_refusal_count(report, "ExpressionArtifacts.computed_property_accesses")? == 1, diagnostic
     return stop_example_engine(binary, store)
 
