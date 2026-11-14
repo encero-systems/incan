@@ -1,10 +1,11 @@
-"""Installation admits the compiler records a toolchain ships, without running a compiler (RFC 179)."""
+"""Installation admits the compiler records a toolchain ships, without running a compiler or copying them (RFC 179)."""
 
 from std.encoding.hex import hexlify
-from std.hash import sha256
+from std.fs import Path
+from std.hash import file_digest, sha256
 from std.json import JsonValue
 from scratch import scratch_directory
-from compiler_record_admission import SHIPPED_RECORDS, convert
+from compiler_record_admission import SHIPPED_RECORDS, convert, installed_records
 
 
 pub def test_shipped_compiler_records_are_admitted_without_running_a_compiler() -> Result[None, str]:
@@ -17,8 +18,40 @@ pub def test_shipped_compiler_records_are_admitted_without_running_a_compiler() 
     """
     scratch = scratch_directory()?
     installed = scratch.path().joinpath("toolchain")
+    # 1. and 2. One content-named object, the index that names it, and a driver that would fail to run.
+    driver = ship_one_record(installed)?
+    pin = convert(driver.0, installed, installed)?
+    # 3. Admission published the set the pin names.
+    assert pin.root == "compiler-records", "the pin names the installed set"
+    assert installed.joinpath("compiler-records").joinpath("manifest.json").is_file(), "the set is published"
+    return Ok(None)
+
+
+pub def test_a_shipped_sealed_set_installs_without_converting_or_copying() -> Result[None, str]:
+    """
+    An archive that ships its sealed set and its admitted store installs by verification alone.
+
+    1. Seal one record into a toolchain directory, as packing does.
+    2. Install it with a driver that cannot run, naming the shipped pin.
+    3. The pin is the shipped one, and the transport and the store's objects are unchanged, file for file.
+    """
+    scratch = scratch_directory()?
+    installed = scratch.path().joinpath("toolchain")
+    # 1. The sealed set and store an archive carries.
+    driver = ship_one_record(installed)?
+    sealed = convert(driver.0, installed, installed)?
+    before = sealed_inventory(installed)?
+    # 2. Installation is handed the archive's pin.
+    pin = installed_records(driver.0, installed, Some(sealed))?
+    # 3. Nothing was converted, copied or rewritten.
+    assert pin.digest == sealed.digest, "the shipped pin is kept"
+    assert sealed_inventory(installed)? == before, "admission wrote no object"
+    return Ok(None)
+
+
+def ship_one_record(installed: Path) -> Result[Path, str]:
+    """Ship one content-named record object and its export index, and a driver file that is not executable."""
     export = installed.joinpath(SHIPPED_RECORDS)
-    # 1. One content-named object and the index that names it.
     export.joinpath("objects").mkdir(true, true).map_err((error) => error.message())?
     value = b"shipped record"
     revision = hexlify(sha256.digest(value))
@@ -30,12 +63,32 @@ pub def test_shipped_compiler_records_are_admitted_without_running_a_compiler() 
     index = JsonValue.object({"schema": schema, "records": JsonValue.array([record])})
     text = index.to_json().map_err((error) => error.message())?
     export.joinpath("index.json").write_bytes(text.encode("utf-8")).map_err((error) => error.message())?
-    # 2. The driver exists, so its digest can name the producer, but running it would fail.
+    # The driver exists, so its digest can name the producer, but running it would fail.
     driver = installed.joinpath("bin").joinpath("incan-rustc-driver")
     driver.parent().mkdir(true, true).map_err((error) => error.message())?
     driver.write_bytes(b"not a program").map_err((error) => error.message())?
-    pin = convert(driver.0, installed, installed)?
-    # 3. Admission published the set the pin names.
-    assert pin.root == "compiler-records", "the pin names the installed set"
-    assert installed.joinpath("compiler-records").joinpath("manifest.json").is_file(), "the set is published"
-    return Ok(None)
+    return Ok(driver)
+
+
+def sealed_inventory(installed: Path) -> Result[list[str], str]:
+    """Every file of the set's transport and of its store's objects and segments, with its full digest."""
+    store = installed.joinpath("compiler-record-store")
+    transport = inventory(installed.joinpath("compiler-records"), "transport/")?
+    objects = inventory(store.joinpath("payloads"), "payloads/")?
+    segments = inventory(store.joinpath("segments"), "segments/")?
+    return Ok(transport + objects + segments)
+
+
+def inventory(directory: Path, prefix: str) -> Result[list[str], str]:
+    """Sorted relative filenames and full digests, so a no-op cannot hide any new or changed file."""
+    if not directory.is_dir():
+        return Ok([])
+    mut entries: list[str] = []
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        name = prefix + entry.name()
+        if entry.is_dir():
+            entries.extend(inventory(entry, name + "/")?)
+        else:
+            digest = hexlify(file_digest(entry, "sha256").map_err((error) => error.message())?)
+            entries.append(f"{name} {digest}")
+    return Ok(sorted(entries))

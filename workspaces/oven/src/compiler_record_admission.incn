@@ -87,6 +87,25 @@ pub def convert(driver: str, installed: Path, installation: Path) -> Result[Comp
     return Ok(CompilerRecordPin(root=relative, digest=digest))
 
 
+pub def installed_records(
+    driver: str,
+    installation: Path,
+    shipped: Option[CompilerRecordPin],
+) -> Result[CompilerRecordPin, str]:
+    """The installation's compiler-record set, converted from its installed Loaves."""
+    return convert(driver, installation, installation)
+
+
+pub def shipped_pin(document: JsonValue) -> Result[Option[CompilerRecordPin], str]:
+    """The compiler-record pin a toolchain description ships, when it names one."""
+    match document.get("compiler_records"):
+        None => return Ok(None)
+        Some(value) =>
+            return Ok(
+                Some(CompilerRecordPin(root=required_text(value, "root")?, digest=required_text(value, "digest")?)),
+            )
+
+
 pub def ship_records(driver: str, installed: Path, stage: Path) -> Result[None, str]:
     """Export the installed Loaves' compiler records into a packing stage, so installing its archive converts nothing."""
     return export_records(driver, installed, stage.joinpath(SHIPPED_RECORDS))
