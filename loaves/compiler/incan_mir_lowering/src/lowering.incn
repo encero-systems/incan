@@ -258,6 +258,7 @@ def lowered_plan(
     """Lower a checked unit once, preserving ordinary frames when exact runtime declarations need resolution."""
     trace_key: str = "INCAN_TRACE_LOWERING"
     trace = traced(trace_key)
+    footprint_trace = footprint_traced()
     # 1. Validate the checked inputs and prepare their shared layouts.
     source_files = source_file_index(modules, files)?
     empty_templates = index_constructors([], source_files, package_versions)
@@ -305,6 +306,7 @@ def lowered_plan(
     )?
     mut program = initial_program
     mut emitted_frames = no_emitted_frames()
+    stage_boundary(footprint_trace, "planned roots")
     # 2. Lower ordinary frames and static initializers exactly once.
     mut retained_nominals = nominal_instances
     lower_ordinary_bodies(
@@ -343,6 +345,7 @@ def lowered_plan(
         externals,
         instances,
     )?
+    stage_boundary(footprint_trace, "lowered ordinary bodies")
     requirements = selected_runtime_requirements(context.as_ref(), externals, functions)?
     if len(requirements) != 0:
         return Ok(
@@ -419,6 +422,7 @@ pub def resume_unit_plan(
     """Resume preserved ordinary frames against the exact runtime declaration closure the frontend resolved."""
     trace_key: str = "INCAN_TRACE_LOWERING"
     trace = traced(trace_key)
+    footprint_trace = footprint_traced()
     validate_plan_inputs(modules, sources, files, entry, continuation.context.as_ref())?
     source_files = source_file_index(modules, files)?
     mut source_context = continuation.source_context
@@ -499,6 +503,7 @@ pub def resume_unit_plan(
         externals,
         instances,
     )?
+    stage_boundary(footprint_trace, "resumed roots")
     mut resolved_statics = lower_computed_statics(
         context.as_ref(),
         program,
@@ -515,6 +520,7 @@ pub def resume_unit_plan(
     emitted_frames = rebase_emitted_frames(context.as_ref(), emitted_frames)
     for cell in resolved_statics:
         statics.append(cell)
+    stage_boundary(footprint_trace, "resumed statics")
     requirements = selected_runtime_requirements(context.as_ref(), externals, functions)?
     if len(requirements) != 0:
         return Ok(
@@ -643,6 +649,7 @@ def finish_unit_plan(
     )?
     for cell in instance_cells:
         statics.append(cell)
+    stage_boundary(footprint_traced(), "lowered generic instances")
     match retention:
         RuntimeRetention.NeedsRuntime(requests) =>
             retry = UnitContinuation(

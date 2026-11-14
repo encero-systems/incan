@@ -12,6 +12,7 @@ pub from runtime_requirements import RuntimeRequirement, RefusalPlanning
 pub from runtime_calls import layout_runtime_requirements
 pub from lowering import BodyIrModule, UnitContinuation, UnitPlanning
 from lowering import unit_plan as checked_unit_plan, resume_unit_plan as checked_resume_unit_plan
+from heap_boundaries import footprint_traced, stage_boundary
 from rust::std::collections import BTreeMap
 from program_refusals import program_refusals as checked_program_refusals
 # The record contracts live in internal_models; these names remain importable from the lowering as before.
@@ -164,7 +165,7 @@ pub def unit_plan(
     mut published: list[NativeUnionDeclaration],
 ) -> Result[UnitPlanning, str]:
     """Borrow checked modules and consume their source inputs to lower a program, library or collected test unit."""
-    return checked_unit_plan(
+    planning = checked_unit_plan(
         modules,
         inputs.sources,
         inputs.files,
@@ -178,6 +179,9 @@ pub def unit_plan(
         inputs.scalar_bodies,
         inputs.record_report,
     )
+    # The attempt's contexts and temporaries are freed; return their pages before the caller allocates beside them.
+    stage_boundary(footprint_traced(), "lowered unit")
+    return planning
 
 
 pub def resume_unit_plan(
@@ -189,7 +193,7 @@ pub def resume_unit_plan(
     mut published: list[NativeUnionDeclaration],
 ) -> Result[UnitPlanning, str]:
     """Resume preserved ordinary-frame work after the frontend resolves the exact requested runtime declarations."""
-    return checked_resume_unit_plan(
+    planning = checked_resume_unit_plan(
         continuation,
         modules,
         inputs.sources,
@@ -201,6 +205,8 @@ pub def resume_unit_plan(
         inputs.package_versions,
         inputs.overflow_checks,
     )
+    stage_boundary(footprint_traced(), "resumed unit")
+    return planning
 
 
 pub def program_refusals(

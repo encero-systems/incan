@@ -1,9 +1,21 @@
-"""Lowering's stage boundaries, where the footprint and live heap are traced on request."""
+"""
+Lowering's stage boundaries, where the heap a stage freed goes back to the system.
 
+The system allocator keeps the pages of freed allocations, and the kernel charges them to the process footprint until
+the allocator gives them back. A stage of a large unit frees gigabytes of contexts and temporaries, and without a
+return the next stage allocates beside those pages, so the unit's peak counts both. A boundary asks the platform to
+return them only when the footprint is at least `RETAINED_HEAP_RELEASE` above the live heap. Below that footprint a
+boundary reads the footprint once and nothing else, and where the live heap cannot be read it releases nothing.
+"""
+
+from pub::incan_platform.heap import release_free_heap
 from pub::incan_platform.probes import current_footprint, current_live_allocated
 from trace_channel import emit, traced
+from rust::std::time import Instant
 
-# A footprint at least this far above the live heap is freed heap a boundary returns: 1 GiB.
+# Freed heap a boundary returns: a footprint at least 1 GiB above the live heap. When Oven's final unit returned its
+# plan, 4.85 GB of its 6.53 GB footprint was freed heap over 1.68 GB live; the standard package's whole worker
+# footprint stays near 1.2 GB, and smaller units' far under it.
 pub const RETAINED_HEAP_RELEASE: int = 1073741824
 
 # The former variable that prints each boundary's readings.
@@ -16,17 +28,36 @@ pub def footprint_traced() -> bool:
 
 
 pub def stage_boundary(trace: bool, boundary: str) -> None:
-    """Report physical footprint and live allocator bytes at a requested boundary, without affecting ordinary runs."""
-    if not trace:
-        return
+    """Return freed heap at one stage boundary when the footprint is far above the live heap, tracing when asked."""
     match current_footprint():
         Ok(footprint) =>
+            if footprint < RETAINED_HEAP_RELEASE and not trace:
+                return
             match current_live_allocated():
-                Ok(live) => trace_footprint(f"{boundary}: {footprint} bytes; live allocated: {live} bytes")
-                Err(reason) => trace_footprint(f"{boundary}: {footprint} bytes; live allocated: unavailable: {reason}")
-        Err(reason) => trace_footprint(f"{boundary}: unavailable: {reason}")
+                Ok(live) => release_retained(trace, boundary, footprint, live)
+                Err(reason) => trace_footprint(
+                    trace,
+                    f"{boundary}: {footprint} bytes; live allocated: unavailable: {reason}",
+                )
+        Err(reason) => trace_footprint(trace, f"{boundary}: unavailable: {reason}")
 
 
-def trace_footprint(text: str) -> None:
+def release_retained(trace: bool, boundary: str, footprint: int, live: int) -> None:
+    """Trace a boundary's readings, and return the freed heap when it reaches the release threshold."""
+    trace_footprint(trace, f"{boundary}: {footprint} bytes; live allocated: {live} bytes")
+    if footprint - live < RETAINED_HEAP_RELEASE:
+        return
+    started = Instant.now()
+    release_free_heap()
+    if not trace:
+        return
+    micros = int(started.elapsed().as_micros())
+    match current_footprint():
+        Ok(returned) => trace_footprint(trace, f"{boundary}: returned freed heap in {micros} us: {returned} bytes")
+        Err(reason) => trace_footprint(trace, f"{boundary}: returned freed heap in {micros} us: unavailable: {reason}")
+
+
+def trace_footprint(trace: bool, text: str) -> None:
     """Emit one boundary's readings into the lowering footprint trace."""
-    emit("lowering_footprint", FOOTPRINT_TRACE, f"lowering footprint: {text}")
+    if trace:
+        emit("lowering_footprint", FOOTPRINT_TRACE, f"lowering footprint: {text}")
