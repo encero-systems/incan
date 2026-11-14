@@ -65,16 +65,34 @@ class SourceProjector:
         return SourceProjector(origin=origin, path=path, source=source, lines=lines)
 
     def discover(mut self) -> None:
-        """Locate top-level chunks while attaching consecutive decorators to their following declaration."""
+        """
+        Locate owner chunks while attaching consecutive decorators to their following declaration.
+
+        Top-level lines start chunks. Inside a top-level conditional block, such as `when feature("json"):`, the lines
+        at the block's member indentation start chunks too, so a feature-gated declaration owns its own record while
+        the condition and the block's imports stay in the module header.
+        """
         mut offset = 0
         mut decorated_start = -1
+        mut conditional = false
+        mut member_indent = -1
         for line in self.lines:
             content = line.strip()
-            top_level = content != "" and line[0] not in " \t"
-            if top_level and content.startswith("@"):
+            indent = leading_whitespace(line)
+            mut chunk = false
+            if content != "" and indent == 0:
+                chunk = true
+                if not content.startswith("#"):
+                    conditional = conditional_block(content)
+                    member_indent = -1
+            elif conditional and content != "" and not content.startswith("#"):
+                if member_indent < 0:
+                    member_indent = indent
+                chunk = indent == member_indent
+            if chunk and content.startswith("@"):
                 if decorated_start < 0:
                     decorated_start = offset
-            elif top_level and not content.startswith("#"):
+            elif chunk and not content.startswith("#"):
                 mut start = 0
                 if decorated_start >= 0:
                     start = decorated_start
@@ -275,6 +293,11 @@ def callable_declaration(line: str) -> bool:
     return header.startswith("def ")
 
 
+def conditional_block(line: str) -> bool:
+    """Recognize a top-level conditional-compilation block whose indented members are declarations of the module."""
+    return line.startswith("when ") and line.endswith(":")
+
+
 def declaration_owner(line: str) -> str:
     """Name an independently owned declaration while imports and other module forms stay in the header."""
     mut header = f"{line}"
@@ -385,15 +408,22 @@ def field_name(member: str) -> Option[str]:
 
 
 def direct_member_starts(source: str) -> list[int]:
-    """Locate direct nominal members after any decorators while bracketed defaults remain one member chunk."""
+    """
+    Locate direct nominal members after any decorators while bracketed defaults remain one member chunk.
+
+    Members are indented past the declaration's own first line, which is indented itself inside a conditional block.
+    """
     mut starts: list[int] = []
     mut offset = 0
+    mut base = -1
     mut member_indent = -1
     mut depth = 0
     for line in source.split("\n"):
         content = line.strip()
         indent = leading_whitespace(line)
-        if content != "" and not content.startswith("#") and indent > 0:
+        if content != "" and not content.startswith("#") and base < 0:
+            base = indent
+        elif content != "" and not content.startswith("#") and indent > base:
             if member_indent < 0:
                 member_indent = indent
             if indent == member_indent and depth == 0:
