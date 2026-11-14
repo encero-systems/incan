@@ -99,7 +99,7 @@ const CHECK_CERTIFICATE: &str = "incan.compiler-check/1\n";
 
 const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | \
                      --source-interface UNIT SYSROOT DIRECTORY [OPTIONS] | --dependencies UNIT SYSROOT [OPTIONS] | --compiler-records INSTALLED OUTPUT | \
-                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT [--source-graph] | --emit-model PATH MODEL incan|json [LABEL] | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY HOME | --identity SYSROOT\n\
+                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [--checked-bodies PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT [--source-graph] | --emit-model PATH MODEL incan|json [LABEL] | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY HOME | --identity SYSROOT\n\
                      OPTIONS: --rustc-arg ARG, --library, --no-codegraph, --inspection, --shared-native DIR, --toolchain-root DIR, --bakery-root DIR, --graph-body-records PATH, --graph-body-output PATH (native artifacts and ABI caches come from UNIT)";
 
 /// Compile an Incan unit (`--unit`, or serially from a `--resident` worker) or check one (`--check`), each from the
@@ -261,6 +261,9 @@ fn rust_abi(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 ///
 /// With `--certify PATH`, a report that unchanged inputs reproduce exactly (a pass, or a refusal by source
 /// diagnostics) also writes the check receipt there, which lets Oven replay it; any other outcome writes none.
+///
+/// A check reuses the `--graph-body-records` it is given exactly as a build does. With `--checked-bodies PATH` it
+/// writes there which top-level function bodies it restored from them and which it checked afresh.
 pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
     native_timing::observe_frontend(false);
     let [path, sysroot, rest @ ..] = arguments else {
@@ -275,9 +278,22 @@ pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Err
         rest => (DiagnosticOutputFormat::Text, rest),
     };
     let (certificate, options) = certified_options(rest);
+    let (bodies_report, options) = match options {
+        [flag, report, options @ ..] if flag == "--checked-bodies" => (Some(Path::new(report)), options),
+        options => (None, options),
+    };
     let unit = UnitDescription::read(Path::new(path)).map_err(|error| error.message)?;
-    let rust = frontend::dependencies(&unit, options)?.rust_facts(&unit, Path::new(sysroot));
-    let checked = incan_driver::check::check_unit(&unit, &rust);
+    let dependencies = frontend::dependencies(&unit, options)?;
+    let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
+    let checked = incan_driver::check::check_unit(&unit, &rust, dependencies.graph_body_records());
+    let checked = checked.and_then(|(output, bodies)| {
+        if let Some(report) = bodies_report {
+            std::fs::write(report, bodies.to_json()?).map_err(|error| {
+                incan_driver::error::CliError::failure(format!("cannot write {}: {error}", report.display()))
+            })?;
+        }
+        Ok(output)
+    });
     let reproducible = checked.as_ref().is_ok_and(|report| report.reproducible);
     let status = status_of(checked.and_then(|report| command_diagnostics::render_check_report(report, format)));
     if reproducible && let Some(certificate) = certificate {

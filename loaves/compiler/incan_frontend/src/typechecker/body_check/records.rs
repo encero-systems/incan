@@ -77,7 +77,7 @@ impl TypeChecker {
     }
 
     /// Report whether this activation restored the selected local body instead of checking statements afresh.
-    pub(crate) fn restored_body_record(&self, owner: Span) -> bool {
+    pub fn restored_body_record(&self, owner: Span) -> bool {
         self.selected_local_records.contains_key(&owner)
     }
 

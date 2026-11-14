@@ -203,6 +203,11 @@ impl Dependencies {
             })),
         }
     }
+
+    /// The engine's graph-selected checker values, which a check installs exactly as a build does.
+    pub(crate) fn graph_body_records(&self) -> incan_frontend::checker_records::GraphBodyRecords {
+        self.graph_body_records.clone()
+    }
 }
 
 /// Read exact artifacts from Oven's unit description and parse compilation options. Native inputs cannot be
