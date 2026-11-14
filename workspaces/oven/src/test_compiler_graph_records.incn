@@ -231,13 +231,17 @@ pub def test_persisted_evaluations_reuse_only_while_every_witness_validates() ->
 
 
 pub def test_source_projection_changes_only_the_edited_owner_record() -> Result[None, str]:
-    """A body edit keeps the module header and sibling owner identities while changing exactly one owner digest."""
+    """
+    A body edit keeps the module header and sibling owner identities while changing exactly one owner digest; an edit to
+    comments, blank lines or documentation changes none.
+    """
     original = "from std import env\n\ntype Count = int\n\nmodel Item:\n    value: Count\n\ndef first() -> int:\n    return 1\n\ndef second() -> int:\n    return 2\n"
     edited = original.replace("return 1", "return 3")
     before = project_source("package", "src/main.incn", original)?
     after = project_source("package", "src/main.incn", edited)?
-    assert before.header.text == "from std import env\n\ntype Count = int\n\n"
+    assert before.header.text == "from std import env\ntype Count = int", before.header.text
     assert before.header.digest() == after.header.digest()
+    verify_documentation_changes_no_record(original, before)?
     assert len(before.owners) == 4 and len(after.owners) == 4, f"owner counts: {len(before.owners)}, {len(after.owners)}"
     mut changed = 0
     for index in range(len(before.owners)):
@@ -1138,3 +1142,48 @@ def count_prefix(values: list[str], prefix: str) -> int:
         if value.startswith(prefix):
             count += 1
     return count
+
+
+def verify_documentation_changes_no_record(
+    original: str,
+    before: compiler_source_projection.SourceProjection,
+) -> Result[None, str]:
+    """
+    Comments, blank lines and documentation leave every record of `original` unchanged; string literals inside code,
+    a `#` inside a string, a string that can be a value and a docstring before only `pass` still change one.
+    """
+    documented = (
+        "\"\"\"A documented module.\"\"\"\n# leading note\n" + original
+            .replace(
+                "def first() -> int:\n",
+                "def first() -> int:\n    \"\"\"Return one.\"\"\"\n    # the first value\n\n",
+            )
+            .replace("return 2\n", "return 2  # second\n\n\n# trailing note\n")
+    )
+    commented = project_source("package", "src/main.incn", documented)?
+    redocumented = project_source("package", "src/main.incn", documented.replace("Return one.", "Return the value one."))?
+    for projection in [commented, redocumented]:
+        assert projection.header.digest() == before.header.digest(), projection.header.text
+        assert projection.declarations.digest() == before.declarations.digest(), projection.declarations.text
+        assert len(projection.owners) == len(before.owners)
+        for index in range(len(before.owners)):
+            assert projection.owners[index].digest() == before.owners[index].digest(), projection.owners[index].text
+    grouped = original.replace("return 1", "return (\n        \"one\"\n    )")
+    regrouped = project_source("package", "src/main.incn", grouped.replace("\"one\"", "\"two\""))?
+    assert projected_owner(project_source("package", "src/main.incn", grouped)?, "first")?.digest() != projected_owner(
+        regrouped,
+        "first",
+    )?.digest()
+    hashed = project_source("package", "src/main.incn", original.replace("return 1", "return \"a # b\""))?
+    rehashed = project_source("package", "src/main.incn", original.replace("return 1", "return \"a # c\""))?
+    assert projected_owner(hashed, "first")?.digest() != projected_owner(rehashed, "first")?.digest()
+    # A string that can be a block's value, or a docstring before only `pass`, is code and stays.
+    for pair in [
+        ["def name() -> str:\n    count = 1\n    \"text\"\n", "def name() -> str:\n    count = 1\n    \"other\"\n"],
+        ["def name() -> str:\n    \"text\"\n", "def name() -> str:\n    \"other\"\n"],
+        ["def name(self) -> int:\n    \"\"\"Doc.\"\"\"\n    pass\n", "def name(self) -> int:\n    pass\n"],
+    ]:
+        before_owner = projected_owner(project_source("package", "src/value.incn", pair[0])?, "name")?
+        after_owner = projected_owner(project_source("package", "src/value.incn", pair[1])?, "name")?
+        assert before_owner.digest() != after_owner.digest(), before_owner.text
+    return Ok(None)
