@@ -255,7 +255,7 @@ pub def test_two_valid_unequal_payloads_of_one_unit_are_both_kept_and_unit_only_
     (RFC 124, BE-31).
 
     1. A second producer's unequal payload joins the first: neither payload leaves the store.
-    2. A lookup by unit identity alone is refused as ambiguous, for a reader, a waiting baker and a project view.
+    2. A lookup by unit identity alone is refused as ambiguous, for a reader and for a waiting baker.
     3. A receipt that pinned its exact payloads still reads them.
     4. Collection keeps both payloads, and the conflict stays.
     """
@@ -289,11 +289,6 @@ pub def test_two_valid_unequal_payloads_of_one_unit_are_both_kept_and_unit_only_
     match bake(store, identity, "third producer"):
         Ok(_) =>
             assert false, "a waiting baker reused or replaced a conflicted unit by its identity"
-        Err(error) =>
-            assert "ambiguous-payload" in error, error
-    match library_directory(store, viewed):
-        Ok(_) =>
-            assert false, "a view that names only the unit identity selected a payload"
         Err(error) =>
             assert "ambiguous-payload" in error, error
     # 3. A receipt names its exact payloads, so it is never asked to choose again and never gets the other variant.
@@ -331,6 +326,53 @@ def selected_text(store: Path, identity: str, selection: str) -> Result[str, str
             match fact_file(store, fact, "payload"):
                 None => return Err("the selected bake has no payload")
                 Some(path) => return read(path)
+
+
+pub def test_a_view_made_before_a_conflict_keeps_the_payloads_it_was_made_from() -> Result[None, str]:
+    """
+    A project's view of a unit pins the exact payloads it was made from, as a receipt does (RFC 124). When a second
+    valid bake with unequal payloads joins the unit, the view still selects its own.
+
+    1. Bake a unit and view it into a project.
+    2. A second producer publishes an unequal bake of the same identity.
+    3. The view still binds its library to the first bake's payloads, and viewing that bake again changes nothing.
+    4. A view of the second bake binds the second bake's payloads.
+    5. A view record that names the unit identity alone, as an earlier Oven wrote it, is refused as ambiguous.
+    """
+    scratch = scratch_directory()?
+    make_directory(scratch.path().joinpath("bakery"))?
+    store = scratch.path().joinpath("bakery").resolve().map_err((error) => error.message())?
+    identity = digest_of("e6")
+    # 1. The view is made while the identity has one bake.
+    assert bake(store, identity, "first producer")?
+    original = match find(store, identity)?:
+        None => return Err("the first bake was not found")
+        Some(fact) => fact
+
+    viewed = scratch.path().joinpath("project").joinpath("dep")
+    view_directory(store, original, viewed)?
+    # 2. The identity alone now selects nothing.
+    added = second_producer(store, identity, "second producer")?
+    forget_verified()
+    # 3. The view was made from the first bake, and says so.
+    first = library_directory(store, viewed)?
+    assert read(first.joinpath("payload"))? == "first producer"
+    view_directory(store, original, viewed)?
+    assert read(viewed.joinpath("payload"))? == "first producer"
+    # 4. Another project's view of the other bake is as exact.
+    other = scratch.path().joinpath("other").joinpath("dep")
+    view_directory(store, added, other)?
+    second = library_directory(store, other)?
+    assert read(second.joinpath("payload"))? == "second producer"
+    assert second.0 != first.0, "two unequal bakes were bound as one library"
+    # 5. Without a pinned selection there is nothing to choose by.
+    write_file(viewed.joinpath("fact.json"), "{\"identity\":\"" + identity + "\"}")?
+    match library_directory(store, viewed):
+        Ok(_) =>
+            assert false, "a view that names only the unit identity selected a payload"
+        Err(error) =>
+            assert "ambiguous-payload" in error, error
+    return Ok(None)
 
 
 pub def test_verify_reports_a_damaged_frame_in_every_live_segment() -> Result[None, str]:
