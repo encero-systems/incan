@@ -2,6 +2,7 @@
 
 from std.fs import Path
 from c_interop import parse_c_targets
+from cli_help import refused_option
 from features import FeatureRequest
 from home_paths import TOOLCHAIN
 from intake import ManifestReader, read_manifest_snapshot
@@ -61,7 +62,7 @@ pub def parse_lock_command(arguments: list[str]) -> Result[LockCommand, str]:
             index += 2
             continue
         if argument.startswith("-"):
-            return Err(f"unknown option `{argument}`")
+            return Err(refused_option(argument))
         if path_seen:
             return Err(f"one PATH is locked at a time; `{argument}` is a second")
         command.path = argument

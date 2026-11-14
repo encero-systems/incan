@@ -6,7 +6,7 @@ from std import toml
 from std.toml import TomlValue, TomlKind
 from std.hash import sha256
 from rust::std::str import from_utf8
-from manifest_errors import IntakeError, IntakeErrorKind
+from manifest_errors import NO_SDK_SELECTION, IntakeError, IntakeErrorKind
 from loaf_identity import crate_name, validate_loaf_identity, validate_project_identity, validate_registry_identity
 from toolchain_access import BINARY_SEPARATOR, BUILD_SEPARATOR, ToolchainAccess, access_keys, read_access
 from pub::incan_platform.trace import Operation
@@ -280,7 +280,7 @@ def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectInte
                 manifest,
                 ["sdk"],
                 IntakeErrorKind.Unsupported,
-                "there is no SDK selection: standard packages are ambient, and a unit reaches every one it uses",
+                NO_SDK_SELECTION,
             ),
         )
     refuse_moved_tables(root, manifest)?

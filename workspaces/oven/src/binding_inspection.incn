@@ -7,6 +7,7 @@ declarations of a source or project, read from the same `c_binding` records its 
 from std.fs import Path
 from std.json import JsonValue, parse
 from binding_receipt import binding_receipt
+from cli_help import refused_option
 from files import json_text
 from graph_inspection import graph_response
 from json_fields import required_items, required_text, string_value
@@ -51,7 +52,9 @@ pub def binding_options(arguments: list[str]) -> Result[BindingOptions, str]:
                 options.target = arguments[index + 1]
             index += 2
             continue
-        if argument.startswith("-") or path_given:
+        if argument.startswith("-"):
+            return Err(refused_option(argument))
+        if path_given:
             return Err(f"unexpected argument `{argument}`")
         options.path = argument
         path_given = true

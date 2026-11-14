@@ -1,4 +1,4 @@
-# behavior: 0.5.1's `--sdk-profile` is refused on every command that took it, naming its removal with SDK profiles and `[sdk]` and what selects a build in 0.6 (#3144)
+# behavior: 0.5.1's `--sdk-profile` is refused on every command that took it, naming its removal with SDK profiles and `[sdk]` and why 0.6 needs no SDK selection, in the words `[sdk]`'s own refusal uses (#3144)
 # cli-commands:
 #   check --sdk-profile minimal src/main.incn
 #   build --sdk-profile minimal
@@ -11,7 +11,7 @@
 #   check --sdk-profile=minimal src/main.incn
 # expect-stdout:
 # expect-stderr-contains:
-#   unknown option `--sdk-profile`: 0.6 removed SDK profiles and `[sdk]` (#3144); a Loaf's `[dependencies]` and `[project.features]` select what it builds
+#   unknown option `--sdk-profile`: 0.6 removed SDK profiles and `[sdk]` (#3144); there is no SDK selection: standard packages are ambient, and a unit reaches every one it uses
 # expect-exit: 2
 
 def main() -> None:

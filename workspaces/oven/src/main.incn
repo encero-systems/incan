@@ -53,7 +53,7 @@ from binding_inspection import binding_options, inspect_bindings
 from graph_incan import inspect_prepared, publish_prepared_graph
 from graph_mcp import serve_graph, options as mcp_options
 from toolchain_archive import toolchain_command, parse_arguments as archive_options
-from cli_help import help_hint, unknown_option
+from cli_help import help_hint, refused_option, unknown_option
 from command_help import UNIT_VALUE_OPTIONS, command_help, usage, version_text
 from surfaces import INTEROP_BAKE_MOVED, OVEN, invoked, misplaced
 from trust_commands import trust_command
@@ -474,7 +474,7 @@ def parse_options(arguments: list[str], default_path: str = "", outputs: bool = 
             options.feature_options = true
             options.request.all_features = true
         elif argument.startswith("-"):
-            return Err(f"unknown option `{argument}`")
+            return Err(refused_option(argument))
         elif options.path != "" and outputs and options.output == "":
             options.output = argument
         elif options.path != "":
