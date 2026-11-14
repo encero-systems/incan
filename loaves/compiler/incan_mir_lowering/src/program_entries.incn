@@ -521,13 +521,21 @@ def lower_ordinary_frame(
                         if record_report is not None:
                             report_scalar_refusal(record_report, record_identity, function.name, reason)?
     elif record_report is not None and inputs is not None:
-        report_scalar_refusal(
-            record_report,
-            record_identity,
-            function.name,
-            "lowering produced pending instances, synthesized frames, or intrinsic changes",
-        )?
+        refusal = lowering_refusal(len(pending), len(synthesized), len(intrinsics) - original_intrinsics)
+        report_scalar_refusal(record_report, record_identity, function.name, refusal)?
     return Ok((function, runtime, pending, synthesized))
+
+
+pub def lowering_refusal(pending: int, synthesized: int, carriers: int) -> str:
+    """Name every lowering side effect a keyed product cannot carry."""
+    mut causes: list[str] = []
+    if pending != 0:
+        causes.append("requested generic instances")
+    if synthesized != 0:
+        causes.append("synthesized helper frames")
+    if carriers != 0:
+        causes.append("admitted new intrinsic carriers")
+    return "lowering " + ", ".join(causes)
 
 
 def ordinary_product_inputs(
