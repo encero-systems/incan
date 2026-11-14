@@ -35,7 +35,7 @@ Every `[[loaf]]` requires `name`, `version`, `origin` and `dependencies`. `origi
 | `entry` | String | Exact compiled producer identity for a toolchain-origin Loaf. |
 | `dependencies` | Array of inline tables | Exact outgoing edges. Empty when the entry has no dependencies. |
 
-An edge requires `key`, `loaf` and `version`. `domain` defaults to `target`; `target` records a target predicate or triple; `entry` disambiguates a compiled producer. Two entries may have the same Loaf name when their exact versions differ. An edge must resolve to exactly one entry in its domain.
+An edge requires `key`, `loaf` and `version`. `domain` defaults to `target`; `target` records a target predicate or triple; `entry` disambiguates a compiled producer. Two entries may have the same Loaf name when their exact versions differ. A `name` or edge `loaf` with a capital letter is refused, never folded. An edge must resolve to exactly one entry in its domain.
 
 Each `[[loaf.features]]` table requires `target` and `domain`. `requested`, `enabled` and `predicates` are arrays of strings and default to empty. Host and target feature closures are separate entries.
 
