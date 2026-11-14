@@ -366,17 +366,20 @@ pub def file_metadata(path: Path) -> Result[Option[FileMetadata], str]:
 model Watched:
     """
     The files and directories this process observed while a request watched its inputs, each with the metadata it
-    had when first observed (empty when nothing was there).
+    had when first observed (empty when nothing was there), and the environment variables it read, each by an
+    observation of its value.
     """
 
     active: bool = false
     seen: Dict[str, str] = {}
+    variables: Dict[str, str] = {}
     fresh: list[str] = []
 
     def start(mut self) -> None:
         """Watch from now, forgetting any earlier watch."""
         self.active = true
         self.seen = {}
+        self.variables = {}
         self.fresh = []
 
     def watching(self) -> bool:
@@ -397,22 +400,33 @@ model Watched:
                     self.fresh.append(path)
             None => self.seen[path] = ""
 
+    def note_variable(mut self, name: str, observed: str) -> None:
+        """Remember an environment variable's first observation while watching."""
+        if self.active and name not in self.variables:
+            self.variables[name] = observed
+
     def finish(mut self) -> WatchedInputs:
         """Stop watching and return what was observed."""
         self.active = false
         found = WatchedInputs(
             stamps={path: self.seen[path] for path in self.seen.keys()},
+            variables={name: self.variables[name] for name in self.variables.keys()},
             fresh=[path for path in self.fresh],
         )
         self.seen = {}
+        self.variables = {}
         self.fresh = []
         return found
 
 
 pub model WatchedInputs:
-    """The paths a watch observed, each with its first metadata (empty when nothing was there)."""
+    """
+    The paths a watch observed, each with its first metadata (empty when nothing was there), and the environment
+    variables, each with an observation of its value that names no value.
+    """
 
     pub stamps: Dict[str, str]
+    pub variables: Dict[str, str] = {}
     # The observed files whose last change was too recent for their metadata to vouch for their bytes.
     pub fresh: list[str] = []
 
@@ -531,3 +545,8 @@ pub def now_seconds() -> int:
     match SystemTime.now().duration_since(UNIX_EPOCH):
         Ok(now) => return int(now.as_secs())
         Err(_) => return 0
+
+
+pub def note_variable(name: str, observed: str) -> None:
+    """Record, while a watch is on, an environment variable a request read, by an observation of its value."""
+    WATCHED.note_variable(name, observed)

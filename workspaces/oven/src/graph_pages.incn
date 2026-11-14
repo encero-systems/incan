@@ -20,6 +20,7 @@ from files import json_text, make_directory, read
 from home import home
 from json_fields import required_items, required_text, string_value
 from observation import WatchedInputs, file_metadata, trace
+from rust_freshness import environment_observation
 from publication import publish
 from toolchain import Toolchain
 from unit_freshness import fingerprint
@@ -66,7 +67,10 @@ pub def request_key(parts: list[str], toolchain: Toolchain) -> Result[str, str]:
 
 
 pub def warm_page(key: str) -> Result[Option[GraphPage], str]:
-    """The page of `key` when every input it was answered from still has the metadata it had."""
+    """
+    The page of `key` when every input it was answered from still has the metadata it had, and every environment
+    variable its preparation read still has the value it had.
+    """
     match record(key)?:
         None => return Ok(None)
         Some(document) =>
@@ -75,6 +79,12 @@ pub def warm_page(key: str) -> Result[Option[GraphPage], str]:
                 path = string_value(fields[0])?
                 if current_stamp(Path(path))? != string_value(fields[1])?:
                     trace(f"graph page {key[:12]}: {path} changed")
+                    return Ok(None)
+            for item in required_items(document, "variables")?:
+                fields = item.expect_array().map_err((error) => error.message())?
+                name = string_value(fields[0])?
+                if environment_observation(name)? != string_value(fields[1])?:
+                    trace(f"graph page {key[:12]}: environment variable {name} changed")
                     return Ok(None)
             return Ok(Some(page_of(key, document)?))
 
@@ -104,7 +114,11 @@ pub def publish_page(
     mut inputs: list[JsonValue] = []
     for path in sorted([name for name in observed.stamps.keys()]):
         inputs.append(JsonValue.array([JsonValue.string(path), JsonValue.string(observed.stamps[path])]))
-    identity = fingerprint([key, json_text(JsonValue.array(inputs))?])?
+    # Each environment variable is recorded as its first read observed it.
+    mut variables: list[JsonValue] = []
+    for name in sorted([name for name in observed.variables.keys()]):
+        variables.append(JsonValue.array([JsonValue.string(name), JsonValue.string(observed.variables[name])]))
+    identity = fingerprint([key, json_text(JsonValue.array(inputs))?, json_text(JsonValue.array(variables))?])?
     # 2. Answers for other preferences survive while the inputs are the same; the others' files go.
     directory = page_file(key)?.parent()
     make_directory(directory)?
@@ -136,6 +150,7 @@ pub def publish_page(
             "identity": JsonValue.string(identity),
             "snapshot": JsonValue.string(snapshot_id),
             "inputs": JsonValue.array(inputs),
+            "variables": JsonValue.array(variables),
             "answers": JsonValue.array(entries),
         },
     )
