@@ -14,7 +14,7 @@ from std.json import JsonValue
 from std.regex import Regex
 
 pub const TOOLCHAIN_VERSION: str = "0.6.0-dev.9"
-pub const TOOLCHAIN_DIRECTORY: str = "toolchains/0.6.0-dev.9"
+pub const TOOLCHAIN_DIRECTORY: str = "toolchains/" + TOOLCHAIN_VERSION
 pub const FAMILIES: FrozenList[str] = [
     "behavior",
     "check",

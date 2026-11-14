@@ -17,6 +17,7 @@ from native_build import (
 from release_support import (
     FAMILIES,
     TOOLCHAIN_DIRECTORY,
+    TOOLCHAIN_VERSION,
     BaselineReport,
     Counts,
     ReleaseTrace,
@@ -710,7 +711,7 @@ def test_the_release_s_registry_closure_records_each_unit_s_pinned_checksum() ->
     pins.write_text(pins_text, "utf-8", "strict", None).map_err((error) => error.message())?
     candidate = temporary.path().joinpath("candidate")
     candidate.mkdir(true, true).map_err((error) => error.message())?
-    manifest = "{\"name\": \"0.6.0-dev.9\", \"registry_units\": \"" + seed.joinpath("closure.json").0 + "\"}\n"
+    manifest = "{\"name\": \"" + TOOLCHAIN_VERSION + "\", \"registry_units\": \"" + seed.joinpath("closure.json").0 + "\"}\n"
     candidate.joinpath("toolchain.json").write_text(manifest, "utf-8", "strict", None).map_err(
         (error) => error.message(),
     )?

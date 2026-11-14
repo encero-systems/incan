@@ -3,6 +3,7 @@
 from rust::std::fs import hard_link, remove_file
 from std.fs import Path
 from files import make_directory, read, write
+from home_paths import TOOLCHAIN
 from scratch import scratch_directory
 from engine_capture import (
     AdmittedHome,
@@ -38,7 +39,7 @@ const PIN: str = """{"schema": "incan.toolchain/1", "driver": "bin/driver", "sys
 def installed_home(scratch: Path) -> Result[AdmittedHome, str]:
     """A home with an installed toolchain, standard Loaf sources and artifacts, and a content-named store."""
     root = scratch.joinpath("home")
-    toolchain = root.joinpath("toolchains").joinpath("0.6.0-dev.9")
+    toolchain = root.joinpath("toolchains").joinpath(TOOLCHAIN)
     for directory in ["loaves/core/debug", "native/runtime-1", "rust-abi", "bin"]:
         make_directory(toolchain.joinpath(directory))?
     write(toolchain.joinpath("toolchain.json"), PIN)?

@@ -41,7 +41,7 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 | IN12 | Declarations without a docstring | 529 | 529 | 529 |
 | IN13 | Helpers nested inside function bodies | 0 | 0 | 0 |
 | IN14 | Positional magic numbers (`parts[3]`) | 257 | — | 257 |
-| IN15 | The toolchain version spelled again where its constant exists | 11 | 7 | 11 |
+| IN15 | The toolchain version spelled again where its constant exists | 11 | 7 | 5 |
 | IN16 | Failure messages that name no subject | 341 | — | 335 |
 | MD1 | Hard-wrapped Markdown prose | 34 | 30 | 4 |
 | MD2 | RFC references in user-facing docs | 12 | 12 | 0 |
@@ -214,7 +214,7 @@ IN15 counts candidates. A message that names its subject in the surrounding erro
 
 - Source: `.agents/skills/review/SKILL.md`, Checklist 8 ("Single source of truth is preserved"); `.agents/learnings.md`, "Single-source plans prevent split brain".
 - Search: `rg -n -F '0.6.0-dev.9' -g '*.incn' -g '*.rs' -g '!**/fixtures/**'`
-- Homes: `TOOLCHAIN` in `workspaces/oven/src/home_paths.incn`, `TOOLCHAIN_VERSION` in `scripts/release_support.incn` and `TOOLCHAIN_NAME` in `workspaces/benchmarks/benchmark_support.incn`; one hit is a rustdoc example. Real: the seven spellings beside a home, in `scripts/release_support.incn` (`TOOLCHAIN_DIRECTORY`), `workspaces/benchmarks/dev_loop/report.incn`, `workspaces/benchmarks/dev_loop/run.incn`, `workspaces/oven/src/dependency_freshness_archive.incn`, `workspaces/oven/src/test_engine_capture.incn` and twice in `workspaces/oven/src/test_source_loaf.incn`.
+- Homes: `TOOLCHAIN` in `workspaces/oven/src/home_paths.incn`, `TOOLCHAIN_VERSION` in `scripts/release_support.incn`, `TOOLCHAIN_NAME` in `workspaces/benchmarks/benchmark_support.incn` and `TOOLCHAIN_DIRECTORY` in `workspaces/benchmarks/dev_loop/report.incn` (the dev loop is its own program and cannot import the benchmark support module); one hit is a rustdoc example. Real at `dd3ee72d8`: the seven spellings beside a home, in `scripts/release_support.incn` (`TOOLCHAIN_DIRECTORY`), the two dev-loop programs, `workspaces/oven/src/dependency_freshness_archive.incn`, `workspaces/oven/src/test_engine_capture.incn` and twice in `workspaces/oven/src/test_source_loaf.incn`; `scripts/test_release_support.incn` added an eighth after it. Each now reads its home.
 
 ### IN16 Failure messages that name no subject
 

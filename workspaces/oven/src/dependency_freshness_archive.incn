@@ -5,6 +5,7 @@ from std.environ import get_or
 from std.fs import Path
 from files import read
 from freshness_fixtures import write
+from home_paths import TOOLCHAIN
 from rust_target import decoded
 from toolchain_archive import admit_archive_member, require_rust_components, stage_loaves
 
@@ -33,7 +34,7 @@ pub def verify_archive_members(scratch: Path) -> Result[None, str]:
     write(root.joinpath("toolchain.json"), "{\"name\":\"archive-member-probe\"}")?
     archive = scratch.joinpath("members.tar")
     home = scratch.joinpath("archive-home")
-    prior = home.joinpath("toolchains/0.6.0-dev.9/prior")
+    prior = home.joinpath("toolchains").joinpath(TOOLCHAIN).joinpath("prior")
     write(prior, "unchanged")?
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     # 3. Each refusal leaves both the prior installation and its sibling staging directory unchanged.

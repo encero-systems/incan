@@ -4,6 +4,7 @@ from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from compile_time_trust import DirectCoverage, MISSING_TRUST_CODE, decide_registry_from_coverage
 from files import write
+from home_paths import TOOLCHAIN
 from lock_format import LockDependency, LockFeatures, LockLoaf, LockToolchain, OvenLock, graph_identity, lock_text
 from registry_units import RegistryUnit, RegistryUnits
 from source_loaf import create_source_loaf, read_source_loaf
@@ -191,7 +192,7 @@ def fixture_lock(macro_digest: str) -> Result[OvenLock, str]:
         format=1,
         mode="lowest",
         graph="",
-        toolchain=LockToolchain(version="0.6.0-dev.9", identity="sha256:compiler"),
+        toolchain=LockToolchain(version=TOOLCHAIN, identity="sha256:compiler"),
         loaves=[root, member, sibling, macro],
     )
     lock.graph = graph_identity(lock)?
@@ -228,7 +229,7 @@ def source_fixture(
         format=1,
         mode="lowest",
         graph="",
-        toolchain=LockToolchain(version="0.6.0-dev.9", identity="sha256:compiler"),
+        toolchain=LockToolchain(version=TOOLCHAIN, identity="sha256:compiler"),
         loaves=[own, selected],
     )
     lock.graph = graph_identity(lock)?
