@@ -17,8 +17,9 @@ from rust_target import decoded
 from registry_units import RegistryDemand, RegistryUnits
 from registry_metadata import bound_entries
 from native_closure_input import native_bindings
+from native_references import closure_reference, native_anchors
 from toml_fields import optional_string, optional_strings, read_manifest
-from toolchain import NativeCrate, Toolchain, located
+from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription
 from unit_freshness import fingerprint, unit_key
 from pub::incan_platform.trace import Operation
@@ -93,6 +94,7 @@ pub def published_bindings(
 ) -> Result[list[str], str]:
     """The requested native roots as the unit's authored Loaves publish them, or its standard Loaves with `standard`."""
     mut paths: list[str] = []
+    anchors = native_anchors()?
     for loaf in unit.loaves:
         if loaf.standard != standard:
             continue
@@ -101,7 +103,7 @@ pub def published_bindings(
             continue
         for name, artifact in native_bindings(closure, toolchain.native_closures)?:
             if name in roots:
-                paths.append(located(closure.parent(), artifact))
+                paths.append(closure_reference(closure.parent(), artifact, anchors)?)
     return Ok(unique(paths))
 
 

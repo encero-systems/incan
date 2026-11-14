@@ -18,6 +18,7 @@ from publication import publish, publish_binary
 from rust_facts import refresh as refresh_rust_facts
 from shared_link import shared_arguments
 from toolchain import Toolchain
+from native_references import native_anchors
 from unit import UnitDescription, dependency_source_roots
 from unit_freshness import Key, artifact_identity, unit_key
 from compiler_body_values import SelectedBodyPage
@@ -46,7 +47,7 @@ pub def compile_prepared_unit(
     Compile one prepared unit without dependency selection or recursive preparation.
 
     1. Publish the description under its reconciled identity and prepare the output directory.
-    2. Select profile flags and any requested shared development linkage.
+    2. Select profile flags, the current home's native-closure anchors and any requested shared development linkage.
     3. Compile or replay a certified refusal under the complete source identity.
     """
     # 1. The compiler reads the selected inputs and a generation-witnessed description.
@@ -59,7 +60,7 @@ pub def compile_prepared_unit(
     path = write_unit(unit, compiled, None, described_by(key), true)?
     trace_boundary("unit_written")
     output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
-    # 2. Native flags match the profile and the caller's explicit linkage request.
+    # 2. Native flags match the profile and the caller's explicit linkage request; published closures are anchored.
     executable = unit.kind in ["program", "test"]
     mut native = compiled_arguments(
         unit.profile,
@@ -68,7 +69,7 @@ pub def compile_prepared_unit(
         executable,
         dependency_source_roots(unit),
         toolchain.sysroot,
-    )? + shared_arguments(unit, development)? + archive_arguments(unit.c_archives)
+    )? + native_anchors()?.arguments() + shared_arguments(unit, development)? + archive_arguments(unit.c_archives)
     if toolchain.codegraph_on_request:
         native.append("--no-codegraph")
     if let Some(records) = graph_body_records:
