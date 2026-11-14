@@ -2,13 +2,15 @@
 //!
 //! Oven converts and validates the installed standard/runtime manifests once. A compiler process sees exactly the
 //! resulting root and digest in its environment, verifies the sealed-set receipt, and reads only content-addressed
-//! record values. Packages outside the installed set retain their ordinary Loaf artifact contract.
+//! record values. Each Loaf's record group is read and authenticated once per process; later demands in the same
+//! process, including later compilations in one worker, share the decoded group. Packages outside the installed set
+//! retain their ordinary Loaf artifact contract.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -53,7 +55,12 @@ struct RecordSet {
     records_read: AtomicUsize,
     /// Payload bytes this process has read from the payload directory.
     bytes_read: AtomicUsize,
+    /// Record groups this process already read, authenticated and decoded, by package prefix and projection.
+    admitted: Mutex<BTreeMap<(String, Projection), AdmittedGroup>>,
 }
+
+/// One authenticated, decoded record group and the manifest digest its metadata names.
+type AdmittedGroup = (Arc<LibraryManifest>, String);
 
 /// Records and payload bytes one installed set has read from its payload directory.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -96,7 +103,27 @@ impl RecordSet {
             entries,
             records_read: AtomicUsize::new(0),
             bytes_read: AtomicUsize::new(0),
+            admitted: Mutex::new(BTreeMap::new()),
         }
+    }
+
+    /// A group this process already authenticated that answers `projection`; the complete group answers both.
+    fn admitted(&self, prefix: &str, projection: Projection) -> Option<AdmittedGroup> {
+        let admitted = self.admitted.lock().unwrap_or_else(PoisonError::into_inner);
+        let key = |projection| (prefix.to_owned(), projection);
+        admitted
+            .get(&key(projection))
+            .or_else(|| admitted.get(&key(Projection::Complete)))
+            .map(|(manifest, digest)| (Arc::clone(manifest), digest.clone()))
+    }
+
+    /// Keep one authenticated group for the rest of the process: its values are content-named under a receipt that
+    /// cannot change while the process runs, so reading and hashing them again could only return the same bytes.
+    fn admit(&self, prefix: String, projection: Projection, group: &AdmittedGroup) {
+        self.admitted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert((prefix, projection), (Arc::clone(&group.0), group.1.clone()));
     }
 
     /// Records and payload bytes read from the payload directory so far.
@@ -229,6 +256,10 @@ fn read_group(
         .and_then(|value| value.to_str())
         .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
     let prefix = format!("loaf/{profile}/{name}/");
+    if let Some(group) = set.admitted(&prefix, projection) {
+        tracing::trace!(target: "incan::invocation", phase = "reuse", loaf = name);
+        return Ok(Some(group));
+    }
     let entries = {
         let _selection = tracing::trace_span!(
             target: "incan::invocation",
@@ -277,7 +308,16 @@ fn read_group(
             })
             .collect::<Result<Vec<_>, _>>()?;
         let bytes = opened.iter().map(|(_, _, _, value)| value.len()).sum::<usize>();
-        tracing::trace!(target: "incan::invocation", phase = "open", loaf = name, records, bytes);
+        let process = set.reads();
+        tracing::trace!(
+            target: "incan::invocation",
+            phase = "open",
+            loaf = name,
+            records,
+            bytes,
+            process_records = process.records,
+            process_bytes = process.bytes
+        );
         opened
     };
     let bytes = opened.iter().map(|(_, _, _, value)| value.len()).sum::<usize>();
@@ -335,7 +375,9 @@ fn read_group(
         tracing::trace!(target: "incan::invocation", phase = "decode", loaf = name, records, bytes);
         manifest
     };
-    Ok(Some((Arc::new(manifest), manifest_digest)))
+    let group = (Arc::new(manifest), manifest_digest);
+    set.admit(prefix, projection, &group);
+    Ok(Some(group))
 }
 
 /// Validate and select one Loaf group's record identities without opening their independently addressed values.
