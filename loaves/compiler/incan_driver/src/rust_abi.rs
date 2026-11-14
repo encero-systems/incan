@@ -787,4 +787,25 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn a_unit_reaching_its_own_crate_and_a_standard_path_extracts_them_together() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let shipped = installed(root.path())?;
+        // An extraction describes the types a signature names only for the crates the same extraction names, so a
+        // unit's paths are extracted in one session whenever one of them is rooted in the unit's own crate.
+        let paths = BTreeSet::from(["first::Carrier".to_owned(), "std::net::Ipv4Addr".to_owned()]);
+        let requests = std::cell::RefCell::new(Vec::new());
+        let extract = |requested: &BTreeSet<String>| -> Result<RustFacts, String> {
+            requests.borrow_mut().push(requested.clone());
+            Ok(RustFacts::new())
+        };
+        cached_path_facts(&unit(root.path(), "first", &shipped)?, &paths, extract)?;
+        assert_eq!(
+            requests.into_inner(),
+            vec![paths],
+            "the unit's paths were split between extractions"
+        );
+        Ok(())
+    }
 }
