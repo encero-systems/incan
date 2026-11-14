@@ -187,6 +187,7 @@ pub def boundary_plan_operand(
                         text = display_plan_operand(builder, operand, span)?
                         operand = read_place(text, true, span)
             _ => pass
+    operand = owned_union_member(builder, operand, target, span)?
     operand = carrier_callable_operand(builder, operand, target, span)?
     operand = option_payload_operand(builder, operand, target.clone(), span)?
     actual_source = operand_type(builder, operand)?
@@ -216,6 +217,30 @@ pub def boundary_plan_operand(
             builder.emit(plan_assign(output, operation, span))
             builder.owned.append(output.local)
             return Ok(read_place(output, true, span))
+
+
+def owned_union_member(
+    mut builder: Builder,
+    value: Operand,
+    target: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """
+    A union payload owns its member, so a nominal a shared parameter lends becomes the payload's copy at the union.
+
+    A field of a parameter the body only reads arrives as a shared reference to the field; its declared union member is
+    the owned nominal, which is cloned from that reference. Every other operand is returned unchanged.
+    """
+    match target:
+        PlanType.Enum(owner, _name) =>
+            index = owner - len(builder.enums)
+            if index < 0 or index >= len(builder.intrinsics) or builder.intrinsics[index].carrier != Carrier.Declared:
+                return Ok(value)
+        _ => return Ok(value)
+    match operand_type(builder, value)?:
+        PlanType.ModelRef(nominal, name) => return Ok(clone_model_reference(builder, value, nominal, name, span))
+        PlanType.EnumRef(nominal, name) => return Ok(clone_enum_reference(builder, value, nominal, name, span))
+        _ => return Ok(value)
 
 
 def copied_native_scalar_referent(
