@@ -56,6 +56,9 @@ from _body import (
     Unwind,
 )
 
+# The Incan import prefix a Rust standard-library function keeps in a product.
+const RUST_BINDING: str = "rust::"
+
 
 @derive(Serialize, Deserialize)
 enum StoredUnwind:
@@ -521,6 +524,11 @@ def store_binding(path: str) -> Result[str, str]:
         return Ok("std::" + path[len(primitives):])
     if path.startswith(standard):
         return Ok("std::" + path[len(standard):])
+    # A Rust standard-library function keeps the identity Incan source imports it by, as a runtime generic's
+    # `from rust::std::vec import Vec` does. Other crates stay outside this bounded schema.
+    for root in ["std", "core", "alloc"]:
+        if path.startswith(root + "::"):
+            return Ok(RUST_BINDING + path)
     return Err("scalar function products refuse an external without an Incan binding identity")
 
 
@@ -532,6 +540,8 @@ def restore_binding(identity: str) -> Result[str, str]:
         _ => pass
     runtime = "builtin::runtime::"
     standard = "std::"
+    if identity.startswith(RUST_BINDING):
+        return Ok(identity[len(RUST_BINDING):])
     if identity.startswith(runtime):
         return Ok("incan_native_runtime::" + identity[len(runtime):])
     if identity.startswith(standard):
