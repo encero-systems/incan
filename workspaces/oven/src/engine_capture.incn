@@ -7,7 +7,9 @@ cheaply as its kind allows.
   and never stats, reads or hashes anything under them.
 - **Editable inputs in reach** are the request roots, the files their recorded lookups resolve to, the paths where a
   recorded lookup found nothing, `loaf.toml`, the lock, the vocabulary and other files `loaf.toml` declares. `build`
-  and `bake` add the package's membership: its source root, listed with the compiler's rules.
+  and `bake` add the package's membership: its source root, listed with the compiler's rules. A whole program unit
+  adds the files its recorded source graphs read and the absent paths they probed, or, before it has a graph, its
+  listed membership.
 - **Editable inputs out of reach**, such as unrelated sibling fixtures, are never listed, checked or read.
 
 Freshness builds on the metadata observation of `observation`. A file whose device, inode, size, nanosecond
@@ -33,6 +35,7 @@ from observation import SETTLE_SECONDS, FileMetadata, children, file_metadata
 from toolchain import Toolchain, installation, toolchain_file
 from installation_page import admitted_identity
 from unit import manifest_candidates
+from unit_sources import SourceGraph
 
 const EPOCH_SCHEMA: str = "incan.engine.build-epoch/2"
 # How many times a file that changes while it is read is read before it is reported unstable.
@@ -307,8 +310,11 @@ pub model CaptureRequest:
     # The lookups a first capture starts from, as the current import resolution reports them. A later capture checks
     # these and the previous epoch's.
     pub witnesses: list[LookupWitness] = []
-    # The unit-record producer uses the existing conservative authored inventory until compiler reach replaces it.
+    # A whole program unit: the unit-record producer's request, which captures the unit's membership.
     pub whole_unit: bool = false
+    # What the whole unit's recorded source graphs read and probed. Capture checks exactly these paths; without them it
+    # lists the authored inventory. A request's later captures pass the same reach, so they compare the same paths.
+    pub reach: Option[SourceGraph] = None
 
 
 pub model AdmittedHome:
@@ -407,7 +413,8 @@ pub def capture_with(
 
     1. Take the frozen roots: from the previous epoch while the toolchain pin is unchanged, else from the pin's bytes.
     2. Capture the roots with their project configuration: the manifest lookup, the lock, the files it declares.
-    3. A `build` or `bake` captures the package's membership.
+    3. A `build` or `bake` captures the package's membership. A whole unit captures the paths its recorded source
+       graphs name, and lists its membership only before it has one.
     4. Check every recorded lookup, resolved or absent, unless it lies under a frozen root.
     5. Compare with the previous epoch.
     """
@@ -420,8 +427,8 @@ pub def capture_with(
     # 2. The roots and their configuration are always in reach.
     mut membership: list[SourceMembership] = []
     for root in request.roots:
-        membership.extend(state.root(absolute(root), request.selection.command, request.whole_unit)?)
-    # 3. A package's membership is listed with the compiler's collection rules.
+        membership.extend(state.root(absolute(root), request.selection.command, request.whole_unit, request.reach)?)
+    # 3. A package's membership is listed with the compiler's collection rules; a graph's paths were checked by name.
     for source in membership:
         state.members(source.root, source.extension)?
     # 4. Recorded lookups are checked at their exact paths, and nowhere else.
@@ -471,11 +478,18 @@ model Capture:
         self.frozen = self.admitted.frozen_roots()
         return Ok(None)
 
-    def root(mut self, path: str, command: str, whole_unit: bool) -> Result[list[SourceMembership], str]:
+    def root(
+        mut self,
+        path: str,
+        command: str,
+        whole_unit: bool,
+        reach: Option[SourceGraph],
+    ) -> Result[list[SourceMembership], str]:
         """
         Capture one request root and its project configuration; the membership directories of a `build` or `bake`.
 
-        1. `run` captures its file and looks up its manifest from the file's directory upward.
+        1. `run` captures its file and looks up its manifest from the file's directory upward. A whole unit captures
+           what its recorded graphs name, or, without them, returns its membership directories.
         2. `build` and `bake` capture the Loaf root's manifest and list its source root.
         """
         if self.is_frozen(path):
@@ -488,13 +502,27 @@ model Capture:
                 _ => pass
             _ = self.manifest_lookup(Path(path))?
             if whole_unit:
-                return self.unit_membership(Path(path))
+                match reach:
+                    Some(graph) => return self.graph_members(graph)
+                    None => return self.unit_membership(Path(path))
             return Ok([])
         # 2. A Loaf: its own manifest is required, and its source root holds its members.
         manifest = Path(path).joinpath("loaf.toml").0
         if not self.manifest(manifest)?:
             return Err(f"{manifest}: no such manifest")
         return self.source_memberships(path)
+
+    def graph_members(mut self, graph: SourceGraph) -> Result[list[SourceMembership], str]:
+        """
+        Capture each file a whole unit's recorded graphs read and each absent path they probed, by name, listing no
+        directory. A file created at a probed path is found here; one nothing imported or probed is never met.
+        """
+        for path in graph.read + graph.absent:
+            if self.is_frozen(path):
+                self.counters.frozen.inputs += 1
+                continue
+            _ = self.editable(path, InputRole.Member)?
+        return Ok([])
 
     def unit_membership(mut self, source: Path) -> Result[list[SourceMembership], str]:
         """Capture the whole-unit producer's authored inventory, including an entry outside its source root."""
