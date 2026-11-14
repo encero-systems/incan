@@ -442,9 +442,10 @@ impl<'a> EntryWriter<'a> {
         }
         written.push_str(&self.text(yielded.span.end, self.line_end(last.span.end)));
         if guarded {
+            // The failure was reported when it was raised; raising it again after teardown reports nothing more.
             let reraise = if stage.returns_value { "return " } else { "" };
             written.push_str(&format!(
-                "\n{indent}match {PREFIX}_panic:\n{indent}    {some}({PREFIX}_message) => {reraise}{PREFIX}_fail({PREFIX}_message)\n{indent}    {none} => pass"
+                "\n{indent}match {PREFIX}_panic:\n{indent}    {some}({PREFIX}_message) => {reraise}{PREFIX}_rethrow({PREFIX}_message)\n{indent}    {none} => pass"
             ));
             if stage.returns_value {
                 written.push_str(&format!("\n{indent}return {ok}({none})"));
@@ -491,6 +492,7 @@ impl<'a> EntryWriter<'a> {
             let mut names = vec![format!("fail_t as {PREFIX}_fail")];
             if uses.panic_boundary {
                 names.insert(0, format!("panic_text as {PREFIX}_panic_text"));
+                names.push(format!("rethrow_t as {PREFIX}_rethrow"));
             }
             imports.push(format!("from rust::incan_std_testing import {}", names.join(", ")));
         }

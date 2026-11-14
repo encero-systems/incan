@@ -89,6 +89,10 @@ def stderr_and_exit(header: Header, outcome: Outcome) -> list[str]:
     for item in header.items("expect-stderr-contains"):
         if item not in outcome.stderr:
             failures.append(f"stderr does not contain `{item}`")
+    for item in header.items("expect-stderr-once"):
+        seen = len(outcome.stderr.split(item)) - 1
+        if seen != 1:
+            failures.append(f"stderr contains `{item}` {seen} times, not once")
     if outcome.code != Some(header.expected_exit()):
         failures.append(f"expected exit {header.expected_exit()}; it exited {outcome.exit_text()}")
     return failures

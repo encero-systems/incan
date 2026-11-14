@@ -30,6 +30,7 @@ const RUN: FrozenList[str] = [
     "expect-stdout-contains",
     "expect-stderr",
     "expect-stderr-contains",
+    "expect-stderr-once",
     "expect-exit",
 ]
 # Every expectation a header can declare; `behavior:`, `retires:` and `pending:` belong to every family.
@@ -39,6 +40,7 @@ const EXPECTATIONS: FrozenList[str] = [
     "expect-stdout-contains",
     "expect-stderr",
     "expect-stderr-contains",
+    "expect-stderr-once",
     "expect-exit",
     "expect-diagnostic",
     "expect-accepted",
@@ -82,7 +84,7 @@ def admitted(family: str, cli: bool = false) -> list[str]:
     if family == "check":
         return ["expect-diagnostic", "expect-accepted"]
     if family == "testing":
-        return ["expect-stdout-contains", "expect-stderr-contains", "expect-exit"]
+        return ["expect-stdout-contains", "expect-stderr-contains", "expect-stderr-once", "expect-exit"]
     if family == "project":
         if cli:
             return list(RUN)
