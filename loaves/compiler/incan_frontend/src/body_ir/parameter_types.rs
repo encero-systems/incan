@@ -315,6 +315,21 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
     }
 }
 
+/// The module's retained bindings, built once and shared by the callable bodies that start from them.
+pub(super) fn shared_retained_type_identities(facts: &TypeCheckInfo) -> &bir::SharedIdentities {
+    facts
+        .body_ir_identity_bases
+        .retained(|| retained_type_identities(facts))
+}
+
+/// The module's declared bindings, built once and shared by the property, partial and default bodies that start
+/// from them.
+pub(super) fn shared_declared_type_identities(facts: &TypeCheckInfo) -> &bir::SharedIdentities {
+    facts
+        .body_ir_identity_bases
+        .declared(|| facts.declarations.named_type_identities.clone())
+}
+
 /// Copy checked carrier bindings and preserve unambiguous short names selected by standard storage projection.
 /// A projected name carries its original canonical owner; conflicting owners never grant a short binding.
 /// Qualified source references and native paths from structural storage add their declaration identities without
