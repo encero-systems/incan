@@ -29,7 +29,7 @@ from rust_registry import read_registry_units
 from rust_activation import ActivationPurpose
 from rust_manifest import rust_facet
 from rust_testing import build_rust_tests
-from project_lock import ensure_project_lock, lock_project, parse_lock_command
+from project_lock import ensure_project_lock, lock_project, locked_report, parse_lock_command
 from toolchain import load_toolchain, readmit_relinked_installation, rust_compiler
 from formatting import format_paths, parse_arguments as format_options
 from testing import (
@@ -423,13 +423,15 @@ def workspace_command(arguments: list[str]) -> None:
 
 
 def lock(arguments: list[str]) -> None:
-    """Resolve and report the root project's generated lock."""
+    """Resolve and report the root project's generated lock, and each lower bound it could not test."""
     match parse_lock_command(arguments):
         Err(reason) => syntax_error("lock", reason)
         Ok(command) =>
             match lock_project(command):
                 Err(reason) => fail(f"oven lock: {reason}", 1)
-                Ok(result) => println(f"locked {result.name} {result.version} ({result.mode})")
+                Ok(result) =>
+                    for line in locked_report(result):
+                        println(line)
 
 
 def syntax_error(command: str, reason: str) -> None:

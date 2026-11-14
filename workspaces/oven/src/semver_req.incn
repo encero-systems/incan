@@ -283,6 +283,46 @@ pub def requirement_matches(requirement: VersionReq, version: Version) -> bool:
     return eligible
 
 
+pub def named_version(comparator: Comparator) -> Version:
+    """The version a comparator's own components name, a missing minor or patch as zero."""
+    mut parts = comparator.parts
+    while len(parts) < 3:
+        parts.append("0")
+    return Version(major=parts[0], minor=parts[1], patch=parts[2], prerelease=comparator.prerelease, build=[])
+
+
+pub def lower_bound(requirement: VersionReq) -> Option[Version]:
+    """
+    The version a requirement names as its lower bound: the highest that its `^`, `~`, `>=`, `=` and partial wildcard
+    comparators name. `>` excludes the version it names, and `*` names none.
+    """
+    mut bounds: list[Version] = []
+    for comparator in requirement.comparators:
+        operator = comparator.operator
+        if operator == Operator.Greater or operator == Operator.Less or operator == Operator.LessEqual:
+            continue
+        if len(comparator.parts) == 0:
+            continue
+        bound = named_version(comparator)
+        if len(bounds) == 0:
+            bounds.append(bound)
+        elif compare_versions(bound, bounds[0]) > 0:
+            bounds[0] = bound
+    if len(bounds) == 0:
+        return None
+    return Some(bounds[0])
+
+
+pub def version_text(version: Version) -> str:
+    """A version as SemVer spells it: `MAJOR.MINOR.PATCH`, then `-PRERELEASE` and `+BUILD` when present."""
+    mut text = f"{version.major}.{version.minor}.{version.patch}"
+    if len(version.prerelease) > 0:
+        text += "-" + ".".join(version.prerelease)
+    if len(version.build) > 0:
+        text += "+" + ".".join(version.build)
+    return text
+
+
 def trim_zeros(value: str) -> str:
     """Normalize build numbers for comparison while retaining the original width as a tie-breaker."""
     mut cursor = 0
