@@ -25,7 +25,10 @@ use crate::library_manifest::{
 
 use super::lazy_entry::Summary;
 use super::{LoafIdentity, LoafIndexError};
+use crate::api_metadata::ApiDocumentation;
 
+/// The record family holding a Loaf's checked API documentation, which compiles never open (RFC 179).
+const DOCUMENTATION: &str = "documentation";
 const ROOT_ENV: &str = "INCAN_COMPILER_RECORD_ROOT";
 const DIGEST_ENV: &str = "INCAN_COMPILER_RECORD_DIGEST";
 const SET_FORMAT: &str = "incan.sealed-set/2";
@@ -88,11 +91,22 @@ impl Projection {
     /// Whether records of `family` belong to this projection.
     fn admits(self, family: &str) -> bool {
         match self {
-            Self::Complete | Self::Documented => true,
+            Self::Complete => family != DOCUMENTATION,
             Self::Execution => matches!(
                 family,
                 "metadata" | "contract-metadata" | "model" | "class" | "trait" | "enum" | "newtype"
             ),
+            Self::Documented => true,
+        }
+    }
+
+    /// The admitted projections that can answer a demand for this one, nearest first. The complete group answers an
+    /// executable demand; only a documented group answers a documented demand, and none answers a compile's.
+    fn answered_by(self) -> &'static [Projection] {
+        match self {
+            Self::Complete => &[Self::Complete],
+            Self::Execution => &[Self::Execution, Self::Complete],
+            Self::Documented => &[Self::Documented],
         }
     }
 }
@@ -109,13 +123,13 @@ impl RecordSet {
         }
     }
 
-    /// A group this process already authenticated that answers `projection`; the complete group answers both.
+    /// A group this process already authenticated that answers `projection`.
     fn admitted(&self, prefix: &str, projection: Projection) -> Option<AdmittedGroup> {
         let admitted = self.admitted.lock().unwrap_or_else(PoisonError::into_inner);
-        let key = |projection| (prefix.to_owned(), projection);
-        admitted
-            .get(&key(projection))
-            .or_else(|| admitted.get(&key(Projection::Complete)))
+        projection
+            .answered_by()
+            .iter()
+            .find_map(|answer| admitted.get(&(prefix.to_owned(), *answer)))
             .map(|(manifest, digest)| (Arc::clone(manifest), digest.clone()))
     }
 
@@ -473,6 +487,14 @@ fn decode_manifest(
         .map(|value| VocabExports::decode_compiler_record_value(&value))
         .transpose()
         .map_err(|error| unreadable(dir, name, format!("invalid compiler-record vocabulary: {error}")))?;
+    let mut contract_metadata =
+        decode_single::<LibraryContractMetadata>(&mut families, "contract-metadata", name, dir)?;
+    // Only a documented read selects the documentation record; a compile's projections never open it.
+    if let Some(documentation) = decode_optional::<Vec<ApiDocumentation>>(&mut families, DOCUMENTATION, name, dir)? {
+        contract_metadata
+            .restore_documentation(documentation)
+            .map_err(|reason| unreadable(dir, name, format!("invalid compiler-record documentation: {reason}")))?;
+    }
     let manifest = LibraryManifest {
         name: metadata.name,
         version: metadata.version,
@@ -496,7 +518,7 @@ fn decode_manifest(
         soft_keywords: SoftKeywordExports {
             activations: decode_values::<SoftKeywordActivation>(&mut families, "soft-keyword", name, dir)?,
         },
-        contract_metadata: decode_single::<LibraryContractMetadata>(&mut families, "contract-metadata", name, dir)?,
+        contract_metadata,
         rust_abi: decode_optional::<LibraryRustAbi>(&mut families, "rust-abi", name, dir)?,
     };
     if let Some((family, _)) = families.first_key_value() {

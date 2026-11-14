@@ -34,6 +34,7 @@ enum ManifestRecordFamily {
     Vocabulary,
     SoftKeyword,
     ContractMetadata,
+    Documentation,
     RustAbi,
 }
 
@@ -57,6 +58,7 @@ impl ManifestRecordFamily {
             Self::Vocabulary => "vocabulary",
             Self::SoftKeyword => "soft-keyword",
             Self::ContractMetadata => "contract-metadata",
+            Self::Documentation => "documentation",
             Self::RustAbi => "rust-abi",
         }
     }
@@ -286,15 +288,29 @@ fn export_manifest(
             records,
         )?;
     }
+    // Contract metadata keeps the compile facts; its checked API documentation becomes a separate record that compiles
+    // never open (RFC 179).
+    let (contract_facts, documentation) = manifest.contract_metadata.split_documentation();
     add_value(
         output,
         &prefix,
         ManifestRecordFamily::ContractMetadata,
         0,
         &manifest.name,
-        &manifest.contract_metadata,
+        &contract_facts,
         records,
     )?;
+    if !documentation.is_empty() {
+        add_value(
+            output,
+            &prefix,
+            ManifestRecordFamily::Documentation,
+            0,
+            &manifest.name,
+            &documentation,
+            records,
+        )?;
+    }
     if let Some(rust_abi) = &manifest.rust_abi {
         add_value(
             output,
