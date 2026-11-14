@@ -49,9 +49,9 @@ fn primitive_metadata_keeps_source_ownership() -> Result<(), String> {
     Ok(())
 }
 
-/// Carrier bytes remain identical to the original formatting, including UTF-8 owners and expanded declarations.
+/// Carrier keys encode a declaration's kind, owner and name, never its byte span, for UTF-8 owners and expansions.
 #[test]
-fn nominal_carrier_encoding_preserves_identity_bytes() -> Result<(), String> {
+fn nominal_carrier_keys_name_declarations_without_byte_spans() -> Result<(), String> {
     for (module, name) in [("types", "Pair"), ("módulo.类型", "Élément"), ("", "_")] {
         for (kind, spelling) in [
             (crate::SemanticSourceTargetKind::Model, "model"),
@@ -80,7 +80,7 @@ fn nominal_carrier_encoding_preserves_identity_bytes() -> Result<(), String> {
                     .map(|value| format!("_expansion_{}", hex::encode(value)))
                     .unwrap_or_default();
                 let expected = format!(
-                    "__incan_carrier_{spelling}_{}_{}_{}_{}_{start}_{end}{suffix}",
+                    "__incan_carrier_{spelling}_{}_{}_{}_{}{suffix}",
                     owner.len(),
                     encode(&owner),
                     name.len(),

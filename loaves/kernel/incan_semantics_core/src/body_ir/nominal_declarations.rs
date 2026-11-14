@@ -524,7 +524,8 @@ pub const NOMINAL_CARRIER_KEY_PREFIX: &str = "__incan_carrier_";
 /// Only Body IR producers publish these keys, beside the original canonical identity in their type maps. Ordinary
 /// source declarations in standard packages retain the same keys as other packages. Foreign storage keeps its
 /// native name. Standard source and local declarations cannot collide merely because their short names match.
-/// A key grants no lookup or layout without its retained identity.
+/// A key grants no lookup or layout without its retained identity. It names the declaration as its
+/// [`crate::stable_identity::StableDeclarationId`] does, so a line inserted above a declaration renames no carrier.
 pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
     if identity.namespace != SymbolNamespace::OrdinaryLexical || identity.scope_discriminant.is_some() {
         return None;
@@ -543,31 +544,25 @@ pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
         SymbolOrigin::Module(_) | SymbolOrigin::Package { .. } => {}
         _ => return None,
     }
+    // A carrier is module-level, so its stable identity is its kind, owning module and name; no byte span enters it.
+    let stable = crate::stable_identity::StableDeclarationId::from_canonical(identity, None, None)?;
     let module = crate::canonical_module_identity(identity)?;
     // Carrier keys are retained in checked scopes and native plans. Reserve their exact spelling rather than a
     // worst-case suffix for every ordinary declaration; spare capacity otherwise survives in every owned key.
     let mut capacity = NOMINAL_CARRIER_KEY_PREFIX.len()
         + kind.len()
-        + 6
-        + 2 * (module.len() + identity.declaration_name.len())
+        + 4
+        + 2 * (module.len() + stable.declaration_name.len())
         + carrier_decimal_digits(module.len())
-        + carrier_decimal_digits(identity.declaration_name.len())
-        + carrier_decimal_digits(identity.declaration_span.start)
-        + carrier_decimal_digits(identity.declaration_span.end);
+        + carrier_decimal_digits(stable.declaration_name.len());
     if identity.declaration_span.expansion.is_some() {
         capacity += "_expansion_".len() + 64;
     }
     let mut key = String::with_capacity(capacity);
     write!(key, "{NOMINAL_CARRIER_KEY_PREFIX}{kind}_{}_", module.len()).ok()?;
     append_carrier_hex(&mut key, module.as_bytes());
-    write!(key, "_{}_", identity.declaration_name.len()).ok()?;
-    append_carrier_hex(&mut key, identity.declaration_name.as_bytes());
-    write!(
-        key,
-        "_{}_{}",
-        identity.declaration_span.start, identity.declaration_span.end
-    )
-    .ok()?;
+    write!(key, "_{}_", stable.declaration_name.len()).ok()?;
+    append_carrier_hex(&mut key, stable.declaration_name.as_bytes());
     if let Some(expansion) = identity.declaration_span.expansion {
         key.push_str("_expansion_");
         append_carrier_hex(&mut key, &expansion);
