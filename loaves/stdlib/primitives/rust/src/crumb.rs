@@ -765,7 +765,7 @@ fn magnitude_bytes(value: u128) -> u64 {
 
 fn zigzag_bytes(magnitude: u128, negative: bool) -> u64 {
     let bits = zigzag_bit_length(magnitude, negative);
-    if bits == 0 { 0 } else { (bits + 7) / 8 }
+    if bits == 0 { 0 } else { bits.div_ceil(8) }
 }
 
 fn zigzag_bit_length(magnitude: u128, negative: bool) -> u64 {

@@ -185,7 +185,7 @@ fn read_block(
     };
     let mut present = rows;
     if absent != 'r' {
-        if rows % 8 != 0 {
+        if !rows.is_multiple_of(8) {
             budget.bytes(1)?;
             if bitmap[bitmap.len() - 1] >> (rows % 8) != 0 {
                 return Err("nonzero_padding");
