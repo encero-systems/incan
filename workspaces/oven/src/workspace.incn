@@ -125,16 +125,23 @@ pub def find_workspace(start: Path) -> Result[Workspace, str]:
     return Err(f"no loaf.toml with a [workspace] table at or above {start.0}")
 
 
-def read_workspace(root: Path, manifest: Path, document: TomlValue) -> Result[Workspace, str]:
-    """A workspace root's members: the root project when it has one, then each declared member directory."""
-    listed = strings(document, "workspace.members", manifest)
-    mut members: list[Member] = []
-    if let Some(name) = document.get_optional[str]("project.name").map_err((error) => error.message())?:
-        members.append(Member(name=name, relative=".", root=root, is_root_member=true))
+pub model DeclaredMembers:
+    """A workspace root's member directories as declared: globs expanded, exclusions removed, in declaration order."""
+
+    pub directories: list[str]
+    pub excluded: list[str]
+    pub unmatched: list[str]
+
+
+pub def declared_members(root: Path, document: TomlValue, manifest: Path) -> Result[DeclaredMembers, str]:
+    """
+    The root-relative directories `workspace.members` names, each glob expanded to the directories that hold a
+    `loaf.toml`, without those `workspace.exclude` names, and the patterns that matched nothing.
+    """
     excluded = [normalized(item) for item in strings(document, "workspace.exclude", manifest)]
     mut directories: list[str] = []
     mut unmatched: list[str] = []
-    for item in listed:
+    for item in strings(document, "workspace.members", manifest):
         if has_glob(item):
             matched = matched_members(root, normalized(item))?
             if len(matched) == 0:
@@ -144,9 +151,17 @@ def read_workspace(root: Path, manifest: Path, document: TomlValue) -> Result[Wo
                     directories.append(relative)
         elif normalized(item) not in directories:
             directories.append(normalized(item))
-    for relative in directories:
-        if is_excluded(relative, excluded):
-            continue
+    kept = [relative for relative in directories if not is_excluded(relative, excluded)]
+    return Ok(DeclaredMembers(directories=kept, excluded=excluded, unmatched=unmatched))
+
+
+def read_workspace(root: Path, manifest: Path, document: TomlValue) -> Result[Workspace, str]:
+    """A workspace root's members: the root project when it has one, then each declared member directory."""
+    declared = declared_members(root, document, manifest)?
+    mut members: list[Member] = []
+    if let Some(name) = document.get_optional[str]("project.name").map_err((error) => error.message())?:
+        members.append(Member(name=name, relative=".", root=root, is_root_member=true))
+    for relative in declared.directories:
         member_manifest = root.joinpath(relative).joinpath("loaf.toml")
         if not member_manifest.is_file():
             return Err(f"{manifest.0}: workspace member `{relative}` has no loaf.toml")
@@ -167,8 +182,8 @@ def read_workspace(root: Path, manifest: Path, document: TomlValue) -> Result[Wo
             manifest=manifest,
             members=members,
             default_members=defaults,
-            excluded=excluded,
-            unmatched=unmatched,
+            excluded=declared.excluded,
+            unmatched=declared.unmatched,
         ),
     )
 

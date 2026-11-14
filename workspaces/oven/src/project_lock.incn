@@ -1,4 +1,4 @@
-"""Resolve, compare and atomically publish the one oven.lock owned by a root project."""
+"""Resolve, compare and atomically publish the one oven.lock owned by a root project or a workspace root."""
 
 from std.fs import Path
 from std.json import JsonValue
@@ -8,7 +8,8 @@ from features import FeatureRequest
 from home_paths import TOOLCHAIN
 from intake import ManifestReader, read_digests, read_manifest_snapshot, read_project
 from interop_lock import LockInterop, interop_difference, locked_interop
-from loaf_local_graph import LocalDemand, LocalFacet, local_facets, unique
+from loaf_local_graph import LocalDemand, LocalFacet, compiled_domain, local_facets, unique
+from lock_authority import LockAuthority, lock_authority
 from lock_format import (
     DEFAULT_MODE,
     LockDependency,
@@ -17,12 +18,12 @@ from lock_format import (
     LockToolchain,
     OvenLock,
     graph_identity,
-    lock_path,
+    lock_roots,
     read_lock,
     validate_mode,
     write_lock,
 )
-from json_fields import required_text
+from json_fields import required_items, required_text
 from observation import file_digest, observe, trace
 from registry_units import RegistryDemand, RegistryUnit, RegistryUnits
 from retained_readings import recall, retain_content
@@ -43,11 +44,14 @@ from unit import discovered_project
 from unit_freshness import compiler_fingerprint
 
 # The selection under which a root lock's last no-change reconciliation is retained beside the lock.
-const SETTLED_LOCK: str = "incan.oven.settled-lock/2"
+const SETTLED_LOCK: str = "incan.oven.settled-lock/3"
 
 
 pub model LockResult:
-    """The root identity and mode of a resolved lock, and whether this command published it."""
+    """
+    The root identity and mode of a resolved lock, and whether this command published it. A virtual workspace's lock
+    is named `workspace` and its directory.
+    """
 
     pub name: str
     pub version: str
@@ -95,10 +99,16 @@ pub def parse_lock_command(arguments: list[str]) -> Result[LockCommand, str]:
 
 
 pub def lock_project(command: LockCommand) -> Result[LockResult, str]:
-    """Resolve and publish the explicit root project, reporting its selected sticky mode."""
+    """
+    Resolve and publish the lock of the explicit project, reporting its selected sticky mode: a workspace root's or a
+    member's is the workspace's one lock, for every member.
+    """
     match root_project(Path(command.path))?:
         None => return Err(f"{command.path}: no root loaf.toml")
-        Some(root) => return reconcile(root, "debug", FeatureRequest(), {}, ManifestReader(), command.mode, false, true)
+        Some(root) =>
+            authority = lock_authority(root)?
+            request = FeatureRequest()
+            return reconcile(authority, root.0, "debug", request, {}, ManifestReader(), command.mode, false, true)
 
 
 pub def ensure_project_lock(
@@ -112,28 +122,32 @@ pub def ensure_project_lock(
     """
     Refresh a run, build or test root's lock silently, or prove `--locked` needs no change.
 
-    1. A lock last reconciled to no change, under the same question, is not resolved again while it and the one
-       manifest that reconciliation read keep the identities they had.
+    1. A lock last reconciled to no change, under the same question, is not resolved again while it and the manifests
+       that reconciliation read keep the identities they had.
     2. Otherwise reconcile, and retain a no-change result for the next command.
+
+    The lock is the project's own, or its workspace's when a workspace lists the project (`lock_authority`).
     """
     match root_project(path)?:
         None => return Ok(None)
         Some(root) =>
             # 1. An edit to a source changes nothing a lock is resolved from.
-            question = settled_question(profile, request, substitutes, locked)?
+            authority = lock_authority(root)?
+            question = settled_question(root.0, profile, request, substitutes, locked)?
             mut lock = ""
-            if lock_path(root).is_file():
-                lock = content_identity(lock_path(root))?
-            if settled(root, question, lock)?:
+            if authority.lock().is_file():
+                lock = content_identity(authority.lock())?
+            if settled(authority, question, lock)?:
                 return Ok(None)
             # 2. Only a no-change result is retained, for the lock bytes it compared against.
-            result = reconcile(root, profile, request, substitutes, reader, "", locked, true)?
+            result = reconcile(authority, root.0, profile, request, substitutes, reader, "", locked, true)?
             if not result.changed and result.interop == 0:
-                remember_settled(root, question, reader, lock)
+                remember_settled(authority, question, reader, lock)
             return Ok(None)
 
 
 def settled_question(
+    selected: str,
     profile: str,
     request: FeatureRequest,
     substitutes: Dict[str, str],
@@ -141,12 +155,13 @@ def settled_question(
 ) -> Result[str, str]:
     """
     Everything a root's lock is resolved from besides its own manifest and lock: the request, the toolchain and the
-    registry closure it ships, as one selection.
+    registry closure it ships, and the project the request selects, as one selection.
     """
     toolchain = load_toolchain()?
     closure = observe(Path(toolchain.registry_units))?
     mut parts = [SETTLED_LOCK, TOOLCHAIN, compiler_fingerprint(toolchain)?, toolchain.registry_units_identity]
     parts.append(closure.stamp)
+    parts.append(selected)
     parts.append(profile)
     parts.append(",".join(request.features))
     parts.append(f"{request.default_features} {request.all_features} {locked}")
@@ -160,58 +175,73 @@ def content_identity(path: Path) -> Result[str, str]:
     return Ok(f"sha256:{file_digest(path)?}")
 
 
-def settled(root: Path, question: str, lock: str) -> Result[bool, str]:
+def settled(authority: LockAuthority, question: str, lock: str) -> Result[bool, str]:
     """
-    Whether the root's lock, whose bytes have identity `lock`, was last reconciled to no change under `question`, and
-    the root manifest that reconciliation read still has the bytes it read.
+    Whether the lock, whose bytes have identity `lock`, was last reconciled to no change under `question`, and every
+    manifest that reconciliation read still has the bytes it read: exactly the manifests the lock is resolved from now.
     """
     if lock == "":
         return Ok(false)
-    path = lock_path(root)
+    path = authority.lock()
     match recall(path, question, lock):
         None => return Ok(false)
         Some(value) =>
-            manifest = root.joinpath("loaf.toml")
-            if required_text(value, "manifest").unwrap_or("") != manifest.0 or not manifest.is_file():
-                return Ok(false)
-            if content_identity(manifest)? != required_text(value, "digest").unwrap_or(""):
+            mut seen: list[str] = []
+            for item in required_items(value, "manifests").unwrap_or([]):
+                manifest = Path(required_text(item, "manifest").unwrap_or(""))
+                if manifest.0 == "" or not manifest.is_file():
+                    return Ok(false)
+                if content_identity(manifest)? != required_text(item, "digest").unwrap_or(""):
+                    return Ok(false)
+                seen.append(manifest.0)
+            if sorted(seen) != sorted(authority.manifests()):
                 return Ok(false)
             trace(f"lock settled {path.0}")
             return Ok(true)
 
 
-def remember_settled(root: Path, question: str, reader: ManifestReader, lock: str) -> None:
+def remember_settled(authority: LockAuthority, question: str, reader: ManifestReader, lock: str) -> None:
     """
-    Retain a no-change reconciliation of the lock with identity `lock` when it read one manifest, the root's, and that
-    manifest and the lock still hold the bytes it read. A project with path dependencies is reconciled every time.
+    Retain a no-change reconciliation of the lock with identity `lock` when it read no manifest but those the lock is
+    resolved from, the root's and a workspace's members', and they and the lock still hold the bytes it read. A
+    project with path dependencies outside its workspace is reconciled every time.
     """
-    # 1. Every manifest the reader parsed must be the root's, however its path was spelled, with one set of bytes.
+    if lock == "":
+        return
+    # 1. Every manifest the reader parsed must be one of the authority's, however its path was spelled, with one set
+    #    of bytes.
+    owned = authority.manifests()
     digests = read_digests(reader)
-    manifest = root.joinpath("loaf.toml")
-    mut read = ""
+    mut read: Dict[str, str] = {}
     for spelled in digests.keys():
         match Path(spelled).resolve():
             Err(_) => return
             Ok(resolved) =>
-                if resolved.0 != manifest.0 or (read != "" and read != digests[spelled]):
+                if resolved.0 not in owned:
                     return
-                read = digests[spelled]
-    if read == "" or lock == "":
+                if resolved.0 in read and read[resolved.0] != digests[spelled]:
+                    return
+                read[resolved.0] = digests[spelled]
+    if len(read) == 0:
         return
-    # 2. Neither file changed since the reconciliation read it.
-    match content_identity(manifest):
-        Err(_) => return
-        Ok(current) =>
-            if current != f"sha256:{read}":
-                return
-    path = lock_path(root)
+    # 2. No manifest the lock is resolved from changed since the reconciliation, and neither did the lock.
+    mut manifests: list[JsonValue] = []
+    for manifest in owned:
+        match content_identity(Path(manifest)):
+            Err(_) => return
+            Ok(current) =>
+                if manifest in read and current != f"sha256:{read[manifest]}":
+                    return
+                manifests.append(
+                    JsonValue.object({"manifest": JsonValue.string(manifest), "digest": JsonValue.string(current)}),
+                )
+    path = authority.lock()
     match content_identity(path):
         Err(_) => return
         Ok(current) =>
             if current != lock:
                 return
-    value = JsonValue.object({"manifest": JsonValue.string(manifest.0), "digest": JsonValue.string(f"sha256:{read}")})
-    retain_content(path, question, lock, value)
+    retain_content(path, question, lock, JsonValue.object({"manifests": JsonValue.array(manifests)}))
 
 
 pub def root_project(path: Path) -> Result[Option[Path], str]:
@@ -223,8 +253,36 @@ pub def root_project(path: Path) -> Result[Option[Path], str]:
         Some(root) => return Ok(Some(root.resolve().map_err((error) => f"cannot {error.message()}")?))
 
 
+def root_demands(
+    authority: LockAuthority,
+    selected: str,
+    request: FeatureRequest,
+    reader: ManifestReader,
+) -> Result[list[LocalDemand], str]:
+    """
+    One root demand for each project the lock resolves: the command's request for the project it selects, and each
+    other workspace member with its default features.
+    """
+    mut demands: list[LocalDemand] = []
+    for project in authority.projects:
+        mut demand = LocalDemand(project=project, domain=DependencyDomain.Target, features=[], defaults=true)
+        if project == selected or not authority.workspace:
+            demand = LocalDemand(
+                project=project,
+                domain=DependencyDomain.Target,
+                features=request.features,
+                defaults=request.default_features,
+                all_features=request.all_features,
+            )
+        demands.append(compiled_domain(demand, reader)?)
+    if len(demands) == 0:
+        return Err(f"{authority.root.joinpath("loaf.toml").0}: the workspace lists no member to lock")
+    return Ok(demands)
+
+
 def reconcile(
-    root: Path,
+    authority: LockAuthority,
+    selected: str,
     profile: str,
     request: FeatureRequest,
     substitutes: Dict[str, str],
@@ -238,10 +296,12 @@ def reconcile(
 
     1. Read and authenticate an existing lock before it can constrain selection.
     2. Choose the explicit mode, else the one the existing lock records under any toolchain, else the default.
-    3. Resolve with valid existing producer pins and construct the complete format-1 graph.
+    3. Resolve every project of the authority in one graph, with valid existing producer pins, and construct the
+       complete format-1 graph.
     4. Refuse a locked change, or publish a changed lock without changing command output.
     """
-    path = lock_path(root)
+    root = authority.root
+    path = authority.lock()
     mut existing: Option[OvenLock] = None
     if path.is_file():
         existing = Some(read_lock(path)?)
@@ -258,42 +318,35 @@ def reconcile(
     mode = selected_mode(existing, requested_mode)
     rustc = rust_compiler(toolchain)
     configuration = target_configuration(rustc)?
-    demand = LocalDemand(
-        project=root.0,
-        domain=DependencyDomain.Target,
-        features=request.features,
-        defaults=request.default_features,
-        all_features=request.all_features,
-    )
-    facets = local_facets(demand, configuration, substitutes, reader)?
-    refuse_unmanaged_providers([root.0] + [facet.project for facet in facets], reader)?
+    demands = root_demands(authority, selected, request, reader)?
+    facets = local_facets(demands[0], configuration, substitutes, reader, demands[1:])?
+    refuse_unmanaged_providers(authority.projects + [facet.project for facet in facets], reader)?
     mut registry = read_registry_units(Path(toolchain.registry_units), root.0, reader, false)?
     registry.resolution_mode = mode
     if let Some(known) = existing:
         if keeps_existing(known, requested_mode, mode):
             registry.recorded_bindings = retained_bindings(known, facets, registry.units)?
-    selected = resolve_registry(registry, facets, profile, root.0)?
-    mut generated = resolved_lock(root, mode, identity, configuration.triple, facets, selected)?
-    projects = [("", root.0)] + [(facet_package(facet), facet.project) for facet in facets]
+    selected_units = resolve_registry(registry, facets, profile, authority.projects)?
+    mut generated = resolved_lock(authority, mode, identity, configuration.triple, facets, selected_units)?
+    mut projects = [(facet_package(facet), facet.project) for facet in facets]
+    if root.0 in authority.projects:
+        projects = [("", root.0)] + projects
     generated.interop = local_interop(root.0, projects, reader)?
     generated.graph = graph_identity(generated)?
-    root_entry = root_loaf(generated)?
     changed = existing is None or not same_resolution(existing, generated)
     if locked and changed:
         return Err(f"{path.0} would change at {difference(existing, generated)}; run `oven lock`")
     if write and changed:
         write_lock(path, generated)?
         trace(f"lock refreshed {path.0} graph={generated.graph}")
-    return Ok(
-        LockResult(
-            name=root_entry.name,
-            version=root_entry.version,
-            mode=mode,
-            changed=changed,
-            interop=len(generated.interop),
-            untested=untested_bounds(facets, registry.units, selected)?,
-        ),
-    )
+    mut result = LockResult(name="workspace", version=root.name(), mode=mode, changed=changed)
+    result.interop = len(generated.interop)
+    result.untested = untested_bounds(facets, registry.units, selected_units)?
+    for entry in generated.loaves:
+        if entry.origin == "root":
+            result.name = entry.name
+            result.version = entry.version
+    return Ok(result)
 
 
 def refuse_unmanaged_providers(projects: list[str], reader: ManifestReader) -> Result[None, str]:
@@ -432,7 +485,7 @@ def locked_features_cover(entry: LockLoaf, domain: str, requested: list[str]) ->
 
 
 def resolved_lock(
-    root: Path,
+    authority: LockAuthority,
     mode: str,
     identity: str,
     target: str,
@@ -442,7 +495,7 @@ def resolved_lock(
     """Project the selected local and compiled registry graph into format 1, then seal its semantic identity."""
     mut loaves: list[LockLoaf] = []
     for facet in facets:
-        loaves.append(local_entry(root, facet, facets, registry, target)?)
+        loaves.append(local_entry(authority, facet, facets, registry, target)?)
     for unit in registry.units:
         loaves.append(toolchain_entry(unit, registry.units, facets, registry.bindings, target)?)
     mut lock = OvenLock(
@@ -457,13 +510,17 @@ def resolved_lock(
 
 
 def local_entry(
-    root: Path,
+    authority: LockAuthority,
     facet: LocalFacet,
     facets: list[LocalFacet],
     registry: RegistryUnits,
     target: str,
 ) -> Result[LockLoaf, str]:
-    """Record one root or path facet with every active local and registry edge."""
+    """
+    Record one root, workspace member or path facet with every active local and registry edge. A workspace's root
+    project is the lock's root; each other member is a `member`, with its path from the workspace root.
+    """
+    root = authority.root
     mut dependencies: list[LockDependency] = []
     for edge in facet.local:
         child = facet_for(edge.project, edge.domain, facets)?
@@ -487,7 +544,9 @@ def local_entry(
         )
     mut origin = "path"
     mut path = relative_path(root, Path(facet.project))
-    if facet.project == root.0:
+    if facet.project in authority.projects:
+        origin = "member"
+    if facet.project == root.0 and facet.project in authority.projects:
         origin = "root"
         path = ""
     return Ok(
@@ -605,14 +664,6 @@ def relative_path(root: Path, selected: Path) -> str:
     return "/".join(parts)
 
 
-def root_loaf(lock: OvenLock) -> Result[LockLoaf, str]:
-    """Return the lock's single root entry after graph validation established that invariant."""
-    for entry in lock.loaves:
-        if entry.origin == "root":
-            return Ok(entry)
-    return Err("resolved lock has no root Loaf")
-
-
 def same_resolution(existing: Option[OvenLock], generated: OvenLock) -> bool:
     """Compare semantic graph, mode and format independently of generated table order."""
     if let Some(known) = existing:
@@ -627,12 +678,14 @@ def difference(existing: Option[OvenLock], generated: OvenLock) -> str:
             return f"toolchain {known.toolchain.version} -> {generated.toolchain.version}"
         if known.mode != generated.mode:
             return f"version mode {known.mode} -> {generated.mode}"
-        known_root = root_loaf(known)
-        generated_root = root_loaf(generated)
         interop = interop_difference(known.interop, generated.interop)
         if interop != "":
             return interop
-        if known_root != generated_root:
+        known_roots = lock_roots(known)
+        generated_roots = lock_roots(generated)
+        if known_roots != generated_roots:
+            if len(known_roots) > 1 or len(generated_roots) > 1:
+                return "a workspace member or one of its dependency edges"
             return "the root Loaf or one of its dependency edges"
         return "the resolved dependency graph"
     return "the missing lock"

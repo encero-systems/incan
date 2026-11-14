@@ -7,7 +7,8 @@ from files import read_json
 from json_fields import field, required_items, required_text, strings
 from intake import ManifestReader
 from home_paths import TOOLCHAIN
-from lock_format import lock_path, read_lock, recorded_bindings
+from lock_authority import project_lock_path
+from lock_format import read_lock, recorded_bindings
 from loaf_local_graph import LocalFacet
 from observation import Observation, observe
 from pub::incan_platform.trace import Operation
@@ -114,11 +115,14 @@ pub def project_registry(
     reader: ManifestReader,
     use_project_lock: bool = true,
 ) -> Result[RegistryUnits, str]:
-    """Apply the root project's validated oven.lock as the exact producer constraint for registry selection."""
+    """
+    Apply the root project's validated oven.lock, its workspace's when a workspace lists the project, as the exact
+    producer constraint for registry selection.
+    """
     _ = reader
     if not use_project_lock or project == "" or not Path(project).joinpath("loaf.toml").is_file():
         return Ok(registry)
-    path = lock_path(Path(project))
+    path = project_lock_path(Path(project))
     if not path.is_file():
         return Ok(registry)
     lock = read_lock(path)?
@@ -254,11 +258,12 @@ pub def resolve_registry(
     registry: RegistryUnits,
     facets: list[LocalFacet],
     profile: str,
-    root: str = "",
+    roots: list[str] = [],
 ) -> Result[RegistryUnits, str]:
     """
-    Resolve exact registry producers without importing their payloads, as `oven lock` requires. With `root`, only the
-    root facet's requirements are the project's own; without it, every requirement is.
+    Resolve exact registry producers without importing their payloads, as `oven lock` requires. With `roots`, only
+    those projects' requirements are the lock's own, a workspace's root project and members; without them, every
+    requirement is.
     """
     mut demands: list[RegistryDemand] = []
     for facet in facets:
@@ -267,7 +272,7 @@ pub def resolve_registry(
                 RegistryDemand(
                     selection=registry_selection(record)?,
                     domain=facet.domain.value(),
-                    direct=root == "" or facet.project == root,
+                    direct=len(roots) == 0 or facet.project in roots,
                 ),
             )
     return registry.select(demands, profile)

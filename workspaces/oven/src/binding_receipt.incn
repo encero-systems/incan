@@ -14,7 +14,8 @@ from c_interop import CInteropTarget, parse_c_targets
 from intake import ManifestReader, read_manifest_snapshot
 from interop_lock import interop_fact, locked_interop
 from json_fields import required_items, required_text, string_value
-from lock_format import lock_path, read_lock
+from lock_authority import lock_authority
+from lock_format import read_lock
 
 const RECEIPT_SCHEMA: int = 2
 
@@ -100,8 +101,13 @@ pub def binding_receipt(export: str, root: str, triple: str) -> Result[JsonValue
 
 
 def receipt_target(root: str, triple: str) -> Result[ReceiptTarget, str]:
-    """The project's contract for `triple`, as current `oven.lock` records it, with its declared binding relations."""
-    lock_file = lock_path(Path(root))
+    """
+    The project's contract for `triple`, as current `oven.lock` records it, with its declared binding relations. A
+    workspace member's is in its workspace's lock, under the member's package.
+    """
+    project = Path(root).resolve().map_err((error) => f"{root}: {error.message()}")?
+    authority = lock_authority(project)?
+    lock_file = authority.lock()
     if not lock_file.is_file():
         return Err(f"`--target {triple}` joins the locked C interop contract, but {lock_file.0} is missing; run `oven lock`")
     lock = read_lock(lock_file)?
@@ -112,7 +118,8 @@ def receipt_target(root: str, triple: str) -> Result[ReceiptTarget, str]:
     for declared in targets:
         if declared.target != triple:
             continue
-        current = locked_interop(root, [declared])?[0]
+        mut current = locked_interop(root, [declared])?[0]
+        current.package = authority.package(project)?
         mut recorded = false
         for entry in lock.interop:
             if entry.target == triple and entry == current:

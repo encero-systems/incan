@@ -1,0 +1,143 @@
+"""
+The directory that holds a project's one `oven.lock`.
+
+A workspace root is the sole authority for its members' resolution and lock (RFC 117): a project that a workspace lists
+as a member locks at that workspace's root, with every other member, and never beside its own manifest. A project
+that no workspace lists locks at its own root.
+"""
+
+from std import toml
+from std.fs import Path
+from std.toml import TomlValue
+from files import read
+from lock_format import LOCK_NAME
+from workspace import declared_members
+
+
+pub model LockAuthority:
+    """Where a project's lock lives, and every project that lock resolves."""
+
+    # The directory that holds `oven.lock`.
+    pub root: Path
+    # The resolved roots of the projects the lock resolves: the one project, or a workspace's root project, when it has
+    # one, followed by its members in declaration order.
+    pub projects: list[str]
+    # Whether `root` is a workspace root.
+    pub workspace: bool = false
+
+    pub def lock(self) -> Path:
+        """The one generated lock."""
+        return self.root.joinpath(LOCK_NAME)
+
+    pub def manifests(self) -> list[str]:
+        """Every manifest the lock is resolved from: the authority's own, then each project's."""
+        mut paths = [self.root.joinpath("loaf.toml").0]
+        for project in self.projects:
+            manifest = Path(project).joinpath("loaf.toml").0
+            if manifest not in paths:
+                paths.append(manifest)
+        return paths
+
+    pub def package(self, project: Path) -> Result[str, str]:
+        """
+        The package that names `project`'s own facts in the lock: empty for the authority's root project, else the
+        member's declared name, or its directory's.
+        """
+        if project.0 == self.root.0:
+            return Ok("")
+        manifest = project.joinpath("loaf.toml")
+        document = toml.parse(read(manifest)?).map_err((error) => f"{manifest.0}: {error.message()}")?
+        match document.get_optional[str]("project.name").map_err((error) => f"{manifest.0}: {error.message()}")?:
+            Some(name) => return Ok(name)
+            None => return Ok(project.name())
+
+
+pub def lock_authority(project: Path) -> Result[LockAuthority, str]:
+    """
+    The lock authority of the project at the resolved directory `project`.
+
+    1. A workspace root is its own authority, for its root project and every member.
+    2. A member is under the nearest workspace root above it that lists it.
+    3. Any other project is its own authority.
+    """
+    # 1. The directory itself declares the workspace.
+    if let Some(members) = workspace_members(project)?:
+        mut projects: list[str] = []
+        if declares_project(project)?:
+            projects.append(project.0)
+        return Ok(LockAuthority(root=project, projects=projects + members, workspace=true))
+    # 2. Only a workspace that lists the project owns its lock; an unlisted directory inside one stays its own.
+    mut directory = project.parent()
+    while directory.0 != "":
+        if let Some(members) = workspace_members(directory)?:
+            if project.0 in members:
+                mut projects: list[str] = []
+                if declares_project(directory)?:
+                    projects.append(directory.0)
+                return Ok(LockAuthority(root=directory, projects=projects + members, workspace=true))
+        parent = directory.parent()
+        if parent.0 == directory.0:
+            break
+        directory = parent
+    # 3. A project outside every workspace.
+    return Ok(LockAuthority(root=project, projects=[project.0]))
+
+
+def workspace_document(directory: Path) -> Result[Option[TomlValue], str]:
+    """A directory's manifest when it declares `[workspace]`; a manifest without the word is not parsed."""
+    manifest = directory.joinpath("loaf.toml")
+    if not manifest.is_file():
+        return Ok(None)
+    source = read(manifest)?
+    if "workspace" not in source:
+        return Ok(None)
+    document = toml.parse(source).map_err((error) => f"{manifest.0}: {error.message()}")?
+    if "workspace" not in document.as_table().map_err((error) => f"{manifest.0}: {error.message()}")?:
+        return Ok(None)
+    return Ok(Some(document))
+
+
+def declares_project(directory: Path) -> Result[bool, str]:
+    """Whether a workspace root is rooted: its manifest also declares `[project]`."""
+    match workspace_document(directory)?:
+        None => return Ok(false)
+        Some(document) =>
+            manifest = directory.joinpath("loaf.toml").0
+            return Ok("project" in document.as_table().map_err((error) => f"{manifest}: {error.message()}")?)
+
+
+def workspace_members(directory: Path) -> Result[Option[list[str]], str]:
+    """
+    The resolved roots of the members a workspace root declares, globs expanded and exclusions removed
+    (`declared_members`), in declaration order; `None` for a directory that is not a workspace root.
+    """
+    match workspace_document(directory)?:
+        None => return Ok(None)
+        Some(document) =>
+            manifest = directory.joinpath("loaf.toml")
+            mut members: list[str] = []
+            for relative in declared_members(directory, document, manifest)?.directories:
+                if relative == ".":
+                    continue
+                member = directory.joinpath(relative)
+                if not member.joinpath("loaf.toml").is_file():
+                    return Err(f"{manifest.0}: workspace member `{relative}` has no loaf.toml")
+                resolved = member.resolve().map_err(
+                    (error) => f"{manifest.0}: workspace member `{relative}`: {error.message()}",
+                )?
+                if resolved.0 not in members:
+                    members.append(resolved.0)
+            return Ok(Some(members))
+
+
+pub def project_lock_path(project: Path) -> Path:
+    """
+    The lock a project's producer selection is read from: its authority's. A project whose authority cannot be read
+    names its own, and the command's lock step reports why.
+    """
+    match project.resolve():
+        Err(_) => return project.joinpath(LOCK_NAME)
+        Ok(resolved) =>
+            match lock_authority(resolved):
+                Ok(authority) => return authority.lock()
+                Err(_) => return project.joinpath(LOCK_NAME)
