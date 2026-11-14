@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, HashSet};
 use incan_lang::lang::standard_packages::standard_package_namespace_policy;
 use serde::{Deserialize, Serialize};
 
-use super::LibraryIdentityGraph;
+use super::{CanonicalIdentityExport, LibraryIdentityGraph};
 use crate::api_metadata::{
     ApiDeclaration, CheckedApiMetadataPackage, is_package_root_module, resolve_api_alias_target,
 };
@@ -35,6 +35,11 @@ pub struct DeclaredType {
     /// that declaration, and the package root does not publish the same declaration under the spelling. Any other
     /// spelling is read through the package root's public names.
     pub scoped: bool,
+    /// The identity of the declaration the Loaf publishes at its declaring module, so a consumer names the type
+    /// without the Loaf's identity graph. A set converted before type scopes carried it has none, and neither has
+    /// a declaration the Loaf does not publish; the consumer then reads the manifest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<CanonicalIdentityExport>,
 }
 
 /// The type scope of every module of `api`, in module order. `package` is the Loaf's package name, which roots the
@@ -70,6 +75,9 @@ pub fn module_type_scopes(
                         module: declaring,
                         name: declared,
                         scoped,
+                        identity: published
+                            .as_ref()
+                            .and_then(|published| CanonicalIdentityExport::from_canonical(package, published)),
                     },
                 );
             }

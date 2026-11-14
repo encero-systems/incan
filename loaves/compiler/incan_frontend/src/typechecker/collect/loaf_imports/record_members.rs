@@ -2,12 +2,12 @@
 //! function, constant or static by its module-qualified name, so checking a program reads what it uses rather than the
 //! Loaf's whole checked API. Whatever these records cannot settle exactly is left to the Loaf's manifest, as before.
 
-use incan_lang::lang::types::builtin_type_name;
 use serde_json::Value;
 
+use super::record_types::RecordSpellings;
 use super::*;
 use crate::library_manifest::declaration_records::{DeclarationFacet, OVERLOAD_FIELD, restored_declaration};
-use crate::library_manifest::{CanonicalIdentityExport, ExportIdentity, LibraryIdentityGraph, TypeRef};
+use crate::library_manifest::{CanonicalIdentityExport, ExportIdentity, LibraryIdentityGraph};
 
 impl TypeChecker {
     /// Bind `from <loaf>[.<path>] import <namespace>, …` from the Loaf's namespace records when every item names one of
@@ -156,9 +156,9 @@ impl TypeChecker {
 
     /// Resolve a function, constant or static published by a public namespace from the namespace's record and the
     /// member's own declaration records; an overloaded function is resolved from each overload's records. `None` when
-    /// they cannot settle it exactly: no records, another kind of member, an alias, a bounded type parameter, a
-    /// signature naming anything but built-in types and its own type parameters, a default record that names no
-    /// overload, or no single declaration identity; the manifest then resolves the member.
+    /// they cannot settle it exactly: no records, another kind of member, an alias, a bounded type parameter, a type
+    /// its declaring module's records do not settle (see [`Self::record_type_remapping`]), a default record that names
+    /// no overload, or no single declaration identity; the manifest then resolves the member.
     pub(in crate::typechecker) fn record_module_member(
         &mut self,
         library: &str,
@@ -186,8 +186,10 @@ impl TypeChecker {
             .declaration_facts(library, DeclarationFacet::Defaults, &qualified)
             .ok()??;
         let declarations = restored_declarations(&signatures, &defaults)?;
-        if !declarations.iter().all(settled_by_built_in_types) {
-            return None;
+        let mut remapping = HashMap::new();
+        for declaration in &declarations {
+            let spellings = RecordSpellings::of_member(declaration)?;
+            remapping.extend(self.record_type_remapping(library, source_module, &spellings, &mut Vec::new())?);
         }
         let public_path = std::iter::once(admitted.name.clone())
             .chain(module_path.iter().cloned())
@@ -212,6 +214,7 @@ impl TypeChecker {
             }
             overloads => self.record_overloads(overloads, exports, &public_path, &source_path)?,
         };
+        self.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
         Self::mark_compiled_class_field_provider(&mut kind, library);
         let mut source_module_path = admitted.binding_root;
         source_module_path.extend(source_module.iter().cloned());
@@ -299,21 +302,6 @@ fn restored_declarations(signatures: &[Value], defaults: &[Value]) -> Option<Vec
         .collect()
 }
 
-/// Whether `declaration` is a function, constant or static whose types are built in, or a function's own unbounded
-/// type parameters.
-fn settled_by_built_in_types(declaration: &ApiDeclaration) -> bool {
-    match declaration {
-        ApiDeclaration::Function(function) => {
-            function.type_params.iter().all(|param| param.bounds.is_empty())
-                && function.params.iter().all(|param| built_in_type(&param.ty))
-                && built_in_type(&function.return_type)
-        }
-        ApiDeclaration::Const(constant) => built_in_type(&constant.ty),
-        ApiDeclaration::Static(item) => built_in_type(&item.ty),
-        _ => false,
-    }
-}
-
 /// The members a namespace record publishes under `name`.
 fn namespace_members<'a>(namespace: &'a Value, name: &str) -> Vec<&'a Value> {
     namespace
@@ -323,17 +311,4 @@ fn namespace_members<'a>(namespace: &'a Value, name: &str) -> Vec<&'a Value> {
         .flatten()
         .filter(|member| member.get("name").and_then(Value::as_str) == Some(name))
         .collect()
-}
-
-/// Whether `ty` names built-in types, `None` and type parameters only, which no provider's type remapping can change.
-fn built_in_type(ty: &TypeRef) -> bool {
-    match ty {
-        TypeRef::Named { name, origin } => origin.is_none() && ResolvedType::builtin_simple(name).is_some(),
-        TypeRef::Applied { name, args, origin } => {
-            origin.is_none() && builtin_type_name(name).is_some() && args.iter().all(built_in_type)
-        }
-        TypeRef::Function { params, return_type } => params.iter().all(built_in_type) && built_in_type(return_type),
-        TypeRef::TypeParam { .. } => true,
-        _ => false,
-    }
 }

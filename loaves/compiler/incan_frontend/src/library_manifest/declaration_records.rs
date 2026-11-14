@@ -128,6 +128,20 @@ pub fn restored_declaration(mut signature: Value, defaults: Option<&Value>) -> V
     signature
 }
 
+/// A nominal declaration as the documentation-free checked API carries it, from its `signature` record, its `layout`
+/// record's value, if it has one, and its `default` record's value, if it has one: the layout's fields or variants are
+/// put back on the signature, then each stated default on the member its path names.
+pub fn restored_nominal_declaration(mut signature: Value, layout: Option<&Value>, defaults: Option<&Value>) -> Value {
+    if let (Value::Object(fields), Some(Value::Object(layout))) = (&mut signature, layout) {
+        for field in LAYOUT_FIELDS {
+            if let Some(members) = layout.get(field) {
+                fields.insert(field.to_owned(), members.clone());
+            }
+        }
+    }
+    restored_declaration(signature, defaults)
+}
+
 /// Put the default fields recorded for `member` back on `value`, and those of its member entries on them.
 fn put_defaults(value: &mut Value, member: &str, defaults: &std::collections::BTreeMap<String, Map<String, Value>>) {
     let Value::Object(fields) = value else {
