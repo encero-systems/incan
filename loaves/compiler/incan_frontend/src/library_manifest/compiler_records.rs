@@ -257,7 +257,12 @@ fn digests(
     name: &str,
     metadata: &Map<String, Value>,
 ) -> Result<FactDigests, LibraryManifestError> {
+    let mut canonical_metadata = metadata.clone();
+    for field in PUBLICATION_FIELDS {
+        canonical_metadata.remove(field);
+    }
     let metadata_record = record(RecordFamily::Metadata, 0, name, metadata)?;
+    let metadata_canonical = LibraryManifest::encode_compiler_record_value(&canonical_metadata)?;
     let mut content = records
         .iter()
         .chain(std::iter::once(&metadata_record))
@@ -271,8 +276,9 @@ fn digests(
         .collect::<Vec<_>>();
     let mut semantic = records
         .iter()
-        .chain(std::iter::once(&metadata_record))
+        .filter(|record| record.family != RecordFamily::Documentation)
         .map(|record| semantic_entry(record, &record.value))
+        .chain(std::iter::once(semantic_entry(&metadata_record, &metadata_canonical)))
         .collect::<Vec<_>>();
     content.sort();
     semantic.sort();
