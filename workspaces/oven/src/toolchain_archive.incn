@@ -42,6 +42,7 @@ from cli_help import render, unknown_option
 from jec import begin, record
 from installation_check import verify_installed_runtime
 from compiler_facts import retire_facts_below
+from toolchain_removal import REMOVE_USAGE, remove_toolchain
 from surfaces import expose_entry_points
 from compiler_record_admission import convert, installed_records, shipped_pin
 
@@ -58,37 +59,43 @@ const FROM_PROFILE: str = "../../../"
 const RESTATED_RECORD_SUFFIX: str = "native.json.oven-unit"
 pub const PACK_USAGE: str = "incan toolchain pack OUT"
 pub const INSTALL_USAGE: str = "incan toolchain install ARCHIVE"
+const EXPECTED: str = "expected `pack OUT`, `install ARCHIVE` or `remove VERSION`"
 const RUST_TOOLCHAIN: str = "1.98.0"
 const RUST_INSTALL_COMMAND: str = "rustup toolchain install 1.98.0 --profile minimal --component rustc-dev"
 
 
 pub def help_text(command: str) -> str:
-    """Describe the selected archive operation without loading or changing an installation."""
+    """Describe the selected toolchain operation without loading or changing an installation."""
     if command == "pack":
         return render(PACK_USAGE, [], "incan toolchain pack toolchain.tar.zst")
+    if command == "remove":
+        return render(REMOVE_USAGE, [], f"incan toolchain remove {TOOLCHAIN}")
     return render(INSTALL_USAGE, [], "incan toolchain install toolchain.tar.zst")
 
 
 pub def parse_arguments(arguments: list[str]) -> Result[tuple[str, str], str]:
-    """Require an archive command and one operand, rejecting unknown commands and options before I/O."""
+    """Require a toolchain command and one operand, rejecting unknown commands and options before I/O."""
     if len(arguments) == 0:
-        return Err("expected `pack OUT` or `install ARCHIVE`")
+        return Err(EXPECTED)
     command = arguments[0]
-    if command not in ["pack", "install"] and not command.startswith("-"):
+    if command not in ["pack", "install", "remove"] and not command.startswith("-"):
         return Err(f"unknown command `{command}`")
     match unknown_option(arguments):
         Some(reason) => return Err(reason)
         None => pass
     if len(arguments) != 2:
-        return Err("expected `pack OUT` or `install ARCHIVE`")
+        return Err(EXPECTED)
     return Ok((command, arguments[1]))
 
 
 pub def toolchain_command(request: tuple[str, str]) -> Result[i32, str]:
-    """Execute a parsed archive request; syntax has already been validated without side effects."""
+    """Execute a parsed toolchain request; syntax has already been validated without side effects."""
     command, operand = request
     if command == "pack":
         pack_toolchain(Path(operand))?
+        return Ok(0)
+    if command == "remove":
+        remove_toolchain(operand)?
         return Ok(0)
     install_toolchain(Path(operand))?
     return Ok(0)

@@ -24,7 +24,7 @@ from files import json_text
 from unit_publication import published_identity
 from rust_target import compiler_version, deployment_target
 from sealed_set import Profile, Record, SetSpec, admit, export_set, mapped_value, selected_value
-from pub::incan_platform.store import Snapshot, begin, commit, get, lease, put
+from pub::incan_platform.store import Snapshot, begin, commit, delete, get, lease, put
 from store_path_conversion import claim, snapshot
 from toolchain_types import NativeCrate, Toolchain
 from installation_documents import capture as capture_documents
@@ -453,3 +453,20 @@ def specification(key: str, digest: str) -> SetSpec:
         namespaces=[],
         dependencies=[],
     )
+
+
+pub def forget(directory: Path) -> Result[bool, str]:
+    """
+    Withdraw the home's selection of the page admitted for the installation at `directory`, and say whether there was
+    one. The page itself is left to collection, like everything else no root reaches.
+    """
+    store = installation_catalog()?
+    key = question(directory)
+    held = claim(store, key).map_err((error) => error.message())?
+    view = snapshot(store).map_err((error) => error.message())?
+    if get(view, binding(key)).map_err((error) => error.message())? == None:
+        return Ok(false)
+    commit(delete(begin(view), binding(key))).map_err((error) => error.message())?
+    SCOPE.forget()
+    clear_documents()
+    return Ok(true)

@@ -49,6 +49,7 @@ incan tools doctor [--format text|json]
 incan mcp PATH [--profile NAME]
 incan toolchain pack OUT
 incan toolchain install ARCHIVE
+incan toolchain remove VERSION
 ```
 
 There is no implicit command. Without `PATH`, `run`, `check`, `lint` and `build` select the Loaf at or above the current directory, `test` and `fmt` use the current directory, and every other command that takes `PATH` either states its default in its section or requires it. A command only `oven` runs that 0.5.1 ran as an `incan` command names its `oven` spelling: `incan lock` reports ``incan: unknown command `lock`: run `oven lock` ``, and `incan new`, `incan init`, `incan version BUMP`, `incan workspace` and `incan env` report ``incan: `incan COMMAND` is an Oven command: run `oven COMMAND` ``. Each name runs only its own commands. A command only `oven` runs is an unknown command to `incan`: `incan bakery status` exits `2` and reports ``incan: unknown command `bakery` ``. A language command given to `oven` exits `2` without running and names the command that runs it: `oven fmt` reports ``oven: `oven fmt` is a language command: run `incan fmt` ``.
@@ -57,7 +58,7 @@ There is no implicit command. Without `PATH`, `run`, `check`, `lint` and `build`
 
 ## Help and version
 
-`oven --help`, `oven -h` and `oven help` print the `oven` synopses above and the CLI reference location, then exit `0`; `incan --help`, `incan -h` and `incan help` do the same for `incan`. `COMMAND --help` or `COMMAND -h` prints that command's usage, options and one example, then exits `0`. Nested commands include the subcommand: `oven owner stop --help`, `oven bakery status --help`, `oven inspect dependencies --help`, `incan inspect codegraph --help`, `incan toolchain pack --help` and `incan toolchain install --help`. Help does not require a project or installed toolchain. Arguments after `--` and option values are not interpreted as help flags.
+`oven --help`, `oven -h` and `oven help` print the `oven` synopses above and the CLI reference location, then exit `0`; `incan --help`, `incan -h` and `incan help` do the same for `incan`. `COMMAND --help` or `COMMAND -h` prints that command's usage, options and one example, then exits `0`. Nested commands include the subcommand: `oven owner stop --help`, `oven bakery status --help`, `oven inspect dependencies --help`, `incan inspect codegraph --help`, `incan toolchain pack --help`, `incan toolchain install --help` and `incan toolchain remove --help`. Help does not require a project or installed toolchain. Arguments after `--` and option values are not interpreted as help flags.
 
 `oven --version` prints `oven 0.6.0-dev.9` and `incan --version` prints `incan 0.6.0-dev.9`, then exit `0`. `oven version` and `incan version` without arguments print the same. `--version --help` prints its usage and example.
 
@@ -547,11 +548,13 @@ Requires `INCAN_ENGINE=records`. `ID` is the 32-character lowercase hexadecimal 
 | `native_interface_evaluations` | Integer | `1` when the lowering produced the unit's native interface for this request, otherwise `0`. |
 | `index_pages`, `keys_listed` | Integers | Bakery index pages read and keys listed while producing the unit, before the request commits. |
 
-## `incan toolchain pack` and `install`
+## `incan toolchain pack`, `install` and `remove`
 
 `pack OUT` archives the installed toolchain closure. Supported extensions are `.tar`, `.tar.gz` and `.tar.zst`. Paths in the packed toolchain manifest are relative; the local Rust sysroot is excluded.
 
 `install ARCHIVE` first requires Rust `1.98.0` with `rustc-dev`; without either it fails naming the `rustup` command that installs it. It stages and verifies the archive before publishing it under `INCAN_HOME/toolchains/0.6.0-dev.9/`. A `.tar.zst` archive is decompressed in process beside the stage, so installation needs no `zstd` program; the decompressed copy is removed whatever the outcome. Absolute archive members, parent traversal and any member whose root component is `sysroot` are refused. This protects the machine-local Rust sysroot link while allowing ordinary nested directories such as a bundled C environment's `c/sysroot`. Manifest paths must be portable, the toolchain name must match this Oven, and named artifacts must exist. Installation binds a local Rust sysroot and verifies the driver's compiler identity. A refused archive preserves the existing installation. After publishing, installation copies the running program to `INCAN_HOME/bin/incan` and exposes `INCAN_HOME/bin/oven` as a symbolic link to that installed copy, then prints `entry points: oven and incan in DIR`. A different file with either name is refused and left in place.
+
+`remove VERSION` deletes the toolchain installed under `INCAN_HOME/toolchains/VERSION/`, the installation page the home admitted for it and the home's admission records of its files, then prints `removed VERSION: DIR`. It deletes nothing from the bakery: units baked with the toolchain stay until `oven bakery gc` finds them unreachable. The machine's Rust sysroot, which the installation only links, and the programs in `INCAN_HOME/bin` are left in place. A `VERSION` that is empty, starts with `.` or contains a path separator exits `1` with `` `VERSION` is not a toolchain name ``; one with no installation exits `1` with `no toolchain VERSION is installed: DIR holds no toolchain`.
 
 ## Environment variables
 

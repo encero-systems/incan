@@ -1,0 +1,44 @@
+"""Remove one installed toolchain from this home, with the records the home kept of it (RFC 118)."""
+
+from rust::std::fs import remove_dir_all, rename
+from rust::std::process import id
+from std.fs import Path
+from compiler_facts import retire_facts_below
+from home_paths import home
+from installation_page import forget
+from unit_publication import retire_admissions
+
+pub const REMOVE_USAGE: str = "incan toolchain remove VERSION"
+
+
+pub def remove_toolchain(version: str) -> Result[None, str]:
+    """
+    Delete the toolchain installed as `version`: its directory, the page this home admitted for it and the admission
+    records of its files.
+
+    Removal withdraws the toolchain as something the home selects. It deletes nothing the bakery holds: units baked
+    with the toolchain stay until `oven bakery gc` finds them unreachable.
+
+    1. Refuse a name that is not one directory of the home's toolchains, and a toolchain that is not installed.
+    2. Move the installation aside, so that no command selects a toolchain that is half removed.
+    3. Withdraw its admitted page and the admission records of its paths.
+    4. Delete it.
+    """
+    # 1. A version names exactly one directory; it never reaches a stage, a backup or a path outside the home.
+    if version == "" or version.startswith(".") or "/" in version or "\\" in version:
+        return Err(f"`{version}` is not a toolchain name")
+    toolchains = home()?.joinpath("toolchains")
+    directory = toolchains.joinpath(version)
+    if not directory.joinpath("toolchain.json").is_file():
+        return Err(f"no toolchain {version} is installed: {directory.0} holds no toolchain")
+    # 2. From here on the name selects nothing.
+    removed = toolchains.joinpath(f".removed-{version}-{id()}")
+    rename(directory.0, removed.0).map_err((error) => f"cannot move toolchain {directory.0} aside: {error}")?
+    # 3. The home's records are keyed by the installed paths, which now hold nothing.
+    _ = forget(directory)?
+    _ = retire_admissions(directory)?
+    _ = retire_facts_below(directory)?
+    # 4. The files go last; the machine's Rust sysroot is only linked from them and stays.
+    remove_dir_all(removed.0).map_err((error) => f"cannot remove toolchain {removed.0}: {error}")?
+    println(f"removed {version}: {directory.0}")
+    return Ok(None)
