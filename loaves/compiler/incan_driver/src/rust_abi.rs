@@ -110,6 +110,151 @@ pub fn cached_rust_facts(unit: &UnitDescription) -> CliResult<RustFactsSetup> {
     Ok(setup)
 }
 
+/// Read or record bounded check-time extractions, keeping installed crates' facts once per toolchain.
+///
+/// A path rooted in `std`, `core` or `alloc`, or in a crate whose artifact the installed toolchain holds (its registry
+/// entries), describes the same items for every unit: its facts depend on the toolchain and that artifact, never on a
+/// unit's own dependencies. Those paths are extracted together once per toolchain and stored in its content store,
+/// where every unit and test case that reaches them reads them. The paths rooted in a unit's own crates keep the
+/// unit's indexed bakery extraction.
+pub fn cached_path_facts(
+    unit: &UnitDescription,
+    paths: &BTreeSet<String>,
+    extract: impl Fn(&BTreeSet<String>) -> Result<RustFacts, String>,
+) -> CliResult<RustFacts> {
+    let Ok((directory, toolchain)) = installed_toolchain(unit) else {
+        return unit_path_facts(unit, paths, &extract);
+    };
+    let (installed, own): (BTreeSet<String>, BTreeSet<String>) = paths
+        .iter()
+        .cloned()
+        .partition(|path| installed_artifact(unit, &directory, path).is_some());
+    let mut facts = RustFacts::new();
+    if !installed.is_empty() {
+        let rust_abi = directory.join("rust-abi");
+        let shared = match installed_identity(unit, &directory, &toolchain, &installed) {
+            Ok(identity) => shared_extraction(
+                &rust_abi.join("paths"),
+                &rust_abi.join(CONTENT_STORE),
+                &identity,
+                || extract(&installed),
+            )?,
+            Err(_) => extract(&installed).map_err(CliError::failure)?,
+        };
+        facts.extend(shared);
+    }
+    if !own.is_empty() {
+        facts.extend(unit_path_facts(unit, &own, &extract)?);
+    }
+    Ok(facts)
+}
+
+/// The installed artifact a path's root crate is, when the toolchain holds it: `None` for a unit's own crate, and the
+/// sysroot (`Some(None)`) for `std`, `core` and `alloc`.
+fn installed_artifact(unit: &UnitDescription, directory: &Path, path: &str) -> Option<Option<PathBuf>> {
+    let root = path.split("::").next().unwrap_or(path);
+    if matches!(root, "std" | "core" | "alloc") {
+        return Some(None);
+    }
+    let native = unit.externs.iter().find(|native| native.name == root)?;
+    native.path.starts_with(directory).then(|| Some(native.path.clone()))
+}
+
+/// The identity of installed paths' facts: the extracting toolchain, its shipped caches, the root artifacts, the paths.
+fn installed_identity(
+    unit: &UnitDescription,
+    directory: &Path,
+    toolchain: &Toolchain,
+    paths: &BTreeSet<String>,
+) -> CliResult<String> {
+    let observations = directory.join("rust-abi").join("observations");
+    fs::create_dir_all(&observations).map_err(failure)?;
+    let mut identity = Sha256::new();
+    identity.update(RUST_ABI_CACHE_VERSION.to_le_bytes());
+    identity.update(b"incan.rust-facts.installed-paths/1\0");
+    hash_file(&mut identity, &toolchain.driver, &observations)?;
+    identity.update(toolchain.sysroot.as_os_str().as_encoded_bytes());
+    for cache in &toolchain.rust_abi {
+        hash_file(&mut identity, cache, &observations)?;
+    }
+    hash_file(&mut identity, &std::env::current_exe().map_err(failure)?, &observations)?;
+    let roots = paths
+        .iter()
+        .filter_map(|path| installed_artifact(unit, directory, path).flatten())
+        .collect::<BTreeSet<_>>();
+    for artifact in roots {
+        hash_file(&mut identity, &artifact, &observations)?;
+    }
+    identity.update(serde_json::to_vec(paths).map_err(failure)?);
+    Ok(hex::encode(identity.finalize()))
+}
+
+/// Reuse the complete extraction stored under `identity`, or extract it once under the identity's lock and publish it
+/// through the content store. A stored file that no longer decodes is extracted again; storage that cannot be used
+/// keeps the ordinary extraction, since a cache is never a prerequisite for checking.
+fn shared_extraction(
+    directory: &Path,
+    store: &Path,
+    identity: &str,
+    extract: impl FnOnce() -> Result<RustFacts, String>,
+) -> CliResult<RustFacts> {
+    let started = std::time::Instant::now();
+    let cache = directory.join(format!("{identity}.rustabi"));
+    let lock = fs::create_dir_all(directory).ok().and_then(|_| {
+        File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(cache.with_extension("lock"))
+            .ok()
+    });
+    let Some(lock) = lock.filter(|lock| flock(lock, FlockOperation::LockExclusive).is_ok()) else {
+        return extract().map_err(CliError::failure);
+    };
+    let stored = fs::read(&cache).ok().and_then(|bytes| {
+        RustAbiCache::decode_owned(bytes)
+            .and_then(RustAbiCache::into_items)
+            .ok()
+    });
+    let reused = stored.is_some();
+    let facts = match stored {
+        Some(facts) => facts,
+        None => {
+            let facts = extract().map_err(CliError::failure)?;
+            if let Err(error) = store_extraction(directory, store, &cache, &facts)
+                && incan_frontend::trace_flags::trace_rust_facts()
+            {
+                incan_frontend::trace_line!(
+                    incan_frontend::trace_flags::Category::RustFacts,
+                    "rust facts not shared: {}",
+                    error.message
+                );
+            }
+            facts
+        }
+    };
+    drop(lock);
+    if incan_frontend::trace_flags::trace_rust_facts() {
+        incan_frontend::trace_line!(
+            incan_frontend::trace_flags::Category::RustFacts,
+            "rust facts cache: {} {} installed items in {:?}",
+            if reused { "shared" } else { "compiled" },
+            facts.len(),
+            started.elapsed()
+        );
+    }
+    Ok(facts)
+}
+
+/// Publish one complete extraction under its request name.
+fn store_extraction(directory: &Path, store: &Path, cache: &Path, facts: &RustFacts) -> CliResult<()> {
+    let bytes = incan_frontend::rust_abi_cache::encode_rust_abi_cache(facts).map_err(failure)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(directory).map_err(failure)?;
+    temporary.write_all(&bytes).map_err(failure)?;
+    temporary.flush().map_err(failure)?;
+    publish_cache(store, temporary, cache)
+}
+
 /// Read or record a bounded check-time extraction through the bakery, separately from complete-crate caches.
 ///
 /// The exact request and native generation identify the result, including absent paths. Oven's index names the
@@ -118,10 +263,10 @@ pub fn cached_rust_facts(unit: &UnitDescription) -> CliResult<RustFactsSetup> {
 /// Oven bakes the staged files and registers their roots before the description's next run. These extractions never
 /// enter a unit's shipped cache list and grant no crate-wide coverage. A unit Oven does not prepare, or a cache that
 /// cannot be read or written, keeps ordinary extraction: cache storage is never a prerequisite for checking.
-pub fn cached_path_facts(
+fn unit_path_facts(
     unit: &UnitDescription,
     paths: &BTreeSet<String>,
-    extract: impl Fn(&BTreeSet<String>) -> Result<RustFacts, String>,
+    extract: &impl Fn(&BTreeSet<String>) -> Result<RustFacts, String>,
 ) -> CliResult<RustFacts> {
     let started = std::time::Instant::now();
 
