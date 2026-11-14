@@ -148,10 +148,10 @@ pub(super) fn portable(value: &mut Value, root: &Path, ids: &BTreeMap<String, St
             "facade_declaration_id",
             "bridge_declaration_id",
         ] {
-            if let Some(value) = fields.get_mut(key) {
-                if let Some(mapped) = value.as_str().and_then(|id| ids.get(id)) {
-                    *value = Value::String(mapped.clone());
-                }
+            if let Some(value) = fields.get_mut(key)
+                && let Some(mapped) = value.as_str().and_then(|id| ids.get(id))
+            {
+                *value = Value::String(mapped.clone());
             }
         }
         if let Some(Value::Array(links)) = fields.get_mut("raw_call_ids") {
