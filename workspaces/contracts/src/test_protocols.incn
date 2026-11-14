@@ -43,3 +43,35 @@ def test_a_family_s_protocol_cases_run_side_by_side() -> None:
     assert "2" in seen, "the protocol cases ran one at a time: " + ", ".join(seen)
     assert forwarded_lines(outcomes["project/cli/first"]).unwrap() == ["PASS project/cli/first"]
     assert forwarded_lines(outcomes["project/cli/second"]).unwrap() == ["PASS project/cli/second"]
+
+
+def ordered_runner(scratch: Path) -> Path:
+    """A runner that records its case (its last argument) in the order file when it starts, then reports it passed."""
+    order = scratch.joinpath("order").0
+    mut script = "#!/bin/sh\nfor case_name; do :; done\n"
+    script += f"echo \"$case_name\" >> '{order}'\n"
+    script += "printf 'PASS %s\\nCONTRACT FAMILY COMPLETE\\n' \"$case_name\"\n"
+    return executable(scratch.joinpath("ordered-runner"), script)
+
+
+def test_the_longest_protocol_case_starts_first_from_the_home_s_duration_table() -> None:
+    """
+    A fresh scratch has no elapsed times of its own, so the family's duration table in the toolchain home orders its
+    protocol cases: the one the table records as longest starts first. The run adds its own cases to the table.
+    """
+    scratch = TemporaryDirectory.try_new().unwrap()
+    program = ordered_runner(scratch.path())
+    runner = ProtocolRunner(program=program.0, incan="incan", root="fixtures")
+    hint = scratch.path().joinpath("hints").joinpath("corpus-project.tsv")
+    make_directory(hint.parent()).unwrap()
+    table = Path(f"{hint.0}.durations-v1")
+    write(table, "protocol-project-cli-first\t40\nprotocol-project-cli-second\t90000\n").unwrap()
+    cases = ["project/cli/first", "project/cli/second", "project/cli/third"]
+    outcomes = run_protocols(runner, scratch.path().joinpath("work"), cases, 1, Some(hint)).unwrap()
+    order = read(scratch.path().joinpath("order")).unwrap().strip().split("\n")
+    assert order == ["project/cli/second", "project/cli/first", "project/cli/third"], "started as " + ", ".join(order)
+    for name in cases:
+        assert forwarded_lines(outcomes[name]).unwrap() == [f"PASS {name}"]
+    rows = read(table).unwrap()
+    assert "protocol-project-cli-second\t90000\n" in rows, rows
+    assert "protocol-project-cli-third\t" in rows, rows

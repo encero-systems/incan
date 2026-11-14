@@ -56,6 +56,7 @@ pub def run_protocols(
     scratch: Path,
     cases: list[str],
     jobs: int,
+    hint: Option[Path] = None,
 ) -> Result[dict[str, Result[Outcome, str]], str]:
     """
     Run each protocol case in a runner of its own, each with its own scratch so no two share a partition or refusal
