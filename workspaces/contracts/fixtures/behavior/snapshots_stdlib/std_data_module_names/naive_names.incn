@@ -1,0 +1,43 @@
+from std.datetime.civil.naive import (
+    DateTimeError,
+    DateTimeInterval,
+    OrdinalKey,
+    OrdinalMapError,
+    SystemTime,
+    TimeDelta,
+    YearMonthInterval,
+)
+
+
+def keyed[K with OrdinalKey](key: K) -> bool:
+    return true
+
+
+pub def naive_line() -> str:
+    """Name each type std.datetime.civil.naive published in 0.5.1."""
+    error: Option[DateTimeError] = None
+    interval: Option[DateTimeInterval] = None
+    map_error: Option[OrdinalMapError] = None
+    now: Option[SystemTime] = None
+    delta: Option[TimeDelta] = None
+    months: Option[YearMonthInterval] = None
+    mut empty = 0
+    match error:
+        Some(_) => pass
+        None => empty += 1
+    match interval:
+        Some(_) => pass
+        None => empty += 1
+    match map_error:
+        Some(_) => pass
+        None => empty += 1
+    match now:
+        Some(_) => pass
+        None => empty += 1
+    match delta:
+        Some(_) => pass
+        None => empty += 1
+    match months:
+        Some(_) => pass
+        None => empty += 1
+    return f"naive {empty}"
