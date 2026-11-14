@@ -416,7 +416,9 @@ def exercise_worker_residency(root: Path, binary: str, inject_failure: bool) -> 
     while len(runtime.0) <= 100:
         runtime = runtime.joinpath("a-runtime-directory-deeper-than-a-socket-path-may-be")
     runtime.mkdir(true, true).map_err((error) => error.message())?
-    fallback_runtime = get_or("XDG_RUNTIME_DIR", "/tmp")
+    # The engine gets a runtime root other than this process's, as another shell's environment would give it: this
+    # process must still find the engine it stops, wherever that engine listens.
+    fallback_runtime = "/tmp"
     project = root.joinpath("project")
     project.mkdir(true, true).map_err((error) => error.message())?
     source = project.joinpath("hello.incn")
