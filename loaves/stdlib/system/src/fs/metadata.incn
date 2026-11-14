@@ -1,8 +1,9 @@
 from rust::std::fs import Metadata as RustMetadata, metadata, symlink_metadata
 from rust::std::path import Path as RustPath
 from rust::std::time import Duration, SystemTime as RustSystemTime, UNIX_EPOCH
-from std.fs.path import Path, _io_error
-from std.io import IoError
+pub from std.fs.path import Path
+from std.fs.path import _io_error
+pub from std.io import IoError
 
 
 @derive(Clone)
