@@ -2,13 +2,14 @@
 Overlay requests (14.1): an editor's unsaved buffer reaches the records engine through an editor view.
 
 Each project view has one editor view, forked on the first overlay request and never merged back. The editor's buffer
-and the program's other editable files are mirrored into an overlay root in the home, outside the bakery whose files
-capture never re-reads, so the engine captures and compiles the overlay exactly as it would a build, with the same
-logical names and therefore the same record keys and unit identities. A refused unit answers with its diagnostics in
-document coordinates.
+and the program's other editable files are mirrored into an overlay root beside the store, outside the bakery whose
+files capture never re-reads, so the engine captures the overlay exactly as it would a build, with the same logical
+names and therefore the same unit keys. The engine checks the overlay's entry, and the compiler's JSON report answers
+with its diagnostics in document coordinates.
 """
 
 from std.fs import Path
+from std.json import JsonValue, parse
 from intake import ManifestReader, entry_source
 from unit_freshness import fingerprint
 
@@ -17,13 +18,16 @@ pub const EDITOR_VIEW_PREFIX: str = "editor-"
 
 
 pub model OverlayDiagnostic:
-    """One compiler diagnostic in document coordinates: the message, the document and one-based line and column."""
+    """One compiler diagnostic in document coordinates: its message, document and one-based start and end."""
 
     pub message: str
     pub path: str
     pub line: int
     pub column: int
     pub severity: str
+    pub code: str = ""
+    pub end_line: int = 0
+    pub end_column: int = 0
 
 
 pub def editor_view_name(project_view: str) -> Result[str, str]:
@@ -120,66 +124,55 @@ def write_if_changed(path: Path, content: bytes) -> Result[bool, str]:
     return Ok(true)
 
 
-pub def projected_diagnostics(console: str) -> list[OverlayDiagnostic]:
+pub def report_diagnostics(report: str, overlay: str, program: str) -> Result[list[OverlayDiagnostic], str]:
     """
-    The diagnostics of a refused unit's compiler stream, each paired with its first `-->` location.
-
-    A diagnostic starts at an unindented `kind: message` line; its location is the first `--> path:line:column`
-    after it. Terminal colors are removed first.
+    The diagnostics of the compiler's JSON check report, each on the editor's path for its document: a file under the
+    `overlay` root is named under `program` instead.
     """
+    document = parse(report).map_err((error) => f"the check answered no report ({error.message()})")?
+    entries = document.require("diagnostics").map_err((error) => error.message())?.expect_array().map_err(
+        (error) => error.message(),
+    )?
     mut found: list[OverlayDiagnostic] = []
-    mut pending = ""
-    for raw in without_colors(console).split("\n"):
-        line = raw.strip()
-        if line.startswith("-->"):
-            if pending != "":
-                if let Some(diagnostic) = located(pending, line[3:].strip()):
-                    found.append(diagnostic)
-                pending = ""
-        elif raw != "" and not raw.startswith(" ") and ": " in line:
-            pending = line
-    return found
+    for entry in entries:
+        mut diagnostic = OverlayDiagnostic(
+            message=text_field(entry, "message"),
+            path="",
+            line=1,
+            column=1,
+            severity=text_field(entry, "severity"),
+            code=text_field(entry, "code"),
+        )
+        if let Some(span) = entry.get("primary_span"):
+            diagnostic.path = document_path(text_field(span, "file"), overlay, program)
+            if let Some(start) = span.get("start"):
+                diagnostic.line = int_field(start, "line", 1)
+                diagnostic.column = int_field(start, "column", 1)
+            if let Some(end) = span.get("end"):
+                diagnostic.end_line = int_field(end, "line", diagnostic.line)
+                diagnostic.end_column = int_field(end, "column", diagnostic.column)
+        found.append(diagnostic)
+    return Ok(found)
 
 
-def located(message: str, location: str) -> Option[OverlayDiagnostic]:
-    """A diagnostic at `path:line:column`, or none when the location is not one."""
-    parts = location.split(":")
-    if len(parts) < 3:
-        return None
-    line_text = parts[len(parts) - 2]
-    column_text = parts[len(parts) - 1]
-    if not digits(line_text) or not digits(column_text):
-        return None
-    path = ":".join(parts[:len(parts) - 2])
-    mut severity = "error"
-    if message.startswith("warning"):
-        severity = "warning"
-    return Some(
-        OverlayDiagnostic(message=message, path=path, line=int(line_text), column=int(column_text), severity=severity),
-    )
+def document_path(path: str, overlay: str, program: str) -> str:
+    """The editor's path of a file the check named under the overlay root."""
+    if path.startswith(overlay + "/"):
+        return program + path[len(overlay):]
+    return path
 
 
-def digits(text: str) -> bool:
-    """Whether `text` is a nonempty decimal number."""
-    if len(text) == 0 or len(text) > 9:
-        return false
-    for character in text:
-        if character not in "0123456789":
-            return false
-    return true
+def text_field(value: JsonValue, name: str) -> str:
+    """One string field of a report entry, or an empty string."""
+    if let Some(found) = value.get(name):
+        if let Ok(text) = found.expect_str():
+            return text
+    return ""
 
 
-def without_colors(text: str) -> str:
-    """`text` without terminal color sequences (`ESC [ ... m`)."""
-    mut result: list[str] = []
-    mut escaped = false
-    for character in text:
-        if escaped:
-            if character == "m":
-                escaped = false
-            continue
-        if character == "\u{1b}":
-            escaped = true
-            continue
-        result.append(character)
-    return "".join(result)
+def int_field(value: JsonValue, name: str, fallback: int) -> int:
+    """One integer field of a report entry, or `fallback`."""
+    if let Some(found) = value.get(name):
+        if let Ok(number) = found.expect_int():
+            return number
+    return fallback

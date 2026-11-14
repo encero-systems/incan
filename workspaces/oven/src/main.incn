@@ -200,7 +200,7 @@ def dispatch(command: str, rest: list[str]) -> None:
         match parse_overlay(rest):
             Err(reason) => syntax_error(command, reason)
             Ok(request) =>
-                match execute_overlay(Path(request.source), Path(request.buffer), request.version, request.profile, []):
+                match execute_overlay(request):
                     Err(reason) => fail(f"{invoked()} check: {reason}", 1)
                     Ok(document) =>
                         println(document)
