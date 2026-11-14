@@ -250,7 +250,8 @@ fn collect_test_entries(
 /// from the same pass. Bodies with function or nominal-owner type parameters remain governed; other linked
 /// callables name their compiled items.
 ///
-/// A refusal by source diagnostics or by declaration validation is certified through `receipt`.
+/// A refusal by source diagnostics or by declaration validation is certified through `receipt`. With `inspection` the
+/// manifest describes the source package for inspection (private registries, named by their source modules).
 pub(super) fn checked_modules(
     unit: &UnitDescription,
     rust: &RustFactsSetup,
@@ -259,6 +260,7 @@ pub(super) fn checked_modules(
     graph_body_records: incan_frontend::checker_records::GraphBodyRecords,
     graph_body_output: Option<PathBuf>,
     collect_codegraph: bool,
+    inspection: bool,
 ) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
     let path = unit
@@ -301,7 +303,7 @@ pub(super) fn checked_modules(
     let mut callable_products = callable_products::CallableProducts::prepare(unit, &modules, &mut session);
     let mut graph_body_output =
         graph_body_output::GraphBodyOutput::prepare(graph_body_output, unit.project_root.clone())?;
-    let mut publication = library.then(|| PublicationFacts::new(package_identity));
+    let mut publication = library.then(|| PublicationFacts::new(package_identity).for_inspection(inspection));
     let module_key_index = incan_driver::modules::module_key_index(&modules);
     let namespace_dependencies = modules
         .iter()
