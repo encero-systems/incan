@@ -117,7 +117,9 @@ def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest) -
     """
     # 1. The overlay has the program's logical names, so its unit key is the one a build of these bytes has.
     absolute = Path(request.source).absolute().map_err((error) => f"cannot make absolute {error.message()}")?
-    entry = overlay_entry(absolute)?
+    buffer = Path(request.buffer)
+    text = buffer.read_text("utf-8", "strict").map_err((error) => f"cannot read {buffer.0}: {error.message()}")?
+    entry = overlay_entry(absolute, Some(text))?
     bound = selected_home_view()?
     project = project_view_name(view_scope(bound)?, entry.0, request.profile, get_optional("OVEN_BODY_REFUSALS"))?
     editor = editor_view_name(project)?
@@ -127,8 +129,6 @@ def answer_overlay(mut channel: Channel, store: Path, request: OverlayRequest) -
         return Err(f"the program entry {entry.0} lies outside {program.0}")
     # The overlay root lies beside the store, not in it: capture never re-reads a file under the bakery.
     overlay = store.parent().joinpath("editor").joinpath(editor)
-    buffer = Path(request.buffer)
-    text = buffer.read_text("utf-8", "strict").map_err((error) => f"cannot read {buffer.0}: {error.message()}")?
     _ = mirror_overlay(program, overlay, document, text)?
     # 2. The editor view starts from the records every build reads, and nothing it publishes reaches them.
     if snapshot(store, editor).map_err((error) => error.message())?.index == "":

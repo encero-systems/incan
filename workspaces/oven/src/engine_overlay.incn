@@ -50,13 +50,35 @@ pub def program_root(document: Path) -> Path:
     return document.parent()
 
 
-pub def overlay_entry(document: Path) -> Result[Path, str]:
-    """The program an overlay of `document` builds: its package's entry, or a manifest-free document itself."""
+pub def overlay_entry(document: Path, text: Option[str] = None) -> Result[Path, str]:
+    """
+    The program an overlay of `document` checks: its package's entry; for a manifest-free document, itself when it
+    declares a top-level `main`, else the `main.incn` beside it when there is one, else itself. `text` is the
+    document's unsaved buffer; without one the file is read.
+    """
     program = program_root(document)
     if program.joinpath("loaf.toml").is_file():
         if let Some(entry) = entry_source(program, ManifestReader())?:
             return Ok(entry)
-    return Ok(document)
+        return Ok(document)
+    conventional = program.joinpath("main.incn")
+    if conventional.0 == document.0 or not conventional.is_file():
+        return Ok(document)
+    mut source = ""
+    match text:
+        Some(buffer) => source = buffer
+        None => source = document.read_text("utf-8", "strict").map_err((error) => f"{document.0}: {error.message()}")?
+    if declares_main(source):
+        return Ok(document)
+    return Ok(conventional)
+
+
+def declares_main(source: str) -> bool:
+    """Whether a source declares a top-level `main` function."""
+    for line in source.split("\n"):
+        if line.startswith("def main(") or line.startswith("pub def main("):
+            return true
+    return false
 
 
 pub def mirror_overlay(program: Path, overlay: Path, document: str, buffer: str) -> Result[int, str]:
