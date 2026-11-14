@@ -1230,10 +1230,11 @@ def owner(arguments: list[str]) -> None:
 def expected_artifacts(arguments: list[str]) -> list[str]:
     """
     The artifacts a build of an Incan source writes, for its report: a library's `.rlib` or a program's executable.
-    A build that cannot be described here reports none; the build itself reports why it failed.
+    Without a PATH it is the working directory's project, as `build` selects it. A build that cannot be described here
+    reports none; the build itself reports why it failed.
     """
     own, _passed = program_arguments(arguments)
-    match parse_options(own):
+    match parse_options(own, "."):
         Err(_) => return []
         Ok(options) =>
             match entry_source(Path(options.path), options.manifests):
