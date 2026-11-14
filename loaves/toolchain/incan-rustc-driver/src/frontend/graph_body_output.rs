@@ -11,6 +11,12 @@ use std::path::{Path, PathBuf};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::typechecker::TypeChecker;
 use incan_semantics_core::body_ir::BodyIrModule;
+use sha2::{Digest, Sha256};
+
+/// Leave room below the compiled-frame metadata contract for a digest-named omission marker.
+const FALLBACK_REASON_PREFIX_BYTES: usize = 60 * 1024;
+/// Mirror the compiled-frame metadata contract without weakening its validation boundary.
+const MAX_FALLBACK_REASON_BYTES: usize = 65_536;
 
 /// One output awaiting canonical ordering and Incan-owned encoding.
 struct PendingBodyValue {
@@ -72,6 +78,24 @@ fn canonical_lowering_inputs(inputs: Vec<Vec<String>>) -> Result<Vec<Vec<String>
 /// Normalize an optional fallback owner before it crosses the Incan codec boundary.
 fn fallback_identity(identity: Option<String>) -> Option<String> {
     identity.filter(|value| !value.is_empty())
+}
+
+/// Retain ordinary fallback reasons exactly and bound exceptional producer diagnostics before frame encoding.
+fn bounded_fallback_reason(reason: String) -> String {
+    if reason.len() <= MAX_FALLBACK_REASON_BYTES {
+        return reason;
+    }
+    let mut prefix_end = FALLBACK_REASON_PREFIX_BYTES.min(reason.len());
+    while !reason.is_char_boundary(prefix_end) {
+        prefix_end -= 1;
+    }
+    let omitted = &reason.as_bytes()[prefix_end..];
+    format!(
+        "{}... [omitted {} bytes; sha256:{}]",
+        &reason[..prefix_end],
+        omitted.len(),
+        hex::encode(Sha256::digest(omitted))
+    )
 }
 
 /// Invocation-local collector for the optional graph-publication sidecar.
@@ -153,7 +177,7 @@ impl GraphBodyOutput {
                             module: module_path.clone(),
                             name: fields.name,
                             identity: fallback_identity(Some(fields.identity)),
-                            reason,
+                            reason: bounded_fallback_reason(reason),
                             artifact_refusals: Vec::new(),
                         }),
                     }
@@ -163,7 +187,7 @@ impl GraphBodyOutput {
                         module: module_path.clone(),
                         name: fallback.name,
                         identity: fallback_identity(fallback.identity),
-                        reason: fallback.reason,
+                        reason: bounded_fallback_reason(fallback.reason),
                         artifact_refusals: fallback.artifact_refusals,
                     });
                 }
@@ -436,7 +460,7 @@ fn publish(path: &Path, frames: Vec<Vec<u8>>) -> Result<(), String> {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{GraphBodyOutput, canonical_lowering_inputs, fallback_identity};
+    use super::{GraphBodyOutput, bounded_fallback_reason, canonical_lowering_inputs, fallback_identity};
 
     /// Explicit sidecar roots resolve aliases and refuse missing roots; an inactive collector needs neither.
     #[test]
@@ -487,5 +511,36 @@ mod tests {
         assert_eq!(fallback_identity(Some(String::new())), None);
         assert_eq!(fallback_identity(None), None);
         assert_eq!(fallback_identity(Some("owner".to_owned())), Some("owner".to_owned()));
+    }
+
+    /// An oversized producer refusal retains its kind and a digest-named tail while remaining valid graph metadata.
+    #[test]
+    fn oversized_fallback_reason_is_bounded_and_encodable() -> Result<(), Box<dyn std::error::Error>> {
+        let reason = format!(
+            "local record output refused: InvalidField(\"{}\")",
+            "candidate,".repeat(8_000)
+        );
+        let bounded = bounded_fallback_reason(reason);
+        assert!(bounded.starts_with("local record output refused: InvalidField(\"candidate,"));
+        assert!(bounded.contains("omitted "));
+        assert!(bounded.contains("sha256:"));
+        assert!(bounded.len() < 65_536);
+
+        let encoded = internal_models::encode_compiled_body_outputs(internal_models::CompiledBodyOutputs {
+            namespaces: Vec::new(),
+            values: Vec::new(),
+            fallbacks: vec![internal_models::CompiledBodyFallback {
+                module: "src/main.incn".to_owned(),
+                name: "dispatch".to_owned(),
+                identity: Some("function:main::dispatch|fixture".to_owned()),
+                reason: bounded,
+            }],
+        });
+        let frames = match encoded {
+            Ok(frames) => frames,
+            Err(error) => return Err(format!("bounded fallback was refused: {error:?}").into()),
+        };
+        assert_eq!(frames.len(), 1);
+        Ok(())
     }
 }
