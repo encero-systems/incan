@@ -49,7 +49,13 @@ from pub::incan_platform.store import snapshot as placed_snapshot
 from pub::incan_platform.store.memory import root as memory_root
 from pub::incan_platform.store.path import StorePath
 from store_path_conversion import compact, payload_intact, payload_path, put_payload, snapshot
-from compiler_graph_records import prepare_evaluation, readers_of, reusable_family_records, supersede_outputs
+from compiler_graph_records import (
+    family_listing,
+    prepare_evaluation,
+    readers_of,
+    reusable_family_records,
+    supersede_outputs,
+)
 from pub::internal_models import ProducerRank, ProducerStage
 from pub::internal_models.records import (
     PreparationEvidence,
@@ -384,8 +390,8 @@ pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edi
     exactly the keys a whole listing would.
     """
     scratch = scratch_directory()?
-    output = "incan.engine.output\tp\tbody-ir\tprofile\torigin\tfunction:main\tfacet\tchecked"
-    edge = "incan.engine.edge-in\tbody-ir\tprofile\torigin\tfunction:main\tfacet\tchecked\t"
+    output = "incan.engine.output\tp\tbody-ir\tprofile\torigin\tfunction:main\tfacet"
+    edge = "incan.engine.edge-in\tbody-ir\tprofile\torigin\tfunction:main\tfacet\t"
     target = RecordKey(
         family="body-ir",
         identity="function:main",
@@ -397,7 +403,7 @@ pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edi
     mut pages: list[int] = []
     for scale in [1, 100]:
         root = scratch.path().joinpath(f"store-{scale}")
-        _ = write_one(root, output, "evaluation").map_err((error) => error.message())?
+        _ = write_one(root, output, encode_record_key(target)?).map_err((error) => error.message())?
         for batch in range(scale):
             mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
             for item in range(10):
@@ -525,6 +531,66 @@ pub def test_a_reader_of_two_contexts_of_one_record_is_found_from_each() -> Resu
     assert readers_of(current, [second], "profile")? == [edited]
     assert len(indexed_keys(root, current, "incan.engine.edge-")?) == 4
     return Ok(None)
+
+
+pub def test_an_edited_declaration_s_output_index_entry_is_written_in_place() -> Result[None, str]:
+    """
+    Each edit evaluates one declaration's slot in a new context. Its output index entry is keyed by the slot, not by
+    the context, so after any number of edits the output index holds one entry for the slot, tombstones included, and
+    a family selection finds the current evaluation's record.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    dependency = graph_key("final", "function:helper", "checked")
+    read = RecordRequest(key=dependency, selection=RecordSelection.Field("value"))
+    _ = write_one(root, encode_record_key(dependency)?, "helper").map_err((error) => error.message())?
+    mut output = graph_key("body-ir", "function:main", "edit 0")
+    for edit in range(12):
+        output = graph_key("body-ir", "function:main", f"edit {edit}")
+        publish_reader(snapshot(root).map_err((error) => error.message())?, output, [read])?
+    latest = snapshot(root).map_err((error) => error.message())?
+    indexed = indexed_keys(root, latest, "incan.engine.output\t")?
+    assert len(indexed) == 1, f"after 12 edits of one declaration the output index holds {len(indexed)} entries"
+    records = reusable_family_records(latest, "body-ir", "profile")?
+    assert len(records) == 1 and records[0].key == output
+    assert records[0].value == b"edit 11"
+    return Ok(None)
+
+
+pub def test_a_family_s_listing_changes_with_each_evaluation_of_a_slot_and_with_nothing_else() -> Result[None, str]:
+    """
+    A check selects its pages again when a family's listing changes: the revisions of the family's output index
+    entries. An entry is keyed by its slot, so the listing changes through the entry's value: with every evaluation of
+    a slot in another context and with every slot that joins the family, and not when a slot is evaluated in the same
+    context again or another family's slot is evaluated.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    dependency = graph_key("final", "function:helper", "checked")
+    read = RecordRequest(key=dependency, selection=RecordSelection.Field("value"))
+    _ = write_one(root, encode_record_key(dependency)?, "helper").map_err((error) => error.message())?
+    mut listings: set[str] = set()
+    for edit in range(12):
+        output = graph_key("body-ir", "function:main", f"edit {edit}")
+        publish_reader(snapshot(root).map_err((error) => error.message())?, output, [read])?
+        listings.add(body_listing(root)?)
+    assert len(listings) == 12, f"12 evaluations of one slot, each in a new context, gave {len(listings)} listings"
+    before = body_listing(root)?
+    again = graph_key("body-ir", "function:main", "edit 11")
+    publish_reader(snapshot(root).map_err((error) => error.message())?, again, [read])?
+    elsewhere = graph_key("local", "function:main", "edit 0")
+    publish_reader(snapshot(root).map_err((error) => error.message())?, elsewhere, [read])?
+    assert body_listing(root)? == before, "the listing changed without another evaluation in the family"
+    joined = graph_key("body-ir", "function:other", "edit 0")
+    publish_reader(snapshot(root).map_err((error) => error.message())?, joined, [read])?
+    assert body_listing(root)? != before, "a slot joined the family and the listing stayed the same"
+    return Ok(None)
+
+
+def body_listing(root: Path) -> Result[str, str]:
+    """The `body-ir` family's listing in the store's latest generation, as one text."""
+    latest = snapshot(root).map_err((error) => error.message())?
+    return Ok("\n".join(family_listing(latest, "body-ir", "profile")?))
 
 
 def graph_key(family: str, identity: str, context: str) -> RecordKey:
