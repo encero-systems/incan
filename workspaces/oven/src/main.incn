@@ -243,7 +243,7 @@ def dispatch(command: str, rest: list[str]) -> None:
         return
     if command == "interop":
         if len(rest) == 0 or rest[0] != "stage":
-            syntax_error("interop", "stages with `stage --target TRIPLE --adapter android|ios --output PATH [PATH]`")
+            syntax_error("interop", "stages with `stage --target TRIPLE --adapter android|ios --output PATH [--locked] [PATH]`")
         match stage_options(rest[1:]):
             Err(reason) => syntax_error("interop", reason)
             Ok(options) => finish("interop", stage_interop(options))
