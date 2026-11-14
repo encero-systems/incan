@@ -12,6 +12,8 @@ from engine_endpoint import connect_with
 from engine_messages import Message, Stop
 from engine_wire import zero_id
 from rust_target import decoded
+from store_path_conversion import snapshot as store_snapshot
+from pub::incan_platform.store import keys_with_prefix
 
 
 pub def test_lowering_record_worked_example() -> Result[None, str]:
@@ -130,6 +132,30 @@ pub def test_local_rust_source_edit_rebuilds_affected_unit() -> Result[None, str
     scratch = scratch_directory()?
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     return verify_rust_source_edit_rebuild(binary, scratch.path())
+
+
+pub def test_body_edits_keep_one_indexed_output_per_slot() -> Result[None, str]:
+    """
+    Five body edits in a row leave one indexed output per slot: each edit's evaluations retire the outputs they
+    replace, so what the next edit selects and invalidates does not grow with the edits before it.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source = root.joinpath("main.incn")
+    store = root.joinpath("store")
+    for edit in range(5):
+        write(source, f"def main() -> None:\n    println(\"edit {edit}\")\n")?
+        _ = lowering_example_run(binary, source, store, f"edit {edit}")?
+    latest = store_snapshot(store).map_err((error) => error.message())?
+    mut slots: Dict[str, int] = {}
+    for key in keys_with_prefix(latest, "incan.engine.output\t").map_err((error) => error.message())?:
+        slot = "\t".join(key.split("\t")[:7])
+        slots[slot] = slots.get(slot, 0) + 1
+    assert len(slots) > 0, "five edits indexed no outputs"
+    for slot in sorted([name for name in slots.keys()]):
+        assert slots[slot] == 1, f"{slots[slot]} indexed outputs for {slot.replace("\t", " | ")}"
+    return stop_example_engine(binary, store)
 
 
 pub def test_two_standalone_sources_share_one_store_without_body_collision() -> Result[None, str]:

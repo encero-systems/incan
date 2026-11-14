@@ -18,6 +18,7 @@ from compiler_body_values import (
     select_namespace_inventory_except,
 )
 from compiler_plan_values import select_plan_inventory_except, plan_owners_reading
+from compiler_graph_records import supersede_outputs
 from engine_epochs import record_text, load_epoch
 from features import FeatureRequest
 from files import json_text
@@ -289,6 +290,8 @@ pub def obtain(
         request_transaction = bodies.transaction
         body_evaluations = bodies.checking_evaluations
         body_ir_evaluations = bodies.body_ir_evaluations
+    # Each slot keeps one indexed output: the request's new evaluations retire the outputs they replace.
+    supersede_outputs(graph, request_transaction)?
     fact = produced_fact(produced.fact)?
     unit = NativeUnit(identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0)
     # An overlay's content-addressed native results and finalized-unit index stay where every build finds them.
