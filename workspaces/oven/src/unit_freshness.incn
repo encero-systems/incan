@@ -346,6 +346,12 @@ pub def description_digest(unit: UnitDescription) -> Result[str, str]:
     mut record_identity: list[str] = []
     if let Some(registry) = unit.registry_id:
         record_identity.append(f"registry-id={registry}")
+    # A project's shared library is checked as a program, and a test unit linking it reads its imports through it;
+    # the modules it leaves out are source inputs. A unit with neither keeps the identity it had before them.
+    if let Some(library) = unit.project_library:
+        record_identity.append(f"project-library={library}")
+    if unit.program_checks:
+        record_identity.append("program-checks")
     return fingerprint(
         [json_text(facts)?] + flags + selected + declared + sorted(bindings) + sorted(unit.rust_crates) + sorted(
             unit.vocab_admissions,
@@ -465,7 +471,8 @@ def source_contents(
             contents.extend(source_inputs(modules, physical, project, code)?)
             contents.extend(["absent"] + absent_inputs(collected.absent, physical))
         None =>
-            modules = [path for path in unit_files(unit, project)? if path != unit.source]
+            # A project's shared library reads no test module, so editing a test never rebuilds it.
+            modules = [path for path in unit_files(unit, project)? if path != unit.source and path not in unit.excluded_sources]
             contents.extend(source_inputs(modules, root, project, code)?)
     for entry in unit.program_entries:
         contents.extend(["program-entry"] + source_inputs([declared.joinpath(entry).0], root, project)?)

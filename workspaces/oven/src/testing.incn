@@ -19,6 +19,7 @@ from incan_units import compile_unit, stored_executable, test_report, test_sourc
 from intake import read_project, source_root_of
 from json_fields import array, text_field
 from observation import trace_launch
+from project_library import with_project_library
 from runner_options import ReportFormat, RunnerOptions, count
 from runner_reports import Outcome, Status, json_record, json_summary, junit, slowest, summary_line
 from runner_selection import keyword_matches, markers_match, shuffle_seed, shuffled
@@ -78,9 +79,12 @@ pub def tests_binary(unit: UnitDescription) -> Path:
 
 
 pub def compile_tests(unit: UnitDescription, toolchain: Toolchain) -> Result[tuple[i32, Path], str]:
-    """Compile a test unit once, unless its stored executable is current; the compiler's status and the executable."""
+    """
+    Compile a test unit once, unless its stored executable is current; the compiler's status and the executable. A
+    test module of a project links the project's shared library (`project_library`) rather than compiling its modules.
+    """
     binary = tests_binary(unit)
-    return Ok((compile_unit(unit, toolchain, binary, true)?, binary))
+    return Ok((compile_unit(with_project_library(unit)?, toolchain, binary, true)?, binary))
 
 
 pub def run_tests(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:
