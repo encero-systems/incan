@@ -32,7 +32,7 @@ The containers keep node and edge identity stable while storing them in dense, n
 
 That representation is private because it carries graph invariants. Writing an identity counter could reuse an id, changing a tombstone could revive a removed relationship, and reaching through `Dag.graph` could insert a cycle without the DAG check. Public operations preserve those invariants and leave the physical layout free to change without changing graph semantics.
 
-The eager RFC 047 methods retain their observable orders for compatibility: neighbors are ordered by `NodeId`, parallel neighbors are deduplicated, and topological order follows repeated allocation-order passes. Indexed readers use edge-insertion adjacency instead, because resumable pages need a stable structural order that does not allocate and sort a complete neighbor list.
+The eager methods keep their original observable orders for compatibility: neighbors are ordered by `NodeId`, parallel neighbors are deduplicated, and topological order follows repeated allocation-order passes. Indexed readers use edge-insertion adjacency instead, because resumable pages need a stable structural order that does not allocate and sort a complete neighbor list.
 
 ## Boundaries are intentional
 
@@ -44,4 +44,3 @@ Keeping the standard module narrow makes it useful as a dependable structural pr
 
 - [Working with graphs](../how-to/working_with_graphs.md)
 - [`std.graph` reference](../reference/stdlib/graph.md)
-- [RFC 047: Lightweight directed graph types](../../RFCs/closed/implemented/047_lightweight_directed_graph_stdlib.md)
