@@ -1,6 +1,6 @@
 # Lock file (`oven.lock`)
 
-`oven.lock` is generated TOML at a root project's directory. Path dependencies do not contribute another lock. `oven lock`, `oven add`, `oven dependency add` and `remove`, `oven update`, `oven interop stage` and the root project's `oven run`, `oven build` and `oven test` write the file atomically. `oven check`, `oven describe-unit` and `oven inspect dependencies` may read it and do not write it.
+`oven.lock` is generated TOML at a root project's directory, or at a workspace root's for the workspace's root project and every member. Path dependencies and workspace members do not contribute another lock. `oven lock`, `oven add`, `oven dependency add` and `remove`, `oven update`, `oven interop stage` and the `oven run`, `oven build` and `oven test` of the root project or of a workspace member write the file atomically. `oven check`, `oven describe-unit` and `oven inspect dependencies` may read it and do not write it.
 
 ## Root fields
 
@@ -8,9 +8,9 @@
 | --- | --- | --- |
 | `format` | Integer | Required. Format 1 is accepted; every other value is refused. |
 | `mode` | String | Required. `lowest`, `lowest-direct` and `newest` are accepted. |
-| `graph` | String | Required. `sha256:` followed by the resolved root closure's digest. A mismatch is refused and names `oven lock`. |
+| `graph` | String | Required. `sha256:` followed by the resolved root closure's digest; a workspace lock folds its root's and every member's closure. A mismatch is refused and names `oven lock`. |
 | `toolchain` | Table | Required. The selected Incan version and compiler identity. |
-| `loaf` | Array of tables | Required. Exactly one entry has `origin = "root"`; every other entry is reachable from it. |
+| `loaf` | Array of tables | Required. At most one entry has `origin = "root"`, and a lock without a `member` entry has exactly one. Every other entry is reachable from the root or from a `member` entry. |
 | `interop` | Array of tables | Present when the root project or a local path dependency declares [`[[interop.c.targets]]`](project_configuration.md#interopc). One entry per declared target; see [C interop entries](#c-interop-entries). |
 
 Unknown fields are refused.
@@ -21,11 +21,11 @@ Unknown fields are refused.
 
 ## Loaf entries
 
-Every `[[loaf]]` requires `name`, `version`, `origin` and `dependencies`. `origin` is one of `root`, `path`, `registry` or `toolchain`.
+Every `[[loaf]]` requires `name`, `version`, `origin` and `dependencies`. `origin` is one of `root`, `member`, `path`, `registry` or `toolchain`. A `member` entry is a workspace member other than the workspace's root project; a virtual workspace's lock has `member` entries and no `root`.
 
 | Field | Type | Contract |
 | --- | --- | --- |
-| `path` | String | A path-origin Loaf's path relative to the lock directory. Generated paths are never absolute. |
+| `path` | String | A path-origin or member-origin Loaf's path relative to the lock directory. Generated paths are never absolute. |
 | `registry` | String | Registry identity. Until a registry has a content-derived id, its configured name is recorded. A toolchain-origin Loaf records the registry its toolchain registry unit names. |
 | `protocol` | String | Registry provider protocol. Reserved in format 1. |
 | `revision` | Integer | Exact registry record revision. Zero when absent. |
