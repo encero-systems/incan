@@ -7,7 +7,10 @@ mod function_calls;
 mod input_flow;
 mod inputs;
 mod mutation;
+mod native_types;
 mod ownership;
+mod rust_artifact_admission;
+mod rust_artifacts_generated;
 mod types;
 use diagnostics::{project_diagnostics, read_diagnostic};
 mod unsupported;
@@ -956,6 +959,9 @@ fn restore_local(
     row: &[String],
 ) -> Result<(), NodeBindingError> {
     if call_artifacts_generated::restore(positions, &mut local.calls, row)? {
+        return Ok(());
+    }
+    if rust_artifacts_generated::restore(positions, &mut local.rust, row)? {
         return Ok(());
     }
     if matches!(
