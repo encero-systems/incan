@@ -1,7 +1,9 @@
 """Named views of a store: roots that change only through publication."""
 
-from crate.db.errors import DbError, DbErrorKind, DbOperation
+from pub::incan_platform.store import snapshot as substrate_snapshot
+from crate.db.errors import DbError, DbErrorKind, DbOperation, store_failure
 from crate.db.handle import StoreHandle
+from crate.db.snapshots import Snapshot
 
 
 pub model View:
@@ -14,6 +16,19 @@ pub model View:
     pub def of(handle: StoreHandle, name: str) -> View:
         """The view `name` of the store `handle` opened; the caller has checked that it exists."""
         return View(handle=handle, name=name)
+
+    pub def snapshot(self) -> Result[Snapshot, DbError]:
+        """
+        The view's current selection, leased and immutable.
+
+        Publications after it is taken never reach it. Taking it reads only the store's current generation, never a
+        record.
+        """
+        self.handle.require_open(DbOperation.Snapshot)?
+        selected = substrate_snapshot(self.handle.root, self.name).map_err(
+            (error) => store_failure(DbOperation.Snapshot, error),
+        )?
+        return Ok(Snapshot.of(self.handle.clone(), selected))
 
 
 pub def check_view_name(operation: DbOperation, name: str) -> Result[None, DbError]:

@@ -1,0 +1,59 @@
+"""Snapshots: one immutable, leased selection of a view, unchanged by every later publication."""
+
+from pub::incan_platform.store import Snapshot as Selection
+from crate.db.errors import DbError, DbErrorKind, DbOperation
+from crate.db.handle import StoreHandle
+
+
+pub class Snapshot:
+    """
+    One immutable selection of a view.
+
+    It never changes after it is taken: later publications reach new snapshots, never this one. It holds a lease on
+    what it selects, so it stays readable after its store is closed, until `release()`.
+    """
+
+    handle: StoreHandle
+    selection: Selection
+    released: bool = false
+
+    @staticmethod
+    pub def of(handle: StoreHandle, selection: Selection) -> Snapshot:
+        """A snapshot of `selection`, taken through the store `handle` opened."""
+        return Snapshot(handle=handle, selection=selection)
+
+    pub def store(self) -> str:
+        """The identity of the store it was taken from."""
+        return self.handle.identity
+
+    pub def view(self) -> str:
+        """The name of the view it selects."""
+        return self.selection.view
+
+    pub def revision(self) -> str:
+        """The view revision it selects: equal revisions select equal contents, and an empty view's is empty."""
+        return self.selection.index
+
+    pub def generation(self) -> int:
+        """The store generation it was taken from: a physical position, never part of what it selects."""
+        return self.selection.generation
+
+    pub def is_released(self) -> bool:
+        """Whether `release()` gave up its lease."""
+        return self.released
+
+    pub def release(mut self) -> None:
+        """Give up the lease. Later operations through this snapshot are refused; releasing twice does nothing."""
+        self.released = true
+        self.selection.pin = None
+
+    pub def require_held(self, operation: DbOperation) -> Result[None, DbError]:
+        """Refuse `operation` through a released snapshot."""
+        if self.released:
+            return Err(DbError.refused(DbErrorKind.Closed, operation, self.selection.view, "the snapshot was released"))
+        return Ok(None)
+
+
+pub def selection_of(snapshot: Snapshot) -> Selection:
+    """The substrate selection a snapshot pins, for `std.db`'s own modules; the prelude does not export it."""
+    return snapshot.selection

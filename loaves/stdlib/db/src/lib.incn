@@ -2,6 +2,7 @@
 
 import db.errors
 import db.handle
+import db.snapshots
 import db.views
 import db.store
 import db.prelude

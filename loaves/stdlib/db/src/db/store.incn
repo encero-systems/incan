@@ -1,13 +1,14 @@
-"""Opening and closing a store: an isolated memory store, or a disk store that is never adopted from foreign files."""
+"""Opening and closing a store, and naming and forking its views; foreign files are never adopted as a store."""
 
 from std.fs import Path
 from pub::incan_platform.store import HOME_VIEW, check_format, read_store_identity, store_identity
-from pub::incan_platform.store import fork as substrate_fork, snapshot as substrate_snapshot
+from pub::incan_platform.store import fork as substrate_fork, fork_selection, snapshot as substrate_snapshot
 from pub::incan_platform.store.disk import root as disk_root
 from pub::incan_platform.store.memory import root as memory_root
 from pub::incan_platform.store.path import StorePath
 from crate.db.errors import DbError, DbErrorKind, DbOperation, store_failure
 from crate.db.handle import Placement, StoreHandle
+from crate.db.snapshots import Snapshot, selection_of
 from crate.db.views import View, check_view_name
 
 
@@ -54,7 +55,37 @@ pub class Store:
     pub def views(self) -> Result[list[str], DbError]:
         """The names of the store's views in its current generation, in name order."""
         self.handle.require_open(DbOperation.View)?
-        return view_names(self.handle)
+        return view_names(self.handle, DbOperation.View)
+
+    pub def fork(self, snapshot: Snapshot, name: str) -> Result[View, DbError]:
+        """
+        A new view `name` that starts at exactly `snapshot`'s selection.
+
+        1. Refuse a closed store, a name the store cannot record, and a released snapshot or one of another store.
+        2. Refuse a name that is taken: an existing view is never replaced.
+        3. Publish the view at the snapshot's root. It shares every record with its source and copies none, and
+           neither side's later writes reach the other.
+        """
+        # 1. The snapshot must be held, and taken from this store.
+        self.handle.require_open(DbOperation.Fork)?
+        check_view_name(DbOperation.Fork, name)?
+        snapshot.require_held(DbOperation.Fork)?
+        if snapshot.store() != self.handle.identity:
+            detail = "the snapshot is of another store"
+            return Err(DbError.refused(DbErrorKind.Scope, DbOperation.Fork, snapshot.store(), detail))
+
+        # 2. A taken name is refused before publishing anything.
+        if name in view_names(self.handle, DbOperation.Fork)?:
+            return Err(view_exists(name))
+
+        # 3. A concurrent fork of the same name loses under the publication lock and is refused the same way.
+        match fork_selection(selection_of(snapshot), name):
+            Ok(_) => return Ok(View.of(self.handle.clone(), name))
+            Err(error) =>
+                failed = store_failure(DbOperation.Fork, error)
+                if failed.kind == DbErrorKind.Conflict:
+                    return Err(view_exists(name))
+                return Err(failed)
 
 
 pub def memory() -> Result[Store, DbError]:
@@ -111,10 +142,15 @@ def not_a_store(root: StorePath, detail: str) -> DbError:
     return DbError.refused(DbErrorKind.Scope, DbOperation.Open, root.value, detail)
 
 
-def view_names(handle: StoreHandle) -> Result[list[str], DbError]:
+def view_names(handle: StoreHandle, operation: DbOperation) -> Result[list[str], DbError]:
     """The view names the store's current generation records, in name order."""
-    current = substrate_snapshot(handle.root, HOME_VIEW).map_err((error) => store_failure(DbOperation.View, error))?
+    current = substrate_snapshot(handle.root, HOME_VIEW).map_err((error) => store_failure(operation, error))?
     return Ok([entry.view for entry in current.views])
+
+
+def view_exists(name: str) -> DbError:
+    """The refusal to fork onto a name that is already a view."""
+    return DbError.refused(DbErrorKind.Exists, DbOperation.Fork, name, "a view of this name already exists")
 
 
 def create_view(handle: StoreHandle, name: str) -> Result[None, DbError]:
@@ -129,6 +165,6 @@ def create_view(handle: StoreHandle, name: str) -> Result[None, DbError]:
         Ok(_) => return Ok(None)
         Err(error) =>
             failed = store_failure(DbOperation.View, error)
-            if failed.kind == DbErrorKind.Conflict and name in view_names(handle)?:
+            if failed.kind == DbErrorKind.Conflict and name in view_names(handle, DbOperation.View)?:
                 return Ok(None)
             return Err(failed)
