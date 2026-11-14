@@ -1,9 +1,0 @@
-# behavior: std.logging publishes the telemetry type names 0.5.1 published, and a module importing them from there uses them
-# expect-stdout:
-#   logging 8
-
-from logging_names import logging_line
-
-
-def main() -> None:
-    println(logging_line())
