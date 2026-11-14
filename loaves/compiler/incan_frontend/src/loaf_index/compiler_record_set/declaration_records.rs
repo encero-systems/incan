@@ -27,7 +27,8 @@ pub(in crate::loaf_index) fn read_declaration(
 }
 
 /// Read the `family` records of the declaration named `declaration` in the Loaf group `name` of `set`, with the
-/// manifest digest of the inventory the index admitted the group by. An overloaded name has one record per overload.
+/// manifest digest of the inventory the index admitted the group by. An overloaded name has one record per overload,
+/// read in declaration order.
 ///
 /// A set converted before declarations had records of their own has none; the reader then has the contract metadata.
 pub(super) fn read_declaration_in(
@@ -50,11 +51,14 @@ pub(super) fn read_declaration_in(
         .ok_or_else(|| unreadable(dir, name, "Loaf profile directory is not UTF-8".to_owned()))?;
     let prefix = format!("loaf/{profile}/{name}/{family}/");
     let suffix = format!("/{:x}", Sha256::digest(declaration.as_bytes()));
-    let entries = set
+    let mut entries = set
         .entries
         .iter()
         .filter(|entry| entry.key.starts_with(&prefix) && entry.key.ends_with(&suffix))
         .collect::<Vec<_>>();
+    // A record key carries its ordinal in its family, so key order is declaration order: an overloaded name's
+    // records are read in the order their overloads are declared.
+    entries.sort_by(|left, right| left.key.cmp(&right.key));
     if entries.is_empty() {
         return Ok(None);
     }
