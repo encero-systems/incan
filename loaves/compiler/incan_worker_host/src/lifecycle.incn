@@ -2,15 +2,20 @@
 When a compiler worker retires: the lifecycle policy, apart from the sockets it is applied to.
 
 A worker serves one activation at a time. It retires after `IDLE_SECONDS` without a request; when what it retains stays
-more than `FOOTPRINT_MARGIN` bytes above what it held after start for `FOOTPRINT_STRIKES` compiling activations in a
-row; at once when its physical footprint after an activation exceeds `FOOTPRINT_CEILING`, because only exiting returns
-a heavy compile's peak heap; when a request of another protocol or generation reaches it; when nothing can reach it any
-more, because its socket path no longer leads to its socket or its home is gone; and when the process could not be
-restored after an activation. A contained compiler panic does not retire it.
+more than `FOOTPRINT_MARGIN` bytes above the least it has retained after a compile for `FOOTPRINT_STRIKES` compiling
+activations in a row; at once when its physical footprint after an activation exceeds `FOOTPRINT_CEILING`, because only
+exiting returns a heavy compile's peak heap; when a request of another protocol or generation reaches it; when nothing
+can reach it any more, because its socket path no longer leads to its socket or its home is gone; and when the process
+could not be restored after an activation. A contained compiler panic does not retire it.
 
 What a worker retains is its heap in live allocations when the entry can read it, else its physical footprint. An
 allocator keeps the blocks a compile freed resident, so the footprint after a compile stays tens of megabytes over its
 start although the worker holds nothing more; counting those blocks retired every warm worker after its second compile.
+
+A worker keeps what its compiles decoded for the next one: the readings of the installed Loaves, and the checked-body
+pages. After one check of a three-function program that is 19 MB of live allocations over the half megabyte it started
+with, so retention is judged against what the worker kept after a compile, never against its start: judged against its
+start, every compile was excess and every worker retired after its second one.
 
 A light activation (formatting, a source listing, an import collection) checks and links nothing. The footprint after
 it is the heap the compile before it left, so it neither adds to a run of excess activations nor ends one; the ceiling
@@ -71,7 +76,7 @@ pub model Settled:
 
 
 pub model Bounds:
-    """A worker's limits: its idle period, its footprint margin over the baseline, and its footprint ceiling."""
+    """A worker's limits: its idle period, its margin over the least it has retained, and its footprint ceiling."""
 
     pub idle_millis: int
     pub margin: int
@@ -79,21 +84,21 @@ pub model Bounds:
 
 
 pub class Lifecycle:
-    """The policy state of one worker: idleness, its footprint baseline and how many activations exceeded it."""
+    """The policy state of one worker: idleness, the least it has retained and its run of compiles over that."""
 
     pub bounds: Bounds
-    # The physical footprint after startup, in bytes; negative when it cannot be read.
-    pub baseline: int
-    # Consecutive activations after which what the worker retains exceeded its start by more than the margin.
+    # The least physical footprint after a compiling activation, in bytes; negative before the first one measured.
+    pub kept: int = -1
+    # Consecutive compiling activations that left more than the margin above the least the worker had retained.
     pub strikes: int = 0
     last_activity: Instant
-    # The bytes in live allocations after startup; negative when they cannot be read.
-    pub live_baseline: int = -1
+    # The least bytes in live allocations after a compiling activation; negative before the first one measured.
+    pub live_kept: int = -1
 
     @staticmethod
-    pub def start(baseline: int, bounds: Bounds, live_baseline: int = -1) -> Lifecycle:
+    pub def start(bounds: Bounds) -> Lifecycle:
         """Start a worker policy now while keeping its activity clock private to the class."""
-        return Lifecycle(bounds=bounds, baseline=baseline, last_activity=Instant.now(), live_baseline=live_baseline)
+        return Lifecycle(bounds=bounds, last_activity=Instant.now())
 
     def touch(mut self) -> None:
         """A request was answered: the idle period starts again."""
@@ -133,7 +138,7 @@ pub class Lifecycle:
             # The caller runs rustc fresh; only exiting returns the heap that was over the ceiling.
             ActivationOutcome.HandedOff(path) =>
                 return Settled(reply=Reply.HandedOff(path), retirement=Some(Retirement.Footprint))
-        # 3. The ceiling retires at once; excess over the baseline must persist across consecutive compiles.
+        # 3. The ceiling retires at once; excess over what the worker kept must persist across compiles.
         if self.over_footprint(footprint, light, live):
             return Settled(reply=reply, retirement=Some(Retirement.Footprint))
         return Settled(reply=reply, retirement=None)
@@ -145,9 +150,8 @@ pub class Lifecycle:
     def over_footprint(mut self, footprint: int, light: bool, live: int) -> bool:
         """
         Whether an activation retires the worker: its footprint above the ceiling, or what it retains more than the
-        margin above its start for the last `FOOTPRINT_STRIKES` compiling activations. What it retains is its live heap
-        when both readings are known, else its footprint. One back within the margin ends the run; a light activation
-        leaves the run as it was.
+        margin above the least it has retained after a compile, for the last `FOOTPRINT_STRIKES` compiling activations.
+        One back within the margin ends the run; a light activation leaves the run as it was.
         """
         if footprint < 0:
             if not light:
@@ -161,13 +165,23 @@ pub class Lifecycle:
             self.strikes = 0
         return footprint > self.bounds.ceiling or self.strikes >= FOOTPRINT_STRIKES
 
-    def retains_over_margin(self, footprint: int, live: int) -> bool:
-        """Whether the live heap, or without it the footprint, is more than the margin above its value at start."""
-        if live >= 0 and self.live_baseline >= 0:
-            return live - self.live_baseline > self.bounds.margin
-        return self.baseline >= 0 and footprint - self.baseline > self.bounds.margin
+    def retains_over_margin(mut self, footprint: int, live: int) -> bool:
+        """
+        Whether a compile left more than the margin above the least the worker has retained after one: in its live heap
+        when that is known, else in its footprint. The first compile measured is what the worker keeps, so it is never
+        over; a later one that left less lowers what is kept.
+        """
+        mut over = self.kept >= 0 and footprint - self.kept > self.bounds.margin
+        if self.kept < 0 or footprint < self.kept:
+            self.kept = footprint
+        if live < 0:
+            return over
+        over = self.live_kept >= 0 and live - self.live_kept > self.bounds.margin
+        if self.live_kept < 0 or live < self.live_kept:
+            self.live_kept = live
+        return over
 
 
-pub def lifecycle(baseline: int, bounds: Bounds, live_baseline: int = -1) -> Lifecycle:
+pub def lifecycle(bounds: Bounds) -> Lifecycle:
     """A worker's policy state, its idle period starting now."""
-    return Lifecycle.start(baseline, bounds, live_baseline)
+    return Lifecycle.start(bounds)
