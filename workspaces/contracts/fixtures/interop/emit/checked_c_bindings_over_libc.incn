@@ -4,6 +4,7 @@
 #   7
 #   9 12
 #   0.5 4
+#   0.5 4 3
 #   5
 #   interior nul refused
 #   true
@@ -40,6 +41,9 @@ binding LibMath:
     link = c.system_library("m")
 
     symbol frexp(value: c.f64, exponent: c.InOut[c.i32]) -> c.f64:
+        native = "frexp"
+
+    symbol frexp_int(value: c.f64, exponent: c.InOut[c.c_int]) -> c.f64:
         native = "frexp"
 
 
@@ -79,6 +83,15 @@ def split(value: f64) -> str:
         exponent = c.inout(initial)
         mantissa = LibMath.frexp(value, exponent)
         return f"{mantissa} {exponent.take()}"
+
+
+def split_int(value: f64) -> str:
+    """Read a C `int` in/out slot as an ordinary Incan integer."""
+    unsafe:
+        exponent = c.inout(0)
+        mantissa = LibMath.frexp_int(value, exponent)
+        written: int = exponent.take()
+        return f"{mantissa} {written} {written - 1}"
 
 
 def string_length(value: str) -> Result[usize, str]:
@@ -128,6 +141,7 @@ def main() -> None:
     println(absolute(7))
     println(f"{absolute_int(-6)} {absolute_int(9)}")
     println(split(8.0))
+    println(split_int(8.0))
     # 2. Text escapes preserve \0 literally, so construct the NUL through a byte literal.
     match string_length("hello"):
         Ok(length) => println(length)
