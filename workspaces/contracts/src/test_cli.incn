@@ -2,7 +2,7 @@
 
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
-from cli import located
+from cli import left_files, located
 from run import Outcome
 
 
@@ -25,3 +25,17 @@ def test_a_project_directory_is_replaced_only_where_it_is_absolute() -> None:
     outcome = Outcome(stdout="case: case/alpha\n", stderr="", code=Some(1))
     seen = located(outcome, Path("case"))
     assert seen.stdout == "case: case/alpha\n"
+
+
+def test_a_case_names_the_files_its_commands_leave_and_do_not_leave() -> None:
+    """A file `expect-files:` names must exist and one `expect-no-files:` names must not; each failure names its path."""
+    scratch = TemporaryDirectory.try_new().unwrap()
+    project = scratch.path().joinpath("case")
+    project.joinpath("alpha").mkdir(true, true).unwrap()
+    project.joinpath("oven.lock").write_text("", "utf-8", "strict", None).unwrap()
+    assert left_files(project, ["oven.lock"], ["alpha/oven.lock"]) == []
+    project.joinpath("alpha").joinpath("oven.lock").write_text("", "utf-8", "strict", None).unwrap()
+    assert left_files(project, ["beta/oven.lock"], ["alpha/oven.lock"]) == [
+        "the commands left no `beta/oven.lock`",
+        "the commands left `alpha/oven.lock`",
+    ]
