@@ -770,14 +770,21 @@ mod tests {
     }
 
     /// Install `values` as the records of one Loaf group named `name` in a fresh payload directory under `root`.
-    fn record_set(root: &Path, name: &str, values: &[(&str, Vec<u8>)]) -> Result<RecordSet, Box<dyn std::error::Error>> {
+    fn record_set(
+        root: &Path,
+        name: &str,
+        values: &[(&str, Vec<u8>)],
+    ) -> Result<RecordSet, Box<dyn std::error::Error>> {
         fs::create_dir(root.join("payloads"))?;
         let mut entries = Vec::new();
         for (family, value) in values {
             let digest = content_name(value);
             fs::write(root.join("payloads").join(&digest), value)?;
             entries.push(RecordEntry {
-                key: format!("loaf/debug/{name}/{family}/00000000/{}", content_name(family.as_bytes())),
+                key: format!(
+                    "loaf/debug/{name}/{family}/00000000/{}",
+                    content_name(family.as_bytes())
+                ),
                 revision: digest.clone(),
                 value: digest,
             });
