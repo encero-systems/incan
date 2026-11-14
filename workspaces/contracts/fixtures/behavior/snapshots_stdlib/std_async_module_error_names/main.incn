@@ -1,0 +1,15 @@
+# behavior: std.async.channel, std.async.sync and std.async.time publish the Error name 0.5.1 published, and a module adopting it from there runs
+# expect-stdout:
+#   channel channel failed
+#   sync sync failed
+#   time time failed
+
+from channel_names import channel_line
+from sync_names import sync_line
+from time_names import time_line
+
+
+def main() -> None:
+    println(channel_line())
+    println(sync_line())
+    println(time_line())
