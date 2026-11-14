@@ -286,6 +286,41 @@ pub def test_generic_body_edit_matches_cold_build() -> Result[None, str]:
     return verify_comment_text_builds_identically(binary, root.joinpath("comment-text"))
 
 
+pub def test_a_comment_in_a_path_dependency_keeps_its_consumer_building() -> Result[None, str]:
+    """
+    A comment appended to a path dependency leaves its semantic facts as they were, so its consumer still builds.
+
+    1. Build and run a program that calls a path dependency's function, in a fresh store.
+    2. Append a comment to the dependency. It moves only the end of the function's declaration span.
+    3. The same store builds and runs the program again.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    dependency = root.joinpath("deps/intervals")
+    root.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    dependency.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    write(
+        root.joinpath("loaf.toml"),
+        "[project]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n"
+            + "[dependencies]\nintervals = { path = \"deps/intervals\" }\n",
+    )?
+    write(dependency.joinpath("loaf.toml"), "[project]\nname = \"intervals\"\nversion = \"0.1.0\"\n")?
+    library = dependency.joinpath("src/lib.incn")
+    function = "pub def interval() -> int:\n    return 42\n"
+    write(library, function)?
+    source = root.joinpath("src/main.incn")
+    write(source, "from pub::intervals import interval\n\n\ndef main() -> None:\n    println(interval())\n")?
+    _ = lowering_example_run(binary, source, store, "42")?
+    # 2. The comment changes no semantic fact of `intervals`, so the consumer keeps what it retained.
+    write(library, function + "# a comment after the function\n")?
+    edited = lowering_example_run(binary, source, store, "42")
+    stop_example_engine(binary, store)?
+    _ = edited?
+    return Ok(None)
+
+
 def verify_deleted_module_matches_cold(binary: str, root: Path) -> Result[None, str]:
     """Deleting an imported module refuses a warm build with exactly the refusal a cold build of the same source gives."""
     root.mkdir(true, true).map_err((error) => error.message())?
