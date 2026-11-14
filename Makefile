@@ -47,3 +47,4 @@ pre-commit:
 	@$(INCAN) run scripts/check_agents_doc_sync.incn
 	@$(INCAN) run scripts/check_doc_paths.incn
 	@$(INCAN) run scripts/check_reference_contract.incn
+	@$(INCAN) run scripts/check_std_reexports.incn
