@@ -2,6 +2,7 @@
 # Count total steps for all numbers 1 to N
 
 def collatz_steps(n: int) -> int:
+    """The number of Collatz steps that take `n` to 1: halve an even value, otherwise triple it and add one."""
     mut count = 0
     mut num = n
     while num != 1:
@@ -13,6 +14,7 @@ def collatz_steps(n: int) -> int:
     return count
 
 def main() -> None:
+    """Sum the Collatz step counts of 1 through 1,000,000 and print the total."""
     limit = 1_000_000
     mut total_steps = 0
     

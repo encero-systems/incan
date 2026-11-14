@@ -3,6 +3,7 @@
 # N = 1,000,000
 
 def fib_mod(n: int, modulo: int) -> int:
+    """The `n`th Fibonacci number modulo `modulo`, computed iteratively; `fib(0)` is 0 and `fib(1)` is 1."""
     if n <= 1:
         return n
     
@@ -17,6 +18,7 @@ def fib_mod(n: int, modulo: int) -> int:
     return curr
 
 def main() -> None:
+    """Print the 1,000,000th Fibonacci number modulo 1,000,000,007."""
     n = 1_000_000
     modulo = 1_000_000_007
     result = fib_mod(n, modulo)

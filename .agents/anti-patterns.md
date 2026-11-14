@@ -38,7 +38,7 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 | IN9 | Ceremony helpers `empty_*` / `clone_*` | 26 | — | 26 |
 | IN10 | `Err(_) =>` arms that drop the error (Incan) | 407 | — | 416 |
 | IN11 | Stale Python script names in Incan programs | 13 | 13 | 0 |
-| IN12 | Declarations without a docstring | 529 | 529 | 529 |
+| IN12 | Declarations without a docstring | 529 | 529 | 506 |
 | IN13 | Helpers nested inside function bodies | 0 | 0 | 0 |
 | IN14 | Positional magic numbers (`parts[3]`) | 257 | — | 259 |
 | IN15 | The toolchain version spelled again where its constant exists | 11 | 7 | 5 |
@@ -198,7 +198,7 @@ IN15 counts candidates. A message that names its subject in the surrounding erro
 
 - Source: `.agents/skills/review-incan-source-quality/SKILL.md` ("docstrings on every authored declaration, including private/internal helpers"); `.agents/skills/review/SKILL.md`, Checklist 5.
 - Search: the `nodoc` findings of [`incan_structure.awk`](#incan_structureawk).
-- Split: 522 in sources, 7 in tests.
+- Split: 522 in sources, 7 in tests. By top directory at `dd3ee72d8`: 246 in `loaves/stdlib`, 209 in `examples`, 30 in `workspaces/docs-site`, 23 in `workspaces/benchmarks` (now 0), 15 in `loaves/compiler` and 1 in `workspaces/oven`.
 
 ### IN13 Helpers nested in function bodies
 

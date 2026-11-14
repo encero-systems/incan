@@ -2,6 +2,7 @@
 # Sort 1,000,000 random integers (with allocation)
 
 def mergesort(arr: List[int]) -> List[int]:
+    """Sort `arr` and return it, merging in place through one scratch buffer allocated once."""
     n = len(arr)
     if n <= 1:
         return arr
@@ -25,8 +26,7 @@ def mergesort(arr: List[int]) -> List[int]:
     return out
 
 def mergesort_range(mut arr: List[int], mut temp: List[int], lo: int, hi: int) -> None:
-    # Sorts arr[lo:hi) *in place* by overwriting elements of `arr`.
-    # This returns None because the result is the side effect on `arr`.
+    """Sort `arr[lo:hi)` in place; the result is the side effect on `arr`, so it returns `None`."""
     if hi - lo <= 1:
         return
 
@@ -36,8 +36,7 @@ def mergesort_range(mut arr: List[int], mut temp: List[int], lo: int, hi: int) -
     merge_range(arr, temp, lo, mid, hi)
 
 def merge_range(mut arr: List[int], mut temp: List[int], lo: int, mid: int, hi: int) -> None:
-    # Merge arr[lo:mid) and arr[mid:hi) into temp[lo:hi), then copy back.
-    # (So `arr` is what ends up sorted.)
+    """Merge the sorted runs `arr[lo:mid)` and `arr[mid:hi)` through `temp[lo:hi)`, leaving `arr[lo:hi)` sorted."""
     mut i = lo
     mut j = mid
     mut k = lo
@@ -65,6 +64,7 @@ def merge_range(mut arr: List[int], mut temp: List[int], lo: int, mid: int, hi: 
         arr[idx] = temp[idx]
         
 def generate_random_array(size: int, seed: int) -> List[int]:
+    """`size` integers below 1,000,000 from a linear congruential generator seeded with `seed`: the same every run."""
     mut arr: List[int] = []
     mut state = seed
     for _ in range(size):
@@ -73,6 +73,7 @@ def generate_random_array(size: int, seed: int) -> List[int]:
     return arr
 
 def main() -> None:
+    """Merge-sort 1,000,000 generated integers and print the count and the first five."""
     size = 1_000_000
     arr = generate_random_array(size, 42)
     sorted_arr = mergesort(arr)

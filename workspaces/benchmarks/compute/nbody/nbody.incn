@@ -7,6 +7,7 @@ const SOLAR_MASS: float = 4.0 * PI * PI
 const DAYS_PER_YEAR: float = 365.24
 
 model Body:
+    """One body of the simulation: its position, velocity and mass in the Benchmarks Game units."""
     x: float
     y: float
     z: float
@@ -16,6 +17,7 @@ model Body:
     mass: float
 
 def advance(mut bodies: List[Body], dt: float, steps: int) -> None:
+    """Advance the bodies `steps` times by `dt`: pairwise gravity updates velocities, then every body moves."""
     for _ in range(steps):
         # Update velocities
         for i in range(len(bodies)):
@@ -41,6 +43,7 @@ def advance(mut bodies: List[Body], dt: float, steps: int) -> None:
             body.z += dt * body.vz
 
 def energy(bodies: List[Body]) -> float:
+    """The system's total energy: each body's kinetic energy less the potential energy of each pair."""
     mut e = 0.0
 
     for i in range(len(bodies)):
@@ -62,6 +65,7 @@ def energy(bodies: List[Body]) -> float:
     return e
 
 def offset_momentum(mut bodies: List[Body]) -> None:
+    """Set the first body's (the sun's) velocity so that the total momentum of the system is zero."""
     mut px = 0.0
     mut py = 0.0
     mut pz = 0.0
@@ -76,6 +80,7 @@ def offset_momentum(mut bodies: List[Body]) -> None:
     bodies[0].vz = -pz / SOLAR_MASS
 
 def main() -> None:
+    """Simulate the sun and the four outer planets for 500,000 steps of 0.01 and print the final energy."""
     mut bodies = [
         # Sun
         Body(x=0.0, y=0.0, z=0.0, vx=0.0, vy=0.0, vz=0.0, mass=SOLAR_MASS),

@@ -2,12 +2,14 @@
 # Sort 1,000,000 random integers in-place
 
 def quicksort(mut arr: List[int], low: int, high: int) -> None:
+    """Sort `arr[low..=high]` in place by partitioning around the last element and recursing on each side."""
     if low < high:
         pivot_idx = partition(arr, low, high)
         quicksort(arr, low, pivot_idx - 1)
         quicksort(arr, pivot_idx + 1, high)
 
 def partition(mut arr: List[int], low: int, high: int) -> int:
+    """Partition `arr[low..=high]` around `arr[high]` and return the index where the pivot ends up."""
     pivot = arr[high]
     mut i = low - 1
 
@@ -20,7 +22,7 @@ def partition(mut arr: List[int], low: int, high: int) -> int:
     return i + 1
 
 def generate_random_array(size: int, seed: int) -> List[int]:
-    # Simple LCG random number generator for reproducibility
+    """`size` integers below 1,000,000 from a linear congruential generator seeded with `seed`: the same every run."""
     mut arr: List[int] = []
     mut state = seed
     for _ in range(size):
@@ -29,6 +31,7 @@ def generate_random_array(size: int, seed: int) -> List[int]:
     return arr
 
 def main() -> None:
+    """Quicksort 1,000,000 generated integers in place and print the count and the first five."""
     size = 1_000_000
     mut arr = generate_random_array(size, 42)
 

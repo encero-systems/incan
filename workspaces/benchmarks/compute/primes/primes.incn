@@ -2,6 +2,7 @@
 # Sieve of Eratosthenes up to N = 50,000,000
 
 def sieve(limit: int) -> int:
+    """The number of primes up to and including `limit`, counted with the sieve of Eratosthenes."""
     # Create boolean array, True = prime candidate
     mut is_prime = [True for x in range(limit + 1)]
     is_prime[0] = False
@@ -21,6 +22,7 @@ def sieve(limit: int) -> int:
     return sum(is_prime)
 
 def main() -> None:
+    """Count the primes up to 50,000,000 and print the count."""
     limit = 50_000_000
     count = sieve(limit)
     println(f"Primes up to {limit}: {count}")

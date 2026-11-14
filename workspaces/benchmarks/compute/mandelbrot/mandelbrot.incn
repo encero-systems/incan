@@ -2,6 +2,7 @@
 # Calculate escape iterations for Mandelbrot set
 
 def mandelbrot_escape(cr: float, ci: float, max_iter: int) -> int:
+    """The iteration at which `z = z * z + c` escapes the radius-2 disk for `c = cr + ci * i`, else `max_iter`."""
     mut zr = 0.0
     mut zi = 0.0
     
@@ -18,6 +19,7 @@ def mandelbrot_escape(cr: float, ci: float, max_iter: int) -> int:
     return max_iter
 
 def main() -> None:
+    """Sum the escape iterations over a 2000 x 2000 grid covering -1.5 to 0.5 by -1.0 to 1.0 and print the total."""
     size = 2000
     max_iter = 50
     mut total_iter = 0

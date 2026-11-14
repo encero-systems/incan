@@ -4,6 +4,7 @@
 import std.math
 
 def main() -> None:
+    """Sum `math.gcd` over ten million deterministic pairs between 1 and 10,000 and print the sum."""
     iterations = 10_000_000
     mut total = 0
     
