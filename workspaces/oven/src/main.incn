@@ -46,6 +46,7 @@ from owner_protocol import Reply
 from owner_endpoint import stop_owners
 from observation import trace_boundary
 from installation_page import begin_command as begin_installation_command
+from home_views import selected_home_view
 from owner_service import serve_owner
 from graph_inspection import inspect_codegraph, options as graph_options
 from interop_plan import inspect_interop_plan, plan_options
@@ -182,6 +183,11 @@ def dispatch(command: str, rest: list[str]) -> None:
         return
     if command in ["run", "check", "test", "build", "describe-unit", "fmt", "inspect", "lock", "trust"]:
         begin_installation_command()
+    # A build binds the home's own view of its bakery the first time the home builds (BE-01).
+    if command in ["run", "test", "build"]:
+        match selected_home_view():
+            Err(reason) => fail(f"{invoked()} {command}: {reason}", 1)
+            Ok(_) => pass
     if command == "--internal-readmit":
         # A relink rewrote the installation it owns; this is its explicit re-admission, never a user command. Owners and
         # compiler workers still hold the earlier installation, so they stop first. The arguments are the compiler files
