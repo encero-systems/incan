@@ -535,6 +535,12 @@ Refused (`INCAN-T0001`):
 
 Refused (`INCAN-P0001`): `pub` on a method declared in a trait.
 
+Refused (`INCAN-T0135`): a direct construction of a class, outside the class's own methods, that names one of its private fields. A function of the same module, another module and a subclass are all outside.
+
+### Method overloads
+
+Ordinary methods of one type may share a name when their positional argument counts or parameter types let every call select exactly one of them. A method that overlaps an earlier one of the same name is refused with ``Type 'T' declares conflicting 'm' method overloads``, which also points at the earlier method.
+
 ## Function Values
 
 Named functions are first-class values of a [function type](#function-types); a value of a rest-aware function keeps its rest parameters ([Rest-aware function values](#rest-aware-function-values)).
@@ -557,6 +563,16 @@ Each of these is error `INCAN-T0001`:
 - Duplicate fixed bindings across direct and unpacked arguments.
 - Missing required normal parameters.
 
+An explicit type-argument list on a call of a function or method that declares no type parameters is error `INCAN-T0129`.
+
+## Unreachable Code
+
+Statements after a `return` in the same block never run and produce the warning `INCAN-T0101`, ``Unreachable code after `return` ``, which points at the `return`. The check is local to the block: it does not follow `if`, `match` or loop divergence, and the program still compiles.
+
+## Program Entry
+
+A program's `main`, and a selected additional program entry, takes no parameters and returns `None` or `Result[None, E]`, where `E` is `str` or an error model or enum of the standard library; it may be `async def`. Any other signature is refused when the program is compiled. When `main` returns `Err(error)`, the error is written to standard error after everything the program printed, and the program exits with status `1`; `None` and `Ok(None)` exit `0`.
+
 ## Rust Interop
 
 A function imported from a Rust crate has no rest parameters.
@@ -571,3 +587,11 @@ A closure passed to a Rust parameter whose bounds require `Send` or `Sync`, such
 - A borrowed capture never has it.
 
 A capture without the property is refused with ``Captured value 'NAME' of type 'TYPE' lacks retained `MARKER` evidence for this Rust callback``.
+
+Checking also refuses these Rust calls and types:
+
+- `INCAN-T0122`: a Rust method call whose arguments check but for which no single native callee can be selected; the diagnostic names the callee and why.
+- `INCAN-T0105`: a Rust associated call that leaves its owner's type arguments open when nothing later fixes them. A local bound to such a call, as in `mut table = HashMap.new()`, takes them from its first use that depends on them.
+- `INCAN-T0120`: a return or field type that names a Rust type borrowing data. A parameter type may name one.
+- A call of an unsafe Rust function: ``Unsafe Rust call `rust::PATH` is unsupported: unsafe interop is out of scope``.
+- An owned use of a Rust value whose type has no retained `Clone` implementation.

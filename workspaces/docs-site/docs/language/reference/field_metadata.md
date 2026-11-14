@@ -91,3 +91,5 @@ model Customer:
 | Construction, access, a pattern or decoding uses an earlier name | `INCAN-T0001` |
 | `made_private` is attached to a public field, method or type | `INCAN-T0132` |
 | A compiled consumer imports a type recorded as made private | `INCAN-T0133` |
+| A model field name starts with `___`, which typed record stores reserve | `INCAN-T0127` |
+| Two fields of one model, or two variants of one enum, have the same compiler-derived six-byte record identity | `INCAN-T0128` |

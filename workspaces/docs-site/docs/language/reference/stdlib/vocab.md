@@ -1,6 +1,6 @@
 # `std.vocab`
 
-`std.vocab` provides vocabulary registration values and the versioned structured syntax exchanged with a native desugarer. Entry exports and execution policy are specified in [Vocabulary entries](../../../tooling/reference/vocabulary.md).
+`std.vocab` provides vocabulary registration values and the versioned structured syntax exchanged with a native desugarer. Its descriptor, scoped-surface and transformation declarations are those of `std.primitives.vocab`, re-exported with the same identities. Entry exports and execution policy are specified in [Vocabulary entries](../../../tooling/reference/vocabulary.md).
 
 ```incan
 from std.vocab import VocabRegistration, DslSurface, DeclarationSurface, ClauseSurface
