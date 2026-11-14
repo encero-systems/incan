@@ -24,7 +24,8 @@ from files import json_text
 from home import StandardPackage
 from incan_units import check_unit, obtain_executable, program_binary, executable_view, view_executable
 from json_fields import required_text
-from pub::incan_platform.store import EXPECT_ABSENT, Snapshot, Transaction, begin, commit, put
+from pub::incan_platform.store import EXPECT_ABSENT, HOME_VIEW, Snapshot, Transaction, begin, commit, put
+from engine_overlay import is_editor_view
 from store_path_conversion import snapshot
 from toolchain import Toolchain, load_toolchain, toolchain_directory
 from unit import describe
@@ -87,6 +88,8 @@ pub model ProgramOutcome:
     pub console: str = ""
     pub epoch_reads: int = 0
     pub transaction: Option[Transaction] = None
+    # An editor overlay's source and checked-body records, published in the editor view only.
+    pub view_transaction: Option[Transaction] = None
     pub claim: Option[Rc[LockGuard]] = None
 
 
@@ -219,8 +222,14 @@ pub def obtain(
     key = linkage_key(native_key, development_link(ready, true))?
     binary = program_binary(ready)
     record_work(Operation.EnginePrepare, epoch.roots[0], preparing)
-    # 3. Exactly one existing producer owns claiming and publishing a native unit.
-    graph = snapshot(store).map_err((error) => error.message())?
+    # 3. Exactly one existing producer owns claiming and publishing a native unit. An editor's overlay reads and
+    # writes its source and checked-body records in its own view, so it never changes what a build reads.
+    request_view = program_view(handle)?
+    editor = is_editor_view(request_view)
+    mut graph_view = str(HOME_VIEW)
+    if editor:
+        graph_view = request_view
+    graph = snapshot(store, graph_view).map_err((error) => error.message())?
     projected = prepare_captured_source_inputs(graph, begin(graph), ready, epoch.inputs)?
     mut invalid = body_owners_reading(graph, projected.keys, CHECKER_PROFILE)?
     origin = source_origin(ready)
@@ -259,7 +268,11 @@ pub def obtain(
             continue
         if not captured_file_current(Path(input.path), input.metadata):
             return Err("captured inputs changed before native selection; submit a new request")
-    mut request_transaction = merge_request_transaction(produced.transaction, projected.transaction)
+    mut request_transaction = projected.transaction
+    mut native = produced.transaction
+    if not editor:
+        request_transaction = merge_request_transaction(produced.transaction, projected.transaction)
+        native = None
     mut body_evaluations = 0
     mut body_ir_evaluations = 0
     mut checker_counts = CheckerRecordCounts()
@@ -278,6 +291,12 @@ pub def obtain(
         body_ir_evaluations = bodies.body_ir_evaluations
     fact = produced_fact(produced.fact)?
     unit = NativeUnit(identity=key.digest, payload=executable_payload(fact, binary.name())?, binary=binary.0)
+    # An overlay's content-addressed native results and finalized-unit index stay where every build finds them.
+    mut shared = Some(request_transaction)
+    mut view_records: Option[Transaction] = None
+    if editor:
+        shared = native
+        view_records = Some(request_transaction)
     return Ok(
         ProgramOutcome(
             code=0,
@@ -297,7 +316,8 @@ pub def obtain(
             artifact_refusals=checker_counts.artifact_refusals,
             console=console,
             epoch_reads=epoch_reads,
-            transaction=index_program(store, selector, unit, Some(request_transaction))?,
+            transaction=index_program(store, selector, unit, shared)?,
+            view_transaction=view_records,
             claim=produced.claim,
         ),
     )

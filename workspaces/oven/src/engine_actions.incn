@@ -120,6 +120,8 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
                 group.append(transaction)
             if let Some(transaction) = produced.transaction:
                 group.append(transaction)
+            if let Some(transaction) = produced.view_transaction:
+                group.append(transaction)
             if let Some(transaction) = selection.transaction:
                 group.append(transaction)
             if pending.proofs:
