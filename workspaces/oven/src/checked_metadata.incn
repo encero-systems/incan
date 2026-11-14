@@ -1,5 +1,5 @@
 """
-Checked compiler metadata for tooling and documentation: a source package's public API.
+Checked compiler metadata for tooling and documentation: a source package's public API and its typed registries.
 
 Each view reads the library manifest the compiler publishes for the package's checked source interface, the same
 `contract_metadata` a compiled Loaf's `.incnlib` carries. Nothing is compiled natively and no module is executed.
@@ -18,6 +18,7 @@ from unit_compiler import crate_name, run_compiler, write_unit
 from unit_rust import prepare_native, toolchain_for
 
 pub const API_USAGE: str = "incan tools metadata api [PATH] [--format json]"
+pub const REGISTRY_USAGE: str = "incan inspect registry IDENTITY [--project PATH] [--format json]"
 
 
 @derive(Eq)
@@ -25,13 +26,15 @@ pub enum MetadataView(str):
     """Which checked metadata a request prints."""
 
     Api = "api"
+    Registry = "registry"
 
 
 pub model MetadataRequest:
-    """One metadata command: the view, the source or project it reads and the format."""
+    """One metadata command: the view, the source or project it reads, the model or registry it names and the format."""
 
     pub view: MetadataView
     pub path: str = "."
+    pub name: str = ""
     pub format: str = "json"
 
 
@@ -65,9 +68,36 @@ pub def parse_metadata(arguments: list[str]) -> Result[MetadataRequest, str]:
     return Ok(MetadataRequest(view=MetadataView.Api, path=path, format=format))
 
 
+pub def parse_registry(arguments: list[str]) -> Result[MetadataRequest, str]:
+    """`inspect registry IDENTITY [--project PATH] [--format json]`."""
+    mut project = "."
+    mut format = "json"
+    mut operands: list[str] = []
+    mut index = 0
+    while index < len(arguments):
+        if arguments[index] in ["--project", "--format"] and index + 1 < len(arguments):
+            if arguments[index] == "--project":
+                project = arguments[index + 1]
+            else:
+                format = arguments[index + 1]
+            index += 2
+            continue
+        if arguments[index].startswith("-"):
+            return Err(f"unknown option `{arguments[index]}`")
+        operands.append(arguments[index])
+        index += 1
+    if len(operands) != 1:
+        return Err("expected one registry identity, such as `feature::functions`")
+    if format != "json":
+        return Err(f"`--format` is json, got `{format}`")
+    return Ok(MetadataRequest(view=MetadataView.Registry, path=project, name=operands[0], format=format))
+
+
 pub def checked_metadata(request: MetadataRequest) -> Result[i32, str]:
-    """Print the requested view from the package's checked library manifest."""
+    """Print the requested view; a registry the package does not publish is refused with the ones it does."""
     metadata = contract_metadata(checked_manifest(Path(request.path))?)?
+    if request.view == MetadataView.Registry:
+        return print_registry(metadata, request)
     match metadata.get("api"):
         Some(api) =>
             println(api.to_pretty_json().map_err((error) => error.message())?)
@@ -113,10 +143,99 @@ def contract_metadata(manifest: Path) -> Result[JsonValue, str]:
         None => return Err(f"{manifest.0}: the library manifest carries no checked metadata")
 
 
+def print_registry(metadata: JsonValue, request: MetadataRequest) -> Result[i32, str]:
+    """
+    Print one checked registry and its entries, selected by `<module>::<binding>` or the package-qualified identity.
+
+    The document is 0.5.1's: schema version, provenance, package, the registry definition and its entries.
+    """
+    registry = match metadata.get("registry"):
+        Some(found) => found
+        None => return Err(registry_absent(request.name, []))
+
+    package = registry_package(registry)
+    modules = elements(registry.get("modules"))?
+    mut available: list[str] = []
+    mut selected: Option[JsonValue] = None
+    for module in modules:
+        for definition in elements(module.get("registries"))?:
+            identity = text(definition, "identity")?
+            available.append(qualified_identity(package, identity))
+            if request.name == identity or request.name == qualified_identity(package, identity):
+                selected = Some(definition)
+    definition = match selected:
+        Some(found) => found
+        None => return Err(registry_absent(request.name, available))
+
+    identity = text(definition, "identity")?
+    mut entries: list[JsonValue] = []
+    for module in modules:
+        for entry in elements(module.get("entries"))?:
+            if text(entry, "registry_identity")? == identity:
+                entries.append(entry)
+    mut document: Dict[str, JsonValue] = {}
+    document["schema_version"] = JsonValue.int(1)
+    document["provenance"] = JsonValue.string("checked")
+    if let Some(named) = registry.get("package"):
+        document["package"] = named
+    document["registry"] = definition
+    document["entries"] = JsonValue.array(entries)
+    println(JsonValue.object(document).to_pretty_json().map_err((error) => error.message())?)
+    return Ok(0)
+
+
+def registry_package(registry: JsonValue) -> str:
+    """The package name the registry metadata names, or an empty string."""
+    match registry.get("package"):
+        None => return ""
+        Some(package) =>
+            match package.get("name"):
+                None => return ""
+                Some(name) => return name.as_str().unwrap_or("")
+
+
+def qualified_identity(package: str, identity: str) -> str:
+    """A registry identity qualified by its package, as refusals list them."""
+    if package == "":
+        return identity
+    return f"{package}::{identity}"
+
+
+def registry_absent(name: str, available: list[str]) -> str:
+    """0.5.1's refusal for a registry the checked package does not define."""
+    mut listed = "none"
+    if len(available) > 0:
+        listed = ", ".join(sorted(available))
+    return f"checked registry `{name}` was not found; available registries: {listed}"
+
+
+def elements(value: Option[JsonValue]) -> Result[list[JsonValue], str]:
+    """An optional array field; an absent one is empty."""
+    match value:
+        None => return Ok([])
+        Some(found) => return found.expect_array().map_err((error) => error.message())
+
+
+def text(value: JsonValue, key: str) -> Result[str, str]:
+    """A required string field."""
+    return value.require(key).and_then((field) => field.expect_str()).map_err((error) => error.message())
+
+
 pub def metadata_help(view: MetadataView) -> str:
-    """`incan tools metadata api --help`."""
-    return render(
-        API_USAGE,
-        ["  --format json  Checked public API metadata, the `contract_metadata.api` a library publishes."],
-        "incan tools metadata api src/lib.incn",
-    )
+    """`incan tools metadata api --help` and `incan inspect registry --help`."""
+    match view:
+        MetadataView.Api =>
+            return render(
+                API_USAGE,
+                ["  --format json  Checked public API metadata, the `contract_metadata.api` a library publishes."],
+                "incan tools metadata api src/lib.incn",
+            )
+        MetadataView.Registry =>
+            return render(
+                REGISTRY_USAGE,
+                [
+                    "  --project PATH  Source project root (default the current directory).",
+                    "  --format json   Deterministic checked registry JSON.",
+                ],
+                "incan inspect registry feature::functions",
+            )
