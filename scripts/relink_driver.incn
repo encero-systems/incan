@@ -239,9 +239,10 @@ pub def install_driver(toolchain: Path, built: Path, sysroot: str) -> Result[tup
     mut replaced = [manifest_text(manifest, "driver")?]
     for cache in manifest_list(manifest, "rust_abi")?:
         replaced.append(cache)
+    # Both are named from the toolchain, as an installed manifest names them, so a copied or moved home stays whole.
     mut fields = manifest.expect_object().map_err((error) => error.message())?
-    fields["driver"] = JsonValue.string(driver.0)
-    fields["rust_abi"] = JsonValue.array([JsonValue.string(abi.0)])
+    fields["driver"] = JsonValue.string(f"bin/{driver.name()}")
+    fields["rust_abi"] = JsonValue.array([JsonValue.string(f"rust-abi/{abi.name()}")])
     fields["codegraph_on_request"] = JsonValue.bool(true)
     fields["closure_anchors"] = JsonValue.bool(true)
     replace_text(
