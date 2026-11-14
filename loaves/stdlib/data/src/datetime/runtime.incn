@@ -15,7 +15,7 @@ println(started.elapsed().whole_seconds())
 """
 
 from rust::std::time import Duration as RustDuration, Instant as RustInstant, SystemTime as RustSystemTime, UNIX_EPOCH
-from std.datetime.error import DateTimeError
+pub from std.datetime.error import DateTimeError
 
 const _DAYS_PER_WEEK: int = 7
 const _HOURS_PER_DAY: int = 24
