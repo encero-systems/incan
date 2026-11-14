@@ -149,3 +149,39 @@ fn a_decorator_anchor_is_a_source_position() {
         "every source position is left out, whatever field holds it"
     );
 }
+
+/// The digests of `PRICE`'s records when its governed bodies sidecar has `content_digest` under `version`.
+fn digests_with_bodies(version: u32, content_digest: &str) -> Result<FactDigests, String> {
+    let mut manifest = manifest(PRICE, "0.1.0")?;
+    manifest.contract_metadata.executable_representation =
+        Some(crate::library_manifest::ExecutableRepresentationExport {
+            representation_version: version,
+            content_digest: content_digest.to_owned(),
+        });
+    Ok(manifest
+        .compiler_records(FIRST_FILE)
+        .map_err(|error| error.to_string())?
+        .digests)
+}
+
+#[test]
+fn moved_governed_bodies_keep_the_semantic_facts_digest() -> Result<(), String> {
+    // A longer docstring in Oven's `incan_platform` moved the spans its Body IR carries, so its `.incnbody` bytes, and
+    // the descriptor's digest of them, changed while every other compile fact stayed.
+    let before = digests_with_bodies(55, FIRST_FILE)?;
+    let after = digests_with_bodies(55, SECOND_FILE)?;
+    assert_eq!(
+        before.semantic_facts, after.semantic_facts,
+        "the bodies' byte digest is not a compile fact"
+    );
+    assert_ne!(
+        before.record_content, after.record_content,
+        "the records name the bodies' bytes"
+    );
+    let other_version = digests_with_bodies(56, FIRST_FILE)?;
+    assert_ne!(
+        before.semantic_facts, other_version.semantic_facts,
+        "the bodies' representation version is a compile fact"
+    );
+    Ok(())
+}
