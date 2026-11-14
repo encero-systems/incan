@@ -1,9 +1,9 @@
 """
-`oven interop stage --target TRIPLE --adapter android|ios --output PATH [PATH]`: copy a declared target's bundled runtime
-libraries into the fixed layout a platform packager consumes, as 0.5's `incan oven interop stage` did. Android stages
-each one at `jniLibs/arm64-v8a/<runtime-name>`, iOS at `Frameworks/<runtime-name>`, beside an
-`incan-interop-adapter.json` manifest. It never starts Gradle, Xcode or a signing tool, and never replaces an existing
-output directory.
+`oven interop stage --target TRIPLE --adapter android|ios --output PATH [--locked] [PATH]`: copy a declared target's
+bundled runtime libraries, as the project's `oven.lock` records them, into the fixed layout a platform packager consumes,
+as 0.5's `incan oven interop stage` did. Android stages each at `jniLibs/arm64-v8a/<runtime-name>`, iOS at
+`Frameworks/<runtime-name>`, beside an `incan-interop-adapter.json` manifest. It never starts Gradle, Xcode or a signing
+tool, and never replaces an existing output directory.
 """
 
 from rust::std::process import id
@@ -14,7 +14,10 @@ from std.json import JsonValue
 from c_interop import CArtifactKind, CInteropArtifact, CInteropTarget
 from c_interop_requirements import CPlatformKind
 from files import json_text, write
-from intake import LocalProject, intake
+from features import FeatureRequest
+from intake import LocalProject, ManifestReader, intake
+from lock_format import OvenLock, lock_path, read_lock
+from project_lock import ensure_project_lock
 from unit import discovered_project
 
 const MANIFEST_NAME: str = "incan-interop-adapter.json"
@@ -38,6 +41,8 @@ pub model StageOptions:
     pub target: str = ""
     pub adapter: StageAdapter = StageAdapter.Android
     pub output: str = ""
+    # Refuse a missing lock, or one that would change, instead of refreshing it.
+    pub locked: bool = false
 
 
 model StagedFile:
@@ -68,6 +73,10 @@ pub def stage_options(arguments: list[str]) -> Result[StageOptions, str]:
                 options.output = value
             index += 2
             continue
+        if argument == "--locked":
+            options.locked = true
+            index += 1
+            continue
         if argument.startswith("-"):
             return Err(f"unknown option `{argument}`")
         if path_given:
@@ -92,15 +101,20 @@ pub def stage_interop(options: StageOptions) -> Result[i32, str]:
     Stage the selected target's bundled artifacts for the adapter.
 
     1. Select the project and its declared target, and require the adapter's platform.
-    2. Refuse an existing output before writing anything.
-    3. Copy each bundled artifact into a private directory beside the output, verifying each copy's digest.
-    4. Write the manifest, then move the directory into place.
+    2. Refresh the project's lock, or with `--locked` prove it needs no change, so it records what is staged.
+    3. Refuse an existing output before writing anything.
+    4. Copy each bundled artifact into a private directory beside the output, each copy the bytes the lock records.
+    5. Write the manifest, then move the directory into place.
     """
     # 1. The project at or above PATH declares the target, with the adapter's platform facts.
     project = staged_project(Path(options.path))?
     target = declared_target(project, options.target)?
     adapter_fits(options.adapter, target)?
-    # 2. A caller-owned output is never replaced.
+    # 2. The lock covers the target's contract and every bundled file's digest.
+    root = Path(project.root)
+    ensure_project_lock(root, "debug", FeatureRequest(), {}, ManifestReader(), options.locked)?
+    lock = read_lock(lock_path(root))?
+    # 3. A caller-owned output is never replaced.
     output = Path(options.output)
     if output.exists() or output.is_symlink():
         return Err(f"staging output `{options.output}` already exists and will not be replaced")
@@ -110,12 +124,12 @@ pub def stage_interop(options: StageOptions) -> Result[i32, str]:
     if staging.exists():
         staging.remove_tree().map_err((error) => f"{staging.0}: {error.message()}")?
     staging.mkdir(false, false).map_err((error) => f"{staging.0}: {error.message()}")?
-    # 3. Each copy is the declared file's bytes.
-    match staged_files(project, target, options.adapter, staging):
+    # 4. Each copy is the declared file's bytes, which the lock records.
+    match locked_files(project, target, options.adapter, staging, lock):
         Ok(files) =>
-            # 4. The manifest names output-relative paths only; the directory appears whole.
+            # 5. The manifest names output-relative paths only; the directory appears whole.
             manifest = staging.joinpath(MANIFEST_NAME)
-            write(manifest, json_text(adapter_manifest(options.adapter, target, files))? + "\n")?
+            write(manifest, json_text(adapter_manifest(options.adapter, target, files, lock.graph))? + "\n")?
             if output.exists() or output.is_symlink():
                 _ = staging.remove_tree()
                 return Err(f"staging output `{options.output}` already exists and will not be replaced")
@@ -130,6 +144,29 @@ pub def stage_interop(options: StageOptions) -> Result[i32, str]:
         Err(reason) =>
             _ = staging.remove_tree()
             return Err(reason)
+
+
+def locked_files(
+    project: LocalProject,
+    target: CInteropTarget,
+    adapter: StageAdapter,
+    staging: Path,
+    lock: OvenLock,
+) -> Result[list[StagedFile], str]:
+    """The staged files, each the digest `oven.lock` records for its artifact."""
+    files = staged_files(project, target, adapter, staging)?
+    for file in files:
+        mut recorded = ""
+        for entry in lock.interop:
+            if entry.target == target.target:
+                for artifact in entry.artifacts:
+                    if artifact.name == file.artifact.name:
+                        recorded = artifact.digest
+        if recorded != file.digest:
+            return Err(
+                f"bundled artifact `{file.artifact.name}` is {file.digest}, but oven.lock records `{recorded}`; run `oven lock`",
+            )
+    return Ok(files)
 
 
 def staged_project(path: Path) -> Result[LocalProject, str]:
@@ -214,8 +251,11 @@ def staged_files(
     return Ok(files)
 
 
-def adapter_manifest(adapter: StageAdapter, target: CInteropTarget, files: list[StagedFile]) -> JsonValue:
-    """The adapter manifest: the target, each staged file's declaration, digest and path, and the system capabilities."""
+def adapter_manifest(adapter: StageAdapter, target: CInteropTarget, files: list[StagedFile], graph: str) -> JsonValue:
+    """
+    The adapter manifest: the target, the lock's graph, each staged file's declaration, digest and path, and the system
+    capabilities.
+    """
     mut bundles: list[JsonValue] = []
     for file in files:
         bundles.append(
@@ -231,7 +271,9 @@ def adapter_manifest(adapter: StageAdapter, target: CInteropTarget, files: list[
         [artifact.capability for artifact in target.artifacts if artifact.kind == CArtifactKind.System],
     )
     return JsonValue.object(
-        {"schema-version": JsonValue.int(MANIFEST_SCHEMA), "adapter": JsonValue.string(adapter.value()), "target": JsonValue.string(
+        {"schema-version": JsonValue.int(MANIFEST_SCHEMA), "adapter": JsonValue.string(adapter.value()), "lock": JsonValue.string(
+            graph,
+        ), "target": JsonValue.string(
             target.target,
         ), "bundles": JsonValue.array(bundles), "system-capabilities": JsonValue.array(
             [JsonValue.string(capability) for capability in capabilities],
