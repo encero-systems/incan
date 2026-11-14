@@ -1,6 +1,10 @@
-"""A home without this Oven's toolchain refuses by naming what is missing and how to install it."""
+"""An installed toolchain: a home without one names the install command, and a zstd archive needs no `zstd`."""
 
+from rust::std::process import Command
+from archive_decompression import plain_archive
+from files import make_directory, write
 from home_paths import TOOLCHAIN
+from rust_target import decoded
 from scratch import scratch_directory
 from toolchain import load_toolchain_at
 
@@ -23,4 +27,32 @@ pub def test_a_home_without_the_toolchain_names_it_and_the_install_command() -> 
             assert f"no toolchain {TOOLCHAIN} is installed" in reason, reason
             assert description.0 in reason, reason
             assert "incan toolchain install ARCHIVE" in reason, reason
+    return Ok(None)
+
+
+pub def test_a_zstd_toolchain_archive_is_read_without_a_zstd_program() -> Result[None, str]:
+    """
+    A `.tar.zst` toolchain archive is decompressed in process, so `tar` reads it on a machine without `zstd`.
+
+    1. Pack a one-file stage as `oven toolchain pack` packs a `.tar.zst`.
+    2. The archive the installation hands `tar` lists its member with no `zstd` program on `PATH`.
+    3. A `.tar` archive is read as it is.
+    """
+    scratch = scratch_directory()?
+    # 1. The macOS `tar` compresses through the `zstd` program, which this machine has.
+    stage = scratch.path().joinpath("stage")
+    make_directory(stage)?
+    write(stage.joinpath("toolchain.json"), "{}\n")?
+    archive = scratch.path().joinpath("toolchain.tar.zst")
+    mut pack = Command.new("/usr/bin/tar")
+    packed = pack.arg("--zstd").arg("-cf").arg(archive.0).arg("-C").arg(stage.0).arg(".").status()
+    assert packed.map_err((error) => str(error))?.success(), "the fixture archive was not packed"
+    # 2. The `tar` of a new macOS cannot run `zstd`, so only a decompressed archive lists.
+    readable = plain_archive(archive, scratch.path().joinpath("toolchain.tar"))?
+    mut list = Command.new("/usr/bin/tar")
+    listed = list.arg("-tf").arg(readable.0).env("PATH", "/usr/bin:/bin").output().map_err((error) => str(error))?
+    assert listed.status.success(), f"tar -tf {readable.0} without zstd: {decoded(listed.stderr)}"
+    assert "./toolchain.json" in decoded(listed.stdout), decoded(listed.stdout)
+    # 3. An uncompressed archive is its own readable form.
+    assert plain_archive(readable, scratch.path().joinpath("again.tar"))?.0 == readable.0
     return Ok(None)
