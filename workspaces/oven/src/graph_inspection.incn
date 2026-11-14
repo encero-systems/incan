@@ -360,12 +360,12 @@ def prepare_cold(selected: GraphOptions, key: str, toolchain: Toolchain) -> Resu
 
 def page_key(selected: GraphOptions, path: Path, toolchain: Toolchain) -> Result[str, str]:
     """
-    The page identity of a request: every graph option and the resolved path. Only an Incan source's answer is paged,
-    and never a process-risk answer, which observes running processes.
+    The page identity of a request: every graph option and the resolved path. An Incan source's answer and a Rust
+    project's are paged; a process-risk answer, which observes running processes, never is.
     """
-    source = entry_source(path)
-    if selected.risk or not source.is_file() or not source.name().endswith(".incn"):
+    if selected.risk:
         return Ok("")
+    source = entry_source(path)
     mut parts = [PRESENTATION_DOMAIN, path.0, source.0, selected.profile, selected.format, selected.query]
     parts = parts + [selected.term]
     parts = parts + [str(selected.limit), str(selected.strict), str(selected.allow_errors), selected.stale]
