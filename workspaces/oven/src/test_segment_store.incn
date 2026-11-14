@@ -41,6 +41,7 @@ from pub::incan_platform.store import (
     durable_syncs,
     graph_barriers,
     keys_with_prefix,
+    index_levels,
 )
 from pub::incan_platform.store import snapshot as placed_snapshot
 from pub::incan_platform.store.memory import root as memory_root
@@ -409,9 +410,12 @@ pub def test_a_commit_reads_each_index_page_it_changes_once_however_many_keys_it
         transaction = put(transaction, key, b"earlier")
         expected.append(key)
     commit(transaction).map_err((error) => error.message())?
+    levels = index_levels(snapshot(root).map_err((error) => error.message())?).map_err((error) => error.message())?
     before_one = read_counts()
     _ = write_one(root, "k-1250-x", "one").map_err((error) => error.message())?
     one = read_counts().pages - before_one.pages
+    # One path read to check the key and one to merge it; a page the commit wrote is never read back to install it.
+    assert one == 2 * levels, f"a one-key commit on a {levels}-level index read {one} index pages"
     expected.append("k-1250-x")
     transaction = begin(snapshot(root).map_err((error) => error.message())?)
     for item in range(64):
@@ -606,7 +610,8 @@ pub def test_injected_128_bit_locator_collision_resolves_by_full_key() -> Result
                     ),
                 )
     mut collided = original
-    collided.index = build_index(store_path(root.joinpath("indexes")), entries).map_err((error) => error.detail)?
+    staging = store_path(root.joinpath("staging/collision"))
+    collided.index = build_index(store_path(root), staging, entries).map_err((error) => error.detail)?
     assert text(lookup(collided, "left")) == "one"
     assert text(lookup(collided, "right")) == "two"
     assert text(lookup(collided, "neither")) == "<absent>"

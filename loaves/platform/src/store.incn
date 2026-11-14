@@ -50,7 +50,7 @@ from crate.store.index import Entry, Location, build, entries as index_entries, 
 from crate.store.index import entries_for_keys as index_entries_for_keys
 from crate.store.index import entries_with_prefix as index_entries_with_prefix
 from crate.store.index import read_page as index_page, search as index_search
-from crate.store.index import copied_index_bytes, page_path, page_reads, view_digest, staged_pages
+from crate.store.index import copied_index_bytes, page_directory, page_path, page_reads, view_digest
 from crate.store.files import (
     StoreError,
     begin_work,
@@ -65,7 +65,6 @@ from crate.store.files import (
     record_work,
     remove_tree,
     sync_directory,
-    sync_file,
 )
 from crate.store.codec import KIND_TOMBSTONE, KIND_VALUE, Encoded, Write, encoded_frames, leaf_entries
 from crate.store.path import StorePath as Path
@@ -749,10 +748,11 @@ def stage_view(root: Path, latest: Snapshot, writes: list[Write], staged: Path) 
     place_synced(delta, encoded.data)?
     segment = install_segment(root, encoded.data, delta)?
     publication_boundary("segment-installed")
-    pages = staged.joinpath("pages")
-    index = insert(root, latest.index, pages, leaf_entries(encoded, segment)).map_err(index_failure)?
+    # Each new page is synchronized and renamed into the index as it is written; one directory sync orders the names.
+    ensure_directory(page_directory(root))?
+    index = insert(root, latest.index, staged.joinpath("pages"), leaf_entries(encoded, segment)).map_err(index_failure)?
     publication_boundary("pages-staged")
-    install_pages(root, pages, [index])?
+    sync_pages(root)?
     publication_boundary("pages-installed")
     return Ok((index, segment))
 
@@ -861,20 +861,12 @@ def install_segment(root: Path, data: bytes, source: Path) -> Result[str, StoreE
     return Ok(name)
 
 
-def install_pages(root: Path, pages: Path, roots: list[str]) -> Result[None, StoreError]:
-    """Sync and install only the final roots' new pages, then sync the index directory once."""
-    if not pages.is_dir():
+def sync_pages(root: Path) -> Result[None, StoreError]:
+    """Order the names of the index pages a commit installed; a store that has written no page has none to order."""
+    directory = page_directory(root)
+    if not directory.is_dir():
         return Ok(None)
-    target_directory = root.joinpath("indexes")
-    ensure_directory(target_directory)?
-    for page in staged_pages(pages, roots).map_err(index_failure)?:
-        target = page_path(root, page.name()[:-5])
-        if target.is_file():
-            continue
-        sync_file(page)?
-        page.store_replace(target).map_err((error) => io_failure(target, error))?
-    sync_directory(target_directory)?
-    return Ok(None)
+    return sync_directory(directory)
 
 
 pub def switch(
@@ -1042,13 +1034,14 @@ pub def compact(root: Path) -> Result[Snapshot, StoreError]:
     base = staged.joinpath("base.seg")
     place_synced(base, encoded.data)?
     name = install_segment(root, encoded.data, base)?
+    ensure_directory(page_directory(root))?
     mut views: list[ViewRoot] = []
     for entry in latest.views:
         held_encoded = encoded_frames(per_view[entry.view])?
         relocated = in_key_order(relocate(leaf_entries(held_encoded, name), encoded))
-        index = build(staged.joinpath("pages"), relocated).map_err(index_failure)?
+        index = build(root, staged.joinpath("pages"), relocated).map_err(index_failure)?
         views.append(ViewRoot(view=entry.view, root=index))
-    install_pages(root, staged.joinpath("pages"), [view.root for view in views])?
+    sync_pages(root)?
     published = switch(root, latest, [name], views, "compaction")?
     remove_tree(staged)
     return Ok(published)

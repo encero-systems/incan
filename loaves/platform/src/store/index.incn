@@ -11,7 +11,6 @@ then for a leaf the frame's segment name, offset, length, SHA-256 and kind byte,
 name. Entries are sorted by key, and an inner entry's key is the smallest key below its child.
 """
 
-from rust::std::process import id
 from rust::std::string import String as RustString
 from std.primitives.hash import sha256
 from std.primitives.hex import hexlify
@@ -93,9 +92,14 @@ pub def copied_index_bytes() -> int:
     return pages_read.get("copied", 0)
 
 
+pub def page_directory(root: Path) -> Path:
+    """The directory every installed index page lives in."""
+    return root.joinpath("indexes")
+
+
 pub def page_path(root: Path, name: str) -> Path:
     """Where one index page lives."""
-    return root.joinpath("indexes").joinpath(f"{name}.page")
+    return page_directory(root).joinpath(f"{name}.page")
 
 
 # ---- Reads ----
@@ -352,54 +356,28 @@ pub def insert(root: Path, top: str, staged: Path, additions: list[Entry]) -> Re
     """
     The root of the index that holds `top`'s entries with `additions` replacing or adding entries by key.
 
-    The additions are merged in one pass: each changed page is read and written once, into `staged` for the caller to
-    install, and every other page is shared.
+    The additions are merged in one pass: each changed page is read once and written once, through `staged` into the
+    index directory (`write_page`), and every other page is shared. Every page written is reachable from the returned
+    root; the caller makes their names durable with one sync of the index directory.
     """
     ordered = sorted_entries(additions)
     if top == "":
-        return build(staged, ordered)
+        return build(root, staged, ordered)
     if len(ordered) == 0:
         return Ok(top)
     page = read_page(root, top)?
     mut parts = merged_into(root, page, ordered, staged)?
     mut level = page.level + 1
     while len(parts) > 1:
-        parts = written_chunks(staged, level, parts)?
+        parts = written_chunks(root, staged, level, parts)?
         level += 1
     return Ok(parts[0].child)
-
-
-pub def staged_pages(staged: Path, roots: list[str]) -> Result[list[Path], IndexError]:
-    """
-    New pages reachable from the final roots, excluding reused installed subtrees.
-
-    A staged page can reference staged or installed children. An installed child is immutable and cannot reach a
-    newly staged page, so this walk stops at it instead of reading the unchanged tree.
-    """
-    mut pending = roots
-    mut seen: set[str] = set()
-    mut result: list[Path] = []
-    mut index = 0
-    while index < len(pending):
-        name = pending[index]
-        index += 1
-        if name == "" or name in seen:
-            continue
-        seen.add(name)
-        path = staged.joinpath(f"{name}.page")
-        if not path.is_file():
-            continue
-        page = decoded_page(path, name)?
-        result.append(path)
-        if page.level > 0:
-            pending.extend([entry.child for entry in page.entries])
-    return Ok(result)
 
 
 def merged_into(root: Path, page: Page, additions: list[Entry], staged: Path) -> Result[list[Entry], IndexError]:
     """The pages that replace `page` once sorted `additions` are merged below it, as inner entries."""
     if page.level == 0:
-        return written_chunks(staged, 0, merged_leaves(page.entries, additions))
+        return written_chunks(root, staged, 0, merged_leaves(page.entries, additions))
     mut updated: list[Entry] = []
     mut taken = 0
     for position in range(len(page.entries)):
@@ -414,7 +392,7 @@ def merged_into(root: Path, page: Page, additions: list[Entry], staged: Path) ->
         else:
             child = read_page(root, page.entries[position].child)?
             updated.extend(merged_into(root, child, group, staged)?)
-    return written_chunks(staged, page.level, updated)
+    return written_chunks(root, staged, page.level, updated)
 
 
 def merged_leaves(entries: list[Entry], additions: list[Entry]) -> list[Entry]:
@@ -434,7 +412,7 @@ def merged_leaves(entries: list[Entry], additions: list[Entry]) -> list[Entry]:
     return result
 
 
-def written_chunks(staged: Path, level: int, entries: list[Entry]) -> Result[list[Entry], IndexError]:
+def written_chunks(root: Path, staged: Path, level: int, entries: list[Entry]) -> Result[list[Entry], IndexError]:
     """
     Write `entries` as one page, or as the fewest pages within the fan-out, sizes even and the larger ones last; return
     their inner entries.
@@ -447,15 +425,16 @@ def written_chunks(staged: Path, level: int, entries: list[Entry]) -> Result[lis
         if chunk_index >= count - len(entries) % count:
             size += 1
         chunk = entries[start:start + size]
-        name = write_page(staged, Page(level=level, entries=chunk))?
+        name = write_page(root, staged, Page(level=level, entries=chunk))?
         parts.append(Entry(key=chunk[0].key, location=None, child=name))
         start += size
     return Ok(parts)
 
 
-pub def build(staged: Path, leaves: list[Entry]) -> Result[str, IndexError]:
+pub def build(root: Path, staged: Path, leaves: list[Entry]) -> Result[str, IndexError]:
     """
-    A canonical index over sorted, distinct leaf entries: full pages from the left, level by level.
+    A canonical index over sorted, distinct leaf entries: full pages from the left, level by level, each written
+    through `staged` into the index directory (`write_page`).
 
     The pages depend only on the entries, so equal contents always give byte-identical pages and the same root.
     """
@@ -468,7 +447,7 @@ pub def build(staged: Path, leaves: list[Entry]) -> Result[str, IndexError]:
         mut start = 0
         while start < len(current):
             chunk = current[start:start + FANOUT]
-            name = write_page(staged, Page(level=level, entries=chunk))?
+            name = write_page(root, staged, Page(level=level, entries=chunk))?
             parents.append(Entry(key=chunk[0].key, location=None, child=name))
             start += FANOUT
         if len(parents) == 1:
@@ -485,17 +464,22 @@ def sorted_entries(additions: list[Entry]) -> list[Entry]:
     return [by_key[key] for key in sorted([key for key in by_key.keys()])]
 
 
-def write_page(staged: Path, page: Page) -> Result[str, IndexError]:
-    """Write one page into staging under its content name."""
+def write_page(root: Path, staged: Path, page: Page) -> Result[str, IndexError]:
+    """
+    Install one page under its content name: written in `staged`, its bytes synchronized, then renamed into the index
+    directory, so an installed page always holds its complete content and is never read back to be installed. An
+    installed page of that name already holds these bytes and is kept. The index directory must exist.
+    """
     data = encode_page(page).map_err((detail) => IndexError(object="index page", detail=detail))?
     name = hexlify(sha256.digest(data))
-    target = staged.joinpath(f"{name}.page")
+    target = page_path(root, name)
     if target.is_file():
         return Ok(name)
     staged.store_mkdir(true, true).map_err((error) => IndexError(object=staged.value, detail=error.message()))?
-    temporary = target.at(f"{target.value}.{id()}.tmp")
-    temporary.store_write_bytes(data).map_err((error) => IndexError(object=temporary.value, detail=error.message()))?
-    temporary.store_replace(target).map_err((error) => IndexError(object=target.value, detail=error.message()))?
+    written = staged.joinpath(f"{name}.page")
+    written.store_write_bytes(data).map_err((error) => IndexError(object=written.value, detail=error.message()))?
+    written.store_sync_ordered().map_err((error) => IndexError(object=written.value, detail=error.message()))?
+    written.store_replace(target).map_err((error) => IndexError(object=target.value, detail=error.message()))?
     return Ok(name)
 
 
