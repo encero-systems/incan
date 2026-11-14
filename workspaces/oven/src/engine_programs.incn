@@ -88,6 +88,9 @@ pub model ProgramOutcome:
     pub artifact_refusals: Dict[str, int] = {}
     pub console: str = ""
     pub epoch_reads: int = 0
+    # Index pages this engine read and keys it listed while producing the unit, before the request commits.
+    pub index_pages: int = 0
+    pub keys_listed: int = 0
     pub transaction: Option[Transaction] = None
     # An editor overlay's source and checked-body records, published in the editor view only.
     pub view_transaction: Option[Transaction] = None

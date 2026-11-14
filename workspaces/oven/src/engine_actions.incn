@@ -8,7 +8,7 @@ from engine_messages import BindingOutcome, Complete, CompletionStatus
 from engine_programs import ProgramOutcome, check_program, obtain, prepare_selection
 from engine_epochs import CapturedRequest, after_projection
 from engine_proofs import retain, prepare_report
-from pub::incan_platform.store import Transaction, begin as begin_selection, commit, commit_pinned
+from pub::incan_platform.store import Transaction, begin as begin_selection, commit, commit_pinned, read_counts
 from observation import trace
 from jec import begin, record
 from pub::incan_platform.trace import Operation
@@ -75,6 +75,7 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
     toolchain = toolchain_directory()?.0 + "/"
     standard = standard_library_dir()?.0 + "/"
     count_frozen_work([toolchain, standard])
+    reading = read_counts()
     produced_result = obtain(
         store,
         pending.capture.revision,
@@ -85,7 +86,10 @@ def settled_request(store: Path, pending: Pending) -> Result[Ready, str]:
         Some(pending.capture.selected),
     )
     frozen = finish_frozen_counting()
-    produced = produced_result?
+    read = read_counts()
+    mut produced = produced_result?
+    produced.index_pages = read.pages - reading.pages
+    produced.keys_listed = read.listed - reading.listed
     mut counters = pending.capture.counters
     counters.frozen.stats += frozen.stats
     counters.frozen.reads += frozen.reads

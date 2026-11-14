@@ -242,35 +242,44 @@ pub def readers_of(selected: Snapshot, changed: list[RecordKey], profile: str) -
 
 pub def supersede_outputs(selected: Snapshot, mut transaction: Transaction) -> Result[None, str]:
     """
-    Retire the outputs that a transaction's new evaluations replace, so each slot indexes one output.
+    Retire the outputs and edges that a transaction's new evaluations replace, so each slot indexes one output and each
+    record's readers are its current evaluations.
 
     An output's slot is its profile, family, identity profile, origin, identity and facet; its context is the
     evaluated content, which an edit changes. Every other output of a slot the transaction writes leaves the output
-    index together with its evaluation's edges: a family selection and a reader lookup then meet one output per slot
-    instead of one per earlier edit. The superseded values, evaluations and receipts stay, content named.
+    index together with its evaluation's edges. An output written again under its own key keeps it, but the edges its
+    earlier evaluation read leave unless the transaction writes them again: what it read now carries new evidence, so
+    the incoming entries are new keys. A family selection and a reader lookup then meet one output per slot and one
+    edge per current read instead of one per earlier edit. The superseded values, evaluations and receipts stay,
+    content named.
     """
-    mut written: set[str] = set()
+    mut writing: set[str] = set()
     for write in transaction.writes:
-        if write.kind != KIND_TOMBSTONE and write.key.startswith("incan.engine.output\t"):
-            written.add(write.key)
+        if write.kind != KIND_TOMBSTONE:
+            writing.add(write.key)
     mut slots: set[str] = set()
-    for key in written:
+    for key in writing:
         fields = key.split("\t")
-        if len(fields) == 8:
+        if key.startswith("incan.engine.output\t") and len(fields) == 8:
             slots.add("\t".join(fields[:7]) + "\t")
     for slot in sorted([item for item in slots]):
         for old in keys_with_prefix(selected, slot).map_err((error) => error.message())?:
-            if old in written:
-                continue
-            stage_delete(transaction, old)
-            retire_edges(selected, transaction, required_value(selected, old)?.decode().map_err(
+            if old not in writing:
+                stage_delete(transaction, old)
+            evaluation = required_value(selected, old)?.decode().map_err(
                 (_) => "compiler output index entry is not UTF-8",
-            )?)?
+            )?
+            retire_edges(selected, transaction, evaluation, writing)?
     return Ok(None)
 
 
-def retire_edges(selected: Snapshot, mut transaction: Transaction, evaluation_key: str) -> Result[None, str]:
-    """Remove a superseded evaluation's outgoing edges and the incoming entries they were indexed under."""
+def retire_edges(
+    selected: Snapshot,
+    mut transaction: Transaction,
+    evaluation_key: str,
+    writing: set[str],
+) -> Result[None, str]:
+    """Remove an earlier evaluation's outgoing edges and their incoming entries, except those written again."""
     for outgoing in keys_with_prefix(selected, "incan.engine.edge-out\t" + evaluation_key + "\t").map_err(
         (error) => error.message(),
     )?:
@@ -278,10 +287,12 @@ def retire_edges(selected: Snapshot, mut transaction: Transaction, evaluation_ke
         edge = parse(encoded.decode().map_err((_) => "compiler graph edge is not UTF-8")?).map_err(
             (error) => error.message(),
         )?
-        stage_delete(transaction, outgoing)
+        if outgoing not in writing:
+            stage_delete(transaction, outgoing)
         target = required_text(edge, "target")?
-        kind = required_text(edge, "kind")?
-        stage_delete(transaction, f"incan.engine.edge-in\t{target}\t{kind}\t{digest(encoded)}")
+        incoming = f"incan.engine.edge-in\t{target}\t{required_text(edge, "kind")?}\t{digest(encoded)}"
+        if incoming not in writing:
+            stage_delete(transaction, incoming)
     return Ok(None)
 
 

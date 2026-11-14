@@ -49,7 +49,7 @@ from crate.store.files import file_digest
 from crate.store.index import Entry, Location, build, entries as index_entries, find as index_find, insert
 from crate.store.index import entries_for_keys as index_entries_for_keys
 from crate.store.index import entries_with_prefix as index_entries_with_prefix
-from crate.store.index import search as index_search
+from crate.store.index import read_page as index_page, search as index_search
 from crate.store.index import copied_index_bytes, page_path, page_reads, view_digest, staged_pages
 from crate.store.files import (
     StoreError,
@@ -179,7 +179,7 @@ pub model ReadCounts:
 
     `records` frames found, `bytes` frame bytes checked in place and `pages` index pages read; `copied` bytes copied
     out of mapped pages and frames by lookups (keys compared and locations decoded, never a value); `decoded` bytes of
-    found values copied into owned bytes by `owned`.
+    found values copied into owned bytes by `owned`; `listed` keys returned by whole and prefix listings.
     """
 
     pub records: int
@@ -187,6 +187,7 @@ pub model ReadCounts:
     pub pages: int
     pub copied: int
     pub decoded: int
+    pub listed: int = 0
 
 
 # Reads this process made, for measuring what a compile reads; nothing is cached by them.
@@ -232,6 +233,7 @@ pub def read_counts() -> ReadCounts:
         pages=page_reads(),
         copied=counted.get("copied", 0) + copied_index_bytes(),
         decoded=counted.get("decoded", 0),
+        listed=counted.get("listed", 0),
     )
 
 
@@ -536,7 +538,15 @@ pub def keys(view: Snapshot) -> Result[list[str], StoreError]:
                 if not location.tombstone:
                     live.append(entry.key)
             None => pass
+    counted["listed"] = counted.get("listed", 0) + len(live)
     return Ok(live)
+
+
+pub def index_levels(view: Snapshot) -> Result[int, StoreError]:
+    """How many levels the view's index has, root to leaves; an empty view has none. Reads the root page."""
+    if view.index == "":
+        return Ok(0)
+    return Ok(index_page(view.root, view.index).map_err(index_failure)?.level + 1)
 
 
 pub def keys_with_prefix(view: Snapshot, prefix: str) -> Result[list[str], StoreError]:
@@ -551,6 +561,7 @@ pub def keys_with_prefix(view: Snapshot, prefix: str) -> Result[list[str], Store
                 if not location.tombstone:
                     live.append(entry.key)
             None => pass
+    counted["listed"] = counted.get("listed", 0) + len(live)
     return Ok(live)
 
 

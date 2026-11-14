@@ -2,7 +2,6 @@
 
 from rust::std::process import Child, Command, Stdio
 from rust::std::str import from_utf8
-from rust::std::time import Instant
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue, parse
@@ -14,7 +13,7 @@ from engine_messages import Message, Stop
 from engine_wire import zero_id
 from rust_target import decoded
 from store_path_conversion import snapshot as store_snapshot
-from pub::incan_platform.store import keys_with_prefix
+from pub::incan_platform.store import index_levels as store_index_levels, keys_with_prefix
 
 
 pub def test_lowering_record_worked_example() -> Result[None, str]:
@@ -161,25 +160,57 @@ pub def test_body_edits_keep_one_indexed_output_per_slot() -> Result[None, str]:
 
 pub def test_twenty_body_edits_in_a_row_hold_a_flat_median() -> Result[None, str]:
     """
-    Twenty body edits in a row cost what the first ones cost: the median of edits 16-20 stays within a quarter, and
-    50 ms, of the median of edits 2-6. A cost that grows with every edit, a leak, fails it.
+    Twenty body edits in a row do the same work: every edit leaves one indexed output per slot, and the medians of
+    edits 16-20 list no more keys, and read no more index pages per level of the index, than those of edits 2-6. The
+    index deepening by a level as the store grows adds one page to each lookup; a cost that grows with every edit, a
+    leak, fails it. Wall time is left to the proofs: it follows the load.
     """
     scratch = scratch_directory()?
     root = scratch.path()
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     source = root.joinpath("main.incn")
     store = root.joinpath("store")
-    mut elapsed: list[int] = []
+    mut pages: list[int] = []
+    mut levels: list[int] = []
+    mut listed: list[int] = []
+    mut crowded: list[int] = []
     for edit in range(20):
         write(source, f"def main() -> None:\n    println(\"edit {edit}\")\n")?
-        started = Instant.now()
-        _ = lowering_example_run(binary, source, store, f"edit {edit}")?
-        elapsed.append(int(started.elapsed().as_millis()))
+        levels.append(index_levels(store)?)
+        proof = lowering_example_run(binary, source, store, f"edit {edit}")?
+        pages.append(proof_count(proof, "index_pages")?)
+        listed.append(proof_count(proof, "keys_listed")?)
+        crowded.append(most_outputs_in_one_slot(store)?)
     stop_example_engine(binary, store)?
-    early = sorted(elapsed[1:6])[2]
-    late = sorted(elapsed[15:20])[2]
-    assert late * 4 <= early * 5 + 200, f"edits 2-6 median {early} ms, edits 16-20 median {late} ms: {elapsed}"
+    println(f"per edit: index pages {pages}, index levels {levels}, keys listed {listed}, most outputs {crowded}")
+    assert crowded == [1 for _ in range(20)], f"most indexed outputs in one slot, per edit: {crowded}"
+    assert sorted(listed[15:20])[2] <= sorted(listed[1:6])[2], f"keys listed per edit: {listed}"
+    per_level = [pages[edit] * 100 // max([levels[edit], 1]) for edit in range(20)]
+    early = sorted(per_level[1:6])[2]
+    assert sorted(per_level[15:20])[2] * 4 <= early * 5, f"index pages per edit {pages} at index levels {levels}"
     return Ok(None)
+
+
+def index_levels(store: Path) -> Result[int, str]:
+    """How many levels the store's index has, root to leaves; none before the first commit."""
+    if not store.joinpath("CURRENT").is_file():
+        return Ok(0)
+    latest = store_snapshot(store).map_err((error) => error.message())?
+    return store_index_levels(latest).map_err((error) => error.message())
+
+
+def most_outputs_in_one_slot(store: Path) -> Result[int, str]:
+    """The most outputs the store's output index holds for one slot: profile, family, identity and facet."""
+    latest = store_snapshot(store).map_err((error) => error.message())?
+    mut slots: Dict[str, int] = {}
+    for key in keys_with_prefix(latest, "incan.engine.output\t").map_err((error) => error.message())?:
+        slot = "\t".join(key.split("\t")[:7])
+        slots[slot] = slots.get(slot, 0) + 1
+    mut most = 0
+    for slot in slots.keys():
+        if slots[slot] > most:
+            most = slots[slot]
+    return Ok(most)
 
 
 pub def test_two_standalone_sources_share_one_store_without_body_collision() -> Result[None, str]:
