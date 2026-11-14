@@ -5,7 +5,15 @@ from std.fs import Path
 from std.json import JsonValue
 from c_interop import CArtifactKind, CArtifactOrigin, CInteropArtifact, CInteropTarget
 from dependency_commands import DependencyVerb, parse_dependency_command
-from dependency_plans import listed_dependencies, plan_add, plan_remove, plan_update
+from dependency_plans import (
+    chosen_name,
+    listed_dependencies,
+    name_question,
+    plan_add,
+    plan_remove,
+    plan_update,
+    short_name_matches,
+)
 from features import FeatureRequest
 from files import make_directory, read, write
 from intake import ManifestReader
@@ -639,4 +647,31 @@ pub def test_oven_dependency_lists_and_removes_dependencies_and_oven_add_is_its_
         Ok(_) => return Err("a Loaf that is not a dependency was removed")
         Err(reason) =>
             assert "crates-io/serde is not a dependency in loaf.toml" in reason, reason
+    return Ok(None)
+
+
+pub def test_oven_add_asks_which_loaf_a_short_name_means_on_a_terminal() -> Result[None, str]:
+    """
+    RFC 125: `oven add tokio` lists every match, asks which one, and records the full name; without a terminal it
+    refuses and prints the full names.
+
+    1. The question numbers every published full name the short name ends; a full name asks nothing.
+    2. A listed number or full name is the answer; anything else adds nothing and names the choices.
+    """
+    # 1. One numbered line per match.
+    matches = short_name_matches("getrandom", [unit.loaf for unit in published_units()])
+    assert matches == ["acme/getrandom", "crates-io/getrandom"], f"{matches}"
+    assert short_name_matches("crates-io/getrandom", ["crates-io/getrandom"]) == []
+    question = name_question("getrandom", matches)
+    mut expected = "`getrandom` is not a full Loaf name; it is the last part of:\n  1. acme/getrandom\n"
+    expected += "  2. crates-io/getrandom\n"
+    assert question == expected + "Which one? Its number or full name: ", question
+    # 2. The answer, as typed.
+    assert chosen_name("2\n", matches)? == "crates-io/getrandom"
+    assert chosen_name(" acme/getrandom \n", matches)? == "acme/getrandom"
+    for answer in ["", "\n", "0", "3", "getrandom", "crates-io/serde"]:
+        match chosen_name(answer, matches):
+            Ok(chosen) => return Err(f"the answer `{answer}` chose {chosen}")
+            Err(reason) =>
+                assert "name one of: acme/getrandom, crates-io/getrandom" in reason, reason
     return Ok(None)

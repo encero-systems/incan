@@ -127,16 +127,47 @@ pub def full_name(name: str, candidates: list[str], noun: str) -> Result[str, st
     """
     refuse_capitals(name)?
     if "/" not in name:
-        mut matches: list[str] = []
-        for candidate in candidates:
-            if candidate.split("/")[-1] == name and candidate not in matches:
-                matches.append(candidate)
+        matches = short_name_matches(name, candidates)
         if len(matches) == 0:
             return Err(f"`{name}` is not a full Loaf name, and no {noun} is named `SCOPE/{name}`")
-        listed = ", ".join(sorted(matches))
+        listed = ", ".join(matches)
         return Err(f"`{name}` is not a full Loaf name, and Oven never guesses one; name one of: {listed}")
     validate_loaf_identity(name).map_err((reason) => f"`{name}`: {reason}")?
     return Ok(name)
+
+
+pub def short_name_matches(name: str, candidates: list[str]) -> list[str]:
+    """Every candidate whose last part is `name`, sorted once each; none for a full name."""
+    mut matches: list[str] = []
+    if "/" in name:
+        return matches
+    for candidate in candidates:
+        if candidate.split("/")[-1] == name and candidate not in matches:
+            matches.append(candidate)
+    return sorted(matches)
+
+
+pub def name_question(name: str, matches: list[str]) -> str:
+    """The question `oven add` asks on a terminal when `name` is the last part of several full names (RFC 125)."""
+    mut lines = [f"`{name}` is not a full Loaf name; it is the last part of:"]
+    for index in range(len(matches)):
+        lines.append(f"  {index + 1}. {matches[index]}")
+    lines.append("Which one? Its number or full name: ")
+    return "\n".join(lines)
+
+
+pub def chosen_name(answer: str, matches: list[str]) -> Result[str, str]:
+    """The full name an answer to `name_question` chooses, a listed number or name; anything else adds nothing."""
+    chosen = answer.strip()
+    if chosen in matches:
+        return Ok(chosen)
+    for index in range(len(matches)):
+        if chosen == str(index + 1):
+            return Ok(matches[index])
+    listed = ", ".join(matches)
+    if chosen == "":
+        return Err(f"no Loaf was chosen; name one of: {listed}")
+    return Err(f"`{chosen}` is not one of the listed Loaves; name one of: {listed}")
 
 
 pub def newest_published(units: list[RegistryUnit], loaf: str, requirement: str) -> Result[Option[Version], str]:
