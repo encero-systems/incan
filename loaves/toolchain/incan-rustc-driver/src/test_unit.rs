@@ -30,32 +30,29 @@ pub(crate) struct CollectedTest {
     serial: bool,
 }
 
-/// A test unit's collected cases, and the source its entries are checked in when any case needs a generated entry,
-/// with the `conftest.incn` text that exports the shared fixtures they use.
+/// A test unit's collected cases, and the source its entries are checked in when any case needs a generated entry.
 pub(crate) struct CollectedUnit {
     pub(crate) tests: Vec<CollectedTest>,
     pub(crate) source: Option<String>,
-    pub(crate) conftest: Option<(std::path::PathBuf, String)>,
 }
 
 /// Collect a test unit using the session's vocabulary and active features; unsupported harness contracts refuse by
 /// name. An async test is collected like any other: the lowering registers a synchronous function that runs its
 /// coroutine to completion on the canonical executor. A test that takes fixtures or `@parametrize` arguments runs as
-/// one generated entry per case (`crate::test_cases`); the `conftest.incn` beside a test file under `tests/` shares
-/// its fixtures with it (`crate::test_conftest`).
+/// one generated entry per case (`crate::test_cases`); the `conftest.incn` files from a test file's directory up to
+/// `tests/` share their fixtures with it (`crate::test_conftest`).
 pub(crate) fn collect(unit: &UnitDescription, session: &CompilationSession) -> Result<CollectedUnit, String> {
     if unit.kind != UnitKind::Test {
         return Ok(CollectedUnit {
             tests: Vec::new(),
             source: None,
-            conftest: None,
         });
     }
     let context = CollectionEvalContext::new(unit.active_features.clone());
-    let conftest = Conftest::beside(&unit.source, &context, session)?;
-    let shared = conftest.as_ref().map_or_else(Vec::new, Conftest::names);
+    let conftests = Conftest::chain(&unit.source, &context, session)?;
+    let shared = Conftest::names(&conftests);
     let discovery = discover_tests_and_fixtures_with_context(&unit.source, &shared, &[], &[], &context, session)?;
-    let planned = crate::test_cases::plan(&unit.source, session, &discovery, conftest.as_ref())?;
+    let planned = crate::test_cases::plan(&unit.source, session, &discovery, &conftests)?;
     let mut collected = Vec::new();
     for case in planned.cases {
         let test = discovery
@@ -85,7 +82,6 @@ pub(crate) fn collect(unit: &UnitDescription, session: &CompilationSession) -> R
     Ok(CollectedUnit {
         tests: collected,
         source: planned.source,
-        conftest: planned.conftest,
     })
 }
 

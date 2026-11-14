@@ -10,13 +10,14 @@
 //! async entry that awaits them.
 //!
 //! The entries are Incan source appended to the test file and checked with it, so diagnostics, lowering and the
-//! harness see ordinary functions. The test file's text is otherwise unchanged except that a `yield` fixture's own
-//! declaration is blanked line for line: its stages replace it, and every later line keeps its number.
+//! harness see ordinary functions. The file's `conftest.incn` files follow its own text (`crate::test_conftest`). The
+//! file's text is otherwise unchanged except that a `yield` fixture's own declaration is blanked line for line: its
+//! stages replace it, and every later line keeps its number.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
-use crate::test_conftest::Conftest;
+use crate::test_conftest::{Conftest, appended};
 use crate::test_entries::{EntryWriter, PREFIX, Stage};
 use incan_driver::session::CompilationSession;
 use incan_driver::testing::types::{DiscoveryResult, FixtureInfo, ParametrizeCase, TestInfo, TestMarker};
@@ -41,12 +42,10 @@ pub(crate) struct NativeCase {
     pub(crate) markers: Vec<TestMarker>,
 }
 
-/// Every case of a test unit, and the test file's source with its generated entries when any case needs one, with
-/// the `conftest.incn` text that exports the shared fixtures those entries import.
+/// Every case of a test unit, and the test file's source with its generated entries when any case needs one.
 pub(crate) struct NativeCases {
     pub(crate) cases: Vec<NativeCase>,
     pub(crate) source: Option<String>,
-    pub(crate) conftest: Option<(PathBuf, String)>,
 }
 
 /// One parameter set of a parametrized test: its case id, each argument's source text by parameter name, its display
@@ -61,36 +60,37 @@ struct Row {
 
 /// Plan the native cases of a test unit.
 ///
-/// 1. A unit without fixtures or test parameters keeps one case per test, registered under its own name.
-/// 2. Otherwise read the test file's declarations, which must be top-level: inline `module tests:` keeps refusing.
+/// 1. A unit without fixtures, autouse conftest fixtures or test parameters keeps one case per test.
+/// 2. Otherwise check the test file with its conftests appended; inline `module tests:` keeps refusing.
 /// 3. Expand each test into its parameter rows and write one entry per row.
 /// 4. Return the checked text: `yield` fixtures blanked, then the entries, their helpers and their imports.
 pub(crate) fn plan(
     source_path: &Path,
     session: &CompilationSession,
     discovery: &DiscoveryResult,
-    conftest: Option<&Conftest>,
+    conftests: &[Conftest],
 ) -> Result<NativeCases, String> {
     // 1. Plain tests register themselves.
-    let inherited = conftest.map_or_else(Vec::new, |conftest| conftest.inherited(&discovery.fixtures));
+    let shared_autouse = conftests
+        .iter()
+        .any(|conftest| conftest.discovery.fixtures.iter().any(|fixture| fixture.autouse));
     let needs_entries = !discovery.fixtures.is_empty()
-        || !inherited.is_empty()
+        || shared_autouse
         || discovery.tests.iter().any(|test| !test.parameter_names.is_empty());
-    if !needs_entries {
-        let cases = discovery
+    let plain = || NativeCases {
+        cases: discovery
             .tests
             .iter()
             .enumerate()
             .map(|(index, test)| plain_case(index, test))
-            .collect();
-        return Ok(NativeCases {
-            cases,
-            source: None,
-            conftest: None,
-        });
+            .collect(),
+        source: None,
+    };
+    if !needs_entries {
+        return Ok(plain());
     }
 
-    // 2. Entries are appended to a test file's top level.
+    // 2. The checked text.
     if !is_named_test_file(source_path) {
         return Err(
             "unsupported test unit fixtures or parameters in an inline test module on the native harness".into(),
@@ -98,7 +98,10 @@ pub(crate) fn plan(
     }
     let own = std::fs::read_to_string(source_path)
         .map_err(|error| format!("cannot read test source {}: {error}", source_path.display()))?;
-    let combined = own.replace(LEGACY_TESTING_CRATE.0, LEGACY_TESTING_CRATE.1);
+    let own_program = parse(session, source_path, &own)?;
+    let own_imports: HashSet<String> = collect_import_aliases(&own_program).into_keys().collect();
+    let (shared_text, shared) = appended(conftests, &discovery.fixtures, own_imports, session)?;
+    let combined = format!("{own}{shared_text}").replace(LEGACY_TESTING_CRATE.0, LEGACY_TESTING_CRATE.1);
     let program = parse(session, source_path, &combined)?;
     let aliases = collect_import_aliases(&program);
     let declarations = program.declarations.as_slice();
@@ -109,8 +112,7 @@ pub(crate) fn plan(
             _ => None,
         })
         .collect();
-    // A shared fixture first, then the file's own: the file's autouse fixtures run after the shared ones.
-    let fixtures: Vec<&FixtureInfo> = inherited.iter().copied().chain(discovery.fixtures.iter()).collect();
+    let fixtures: Vec<&FixtureInfo> = shared.iter().copied().chain(discovery.fixtures.iter()).collect();
     let writer = EntryWriter::new(
         &combined,
         fixtures
@@ -119,9 +121,6 @@ pub(crate) fn plan(
             .collect(),
         functions,
     );
-    if let Some(conftest) = conftest {
-        conftest.refuse_unsupported(&inherited, &discovery.tests)?;
-    }
     let semantics = session
         .require_testing_marker_semantics()
         .map_err(|error| error.message)?;
@@ -162,24 +161,9 @@ pub(crate) fn plan(
         checked.push('\n');
     }
     checked.push_str(&writer.finish(&generated));
-    let mut exported = None;
-    if let Some(conftest) = conftest
-        && !inherited.is_empty()
-    {
-        let names: Vec<&str> = inherited
-            .iter()
-            .filter(|fixture| !fixture.has_teardown && !fixture.is_async)
-            .map(|fixture| fixture.name.as_str())
-            .collect();
-        if !names.is_empty() {
-            checked.push_str(&format!("\n\nfrom conftest import {}\n", names.join(", ")));
-            exported = Some((conftest.path.clone(), conftest.exported_source(&names, session)?));
-        }
-    }
     Ok(NativeCases {
         cases,
         source: Some(checked),
-        conftest: exported,
     })
 }
 
