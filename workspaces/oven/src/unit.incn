@@ -3,6 +3,7 @@ The unit description (`incan.unit/1`, DD-0008): everything the compiler knows ab
 The compiler reads no manifest; it reads this. Its fields are the compiler's `incan_driver::unit::UnitDescription`.
 """
 
+from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue
 from clove_units import CloveUnit, clove_unit
@@ -323,11 +324,21 @@ pub def with_c_abi_target(unit: UnitDescription, triple: str) -> Result[UnitDesc
             graph = intake(found, unit.manifests).map_err((error) => error.message())?
             for project in graph.projects:
                 if project.root == unit.project_root:
-                    selected.c_abi_target = Some(
-                        select_interop_target(project.intent.name, project.intent.c_targets, triple)?,
-                    )
+                    mut target = select_interop_target(project.intent.name, project.intent.c_targets, triple)?
+                    target.verifier = selected_verifier(unit)
+                    selected.c_abi_target = Some(target)
                     return Ok(selected)
             return Err(f"`--interop-target {triple}`: {unit.project_root} is not a project of its own graph")
+
+
+def selected_verifier(unit: UnitDescription) -> str:
+    """The Clang a C ABI check selects explicitly: `INCAN_C_ABI_CLANG`, else the toolchain's own, else none."""
+    explicit = get_or("INCAN_C_ABI_CLANG", "")
+    if explicit != "":
+        return explicit
+    if let Some(toolchain) = unit.selected_toolchain:
+        return toolchain.c_compiler
+    return ""
 
 
 def projects_by_root(found: list[LocalProject]) -> Dict[str, LocalProject]:
