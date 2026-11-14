@@ -7,15 +7,13 @@ from std.primitives.text import copy_frozen_bytes
 from checker_records import (
     CHECKER_PROFILE,
     CheckedFamily,
-    CheckedRecord,
     CodecFault,
     CompiledBodyDependencyRead,
     CompiledBodyFallback,
     CompiledBodyOutputs,
     CompiledBodyValue,
     CompiledNamespaceValue,
-    decode_record,
-    record_root,
+    decode_owned_record,
 )
 from crumb_rows import ModelField, decode_rows, encode_rows, model_description, required_value
 
@@ -522,9 +520,10 @@ def fallback_description() -> Description:
 
 def validate_compiled_body_value(value: CompiledBodyValue) -> Result[None, CodecFault]:
     """Require one declaration and a matching local/final pair under the compiler-owned stable identity."""
-    declaration = decode_graph_record(value.declaration, value.identity)?
-    local = decode_graph_record(value.local, value.identity)?
-    final = decode_graph_record(value.final, value.identity)?
+    # Each checker record is decoded once, through its authenticated semantic root and compiler-owned identity.
+    declaration = decode_owned_record(value.declaration, CHECKER_PROFILE, value.identity)?
+    local = decode_owned_record(value.local, CHECKER_PROFILE, value.identity)?
+    final = decode_owned_record(value.final, CHECKER_PROFILE, value.identity)?
     if (
         declaration.family != CheckedFamily.Declaration
         or local.family != CheckedFamily.Local
@@ -535,8 +534,3 @@ def validate_compiled_body_value(value: CompiledBodyValue) -> Result[None, Codec
     ):
         return Err(CodecFault.Malformed)
     return Ok(None)
-
-
-def decode_graph_record(encoded: bytes, identity: str) -> Result[CheckedRecord, CodecFault]:
-    """Decode one checker record through its authenticated semantic root and compiler-owned identity."""
-    return decode_record(encoded, CHECKER_PROFILE, identity, record_root(encoded)?)
