@@ -53,6 +53,7 @@ model Selection:
                     payload=admission.payload,
                     observation=admission.observation,
                     provenance=admission.provenance,
+                    facts=admission.facts,
                 ),
             ),
         )

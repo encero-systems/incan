@@ -25,6 +25,7 @@ pub def verified_payload(path: Path) -> Result[PayloadAdmission, str]:
             payload=payload,
             observation=required_text(document, "observation")?,
             provenance=source_provenance(document)?,
+            facts=recorded_facts(document)?,
         ),
     )
 
@@ -297,15 +298,27 @@ pub def published_facts(path: Path) -> Result[Option[str], str]:
     The semantic facts a library manifest's current publication carries, when it carries them: its producer's record,
     or the home's admitted import of a transported one, so an installed Loaf keys its consumers as where it was built.
     """
+    if let Some(admission) = frozen_payload(path)?:
+        if admission.facts == "":
+            return Ok(None)
+        return Ok(Some(admission.facts))
     record = available_record(path)?
     if not record.is_file():
         return Ok(None)
     document = read_json(record)?
     if required_text(document, "observation")? != observe(path)?.stamp:
         return Ok(None)
+    facts = recorded_facts(document)?
+    if facts == "":
+        return Ok(None)
+    return Ok(Some(facts))
+
+
+pub def recorded_facts(document: JsonValue) -> Result[str, str]:
+    """The semantic facts a publication record carries, or empty when it carries none."""
     match document.get("facts"):
-        None => return Ok(None)
-        Some(value) => return Ok(Some(value.expect_str().map_err((error) => error.message())?))
+        None => return Ok("")
+        Some(value) => return value.expect_str().map_err((error) => error.message())
 
 
 def source_provenance(document: JsonValue) -> Result[list[str], str]:

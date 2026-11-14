@@ -8,6 +8,8 @@ pub model PayloadAdmission:
     pub payload: str
     pub observation: str
     pub provenance: list[str]
+    # The semantic facts a library manifest's publication recorded for these bytes; empty when it recorded none.
+    pub facts: str = ""
 
 
 pub model InstalledPayload:
