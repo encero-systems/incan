@@ -520,20 +520,35 @@ def install_runtime(context: NativeContext, helper: Path, unit: Path, output: Pa
 
 
 def rewrite_native_paths(document: Path, directory: Path) -> Result[None, str]:
-    """Make runtime sidecar extern, macro, and search paths absolute against their producer directory."""
+    """Restate runtime sidecar extern, macro, and search references against their producer directory."""
     mut fields = read_json(document)?.expect_object().map_err((error) => error.message())?
     for key in ["externs", "macro_externs"]:
         mut rewritten: list[JsonValue] = []
         for entry in entries(JsonValue.object(fields), key)?:
             mut pair = entry.expect_array().map_err((error) => error.message())?
-            pair[1] = JsonValue.string(absolute(pair[1].expect_str().map_err((error) => error.message())?, directory).0)
+            text = pair[1].expect_str().map_err((error) => error.message())?
+            pair[1] = JsonValue.string(producer_reference(text, directory))
             rewritten.append(JsonValue.array(pair))
         fields[key] = JsonValue.array(rewritten)
     mut search: list[JsonValue] = []
     for path in entries(JsonValue.object(fields), "search")?:
-        search.append(JsonValue.string(absolute(path.expect_str().map_err((error) => error.message())?, directory).0))
+        text = path.expect_str().map_err((error) => error.message())?
+        search.append(JsonValue.string(producer_reference(text, directory)))
     fields["search"] = JsonValue.array(search)
     return write_json(document, JsonValue.object(fields))
+
+
+def producer_reference(reference: str, directory: Path) -> str:
+    """
+    Restate one runtime sidecar reference against its producer directory. A `sibling:` reference becomes `absolute:`;
+    `toolchain:`, `bakery:` and `absolute:` references keep their anchor; a legacy bare path is made absolute.
+    """
+    parts = reference.split(":")
+    if len(parts) > 1 and parts[0] in ["toolchain", "bakery", "absolute"]:
+        return reference
+    if len(parts) > 1 and parts[0] == "sibling":
+        return "absolute:" + absolute(":".join(parts[1:]), directory).0
+    return absolute(reference, directory).0
 
 
 def update_runtime_manifest(toolchain: Path, installed: Path) -> Result[None, str]:
