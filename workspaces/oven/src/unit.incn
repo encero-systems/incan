@@ -234,13 +234,14 @@ def retired_manifest(directory: Path) -> Option[Path]:
 pub def manifest_candidates(source: Path) -> list[Path]:
     """
     Where the manifest of `source` is looked up, nearest first: `loaf.toml` in its directory and each one above. A
-    relative source's directories end at the working directory, which is looked up too; an absolute source's end at the
-    root.
+    relative source is looked up from its absolute path, so a source in the working directory, such as `main.incn`,
+    finds the working directory's manifest under a directory that can be resolved.
     """
     mut candidates: list[Path] = []
     mut directory = source.parent()
-    if directory.0 == "":
-        directory = Path(".")
+    match source.absolute():
+        Ok(absolute) => directory = absolute.parent()
+        Err(_) => pass
     while true:
         candidates.append(directory.joinpath("loaf.toml"))
         parent = directory.parent()
