@@ -15,9 +15,11 @@ use crate::loaf_index::LoafIndex;
 /// How many public functions the module declares beside the one the program calls.
 const OTHER_FUNCTIONS: usize = 60;
 
-/// A Loaf `prices` whose module `money` declares `price`, with a defaulted parameter, and many other public functions.
+/// A Loaf `prices` whose module `money` declares `price`, with a defaulted parameter, `unit`, without parameters, and
+/// many other public functions.
 pub(super) fn catalog() -> Result<LibraryManifest, Box<dyn std::error::Error>> {
     let mut source = "pub def price(cents: int, rounded: bool = true) -> int:\n    return cents\n".to_owned();
+    source.push_str("\npub def unit() -> int:\n    return 100\n");
     for index in 0..OTHER_FUNCTIONS {
         source.push_str(&format!(
             "\npub def discount_{index}(cents: int, percent: int = 10) -> int:\n    return cents - percent\n"
@@ -220,6 +222,47 @@ fn importing_a_child_namespace_reads_no_record_of_its_parent() -> Result<(), Box
     assert!(
         parents.is_empty(),
         "the import read the parent namespace's record: {parents:?}"
+    );
+    Ok(())
+}
+
+/// Check `source`, a program importing from the installed Loaf `prices`, and return the keys of the records it read.
+fn prices_import_reads(source: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let _selection = thread_selection::select(installed_library(root.path(), &catalog()?)?);
+    let index = LoafIndex::deferred([(
+        "prices".to_owned(),
+        "prices".to_owned(),
+        root.path().join("debug"),
+        false,
+    )])?;
+    let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let mut checker = crate::typechecker::TypeChecker::new();
+    checker.set_loaves(Arc::new(index));
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    Ok(thread_selection::read_keys())
+}
+
+/// A program that calls a function without parameters, which has no default record, is checked from the function's
+/// signature record: it reads `money::unit`'s signature by name and never the Loaf's contract metadata.
+#[test]
+fn a_program_checks_an_imported_function_without_parameters_from_its_records() -> Result<(), Box<dyn std::error::Error>>
+{
+    let read = prices_import_reads("from pub::prices import money\n\ndef main() -> int:\n    return money.unit()\n")?;
+    let signature = format!("/{}/", RecordFamily::DeclarationSignature.as_str());
+    let named = format!("/{}", content_name(b"money::unit"));
+    assert!(
+        read.iter().any(|key| key.contains(&signature) && key.ends_with(&named)),
+        "checking reads `unit`'s signature by name; it read {read:?}"
+    );
+    let contract = format!("/{}/", RecordFamily::ContractMetadata.as_str());
+    let whole = read.iter().filter(|key| key.contains(&contract)).collect::<Vec<_>>();
+    assert!(
+        whole.is_empty(),
+        "checking read the Loaf's contract metadata: {whole:?}"
     );
     Ok(())
 }
