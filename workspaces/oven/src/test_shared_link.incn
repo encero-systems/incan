@@ -1,0 +1,28 @@
+"""Development executables link shared carriers from the bakery every home on it reads."""
+
+from home_paths import bakery
+from shared_link import shared_arguments
+from unit import UnitDescription
+
+
+pub def test_development_executables_link_carriers_from_the_bakery() -> Result[None, str]:
+    """A development executable links its shared carriers from the bakery, which every home on it reads."""
+    unit = UnitDescription(
+        source="src/main.incn",
+        project_root="/project",
+        source_root="/project/src",
+        package="app",
+        version="0.1.0",
+        profile="debug",
+        declared_features=[],
+        active_features=[],
+        loaves=[],
+        rust_crates=[],
+        contract_models=[],
+        c_headers=[],
+        kind="test",
+    )
+    store = bakery()?.joinpath("native-shared").absolute().map_err((error) => error.message())?
+    assert shared_arguments(unit, true)? == ["--shared-native", store.0]
+    assert shared_arguments(unit, false)? == []
+    return Ok(None)

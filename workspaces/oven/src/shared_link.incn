@@ -1,12 +1,14 @@
 """Select local debug linkage and bind its loader generations at link time."""
 
 from std.fs import Path
-from home import home
+from home_paths import bakery
 from unit import UnitDescription
 from unit_freshness import Key, fingerprint
 
 # Version 2 admits the witness's frozen loader generations when the native unit is recorded instead of on each use.
-const LINKAGE_SCHEMA: str = "incan.native-shared-linkage/2"
+# Version 3 links carriers from the bakery's shared native store through bakery-absolute search paths only, so an
+# executable linked in one home runs in every home that shares the bakery.
+const LINKAGE_SCHEMA: str = "incan.native-shared-linkage/3"
 
 
 pub def development_link(unit: UnitDescription, requested: bool) -> bool:
@@ -35,10 +37,13 @@ pub def linkage_key(key: Key, shared: bool) -> Result[Key, str]:
 
 
 pub def shared_arguments(unit: UnitDescription, requested: bool) -> Result[list[str], str]:
-    """Select the home's immutable native store only for a requested development executable."""
+    """
+    Select the bakery's immutable shared native store only for a requested development executable. Its carriers are
+    content-addressed, so every home that shares the bakery reads the carriers an executable fact was linked against.
+    """
     if not development_link(unit, requested):
         return Ok([])
-    directory = home()?.joinpath("store").joinpath("native-shared").absolute().map_err(
+    directory = bakery()?.joinpath("native-shared").absolute().map_err(
         (error) => f"cannot make absolute {error.message()}",
     )?
     return Ok(["--shared-native", directory.0])
