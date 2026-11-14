@@ -10,9 +10,10 @@
 //! async entry that awaits them.
 //!
 //! The entries are Incan source appended to the test file and checked with it, so diagnostics, lowering and the
-//! harness see ordinary functions. The file's `conftest.incn` files follow its own text (`crate::test_conftest`). The
-//! file's text is otherwise unchanged except that a `yield` fixture's own declaration is blanked line for line: its
-//! stages replace it, and every later line keeps its number.
+//! harness see ordinary functions; an inline `module tests:` is hoisted to its file's top level for the test unit, so
+//! its helpers resolve there. The file's `conftest.incn` files follow its own text (`crate::test_conftest`). The file's
+//! text is otherwise unchanged except that a `yield` fixture's own declaration is blanked line for line: its stages
+//! replace it, and every later line keeps its number.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -60,8 +61,9 @@ struct Row {
 
 /// Plan the native cases of a test unit.
 ///
-/// 1. A unit without fixtures, autouse conftest fixtures or test parameters keeps one case per test.
-/// 2. Otherwise check the test file with its conftests appended; inline `module tests:` keeps refusing.
+/// 1. A test file without fixtures, autouse conftest fixtures or test parameters keeps one case per test.
+/// 2. Otherwise check the test file with its conftests appended; an inline `module tests:` is hoisted to its file's top
+///    level first, so its fixtures, helpers and tests are declarations the entries can call.
 /// 3. Expand each test into its parameter rows and write one entry per row.
 /// 4. Return the checked text: `yield` fixtures blanked, then the entries, their helpers and their imports.
 pub(crate) fn plan(
@@ -70,13 +72,14 @@ pub(crate) fn plan(
     discovery: &DiscoveryResult,
     conftests: &[Conftest],
 ) -> Result<NativeCases, String> {
-    // 1. Plain tests register themselves.
+    // 1. Plain tests in a test file register themselves.
     let shared_autouse = conftests
         .iter()
         .any(|conftest| conftest.discovery.fixtures.iter().any(|fixture| fixture.autouse));
     let needs_entries = !discovery.fixtures.is_empty()
         || shared_autouse
         || discovery.tests.iter().any(|test| !test.parameter_names.is_empty());
+    let inline = !is_named_test_file(source_path) && !discovery.tests.is_empty();
     let plain = || NativeCases {
         cases: discovery
             .tests
@@ -86,18 +89,25 @@ pub(crate) fn plan(
             .collect(),
         source: None,
     };
-    if !needs_entries {
+    if !needs_entries && !inline {
         return Ok(plain());
     }
 
     // 2. The checked text.
-    if !is_named_test_file(source_path) {
-        return Err(
-            "unsupported test unit fixtures or parameters in an inline test module on the native harness".into(),
-        );
-    }
-    let own = std::fs::read_to_string(source_path)
+    let mut own = std::fs::read_to_string(source_path)
         .map_err(|error| format!("cannot read test source {}: {error}", source_path.display()))?;
+    if inline {
+        match hoisted(session, source_path, &own)? {
+            Some(lifted) => own = lifted,
+            None if needs_entries => {
+                return Err(format!(
+                    "unsupported inline test fixtures or parameters in {}: `module tests:` must be the file's last declaration",
+                    source_path.display()
+                ));
+            }
+            None => return Ok(plain()),
+        }
+    }
     let own_program = parse(session, source_path, &own)?;
     let own_imports: HashSet<String> = collect_import_aliases(&own_program).into_keys().collect();
     let (shared_text, shared) = appended(conftests, &discovery.fixtures, own_imports, session)?;
@@ -172,6 +182,35 @@ fn parse(session: &CompilationSession, path: &Path, text: &str) -> Result<incan_
     session
         .parse_source(path, text, false)
         .map_err(|errors| format!("cannot parse test source {}: {errors:?}", path.display()))
+}
+
+/// An inline `module tests:` hoisted to its file's top level for the test unit, or `None` when the file's last
+/// declaration is not its test module. The `module tests:` line is blanked and each later line loses the module's
+/// indentation, so every line keeps its number and the module's fixtures, helpers and tests become top-level
+/// declarations that generated entries, and the tests themselves, can call.
+fn hoisted(session: &CompilationSession, path: &Path, text: &str) -> Result<Option<String>, String> {
+    let program = parse(session, path, text)?;
+    let Some(declaration) = program.declarations.last() else {
+        return Ok(None);
+    };
+    let Declaration::TestModule(module) = &declaration.node else {
+        return Ok(None);
+    };
+    let Some(first) = module.body.first() else {
+        return Ok(None);
+    };
+    let body_start = text
+        .get(..first.span.start)
+        .and_then(|before| before.rfind('\n'))
+        .map_or(0, |at| at + 1);
+    let indent = text.get(body_start..first.span.start).unwrap_or("");
+    let header = text.get(declaration.span.start..body_start).unwrap_or("");
+    let mut lifted = text.get(..declaration.span.start).unwrap_or("").to_string();
+    lifted.push_str(&crate::test_entries::blank(header, &[(0, header.len())]));
+    for line in text.get(body_start..).unwrap_or("").split_inclusive('\n') {
+        lifted.push_str(line.strip_prefix(indent).unwrap_or(line));
+    }
+    Ok(Some(lifted))
 }
 
 /// Write one case's entry: a stage per `yield` fixture, outermost first, then the stage that calls the test. Stage
