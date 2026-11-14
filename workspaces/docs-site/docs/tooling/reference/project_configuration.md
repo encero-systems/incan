@@ -122,6 +122,10 @@ A manifest with a `[workspace]` table is a workspace root. `members`, `default-m
 
 `[workspace.dependencies]` declares dependencies the members share. Each entry names a local `path`, relative to the root, or a registry `loaf` with its `version`, and accepts the fields of a `[dependencies]` entry. A member inherits one with `NAME = { workspace = true }` in its own `[dependencies]`, optionally with `features`, added to the entry's, and `optional`. The member must be the root or one of its `members`; a local `path` is rebased from the root onto the member. `[workspace.rust-dependencies]` is refused with the corresponding `[workspace.dependencies]` Loaf form.
 
+`[workspace.envs.NAME]` declares an environment fragment with the keys of `[envs.NAME]`. An environment of the root or a member reaches it only through `extends = ["workspace:NAME"]`, which applies the fragment before the environment's own layer; `oven env list` does not list fragments.
+
+`[workspace.policy]` and `[workspace.sources]` are tables accepted as 0.5.1 accepted them and reserved for later phases; no command reads them.
+
 ## `[tool.incan]`
 
 `metadata` and `codegraph` are read as below. Any other `[tool.incan]` key is tolerated, as 0.5.1 tolerated it, and `run`, `check`, `build` and `test` print one warning naming each such key. `[tool.incan.envs]` is refused in favor of `[envs.NAME]`.

@@ -36,24 +36,28 @@ def validate_environments(root: Dict[str, TomlValue], manifest: str) -> Result[N
         return Ok(None)
     environments = table(root["envs"], manifest, ["envs"])?
     for name in sorted([name for name in environments.keys()]):
-        environment = table(environments[name], manifest, ["envs", name])?
-        if "rust-dependencies" in environment:
-            entries = table(environment["rust-dependencies"], manifest, ["envs", name, "rust-dependencies"])?
-            alias = first_key(entries)
-            replacement = dependency_replacement(
-                alias,
-                entries[alias],
-                manifest,
-                ["envs", name, "rust-dependencies", alias],
-            )?
-            detail = f"use [envs.{name}.dependencies] {replacement}"
-            return Err(refusal(manifest, ["envs", name, "rust-dependencies"], IntakeErrorKind.Unsupported, detail))
-        allowed(environment, list(ENVIRONMENT_KEYS), manifest, ["envs", name])?
-        for group in ["dependencies", "env-vars", "scripts"]:
-            if group in environment:
-                table(environment[group], manifest, ["envs", name, group])?
-        if "requires-incan" in environment:
-            requirement(environment["requires-incan"], manifest, ["envs", name, "requires-incan"])?
+        validate_environment(environments[name], manifest, ["envs", name])?
+    return Ok(None)
+
+
+pub def validate_environment(value: TomlValue, manifest: str, field: list[str]) -> Result[None, IntakeError]:
+    """
+    One environment table, `[envs.NAME]` or a workspace root's `[workspace.envs.NAME]` fragment: its keys, its
+    dependency, variable and script tables, and its `requires-incan`.
+    """
+    environment = table(value, manifest, field)?
+    if "rust-dependencies" in environment:
+        entries = table(environment["rust-dependencies"], manifest, field + ["rust-dependencies"])?
+        alias = first_key(entries)
+        replacement = dependency_replacement(alias, entries[alias], manifest, field + ["rust-dependencies", alias])?
+        detail = f"use [{".".join(field)}.dependencies] {replacement}"
+        return Err(refusal(manifest, field + ["rust-dependencies"], IntakeErrorKind.Unsupported, detail))
+    allowed(environment, list(ENVIRONMENT_KEYS), manifest, field)?
+    for group in ["dependencies", "env-vars", "scripts"]:
+        if group in environment:
+            table(environment[group], manifest, field + [group])?
+    if "requires-incan" in environment:
+        requirement(environment["requires-incan"], manifest, field + ["requires-incan"])?
     return Ok(None)
 
 

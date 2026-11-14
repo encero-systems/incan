@@ -64,3 +64,23 @@ json = { workspace = true, features = ["preserve_order"] }
 ```
 
 The root's `path = "."` reaches the member as `path = ".."`: a local path is spelled from the root and rebased onto each member. See [`[workspace]`](../../tooling/reference/project_configuration.md#workspace).
+
+## Share environments across members
+
+A workspace root can declare environment fragments under `[workspace.envs.NAME]`:
+
+```toml
+[workspace.envs.ci]
+env-vars = { CI = "1" }
+scripts.lint = ["incan", "fmt", "--check", "."]
+```
+
+A member's environment takes a fragment by extending it as `workspace:NAME`; the fragment applies before the member's own layer, so the member can override a variable or script:
+
+```toml
+[envs.ci]
+extends = ["workspace:ci"]
+env-vars = { CI_MEMBER = "consumer" }
+```
+
+`oven env show ci` in the member shows the chain `project -> dev -> workspace:ci -> ci`. See [`[workspace]`](../../tooling/reference/project_configuration.md#workspace).
