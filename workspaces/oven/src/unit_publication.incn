@@ -280,3 +280,12 @@ def source_provenance(document: JsonValue) -> Result[list[str], str]:
             for origin in value.expect_array().map_err((error) => error.message())?:
                 origins.append(origin.expect_str().map_err((error) => error.message())?)
     return Ok(origins)
+
+
+# The schema of the semantic facts a library's compiler publishes beside its manifest (RFC 179).
+pub const LOAF_FACTS_SCHEMA: str = "incan.loaf-facts/1"
+
+
+pub def facts_path(manifest: Path) -> Path:
+    """The semantic facts the compiler publishes beside one `.incnlib` manifest: `<stem>.incnfacts`."""
+    return manifest.parent().joinpath(f"{manifest.stem()}.incnfacts")
