@@ -241,22 +241,23 @@ pub def test_engine_report_counts_checker_reuse_and_artifact_refusals() -> Resul
     )?
     write(
         source.joinpath("values.incn"),
-        "pub model Flag:\n    pub ready: bool\n\n    def __bool__(self) -> bool:\n        return self.ready\n\n\npub def stable() -> int:\n    return 40\n\n\npub def selected(flag: Flag) -> int:\n    if flag:\n        return 2\n    return 0\n",
+        "pub model Flag:\n    pub ready: bool\n\n    property weight -> int:\n        return 2\n\n    def __bool__(self) -> bool:\n        return self.ready\n\n\npub def stable() -> int:\n    return 40\n\n\npub def selected(flag: Flag) -> int:\n    if flag:\n        return 2\n    return 0\n\n\npub def weighed(flag: Flag) -> int:\n    return flag.weight\n",
     )?
     write(
         source.joinpath("main.incn"),
-        "from values import Flag, selected, stable\n\n\ndef main() -> None:\n    println(stable() + selected(Flag(ready=true)))\n",
+        "from values import Flag, selected, stable, weighed\n\n\ndef main() -> None:\n    println(stable() + selected(Flag(ready=true)) + weighed(Flag(ready=false)))\n",
     )?
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
     store = root.joinpath("store")
     report = report_fixture_build(binary, project, store)?
     diagnostic = report.to_json().map_err((error) => error.message())?
-    assert proof_count(report, "reusable_declarations")? == 1, diagnostic
-    assert proof_count(report, "all_declarations")? == 3, diagnostic
-    # `selected` tests a `Flag` for truth through `Flag.__bool__`: a resolved operator call, whose record row the
-    # schema has no grammar for. `main` constructs the imported `Flag`, a reference no record admits yet, which is not
-    # an artifact field.
-    assert proof_refusal_count(report, "CallArtifacts.resolved_operator_calls")? == 1, diagnostic
+    # `selected` tests a `Flag` for truth through `Flag.__bool__`, a resolved operator call its record keeps. `main`
+    # constructs the imported `Flag`, and its record keeps the field binding and the imported field it initializes.
+    assert proof_count(report, "reusable_declarations")? == 3, diagnostic
+    assert proof_count(report, "all_declarations")? == 4, diagnostic
+    assert proof_refusal_count(report, "CallArtifacts.resolved_operator_calls")? == 0, diagnostic
+    # `weighed` reads a computed property, which no record keeps yet.
+    assert proof_refusal_count(report, "ExpressionArtifacts.computed_property_accesses")? == 1, diagnostic
     return stop_example_engine(binary, store)
 
 

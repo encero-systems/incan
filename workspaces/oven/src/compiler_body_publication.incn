@@ -344,7 +344,8 @@ pub def prepare_compiled_bodies(
     Stage one successful compiler sidecar through source projections and witnessed checker evaluations.
 
     `retained` are the records the engine selected for the compiler; `restored` names the owners the compiler reports
-    it restored from them. Only those were reused: a selected record the compiler refused was checked afresh.
+    it restored. Only an owner in both was reused: a selected record the compiler refused was checked afresh, and an
+    owner the compiler names whose record the engine did not select was checked afresh too.
 
     1. Authenticate the bounded sidecar through the shared checker codec.
     2. Stage each source projection and declaration value before any body receipt reads them.
@@ -356,7 +357,10 @@ pub def prepare_compiled_bodies(
         return Err("successful graph-enabled compile did not publish body outputs")
     outputs = read_compiled_body_outputs(output)?
     discard_file(output)
-    restored_identities = set([owner for owner in restored])
+    # After a successful build the compiler also names an edited owner whose body it checked again, as its reported
+    # type errors show; a body is restored only from a record the engine selected.
+    chosen = set([record.identity for record in retained])
+    restored_identities = set([owner for owner in restored if owner in chosen])
     mut owner_evaluations = len(outputs.fallbacks)
     mut owner_reuses = 0
     for value in outputs.values:

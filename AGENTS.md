@@ -34,6 +34,7 @@ Incan is a Python-like language that compiles to native code through the pinned 
 | Contributor guide        | [`CONTRIBUTING.md`]                                                                  |
 | GitHub issue templates   | [`.github/ISSUE_TEMPLATE/`]                                                          |
 | Implementation learnings | [`.agents/learnings.md`]                                                             |
+| Anti-pattern inventory   | [`.agents/anti-patterns.md`]                                                         |
 
 [`workspaces/docs-site/docs/contributing/explanation/readable-incan.md`]: workspaces/docs-site/docs/contributing/explanation/readable-incan.md
 [`workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md`]: workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md
@@ -43,6 +44,7 @@ Incan is a Python-like language that compiles to native code through the pinned 
 [`CONTRIBUTING.md`]: CONTRIBUTING.md
 [`.github/ISSUE_TEMPLATE/`]: .github/ISSUE_TEMPLATE/
 [`.agents/learnings.md`]: .agents/learnings.md
+[`.agents/anti-patterns.md`]: .agents/anti-patterns.md
 
 Skills (`.agents/skills/`) and learnings (`.agents/learnings.md`) live under **this repository’s** `.agents/` directory and are committed here. Working state and review-run artifacts (`.agents/state/`) live in the same directory but are **not** committed — they're gitignored, per-machine scratch, except `.agents/state/findings-ledger.md` which is a symlink into a private workspace-level log (see `.agents/skills/review/SKILL.md` and `.agents/skills/ralph-loop/SKILL.md` for how it's used).
 

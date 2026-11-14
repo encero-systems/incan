@@ -231,21 +231,33 @@ def share_tree(selected: Path, destination: Path, tree: str) -> Result[None, str
 
 def compiler_manifest(manifest: JsonValue, base: str) -> Result[str, str]:
     """
-    The installed manifest as the compiler home selects it: every artifact path absolute, except a registry closure or
-    lock inside the linked `registry` tree, which stays relative and so resolves through the compiler home's own link.
+    The installed manifest as the compiler home selects it: every artifact path absolute, except the registry of an
+    installed toolchain, which stays relative and so resolves through the compiler home's own `registry` link.
 
-    A Loaf's native closure names registry artifacts relative to the toolchain directory, so the compiler home's builds
-    read them through that link. Naming the closure there too admits each artifact under the spelling its builds read.
+    The compiler home admits each registry artifact where its manifest names the closure, and its builds must read it
+    there:
+
+    - An installed toolchain keeps its closure and its producer selection inside `registry/`. Its packed Loaves name
+      registry artifacts relative to the toolchain directory that selects them, so the compiler home's builds read them
+      through its link, and the closure and selection are named there too.
+    - A release's candidate home names another producer's selection outside `registry/`. Its Loaves are built in the
+      candidate home and name registry artifacts in the candidate's toolchain directory, so every path stays absolute.
     """
     mut fields = absolute_fields(manifest, base)?
-    for key in ["registry_units", "registry_lock"]:
-        match manifest.get(key):
-            Some(value) =>
-                text = value.as_str().unwrap_or("")
-                if text.startswith("registry/"):
-                    fields[key] = JsonValue.string(text)
-            None => pass
+    units = registry_text(manifest, "registry_units")
+    lock = registry_text(manifest, "registry_lock")
+    if units.startswith("registry/") and (lock == "" or lock.startswith("registry/")):
+        fields["registry_units"] = JsonValue.string(units)
+        if lock != "":
+            fields["registry_lock"] = JsonValue.string(lock)
     return JsonValue.object(fields).to_pretty_json().map_err((error) => error.message())
+
+
+def registry_text(manifest: JsonValue, key: str) -> str:
+    """One registry path as the manifest writes it, empty when it names none."""
+    match manifest.get(key):
+        Some(value) => return value.as_str().unwrap_or("")
+        None => return ""
 
 
 pub def absolute_manifest(manifest: JsonValue, base: str) -> Result[str, str]:

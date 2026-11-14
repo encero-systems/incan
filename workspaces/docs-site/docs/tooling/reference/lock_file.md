@@ -29,7 +29,7 @@ Every `[[loaf]]` requires `name`, `version`, `origin` and `dependencies`. `origi
 | `registry` | String | Registry identity. Until a registry has a content-derived id, its configured name is recorded. A toolchain-origin Loaf records the registry its toolchain registry unit names. |
 | `protocol` | String | Registry provider protocol. Reserved in format 1. |
 | `revision` | Integer | Exact registry record revision. Zero when absent. |
-| `checksum` | String | Immutable registry source digest. A toolchain-origin Loaf records the source digest the toolchain's registry closure records for its unit, and none when the closure records none. |
+| `checksum` | String | Immutable registry source digest. A toolchain-origin Loaf records the source digest the toolchain's registry closure records for its unit, and none when the closure records none. For a `crates-io` Loaf the toolchain ships, that digest is `sha256:` and the checksum the crates.io index publishes for its package archive. |
 | `source` | String | Immutable registry source reference. |
 | `trust` | String | Trust outcome reached for the selected content. |
 | `adopted` | Boolean | Whether the registry version was adopted locally. False when absent. |

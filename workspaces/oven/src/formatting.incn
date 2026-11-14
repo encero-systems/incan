@@ -1,6 +1,7 @@
 """Oven's formatting invocation; the compiler owns parsing and the single formatter implementation."""
 
 from rust::std::env import temp_dir
+from rust::std::io import Write, stderr
 from rust::std::process import id as process_id
 from std.fs import Path
 from rust::std::string import String as RustString
@@ -9,7 +10,6 @@ from driver_command import driver_command
 from files import parse_json
 from json_fields import strings
 from features import FeatureRequest
-from incan_units import format_unit
 from unit_compiler import crate_name, write_unit
 from intake import intake
 from toolchain import Toolchain, load_toolchain
@@ -59,12 +59,64 @@ pub def format_paths(request: FormatRequest) -> Result[i32, str]:
     files = discover(request.paths, toolchain)?
     if request.diff:
         return show_changes(files, toolchain)
-    mut code: i32 = 0
     # 3. One failed file does not prevent the remaining files from being processed.
+    return format_files(files, toolchain, request.check)
+
+
+def format_files(files: list[str], toolchain: Toolchain, check: bool) -> Result[i32, str]:
+    """
+    Format every file, or with `--check` name each one formatting would change, then print one summary for the
+    whole invocation, as 0.5.1 did: `Would reformat: FILE` or `Formatted: FILE` for each changed file, then
+    `✓ N file(s) already formatted`, `N file(s) would be reformatted` on stderr, or `✓ N file(s) formatted, E error(s)`.
+    The compiler formats a private copy of each file, as for `--diff`, so its own report never reaches the output.
+    The exit code is 1 when a file failed or, with `--check`, would change.
+    """
+    mut changed = 0
+    mut errors = 0
     for file in files:
-        if format_file(file, toolchain, request.check)? != 0:
-            code = 1
-    return Ok(code)
+        match reformatted(file, toolchain):
+            Err(reason) =>
+                complain(f"Error formatting {file}: {reason}\n")
+                errors += 1
+            Ok(None) => pass
+            Ok(Some(formatted)) =>
+                if check:
+                    println(f"Would reformat: {displayed(file)}")
+                    changed += 1
+                    continue
+                match Path(file).write_bytes(RustString.from(formatted).into_bytes()):
+                    Ok(_) =>
+                        println(f"Formatted: {displayed(file)}")
+                        changed += 1
+                    Err(error) =>
+                        complain(f"Error writing {file}: {error.message()}\n")
+                        errors += 1
+    if check:
+        if changed > 0:
+            complain(f"\n{changed} file(s) would be reformatted\n")
+            return Ok(1)
+        if errors == 0:
+            println(f"✓ {len(files)} file(s) already formatted")
+    else:
+        println(f"\n✓ {changed} file(s) formatted, {errors} error(s)")
+    if errors > 0:
+        return Ok(1)
+    return Ok(0)
+
+
+def reformatted(file: str, toolchain: Toolchain) -> Result[Option[str], str]:
+    """What formatting changes `file` to, or `None` when it is already formatted."""
+    original = Path(file).read_text("utf-8", "strict").map_err((error) => f"cannot {error.message()}")?
+    formatted = formatted_text(file, original, toolchain)?
+    if formatted == original:
+        return Ok(None)
+    return Ok(Some(formatted))
+
+
+def complain(text: str) -> None:
+    """Write `text` to standard error; a closed stream cannot be told about, so a failed write is ignored."""
+    mut err = stderr()
+    _ = err.write_all(RustString.from(text).into_bytes())
 
 
 pub def parse_arguments(arguments: list[str]) -> Result[FormatRequest, str]:
@@ -102,15 +154,6 @@ def discover(paths: list[str], toolchain: Toolchain) -> Result[list[str], str]:
     if len(files) == 0:
         return Err("no .incn files found")
     return Ok(files)
-
-
-def format_file(file: str, toolchain: Toolchain, check: bool) -> Result[i32, str]:
-    """Format or check one file with its own unit's vocabulary; a file whose unit cannot be described reports why."""
-    match describe_formatting(file, toolchain):
-        Err(reason) =>
-            println(f"Error formatting {file}: {reason}")
-            return Ok(1)
-        Ok(unit) => return format_unit(unit, toolchain, file, check)
 
 
 def describe_formatting(file: str, toolchain: Toolchain) -> Result[UnitDescription, str]:

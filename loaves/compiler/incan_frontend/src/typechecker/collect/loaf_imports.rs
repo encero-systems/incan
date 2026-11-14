@@ -45,6 +45,7 @@ mod manifest_types;
 mod module_imports;
 mod pub_library_symbols;
 mod public_modules;
+mod record_members;
 mod standard_loaves;
 mod type_remapping;
 

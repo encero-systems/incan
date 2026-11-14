@@ -3,6 +3,7 @@
 use super::{FactDigests, RecordFamily};
 use crate::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+    materialize_checked_api_public_namespaces,
 };
 use crate::library_exports::collect_checked_public_exports;
 use crate::library_manifest::LibraryManifest;
@@ -231,6 +232,83 @@ fn signatures_layouts_and_defaults_are_their_own_records() -> Result<(), String>
     assert!(
         !text.contains("has_default") && !text.contains("docstring"),
         "a signature carries neither defaults nor documentation: {text}"
+    );
+    Ok(())
+}
+
+/// The manifest of a Loaf `prices` whose one module, `money`, publishes `source`, with its public namespaces and
+/// declaration identities materialized as an installed Loaf carries them.
+fn namespaced(source: &str) -> Result<LibraryManifest, String> {
+    let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    let module = vec!["money".to_owned()];
+    let mut checker = typechecker::TypeChecker::new();
+    checker.set_current_package_identity(Some("prices".into()));
+    checker.set_current_module_path(Some(module.clone()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+    let exports = collect_checked_public_exports(&program, &checker);
+    let mut api = CheckedApiMetadataPackage {
+        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        package: None,
+        modules: vec![collect_checked_api_metadata(&program, &checker, module.clone())],
+        public_namespaces: Vec::new(),
+    };
+    materialize_checked_api_public_namespaces(&mut api).map_err(|error| error.to_string())?;
+    let mut manifest = LibraryManifest::new("prices", "0.1.0");
+    manifest
+        .contract_metadata
+        .identity_graph
+        .extend_checked_api_exports("prices", &api, &[(module, exports)])
+        .map_err(|error| error.to_string())?;
+    manifest.contract_metadata.api = Some(api);
+    Ok(manifest)
+}
+
+#[test]
+fn each_public_namespace_is_a_record_of_its_own() -> Result<(), String> {
+    let records = |source: &str| -> Result<Vec<super::CompilerRecord>, String> {
+        Ok(namespaced(source)?
+            .compiler_records(FIRST_FILE)
+            .map_err(|error| error.to_string())?
+            .records
+            .into_iter()
+            .filter(|record| record.family.as_str() == "public-namespace")
+            .collect())
+    };
+    let before = records(PRICED)?;
+    assert_eq!(
+        before.iter().map(|record| record.name.as_str()).collect::<Vec<_>>(),
+        ["money"],
+        "one `public-namespace` record, named by the namespace's path"
+    );
+    let value: serde_json::Value =
+        LibraryManifest::decode_compiler_record_value(&before[0].value).map_err(|error| error.to_string())?;
+    let mut members = value["members"]
+        .as_array()
+        .ok_or("the record lists the namespace's members")?
+        .iter()
+        .map(|member| member["name"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    members.sort_unstable();
+    assert_eq!(members, ["Price", "total"], "{value}");
+    let identities = value["identities"]
+        .as_array()
+        .ok_or("the record carries the identities of its public paths")?;
+    assert!(
+        identities
+            .iter()
+            .any(|identity| identity["public_path"] == serde_json::json!(["prices", "money", "total"])),
+        "the identity of `prices.money.total`: {value}"
+    );
+    // Positions and documentation stay out of its digest, as for every other record.
+    let after = records(PRICED_LONGER_DOCUMENTATION)?;
+    let canonical = |record: &super::CompilerRecord| super::canonical_value(record.family, &record.value);
+    assert_eq!(
+        canonical(&before[0]).map_err(|error| error.to_string())?,
+        canonical(&after[0]).map_err(|error| error.to_string())?,
+        "a namespace's record is digested without documentation or positions"
     );
     Ok(())
 }

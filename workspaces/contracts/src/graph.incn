@@ -23,7 +23,7 @@ from files import (
     write_bytes,
 )
 from header import Header
-from run import Outcome, invoke
+from run import Outcome, invoke, invoke_side_by_side
 from graph_context_contract import check_context
 from graph_relocation_contract import check_relocation
 from graph_mcp_contract import check_mcp
@@ -48,13 +48,20 @@ pub def compare_graph(incan: str, selected: Path, header: Header) -> Result[list
     mut stderr = ""
     mut code: Option[int] = Some(0)
     mut failures: list[str] = []
-    # 1. Every declared inspection runs twice, and its warm second answer must equal the first.
+    # 1. Every declared inspection runs twice, and its warm second answer must equal the first. The first inspection
+    #    builds the graph; the others read it side by side, and then every one of them runs again side by side.
     existing = library_artifacts(project)?
-    for invocation in header.items("graph-commands"):
-        arguments = ["inspect", "codegraph"] + invocation.split(" ")
-        outcome = invoke(incan, arguments, project)?
-        repeated = invoke(incan, arguments, project)?
-        failures = failures + inspection_failures(invocation, outcome, repeated)
+    invocations = header.items("graph-commands")
+    commands = [["inspect", "codegraph"] + invocation.split(" ") for invocation in invocations]
+    mut firsts: list[Result[Outcome, str]] = []
+    if len(commands) > 0:
+        firsts.append(invoke(incan, commands[0], project))
+        firsts.extend(invoke_side_by_side(incan, commands[1:], project))
+    repeats = invoke_side_by_side(incan, commands, project)
+    for index in range(len(invocations)):
+        outcome = firsts[index]?
+        repeated = repeats[index]?
+        failures = failures + inspection_failures(invocations[index], outcome, repeated)
         stdout += outcome.stdout.replace(f"{project.0}/", "")
         stderr += outcome.stderr
         if outcome.code != Some(0):
@@ -346,6 +353,10 @@ def check_identity_queries(incan: str, project: Path, document: GraphDocument) -
     declarations = [record for record in records if string_field(record, "record") == "declaration"]
     if len(declarations) > 0:
         check_definition_selection(incan, project, string_field(declarations[0], "id"))?
+    # Each unique project declaration is asked for by its short name and by its full ID; the queries only read the
+    # built graph, so they run side by side.
+    mut names: list[str] = []
+    mut commands: list[list[str]] = []
     for declaration in declarations:
         match declaration.get("span"):
             Some(span) =>
@@ -355,13 +366,17 @@ def check_identity_queries(incan: str, project: Path, document: GraphDocument) -
         name = string_field(declaration, "name")
         if name == "" or len([item for item in declarations if string_field(item, "name") == name]) != 1:
             continue
-        identifier = string_field(declaration, "id")
-        short = invoke(incan, ["inspect", "codegraph", ".", "--query", "callers", name], project)?
+        names.append(name)
+        commands.append(["inspect", "codegraph", ".", "--query", "callers", name])
+        commands.append(["inspect", "codegraph", ".", "--query", "callers", string_field(declaration, "id")])
+    outcomes = invoke_side_by_side(incan, commands, project)
+    for index in range(len(names)):
+        short = outcomes[2 * index]?
         if short.stdout == "":
             continue
-        full = invoke(incan, ["inspect", "codegraph", ".", "--query", "callers", identifier], project)?
+        full = outcomes[2 * index + 1]?
         if short.code != Some(0) or full.code != Some(0) or short.stdout != full.stdout:
-            return Err(f"full declaration ID and short name select different callers: {name}")
+            return Err(f"full declaration ID and short name select different callers: {names[index]}")
     return Ok(None)
 
 

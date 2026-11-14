@@ -1,0 +1,111 @@
+"""
+Give a release's registry closure each unit's source checksum, as the release pins it from the crates.io index.
+
+The seed toolchain's registry units were compiled from crates.io package archives, and its closure records no source
+digest for them. A release writes the candidate home's own closure, each unit carrying the SHA-256 of the package
+archive its Loaf version publishes, as `scripts/registry-checksums.json` pins it. The seed's compiled entries and
+producer selection stay shared.
+"""
+
+from std.fs import Path
+from std.json import JsonValue
+from release_support import write_json
+
+pub const REGISTRY_CHECKSUMS: str = "scripts/registry-checksums.json"
+
+
+pub def write_checksummed_registry(toolchain: Path, pins: Path) -> Result[None, str]:
+    """
+    Write the candidate's registry closure with each unit's pinned checksum, and name it in the candidate's manifest.
+
+    1. The manifest names the seed's closure by absolute path; a manifest naming none leaves the candidate without a
+       registry.
+    2. Every other file beside the seed's closure, its compiled entries and producer selection among them, is linked.
+    3. The written closure is the seed's with each unit's `checksum` set, and the manifest names it relative to the
+       toolchain directory. The seed's own closure is never written.
+    """
+    manifest = toolchain.joinpath("toolchain.json")
+    seed_closure = optional_text(read_json(manifest)?, "registry_units")?
+    if seed_closure == "":
+        return Ok(None)
+    if not seed_closure.startswith("/"):
+        return Err(f"the candidate manifest names its seed registry closure by a relative path: {seed_closure}")
+    source = Path(seed_closure)
+    registry = toolchain.joinpath("registry")
+    registry.mkdir(true, true).map_err((error) => error.message())?
+    for child in source.parent().iterdir().map_err((error) => error.message())?:
+        if child.name() != source.name():
+            registry.joinpath(child.name()).symlink_to(child).map_err((error) => error.message())?
+    closure = checksummed_closure(read_json(source)?, read_json(pins)?)?
+    write_json(registry.joinpath("closure.json"), closure)?
+    mut fields = read_json(manifest)?.expect_object().map_err((error) => error.message())?
+    fields["registry_units"] = JsonValue.string("registry/closure.json")
+    return write_json(manifest, JsonValue.object(fields))
+
+
+pub def checksummed_closure(closure: JsonValue, pins: JsonValue) -> Result[JsonValue, str]:
+    """
+    The registry closure with each unit's `checksum` set to the pin for its Loaf version.
+
+    Every unit needs a pin, and the refusal names every unpinned Loaf version at once. A unit that already records a
+    checksum keeps it only when it equals the pin.
+    """
+    checksums = pins.require("checksums").map_err((error) => f"{REGISTRY_CHECKSUMS}: {error.message()}")?
+    mut units: list[JsonValue] = []
+    mut unpinned: list[str] = []
+    listed: list[JsonValue] = closure.require("units").map_err((error) => error.message())?.expect_array().map_err(
+        (error) => error.message(),
+    )?
+    for item in listed:
+        loaf = optional_text(item, "loaf")?
+        version = optional_text(item, "version")?
+        pinned = pinned_checksum(checksums, loaf, version)?
+        if pinned == "":
+            if f"{loaf} {version}" not in unpinned:
+                unpinned.append(f"{loaf} {version}")
+            continue
+        recorded = optional_text(item, "checksum")?
+        if recorded != "" and recorded != pinned:
+            return Err(f"the registry unit of {loaf} {version} records {recorded}; {REGISTRY_CHECKSUMS} pins {pinned}")
+        mut unit = item.expect_object().map_err((error) => error.message())?
+        unit["checksum"] = JsonValue.string(pinned)
+        units.append(JsonValue.object(unit))
+    if len(unpinned) > 0:
+        return Err(f"{REGISTRY_CHECKSUMS} pins no checksum for: {", ".join(sorted(unpinned))}")
+    mut fields = closure.expect_object().map_err((error) => error.message())?
+    fields["units"] = JsonValue.array(units)
+    return Ok(JsonValue.object(fields))
+
+
+def pinned_checksum(checksums: JsonValue, loaf: str, version: str) -> Result[str, str]:
+    """The `sha256:` checksum pinned for one Loaf version, or empty when none is pinned."""
+    match checksums.get(loaf):
+        None => return Ok("")
+        Some(versions) =>
+            pinned = optional_text(versions, version)?
+            if pinned != "" and not is_sha256(pinned):
+                return Err(f"{REGISTRY_CHECKSUMS} pins {loaf} {version} to `{pinned}`, not a `sha256:` digest")
+            return Ok(pinned)
+
+
+pub def is_sha256(value: str) -> bool:
+    """Whether `value` is `sha256:` followed by 64 lowercase hexadecimal digits."""
+    if not value.startswith("sha256:") or len(value) != 71:
+        return false
+    for character in value[7:]:
+        if character not in "0123456789abcdef":
+            return false
+    return true
+
+
+def optional_text(value: JsonValue, key: str) -> Result[str, str]:
+    """One optional JSON object string, empty when absent."""
+    match value.get(key):
+        Some(entry) => return entry.expect_str().map_err((error) => f"{key}: {error.message()}")
+        None => return Ok("")
+
+
+def read_json(path: Path) -> Result[JsonValue, str]:
+    """Read one UTF-8 JSON document, naming its path on failure."""
+    text = path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")?
+    return JsonValue.parse(text).map_err((error) => f"{path.0}: {error.message()}")

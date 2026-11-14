@@ -175,4 +175,3 @@ This keeps graph ownership explicit. It also keeps tests isolated because each t
 
 - [`std.graph` reference](../reference/stdlib/graph.md)
 - [Why `std.graph` exists](../explanation/graph_model.md)
-- [RFC 047: Lightweight directed graph types](../../RFCs/closed/implemented/047_lightweight_directed_graph_stdlib.md)
