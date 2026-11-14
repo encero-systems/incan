@@ -163,6 +163,19 @@ def target_requirements(entry: CInteropTarget) -> JsonValue:
                 ),
             )
     fields["system"] = JsonValue.array(system)
+    mut bundled: list[JsonValue] = []
+    for artifact in entry.artifacts:
+        if artifact.kind == CArtifactKind.Bundled:
+            bundled.append(
+                JsonValue.object(
+                    {"name": JsonValue.string(artifact.name), "path": JsonValue.string(artifact.path), "runtime_name": JsonValue.string(
+                        artifact.runtime_name,
+                    ), "placement": JsonValue.string(artifact.placement), "minimum_platform": JsonValue.string(
+                        artifact.minimum_platform,
+                    )},
+                ),
+            )
+    fields["bundled"] = JsonValue.array(bundled)
     return JsonValue.object(fields)
 
 
@@ -189,6 +202,13 @@ def requirement_lines(requirements: JsonValue) -> Result[list[str], str]:
         lines.append(f"  definition {definition}")
     for system in field_items(requirements, "system")?:
         lines.append(f"  system artifact {field_text(system, "name")?}: {field_text(system, "capability")?}")
+    for bundle in field_items(requirements, "bundled")?:
+        lines.append(
+            f"  bundled artifact {field_text(bundle, "name")?}: {field_text(bundle, "path")?} as {field_text(
+                bundle,
+                "runtime_name",
+            )?}, placement {field_text(bundle, "placement")?}, minimum platform {field_text(bundle, "minimum_platform")?}",
+        )
     return Ok(lines)
 
 
