@@ -1,0 +1,63 @@
+# behavior: tests receive fixtures by parameter name and fixtures the fixtures they name; an autouse fixture runs for every test; a `yield` fixture injects the value it yields; a module-scoped fixture serves each test that names it, as 0.5.1 runs them (#3149)
+# expect-stdout-contains:
+#   test_fixtures.incn::test_uses_fixture PASSED
+#   test_fixtures.incn::test_depends_on_fixtures PASSED
+#   test_fixtures.incn::test_yields_a_value PASSED
+#   test_fixtures.incn::test_shares_a_module_fixture PASSED
+
+"""Fixtures run as 0.5.1 runs them: by parameter name, dependencies first, teardown after the test."""
+
+from std.testing import assert_eq, fixture
+
+
+@fixture
+def base() -> int:
+    """A plain fixture's value is what it returns."""
+    return 40
+
+
+@fixture
+def answer(base: int) -> int:
+    """A fixture receives the fixtures its parameters name."""
+    return base + 2
+
+
+@fixture(autouse=true)
+def announce() -> None:
+    """An autouse fixture runs before every test without being named."""
+    println("auto setup")
+
+
+@fixture
+def resource() -> int:
+    """The statements after `yield` tear the fixture down and still see its setup locals."""
+    opened = 7
+    println("open resource")
+    yield opened
+    println(f"close resource {opened}")
+
+
+@fixture(scope="module")
+def shared() -> str:
+    """A module-scoped fixture serves every test that names it."""
+    return "shared"
+
+
+def test_uses_fixture(base: int) -> None:
+    """A test parameter names its fixture."""
+    assert_eq(base, 40)
+
+
+def test_depends_on_fixtures(answer: int, base: int) -> None:
+    """A fixture's own fixtures are set up for it."""
+    assert_eq(answer, base + 2)
+
+
+def test_yields_a_value(resource: int) -> None:
+    """A `yield` fixture injects the value it yields."""
+    assert_eq(resource, 7)
+
+
+def test_shares_a_module_fixture(shared: str) -> None:
+    """A module-scoped fixture's value reaches the test."""
+    assert_eq(shared, "shared")

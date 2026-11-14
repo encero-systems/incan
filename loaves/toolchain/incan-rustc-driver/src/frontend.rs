@@ -146,7 +146,7 @@ struct CheckedProgram {
     manifest: Option<LibraryManifest>,
     /// Compatibility graph bytes for a caller that has not opted into separate requested publication.
     graph: Option<Vec<u8>>,
-    /// Session-collected tests; lowering receives their names and Oven receives their outcome policy.
+    /// Session-collected test cases; lowering receives their entries and Oven receives their outcome policy.
     tests: Vec<crate::test_unit::CollectedTest>,
 }
 
@@ -841,7 +841,7 @@ fn lower_compilation_plan(
                     scalar_bodies: Vec::new(),
                     sources: retry.sources,
                     files: retry.files,
-                    tests: program.tests.iter().map(|test| test.name.clone()).collect(),
+                    tests: program.tests.iter().map(|test| test.entry.clone()).collect(),
                     package_versions: program.dependencies.package_versions.clone(),
                     overflow_checks,
                     record_report: plan_record_report.clone(),
@@ -862,7 +862,7 @@ fn lower_compilation_plan(
                     scalar_bodies: program.cacheable_bodies.clone(),
                     sources: program.sources.clone(),
                     files: program.files.clone(),
-                    tests: program.tests.iter().map(|test| test.name.clone()).collect(),
+                    tests: program.tests.iter().map(|test| test.entry.clone()).collect(),
                     package_versions: program.dependencies.package_versions.clone(),
                     overflow_checks,
                     record_report: plan_record_report.clone(),

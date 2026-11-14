@@ -1,0 +1,21 @@
+"""A `yield` fixture's teardown and an autouse fixture, observed through the test's own output."""
+
+from std.testing import assert_eq, fixture
+
+
+@fixture(autouse=true)
+def announce() -> None:
+    println("auto setup")
+
+
+@fixture
+def resource() -> int:
+    opened = 7
+    println("open resource")
+    yield opened
+    println(f"close resource {opened}")
+
+
+def test_tears_down(resource: int) -> None:
+    println(f"test saw {resource}")
+    assert_eq(resource, 7)

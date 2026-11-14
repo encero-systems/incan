@@ -7,9 +7,12 @@ use incan_driver::unit::{UnitDescription, UnitKind};
 use rustc_ast as ast;
 use rustc_span::Span;
 
-/// One collected test's source name, outcome markers and selection markers, resolved once by the session collector.
+/// One collected test case's report name, native entry, outcome markers and selection markers, resolved once by
+/// the session collector.
 pub(crate) struct CollectedTest {
     pub(crate) name: String,
+    // The zero-argument function the native harness registers: the test itself, or its generated case entry.
+    pub(crate) entry: String,
     skip: Option<String>,
     xfail: Option<String>,
     // `@slow`, which the runner leaves out unless asked, and the `@mark` names its marker expressions select.
@@ -24,12 +27,22 @@ pub(crate) struct CollectedTest {
     serial: bool,
 }
 
+/// A test unit's collected cases, and the source its entries are checked in when any case needs a generated entry.
+pub(crate) struct CollectedUnit {
+    pub(crate) tests: Vec<CollectedTest>,
+    pub(crate) source: Option<String>,
+}
+
 /// Collect a test unit using the session's vocabulary and active features; unsupported harness contracts refuse by
 /// name. An async test is collected like any other: the lowering registers a synchronous function that runs its
-/// coroutine to completion on the canonical executor.
-pub(crate) fn collect(unit: &UnitDescription, session: &CompilationSession) -> Result<Vec<CollectedTest>, String> {
+/// coroutine to completion on the canonical executor. A test that takes fixtures or `@parametrize` arguments runs as
+/// one generated entry per case (`crate::test_cases`).
+pub(crate) fn collect(unit: &UnitDescription, session: &CompilationSession) -> Result<CollectedUnit, String> {
     if unit.kind != UnitKind::Test {
-        return Ok(Vec::new());
+        return Ok(CollectedUnit {
+            tests: Vec::new(),
+            source: None,
+        });
     }
     let discovery = discover_tests_and_fixtures_with_context(
         &unit.source,
@@ -39,19 +52,16 @@ pub(crate) fn collect(unit: &UnitDescription, session: &CompilationSession) -> R
         &CollectionEvalContext::new(unit.active_features.clone()),
         session,
     )?;
-    if !discovery.fixtures.is_empty() {
-        return Err("unsupported test unit fixtures on the native harness".into());
-    }
+    let planned = crate::test_cases::plan(&unit.source, session, &discovery)?;
     let mut collected = Vec::new();
-    for test in discovery.tests {
-        if !test.parameter_names.is_empty() {
-            return Err(format!(
-                "unsupported test contract for `{}`: parameters",
-                test.function_name
-            ));
-        }
+    for case in planned.cases {
+        let test = discovery
+            .tests
+            .get(case.test)
+            .ok_or("test case planning lost its test")?;
         let mut entry = CollectedTest {
-            name: test.function_name,
+            name: case.name,
+            entry: case.entry,
             skip: None,
             xfail: None,
             slow: false,
@@ -63,32 +73,42 @@ pub(crate) fn collect(unit: &UnitDescription, session: &CompilationSession) -> R
             resources: Vec::new(),
             serial: false,
         };
-        for marker in test.markers {
-            match marker {
-                TestMarker::Skip(reason) => entry.skip = Some(reason),
-                TestMarker::XFail(reason) => entry.xfail = Some(reason),
-                TestMarker::Slow => entry.slow = true,
-                TestMarker::Mark(name) => {
-                    if !discovery.known_markers.contains(&name) && !entry.unregistered.contains(&name) {
-                        entry.unregistered.push(name.clone());
-                    }
-                    if !entry.marks.contains(&name) {
-                        entry.marks.push(name);
-                    }
-                }
-                TestMarker::Resource(name) => {
-                    if !entry.resources.contains(&name) {
-                        entry.resources.push(name);
-                    }
-                }
-                TestMarker::Serial => entry.serial = true,
-                TestMarker::Test | TestMarker::Timeout(_) => {}
-                _ => return Err(format!("unsupported test marker for `{}`", entry.name)),
-            }
+        for marker in test.markers.iter().chain(case.markers.iter()) {
+            apply_marker(&mut entry, marker.clone(), &discovery.known_markers);
         }
         collected.push(entry);
     }
-    Ok(collected)
+    Ok(CollectedUnit {
+        tests: collected,
+        source: planned.source,
+    })
+}
+
+/// Record one marker on a collected case; a `param_case` marker applies to its case alone.
+fn apply_marker(entry: &mut CollectedTest, marker: TestMarker, known_markers: &[String]) {
+    match marker {
+        TestMarker::Skip(reason) => entry.skip = Some(reason),
+        TestMarker::XFail(reason) => entry.xfail = Some(reason),
+        TestMarker::Slow => entry.slow = true,
+        TestMarker::Mark(name) => {
+            if !known_markers.contains(&name) && !entry.unregistered.contains(&name) {
+                entry.unregistered.push(name.clone());
+            }
+            if !entry.marks.contains(&name) {
+                entry.marks.push(name);
+            }
+        }
+        TestMarker::Resource(name) => {
+            if !entry.resources.contains(&name) {
+                entry.resources.push(name);
+            }
+        }
+        TestMarker::Serial => entry.serial = true,
+        TestMarker::Timeout(limit) => {
+            entry.timeout_ms = Some(u64::try_from(limit.as_millis()).unwrap_or(u64::MAX));
+        }
+        TestMarker::Test | TestMarker::Parametrize(..) => {}
+    }
 }
 
 /// Pair checked native entries with collected policies without deriving discovery from emitted names.
