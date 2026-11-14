@@ -66,7 +66,21 @@ from store_path_conversion import (
 )
 from unit import UnitDescription
 from unit_freshness import Key, fingerprint
-from bakery_records import Fact, FactFile, claim_file, decode_fact, encode_fact, record_key, staging_root, store_failure
+from bakery_records import (
+    Fact,
+    FactFile,
+    ambiguous_payload,
+    claim_file,
+    decode_fact,
+    decode_variants,
+    encode_conflict,
+    encode_fact,
+    payload_selection,
+    record_key,
+    staging_root,
+    store_failure,
+    variant_records,
+)
 from bakery_roots import collect, preview_collection
 
 const VIEW_RECORD: str = "fact.json"
@@ -115,18 +129,62 @@ def find_unit(store: Path, identity: str) -> Result[Option[Fact], str]:
 
 
 def checked_fact(store: Path, identity: str, value: bytes) -> Result[Option[Fact], str]:
-    """Decode a selected unit and verify its payloads without mutating the store on failure."""
+    """
+    Decode a selected unit and verify its payloads without mutating the store on failure.
+
+    A conflicted unit holds several valid bakes with unequal payloads (RFC 124). Its identity alone selects none of
+    them: neither the newest, the first found nor another caller's choice is a default.
+    """
     object = record_key(identity)
     match decode_fact(value):
-        None => return Err(StoreError(kind="integrity", object=object, detail="invalid unit record").message())
-        Some(fact) =>
-            if fact.identity != identity:
-                return Err(StoreError(kind="integrity", object=object, detail="unit names another identity").message())
-            for file in fact.files:
-                if not payload_current(store, file):
-                    path = payload_path(store, file.digest)
-                    return Err(StoreError(kind="integrity", object=path.0, detail="unit payload is damaged").message())
-            return Ok(Some(fact))
+        None =>
+            match decode_variants(value):
+                None => return Err(StoreError(kind="integrity", object=object, detail="invalid unit record").message())
+                Some(variants) => return Err(ambiguous_payload(identity, variants))
+        Some(fact) => return Ok(Some(intact_fact(store, identity, fact)?))
+
+
+def intact_fact(store: Path, identity: str, fact: Fact) -> Result[Fact, str]:
+    """A decoded bake of `identity` whose every payload matches its digest."""
+    if fact.identity != identity:
+        object = record_key(identity)
+        return Err(StoreError(kind="integrity", object=object, detail="unit names another identity").message())
+    for file in fact.files:
+        if not payload_current(store, file):
+            path = payload_path(store, file.digest)
+            return Err(StoreError(kind="integrity", object=path.0, detail="unit payload is damaged").message())
+    return Ok(fact)
+
+
+pub def find_selected(store: Path, identity: str, selection: str) -> Result[Option[Fact], str]:
+    """
+    The bake of `identity` whose exact payload set is `selection` (`payload_selection`), or nothing.
+
+    This is the lookup of a receipt that pinned the payloads it linked. It answers for a conflicted unit too, and
+    never substitutes another variant.
+    """
+    view = snapshot(store).map_err(store_failure)?
+    match store_lookup(view, record_key(identity)).map_err(store_failure)?:
+        Lookup.Found(value) =>
+            match decode_variants(owned(value)):
+                None =>
+                    object = record_key(identity)
+                    return Err(StoreError(kind="integrity", object=object, detail="invalid unit record").message())
+                Some(variants) =>
+                    for variant in variants:
+                        if payload_selection(variant) == selection:
+                            return Ok(Some(intact_fact(store, identity, variant)?))
+                    return Ok(None)
+        Lookup.Deleted => return Ok(None)
+        Lookup.Absent => return Ok(None)
+
+
+def payloads_current(store: Path, fact: Fact) -> bool:
+    """Whether every payload of a bake matches its digest: the bake is valid, not damage awaiting repair."""
+    for file in fact.files:
+        if not payload_current(store, file):
+            return false
+    return true
 
 
 def payload_current(store: Path, file: FactFile) -> bool:
@@ -227,6 +285,7 @@ pub def seal(
     name: str,
     reaches: list[str],
     provenance: str,
+    supersedes: bool = false,
 ) -> Result[Fact, str]:
     """
     Publish a completed bake of `identity`; the caller holds its claim.
@@ -234,9 +293,11 @@ pub def seal(
     1. Store every staged file as a content-named payload.
     2. Publish the unit record and the record of its name in one delta.
     3. Remove the staging directory.
+
+    `supersedes` is for a producer that found the stored bake no longer usable; see `prepare_seal`.
     """
     clock = begin_work()
-    prepared = prepare_seal(store, identity, staged, kind, name, reaches, provenance)?
+    prepared = prepare_seal(store, identity, staged, kind, name, reaches, provenance, supersedes)?
     published = commit(prepared.transaction).map_err(store_failure)?
     trace(f"bakery {identity[:12]}: baked {kind} {name} (generation {published.generation})")
     record_work(Operation.BakerySeal, identity, clock)
@@ -258,12 +319,17 @@ pub def prepare_seal(
     name: str,
     reaches: list[str],
     provenance: str,
+    supersedes: bool = false,
 ) -> Result[PreparedFact, str]:
     """
     Store immutable payloads before preparing their records; only the caller's commit makes the unit visible.
 
     Copying the staged files into the store is admitted first. A refusal removes the staging directory, so the
     decision-required outcome leaves no private state of the attempt behind.
+
+    A valid stored bake of `identity` with unequal payloads is kept beside this one (RFC 124): the record then holds
+    both, and the identity alone selects neither. With `supersedes`, the producer found the stored bake unusable, a
+    development executable whose shared carrier is gone, and this bake replaces it.
     """
     relatives = staged_files(staged, "")?
     match extend(store, staged.name(), f"seal {identity}", tree_bytes(staged), preview_collection):
@@ -277,13 +343,53 @@ pub def prepare_seal(
     for index in range(len(relatives)):
         files.append(stored_file(staged, relatives[index], digests[index].digest)?)
     fact = Fact(identity=identity, kind=kind, name=name, reaches=reaches, files=files)
-    mut transaction = begin(snapshot(store).map_err(store_failure)?)
+    view = snapshot(store).map_err(store_failure)?
+    mut record = encode_fact(fact, provenance)?
+    if not supersedes:
+        record = with_valid_variants(store, view, fact, record)?
+    mut transaction = begin(view)
     transaction.payloads = digests
-    transaction = put(transaction, record_key(identity), encode_fact(fact, provenance)?.encode("utf-8"), EXPECT_REPAIR)
+    transaction = put(transaction, record_key(identity), record.encode("utf-8"), EXPECT_REPAIR)
     transaction = put(transaction, name_key(name), identity.encode("utf-8"))
     _ = staged.remove_tree()
     release(store, staged.name())
     return Ok(PreparedFact(fact=fact, transaction=transaction))
+
+
+def with_valid_variants(store: Path, view: Snapshot, fact: Fact, record: str) -> Result[str, str]:
+    """
+    The record that publishes `fact`: its own, or the conflict record that also keeps every valid stored bake of its
+    identity with unequal payloads.
+
+    A damaged record or a bake with a damaged payload is no variant; the new bake repairs it, as before. An existing
+    conflict keeps all its variants, so it is not erased when one of them is damaged or collected later.
+    """
+    mut stored: list[str] = []
+    match store_lookup(view, record_key(fact.identity)):
+        Err(_) => return Ok(record)
+        Ok(found) =>
+            match found:
+                Lookup.Found(value) =>
+                    match variant_records(owned(value)):
+                        None => return Ok(record)
+                        Some(records) => stored = records
+                Lookup.Deleted => return Ok(record)
+                Lookup.Absent => return Ok(record)
+    selection = payload_selection(fact)
+    mut kept: list[str] = []
+    for variant in stored:
+        match decode_fact(variant.encode("utf-8")):
+            None => pass
+            Some(other) =>
+                if payload_selection(other) == selection:
+                    if len(stored) == 1:
+                        return Ok(record)
+                    return encode_conflict(fact.identity, stored)
+                if len(stored) > 1 or payloads_current(store, other):
+                    kept.append(variant)
+    if len(kept) == 0:
+        return Ok(record)
+    return encode_conflict(fact.identity, kept + [record])
 
 
 def stored_file(staged: Path, relative: str, digest: str) -> Result[FactFile, str]:
@@ -732,17 +838,21 @@ pub def verify_all(store: Path) -> Result[list[str], str]:
 def verify_record(store: Path, key: str, value: bytes) -> list[str]:
     """Audit a record's schema, exact identity and every payload; report all damage without mutations."""
     mut damaged: list[str] = []
-    match decode_fact(value):
+    match decode_variants(value):
         None => damaged.append(StoreError(kind="integrity", object=key, detail="invalid unit record").message())
-        Some(fact) =>
-            if record_key(fact.identity) != key:
-                damaged.append(StoreError(kind="integrity", object=key, detail="unit names another identity").message())
-            for file in fact.files:
-                if not payload_intact(store, file.digest):
-                    path = payload_path(store, file.digest)
+        Some(variants) =>
+            # A conflicted unit is not damage; each of its variants is audited like a unit.
+            for fact in variants:
+                if record_key(fact.identity) != key:
                     damaged.append(
-                        StoreError(kind="integrity", object=path.0, detail="unit payload is damaged").message(),
+                        StoreError(kind="integrity", object=key, detail="unit names another identity").message(),
                     )
+                for file in fact.files:
+                    if not payload_intact(store, file.digest):
+                        path = payload_path(store, file.digest)
+                        damaged.append(
+                            StoreError(kind="integrity", object=path.0, detail="unit payload is damaged").message(),
+                        )
     return damaged
 
 
@@ -896,8 +1006,12 @@ def preserve_unit_damage(store: Path, identity: str, view: Snapshot) -> Result[b
         Ok(found) =>
             match found:
                 Lookup.Found(value) =>
-                    match decode_fact(owned(value)):
+                    record = owned(value)
+                    match decode_fact(record):
                         None =>
+                            # A conflicted unit's variants are valid bakes; a repair cannot replace them.
+                            if decode_variants(record) is not None:
+                                return Ok(false)
                             quarantine_record(view, key, true).map_err(store_failure)?
                             return Ok(true)
                         Some(fact) =>

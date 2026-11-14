@@ -10,6 +10,7 @@ from json_fields import required_items, required_text, string_value
 from pub::incan_platform.store.files import StoreError
 
 const UNIT_SCHEMA: str = "incan.bakery.unit/1"
+const CONFLICT_SCHEMA: str = "incan.bakery.unit-conflict/1"
 
 
 pub model FactFile:
@@ -125,3 +126,106 @@ pub def claim_file(store: Path, identity: str) -> Path:
 pub def staging_root(store: Path) -> Path:
     """Where bakes in progress stage their files."""
     return store.joinpath("staging")
+
+
+# ---- Unequal payloads of one unit (RFC 124) ----
+
+
+pub def encode_conflict(identity: str, variants: list[str]) -> Result[str, str]:
+    """
+    The canonical text of a conflicted unit's record: every valid bake of `identity`, each as its own unit record.
+
+    A conflicted unit is machine-local. Its identity alone selects no payload, and it is not exported.
+    """
+    document = JsonValue.object(
+        {"schema": JsonValue.string(CONFLICT_SCHEMA), "identity": JsonValue.string(identity), "variants": JsonValue.array(
+            [JsonValue.string(variant) for variant in variants],
+        )},
+    )
+    return json_text(document)
+
+
+pub def variant_records(value: bytes) -> Option[list[str]]:
+    """The unit records a stored record holds: itself, or each variant of a conflicted unit, in the order they came."""
+    match RustString.from_utf8(value):
+        Err(_) => return None
+        Ok(text) =>
+            if decode_fact(value) is not None:
+                return Some([str(text)])
+            match JsonValue.parse(str(text)):
+                Err(_) => return None
+                Ok(document) =>
+                    match conflict_document(document):
+                        Ok(variants) => return Some(variants)
+                        Err(_) => return None
+
+
+pub def decode_variants(value: bytes) -> Option[list[Fact]]:
+    """Every valid bake a stored record holds: one, or the unequal variants of a conflicted unit."""
+    match variant_records(value):
+        None => return None
+        Some(records) =>
+            mut facts: list[Fact] = []
+            for record in records:
+                match decode_fact(record.encode("utf-8")):
+                    None => return None
+                    Some(fact) => facts.append(fact)
+            return Some(facts)
+
+
+def conflict_document(document: JsonValue) -> Result[list[str], str]:
+    """Read a decoded conflict record: at least two variants, every one a unit record of the conflict's identity."""
+    if required_text(document, "schema")? != CONFLICT_SCHEMA:
+        return Err("another record schema")
+    identity = required_text(document, "identity")?
+    mut variants: list[str] = []
+    for item in required_items(document, "variants")?:
+        variant = string_value(item)?
+        match decode_fact(variant.encode("utf-8")):
+            None => return Err("variant")
+            Some(fact) =>
+                if fact.identity != identity:
+                    return Err("variant identity")
+        variants.append(variant)
+    if len(variants) < 2:
+        return Err("variants")
+    return Ok(variants)
+
+
+pub def payload_selection(fact: Fact) -> str:
+    """The exact payload set of one bake, which a receipt pins: every file's path, digest, size and mode, in order."""
+    mut lines: list[str] = []
+    for file in fact.files:
+        lines.append(f"{file.path}\t{file.digest}\t{file.size}\t{file.program}")
+    return hexlify(sha256.digest("\n".join(sorted(lines)).encode("utf-8")))
+
+
+pub def ambiguous_payload(identity: str, variants: list[Fact]) -> str:
+    """The refusal of a lookup that names a conflicted unit by its identity alone."""
+    selections = ", ".join([payload_selection(variant)[:12] for variant in variants])
+    return StoreError(
+        kind="ambiguous-payload",
+        object=record_key(identity),
+        detail=f"{len(variants)} valid bakes of this unit hold unequal payloads ({selections}); select one exactly",
+    ).message()
+
+
+pub def stored_unit(value: bytes) -> Option[Fact]:
+    """
+    What a stored record keeps reachable: a unit, or a conflicted unit with the files and reaches of every variant.
+
+    Collection, expiry and status account for a record as a whole. Selecting a payload goes through `decode_variants`.
+    """
+    match decode_variants(value):
+        None => return None
+        Some(variants) =>
+            mut reaches: list[str] = []
+            mut files: list[FactFile] = []
+            for variant in variants:
+                for identity in variant.reaches:
+                    if identity not in reaches:
+                        reaches.append(identity)
+                for file in variant.files:
+                    files.append(file)
+            first = variants[0]
+            return Some(Fact(identity=first.identity, kind=first.kind, name=first.name, reaches=reaches, files=files))
