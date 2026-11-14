@@ -106,6 +106,10 @@ pub struct PublicationFacts {
     alias_modules: Vec<CheckedApiMetadata>,
     /// Checked registries and entries, one per module.
     registry_modules: Vec<CheckedRegistryMetadataModule>,
+    /// Whether the manifest describes the source package for inspection rather than publication: it keeps the
+    /// unit's non-public registries and names the entry module's registries by its source file (`lib` for `lib.incn`,
+    /// `main` for `main.incn`), as RFC 113's source-package inspection does.
+    inspection: bool,
     /// First inspected fact per exact canonical query path, shared across module visits until ABI publication.
     rust_items: BTreeMap<String, Arc<RustItemMetadata>>,
 }
@@ -122,13 +126,21 @@ impl PublicationFacts {
             alias_modules: Vec::new(),
             registry_modules: Vec::new(),
             rust_items: BTreeMap::new(),
+            inspection: false,
         }
+    }
+
+    /// Describe the source package for inspection instead of publication (see the `inspection` field).
+    pub fn for_inspection(mut self, inspection: bool) -> Self {
+        self.inspection = inspection;
+        self
     }
 
     /// Collect one checked module's public exports, API metadata and registries.
     ///
-    /// A registry declared in the unit's entry module is published under the module path `lib`; a migration tombstone
-    /// from that same module is published at the package root because that is where consumers import its former name.
+    /// A registry declared in the unit's entry module is published under the module path `lib`, or under its source
+    /// file's name for an inspection; a migration tombstone from that same module is published at the package root
+    /// because that is where consumers import its former name.
     pub fn visit(&mut self, module: &ParsedModule, checker: &TypeChecker, entry: bool) {
         self.collect_native_rust_items(module, checker);
         let exports = collect_checked_public_exports(&module.ast, checker);
@@ -139,10 +151,15 @@ impl PublicationFacts {
         };
         self.made_private_types
             .extend(collect_checked_made_private_types(&module.ast, &published_module_path));
-        let registry_path = if entry {
-            vec!["lib".to_string()]
-        } else {
-            module.path_segments.clone()
+        let registry_path = match (entry, self.inspection) {
+            (false, _) => module.path_segments.clone(),
+            (true, false) => vec!["lib".to_string()],
+            (true, true) => module
+                .file_path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(|stem| vec![stem.to_string()])
+                .unwrap_or_else(|| module.path_segments.clone()),
         };
         self.api_modules.push(collect_checked_api_metadata(
             &module.ast,
@@ -300,9 +317,12 @@ impl PublicationFacts {
 
         // ---- Public registries ----
         materialize_registry_reexport_projections(&mut self.registry_modules, &self.alias_modules);
+        let inspection = self.inspection;
         for module in &mut self.registry_modules {
-            module.registries.retain(|registry| registry.public);
-            module.entries.retain(|entry| entry.registry_public);
+            if !inspection {
+                module.registries.retain(|registry| registry.public);
+                module.entries.retain(|entry| entry.registry_public);
+            }
         }
         self.registry_modules
             .retain(|module| !module.registries.is_empty() || !module.entries.is_empty());

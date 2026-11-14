@@ -170,6 +170,9 @@ pub(crate) struct Dependencies {
     library: bool,
     /// Compatibility for a compiler generation whose Oven still requires graphs in native publications.
     collect_codegraph: bool,
+    /// Describe a source interface for inspection: keep private registries, named by their source modules
+    /// (`--inspection`). Ordinary publication and compilation leave it unset.
+    pub(crate) inspection: bool,
     /// Arguments Oven passes to rustc unchanged (`--rustc-arg`): the pinned target's link policy (DD-0008).
     rustc_args: Vec<String>,
     /// A development executable may link exact native carriers from this immutable store.
@@ -222,6 +225,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     }
     let mut library = false;
     let mut collect_codegraph = true;
+    let mut inspection = false;
     let mut rustc_args = Vec::new();
     let mut shared_native = None;
     let mut graph_body_records = incan_frontend::checker_records::GraphBodyRecords::default();
@@ -233,6 +237,10 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     while let Some(option) = remaining.next() {
         if option == "--library" {
             library = true;
+            continue;
+        }
+        if option == "--inspection" {
+            inspection = true;
             continue;
         }
         if option == "--no-codegraph" {
@@ -265,6 +273,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         rust_abi: unit.rust_abi.clone(),
         library,
         collect_codegraph,
+        inspection,
         rustc_args,
         shared_native,
         graph_body_records,
@@ -616,6 +625,7 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
             dependencies.graph_body_records,
             None,
             true,
+            dependencies.inspection,
         )
     })?;
     let manifest = program
@@ -813,6 +823,7 @@ fn check_compilation_source(
             graph_body_records,
             graph_body_output,
             collect_codegraph,
+            false,
         )
     });
     match checked {

@@ -94,7 +94,7 @@ const CHECK_CERTIFICATE: &str = "incan.compiler-check/1\n";
 const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | \
                      --source-interface UNIT SYSROOT DIRECTORY [OPTIONS] | --dependencies UNIT SYSROOT [OPTIONS] | --compiler-records INSTALLED OUTPUT | \
                      --check UNIT SYSROOT [--format text|json] [--certify PATH] [OPTIONS] | --explain CODE | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT | --emit-model PATH MODEL incan|json [LABEL] | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY HOME | --identity SYSROOT\n\
-                     OPTIONS: --rustc-arg ARG, --library, --no-codegraph, --shared-native DIR, --toolchain-root DIR, --bakery-root DIR, --graph-body-records PATH, --graph-body-output PATH (native artifacts and ABI caches come from UNIT)";
+                     OPTIONS: --rustc-arg ARG, --library, --no-codegraph, --inspection, --shared-native DIR, --toolchain-root DIR, --bakery-root DIR, --graph-body-records PATH, --graph-body-output PATH (native artifacts and ABI caches come from UNIT)";
 
 /// Compile an Incan unit (`--unit`, or serially from a `--resident` worker) or check one (`--check`), each from the
 /// unit description Oven wrote, publish a checking-only source interface (`--source-interface`), report a unit's
