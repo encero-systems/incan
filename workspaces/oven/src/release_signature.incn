@@ -1,0 +1,371 @@
+"""
+The one verifier of a signed toolchain release (DD-0016).
+
+A release asset is signed keylessly through Sigstore: a short-lived certificate names the release workflow's identity,
+and a transparency log records the signature. `verify_bundle` checks a Sigstore bundle against the asset's digest, the
+signer a toolchain carries and the trust root it carries, and refuses with the reason. Nothing here reaches the
+network: the bundle carries the log's proof, and the trust root carries the keys.
+"""
+
+from std.encoding.base64 import b64decode
+from std.encoding.hex import hexlify
+from std.hash import sha256, sha384
+from std.json import JsonValue
+from ecdsa import verify
+from x509 import Certificate, PublicKey, SignatureHash, certificate, public_key, signature
+
+const BUNDLE_MEDIA_TYPE: str = "application/vnd.dev.sigstore.bundle.v0.3+json"
+const TRUST_ROOT_MEDIA_TYPE: str = "application/vnd.dev.sigstore.trustedroot+json;version=0.1"
+const PEM_BEGIN: str = "-----BEGIN CERTIFICATE-----"
+const PEM_END: str = "-----END CERTIFICATE-----"
+# A checkpoint's signature lines begin with an em dash and a space.
+const NOTE_SIGNATURE_PREFIX: str = "— "
+
+
+pub model Signer:
+    """The identity a release must be signed by: the workflow's certificate identity and its token issuer."""
+
+    pub identity: str
+    pub issuer: str
+
+
+pub model Log:
+    """One trusted transparency log: its key identifier and its key."""
+
+    pub identifier: bytes
+    pub key: PublicKey
+
+
+pub model TrustRoot:
+    """The certificate authorities and transparency logs a toolchain trusts; each chain runs from issuer to root."""
+
+    pub authorities: list[list[Certificate]]
+    pub logs: list[Log]
+
+
+pub model Verified:
+    """What a verified bundle proved: who signed, and when and where the log recorded it."""
+
+    pub identity: str
+    pub issuer: str
+    pub integrated_time: int
+    pub log_index: int
+
+
+model Entry:
+    """One transparency-log entry of a bundle, decoded."""
+
+    log_identifier: bytes
+    log_index: int
+    integrated_time: int
+    body_text: str
+    body: bytes
+    promise: bytes
+    proof_index: int
+    tree_size: int
+    root: bytes
+    hashes: list[bytes]
+    checkpoint: str
+
+
+pub def trust_root(text: str) -> Result[TrustRoot, str]:
+    """
+    Read a Sigstore trusted root, and prove each authority's chain before any release is checked against it.
+
+    1. Each certificate authority's chain is read, issuer first.
+    2. Every certificate in a chain is an authority signed by the next one, and the last signs itself.
+    3. Each transparency log's key and identifier are read; the identifier is the SHA-256 of the key.
+    """
+    document = parsed(text, "trust root")?
+    if member_text(document, "mediaType")? != TRUST_ROOT_MEDIA_TYPE:
+        return Err("the trust root is not a Sigstore trusted root of version 0.1")
+    mut authorities: list[list[Certificate]] = []
+    for authority in member_items(document, "certificateAuthorities")?:
+        # 1. The chain as the trust root lists it.
+        mut chain: list[Certificate] = []
+        for item in member_items(member(authority, "certChain")?, "certificates")?:
+            chain.append(certificate(octets(member_text(item, "rawBytes")?)?)?)
+        if len(chain) == 0:
+            return Err("a trusted certificate authority has no certificates")
+        # 2. The chain holds together up to a self-signed root.
+        for index in range(len(chain)):
+            mut issuer = index + 1
+            if issuer == len(chain):
+                issuer = index
+            if not chain[index].authority or not signed_by(chain[index], chain[issuer]):
+                return Err("a trusted certificate authority's chain does not verify")
+        authorities.append(chain)
+    mut logs: list[Log] = []
+    for log in member_items(document, "tlogs")?:
+        # 3. A log is found by the identifier a bundle names, so the identifier must be the key's own digest.
+        raw = octets(member_text(member(log, "publicKey")?, "rawBytes")?)?
+        identifier = octets(member_text(member(log, "logId")?, "keyId")?)?
+        if sha256.digest(raw) != identifier:
+            return Err("a trusted transparency log's identifier is not its key's digest")
+        logs.append(Log(identifier=identifier, key=public_key(raw, 0, len(raw))?))
+    if len(authorities) == 0 or len(logs) == 0:
+        return Err("the trust root names no certificate authority or no transparency log")
+    return Ok(TrustRoot(authorities=authorities, logs=logs))
+
+
+pub def verify_bundle(text: str, digest: bytes, root: TrustRoot, signer: Signer) -> Result[Verified, str]:
+    """
+    Verify a Sigstore bundle for the asset whose SHA-256 is `digest`.
+
+    1. The bundle signs this digest.
+    2. Its certificate chains to a trusted authority, is for code signing, and names the signer and its token issuer.
+    3. The certificate's key signed the digest.
+    4. A trusted transparency log recorded that signature, certificate and digest: the log's signed entry timestamp
+       covers the entry, the entry is included under the log's signed checkpoint, and the log saw it while the
+       certificate and its authorities were valid.
+    """
+    document = parsed(text, "signature bundle")?
+    if member_text(document, "mediaType")? != BUNDLE_MEDIA_TYPE:
+        return Err("the signature bundle is not a Sigstore bundle of version 0.3")
+    # 1. The digest the signature was made over.
+    message = member(document, "messageSignature")?
+    signed_digest = member(message, "messageDigest")?
+    if member_text(signed_digest, "algorithm")? != "SHA2_256":
+        return Err("the signature bundle does not sign a SHA-256 digest")
+    if octets(member_text(signed_digest, "digest")?)? != digest:
+        return Err(f"the signature bundle signs another file: this one's SHA-256 is {hexlify(digest)}")
+    # 2. The signing certificate.
+    material = member(document, "verificationMaterial")?
+    raw_certificate = octets(member_text(member(material, "certificate")?, "rawBytes")?)?
+    leaf = certificate(raw_certificate)?
+    chain = issuing_chain(leaf, root)?
+    if not leaf.code_signing or leaf.authority:
+        return Err("the signing certificate is not a code-signing certificate")
+    if signer.identity not in leaf.uris:
+        return Err(f"the release is signed by {named(leaf.uris)}, not by {signer.identity}")
+    if leaf.token_issuer != signer.issuer:
+        return Err(f"the signer's token came from `{leaf.token_issuer}`, not from {signer.issuer}")
+    # 3. The signature over the digest.
+    raw_signature = octets(member_text(message, "signature")?)?
+    signed = signature(raw_signature)?
+    if not verify(leaf.key.curve, leaf.key.point, digest, signed.r, signed.s):
+        return Err("the signature does not verify under the signing certificate")
+    # 4. The transparency log's record of it.
+    entries = member_items(material, "tlogEntries")?
+    if len(entries) == 0:
+        return Err("the signature bundle has no transparency-log entry")
+    found = entry(entries[0])?
+    recorded(found, digest, raw_signature, raw_certificate)?
+    log = trusted_log(root, found.log_identifier)?
+    promised(found, log)?
+    included(found, log)?
+    for link in [leaf] + chain:
+        if found.integrated_time < link.not_before or found.integrated_time > link.not_after:
+            return Err("the transparency log recorded the signature outside its certificates' validity")
+    return Ok(
+        Verified(
+            identity=signer.identity,
+            issuer=signer.issuer,
+            integrated_time=found.integrated_time,
+            log_index=found.log_index,
+        ),
+    )
+
+
+def issuing_chain(leaf: Certificate, root: TrustRoot) -> Result[list[Certificate], str]:
+    """The trusted chain whose first certificate issued and signed `leaf`."""
+    for chain in root.authorities:
+        if chain[0].subject == leaf.issuer and signed_by(leaf, chain[0]):
+            return Ok(chain)
+    return Err("the signing certificate does not chain to a trusted certificate authority")
+
+
+def signed_by(subject: Certificate, issuer: Certificate) -> bool:
+    """Return whether `issuer` is named as and signed `subject`."""
+    if subject.issuer != issuer.subject:
+        return false
+    mut digest = sha256.digest(subject.signed)
+    if subject.hash == SignatureHash.Sha384:
+        digest = sha384.digest(subject.signed)
+    return verify(issuer.key.curve, issuer.key.point, digest, subject.signature.r, subject.signature.s)
+
+
+def entry(value: JsonValue) -> Result[Entry, str]:
+    """Decode a bundle's transparency-log entry; it must carry both an inclusion promise and an inclusion proof."""
+    kind = member(value, "kindVersion")?
+    if member_text(kind, "kind")? != "hashedrekord" or member_text(kind, "version")? != "0.0.1":
+        return Err("the transparency-log entry is not a hashedrekord of version 0.0.1")
+    proof = member(value, "inclusionProof")?
+    mut hashes: list[bytes] = []
+    for item in member_items(proof, "hashes")?:
+        match item.as_str():
+            Some(encoded) => hashes.append(octets(encoded)?)
+            None => return Err("malformed inclusion proof")
+    body_text = member_text(value, "canonicalizedBody")?
+    return Ok(
+        Entry(
+            log_identifier=octets(member_text(member(value, "logId")?, "keyId")?)?,
+            log_index=count(member_text(value, "logIndex")?)?,
+            integrated_time=count(member_text(value, "integratedTime")?)?,
+            body_text=body_text,
+            body=octets(body_text)?,
+            promise=octets(member_text(member(value, "inclusionPromise")?, "signedEntryTimestamp")?)?,
+            proof_index=count(member_text(proof, "logIndex")?)?,
+            tree_size=count(member_text(proof, "treeSize")?)?,
+            root=octets(member_text(proof, "rootHash")?)?,
+            hashes=hashes,
+            checkpoint=member_text(member(proof, "checkpoint")?, "envelope")?,
+        ),
+    )
+
+
+def recorded(found: Entry, digest: bytes, raw_signature: bytes, raw_certificate: bytes) -> Result[None, str]:
+    """The logged entry is this digest, this signature and this certificate."""
+    body = parsed(text_of(found.body)?, "transparency-log entry")?
+    spec = member(body, "spec")?
+    hash = member(member(spec, "data")?, "hash")?
+    logged = member(spec, "signature")?
+    if member_text(hash, "algorithm")? != "sha256" or member_text(hash, "value")? != hexlify(digest):
+        return Err("the transparency-log entry records another file")
+    if octets(member_text(logged, "content")?)? != raw_signature:
+        return Err("the transparency-log entry records another signature")
+    pem = text_of(octets(member_text(member(logged, "publicKey")?, "content")?)?)?
+    if unarmored(pem)? != raw_certificate:
+        return Err("the transparency-log entry records another certificate")
+    return Ok(None)
+
+
+def trusted_log(root: TrustRoot, identifier: bytes) -> Result[Log, str]:
+    """The trusted log a bundle's entry names."""
+    for log in root.logs:
+        if log.identifier == identifier:
+            return Ok(log)
+    return Err("the signature was recorded by a transparency log this toolchain does not trust")
+
+
+def promised(found: Entry, log: Log) -> Result[None, str]:
+    """The log's signed entry timestamp covers the entry's body, time, log and index."""
+    payload = (
+        "{\"body\":\"" + found.body_text + "\",\"integratedTime\":" + str(found.integrated_time) +
+        ",\"logID\":\"" + hexlify(found.log_identifier) + "\",\"logIndex\":" + str(found.log_index) + "}"
+    )
+    signed = signature(found.promise)?
+    if not verify(log.key.curve, log.key.point, sha256.digest(payload.encode("utf-8")), signed.r, signed.s):
+        return Err("the transparency log's signed entry timestamp does not verify")
+    return Ok(None)
+
+
+def included(found: Entry, log: Log) -> Result[None, str]:
+    """
+    The entry is in the log's tree under a checkpoint the log signed (RFC 9162, section 2.1.3.2).
+
+    1. The entry's leaf hash and the proof's hashes rebuild the proof's root.
+    2. The checkpoint states that root and tree size.
+    3. The log's key signed the checkpoint.
+    """
+    # 1. The audit path from the leaf to the root.
+    if found.proof_index < 0 or found.proof_index >= found.tree_size:
+        return Err("the inclusion proof's index is outside its tree")
+    mut node = found.proof_index
+    mut last = found.tree_size - 1
+    mut current = hashed([b"\x00", found.body])
+    for sibling in found.hashes:
+        if last == 0:
+            return Err("the inclusion proof is longer than its tree")
+        if node % 2 == 1 or node == last:
+            current = hashed([b"\x01", sibling, current])
+            while node % 2 == 0 and node != 0:
+                node = node // 2
+                last = last // 2
+        else:
+            current = hashed([b"\x01", current, sibling])
+        node = node // 2
+        last = last // 2
+    if last != 0 or current != found.root:
+        return Err("the inclusion proof does not lead to its root")
+    # 2. The checkpoint's note: an origin line, the tree size, the root hash, then a blank line and signatures.
+    halves = found.checkpoint.split("\n\n")
+    if len(halves) != 2:
+        return Err("malformed transparency-log checkpoint")
+    note = halves[0] + "\n"
+    lines = halves[0].split("\n")
+    if len(lines) < 3 or count(lines[1])? != found.tree_size or octets(lines[2])? != found.root:
+        return Err("the transparency-log checkpoint is for another tree than the inclusion proof")
+    # 3. A signature line by this log: its key's first four identifier octets, then the signature.
+    for line in halves[1].split("\n"):
+        parts = line.split(" ")
+        if line.startswith(NOTE_SIGNATURE_PREFIX) and len(parts) == 3:
+            signed = octets(parts[2])?
+            if len(signed) > 4 and signed[0:4] == log.identifier[0:4]:
+                parsed_signature = signature(signed[4:])?
+                digest = sha256.digest(note.encode("utf-8"))
+                if verify(log.key.curve, log.key.point, digest, parsed_signature.r, parsed_signature.s):
+                    return Ok(None)
+    return Err("the transparency-log checkpoint is not signed by its log")
+
+
+def unarmored(pem: str) -> Result[bytes, str]:
+    """Decode one PEM certificate."""
+    mut encoded = ""
+    mut inside = false
+    for line in pem.split("\n"):
+        trimmed = line.strip()
+        if trimmed == PEM_BEGIN:
+            inside = true
+        elif trimmed == PEM_END:
+            return octets(encoded)
+        elif inside:
+            encoded += trimmed
+    return Err("the transparency-log entry's certificate is not PEM")
+
+
+def named(uris: list[str]) -> str:
+    """A certificate's identities for a refusal."""
+    if len(uris) == 0:
+        return "a certificate without an identity"
+    return ", ".join(uris)
+
+
+def parsed(text: str, what: str) -> Result[JsonValue, str]:
+    """Parse one JSON document, naming it in a refusal."""
+    return JsonValue.parse(text).map_err((error) => f"malformed {what}: {error.message()}")
+
+
+def member(value: JsonValue, key: str) -> Result[JsonValue, str]:
+    """The required member `key` of an object."""
+    return value.require(key).map_err((error) => f"malformed signature document: {error.message()}")
+
+
+def member_text(value: JsonValue, key: str) -> Result[str, str]:
+    """The required string member `key` of an object."""
+    return member(value, key)?.expect_str().map_err((error) => f"malformed signature document: {error.message()}")
+
+
+def member_items(value: JsonValue, key: str) -> Result[list[JsonValue], str]:
+    """The required array member `key` of an object."""
+    return member(value, key)?.expect_array().map_err((error) => f"malformed signature document: {error.message()}")
+
+
+def octets(encoded: str) -> Result[bytes, str]:
+    """Decode strict standard Base64."""
+    return b64decode(encoded).map_err((error) => f"malformed signature document: {error.message()}")
+
+
+def text_of(value: bytes) -> Result[str, str]:
+    """Decode UTF-8 text from a signature document."""
+    return value.decode("utf-8", "strict").map_err((_) => "malformed signature document: text is not UTF-8")
+
+
+def count(text: str) -> Result[int, str]:
+    """Read a non-negative decimal of at most 18 digits."""
+    if len(text) == 0 or len(text) > 18:
+        return Err("malformed signature document: expected a number")
+    mut value = 0
+    for digit in text.encode("utf-8"):
+        if int(digit) < 48 or int(digit) > 57:
+            return Err("malformed signature document: expected a number")
+        value = value * 10 + int(digit) - 48
+    return Ok(value)
+
+
+def hashed(parts: list[bytes]) -> bytes:
+    """The SHA-256 of the parts, one after another."""
+    mut hasher = sha256.new()
+    for part in parts:
+        hasher.update(part)
+    return hasher.finalize_bytes()
