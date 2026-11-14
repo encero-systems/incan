@@ -249,7 +249,7 @@ pub(super) fn project_declarations(
             }
         }
 
-        project_nominals(module, library, public, &mut admitted, declarations);
+        project_nominals(module, library, public, &native_callables, &mut admitted, declarations);
         project_enums(module, library, public, &mut admitted, declarations)?;
     }
     Ok(admitted)
@@ -285,11 +285,14 @@ pub(super) fn publishes_compiled_frame(module: &BodyIrModule, body: &Body) -> bo
         })
 }
 
-/// Project public nominal layouts and retain checked trait slots without synthesizing consumer dispatch.
+/// Project public nominal layouts and retain checked trait slots without synthesizing consumer dispatch. Default
+/// frames select their native callees from the whole package's inventory, as callable bodies do: the driver joins
+/// every module's checked native calls into one inventory before publication.
 pub(super) fn project_nominals(
     module: &BodyIrModule,
     library: &str,
     public: &BTreeSet<CanonicalSymbolId>,
+    native_callables: &[&crate::body_ir::LoafCallable],
     admitted: &mut BTreeMap<CanonicalSymbolId, AdmittedDeclaration>,
     declarations: &mut BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
 ) {
@@ -298,8 +301,12 @@ pub(super) fn project_nominals(
         if !declarations.contains_key(&nominal.canonical) {
             continue;
         }
-        match publication::project_nominal(nominal, module, library, public) {
-            Ok((nominal, mut requirements)) => {
+        match publication::project_nominal(nominal, module, library, public, native_callables) {
+            Ok(publication::ProjectedNominal {
+                nominal,
+                mut requirements,
+                callables,
+            }) => {
                 let implementations = module
                     .trait_implementations
                     .iter()
@@ -316,7 +323,14 @@ pub(super) fn project_nominals(
                     requirements.insert(implementation.implementation.clone());
                 }
                 let identity = nominal.canonical.clone();
-                let declaration = if implementations.is_empty() {
+                // A layout without native default calls keeps its earlier form, so its fragment bytes are unchanged.
+                let declaration = if !callables.is_empty() {
+                    ExecutableDeclaration::NominalWithCallables {
+                        nominal,
+                        implementations,
+                        callables,
+                    }
+                } else if implementations.is_empty() {
                     ExecutableDeclaration::Nominal(nominal)
                 } else {
                     ExecutableDeclaration::NominalWithTraits(nominal, implementations)
@@ -512,7 +526,9 @@ pub(super) fn record_type_context_members(
     for (identity, entry) in admitted {
         // Layouts own addressable members; bodies, traits, constants, aliases and storage are addressed directly.
         let members: Vec<&CanonicalSymbolId> = match &entry.declaration {
-            ExecutableDeclaration::Nominal(value) | ExecutableDeclaration::NominalWithTraits(value, _) => {
+            ExecutableDeclaration::Nominal(value)
+            | ExecutableDeclaration::NominalWithTraits(value, _)
+            | ExecutableDeclaration::NominalWithCallables { nominal: value, .. } => {
                 value.field_identities.iter().collect()
             }
             ExecutableDeclaration::FieldlessEnum(value) => {
@@ -586,11 +602,8 @@ pub(super) fn encode_surface(
     let mut payload = Vec::new();
     for (identity, entry) in admitted {
         let mut encoded = postcard::to_allocvec(&entry.declaration).map_err(|error| malformed(error.to_string()))?;
-        match &entry.declaration {
-            ExecutableDeclaration::Nominal(nominal) | ExecutableDeclaration::NominalWithTraits(nominal, _) => {
-                append_trait_fields(&mut encoded, std::slice::from_ref(nominal))?;
-            }
-            _ => {}
+        if let Some(nominal) = entry.declaration.nominal() {
+            append_trait_fields(&mut encoded, std::slice::from_ref(nominal))?;
         }
         declarations.insert(
             identity,
