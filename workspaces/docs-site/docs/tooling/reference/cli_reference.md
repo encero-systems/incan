@@ -119,6 +119,8 @@ An unknown environment or script exits `1` before anything runs.
 
 Resolves the root project at `PATH` and atomically writes its generated [`oven.lock`](lock_file.md). `PATH` defaults to the current directory. Success prints `locked NAME VERSION (MODE)` and exits `0`. A generated write adds no other stdout or stderr.
 
+A workspace has one `oven.lock`, at its root. When `PATH` is a workspace root or a directory the workspace lists as a member, the command resolves the root project and every member in one graph and writes the root's lock; it writes no lock in a member's directory. A virtual workspace's success line is `locked workspace DIRECTORY (MODE)`, with the root directory's name. `run`, `build` and `test` on a member refresh the same lock, and `--locked` compares against it.
+
 `--versions` accepts `lowest`, `lowest-direct` or `newest`. Without the option, an existing lock keeps its recorded mode, under any toolchain; without a lock, the mode is `lowest`. The current compiled-unit resolver applies the mode before its exact-producer and profile tie-breaks.
 
 This command is available only as `oven lock`. `incan lock` is an unknown command.
