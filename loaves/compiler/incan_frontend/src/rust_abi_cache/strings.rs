@@ -701,27 +701,31 @@ mod tests {
         }
     }
 
+    /// Two records sharing strings store each distinct string once and decode back to the records they encoded.
     #[test]
-    fn records_round_trip_through_one_shared_table() {
+    fn records_round_trip_through_one_shared_table() -> Result<(), Box<dyn std::error::Error>> {
         let table = RefCell::new(StringTable::default());
-        let first = encode(&sample("std::vec::Vec"), &table).expect("first record encodes");
-        let second = encode(&sample("std::string::String"), &table).expect("second record encodes");
+        let first =
+            encode(&sample("std::vec::Vec"), &table).map_err(|error| format!("first record encodes: {error}"))?;
+        let second = encode(&sample("std::string::String"), &table)
+            .map_err(|error| format!("second record encodes: {error}"))?;
         let strings = table.into_inner().into_strings();
         assert_eq!(strings.len(), 4, "each distinct string is stored once: {strings:?}");
-        assert_eq!(
-            decode::<Record>(&first, &strings).expect("first record decodes"),
-            sample("std::vec::Vec")
-        );
-        assert_eq!(
-            decode::<Record>(&second, &strings).expect("second record decodes"),
-            sample("std::string::String")
-        );
+        let first_decoded =
+            decode::<Record>(&first, &strings).map_err(|error| format!("first record decodes: {error}"))?;
+        assert_eq!(first_decoded, sample("std::vec::Vec"));
+        let second_decoded =
+            decode::<Record>(&second, &strings).map_err(|error| format!("second record decodes: {error}"))?;
+        assert_eq!(second_decoded, sample("std::string::String"));
+        Ok(())
     }
 
+    /// A string index that the table does not hold is a decode error, not a panic or an empty string.
     #[test]
-    fn an_index_outside_the_table_is_an_error() {
+    fn an_index_outside_the_table_is_an_error() -> Result<(), Box<dyn std::error::Error>> {
         let table = RefCell::new(StringTable::default());
-        let bytes = encode(&"text".to_owned(), &table).expect("a string encodes");
+        let bytes = encode(&"text".to_owned(), &table).map_err(|error| format!("a string encodes: {error}"))?;
         assert!(decode::<String>(&bytes, &[]).is_err());
+        Ok(())
     }
 }

@@ -14,7 +14,7 @@ Every anti-pattern the repository's own rules name, with the rule's source, one 
 
 | ID | Rule | Before | Real | Now |
 | --- | --- | ---: | ---: | ---: |
-| RS1 | `.unwrap()` / `.expect("…")` in Rust | 6 | 5 | 6 |
+| RS1 | `.unwrap()` / `.expect("…")` in Rust | 6 | 5 | 1 |
 | RS2 | `.expect()` spelled `unwrap_or_else(\|…\| panic!(…))` | 11 | 11 | 11 |
 | RS3 | `panic!` control flow (tests and production) | 284 | 284 | 284 |
 | RS4 | Wildcard `use …::*;` | 644 | 644 | 644 |
