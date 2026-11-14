@@ -22,9 +22,10 @@ from rust::std::fs import (
 from rust::std::os::unix::fs import MetadataExt, symlink
 from rust::std::path import Path as RustPath
 from rust::std::time import SystemTime
-from std.fs.file import File, _decode_text, _encode_text, _open_file, _validate_open_options
-from std.fs.glob import matches
-from std.fs.locking import (
+pub from std.fs.file import File
+from std.fs.file import _decode_text, _encode_text, _open_file, _validate_open_options
+pub from std.fs.glob import matches
+pub from std.fs.locking import (
     FileLock,
     exclusive as lock_exclusive,
     shared as lock_shared,
@@ -32,8 +33,8 @@ from std.fs.locking import (
     try_shared as try_lock_shared,
 )
 from std.fs.mapping import MappedFile, map_read as map_file_read
-from std.fs.metadata import DirEntry, PathStat, DiskUsage
-from std.io import IoError
+pub from std.fs.metadata import DirEntry, PathStat, DiskUsage
+pub from std.io import IoError
 from std.primitives.fs.path import PrimitivePath, filesystem_capacity
 
 
