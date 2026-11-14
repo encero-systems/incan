@@ -28,6 +28,7 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOr
 mod callable_products;
 mod checked_program;
 mod declaration_validation;
+pub(crate) mod decoded_pages;
 mod graph_body_output;
 
 use checked_program::*;
@@ -326,6 +327,11 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
                 path.display()
             ))
         })?;
+        // The same bytes decode to the same record: a page this process decoded before is not decoded again.
+        let digest: [u8; 32] = Sha256::digest(&encoded).into();
+        if let Some(record) = decoded_pages::decoded(&digest, identity) {
+            return Ok(Some(record));
+        }
         // Oven writes each page as one owner's Crumb row (`encode_graph_body_values`); the shared codec decodes and
         // authenticates it, both checker records included.
         let mut records = internal_models::decode_graph_body_values(&encoded).map_err(|error| {
@@ -352,12 +358,14 @@ impl incan_frontend::checker_records::GraphBodyRecordSource for GraphBodyRecordP
                 "graph Body IR owner frame disagrees with its selected identity".into(),
             ));
         }
-        Ok(Some(incan_frontend::checker_records::GraphBodyRecord {
+        let record = incan_frontend::checker_records::GraphBodyRecord {
             identity: record.identity,
             local: record.local,
             final_value: record.final_fields,
             body_ir: Some(frame),
-        }))
+        };
+        decoded_pages::remember(digest, &record);
+        Ok(Some(record))
     }
 
     /// Read one engine-selected namespace page and decode both compiler-owned payloads before exposing it.

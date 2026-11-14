@@ -83,6 +83,8 @@ pub model ProgramOutcome:
     pub body_evaluations: int = 0
     # Checked bodies the compiler restored from the request view's records instead of checking them, as it reports.
     pub body_reuses: int = 0
+    # Restored pages the compiler decoded itself, rather than found decoded by an earlier check.
+    pub body_page_decodes: int = 0
     pub body_ir_evaluations: int = 0
     pub native_bakes: int = 0
     pub plan_function_evaluations: int = 0
@@ -113,6 +115,8 @@ pub model CheckOutcome:
     # Top-level function bodies the check checked, and those it restored from the request view's records.
     pub body_evaluations: int = 0
     pub body_reuses: int = 0
+    # Restored pages the compiler decoded itself, rather than found decoded by an earlier check.
+    pub body_page_decodes: int = 0
 
 
 pub model BodySelection:
@@ -183,6 +187,7 @@ pub def check_program(
             console=console,
             body_evaluations=checked.bodies.checked,
             body_reuses=checked.bodies.reused,
+            body_page_decodes=checked.bodies.decoded,
         ),
     )
 

@@ -255,6 +255,18 @@ fn rust_abi(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// The check's `incan.checked-bodies/1` report, with `decoded`: how many of the pages it restored from it decoded
+/// itself rather than found decoded by an earlier check in this process.
+fn checked_bodies_report(
+    bodies: &incan_driver::check::CheckedBodies,
+    decoded: usize,
+) -> Result<String, incan_driver::error::CliError> {
+    let failure = |error: serde_json::Error| incan_driver::error::CliError::failure(error.to_string());
+    let mut report: serde_json::Value = serde_json::from_str(&bodies.to_json()?).map_err(failure)?;
+    report["decoded"] = serde_json::json!(decoded);
+    serde_json::to_string(&report).map_err(failure)
+}
+
 /// Check one unit and return the check's status; the report goes to stdout, a refusal's message to stderr. The
 /// unit's crates and their ABI caches supply its Rust facts, as for `--unit`. A short-lived process and the resident
 /// worker share this exact path.
@@ -285,10 +297,12 @@ pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Err
     let unit = UnitDescription::read(Path::new(path)).map_err(|error| error.message)?;
     let dependencies = frontend::dependencies(&unit, options)?;
     let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
+    let decoded_before = frontend::decoded_pages::decodes();
     let checked = incan_driver::check::check_unit(&unit, &rust, dependencies.graph_body_records());
+    let decoded = frontend::decoded_pages::decodes() - decoded_before;
     let checked = checked.and_then(|(output, bodies)| {
         if let Some(report) = bodies_report {
-            std::fs::write(report, bodies.to_json()?).map_err(|error| {
+            std::fs::write(report, checked_bodies_report(&bodies, decoded)?).map_err(|error| {
                 incan_driver::error::CliError::failure(format!("cannot write {}: {error}", report.display()))
             })?;
         }

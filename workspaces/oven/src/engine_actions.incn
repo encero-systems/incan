@@ -189,6 +189,7 @@ def settled_check(store: Path, pending: Pending, console: str) -> Result[Ready, 
             code=outcome.code,
             body_evaluations=outcome.body_evaluations,
             body_reuses=outcome.body_reuses,
+            body_page_decodes=outcome.body_page_decodes,
         )
         observation = retain(store, hexlify(pending.request), pending.capture.counters, checked)?
     return Ok(
