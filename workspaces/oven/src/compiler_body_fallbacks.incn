@@ -17,23 +17,61 @@ pub def fallback_lowering_event(
     identity: str,
 ) -> Result[bool, str]:
     """Skip only a self-describing lowering event that names an explicit full-source fallback owner."""
-    decoded = decode_incan_symbol_identity(identity).map_err((error) => str(error))?
-    selected = match decoded:
+    owner = match event_owner(identity)?:
         None => return Ok(false)
         Some(value) => value
 
-    module = match selected.origin:
-        SymbolOrigin.Module(path) => "/".join(path)
-        _ => return Ok(false)
-
-    source_root = Path(unit.source_root).resolve().map_err((error) => error.message())?.0 + "/"
     for fallback in fallbacks:
-        path = Path(unit.project_root).joinpath(fallback.module).resolve().map_err((error) => error.message())?.0
-        if path.startswith(source_root):
-            relative = path[len(source_root):]
-            if source_module(relative) == module and fallback.name == selected.declaration_name:
-                return Ok(true)
+        if source_module_of(unit, fallback.module)? == Some(owner.module) and fallback.name == owner.name:
+            return Ok(true)
     return Ok(false)
+
+
+pub def retained_namespace_event(unit: UnitDescription, rechecked: list[str], identity: str) -> Result[bool, str]:
+    """
+    Whether a lowering event names an owner of a module this request did not check again.
+
+    The compiler restores such a module whole from its namespace record and reports none of its owners. An owner of
+    it that the graph holds no checker record for fell back to full-source checking when the module was last checked,
+    so its event is skipped as that check's explicit fallback was. A rechecked module reports every owner, and an
+    owner missing there stays a refusal.
+    """
+    owner = match event_owner(identity)?:
+        None => return Ok(false)
+        Some(value) => value
+
+    for module in rechecked:
+        if source_module_of(unit, module)? == Some(owner.module):
+            return Ok(false)
+    return Ok(true)
+
+
+model EventOwner:
+    """The source module and declaration a self-describing lowering event names."""
+
+    module: str
+    name: str
+
+
+def event_owner(identity: str) -> Result[Option[EventOwner], str]:
+    """Read the project module and declaration from a canonical event identity; any other origin names no owner."""
+    decoded = decode_incan_symbol_identity(identity).map_err((error) => str(error))?
+    selected = match decoded:
+        None => return Ok(None)
+        Some(value) => value
+
+    match selected.origin:
+        SymbolOrigin.Module(path) => return Ok(Some(EventOwner(module="/".join(path), name=selected.declaration_name)))
+        _ => return Ok(None)
+
+
+def source_module_of(unit: UnitDescription, module: str) -> Result[Option[str], str]:
+    """Name a project-relative module file as a canonical module origin does, when it lies under the source root."""
+    source_root = Path(unit.source_root).resolve().map_err((error) => error.message())?.0 + "/"
+    path = Path(unit.project_root).joinpath(module).resolve().map_err((error) => error.message())?.0
+    if not path.startswith(source_root):
+        return Ok(None)
+    return Ok(Some(source_module(path[len(source_root):])))
 
 
 def source_module(relative: str) -> str:

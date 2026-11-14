@@ -261,6 +261,38 @@ pub def test_engine_report_counts_checker_reuse_and_artifact_refusals() -> Resul
     return stop_example_engine(binary, store)
 
 
+pub def test_body_edit_rebuilds_beside_an_unchecked_fallback_owner() -> Result[None, str]:
+    """A body edit in one module rebuilds while an untouched module holds an owner that has no checker record."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    project = root.joinpath("fallback-project")
+    source = project.joinpath("src")
+    source.mkdir(true, true).map_err((error) => error.message())?
+    write(
+        project.joinpath("loaf.toml"),
+        "[project]\nname = \"fallback_owner\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n",
+    )?
+    values = "pub model Flag:\n    pub ready: bool\n\n    property weight -> int:\n        return 2\n\n\npub def stable() -> int:\n    return "
+    write(source.joinpath("values.incn"), values + "40\n")?
+    write(
+        source.joinpath("main.incn"),
+        "from values import Flag, stable\n\n\ndef main() -> None:\n    println(stable() + Flag(ready=true).weight)\n",
+    )?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    store = root.joinpath("store")
+    cold = report_fixture_build(binary, project, store)?
+    cold_diagnostic = cold.to_json().map_err((error) => error.message())?
+    # `main` reads a computed property, which no record keeps yet, so it stays on full-source checking.
+    assert proof_refusal_count(cold, "ExpressionArtifacts.computed_property_accesses")? == 1, cold_diagnostic
+    # The edit leaves `main.incn` alone: the compiler restores that module whole and reports none of its owners.
+    write(source.joinpath("values.incn"), values + "41\n")?
+    warm = report_fixture_build(binary, project, store)?
+    warm_diagnostic = warm.to_json().map_err((error) => error.message())?
+    assert proof_count(warm, "body_evaluations")? == 1, warm_diagnostic
+    require_probe_output(project.joinpath("target/incan/release/bin/fallback_owner"), "43")?
+    return stop_example_engine(binary, store)
+
+
 pub def test_generic_body_edit_matches_cold_build() -> Result[None, str]:
     """
     A generic body edit in a warm store reproduces the cold plan, executable and output for both instances, and a
