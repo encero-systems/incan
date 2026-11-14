@@ -552,8 +552,13 @@ def producer_reference(reference: str, directory: Path) -> str:
 
 
 pub def update_runtime_manifest(toolchain: Path, installed: Path) -> Result[None, str]:
-    """Replace the direct runtime binding and its search directory in `toolchain.json`."""
+    """
+    Replace the direct runtime binding and its search directory in `toolchain.json`, naming an installed generation
+    from the toolchain directory, as an installed manifest names every artifact, so a copied or moved home selects its
+    own runtime.
+    """
     path = toolchain.joinpath("toolchain.json")
+    generation = toolchain_relative(toolchain, installed)
     mut fields = read_json(path)?.expect_object().map_err((error) => error.message())?
     mut externs: list[JsonValue] = []
     mut previous: list[str] = []
@@ -564,9 +569,7 @@ pub def update_runtime_manifest(toolchain: Path, installed: Path) -> Result[None
             externs.append(entry)
     externs.append(
         JsonValue.object(
-            {"name": JsonValue.string(RUNTIME_NAME), "path": JsonValue.string(
-                installed.joinpath(f"lib{RUNTIME_NAME}.rlib").0,
-            )},
+            {"name": JsonValue.string(RUNTIME_NAME), "path": JsonValue.string(f"{generation}/lib{RUNTIME_NAME}.rlib")},
         ),
     )
     mut search: set[str] = set()
@@ -574,10 +577,18 @@ pub def update_runtime_manifest(toolchain: Path, installed: Path) -> Result[None
         value = entry.expect_str().map_err((error) => error.message())?
         if value not in previous:
             search.add(value)
-    search.add(installed.0)
+    search.add(generation)
     fields["externs"] = JsonValue.array(externs)
     fields["search"] = JsonValue.array([JsonValue.string(value) for value in sorted([value for value in search])])
     return replace_json(path, JsonValue.object(fields))
+
+
+def toolchain_relative(toolchain: Path, installed: Path) -> str:
+    """`installed` as the manifest in `toolchain` names it: relative when it is inside the toolchain directory."""
+    prefix = toolchain.0 + "/"
+    if installed.0.startswith(prefix):
+        return installed.0[len(prefix):]
+    return installed.0
 
 
 def build_standard_package(
