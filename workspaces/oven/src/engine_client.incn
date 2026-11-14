@@ -458,7 +458,9 @@ def execute_local(
                 return Err("selected native snapshot has no execution lease")
             record_work(Operation.EngineLease, view, pinning)
             restoring = begin_work()
-            restore_program(store, unit)?
+            # A unit whose shared carrier is gone is linked again by the engine.
+            if not restore_program(store, unit)?:
+                return Ok(None)
             record_work(Operation.EngineUnit, unit.identity, restoring)
             record_work(Operation.EngineSelect, view, selecting)
             trace(

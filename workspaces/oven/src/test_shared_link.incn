@@ -1,8 +1,17 @@
 """Development executables link shared carriers from the bakery every home on it reads."""
 
+from rust::std::process import Command
+from std.fs import Path
+from bakery import find
+from files import make_directory, read, write
 from home_paths import bakery
-from shared_link import shared_arguments
+from engine_programs import NativeUnit, restore_program
+from incan_units import obtain_executable
+from scratch import scratch_directory
+from shared_link import linkage_key, shared_arguments
+from toolchain import Toolchain
 from unit import UnitDescription
+from unit_freshness import Key, fingerprint
 
 
 pub def test_development_executables_link_carriers_from_the_bakery() -> Result[None, str]:
@@ -25,4 +34,94 @@ pub def test_development_executables_link_carriers_from_the_bakery() -> Result[N
     store = bakery()?.joinpath("native-shared").absolute().map_err((error) => error.message())?
     assert shared_arguments(unit, true)? == ["--shared-native", store.0]
     assert shared_arguments(unit, false)? == []
+    return Ok(None)
+
+
+def carrier_toolchain(scratch: Path, carrier: Path) -> Result[Toolchain, str]:
+    """
+    A compiler that cannot start a worker and counts each compilation. It writes a fixed executable, puts `carrier` in
+    place and names it in the executable's loader witness, as a development link does.
+    """
+    driver = scratch.joinpath("toolchain").joinpath("driver")
+    attempts = scratch.joinpath("attempts")
+    directory = carrier.parent()
+    listed = "{\"schema\":\"incan.native-shared/1\",\"libraries\":[{\"path\":\""
+    witness = listed + carrier.0 + "\",\"identity\":\"stub\"}]}"
+    mut script = "#!/bin/sh\n[ \"${3:-}\" = --source-graph ] && exit 2\n[ \"$1\" = --resident ] && exit 1\n"
+    script += f"printf x >> '{attempts.0}'\nprintf 'compiled program' > \"$4\"\nchmod +x \"$4\"\n"
+    script += f"mkdir -p '{directory.0}'\nprintf carrier > '{carrier.0}'\n"
+    script += "printf '%s' '" + witness + "' > \"$4.native-shared.json\"\nexit 0\n"
+    make_directory(driver.parent())?
+    write(driver, script)?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    return Ok(Toolchain(driver=driver.0, sysroot="/rust/1.98.0", rust_abi=[], externs=[], search=[], registry_units=""))
+
+
+def program_unit(root: Path) -> Result[UnitDescription, str]:
+    """A debug program unit of a project at `root` with one source and no Loaves."""
+    make_directory(root.joinpath("src"))?
+    write(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.1.0\"\n")?
+    write(root.joinpath("src").joinpath("main.incn"), "def main() -> None:\n    pass\n")?
+    return Ok(
+        UnitDescription(
+            source=root.joinpath("src").joinpath("main.incn").0,
+            project_root=root.0,
+            source_root=root.joinpath("src").0,
+            package="app",
+            version="0.1.0",
+            profile="debug",
+            declared_features=[],
+            active_features=[],
+            loaves=[],
+            rust_crates=[],
+            contract_models=[],
+            c_headers=[],
+        ),
+    )
+
+
+def selected_unit(store: Path, key: Key, output: Path) -> Result[NativeUnit, str]:
+    """The engine's descriptor of the development executable baked under `key`."""
+    identity = linkage_key(key, true)?.digest
+    match find(store, identity)?:
+        None => return Err("the development executable was not baked")
+        Some(fact) =>
+            for file in fact.files:
+                if file.path == output.name() and file.program:
+                    return Ok(NativeUnit(identity=identity, payload=file.digest, binary=output.0))
+            return Err("the baked unit holds no executable")
+
+
+pub def test_a_reused_development_executable_is_linked_again_when_a_carrier_it_loads_is_gone() -> Result[None, str]:
+    """
+    A development executable loads its shared carriers by path when it starts, so reuse first checks they are all
+    still in place.
+
+    1. The first request links the executable; the next one reuses it and starts no compiler.
+    2. With a carrier its witness names removed, neither the bakery's fact nor the engine's selected unit is reused:
+       the next request links it again, which puts the carrier back.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path()
+    store = root.joinpath("home").joinpath("bakery")
+    carrier = root.joinpath("native-shared").joinpath("libincan_debug_shared_0123456789abcdef.dylib")
+    toolchain = carrier_toolchain(root, carrier)?
+    unit = program_unit(root.joinpath("app"))?
+    output = root.joinpath("app").joinpath("target").joinpath("incan").joinpath("debug").joinpath("bin").joinpath("app")
+    key = Key(digest="sha256:" + fingerprint(["a development executable with one carrier"])?, parts=["compiler c"])
+    # 1. One link, then reuse.
+    assert obtain_executable(unit, toolchain, output, key, true, Some(store))?.native_bakes == 1
+    assert obtain_executable(unit, toolchain, output, key, true, Some(store))?.native_bakes == 0
+    assert read(root.joinpath("attempts"))? == "x"
+    assert restore_program(store, selected_unit(store, key, output)?)?
+    # 2. A removed carrier: the stored executable would fail to load it, so it is linked again.
+    carrier.unlink().map_err((error) => error.message())?
+    restored = restore_program(store, selected_unit(store, key, output)?)?
+    assert not restored, "the engine restored a unit whose carrier is gone"
+    made = obtain_executable(unit, toolchain, output, key, true, Some(store))?
+    assert made.native_bakes == 1, "a development executable was reused after a carrier it loads was removed"
+    assert read(root.joinpath("attempts"))? == "xx"
+    assert carrier.is_file()
+    assert restore_program(store, selected_unit(store, key, output)?)?
     return Ok(None)

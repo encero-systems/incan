@@ -46,7 +46,7 @@ from unit import UnitDescription
 from unit_compiler import compile_prepared_unit, crate_name, described_by, run_compiler, write_unit
 from unit_freshness import Key, unit_key
 from unit_rust import compile_library_unit, prepare_native
-from shared_link import development_link, library_witness, linkage_key
+from shared_link import carriers_present, development_link, library_witness, linkage_key
 from jec import begin as begin_work, record as record_work
 from pub::incan_platform.trace import Operation
 
@@ -177,7 +177,8 @@ pub def obtain_executable(
     Development linkage has its own identity, and every shared library is validated before its fact is used.
     Execution starts the requested view, so the host's executable-path lookup and the program name agree.
 
-    1. A sealed fact of the identity is viewed, and no compiler starts.
+    1. A sealed fact of the identity, with every shared carrier its executable loads in place, is viewed, and no
+       compiler starts.
     2. Otherwise claim the identity: one bake of it at a time, in any project or process.
     3. A fact another command sealed while this one waited is viewed.
     4. Compile into a private staging directory of the fact.
@@ -197,14 +198,14 @@ pub def obtain_executable(
     label = f"unit {crate_name(unit)} {unit.kind}"
     register_root(store, unit.project_root, root_registration(unit), [identity])?
     # 1. A sealed executable of the identity starts no compiler.
-    if let Some(fact) = current_executable(store, identity)?:
+    if let Some(fact) = current_executable(store, identity, output)?:
         made = viewed(store, fact, output, unit.kind, shared)?
         trace(f"{label}: reused")
         return Ok(made)
     # 2. A concurrent build waits here, and then finds the fact it needs. The claim is held until this returns.
     held = claim(store, identity)?
     # 3. A bake another command finished while this one waited is used, not repeated.
-    if let Some(fact) = current_executable(store, identity)?:
+    if let Some(fact) = current_executable(store, identity, output)?:
         made = viewed(store, fact, output, unit.kind, shared)?
         trace(f"{label}: reused (built meanwhile by another command)")
         return Ok(made)
@@ -264,9 +265,18 @@ def viewed(store: Path, fact: Fact, output: Path, kind: str, shared: bool) -> Re
     return Ok(Made(code=0, launch=output, fact=Some(fact), identity=fact.identity))
 
 
-def current_executable(store: Path, identity: str) -> Result[Option[Fact], str]:
-    """The sealed fact of `identity`; its linkage key already binds the loader generations admitted at link time."""
-    return find(store, identity)
+def current_executable(store: Path, identity: str, output: Path) -> Result[Option[Fact], str]:
+    """
+    The sealed fact of `identity`, while its executable can still start. Its linkage key already binds the loader
+    generations admitted at link time; a shared carrier the executable loads that is gone since means linking again.
+    """
+    match find(store, identity)?:
+        None => return Ok(None)
+        Some(fact) =>
+            if not carriers_present(store, fact, output)?:
+                trace(f"bakery {identity[:12]}: a shared carrier its executable loads is gone; linking it again")
+                return Ok(None)
+            return Ok(Some(fact))
 
 
 def bake_reason(store: Path, unit: UnitDescription) -> str:
