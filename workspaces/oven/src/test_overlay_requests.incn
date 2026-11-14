@@ -95,15 +95,7 @@ pub def test_a_keystroke_checks_only_the_function_it_edits() -> Result[None, str
     """After a build, an overlay that edits one function's body checks that body and restores every other one."""
     scratch = scratch_directory()?
     binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
-    package = scratch.path().joinpath("package")
-    package.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
-    manifest = "[project]\nname = \"keystroke\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
-    write(package.joinpath("loaf.toml"), manifest)?
-    source = package.joinpath("src").joinpath("main.incn")
-    write(source, "from helper import thrice, twice\n\n\ndef main() -> None:\n    total = twice(2) + thrice(2)\n    println(str(total))\n")?
-    helper = package.joinpath("src").joinpath("helper.incn")
-    original = "pub def twice(value: int) -> int:\n    return value * 2\n\n\npub def thrice(value: int) -> int:\n    return value * 3\n"
-    write(helper, original)?
+    source, helper, original = keystroke_package(scratch.path())?
     buffer = scratch.path().joinpath("buffer.incn")
     write(buffer, original.replace("value * 2", "value + value"))?
     store = scratch.path().joinpath("store")
@@ -119,6 +111,80 @@ pub def test_a_keystroke_checks_only_the_function_it_edits() -> Result[None, str
     assert count(work, "body_evaluations")? == 1, text
     assert count(work, "body_reuses")? == 2, text
     return Ok(None)
+
+
+pub def test_a_keystroke_writes_no_page_an_earlier_keystroke_wrote() -> Result[None, str]:
+    """
+    After a build, the first keystroke's check writes every checked-body page once. The next keystroke, which edits
+    another function, offers the same pages again without selecting, encoding or writing any of them.
+    """
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source, helper, original = keystroke_package(scratch.path())?
+    first_buffer = scratch.path().joinpath("first.incn")
+    write(first_buffer, original.replace("value * 2", "value + value"))?
+    second_buffer = scratch.path().joinpath("second.incn")
+    write(second_buffer, original.replace("value * 3", "value + value + value"))?
+    store = scratch.path().joinpath("store")
+    ran = records_run(binary, source, store)
+    first = overlay(binary, helper, first_buffer, store)
+    second = overlay(binary, helper, second_buffer, store)
+    if store.exists():
+        stop_engine(binary, store)?
+    _ = ran?
+    first_text = first?.to_json().map_err((error) => error.message())?
+    answer = second?
+    text = answer.to_json().map_err((error) => error.message())?
+    assert answer.require("ok").map_err((error) => error.message())?.expect_bool().map_err((error) => error.message())?, text
+    work = answer.require("work").map_err((error) => f"{error.message()}: {text}")?
+    assert count(work, "body_evaluations")? == 1, text
+    assert count(work, "body_reuses")? == 2, text
+    assert count(work, "body_page_writes")? == 0, f"first: {first_text}\nsecond: {text}"
+    return Ok(None)
+
+
+pub def test_a_keystroke_decodes_no_page_an_earlier_keystroke_decoded() -> Result[None, str]:
+    """
+    After a build, the first keystroke's check decodes each page it restores. The next keystroke edits the same
+    function again: it restores the same bodies from the pages the compiler already decoded, and decodes none.
+    """
+    scratch = scratch_directory()?
+    binary = get_or("OVEN_ENGINE_BINARY", f"{get_or("INCAN_HOME", "")}/bin/incan")
+    source, helper, original = keystroke_package(scratch.path())?
+    first_buffer = scratch.path().joinpath("first.incn")
+    write(first_buffer, original.replace("value * 2", "value + value"))?
+    second_buffer = scratch.path().joinpath("second.incn")
+    write(second_buffer, original.replace("value * 2", "2 * value"))?
+    store = scratch.path().joinpath("store")
+    ran = records_run(binary, source, store)
+    first = overlay(binary, helper, first_buffer, store)
+    second = overlay(binary, helper, second_buffer, store)
+    if store.exists():
+        stop_engine(binary, store)?
+    _ = ran?
+    first_text = first?.to_json().map_err((error) => error.message())?
+    answer = second?
+    text = answer.to_json().map_err((error) => error.message())?
+    assert answer.require("ok").map_err((error) => error.message())?.expect_bool().map_err((error) => error.message())?, text
+    work = answer.require("work").map_err((error) => f"{error.message()}: {text}")?
+    assert count(work, "body_evaluations")? == 1, text
+    assert count(work, "body_reuses")? == 2, text
+    assert count(work, "body_page_decodes")? == 0, f"first: {first_text}\nsecond: {text}"
+    return Ok(None)
+
+
+def keystroke_package(scratch: Path) -> Result[tuple[Path, Path, str], str]:
+    """A package whose `main` calls `twice` and `thrice` from `helper`: its entry, its helper and the helper's text."""
+    package = scratch.joinpath("package")
+    package.joinpath("src").mkdir(true, true).map_err((error) => error.message())?
+    manifest = "[project]\nname = \"keystroke\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+    write(package.joinpath("loaf.toml"), manifest)?
+    source = package.joinpath("src").joinpath("main.incn")
+    write(source, "from helper import thrice, twice\n\n\ndef main() -> None:\n    total = twice(2) + thrice(2)\n    println(str(total))\n")?
+    helper = package.joinpath("src").joinpath("helper.incn")
+    original = "pub def twice(value: int) -> int:\n    return value * 2\n\n\npub def thrice(value: int) -> int:\n    return value * 3\n"
+    write(helper, original)?
+    return Ok((source, helper, original))
 
 
 def overlay(binary: str, source: Path, buffer: Path, store: Path) -> Result[JsonValue, str]:
