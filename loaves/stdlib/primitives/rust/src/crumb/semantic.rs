@@ -15,6 +15,10 @@ mod columns;
 mod hash;
 #[path = "semantic_print.rs"]
 mod print;
+#[path = "semantic_read.rs"]
+mod read;
+#[path = "semantic_scan.rs"]
+mod scan;
 
 /// One native semantic-codec attempt with independently measured encode and decode stages.
 pub struct SemanticCase {
@@ -49,6 +53,7 @@ pub fn evaluate_semantic_case(operation: String, document: String) -> SemanticCa
         "hash_preimage" => hash_preimage(&parsed),
         "adaptation" => adaptation::adaptation(&parsed),
         "text_print" => print::text_print(&parsed),
+        "text_read" => read::text_read(&parsed),
         "column_codec" => columns::encode(&parsed),
         _ => None,
     };
@@ -561,6 +566,24 @@ mod tests {
         assert_eq!(refused.kind, 0);
         assert!(refused.encoded.is_empty());
         assert_eq!(refused.decoded, b"\x01\x0fnonminimal_base");
+    }
+
+    #[test]
+    fn text_read_prints_accepted_documents_and_positions_refusals() {
+        let source = "example.Point = Record { x: i64, y: i64 }\nexample.Point << (1, y=2)\n";
+        let hex: String = source.bytes().map(|byte| format!("{byte:02x}")).collect();
+        let accepted = evaluate_semantic_case("text_read".to_string(), format!(r#"{{"input_hex":"{hex}"}}"#));
+        assert_eq!(accepted.kind, 0);
+        assert_eq!(
+            &accepted.encoded[2..],
+            b"example.Point = Record { x: i64, y: i64 }\n\nexample.Point << (x=1, y=2)\n"
+        );
+
+        let source = "example.Point = Record { x: i64 }\nexample.Point << (x=1, x=2)\n";
+        let hex: String = source.bytes().map(|byte| format!("{byte:02x}")).collect();
+        let refused = evaluate_semantic_case("text_read".to_string(), format!(r#"{{"input_hex":"{hex}"}}"#));
+        assert_eq!(refused.kind, 0);
+        assert_eq!(refused.encoded, b"\x01\x0fduplicate_field\x02\x18");
     }
 
     #[test]
