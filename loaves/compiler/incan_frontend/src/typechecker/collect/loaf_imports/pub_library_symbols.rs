@@ -149,6 +149,10 @@ impl TypeChecker {
         if let Some(resolved) = self.record_module_member(library, module_path, member) {
             return Ok(Some(resolved));
         }
+        // A name the namespace's records prove it does not publish, such as one of its child modules, is no member.
+        if self.record_proves_no_member(library, module_path, member) {
+            return Ok(None);
+        }
         let Some(manifest) = self
             .loaves
             .entry(library)
@@ -177,8 +181,10 @@ impl TypeChecker {
         member: &str,
         binding_name: &str,
     ) -> Option<PartialProjectionInfo> {
-        // A plain function its records settle projects no partial call.
-        if self.record_module_member(library, module_path, member).is_some() {
+        // A plain function its records settle projects no partial call, and neither does a name they prove absent.
+        if self.record_module_member(library, module_path, member).is_some()
+            || self.record_proves_no_member(library, module_path, member)
+        {
             return None;
         }
         let manifest = std::sync::Arc::clone(&self.loaves.entry(library)?.artifact.manifest);
