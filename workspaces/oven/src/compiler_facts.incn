@@ -84,5 +84,29 @@ pub def fact_identity(path: Path) -> Result[str, str]:
 def fact_record(path: Path) -> Result[Path, str]:
     """Locate admission evidence by physical provenance, outside the fact's content identity."""
     physical = path.resolve().map_err((error) => f"cannot resolve {error.message()}")?
+    return record_at(physical)
+
+
+def record_at(physical: Path) -> Result[Path, str]:
+    """The admission record of the fact at one physical path."""
     address = hexlify(sha256.digest(physical.0.encode("utf-8")))
     return Ok(home()?.joinpath("cache/compiler-facts").joinpath(f"{address}.json"))
+
+
+pub def retire_facts(removed: list[str]) -> Result[int, str]:
+    """
+    Remove the admission records of compiler files a relink replaced and deleted, such as its earlier driver and ABI
+    cache, and return how many were removed. A record is addressed by its file's physical path, which the file's
+    directory still resolves; a file that exists keeps its record.
+    """
+    mut retired = 0
+    for named in removed:
+        path = Path(named)
+        if path.exists():
+            continue
+        directory = path.parent().resolve().map_err((error) => f"cannot resolve {error.message()}")?
+        record = record_at(directory.joinpath(path.name()))?
+        if record.is_file():
+            record.unlink().map_err((error) => f"cannot remove {record.0}: {error.message()}")?
+            retired += 1
+    return Ok(retired)

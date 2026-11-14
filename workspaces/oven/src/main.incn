@@ -27,7 +27,7 @@ from rust_activation import ActivationPurpose
 from rust_manifest import rust_facet
 from rust_testing import build_rust_tests
 from project_lock import ensure_project_lock, lock_project, parse_lock_command
-from toolchain import load_toolchain, rust_compiler
+from toolchain import load_toolchain, readmit_relinked_installation, rust_compiler
 from formatting import format_paths, parse_arguments as format_options
 from testing import (
     TestCase,
@@ -176,6 +176,20 @@ def dispatch(command: str, rest: list[str]) -> None:
         return
     if command in ["run", "check", "test", "build", "describe-unit", "fmt", "inspect", "lock", "trust"]:
         begin_installation_command()
+    if command == "--internal-readmit":
+        # A relink rewrote the installation it owns; this is its explicit re-admission, never a user command. Owners and
+        # compiler workers still hold the earlier installation, so they stop first. The arguments are the compiler files
+        # the relink removed, whose admission records retire.
+        begin_installation_command()
+        match stop_owners():
+            Err(reason) => fail(f"{invoked()}: cannot stop the home's owners before re-admission: {reason}", 1)
+            Ok(_) => pass
+        match readmit_relinked_installation(rest):
+            Err(reason) => fail(f"{invoked()}: cannot re-admit the relinked installation: {reason}", 1)
+            Ok(retired) =>
+                println(f"re-admitted the relinked installation; retired {retired} compiler fact records")
+                return
+        return
     if command == "--internal-engine":
         match serve_engine(rest):
             Ok(_) => return
