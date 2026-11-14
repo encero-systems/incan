@@ -2,11 +2,11 @@
 //! ordinary manifest reader; an unavailable summary takes that reader again rather than guessing at absent facts.
 
 use incan_loaf_names::artifact_stem;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -80,7 +80,13 @@ pub(super) struct IndexedLoaf {
     execution: Arc<OnceLock<Result<Arc<crate::library_manifest::LibraryManifest>, LoafIndexError>>>,
     surface: Arc<OnceLock<Result<Arc<ExecutableSurface>, LoafIndexError>>>,
     bindings: Arc<OnceLock<Result<Arc<Vec<RuntimeCallableBinding>>, LoafIndexError>>>,
+    /// The records read by family and name, kept for the rest of the compilation so each is read once; `None` where
+    /// the installed set holds no such record.
+    named: Arc<Mutex<NamedRecords>>,
 }
+
+/// Records read by name, keyed by family and name.
+type NamedRecords = HashMap<(&'static str, String), Option<Arc<Vec<serde_json::Value>>>>;
 
 impl IndexedLoaf {
     /// Wrap a caller's already admitted entry without reopening its files.
@@ -94,6 +100,7 @@ impl IndexedLoaf {
             execution: Arc::default(),
             surface: Arc::default(),
             bindings: Arc::default(),
+            named: Arc::default(),
         };
         let _ = indexed.entry.set(Ok(entry));
         indexed
@@ -119,6 +126,7 @@ impl IndexedLoaf {
             execution: Arc::default(),
             surface: Arc::default(),
             bindings: Arc::default(),
+            named: Arc::default(),
         }
     }
 
@@ -143,6 +151,7 @@ impl IndexedLoaf {
                 execution: Arc::default(),
                 surface: Arc::default(),
                 bindings: Arc::default(),
+                named: Arc::default(),
             });
         }
         if !super::compiler_record_set::configured()
@@ -158,6 +167,7 @@ impl IndexedLoaf {
                 execution: Arc::default(),
                 surface: Arc::default(),
                 bindings: Arc::default(),
+                named: Arc::default(),
             });
         }
         let before = observation(&path);
@@ -290,22 +300,9 @@ impl IndexedLoaf {
     ) -> Result<Vec<serde_json::Value>, LoafIndexError> {
         let family = RecordFamily::of_declaration(facet).as_str();
         if super::compiler_record_set::configured()
-            && let Some((values, digest)) = super::compiler_record_set::read_declaration(
-                &self.dir,
-                &self.summary.identity.name,
-                family,
-                declaration,
-            )?
+            && let Some(values) = self.named_records(family, declaration)?
         {
-            if digest != self.summary.identity.digest {
-                return Err(LoafIndexError::Unreadable {
-                    path: self
-                        .dir
-                        .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
-                    reason: "declaration records differ from their admitted inventory".to_owned(),
-                });
-            }
-            return Ok(values);
+            return Ok(values.as_ref().clone());
         }
         let manifest = self.execution_manifest()?;
         let Some(api) = manifest.contract_metadata.split_documentation().0.api else {
@@ -331,24 +328,46 @@ impl IndexedLoaf {
         if !super::compiler_record_set::configured() {
             return Ok(None);
         }
-        let Some((mut values, digest)) = super::compiler_record_set::read_declaration(
-            &self.dir,
-            &self.summary.identity.name,
-            RecordFamily::PublicNamespace.as_str(),
-            &path.join("::"),
-        )?
-        else {
+        let Some(values) = self.named_records(RecordFamily::PublicNamespace.as_str(), &path.join("::"))? else {
             return Ok(None);
         };
-        if digest != self.summary.identity.digest || values.len() != 1 {
-            return Err(LoafIndexError::Unreadable {
-                path: self
-                    .dir
-                    .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
-                reason: "a public namespace record differs from its admitted inventory".to_owned(),
-            });
+        match values.as_slice() {
+            [namespace] => Ok(Some(namespace.clone())),
+            _ => Err(self.inventory_mismatch("a public namespace record differs from its admitted inventory")),
         }
-        Ok(values.pop())
+    }
+
+    /// The `family` records named `name`, read from the installed set the first time they are asked for and kept for
+    /// the rest of the compilation; `None` when the set holds no such record.
+    fn named_records(
+        &self,
+        family: &'static str,
+        name: &str,
+    ) -> Result<Option<Arc<Vec<serde_json::Value>>>, LoafIndexError> {
+        let mut kept = self.named.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(found) = kept.get(&(family, name.to_owned())) {
+            return Ok(found.clone());
+        }
+        let read = super::compiler_record_set::read_declaration(&self.dir, &self.summary.identity.name, family, name)?;
+        let values = match read {
+            Some((_, digest)) if digest != self.summary.identity.digest => {
+                return Err(self.inventory_mismatch("records read by name differ from their admitted inventory"));
+            }
+            Some((values, _)) => Some(Arc::new(values)),
+            None => None,
+        };
+        kept.insert((family, name.to_owned()), values.clone());
+        Ok(values)
+    }
+
+    /// The refusal of a record that does not belong to the inventory the index admitted this Loaf by.
+    fn inventory_mismatch(&self, reason: &str) -> LoafIndexError {
+        LoafIndexError::Unreadable {
+            path: self
+                .dir
+                .join(format!("{}.incnlib", artifact_stem(&self.summary.identity.name))),
+            reason: reason.to_owned(),
+        }
     }
 
     /// Whether the installed set holds a record of one of `families` for this Loaf, named `record` when one is given,
