@@ -148,17 +148,34 @@ pub(super) fn retain_native_type_identities(modules: &mut [BodyIrModule], native
     );
 }
 
-/// Add each missing identity to the bodies' shared identity maps.
+/// Add each missing identity to the bodies' shared identity maps. A map that already names every identity is kept,
+/// and the maps that were one shared map stay one shared extension: this runs again on every runtime resolution, and
+/// a private copy per body of a module-wide map multiplied the checked program.
 fn extend_shared_identities<'a>(
     maps: impl Iterator<Item = &'a mut incan_semantics_core::body_ir::SharedIdentities>,
     identities: &BTreeMap<String, CanonicalSymbolId>,
 ) {
+    // Keyed by the shared map's address; holding the original keeps that address from being reused while it is a key.
+    let mut extended = std::collections::HashMap::new();
     for map in maps {
-        for (name, identity) in identities {
-            std::sync::Arc::make_mut(map)
-                .entry(name.clone())
-                .or_insert_with(|| identity.clone());
+        if identities.keys().all(|name| map.contains_key(name)) {
+            continue;
         }
+        // A map no other body or copy holds is extended in place.
+        if let Some(owned) = std::sync::Arc::get_mut(map) {
+            for (name, identity) in identities {
+                owned.entry(name.clone()).or_insert_with(|| identity.clone());
+            }
+            continue;
+        }
+        let (_, shared) = extended.entry(std::sync::Arc::as_ptr(map)).or_insert_with(|| {
+            let mut copy = map.as_ref().clone();
+            for (name, identity) in identities {
+                copy.entry(name.clone()).or_insert_with(|| identity.clone());
+            }
+            (std::sync::Arc::clone(map), std::sync::Arc::new(copy))
+        });
+        *map = std::sync::Arc::clone(shared);
     }
 }
 

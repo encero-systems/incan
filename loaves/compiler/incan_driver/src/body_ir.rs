@@ -70,7 +70,9 @@ pub fn lower_authored_modules(
             library_package,
             unit.kind == UnitKind::Test,
         )?;
-        for (index, module) in lowered {
+        for (index, mut module) in lowered {
+            // A module's bodies carry equal module-wide identity maps; keep one shared map per distinct content.
+            incan_semantics_core::body_ir::share_equal_identity_maps(&mut module.bodies);
             if authored[index].replace(module).is_some() {
                 return Err("Body IR source component produced a module twice".to_string());
             }
