@@ -78,10 +78,4 @@ pub from _plan import (
     EnumVariant,
 )
 pub from function_records import encode_product, decode_product, encode_scalar, decode_scalar
-pub from record_codec import (
-    encode_record_plan,
-    encode_record_plan_products,
-    decode_record_plan,
-    encode_entry_binding,
-    record_plan_products,
-)
+pub from record_codec import encode_record_plan, decode_record_plan, encode_entry_binding

@@ -39,18 +39,6 @@ pub def encode_entry_binding(entry: str, inputs: list[str]) -> Result[str, str]:
 
 pub def encode_record_plan(plan: &Plan) -> Result[str, str]:
     """Encode one complete scalar plan or explicitly refuse a field the codec cannot preserve."""
-    mut functions: list[str] = []
-    empty_runtime: list[ExternalFunction] = []
-    for index in range(len(plan.functions)):
-        if index == 0:
-            functions.append(encode_product(plan.functions[index], plan.externals)?)
-        else:
-            functions.append(encode_product(plan.functions[index], empty_runtime)?)
-    return encode_record_plan_products(plan, functions)
-
-
-pub def encode_record_plan_products(plan: &Plan, functions: list[str]) -> Result[str, str]:
-    """Encode a complete interface while retaining its keyed function-product bytes in declaration order."""
     counts: list[int] = [
         len(plan.statics), len(plan.exports), len(plan.tests), len(plan.generic_models), len(plan.generic_enums),
     ]
@@ -60,8 +48,13 @@ pub def encode_record_plan_products(plan: &Plan, functions: list[str]) -> Result
             return Err(f"native-interface refuses {fields[index]}: {counts[index]}")
     if len(plan.functions) == 0:
         return Err("native-interface refuses an empty plan")
-    if len(functions) != len(plan.functions):
-        return Err("native-interface product count differs from its plan functions")
+    mut functions: list[str] = []
+    empty_runtime: list[ExternalFunction] = []
+    for index in range(len(plan.functions)):
+        if index == 0:
+            functions.append(encode_product(plan.functions[index], plan.externals)?)
+        else:
+            functions.append(encode_product(plan.functions[index], empty_runtime)?)
     stored = StoredPlan(
         schema=1, functions=functions, programs=plan.programs,
         models=encode_models(plan.models)?, enums=encode_enums(plan.enums)?, zip_carriers=encode_zip_carriers(plan.zip_carriers)?,
@@ -78,14 +71,13 @@ pub def decode_record_plan(encoded: str) -> Result[Plan, str]:
     stored = read_plan(encoded).map_err((error) => str(error))?
     if stored.schema != 1 or len(stored.functions) == 0:
         return Err("unsupported native-interface schema")
-    first, first_runtime = decode_product(stored.functions[0])?
+    first, externals = decode_product(stored.functions[0])?
     mut functions = [first]
-    mut externals: list[ExternalFunction] = []
-    append_runtime(externals, first_runtime)?
     for encoded_function in stored.functions[1:]:
         function, extra = decode_product(encoded_function)?
+        if len(extra) != 0:
+            return Err("native-interface has duplicate external inventories")
         functions.append(function)
-        append_runtime(externals, extra)?
     return Ok(
         Plan(
             models=decode_models(stored.models)?, enums=decode_enums(stored.enums)?,
@@ -93,25 +85,6 @@ pub def decode_record_plan(encoded: str) -> Result[Plan, str]:
             span=source_span(file=stored.file, line=stored.line, column=stored.column),
         ),
     )
-
-
-pub def record_plan_products(encoded: str) -> Result[list[str], str]:
-    """Expose the whole interface's ordered function contributions for byte-equivalence checks."""
-    return Ok(read_plan(encoded).map_err((error) => str(error))?.functions)
-
-
-def append_runtime(mut retained: list[ExternalFunction], values: list[ExternalFunction]) -> Result[None, str]:
-    """Merge each declaration's exact requirements in first-use order, matching whole-plan external merging."""
-    for value in values:
-        mut found = false
-        for present in retained:
-            if present.path == value.path and present.type_arguments == value.type_arguments:
-                if present.parameters != value.parameters or present.return_type != value.return_type:
-                    return Err(f"native-interface has conflicting runtime signatures for {value.path}")
-                found = true
-        if not found:
-            retained.append(value)
-    return Ok(None)
 
 
 def read_plan(encoded: str) -> Result[StoredPlan, JsonError]:

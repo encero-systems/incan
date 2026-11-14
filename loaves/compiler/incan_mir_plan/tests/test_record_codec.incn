@@ -1,10 +1,9 @@
 """Complete native-interface round trips include SDK layouts and selected entries, not only function instructions."""
 
-from _plan import Plan, Function, ExternalFunction, ModelDeclaration, EnumDeclaration, EnumVariant, Carrier
-from _types import PlanType, ListLeaf, SourceSpan, source_span
+from _plan import Plan, Function, ModelDeclaration, EnumDeclaration, EnumVariant, Carrier
+from _types import PlanType, ListLeaf, source_span
 from _body import Local, BasicBlock, Terminator, TerminatorKind, Parameter
-from record_codec import encode_record_plan, encode_record_plan_products, decode_record_plan, record_plan_products
-from function_records import encode_product
+from record_codec import encode_record_plan, decode_record_plan
 from pub::internal_models.checked_types import CheckedType, CheckedPrimitiveType
 
 
@@ -35,35 +34,3 @@ pub def test_complete_plan_round_trip() -> Result[None, str]:
         Ok(_) => assert false, "native-interface dropped a collected test entry"
         Err(_) => pass
     return Ok(None)
-
-
-pub def test_whole_plan_keeps_keyed_product_bytes() -> Result[None, str]:
-    """A runtime demand owned by the second declaration stays on that exact keyed product in the whole plan."""
-    span = source_span(file="keyed_products.incn", line=1, column=1)
-    first = empty_function("first", span)
-    second = empty_function("second", span)
-    runtime = ExternalFunction(
-        path="incan_native_runtime::println_text",
-        parameters=[PlanType.String], return_type=PlanType.Unit, span=span,
-    )
-    empty_runtime: list[ExternalFunction] = []
-    second_runtime = [runtime]
-    keyed = [encode_product(first, empty_runtime)?, encode_product(second, second_runtime)?]
-    plan = Plan(
-        enums=[], models=[], functions=[first, second], externals=second_runtime,
-        programs=[], span=span,
-    )
-    assert record_plan_products(encode_record_plan_products(plan, keyed)?)? == keyed
-    return Ok(None)
-
-
-def empty_function(name: str, span: SourceSpan) -> Function:
-    """Build one ordinary scalar declaration for keyed-plan membership checks."""
-    return Function(
-        name=name, parameters=[], return_type=PlanType.Unit,
-        locals=[Local(ty=PlanType.Unit, span=span)],
-        blocks=[BasicBlock(
-            statements=[], terminator=Terminator(kind=TerminatorKind.Return, span=span), cleanup=false, span=span,
-        )],
-        span=span,
-    )
