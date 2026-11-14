@@ -169,6 +169,33 @@ pub def entries(root: Path, top: str) -> Result[list[Entry], IndexError]:
     return Ok(result)
 
 
+pub def entries_with_prefix(root: Path, top: str, prefix: str) -> Result[list[Entry], IndexError]:
+    """
+    The leaf entries whose keys start with `prefix`, sorted by key, reading only the pages whose range can hold one.
+
+    An inner entry's key is the least key below it. A child is skipped when its next sibling starts at or before
+    `prefix`, since every key below it is then less than `prefix`; the walk stops at the first child whose least key
+    is past `prefix` without starting with it, since every key from there on is greater than any key with the prefix.
+    """
+    mut result: list[Entry] = []
+    if top == "":
+        return Ok(result)
+    page = read_page(root, top)?
+    if page.level == 0:
+        for entry in page.entries:
+            if entry.key.startswith(prefix):
+                result.append(entry)
+        return Ok(result)
+    for position in range(len(page.entries)):
+        entry = page.entries[position]
+        if entry.key > prefix and not entry.key.startswith(prefix):
+            break
+        if position + 1 < len(page.entries) and page.entries[position + 1].key <= prefix:
+            continue
+        result.extend(entries_with_prefix(root, entry.child, prefix)?)
+    return Ok(result)
+
+
 pub def read_page(root: Path, name: str) -> Result[Page, IndexError]:
     """One page, checked against its content name and decoded into owned entries."""
     return decoded_page(page_path(root, name), name)

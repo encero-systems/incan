@@ -40,11 +40,14 @@ from pub::incan_platform.store import (
     view_snapshot,
     durable_syncs,
     graph_barriers,
+    keys_with_prefix,
 )
 from pub::incan_platform.store import snapshot as placed_snapshot
 from pub::incan_platform.store.memory import root as memory_root
 from pub::incan_platform.store.path import StorePath
 from store_path_conversion import compact, payload_intact, payload_path, put_payload, snapshot
+from compiler_graph_records import readers_of, reusable_family_records
+from pub::internal_models.records import RecordKey
 
 static observed_work: dict[str, int] = {}
 
@@ -344,6 +347,51 @@ def damage_last_byte(path: Path) -> Result[None, str]:
     data = path.read_bytes().map_err((error) => error.message())?
     path.chmod(false).map_err((error) => error.message())?
     path.write_bytes(data[:len(data) - 1]).map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def test_a_family_selection_reads_its_range_however_many_records_earlier_edits_left() -> Result[None, str]:
+    """
+    Selecting one family's reusable records and one record's readers reads only the index pages of their key range:
+    the pages read do not grow with the records every earlier edit left in the store, and a prefix listing returns
+    exactly the keys a whole listing would.
+    """
+    scratch = scratch_directory()?
+    output = "incan.engine.output\tp\tbody-ir\tprofile\torigin\tfunction:main\tfacet\tchecked"
+    edge = "incan.engine.edge-in\tbody-ir\tprofile\torigin\tfunction:main\tfacet\tchecked\t"
+    target = RecordKey(
+        family="body-ir",
+        identity="function:main",
+        identity_profile="profile",
+        origin="origin",
+        facet="facet",
+        context="checked",
+    )
+    mut pages: list[int] = []
+    for scale in [1, 100]:
+        root = scratch.path().joinpath(f"store-{scale}")
+        _ = write_one(root, output, "evaluation").map_err((error) => error.message())?
+        for batch in range(scale):
+            mut transaction = begin(snapshot(root).map_err((error) => error.message())?)
+            for item in range(10):
+                transaction = put(transaction, f"incan.engine.receipt\t{batch}-{item}", b"earlier edit")
+                transaction = put(
+                    transaction,
+                    f"incan.engine.output\tp\tlocal\tprofile\torigin\tfunction:{batch}-{item}\tfacet\tchecked",
+                    b"other family",
+                )
+            commit(transaction).map_err((error) => error.message())?
+        latest = snapshot(root).map_err((error) => error.message())?
+        before = read_counts()
+        assert len(reusable_family_records(latest, "body-ir", "p")?) == 0
+        assert len(readers_of(latest, [target], "p")?) == 0
+        pages.append(read_counts().pages - before.pages)
+        every = keys(latest).map_err((error) => error.message())?
+        for prefix in ["incan.engine.output\tp\tbody-ir\t", "incan.engine.output\tp\t", "incan.engine.receipt\t5", edge]:
+            assert keys_with_prefix(latest, prefix).map_err((error) => error.message())? == [
+                key for key in every if key.startswith(prefix)
+            ], prefix
+    assert pages[1] <= pages[0] + 10, f"family selection read {pages[0]} pages at scale 1 and {pages[1]} at scale 100"
     return Ok(None)
 
 

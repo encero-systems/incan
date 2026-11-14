@@ -47,6 +47,7 @@ from crate.trace.schema import Operation
 from crate.ipc import session_id
 from crate.store.files import file_digest
 from crate.store.index import Entry, Location, build, entries as index_entries, find as index_find, insert
+from crate.store.index import entries_with_prefix as index_entries_with_prefix
 from crate.store.index import search as index_search
 from crate.store.index import copied_index_bytes, page_path, page_reads, view_digest, staged_pages
 from crate.store.files import (
@@ -529,6 +530,21 @@ pub def keys(view: Snapshot) -> Result[list[str], StoreError]:
     """Every full key whose state in the view is a value, sorted; a maintenance read over every page."""
     mut live: list[str] = []
     for entry in index_entries(view.root, view.index).map_err(index_failure)?:
+        match entry.location:
+            Some(location) =>
+                if not location.tombstone:
+                    live.append(entry.key)
+            None => pass
+    return Ok(live)
+
+
+pub def keys_with_prefix(view: Snapshot, prefix: str) -> Result[list[str], StoreError]:
+    """
+    Every full key starting with `prefix` whose state in the view is a value, sorted, reading only the index pages of
+    that key range: what a request reads stays the same however many other records the store holds.
+    """
+    mut live: list[str] = []
+    for entry in index_entries_with_prefix(view.root, view.index, prefix).map_err(index_failure)?:
         match entry.location:
             Some(location) =>
                 if not location.tombstone:
