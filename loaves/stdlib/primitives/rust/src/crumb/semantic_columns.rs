@@ -135,6 +135,7 @@ pub(super) fn decode(document: &Json) -> Option<Vec<u8>> {
     match document.get("operation")?.as_str()? {
         "column_dictionary" => {}
         "column_block" => return super::blocks::decode(document),
+        "column_data" => return super::blocks::decode_column(document),
         _ => return None,
     }
     let data = hex(document.get("input_hex")?.as_str()?)?;
@@ -169,6 +170,7 @@ pub(super) fn encode(document: &Json) -> Option<Vec<u8>> {
     match document.get("operation")?.as_str()? {
         "column_dictionary" => {}
         "column_block" => return super::blocks::encode(document),
+        "column_data" => return super::blocks::encode_column(document),
         _ => return None,
     }
     let expected = document.get("expected")?;
@@ -235,7 +237,7 @@ pub(super) fn key_type(name: &str) -> Option<KeyType> {
 }
 
 /// Validate every key and exact restart boundary, returning the keys in code order.
-fn read_keys(node: Option<KeyType>, data: &[u8], budget: &mut Budget) -> Result<Vec<Value>, Refused> {
+pub(super) fn read_keys(node: Option<KeyType>, data: &[u8], budget: &mut Budget) -> Result<Vec<Value>, Refused> {
     let node = node.ok_or("encoding_type")?;
     let mut cursor = Cursor::new(data);
     let count = cursor.length(budget)?;
@@ -516,7 +518,7 @@ pub(super) fn sorted_keys(node: KeyType, values: Vec<Value>) -> Option<Vec<(Vec<
 }
 
 /// Write sorted keys with restarts every sixteen keys and a minimal offset directory.
-fn encode_keys(node: KeyType, values: Vec<Value>) -> Option<Vec<u8>> {
+pub(super) fn encode_keys(node: KeyType, values: Vec<Value>) -> Option<Vec<u8>> {
     let distinct = sorted_keys(node, values)?;
     let mut chunks: Vec<Vec<u8>> = Vec::new();
     for (index, (cell, value)) in distinct.iter().enumerate() {
