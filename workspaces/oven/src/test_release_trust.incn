@@ -12,7 +12,7 @@ from release_signature_fixtures import (
     other_trusted_root,
     trusted_root,
 )
-from release_trust import BUNDLE_SUFFIX, CARRIED_TRUST, admit_release, adopt, carried
+from release_trust import BUNDLE_SUFFIX, CARRIED_TRUST, admit_release, adopt, carried, ship
 
 
 def raw(encoded: str) -> Result[bytes, str]:
@@ -122,4 +122,33 @@ pub def test_a_home_that_carries_no_signer_verifies_nothing_and_a_damaged_file_r
     # 2. Damage is never read as absence.
     put(home.joinpath(CARRIED_TRUST), "{\"signer\":{}}")?
     assert admit_release(asset, home).is_err()
+    return Ok(None)
+
+
+pub def test_a_packed_archive_ships_the_signer_its_toolchain_carries() -> Result[None, str]:
+    """
+    The signer travels inside the archive, from one installation to the next.
+
+    1. Packing an installation that carries a signer stages it; packing one that carries none stages nothing.
+    2. A home that installs the staged archive carries the same signer.
+    3. An installation whose signer file is damaged does not pack.
+    """
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    installed = scratch.path().joinpath("installed")
+    stage = scratch.path().joinpath("stage")
+    home = scratch.path().joinpath("home")
+    for directory in [installed, stage, home]:
+        directory.mkdir(true, true).map_err((error) => error.message())?
+    # 1. Only what the installation carries is shipped.
+    assert not ship(installed, stage)?
+    put(installed.joinpath(CARRIED_TRUST), trust_text(trusted_root())?)?
+    assert ship(installed, stage)?
+    # 2. The next home adopts it unchanged.
+    assert adopt(stage, home)?
+    match carried(home)?:
+        None => return Err("the shipped signer was not adopted")
+        Some(facts) => assert facts.signer.workflow == WORKFLOW
+    # 3. A signer that cannot be read is never shipped.
+    put(installed.joinpath(CARRIED_TRUST), "{}")?
+    assert ship(installed, stage).is_err()
     return Ok(None)
