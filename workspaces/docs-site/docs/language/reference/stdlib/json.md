@@ -25,9 +25,7 @@ Common imports: `from std.json import JsonValue, JsonError, parse_jsonl`. For ta
 | `dumps(value: JsonValue)` | `Result[str, JsonError]` |
 | `dumps_pretty(value: JsonValue)` | `Result[str, JsonError]` |
 
-`loads` is an alias for `parse`. `parse_jsonl` parses one JSON value per non-empty line, preserving source order and
-prefixing parse failures with a one-based line number. `dumps` and `dumps_pretty` delegate to the corresponding
-`JsonValue` serialization methods.
+`loads` is an alias for `parse`. `parse_jsonl` parses one JSON value per non-empty line, preserving source order and prefixing parse failures with a one-based line number. `dumps` and `dumps_pretty` delegate to the corresponding `JsonValue` serialization methods.
 
 ## Constructors
 
