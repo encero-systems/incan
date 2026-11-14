@@ -286,6 +286,30 @@ fn a_byte_literal_keeps_its_escapes() -> Result<(), String> {
 }
 
 #[test]
+fn a_string_literal_keeps_its_escapes_between_double_quotes() -> Result<(), String> {
+    // Literals were rebuilt from their decoded values: `"\u{1b}"` came back as a raw ESC character, `"\u{41}"` as
+    // `"A"` and `"\u{9}"` as `"\t"`. A single-quoted literal is written between double quotes, and its escapes keep
+    // their spelling there too; only the quotes it needs change.
+    let source = r#"def main() -> None:
+    escape = "\u{1b}"
+    letter = "\u{41}"
+    quoted = 'it\'s "\u{1b}"'
+    println(escape + letter + quoted + '\u{9}')
+"#;
+    let once = formatted(source)?;
+    for spelled in [
+        r#"escape = "\u{1b}""#,
+        r#"letter = "\u{41}""#,
+        r#"quoted = "it's \"\u{1b}\"""#,
+        r#"quoted + "\u{9}")"#,
+    ] {
+        assert!(once.contains(spelled), "expected {spelled} in:\n{once:?}");
+    }
+    assert_eq!(once, formatted(&once)?, "formatting is not a fixed point:\n{once}");
+    Ok(())
+}
+
+#[test]
 fn a_guarded_match_arm_keeps_its_guard_and_still_parses() -> Result<(), String> {
     // `incan fmt` used to write the guard before an arrow -- `_ if n <= 0 => ...` -- which the parser then rejected,
     // so `examples/simple/fib.incn` was reformatted into a syntax error. The guard is no longer the arrow form's
