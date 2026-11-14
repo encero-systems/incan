@@ -319,6 +319,7 @@ impl TypeChecker {
             ResolvedType::Float => ResolvedType::RustPath("f64".into()),
             ResolvedType::Bool => ResolvedType::RustPath("bool".into()),
             ResolvedType::Str => ResolvedType::RustPath("std::string::String".into()),
+            ResolvedType::Bytes => ResolvedType::RustPath("std::vec::Vec<u8>".into()),
             ResolvedType::Numeric(kind) => {
                 ResolvedType::RustPath(incan_lang::lang::types::numerics::rust_name(*kind).into())
             }
