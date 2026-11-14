@@ -1,0 +1,26 @@
+# behavior: `oven workspace inspect --format json` reports the root's shared tables as 0.5.1's `incan workspace inspect` did: `shared_dependencies` (`libraries`, `rust`, `rust_dev`), `shared_environments`, `shared_policy` and `shared_sources` (#3141).
+# cli-commands:
+#   oven workspace inspect --format json
+# expect-stdout-contains:
+#   {
+#     "shared_dependencies": {
+#       "libraries": {
+#         "shared": {
+#       "rust": {
+#         "serde": {
+#           "crate_name": "serde",
+#           "default_features": false,
+#           "loaf": "crates-io/serde",
+#           "version": "1"
+#       "rust_dev": {}
+#     "shared_environments": {
+#           "CI": "1"
+#     "shared_policy": {
+#         "approval": "required"
+#     "shared_sources": {
+#         "url": "https://packages.example.test"
+# expect-exit: 0
+
+def main() -> None:
+    """The workspace root's own program, which this case does not run."""
+    pass
