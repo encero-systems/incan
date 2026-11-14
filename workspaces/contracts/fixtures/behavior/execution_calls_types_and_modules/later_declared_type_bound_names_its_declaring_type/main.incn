@@ -1,0 +1,13 @@
+# behavior: a type bound names its declaring module's type when that type is declared after the function or method that carries the bound, so its alias needs no import where it is called and a type imported under another name satisfies it (#1033)
+# expect-stdout:
+#   later 1
+#   whole 2
+#   r later 3
+
+from provider import tagged, counted, Router, Later as Renamed
+
+
+def main() -> None:
+    println(tagged[Renamed](1))
+    println(counted[int](2))
+    println(Router(name="r").marked[Renamed](3))

@@ -1,0 +1,16 @@
+"""Models whose type parameters' bounds name this module's alias and model."""
+
+
+pub type Whole = int
+
+
+pub model Marker:
+    pub label: str
+
+
+pub model Counted[T with Whole]:
+    pub item: T
+
+
+pub model Tagged[T with Marker]:
+    pub item: T

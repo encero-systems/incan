@@ -1,0 +1,13 @@
+# behavior: a model's type-parameter bound names its declaring module's type, so a calling module's own type of the same name does not satisfy it (#1033)
+# expect-diagnostic: INCAN-T0001
+
+from provider import Tagged
+
+
+model Marker:
+    other: int
+
+
+def main() -> None:
+    tagged = Tagged[Marker](item=Marker(other=1))
+    println(tagged.item.other)

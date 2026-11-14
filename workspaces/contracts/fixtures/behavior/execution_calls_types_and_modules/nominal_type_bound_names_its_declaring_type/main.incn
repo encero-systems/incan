@@ -1,0 +1,13 @@
+# behavior: a model's type-parameter bound names its declaring module's type, so its alias needs no import where the model is constructed and a type imported under another name satisfies it (#1033)
+# expect-stdout:
+#   3
+#   tag
+
+from provider import Counted, Tagged, Marker as Renamed
+
+
+def main() -> None:
+    counted = Counted[int](item=3)
+    println(counted.item)
+    tagged = Tagged[Renamed](item=Renamed(label="tag"))
+    println(tagged.item.label)

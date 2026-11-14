@@ -1,0 +1,12 @@
+# behavior: a method's type bound names its declaring module's type, so a calling module's own type of the same name does not satisfy it (#1033)
+# expect-diagnostic: INCAN-T0001
+
+from provider import Router
+
+
+model Marker:
+    other: int
+
+
+def main() -> None:
+    println(Router(name="r").marked[Marker](2))

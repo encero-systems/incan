@@ -1,0 +1,9 @@
+"""A model whose type parameter's bound names this module's model."""
+
+
+pub model Marker:
+    pub label: str
+
+
+pub model Tagged[T with Marker]:
+    pub item: T

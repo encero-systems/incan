@@ -1,0 +1,18 @@
+"""A model whose methods' bounds name this module's alias and model."""
+
+
+pub type Whole = int
+
+
+pub model Marker:
+    pub label: str
+
+
+pub model Router:
+    pub name: str
+
+    pub def whole[T with Whole](self, value: int) -> str:
+        return f"{self.name} whole {value}"
+
+    pub def marked[T with Marker](self, value: int) -> str:
+        return f"{self.name} marker {value}"

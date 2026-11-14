@@ -1,0 +1,19 @@
+# behavior: overloads whose type bounds name one type through aliases declared after them are duplicate declarations even when nothing calls them (#1033)
+# expect-diagnostic: INCAN-T0001
+
+def choose[T with Count]() -> str:
+    return "count"
+
+
+def choose[T with Total]() -> str:
+    return "total"
+
+
+type Count = int
+
+
+type Total = Count
+
+
+def main() -> None:
+    println("no call")

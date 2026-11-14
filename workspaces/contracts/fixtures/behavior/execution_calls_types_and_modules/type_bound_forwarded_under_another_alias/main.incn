@@ -1,0 +1,25 @@
+# behavior: a function forwards its own type parameter to a callee whose bound names the same type under another alias or import name (#1033)
+# expect-stdout:
+#   whole 1
+#   marker 2
+
+from provider import counted, tagged, Marker as Renamed
+
+
+type Count = int
+
+
+type Label = Renamed
+
+
+def count_through[T with Count](value: int) -> str:
+    return counted[T](value)
+
+
+def tag_through[T with Label](value: int) -> str:
+    return tagged[T](value)
+
+
+def main() -> None:
+    println(count_through[int](1))
+    println(tag_through[Renamed](2))

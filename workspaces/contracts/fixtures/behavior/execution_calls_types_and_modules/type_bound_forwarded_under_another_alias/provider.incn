@@ -1,0 +1,16 @@
+"""Functions whose bounds name this module's alias and model."""
+
+
+pub type Whole = int
+
+
+pub model Marker:
+    pub label: str
+
+
+pub def counted[T with Whole](value: int) -> str:
+    return f"whole {value}"
+
+
+pub def tagged[T with Marker](value: int) -> str:
+    return f"marker {value}"

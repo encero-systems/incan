@@ -1,0 +1,9 @@
+"""A function whose bound names a model this module declares further down."""
+
+
+pub def tagged[T with Later](value: int) -> str:
+    return f"later {value}"
+
+
+pub model Later:
+    pub label: str

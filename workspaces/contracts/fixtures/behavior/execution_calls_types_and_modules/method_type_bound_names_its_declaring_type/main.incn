@@ -1,0 +1,12 @@
+# behavior: a method's type bound names its declaring module's type, so its alias needs no import where the method is called and a type imported under another name satisfies it (#1033)
+# expect-stdout:
+#   r whole 1
+#   r marker 2
+
+from provider import Router, Marker as Renamed
+
+
+def main() -> None:
+    router = Router(name="r")
+    println(router.whole[int](1))
+    println(router.marked[Renamed](2))

@@ -1,0 +1,23 @@
+"""A function and a method whose bounds name a model and an alias this module declares further down."""
+
+
+pub def tagged[T with Later](value: int) -> str:
+    return f"later {value}"
+
+
+pub def counted[T with LaterWhole](value: int) -> str:
+    return f"whole {value}"
+
+
+pub model Router:
+    pub name: str
+
+    pub def marked[T with Later](self, value: int) -> str:
+        return f"{self.name} later {value}"
+
+
+pub model Later:
+    pub label: str
+
+
+pub type LaterWhole = int

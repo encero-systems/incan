@@ -1,0 +1,12 @@
+"""A model whose method's bound names this module's model."""
+
+
+pub model Marker:
+    pub label: str
+
+
+pub model Router:
+    pub name: str
+
+    pub def marked[T with Marker](self, value: int) -> str:
+        return f"{self.name} marker {value}"
