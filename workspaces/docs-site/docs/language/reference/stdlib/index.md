@@ -12,6 +12,7 @@ Pages in this section are curated and checked into the repository.
 - [`std.compression`](compression.md) (curated)
 - [`std.derives.*`](derives.md) (curated)
 - [`std.datetime`](datetime.md) (curated; see also [tutorial](../../tutorials/dates_and_times.md), [how-to](../../how-to/dates_and_times.md), and [model](../../explanation/datetime_model.md))
+- [`std.db`](db.md) (curated; see also [how-to](../../how-to/embedded_storage.md))
 - [`std.encoding`](encoding.md) (curated)
 - [`std.environ`](environ.md) (curated; string and typed environment access)
 - [`std.fs`](fs.md) (curated)

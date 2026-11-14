@@ -154,6 +154,7 @@ nav:
           - Module state: language/how-to/module_state.md
           - Choosing collection types: language/how-to/choosing_collections.md
           - Working with graphs: language/how-to/working_with_graphs.md
+          - Store records with std.db: language/how-to/embedded_storage.md
           - Choosing numeric types: language/how-to/choosing_numeric_types.md
           - Modeling with enums: language/how-to/modeling_with_enums.md
           - Project lifecycle: language/how-to/project_lifecycle.md
@@ -200,6 +201,7 @@ nav:
               - std.compression: language/reference/stdlib/compression.md
               - std.derives.*: language/reference/stdlib/derives.md
               - std.datetime: language/reference/stdlib/datetime.md
+              - std.db: language/reference/stdlib/db.md
               - std.encoding: language/reference/stdlib/encoding.md
               - std.environ: language/reference/stdlib/environ.md
               - std.fs: language/reference/stdlib/fs.md
