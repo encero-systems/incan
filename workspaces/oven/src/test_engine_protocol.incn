@@ -1,6 +1,6 @@
 """Engine control-channel boundaries reject malformed input before allocating or admitting work."""
 
-from core_process import Process, spawn_detached
+from core_process import Process, executable, spawn_detached
 from rust::std::thread import sleep
 from rust::std::time import Duration
 from rust::std::string import String as RustString
@@ -11,7 +11,7 @@ from files import write, json_text
 from bakery_roots import Collected, collect
 from engine_programs import read_program, select_program, program_handle, NativeUnit, obtain, selected_program
 from engine_epochs import prepare_submit
-from engine_client import service_identity
+from engine_client import service_generation, service_identity
 from pub::incan_platform.store import Transaction, durable_commits, begin, put, commit, commit_group
 from store_path_conversion import compact, snapshot
 from engine_proofs import report
@@ -156,6 +156,18 @@ pub def test_credit_back_pressure_and_control_lane() -> Result[None, str]:
 def detail(refusal: Refusal) -> str:
     """Expose typed test failures through the Oven harness's textual error boundary."""
     return refusal.detail
+
+
+pub def test_service_generation_follows_binary_bytes_not_its_path() -> Result[None, str]:
+    """Byte-identical engine executables negotiate one service generation after installation relocation."""
+    scratch = scratch_directory()?
+    binary = Path(executable()?)
+    relocated = scratch.path().joinpath("relocated-oven")
+    relocated.write_bytes(binary.read_bytes().map_err((error) => error.message())?).map_err(
+        (error) => error.message(),
+    )?
+    assert service_generation(binary.0)? == service_generation(relocated.0)?
+    return Ok(None)
 
 
 pub def test_service_handshake_drain_and_idle() -> Result[None, str]:
@@ -324,8 +336,9 @@ def check_worker_residency_case(inject_failure: bool) -> Result[None, str]:
     waits = len([line for line in lines if "worker_observer_joined" in line])
     detached = len([line for line in lines if "worker_observer_detached" in line])
     releases = len([line for line in lines if "worker_heap_released" in line])
-    # Both activations restore the same resident worker and release its free heap before the next request.
-    assert waits == 2 and detached == 0 and releases == 2, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
+    # Both requests use the same resident worker for Rust-import discovery and compilation, releasing its free heap
+    # after each activation. No activation may be detached from the observer that owns its completion.
+    assert waits == 4 and detached == 0 and releases == 4, f"worker monitor: {waits} joins, {detached} detachments, {releases} heap releases"
     released_requests = [line for line in lines if "engine request released:" in line]
     assert len(released_requests) == 2, "request teardown did not release its payload verification observations"
     assert "captures=0 verification=0" in released_requests[0]
