@@ -17,8 +17,10 @@ from storage_admission import (
     maintain,
     observe_free_space,
     read_reservations,
+    reservations_root,
     take_decision,
 )
+from trace_adapter import count_work, finish_counting
 from home_paths import BakeryLocation, select_bakery
 from storage_policy import StoragePolicy, read_policy
 from store_status import STATUS_SCHEMA, status_document, status_text, store_status
@@ -282,6 +284,32 @@ pub def test_storing_staged_bytes_is_admitted_and_a_refusal_releases_the_staging
     _ = seal(store, identity, again, "library", "dep", [], "test")?
     assert baked(store, identity)?
     assert len(read_reservations(store)?) == 0, "a sealed bake kept its reservation"
+    return Ok(None)
+
+
+pub def test_an_admission_reads_each_reservation_once() -> Result[None, str]:
+    """
+    Admitting a write reads every other reservation record once: the maintenance of ended attempts and the decision
+    share one reading, under the same admission lock.
+    """
+    scratch = scratch_directory()?
+    store = scratch.path().joinpath("bakery")
+    observe_free_space(store, RESERVE + 1000000)
+    first = digest_of("e1")
+    second = digest_of("e2")
+    third = digest_of("e3")
+    held_first = claim(store, first)?
+    _ = staging(store, first, 100)?
+    held_second = claim(store, second)?
+    _ = staging(store, second, 100)?
+    held_third = claim(store, third)?
+    _ = staging(store, third, 100)?
+    identity = digest_of("e9")
+    held = claim(store, identity)?
+    count_work(reservations_root(store).0 + "/")
+    _ = staging(store, identity, 100)?
+    reads = finish_counting().reads
+    assert reads == 3, f"admitting one bake beside 3 reservations read {reads} reservation records"
     return Ok(None)
 
 
