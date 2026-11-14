@@ -7,13 +7,11 @@ from std.fs import Path
 from std.json import JsonValue, parse
 from files import write
 from scratch import scratch_directory
-from engine_client import service_identity
+from engine_client import service_generation, service_identity
 from engine_endpoint import connect_with
 from engine_messages import Message, Stop
 from engine_wire import zero_id
-from observation import observe
 from rust_target import decoded
-from unit_freshness import fingerprint
 
 
 pub def test_lowering_record_worked_example() -> Result[None, str]:
@@ -331,7 +329,7 @@ def debug_probe_build(binary: str, app: Path, store: Path) -> Result[JsonValue, 
 def stop_example_engine(binary: str, store: Path) -> Result[None, str]:
     """Stop one disposable records engine after its final request."""
     mut identity = service_identity(store)?
-    identity.service_generation = fingerprint([binary, observe(Path(binary))?.stamp])?
+    identity.service_generation = service_generation(binary)?
     mut channel = connect_with(store, identity, binary).map_err((refusal) => refusal.detail)?
     channel
         .send(zero_id(), Message.Stop(Stop(reason="lowering example completed")))
