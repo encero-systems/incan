@@ -581,6 +581,10 @@ pub def shared_relocated_sysroot(source: Path, cache: Path) -> Result[Path, str]
             return Err(f"cached relocated tree digest disagrees with {identity}: {destination.0}")
         if not same_bytes(source_update, cached_update)?:
             return Err(f"cached relocated Rust update hash disagrees: {cached_update.0}")
+        # Reuse only reads: a permission write changes every entry's status time, and with it the compiler facts
+        # that a concurrent release using this shared home has already admitted.
+        require_readonly_tree(home)?
+        return Ok(home)
     else:
         toolchains.mkdir(true, true).map_err((error) => error.message())?
         _ = source.copy(destination, true, true).map_err((error) => error.message())?
@@ -616,6 +620,16 @@ def only_children(parent: Path, names: list[str]) -> bool:
     match parent.iterdir():
         Ok(children) => return sorted([child.name() for child in children]) == sorted(names)
         Err(_) => return false
+
+
+def require_readonly_tree(root: Path) -> Result[None, str]:
+    """Refuse a cached relocated home with any writable entry, without changing any entry's permissions."""
+    mut entries = root.rglob("*").map_err((error) => error.message())?
+    entries.append(root)
+    for entry in entries:
+        if not entry.stat().map_err((error) => error.message())?.readonly().map_err((error) => error.message())?:
+            return Err(f"cached relocated Rust home has a writable entry: {entry.0}")
+    return Ok(None)
 
 
 def make_tree_readonly(root: Path) -> Result[None, str]:

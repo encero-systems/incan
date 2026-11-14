@@ -387,6 +387,14 @@ def test_tree_measurement_walks_regular_files_once_and_records_bytes() -> Result
         Ok(_) => return Err("the shared relocated tree remained writable")
         Err(_) => pass
     assert shared_relocated_sysroot(tree, cache)?.0 == home.0
+    # Reuse only reads the shared home: a permission write would change what a concurrent release admitted.
+    cached.chmod(false).map_err((error) => error.message())?
+    match shared_relocated_sysroot(tree, cache):
+        Ok(_) => return Err("a writable shared relocated tree was reused")
+        Err(message) =>
+            assert message.contains("writable entry"), message
+    cached.chmod(true).map_err((error) => error.message())?
+    assert shared_relocated_sysroot(tree, cache)?.0 == home.0
     rustup
         .joinpath("update-hashes/tree")
         .write_text("changed\n", "utf-8", "strict", None)
