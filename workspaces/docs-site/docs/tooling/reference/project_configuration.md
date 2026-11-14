@@ -26,7 +26,7 @@ Omitting the key preserves the existing unit key and records no explicit registr
 
 ### `[project.scripts]`
 
-Maps script names to existing source-path strings. Project intake requires at least one script, an Incan `lib.incn` under the selected source root, a Rust `src/lib.rs`, or a `tests` directory. A script resolving to the conventional Incan library, such as `library = "src/lib.incn"`, is accepted as 0.5.1 accepted it and ignored: the library is built as a library, never as an executable, and `run`, `check`, `build` and `test` print one warning naming the script line. Source commands still require an explicit path; a `main` script does not supply an omitted argument.
+Maps script names to existing source-path strings. Project intake requires at least one script, an Incan `lib.incn` under the selected source root, a Rust `src/lib.rs`, or a `tests` directory. A script resolving to the conventional Incan library, such as `library = "src/lib.incn"`, is accepted as 0.5.1 accepted it and ignored: the library is built as a library, never as an executable, and `run`, `check`, `build` and `test` print one warning naming the script line. A script does not select what `run`, `check` and `build` compile: without `PATH`, they select the Loaf's `lib.incn` or `main.incn`, as [`oven build`](cli_reference.md#oven-build) states.
 
 ### `[project.features]`
 

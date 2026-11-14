@@ -221,13 +221,15 @@ Trust controls only whether unattended preparation and the language server may r
 
 `PATH` names an Incan entry source or a directory. A directory, or no `PATH`, selects the Loaf at or above it, whose program is selected as for [`oven build`](#oven-build); outside a Loaf the command exits `1`. On `incan run`, `-c CODE` or `--command CODE` runs `CODE`, a whole module, as direct source, as `--direct` runs a file; `oven run` refuses it. Arguments after `--` are passed to the program. `--argv0 TEXT` sets the program's argument zero. Repeatable `--program-entry PATH` adds program entries. The compiled program inherits stdin, stdout and stderr; its exit status is the command's exit status.
 
-With `INCAN_ENGINE=records`, `PATH` must name one ordinary program source file or a project directory with a conventional `src/main.incn` entry, the profile must be `debug` or `release`, and vocabulary entries, foreign headers, feature-selection flags, substitutions and additional program entries are refused. Editable Incan path dependencies are captured with the program. Build and run select the same compiled unit. The program runs only after successful capture and native selection. `--engine-report` retains a proof report and prints one JSON line before any program output. Without that flag, proof reporting adds no console output. The flag is refused in legacy mode.
+With `INCAN_ENGINE=records`, `PATH` must name one ordinary program source file or a directory whose Loaf's program [`oven build`](#oven-build) selects, the profile must be `debug` or `release`, and vocabulary entries, foreign headers, feature-selection flags, substitutions, additional program entries and `--interop-target` are refused; a library is refused with `records engine requires an Incan program`. Editable Incan path dependencies are captured with the program. Build and run select the same compiled unit. The program runs only after successful capture and native selection. `--engine-report` retains a proof report and prints one JSON line before any program output. Without that flag, proof reporting adds no console output. The flag is refused in legacy mode.
 
 ## `oven check`
 
 Checks the source at `PATH` without producing an executable. A directory, or no `PATH`, selects the Loaf at or above it and checks the entry [`oven build`](#oven-build) selects for it; a Loaf without an Incan entry is refused. `--format` accepts `text` (default) or `json`. Successful checks exit zero; errors exit nonzero.
 
 The JSON report has `schema_version: 2`, Boolean `ok`, and a `diagnostics` array. Diagnostic entries carry `code`, `severity`, `phase`, `origin`, `message`, `primary_span`, `notes`, `hints` and `explain`, with additional related or comparison fields when applicable. `explain` is always the string `incan explain CODE`, with the diagnostic's code. Message wording is not stable. A span carries its source file and positions, including byte offsets.
+
+With `INCAN_ENGINE=records`, `PATH` selects a program as records-mode [`run`](#oven-run) does, with the same restrictions, `--format` accepts `text` or `json`, and the check writes no lock.
 
 ## `oven lint`
 
@@ -262,7 +264,7 @@ Runner options select, order and report the collected tests. Each option that ta
 | `--durations N` | Integer, `0` | Prints the `N` slowest tests after the run. |
 | `--nocapture` | Boolean, false | Prints what passing tests print. |
 | `-v`, `--verbose` | Boolean, false | Prints `collected N test(s)` before the run and a summary line after it. |
-| `--format console\|json` | `console` | `json` prints one `incan.test.v1` record per test, naming its module relative to the working directory, and a final summary record instead of console lines. |
+| `--format console\|json` | `console` | `json` prints one `incan.test.v1` record per test, naming its module relative to the working directory, and a final summary record instead of console lines. A parametrized case's record also carries `parameters`, its argument values as strings. |
 | `--junit PATH` | Path, none | Writes a JUnit XML report whose class names are modules relative to the working directory. Skipped tests and expected failures are skipped cases. |
 | `--feature NAME` | Name, repeatable | Enables a testing feature that `std.testing.feature(NAME)` observes during collection. A module compiled with a testing feature is compiled in this process rather than by a resident owner. |
 
@@ -272,7 +274,7 @@ Collected test functions return `None` or `Result[None, E]`, and each of their p
 
 ## `oven build`
 
-An explicit source file selects that unit. A directory, or no `PATH`, selects the Loaf at or above it. For that Loaf, `lib.incn` in the project's source root selects a library; otherwise `main.incn` there selects a program. The source root is `[build] source-root`, otherwise `src` when present, otherwise the project directory. Other project directories select the Rust facet build.
+An explicit source file selects that unit. A directory, or no `PATH`, selects the Loaf at or above it. A `PATH` that names neither a file nor a directory is refused with `PATH: no such source file or Loaf directory`. For that Loaf, `lib.incn` in the project's source root selects a library; otherwise `main.incn` there selects a program. The source root is `[build] source-root`, otherwise `src` when present, otherwise the project directory. Other project directories select the Rust facet build.
 
 A library source named `lib.incn` produces an rlib and checked library sidecars. Path dependency artifacts reside under `target/incan/loaves/<package>/<profile>/`. Program executables reside under `target/incan/<profile>/bin/<crate>`. `--substitute NAME=DIR` supplies local Rust dependency substitutions for a Rust-project build. `--program-entry` is accepted for Incan programs. `--argv0` is refused by builds. `OUTPUT_DIR`, after `PATH`, receives a copy of a program build's executable under the same name, replacing a file of that name; a library or Rust-project build refuses it. `--lib` is not accepted.
 
@@ -280,7 +282,7 @@ A library source named `lib.incn` produces an rlib and checked library sidecars.
 
 `--report json` runs the same build and prints one JSON build report on stdout, or writes it to `--report-output PATH`. The build's own output goes to stderr, and the command exits with the build's status. The report has `schema_version` `1`, `command` `build`, `incan_version`, `path` (the given `PATH`, empty without one), `profile` (the `--profile` value, `debug` without one), `status` (`succeeded` or `failed`), `exit_code`, `artifacts`, each with `kind` (`executable` or `library`), `path` and, when the file exists, `size` and `sha256`, and `timings` with `total_milliseconds`. Without `PATH` the artifacts are those of the project at the working directory. A `--report` other than `json`, and `--report-output` without `--report json`, exit `2`.
 
-With `INCAN_ENGINE=records`, only explicit program source files are accepted, with the same restrictions and `--engine-report` behavior as records-mode `run`. Build does not execute the selected program.
+With `INCAN_ENGINE=records`, `PATH` selects a program as records-mode [`run`](#oven-run) does, with the same restrictions and `--engine-report` behavior. Build does not execute the selected program; program arguments and `--argv0` exit `2`.
 
 ## `oven describe-unit`
 
@@ -311,7 +313,7 @@ Writes the selected source's unit description as a JSON object. Execution-only o
 
 ## `incan fmt`
 
-Formats one or more files or directory trees, or the current directory without `PATH`, printing `Formatted: FILE` for each file it changes, then one summary for the whole invocation, `✓ N file(s) formatted, E error(s)`. `--check` leaves files unchanged and prints `Would reformat: FILE` for each file formatting would change; then it prints `N file(s) would be reformatted` to stderr and exits `1`, or prints `✓ N file(s) already formatted` and exits `0`. `FILE` is relative to the working directory when it is below it. `--diff` leaves files unchanged, prints each file formatting would change as `--- FILE`, `--- original` and `+++ formatted` followed by its removed lines as `-   N | TEXT` and added lines as `+   N | TEXT`, with each line's number in its own version, then `N file(s) need formatting`, and exits `1`; when no file would change it prints `✓ N file(s) already formatted` and exits `0`. `--` ends option parsing. Only `.incn` files are selected; hidden directories, `target`, `node_modules` and nested symbolic links are skipped. Explicitly named files retain their single-file selection. Directory-read errors and no discovered source files are errors. Files that cannot be formatted are reported; other selected files are still processed. Formatting changes layout only: a formatted file reads as the same program, with its comments and docstrings kept. The [code style](../../language/reference/code_style.md) specifies formatting rules.
+Formats one or more files or directory trees, or the current directory without `PATH`, printing `Formatted: FILE` for each file it changes, then one summary for the whole invocation, `✓ N file(s) formatted, E error(s)`. `--check` leaves files unchanged and prints `Would reformat: FILE` for each file formatting would change; then it prints `N file(s) would be reformatted` to stderr and exits `1`, or prints `✓ N file(s) already formatted` and exits `0`. `FILE` is relative to the working directory when it is below it. `--diff` leaves files unchanged, prints each file formatting would change as `--- FILE`, `--- original` and `+++ formatted` followed by its removed lines as `-   N | TEXT` and added lines as `+   N | TEXT`, with each line's number in its own version, then `N file(s) need formatting`, and exits `1`; when no file would change it prints `✓ N file(s) already formatted` and exits `0`. `--` ends option parsing. Only `.incn` files are selected; hidden directories, `target`, `node_modules` and nested symbolic links are skipped. Explicitly named files retain their single-file selection. Directory-read errors and no discovered source files are errors. Files that cannot be formatted are reported; other selected files are still processed. Formatting changes layout only: a formatted file reads as the same program, with its comments and docstrings kept. A single-line string literal is written between double quotes: a single-quoted literal is respelled, with `\'` unescaped and a bare `"` escaped. Every other escape keeps its spelling, so `"\u{1b}"` stays an escape, and a triple-quoted literal is written verbatim. The [code style](../../language/reference/code_style.md) specifies formatting rules.
 
 ## `oven owner stop`
 
@@ -328,7 +330,7 @@ The byte count sums the logical lengths of removed immutable files; staging byte
 
 ## `oven bakery verify`
 
-Reads every unit record and every byte of every payload file in the selected bakery. A damaged record is named. A payload file that does not match its committed digest is reported by its canonical object path. Verification does not change records or payloads. Exits `0` when nothing is damaged and `1` otherwise.
+Reads every record segment the bakery's current views reach, every unit record and every byte of every payload file in the selected bakery. A segment whose bytes do not match its name is reported by its path with `segment does not match its digest`. A damaged record is named. A payload file that does not match its committed digest is reported by its canonical object path. Each damaged object is reported once. Verification does not change records or payloads. Exits `0` when nothing is damaged and `1` otherwise.
 
 
 ## `oven bakery repair-payload SHA256 FILE`
@@ -521,18 +523,29 @@ Serves the selected project's graph through newline-delimited JSON-RPC on stdin/
 
 ## `oven inspect run ID --proofs`
 
-Requires `INCAN_ENGINE=records`. `ID` is the 32-character lowercase hexadecimal `run` field printed by a command with `--engine-report`. The command prints that retained report as one JSON object; an unknown or malformed id is an error. Reports are retained only when explicitly requested.
+Requires `INCAN_ENGINE=records`. `ID` is the 32-character lowercase hexadecimal `run` field printed by a command with `--engine-report`. The command prints that retained report as one JSON object; an unknown or malformed id is an error. Reports are retained only when explicitly requested. 0.5.1's `incan inspect oven` and `oven inspect oven`, which read an Oven Alpha receipt, exit `2` naming this command.
 
 | Field | JSON type | Contract |
 | --- | --- | --- |
-| `schema` | String | `incan.engine.proofs/2`. |
+| `schema` | String | `incan.engine.proofs/3`. |
 | `run` | String | The run id. |
 | `granularity` | String | `unit-record`. |
 | `unit_evaluations` | Integer | Whole-unit producer evaluations performed for this request; a compiled-unit hit is zero. |
 | `body_evaluations` | Integer | Previously published body owners invalidated by this request's changed source records. |
+| `body_reuses` | Integer | Checked bodies restored from the request view's records instead of being checked. |
+| `body_page_writes`, `body_page_decodes` | Integers | Checked-body pages this request encoded and wrote, and restored pages the compiler decoded. |
+| `body_ir_evaluations` | Integer | Body owners whose Body IR this request evaluated. |
 | `native_bakes` | Integer | Successful native units published by this request. |
+| `reusable_declarations`, `all_declarations` | Integers | The declarations the checker could reuse, and all declarations it checked. |
+| `checker_reuse` | String | The checker's summary, `N/M reusable declarations`. |
+| `artifact_refusals` | Object | Each checked-artifact family the checker could not record for reuse, with its count. |
 | `source_stats`, `source_reads`, `source_hashes`, `source_listings` | Integers | Editable-input operations counted by request capture, including configuration and the toolchain pin. |
+| `epoch_reads` | Integer | `1` when the request's source epoch was read from the bakery rather than taken from its own capture, otherwise `0`. |
 | `frozen_stats`, `frozen_reads`, `frozen_hashes` | Integers | Frozen-input operations counted by request capture. These counters do not count compiler reads of admitted facts. |
+| `plan_function_evaluations`, `plan_function_reuses` | Integers | Plan products the lowering evaluated, and those it reused, for this request. |
+| `lowering_demand_evaluations`, `lowering_demand_reuses` | Integers | The same counts without the products of entry roles. |
+| `native_interface_evaluations` | Integer | `1` when the lowering produced the unit's native interface for this request, otherwise `0`. |
+| `index_pages`, `keys_listed` | Integers | Bakery index pages read and keys listed while producing the unit, before the request commits. |
 
 ## `incan toolchain pack` and `install`
 
@@ -546,7 +559,11 @@ Requires `INCAN_ENGINE=records`. `ID` is the 32-character lowercase hexadecimal 
 | --- | --- |
 | `INCAN_HOME` | Toolchain, cache and owner home. Default: `.incan` under `HOME`, or `USERPROFILE` when `HOME` is absent. |
 | `INCAN_STDLIB` | Optional directory containing standard-package source directories with `loaf.toml`; otherwise the installed toolchain's `stdlib` directory is selected. Compiled artifacts belong to the installed toolchain and selected profile. Its sources, like those of any standard, runtime or compiler Loaf a build reaches through a path, must be the ones the installed native generation was built from: a build that reaches an installed native crate whose selected sources differ is refused before anything compiles, naming each such crate. |
-| `INCAN_ENGINE` | `legacy` (default) or `records`. Records mode accepts the file-based `run` and `build` commands and `inspect run ID --proofs`. Help, version and `explain` do not select an engine. Other unsupported commands fail without falling back to legacy. |
+| `INCAN_ENGINE` | `legacy` (default) or `records`. It applies to `run`, `check`, `test`, `build`, `describe-unit` and `inspect run`; every other command ignores it, and on those six another value exits `2` with `INCAN_ENGINE must be legacy or records`. Records mode runs `run`, `check` and `build` on unit records, runs `test` and `describe-unit` as legacy mode does, and serves `inspect run ID --proofs`. A records-mode request it does not implement exits `1` without falling back to legacy. |
+| `OVEN_BODY_REFUSALS` | `default` or `list`. With `list`, a records-mode compile checks every compiled body's source projection before publishing and fails with `compiled body projection refusal list (N):` followed by each numbered refusal; `default` stops at the first. Another value fails the command with `OVEN_BODY_REFUSALS must be default or list`. |
+| `INCAN_JOBS` | A positive integer: how many ready Rust units a build compiles at once, and how many compiler workers one compiler generation runs. Default: the CPU count. The worker count never exceeds what physical memory holds at the workers' footprint ceiling. Another value selects the default. |
+| `INCAN_C_COMPILER` | `host` selects the host C compiler for [`[c]`](project_configuration.md#c) Cloves. A build that compiles a Clove without it is refused. |
+| `INCAN_C_ABI_CLANG` | The Clang executable that verifies checked C bindings, in place of the installed toolchain's own Clang or the platform's; see [`std.interop`](../../language/reference/stdlib/interop.md). |
 | `INCAN_BAKERY` | Optional bakery directory for one invocation. It overrides `storage.root` in the home's `config.toml` without changing the file; otherwise the [storage policy](#storage-policy) selects the bakery, `<INCAN_HOME>/bakery` by default. |
 | `INCAN_SYSROOT` | Explicit local Rust sysroot for installation. Otherwise installation probes Rustup `1.98.0`, then `rustc`. Identity verification is required. |
 | `OVEN_OWNER` | `off` disables resident owner use. |

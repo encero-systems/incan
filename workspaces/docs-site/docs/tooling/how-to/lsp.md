@@ -31,7 +31,7 @@ To inspect or reverse the resulting entry outside the editor, use `oven trust li
 incan check src/main.incn --format json
 ```
 
-Compare these diagnostics with the editor's selected compiler line. Dev.8's `incan` has no `lsp` or `tools doctor` command.
+Compare these diagnostics with the editor's selected compiler line. `incan tools doctor` reports where `incan`, `oven` and `incan-lsp` resolve and which toolchains the home has installed; `incan` has no `lsp` command.
 
 Graph MCP is a separate stdio service:
 
