@@ -127,6 +127,8 @@ pub model TestCase:
     pub serial: bool = false
     # Whether the compiler reported the test's selection markers.
     pub marked: bool = true
+    # A parametrized case's argument values, which its JSON record lists.
+    pub parameters: list[str] = []
 
     pub def markers(self) -> list[str]:
         """The marker names reports and `-m` expressions see."""
@@ -157,6 +159,7 @@ pub def collected_cases(binary: Path, file: str, label: str, path: str = "") -> 
             binary=binary.0,
             skip=reason(test, "skip"),
             xfail=reason(test, "xfail"),
+            parameters=names(test, "parameters"),
         )
         match test.get("marks"):
             None => test_case.marked = false
@@ -503,6 +506,7 @@ def outcome_of(test_case: TestCase, status: Status, reason: str, elapsed: int) -
         reason=reason,
         duration_ms=elapsed,
         markers=test_case.markers(),
+        parameters=test_case.parameters,
     )
 
 
