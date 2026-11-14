@@ -1,0 +1,111 @@
+"""The declared intent a manifest normalizes into, and the source evidence it is read from."""
+
+from std.toml import TomlValue
+from toolchain_access import ToolchainAccess
+from c_facet import CFacet
+from c_interop import CInteropTarget
+
+
+pub model ManifestEvidence:
+    """Physical source evidence, excluded from effective intent and unit identity."""
+
+    pub path: str
+    pub raw_bytes: bytes
+    pub source: str
+    pub sha256_digest: bytes
+
+
+@derive(Eq)
+pub model LocalDependency:
+    """An authored alias and relative path; neither is a resolved symbol name."""
+
+    pub alias: str
+    pub path: str
+    # Whether the edge stays inactive until a package feature selects `dep:<alias>`.
+    pub optional: bool = false
+    # Whether the edge selects the dependency's `default` feature.
+    pub default_features: bool = true
+    # The dependency's features the edge requests.
+    pub features: list[str] = []
+    # Whether the edge links a sibling Loaf's Rust crate (`loaf = "<name>"` beside `path`) rather than an Incan package.
+    pub rust_facet: bool = false
+
+
+@derive(Eq)
+pub model RustInputRequest:
+    """An unresolved Rust-facet Loaf requirement, before source or host/target unit admission."""
+
+    pub alias: str
+    pub package: str
+    pub loaf: Option[str]
+    pub version: str
+    pub features: list[str]
+    pub default_features: bool
+    pub optional: bool
+    pub target: Option[str]
+    pub path: Option[str] = None
+
+
+@derive(Eq)
+pub model FeatureDeclaration:
+    """One `[project.features]` entry, compact and expanded forms normalized into the same edges."""
+
+    # Features of the same package the feature includes.
+    pub includes: list[str] = []
+    # Optional dependencies the feature activates (`dep:<alias>`).
+    pub optional_dependencies: list[str] = []
+    # Features the feature requests from an active dependency (`<alias>/<feature>`), by alias.
+    pub dependency_features: Dict[str, list[str]] = {}
+
+
+@derive(Eq)
+pub model ProjectIntent:
+    """Supported authored fields, independent of comments and source locations."""
+
+    pub name: str
+    pub version: str
+    pub scripts: Dict[str, str]
+    pub dependencies: list[LocalDependency]
+    pub rust_inputs: list[RustInputRequest]
+    pub rust_edition: str
+    # The owning manifest's declared registry, not a dependency alias or a registry lookup.
+    pub registry_id: Option[str] = None
+    # The crate name of this project's Rust facet, explicit or derived from the Loaf identity.
+    pub rust_name: str = ""
+    # The Rust facet kind, empty when this project has no Rust facet.
+    pub rust_type: str = ""
+    # Whether the Rust facet declares build-time behavior. Intake admits `false`; `true` needs an exact bound fact.
+    pub rust_build_script: bool = false
+    # Fully normalized Rust-facet dependency slots for each root environment after production overrides are applied.
+    pub environment_rust_inputs: Dict[str, list[RustInputRequest]] = {}
+    # The declared package features by name.
+    pub features: Dict[str, FeatureDeclaration] = {}
+    # The source root `[build] source-root` names, project-relative, when it names one.
+    pub source_root: Option[str] = None
+    # The contract model bundles `[tool.incan.metadata] model-bundles` names, project-relative.
+    pub contract_models: list[str] = []
+    # The C headers the `[interop.c]` targets declare, project-relative.
+    pub c_headers: list[str] = []
+    # The `[c]` facet, when the Loaf is a Clove (RFC 159).
+    pub c_facet: Option[CFacet] = None
+    # Every `[[interop.c.targets]]` entry: headers, package-owned static archives and binding relations.
+    pub c_targets: list[CInteropTarget] = []
+    # The Incan module registering this Loaf's vocabulary, project-relative.
+    pub vocab_entry: Option[str] = None
+    # The rustc-internal access `[build]` declares for the Loaf's Incan units.
+    pub toolchain_access: ToolchainAccess = ToolchainAccess()
+
+
+pub model ManifestSnapshot:
+    """One exact source generation and its parsed document, before any view imposes its own validation policy."""
+
+    pub evidence: ManifestEvidence
+    pub parsed: TomlValue
+
+
+pub model ManifestDocument:
+    """One byte snapshot, its independently comparable normalized intent, and its Rust source-facet root."""
+
+    pub evidence: ManifestEvidence
+    pub intent: ProjectIntent
+    pub rust_source_root: Option[str] = None
