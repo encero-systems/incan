@@ -440,8 +440,8 @@ pub def release_receipt(
 
 
 pub def digest(path: Path) -> Result[str, str]:
-    """Return a file's lowercase SHA-256 digest."""
-    return Ok(hexlify(file_digest(path, "sha256").map_err((error) => error.message())?))
+    """Return a file's lowercase SHA-256 digest; a file that cannot be read is named in the refusal."""
+    return Ok(hexlify(file_digest(path, "sha256").map_err((error) => f"cannot digest {path.0}: {error.message()}")?))
 
 
 pub def reference_cache_identity(
