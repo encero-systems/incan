@@ -260,15 +260,49 @@ def publish_record(
     provenance: list[str] = [],
     refusal: str = "",
 ) -> Result[None, str]:
-    """Publish the same three-way identity record for a local producer or an admitted imported payload."""
-    document = JsonValue.object(
+    """
+    Publish the same three-way identity record for a local producer or an admitted imported payload.
+
+    A library manifest's record also carries the semantic facts its compiler published for exactly these bytes.
+    """
+    mut document = JsonValue.object(
         {"schema": JsonValue.string(PUBLICATION_SCHEMA), "unit": JsonValue.string(identity), "payload": JsonValue.string(
             payload,
         ), "provenance": JsonValue.string(path.0), "observation": JsonValue.string(observation), "source_provenance": JsonValue.array(
             [JsonValue.string(origin) for origin in provenance],
         ), "refusal": JsonValue.string(refusal)},
     )
+    if let Some(facts) = manifest_facts(path, payload)?:
+        mut fields = document.expect_object().map_err((error) => error.message())?
+        fields["facts"] = JsonValue.string(facts)
+        document = JsonValue.object(fields)
     return publish(destination, json_text(document)?)
+
+
+def manifest_facts(path: Path, payload: str) -> Result[Option[str], str]:
+    """The semantic facts published beside a library manifest, only when they name these exact manifest bytes."""
+    if not path.name().endswith(".incnlib"):
+        return Ok(None)
+    published = facts_path(path)
+    if not published.is_file():
+        return Ok(None)
+    document = read_json(published)?
+    if required_text(document, "schema")? != LOAF_FACTS_SCHEMA or required_text(document, "manifest_digest")? != payload:
+        return Ok(None)
+    return Ok(Some(required_text(document, "semantic_facts")?))
+
+
+pub def published_facts(path: Path) -> Result[Option[str], str]:
+    """The semantic facts a library manifest's current publication record carries, when it carries them."""
+    local = record_path(path)
+    if not local.is_file():
+        return Ok(None)
+    document = read_json(local)?
+    if required_text(document, "observation")? != observe(path)?.stamp:
+        return Ok(None)
+    match document.get("facts"):
+        None => return Ok(None)
+        Some(value) => return Ok(Some(value.expect_str().map_err((error) => error.message())?))
 
 
 def source_provenance(document: JsonValue) -> Result[list[str], str]:

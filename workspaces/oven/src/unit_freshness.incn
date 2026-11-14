@@ -21,7 +21,12 @@ from publication import place, publish
 from toolchain import NativeCrate, Toolchain, rust_compiler
 from native_references import NATIVE_CLOSURE_SCHEMA, RUST_NATIVE_SCHEMA
 from unit import UnitDescription
-from unit_publication import admitted_identity as admitted_payload_identity, published_identity, record_payload
+from unit_publication import (
+    admitted_identity as admitted_payload_identity,
+    published_facts,
+    published_identity,
+    record_payload,
+)
 from frozen_inputs import observation as frozen_observation
 from source_identity import absent_inputs, entry_scope, source_inputs
 from unit_sources import SourceGraph, recorded_imports, source_graph
@@ -44,6 +49,10 @@ pub def artifact_files(directory: Path, package: str) -> Result[list[Path], str]
     cache = directory.joinpath(f"{artifact_stem(package)}.rustabi")
     if artifact_available(cache):
         artifacts.append(cache)
+    # The semantic facts a library's compiler published travel with its manifest when it published them.
+    facts = directory.joinpath(f"{artifact_stem(package)}.incnfacts")
+    if artifact_available(facts):
+        artifacts.append(facts)
     manifest = directory.joinpath(f"{artifact_stem(package)}.incnlib")
     if artifact_available(manifest):
         declared = manifest_vocabulary(manifest)?
@@ -509,11 +518,22 @@ pub def vocabulary_facts(path: Path) -> Result[str, str]:
 
 
 def loaf_identities(unit: UnitDescription) -> Result[list[str], str]:
-    """Canonical Loaf bindings and their published producer identities; absent producer evidence refuses."""
+    """
+    Canonical Loaf bindings and the identities their consumer is keyed on; absent producer evidence refuses.
+
+    A unit that only compiles against a Loaf is keyed on the semantic facts the Loaf's publication recorded, so a
+    documentation edit in the Loaf leaves it alone (RFC 179). A program or test links the Loaf's code and is keyed on
+    its producer identity, as is every unit whose Loaf recorded no facts.
+    """
+    links = unit.kind in ["program", "test"]
     mut inputs: list[str] = []
     for loaf in unit.loaves:
         path = Path(loaf.dir).joinpath(f"{artifact_stem(loaf.name)}.incnlib")
-        inputs.append(f"{loaf.key}={loaf.name} {published_identity(path)?}")
+        mut identity = published_identity(path)?
+        if not links:
+            if let Some(facts) = published_facts(path)?:
+                identity = f"facts {facts}"
+        inputs.append(f"{loaf.key}={loaf.name} {identity}")
     return Ok(sorted(inputs))
 
 
